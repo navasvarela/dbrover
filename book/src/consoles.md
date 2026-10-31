@@ -130,7 +130,7 @@ The toolbar's buttons, and their shortcuts while the editor has focus:
 | --- | --- | --- |
 | **Run** (▷) | ⌘↵ | Runs the selected text if there is a selection, otherwise the statement at the cursor. |
 | **Run all** (▷▷) | ⇧⌘↵ | Runs every statement in the console, in order, stopping at the first one that fails. |
-| **Explain** | ⌥⌘E | Shows how the database would run the statement at the cursor: `EXPLAIN` on PostgreSQL and MariaDB, `EXPLAIN QUERY PLAN` on SQLite, `EXPLAIN FORMAT=TREE` on MySQL 8 once the console has connected, on SQL Server the estimated plan as XML (`SET SHOWPLAN_XML`), which **View value** shows indented, `EXPLAIN` on DuckDB, whose plan is drawn as a tree in text, and `EXPLAIN` on ClickHouse, one step of the plan per row. |
+| **Explain** | ⌥⌘E | Shows how the database would run the statement at the cursor: on PostgreSQL its plan as a tree of steps, the costliest highlighted, with **Text** for the plan as text and buttons to copy either; `EXPLAIN` on MariaDB, `EXPLAIN QUERY PLAN` on SQLite, `EXPLAIN FORMAT=TREE` on MySQL 8 once the console has connected, on SQL Server the estimated plan as XML (`SET SHOWPLAN_XML`), which **View value** shows indented, `EXPLAIN` on DuckDB, whose plan is drawn as a tree in text, and `EXPLAIN` on ClickHouse, one step of the plan per row. |
 | **Cancel** (□) | ⌘. | Stops the running statement, or discards rows not yet loaded. |
 | **History** | — | Opens the data source's query history. |
 | **Format** | ⌥⌘L | Formats the selected text, or the statement at the cursor (see [The editor](#the-editor)). |

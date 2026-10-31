@@ -711,6 +711,7 @@ mod tests {
                     range: 0..sql.len(),
                     prefix_len: 0,
                     in_database: None,
+                    plan: None,
                 })
                 .collect(),
             purpose: RunPurpose::Run,

@@ -14,6 +14,7 @@ use super::documents::{self, CellLook, ColumnFold, DocumentResult, ShownAs};
 use super::edit::{CellEditor, EditSession, Editability, PendingEdits, RowRef};
 use super::grid::{CellPos, GridView, SortKey, tsv_field};
 use super::keys::{KeyLinks, RowsToOpen};
+use super::plan;
 use super::{
     ClipboardCopy, ClipboardFormat, ConsoleAction, QueryConsole, RunState, StatementView,
     ViewedCell, selected_cells,
@@ -77,7 +78,17 @@ pub fn show(
     if let Some(view) = language.key_view(&statement.sql) {
         key_bar(ui, &view, &mut statement.key_bar, read_only, actions);
     }
+    if let Some(plan) = statement.plan.as_mut().filter(|plan| plan.is_read()) {
+        plan::show(ui, plan);
+        return;
+    }
     let load_clicked = summary(ui, statement, running, dialect);
+    if let Some(reason) = statement.plan.as_ref().and_then(plan::PlanView::failure) {
+        ui.colored_label(
+            ui.visuals().warn_fg_color,
+            format!("Not shown as a plan, but as the database returned it: {reason}"),
+        );
+    }
     let mut grid_output = GridOutput::default();
     if statement.returns_rows() {
         let toolbar = Toolbar {

@@ -59,7 +59,9 @@ fn estimate(estimate: Estimate) -> String {
         (None, Some(total)) => Some(format!("cost={total:.2}")),
         (_, None) => None,
     };
-    let rows = estimate.rows.map(|rows| format!("rows={}", count(rows)));
+    let rows = estimate
+        .rows
+        .map(|rows| format!("rows={}", format_rows(rows)));
     let parts: Vec<String> = cost.into_iter().chain(rows).collect();
     if parts.is_empty() {
         String::new()
@@ -72,8 +74,8 @@ fn actual_figures(actual: Actual) -> String {
     if actual.loops == 0.0 {
         return " (never executed)".to_owned();
     }
-    let rows = count(actual.rows);
-    let loops = count(actual.loops);
+    let rows = format_rows(actual.rows);
+    let loops = format_rows(actual.loops);
     match actual.time {
         Some(time) => format!(
             " (actual time={:.3}..{:.3} rows={rows} loops={loops})",
@@ -83,8 +85,8 @@ fn actual_figures(actual: Actual) -> String {
     }
 }
 
-/// A row count: whole, unless it is an average or an estimate that isn't.
-pub(crate) fn count(value: f64) -> String {
+/// A row count as plans show it: whole, unless it is an average or an estimate that isn't.
+pub fn format_rows(value: f64) -> String {
     if (value - value.round()).abs() < 0.005 {
         format!("{value:.0}")
     } else {

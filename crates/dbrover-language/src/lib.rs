@@ -19,6 +19,7 @@ mod test_language;
 use std::ops::Range;
 
 use dbrover_core::{DriverKind, Quoting, ResultShape, ServerInfo};
+use dbrover_plan::PlanFormat;
 use dbrover_sql::Dialect;
 pub use dbrover_sql::{Analysis, NamedSchemas, StatementKind, Token, TokenKind, Unclassified};
 
@@ -39,6 +40,9 @@ pub struct Explained {
     /// Where the original command starts in `text`, so an error's position can be moved back
     /// onto it.
     pub prefix_len: usize,
+    /// The format of the plan the database answers with, when it is one value DbRover draws as
+    /// a tree; `None` when the plan comes as rows to show as they are.
+    pub plan: Option<PlanFormat>,
 }
 
 /// The language of a data source's console, of the MCP server's statements, and of the
@@ -108,20 +112,26 @@ impl QueryLanguage {
     }
 
     /// `command` made to show its plan rather than run, on `server`: SQL's `EXPLAIN` prefix,
-    /// or a MongoDB `find` or `aggregate` with `.explain("executionStats")` after it. `None`
-    /// for a command, or a language, that has no plan to show.
+    /// asking for a plan to draw where the dialect has one, or a MongoDB `find` or `aggregate`
+    /// with `.explain("executionStats")` after it. `None` for a command, or a language, that
+    /// has no plan to show.
     pub fn explain(self, command: &str, server: Option<&ServerInfo>) -> Option<Explained> {
         match self.explain_style()? {
             ExplainStyle::Prefix(dialect) => {
-                let prefix = dialect.explain_prefix(server);
+                let (prefix, plan) = match dialect.plan_request() {
+                    Some(request) => (request.prefix, Some(request.format)),
+                    None => (dialect.explain_prefix(server), None),
+                };
                 Some(Explained {
                     text: format!("{prefix}{command}"),
                     prefix_len: prefix.len(),
+                    plan,
                 })
             }
             ExplainStyle::MongoShell => mongo::explain(command).map(|text| Explained {
                 text,
                 prefix_len: 0,
+                plan: None,
             }),
         }
     }

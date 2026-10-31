@@ -15,6 +15,7 @@ pub use capabilities::{
 };
 
 use dbrover_core::{Quoting, ServerInfo};
+use dbrover_plan::PlanFormat;
 use sqlparser::dialect::{
     ClickHouseDialect, DuckDbDialect, MsSqlDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect,
 };
@@ -103,6 +104,16 @@ pub struct Savepoint {
 pub struct ExplainSetting {
     pub on: &'static str,
     pub off: &'static str,
+}
+
+/// How to have the database explain a statement with a plan DbRover can draw as a tree, and
+/// what it answers with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlanRequest {
+    /// What to put before the statement.
+    pub prefix: &'static str,
+    /// The format of the one value the database answers with.
+    pub format: PlanFormat,
 }
 
 /// A construct `sqlparser` rejects although the dialect's database accepts it. A statement
@@ -367,6 +378,20 @@ impl Dialect {
         }
     }
 
+    /// How to ask the database for a plan DbRover draws as a tree: `EXPLAIN (FORMAT JSON)` on
+    /// PostgreSQL. `None` where the database's plan is text without costs to weigh, or where
+    /// DbRover doesn't read its format yet: [`explain_prefix`](Self::explain_prefix) then
+    /// explains the statement as rows.
+    pub fn plan_request(self) -> Option<PlanRequest> {
+        match self {
+            Self::Postgres => Some(PlanRequest {
+                prefix: "EXPLAIN (FORMAT JSON) ",
+                format: PlanFormat::PostgresJson,
+            }),
+            Self::Sqlite | Self::Mysql | Self::SqlServer | Self::DuckDb | Self::ClickHouse => None,
+        }
+    }
+
     /// Whether the database has transactions a console can open and end. ClickHouse's are
     /// experimental and off unless the server is configured for them, so a ClickHouse console
     /// has no manual commit mode.
@@ -615,6 +640,18 @@ mod tests {
                 expected,
                 "{dialect:?} {schema:?}.{table}"
             );
+        }
+    }
+
+    #[test]
+    fn asks_for_a_plan_to_draw_where_dbrover_reads_the_format() {
+        let request = Dialect::Postgres.plan_request();
+        assert_eq!(
+            request.map(|request| (request.prefix, request.format)),
+            Some(("EXPLAIN (FORMAT JSON) ", PlanFormat::PostgresJson))
+        );
+        for dialect in [Dialect::Sqlite, Dialect::DuckDb, Dialect::ClickHouse] {
+            assert_eq!(dialect.plan_request(), None, "{dialect:?}");
         }
     }
 

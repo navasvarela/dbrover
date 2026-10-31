@@ -25,6 +25,7 @@ dbrover-engine = { path = "crates/dbrover-engine" }
 dbrover-export = { path = "crates/dbrover-export" }
 dbrover-language = { path = "crates/dbrover-language" }
 dbrover-mcp = { path = "crates/dbrover-mcp" }
+dbrover-plan = { path = "crates/dbrover-plan" }
 dbrover-sql = { path = "crates/dbrover-sql" }
 dbrover-ssh = { path = "crates/dbrover-ssh" }
 dbrover-store = { path = "crates/dbrover-store" }

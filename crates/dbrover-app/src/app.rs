@@ -2317,6 +2317,7 @@ mod tests {
     mod modify_table;
     mod parameters;
     mod password_commands;
+    mod plans;
     mod settings;
     mod title_bar;
 

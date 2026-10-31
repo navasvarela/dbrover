@@ -20,6 +20,7 @@ dbrover-engine.workspace = true
 dbrover-export.workspace = true
 dbrover-language.workspace = true
 dbrover-mcp.workspace = true
+dbrover-plan.workspace = true
 dbrover-sql.workspace = true
 dbrover-store.workspace = true
 eframe.workspace = true

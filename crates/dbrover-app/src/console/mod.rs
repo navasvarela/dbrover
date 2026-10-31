@@ -17,6 +17,7 @@ mod find_bar;
 mod grid;
 pub(crate) mod highlight;
 mod keys;
+mod plan;
 mod problems;
 mod results;
 mod snippet;
@@ -41,6 +42,7 @@ use crate::export_dialog::{ExportPreview, PREVIEW_ROWS};
 use dbrover_language::mongo::CollectionView;
 use dbrover_language::redis::{KeyView, ViewShape};
 use dbrover_language::{EditsRun, QueryLanguage, command_at};
+use dbrover_plan::PlanFormat;
 use dbrover_sql::{Dialect, FormatOptions, ParameterValues, format_ranges};
 use dbrover_store::{ConsoleKey, Snippet, SnippetBody, SqlFileContents};
 
@@ -71,6 +73,9 @@ pub struct SubmittedStatement {
     pub prefix_len: usize,
     /// Set when `sql` wraps the statement to sort and filter its rows in the database.
     pub in_database: Option<InDatabase>,
+    /// Set when `sql` explains the statement, and the database answers with a plan in this
+    /// format, to draw rather than show as rows.
+    pub plan: Option<PlanFormat>,
 }
 
 /// A statement whose rows the database sorts and filters, by running it wrapped: the
@@ -255,6 +260,8 @@ pub struct StatementView {
     documents: Option<documents::DocumentResult>,
     /// The bar above a Redis key's value, and what it is asking.
     key_bar: results::KeyBar,
+    /// The statement explains another, and its one value is a plan to draw.
+    plan: Option<plan::PlanView>,
 }
 
 /// The selected cells of loaded rows, for a custom action: added rows have no values yet.
@@ -434,6 +441,7 @@ impl StatementView {
             range: self.range.clone(),
             prefix_len: self.prefix_len,
             in_database: None,
+            plan: self.plan.as_ref().map(plan::PlanView::format),
         };
         if !self.grid.is_in_database() || !self.grid.has_sort_or_filter() {
             return Ok(as_typed);
@@ -1539,6 +1547,7 @@ impl QueryConsole {
             range: range.clone(),
             prefix_len: 0,
             in_database: None,
+            plan: None,
         };
         Some(SubmittedRun {
             statements: vec![statement(command), statement(read)],
@@ -1609,6 +1618,13 @@ impl QueryConsole {
         &self.session
     }
 
+    /// The plan the shown result was read as, if it was an explain's.
+    #[cfg(test)]
+    pub fn shown_plan(&self) -> Option<&dbrover_plan::Plan> {
+        let run = self.run.as_ref()?;
+        run.statements.get(run.selected)?.plan.as_ref()?.plan()
+    }
+
     /// Whether the latest run finished without a failure.
     #[cfg(test)]
     pub fn last_run_completed(&self) -> bool {
@@ -1661,6 +1677,7 @@ impl QueryConsole {
                     range: range.start + offset..range.end + offset,
                     prefix_len: 0,
                     in_database: None,
+                    plan: None,
                 })
                 .collect::<Vec<_>>()
         };
@@ -1688,6 +1705,7 @@ impl QueryConsole {
                         Some(SubmittedStatement {
                             sql: explained.text,
                             prefix_len: explained.prefix_len,
+                            plan: explained.plan,
                             ..statement
                         })
                     })
@@ -1728,6 +1746,7 @@ impl QueryConsole {
                         links: keys::KeyLinks::default(),
                         wrapped: statement.in_database.is_some(),
                         documents: None,
+                        plan: statement.plan.map(plan::PlanView::new),
                     }
                 })
                 .collect(),
@@ -1887,6 +1906,9 @@ impl QueryConsole {
         statement_view.result = Some(result.clone());
         statement_view.more = false;
         statement_view.fetching = false;
+        if let (Ok(_), Some(plan)) = (result, &mut statement_view.plan) {
+            plan.read(&statement_view.rows);
+        }
         if let Err(StatementFailure {
             position: Some(position),
             ..
