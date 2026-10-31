@@ -500,12 +500,14 @@ fn typed_in_upper_case(prefix: &str) -> bool {
     prefix.chars().any(|c| c.is_ascii_uppercase())
 }
 
-/// The candidates for a language without a SQL dialect: its own words, best first, each with
-/// what the language says of it (a Redis command's or a MongoDB method's arguments) or as a
-/// keyword.
+/// The candidates for a language without a SQL dialect: its own words, each with what the
+/// language says of it (a Redis command's or a MongoDB method's arguments) or as a keyword,
+/// and the catalog's `names` its commands take, such as an Elasticsearch cluster's indices;
+/// best first.
 pub fn word_candidates(
     prefix: &str,
     language: QueryLanguage,
+    names: &[String],
     recent: &RecentCompletions,
 ) -> Vec<Candidate> {
     let words = language.completion_words();
@@ -519,6 +521,13 @@ pub fn word_candidates(
             candidate.detail = Some(detail.to_owned());
         }
     }
+    candidates.extend(names.iter().map(|name| Candidate {
+        kind: CandidateKind::Table,
+        label: name.clone(),
+        detail: None,
+        insert: name.clone(),
+        cursor_back: 0,
+    }));
     ranking::rank(candidates, prefix, recent)
 }
 

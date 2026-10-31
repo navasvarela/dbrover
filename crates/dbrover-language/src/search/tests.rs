@@ -301,3 +301,11 @@ fn completes_methods_endpoints_and_query_words() {
     assert!(is_keyword("_bulk"));
     assert!(!is_keyword("orders"));
 }
+
+#[test]
+fn opening_an_index_searches_every_document() {
+    let text = search_all("orders-live");
+    let read = request(&text);
+    assert_eq!(read.path, "/orders-live/_search");
+    assert_eq!(classify(&text), Ok(StatementKind::Read));
+}

@@ -147,15 +147,30 @@ the server. `system.` collections are system ones.
 definition** gives the commands that make it again: `db.createCollection(…)` with its options and
 validator, or `db.createView(…)`, then a `createIndex(…)` for each index but `_id`'s.
 
-**Elasticsearch / OpenSearch**, where the explorer lists the cluster's indices, each with its
-number of documents (or `closed`). Indices whose name starts with `.` are system or hidden ones,
-shown only with **System** ticked.
+**Elasticsearch / OpenSearch**, where a cluster has no databases, and the explorer lists what a
+search reads from and what makes new indices:
 
 ```text
 data source
-├─ logs-2026.10.31          an index, with its number of documents
-└─ orders
+├─ indices
+│  └─ orders                an index, with its number of documents (or "closed")
+│     ├─ address.city       its fields, from its mapping, by their path, with their type
+│     └─ address.city.keyword
+├─ aliases
+│  └─ orders-live           → the indices it names
+├─ data streams
+│  └─ logs-web              with its number of backing indices
+└─ index templates
+   └─ logs                  with its index patterns
 ```
+
+An object's fields are listed by their path: a field of an object under it (`address.city`),
+a `nested` field before its own fields, and a field's other ways of being indexed after it
+(`status.keyword`). Indices are listed by name, 1,000 at a time, with **Load more…** after
+them; in a cluster with more, the filter box searches every index's name on the server.
+
+**Open data** on an index, an alias or a data stream opens a console with a `match_all` search
+of it and runs it, its hits read a page at a time as you scroll.
 
 **Redis / Valkey**, where the server's numbered databases hold keys, grouped by the data
 source's **Key separator** (`:` unless you set another):
@@ -217,7 +232,7 @@ Right-click an object for what you can do with it:
 
 | Menu item | Shown for | What it does |
 | --- | --- | --- |
-| **Open data** | Tables, views, materialized views | Opens a new console with `SELECT * FROM` the object and runs it. |
+| **Open data** | Tables, views, materialized views; Redis keys; MongoDB collections; Elasticsearch indices, aliases and data streams | Opens a new console that reads the object (`SELECT * FROM` it, in SQL) and runs it. |
 | **Export data…** | Tables, views | Writes every row to a file, in any export format; see [A whole table, from the explorer](exporting.md#a-whole-table-from-the-explorer). |
 | **Import CSV…** | Tables | Asks for a CSV file and imports it into the table; see [Importing a CSV file](table-data.md#importing-a-csv-file). |
 | **Copy name** | Objects inside a schema | Copies the name to use in SQL: schema-qualified for tables, views, sequences, indexes and functions (`main."Order Items"`), bare for columns, constraints and triggers. Quoted where needed. |
@@ -255,6 +270,11 @@ Which objects have one depends on the database:
   definition is rebuilt from its parameters and body, one `CREATE MACRO` per parameter list.
 - **ClickHouse**: tables, views, materialized views and dictionaries, as ClickHouse keeps
   their `CREATE` statement.
+- **Elasticsearch and OpenSearch**: an index, as the `PUT /<index>` that makes it again with
+  its aliases, mappings and the settings that can be set (not those the server sets itself,
+  such as its `uuid` or `creation_date`); an alias, as the `POST /_aliases` that adds it to
+  each of its indices; an index template, as its `PUT /_index_template/<name>`. Each runs again
+  as written, in a console.
 
 ## Filtering
 
@@ -291,7 +311,10 @@ The explorer hides each database's own objects:
 - DuckDB's `system` and `temp` databases, and its `information_schema` and `pg_catalog`
   schemas;
 - ClickHouse's `system` and `information_schema` databases (in either case), and the
-  `.inner` tables where a materialized view without a `TO` table keeps its rows.
+  `.inner` tables where a materialized view without a `TO` table keeps its rows;
+- Elasticsearch's and OpenSearch's indices, aliases and data streams whose name starts with
+  `.`, hidden data streams, and the index templates the server manages itself (`logs`,
+  `metrics` and the like on Elasticsearch).
 
 The eye button next to **+** shows or hides them, for every data source at once.
 

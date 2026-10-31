@@ -1099,10 +1099,15 @@ impl QueryConsole {
                     recent,
                 }),
             ),
-            None => (
-                Vec::new(),
-                completion::word_candidates(&point.prefix, self.language, recent),
-            ),
+            None => {
+                let names = catalog
+                    .map(|catalog| catalog.top_level_names(self.language.named_objects()))
+                    .unwrap_or_default();
+                (
+                    Vec::new(),
+                    completion::word_candidates(&point.prefix, self.language, &names, recent),
+                )
+            }
         };
         let snippets = if point.qualifier.is_none() {
             snippet::offer(&mut candidates, snippets, &point.prefix);
@@ -1114,7 +1119,10 @@ impl QueryConsole {
             Vec::new()
         };
         let needed = catalog
-            .map(|catalog| catalog.missing(&references))
+            .map(|catalog| match self.language.named_objects() {
+                [] => catalog.missing(&references),
+                _ => catalog.missing_top_level(),
+            })
             .unwrap_or_default();
         // While the catalog loads, an empty list may yet fill; it shows "Loading…".
         if candidates.is_empty() && !open.explicit && !needed.is_pending() {

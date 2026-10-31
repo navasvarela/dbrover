@@ -52,8 +52,11 @@ pub enum NodeKind {
     /// the node's detail says.
     Collection,
     /// What an Elasticsearch or OpenSearch search reads documents from: an index, an alias or
-    /// a data stream, by its name.
+    /// a data stream, by its name, the folder it is in saying which.
     SearchIndex,
+    /// An Elasticsearch or OpenSearch index template, which new indices whose names match its
+    /// patterns are made from.
+    IndexTemplate,
 }
 
 /// The type of a Redis key's value, as `TYPE` answers.
@@ -118,6 +121,11 @@ pub enum FolderKind {
     Constraints,
     Triggers,
     Roles,
+    /// Elasticsearch's and OpenSearch's indices.
+    Indices,
+    Aliases,
+    DataStreams,
+    IndexTemplates,
 }
 
 impl FolderKind {
@@ -137,6 +145,10 @@ impl FolderKind {
             Self::Constraints => "constraints",
             Self::Triggers => "triggers",
             Self::Roles => "roles",
+            Self::Indices => "indices",
+            Self::Aliases => "aliases",
+            Self::DataStreams => "data streams",
+            Self::IndexTemplates => "index templates",
         }
     }
 }
@@ -253,9 +265,10 @@ impl CatalogPath {
             }
             // A key's, a collection's or an index's name as a command takes it: it belongs to
             // no schema.
-            NodeKind::Key(_) | NodeKind::Collection | NodeKind::SearchIndex => {
-                Some(object.name.clone())
-            }
+            NodeKind::Key(_)
+            | NodeKind::Collection
+            | NodeKind::SearchIndex
+            | NodeKind::IndexTemplate => Some(object.name.clone()),
             NodeKind::Database | NodeKind::Schema | NodeKind::Folder(_) | NodeKind::KeyPrefix => {
                 None
             }

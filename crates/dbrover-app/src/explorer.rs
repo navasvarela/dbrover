@@ -908,7 +908,10 @@ fn node_menu(
     if holds_rows && widgets::menu_item(ui, icons::TABLE, "Open data").clicked() {
         actions.push(ExplorerAction::OpenData(id, node.path.clone()));
     }
-    let is_read_whole = matches!(node.kind(), Some(NodeKind::Key(_) | NodeKind::Collection));
+    let is_read_whole = matches!(
+        node.kind(),
+        Some(NodeKind::Key(_) | NodeKind::Collection | NodeKind::SearchIndex)
+    );
     if is_read_whole && widgets::menu_item(ui, icons::TABLE, "Open data").clicked() {
         actions.push(ExplorerAction::OpenData(id, node.path.clone()));
     }
