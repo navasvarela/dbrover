@@ -46,6 +46,12 @@ muda.workspace = true
 objc2-app-kit.workspace = true
 objc2-foundation.workspace = true
 
+# wgpu, on Direct3D 12 alone, is the renderer Windows falls back to without OpenGL 2
+# (src/renderer.rs). Elsewhere glow is the only renderer, which keeps the other packages smaller.
+[target.'cfg(windows)'.dependencies]
+eframe = { workspace = true, features = ["wgpu_no_default_features"] }
+wgpu = { workspace = true, features = ["dx12"] }
+
 [dev-dependencies]
 async-trait.workspace = true
 dbrover-language = { workspace = true, features = ["test-language"] }
@@ -54,6 +60,9 @@ rmcp = { workspace = true, features = ["client", "transport-child-process"] }
 rusqlite.workspace = true
 tempfile.workspace = true
 toml.workspace = true
+
+[target.'cfg(windows)'.dev-dependencies]
+winit.workspace = true
 
 [lints]
 workspace = true

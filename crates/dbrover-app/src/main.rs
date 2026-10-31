@@ -48,6 +48,7 @@ mod previous_install;
 mod project_dialog;
 mod project_settings;
 mod relaunch;
+mod renderer;
 mod repaint;
 mod rollback_dialog;
 #[cfg(test)]
@@ -55,6 +56,7 @@ mod screenshots;
 mod settings;
 mod settings_tab;
 mod sql_files;
+mod startup_failure;
 mod state;
 mod system_look;
 mod telemetry;
@@ -70,6 +72,8 @@ mod welcome;
 mod widgets;
 mod workspace;
 
+use std::panic::AssertUnwindSafe;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow};
@@ -80,6 +84,8 @@ use dbrover_store::{
 };
 
 use crate::app::DbRoverApp;
+use crate::log_console::LogFeed;
+use crate::previous_install::Adopted;
 
 /// Also the size UI tests run at, so they see the layout a new user sees.
 const DEFAULT_WINDOW_SIZE: [f32; 2] = [1440.0, 900.0];
@@ -105,15 +111,40 @@ fn main() -> anyhow::Result<()> {
         .into_iter()
         .map(|file| std::path::absolute(&file).unwrap_or(file))
         .collect();
-    let adopted =
-        previous_install::adopt(AppPaths::discover().context(
-            "the OS reports no home directory, so DbRover has nowhere to keep its files",
-        )?);
-    let paths = &adopted.paths;
-    let telemetry = telemetry::init(&paths.logs_dir())?;
+    run_window(files)
+}
+
+/// Opens DbRover's window and runs it until it closes. Its failures are shown to the user, not
+/// only printed.
+fn run_window(files: Vec<PathBuf>) -> anyhow::Result<()> {
+    let paths = AppPaths::discover()
+        .context("the OS reports no home directory, so DbRover has nowhere to keep its files")
+        .inspect_err(|error| startup_failure::report(error, None))?;
+    let adopted = previous_install::adopt(paths);
+    let logs_dir = adopted.paths.logs_dir();
+    let telemetry =
+        telemetry::init(&logs_dir).inspect_err(|error| startup_failure::report(error, None))?;
+    // Lives until DbRover exits, so the log file also gets the reason for a failed start.
     let _file_guard = telemetry.file_guard;
-    let log_feed = telemetry.log_feed;
     adopted.log();
+    // wgpu reports some failures by panicking, and a panic would otherwise end DbRover as
+    // silently as an error.
+    std::panic::catch_unwind(AssertUnwindSafe(|| {
+        open_window(adopted, telemetry.log_feed, files)
+    }))
+    .unwrap_or_else(|panic| {
+        Err(anyhow!(
+            "DbRover stopped unexpectedly: {}",
+            telemetry::panic_message(panic.as_ref())
+        ))
+    })
+    .inspect_err(|error| startup_failure::report(error, Some(&logs_dir)))?;
+    relaunch::start_if_requested();
+    Ok(())
+}
+
+fn open_window(adopted: Adopted, log_feed: LogFeed, files: Vec<PathBuf>) -> anyhow::Result<()> {
+    let paths = &adopted.paths;
     let adoption_notice = adopted.notice();
     let engine_config = EngineConfig {
         data_sources: DataSourceFile::new(paths.data_sources_file()),
@@ -163,24 +194,15 @@ fn main() -> anyhow::Result<()> {
         persistence_path: Some(paths.window_state_file()),
         ..Default::default()
     };
-    eframe::run_native(
-        APP_NAME,
-        options,
-        Box::new(move |cc| {
-            let app = DbRoverApp::new(cc, log_feed, engine_config)?
-                .with_files_to_open(files)
-                .with_adoption_notice(adoption_notice);
-            #[cfg(target_os = "macos")]
-            let app = app
-                .with_native_menu(native_menu::NativeMenu::install(&cc.egui_ctx))
-                .with_integrated_title_bar()
-                .with_system_look(system_look::SystemLook::install(&cc.egui_ctx));
-            Ok(Box::new(app))
-        }),
-    )
-    // eframe's error wraps winit/GL errors that aren't `Sync`, so it can't become an
-    // `anyhow::Error` directly.
-    .map_err(|error| anyhow!("DbRover stopped with an error: {error}"))?;
-    relaunch::start_if_requested();
-    Ok(())
+    renderer::run_native(APP_NAME, options, renderer::RENDERERS, move |cc| {
+        let app = DbRoverApp::new(cc, log_feed, engine_config)?
+            .with_files_to_open(files)
+            .with_adoption_notice(adoption_notice);
+        #[cfg(target_os = "macos")]
+        let app = app
+            .with_native_menu(native_menu::NativeMenu::install(&cc.egui_ctx))
+            .with_integrated_title_bar()
+            .with_system_look(system_look::SystemLook::install(&cc.egui_ctx));
+        Ok(Box::new(app))
+    })
 }

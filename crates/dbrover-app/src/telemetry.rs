@@ -114,16 +114,22 @@ fn log_panics() {
 
 /// `panicked on thread 'main' at src/grid.rs:12:5: <message>`, as close to Rust's own
 /// wording as the parts allow.
+/// The text a panic was raised with, which is a `&str` or a `String` unless the code panicked
+/// with some other value.
+pub fn panic_message(payload: &(dyn Any + Send)) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("(a panic without a message)")
+}
+
 fn panic_report(
     payload: &(dyn Any + Send),
     location: Option<&Location<'_>>,
     thread: Option<&str>,
 ) -> String {
-    let message = payload
-        .downcast_ref::<&str>()
-        .copied()
-        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
-        .unwrap_or("(a panic without a message)");
+    let message = panic_message(payload);
     let thread = thread.unwrap_or("<unnamed>");
     match location {
         Some(location) => format!("panicked on thread '{thread}' at {location}: {message}"),

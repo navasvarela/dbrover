@@ -65,6 +65,11 @@ egui_dock = { version = "0.21.1", features = ["serde"] }
 # "svg" renders the database logos (assets/icons/databases) with resvg.
 egui_extras = { version = "0.36.2", features = ["image", "svg"] }
 egui_kittest = "0.36.2"
+# Only Windows builds use these two, for the renderer that draws without OpenGL 2 (wgpu on
+# Direct3D 12, see docs/renderers.md), and the tests that open a window with it. Both are the
+# versions eframe 0.36 is built with: bump them only together with it.
+wgpu = { version = "30.0.1", default-features = false }
+winit = { version = "0.30.13", default-features = false }
 # Icon font; 0.14 is the release built against egui 0.36.
 egui-phosphor = "0.14.0"
 # Encodes the query string of Help › Report a problem…'s address. url's own encoder, which the
