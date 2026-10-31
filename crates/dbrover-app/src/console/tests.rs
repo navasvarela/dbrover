@@ -164,17 +164,83 @@ fn explains_the_statement_at_the_cursor_and_marks_errors_in_it() {
 
     let statements = console.statements_to_run(RunScope::Explain);
 
-    assert_eq!(sqls(&statements), ["EXPLAIN select broken from"]);
+    assert_eq!(
+        sqls(&statements),
+        ["EXPLAIN (FORMAT JSON) select broken from"]
+    );
     console.begin_run(RunId(1), &statements);
     console.apply(&Event::StatementFinished {
         run: RunId(1),
         statement: 0,
         result: Err(StatementFailure {
             message: "syntax error".to_owned(),
-            position: Some("EXPLAIN select broken ".len()),
+            position: Some("EXPLAIN (FORMAT JSON) select broken ".len()),
         }),
     });
     assert_eq!(&text[console.error_marker.clone().unwrap()], "from");
+}
+
+/// PostgreSQL's plan comes back as one JSON value, which the console reads into a plan to draw
+/// once the statement finishes; a value that isn't a plan stays rows, with the reason.
+#[test]
+fn reads_the_plan_an_explain_returns() {
+    let mut console = console("select * from orders");
+    let statements = console.statements_to_run(RunScope::Explain);
+    assert_eq!(
+        statements[0].plan,
+        Some(dbrover_plan::PlanFormat::PostgresJson)
+    );
+    let explain = |console: &mut QueryConsole, run: u64, value: &str| {
+        console.begin_run(RunId(run), &statements);
+        for event in [
+            Event::StatementStarted {
+                run: RunId(run),
+                statement: 0,
+                columns: vec![ColumnInfo {
+                    name: "QUERY PLAN".to_owned(),
+                    type_name: Some("json".to_owned()),
+                }],
+                shape: ResultShape::Rows,
+            },
+            Event::RowsFetched {
+                run: RunId(run),
+                statement: 0,
+                rows: vec![vec![Some(value.to_owned())]],
+                more: false,
+            },
+            Event::StatementFinished {
+                run: RunId(run),
+                statement: 0,
+                result: Ok(StatementSummary {
+                    rows_changed: None,
+                    elapsed: Duration::from_millis(3),
+                    truncated: false,
+                }),
+            },
+        ] {
+            console.apply(&event);
+        }
+        console.run.as_ref().unwrap().statements[0]
+            .plan
+            .as_ref()
+            .map(|plan| (plan.is_read(), plan.failure().map(str::to_owned)))
+    };
+
+    let read = explain(
+        &mut console,
+        1,
+        r#"[{"Plan": {"Node Type": "Seq Scan", "Relation Name": "orders", "Total Cost": 1.5}}]"#,
+    );
+    assert_eq!(read, Some((true, None)));
+    let plan = console.run.as_ref().unwrap().statements[0].plan.as_ref();
+    assert_eq!(
+        plan.and_then(|plan| plan.plan())
+            .map(|plan| plan.root.title()),
+        Some("Seq Scan on orders".to_owned())
+    );
+
+    let unread = explain(&mut console, 2, "Seq Scan on orders");
+    assert!(matches!(unread, Some((false, Some(reason))) if reason.contains("isn't JSON")));
 }
 
 #[test]

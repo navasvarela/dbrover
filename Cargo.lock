@@ -1689,6 +1689,7 @@ dependencies = [
  "dbrover-export",
  "dbrover-language",
  "dbrover-mcp",
+ "dbrover-plan",
  "dbrover-sql",
  "dbrover-store",
  "eframe",
@@ -1919,6 +1920,7 @@ version = "0.19.1"
 dependencies = [
  "dbrover-core",
  "dbrover-document",
+ "dbrover-plan",
  "dbrover-sql",
  "thiserror 2.0.21",
 ]
@@ -1959,6 +1961,7 @@ version = "0.19.1"
 dependencies = [
  "base64 0.22.1",
  "dbrover-core",
+ "dbrover-plan",
  "hmac",
  "postgres-protocol",
  "sha2 0.11.1",

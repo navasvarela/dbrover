@@ -1185,7 +1185,7 @@ fn toggle_expansion(id: DataSourceId, path: &CatalogPath, expanded: bool) -> Exp
 }
 
 /// The disclosure triangle. Labelled "Expand x" / "Collapse x" for screen readers and tests.
-fn expander(ui: &mut Ui, expanded: bool, label: &str) -> Response {
+pub(crate) fn expander(ui: &mut Ui, expanded: bool, label: &str) -> Response {
     let size = ui.spacing().icon_width;
     let (_, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
     let verb = if expanded { "Collapse" } else { "Expand" };

@@ -16,6 +16,7 @@ test-language = []
 [dependencies]
 dbrover-core.workspace = true
 dbrover-document.workspace = true
+dbrover-plan.workspace = true
 dbrover-sql.workspace = true
 thiserror.workspace = true
 

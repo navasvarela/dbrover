@@ -11,6 +11,7 @@ mod postgres;
 mod text;
 mod weigh;
 
+pub use text::format_rows;
 pub use weigh::{Heat, Line, Measure, Weight};
 
 /// A statement's plan, as one database explained it.

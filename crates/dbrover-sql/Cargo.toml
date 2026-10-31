@@ -10,6 +10,8 @@ publish.workspace = true
 
 [dependencies]
 dbrover-core.workspace = true
+# The plan formats a dialect's plan requests are answered in.
+dbrover-plan.workspace = true
 postgres-protocol.workspace = true
 sqlparser.workspace = true
 thiserror.workspace = true
