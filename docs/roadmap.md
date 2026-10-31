@@ -1228,14 +1228,29 @@ three to five, **L** a track of its own).
   password on every connection, through an SSH tunnel, a failing command, the dialog's test),
   store tests of the trust file and the export, and a kittest test of the dialog and the
   prompt.
-- **W10 — A visual explain plan (M):** the plan of the statement at the cursor as a tree of
-  steps, each with its estimated cost and rows and, after **Explain analyse**, the actual rows
-  and time, the costliest steps highlighted.
+- **W10 — A visual explain plan (M):** designed on 2026-10-31 in
+  [A well-rounded app](well-rounded.md#w10--a-visual-explain-plan). The plan of the statement at
+  the cursor as a tree of steps, each with its estimated cost and rows and, after **Explain
+  analyse**, the actual rows and time, the costliest steps highlighted.
   - PostgreSQL first, from `EXPLAIN (FORMAT JSON)`; then MySQL's `EXPLAIN FORMAT=JSON` and SQL
     Server's XML showplan. Each format is parsed into one plan type, which the view draws.
   - **Explain analyse** runs the statement, so on a careful data source it asks first, and on a
     read-only one it runs inside the read-only transaction.
   - The text plan stays one click away, and both can be copied.
+  - **W10a — The plan type and PostgreSQL:** a new crate, `dbrover-plan`, holds one plan type,
+    weighs its steps and writes the text plan; PostgreSQL's JSON is parsed into it, tested with
+    plans recorded from the test server.
+  - **W10b — The plan view:** ⌥⌘E draws the plan as a tree with the costliest step
+    highlighted, **Tree** and **Text** switch views, **Copy text** and **Copy JSON** copy them.
+  - **W10c — Explain analyse** (⌥⇧⌘E): actual rows, loops and time beside each estimate, and
+    estimates ten times off flagged; it runs as **Run** would, asking first on a careful data
+    source and inside the read-only transaction on a read-only one.
+  - **W10d — MySQL and MariaDB:** MySQL 8.3 and later through `explain_json_format_version =
+    2`, switched on around the statement; the older `query_block` format for MySQL 8.0 and
+    MariaDB, with MariaDB's `ANALYZE FORMAT=JSON`.
+  - **W10e — SQL Server:** the XML showplan, estimated (`SHOWPLAN_XML`) and actual
+    (`STATISTICS XML`).
+  - **W10f — Manual:** a chapter on reading plans, and this demo note.
 
   **Exit:** on the PostgreSQL test server, ⌥⌘E on a join of `orders` and `customers` shows a
   tree whose costliest step is highlighted, and **Explain analyse** adds the actual rows.

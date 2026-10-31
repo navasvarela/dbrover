@@ -1944,6 +1944,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "dbrover-plan"
+version = "0.18.0"
+dependencies = [
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "dbrover-sql"
 version = "0.18.0"
 dependencies = [
