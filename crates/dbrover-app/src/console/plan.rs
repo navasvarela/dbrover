@@ -391,14 +391,17 @@ fn actual_rows(ui: &mut Ui, step: &Step, palette: &Palette) {
         figure(ui, RichText::new("never ran").weak());
         return;
     }
-    let rows = format_rows(actual.rows);
+    let Some(returned) = actual.rows else {
+        return;
+    };
+    let rows = format_rows(returned);
     if !step.is_misestimated() {
         figure(ui, RichText::new(rows));
         return;
     }
     let expected = step.estimate.rows.map(format_rows).unwrap_or_default();
     let factor = step.misestimate().unwrap_or_default();
-    let direction = if actual.rows > step.estimate.rows.unwrap_or_default() {
+    let direction = if returned > step.estimate.rows.unwrap_or_default() {
         "more"
     } else {
         "fewer"
@@ -531,19 +534,19 @@ fn figures_in_words(step: &Step) -> String {
     let rows = estimate
         .rows
         .map(|rows| format!("{} rows expected", format_rows(rows)));
-    let actual = step.actual.map(|actual| match actual.time {
-        _ if actual.loops == 0.0 => "never ran".to_owned(),
-        Some(time) => format!(
-            "{} rows returned in {:.3} ms, {} times",
-            format_rows(actual.rows),
-            time.last_row_ms,
-            format_rows(actual.loops)
-        ),
-        None => format!(
-            "{} rows returned, {} times",
-            format_rows(actual.rows),
-            format_rows(actual.loops)
-        ),
+    let actual = step.actual.map(|actual| {
+        if actual.loops == 0.0 {
+            return "never ran".to_owned();
+        }
+        let returned = actual.rows.map_or_else(
+            || "ran".to_owned(),
+            |rows| format!("{} rows returned", format_rows(rows)),
+        );
+        let took = actual
+            .time
+            .map(|time| format!(" in {:.3} ms", time.last_row_ms))
+            .unwrap_or_default();
+        format!("{returned}{took}, {} times", format_rows(actual.loops))
     });
     cost.into_iter()
         .chain(rows)

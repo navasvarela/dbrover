@@ -55,11 +55,13 @@ pub struct Line<'a> {
 }
 
 impl Plan {
-    /// Time, when the statement ran and the database timed it; the estimate otherwise.
+    /// Time, when the statement ran and the database timed its steps; the estimate otherwise.
     pub fn measure(&self) -> Measure {
-        match self.root.actual {
-            Some(actual) if actual.time.is_some() => Measure::Time,
-            _ => Measure::Cost,
+        let timed = |step: &Step| step.actual.is_some_and(|actual| actual.time.is_some());
+        if self.root.any(&timed) {
+            Measure::Time
+        } else {
+            Measure::Cost
         }
     }
 
@@ -181,10 +183,10 @@ mod tests {
 
     fn timed(mut step: Step, last_row_ms: f64, loops: f64) -> Step {
         step.actual = Some(Actual {
-            rows: 1.0,
+            rows: Some(1.0),
             loops,
             time: Some(Timing {
-                first_row_ms: 0.0,
+                first_row_ms: None,
                 last_row_ms,
             }),
         });

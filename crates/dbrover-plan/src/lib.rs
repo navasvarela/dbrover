@@ -7,6 +7,8 @@
 //! most, and writes itself as text ([`Plan::text`]), so whoever shows a plan only draws it.
 //! Nothing here talks to a database.
 
+mod json;
+mod mysql;
 mod postgres;
 mod text;
 mod weigh;
@@ -61,8 +63,9 @@ pub struct Estimate {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Actual {
     /// The rows it returned each time it ran, on average: comparable with
-    /// [`Estimate::rows`].
-    pub rows: f64,
+    /// [`Estimate::rows`]. `None` where the database times a step without counting its rows
+    /// (MariaDB's query blocks).
+    pub rows: Option<f64>,
     /// How many times it ran; 0 when the plan never needed it.
     pub loops: f64,
     /// How long each run took on average, when the database timed it.
@@ -73,7 +76,8 @@ pub struct Actual {
 /// children's time included.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Timing {
-    pub first_row_ms: f64,
+    /// `None` where the database only says how long the step took in all (MariaDB).
+    pub first_row_ms: Option<f64>,
     pub last_row_ms: f64,
 }
 
@@ -110,11 +114,16 @@ impl Detail {
 impl Plan {
     /// Whether the statement ran to produce this plan, so its steps have actual figures.
     pub fn is_analysed(&self) -> bool {
-        self.root.actual.is_some()
+        self.root.any(&|step| step.actual.is_some())
     }
 }
 
 impl Step {
+    /// Whether the step, or any step under it, is one `matches` accepts.
+    pub fn any(&self, matches: &dyn Fn(&Step) -> bool) -> bool {
+        matches(self) || self.children.iter().any(|child| child.any(matches))
+    }
+
     /// The operation and its target together, as one line of the text plan starts.
     pub fn title(&self) -> String {
         match &self.target {
@@ -135,7 +144,7 @@ impl Step {
     pub fn misestimate(&self) -> Option<f64> {
         let actual = self.actual.filter(|actual| actual.loops > 0.0)?;
         let estimated = self.estimate.rows?.max(1.0);
-        let returned = actual.rows.max(1.0);
+        let returned = actual.rows?.max(1.0);
         Some(if returned > estimated {
             returned / estimated
         } else {
@@ -149,6 +158,9 @@ impl Step {
 pub enum PlanFormat {
     /// PostgreSQL's `EXPLAIN (FORMAT JSON)`, with or without `ANALYZE`.
     PostgresJson,
+    /// MySQL's `EXPLAIN FORMAT=JSON`, in either of its formats, with or without `ANALYZE`, and
+    /// MariaDB's `EXPLAIN FORMAT=JSON` and `ANALYZE FORMAT=JSON`.
+    MysqlJson,
 }
 
 impl PlanFormat {
@@ -160,13 +172,14 @@ impl PlanFormat {
     pub fn parse(self, text: &str) -> Result<Plan, PlanError> {
         match self {
             Self::PostgresJson => postgres::parse(text),
+            Self::MysqlJson => mysql::parse(text),
         }
     }
 
     /// The name of the notation the plan is written in, for what copying it copies.
     pub fn notation(self) -> &'static str {
         match self {
-            Self::PostgresJson => "JSON",
+            Self::PostgresJson | Self::MysqlJson => "JSON",
         }
     }
 }

@@ -9,6 +9,7 @@ mod names;
 #[cfg(test)]
 mod tests;
 
+use std::borrow::Cow;
 use std::ops::ControlFlow;
 
 use sqlparser::ast::{
@@ -19,6 +20,7 @@ use sqlparser::parser::Parser;
 use self::names::NameCollector;
 pub use self::names::{NamePart, NamedSchemas};
 use crate::dialect::Dialect;
+use crate::lexer::tokenize;
 
 /// What a statement may change, from least to most. A statement holding others (a `WITH`
 /// clause with a `DELETE`, an `EXPLAIN ANALYZE`) is the most demanding of them all.
@@ -87,7 +89,8 @@ pub fn classify(sql: &str, dialect: Dialect) -> Result<StatementKind, Unclassifi
 /// [`Unclassified`] when the text holds no statement, several, or one the dialect's parser
 /// can't read.
 pub fn analyze(sql: &str, dialect: Dialect) -> Result<Analysis, Unclassified> {
-    let statements = Parser::parse_sql(dialect.sqlparser_dialect(), sql).map_err(|error| {
+    let parsed = as_parsed(sql, dialect);
+    let statements = Parser::parse_sql(dialect.sqlparser_dialect(), &parsed).map_err(|error| {
         let message = error.to_string();
         let message = message
             .strip_prefix("sql parser error: ")
@@ -109,6 +112,32 @@ pub fn analyze(sql: &str, dialect: Dialect) -> Result<Analysis, Unclassified> {
         kind: classifier.kind,
         schemas: classifier.names.finish(),
     })
+}
+
+/// The text to parse for `sql`. MariaDB's `ANALYZE` before a statement runs the statement and
+/// explains it, as MySQL's `EXPLAIN ANALYZE` does, but `sqlparser` only reads `ANALYZE TABLE`;
+/// so such a statement is read as the `EXPLAIN ANALYZE` it is, which classifies it by the
+/// statement it runs. `ANALYZE TABLE`, and its `LOCAL` and `NO_WRITE_TO_BINLOG` forms, are
+/// left as they are.
+fn as_parsed(sql: &str, dialect: Dialect) -> Cow<'_, str> {
+    if dialect != Dialect::Mysql {
+        return Cow::Borrowed(sql);
+    }
+    let words: Vec<String> = tokenize(sql, dialect)
+        .into_iter()
+        .filter(|token| !token.kind.is_trivia())
+        .take(2)
+        .map(|token| sql[token.range].to_ascii_lowercase())
+        .collect();
+    match words.as_slice() {
+        [first, second]
+            if first == "analyze"
+                && !matches!(second.as_str(), "table" | "local" | "no_write_to_binlog") =>
+        {
+            Cow::Owned(format!("EXPLAIN {sql}"))
+        }
+        _ => Cow::Borrowed(sql),
+    }
 }
 
 /// Walks every statement, query, expression and table in the tree, nested ones included,

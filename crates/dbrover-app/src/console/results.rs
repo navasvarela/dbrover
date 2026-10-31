@@ -47,6 +47,7 @@ pub fn show(
     let dialect = console.dialect();
     let language = console.language;
     let read_only = console.safety == SafetyLevel::ReadOnly;
+    let can_analyse = language.can_explain(ExplainDepth::Analysed, console.server());
     actions.extend(
         console
             .tables_to_describe()
@@ -80,7 +81,7 @@ pub fn show(
         key_bar(ui, &view, &mut statement.key_bar, read_only, actions);
     }
     if let Some(plan) = statement.plan.as_mut().filter(|plan| plan.is_read()) {
-        let analyse = match language.can_explain(ExplainDepth::Analysed) {
+        let analyse = match can_analyse {
             false => plan::AnalyseButton::Hidden,
             true if running => plan::AnalyseButton::Disabled,
             true => plan::AnalyseButton::Enabled,

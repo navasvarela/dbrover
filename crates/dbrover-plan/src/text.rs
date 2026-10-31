@@ -74,15 +74,16 @@ fn actual_figures(actual: Actual) -> String {
     if actual.loops == 0.0 {
         return " (never executed)".to_owned();
     }
-    let rows = format_rows(actual.rows);
-    let loops = format_rows(actual.loops);
-    match actual.time {
-        Some(time) => format!(
-            " (actual time={:.3}..{:.3} rows={rows} loops={loops})",
-            time.first_row_ms, time.last_row_ms
-        ),
-        None => format!(" (actual rows={rows} loops={loops})"),
-    }
+    let time = actual.time.map(|time| match time.first_row_ms {
+        Some(first) => format!("time={first:.3}..{:.3}", time.last_row_ms),
+        None => format!("time={:.3}", time.last_row_ms),
+    });
+    let rows = actual
+        .rows
+        .map(|rows| format!("rows={}", format_rows(rows)));
+    let loops = format!("loops={}", format_rows(actual.loops));
+    let parts: Vec<String> = time.into_iter().chain(rows).chain([loops]).collect();
+    format!(" (actual {})", parts.join(" "))
 }
 
 /// A row count as plans show it: whole, unless it is an average or an estimate that isn't.
@@ -149,22 +150,31 @@ mod tests {
     fn writes_what_happened_after_the_estimate() {
         let mut ran = step("Index Scan", Some("using pk on t"), vec![]);
         ran.actual = Some(Actual {
-            rows: 1.0,
+            rows: Some(1.0),
             loops: 20.0,
             time: Some(Timing {
-                first_row_ms: 0.01,
+                first_row_ms: Some(0.01),
                 last_row_ms: 0.0125,
             }),
         });
         let mut untimed = step("Sort", None, vec![]);
         untimed.actual = Some(Actual {
-            rows: 0.5,
+            rows: Some(0.5),
             loops: 2.0,
             time: None,
         });
+        let mut uncounted = step("Query block", None, vec![]);
+        uncounted.actual = Some(Actual {
+            rows: None,
+            loops: 1.0,
+            time: Some(Timing {
+                first_row_ms: None,
+                last_row_ms: 2.5,
+            }),
+        });
         let mut skipped = step("Seq Scan", None, vec![]);
         skipped.actual = Some(Actual {
-            rows: 0.0,
+            rows: Some(0.0),
             loops: 0.0,
             time: None,
         });
@@ -175,6 +185,10 @@ mod tests {
         assert_eq!(
             figures(&untimed),
             "  (cost=0.00..12.50 rows=100) (actual rows=0.50 loops=2)"
+        );
+        assert_eq!(
+            figures(&uncounted),
+            "  (cost=0.00..12.50 rows=100) (actual time=2.500 loops=1)"
         );
         assert_eq!(
             figures(&skipped),
