@@ -134,6 +134,44 @@ impl<'a> TreeCatalog<'a> {
         };
         found.map(|(_, relation)| relation)
     }
+
+    /// The names of the loaded objects of `kinds` at the top of the tree or in a folder there,
+    /// system ones left out: what a language without SQL's clauses names in its commands, such
+    /// as an Elasticsearch cluster's indices, aliases and data streams.
+    pub fn top_level_names(&self, kinds: &[NodeKind]) -> Vec<String> {
+        let top = self
+            .tree
+            .loaded_children(&CatalogPath::root())
+            .unwrap_or_default();
+        let in_folders = top
+            .iter()
+            .filter(|node| matches!(node.kind(), Some(NodeKind::Folder(_))))
+            .flat_map(|folder| self.tree.loaded_children(&folder.path).unwrap_or_default());
+        top.iter()
+            .chain(in_folders)
+            .filter(|node| !node.system && node.kind().is_some_and(|kind| kinds.contains(&kind)))
+            .map(|node| node.label.clone())
+            .collect()
+    }
+
+    /// The top of the tree and its folders, while they haven't loaded: what
+    /// [`Self::top_level_names`] reads.
+    pub fn missing_top_level(&self) -> Needed {
+        let mut missing = Needed::default();
+        let mut need = |path: &CatalogPath| match self.tree.children(path) {
+            None => missing.unrequested.push(path.clone()),
+            Some(Children::Loading) => missing.loading = true,
+            Some(Children::Loaded(_) | Children::Failed(_)) => {}
+        };
+        let root = CatalogPath::root();
+        need(&root);
+        for folder in self.tree.loaded_children(&root).unwrap_or_default() {
+            if matches!(folder.kind(), Some(NodeKind::Folder(_))) {
+                need(&folder.path);
+            }
+        }
+        missing
+    }
 }
 
 impl CatalogSource for TreeCatalog<'_> {
@@ -315,5 +353,61 @@ mod tests {
                 detail: None
             }]
         );
+    }
+
+    /// A search console names the cluster's indices, aliases and data streams, one folder
+    /// down: completion asks for the folders once the top has loaded, and leaves out system
+    /// ones and other kinds.
+    #[test]
+    fn reads_the_names_at_the_top_of_the_tree() {
+        let config = ConnectionConfig::Elasticsearch(dbrover_core::ElasticsearchConfig {
+            server: dbrover_core::ServerConfig {
+                host: "localhost".to_owned(),
+                port: 9200.into(),
+                database: String::new(),
+                user: String::new(),
+                tls: dbrover_core::TlsMode::Disable,
+                ssh: None,
+                password_command: None,
+            },
+            auth: dbrover_core::ElasticsearchAuth::Password,
+        });
+        let mut tree = CatalogTree::default();
+        let root = CatalogPath::root();
+        let indices = CatalogNode::folder(&root, FolderKind::Indices);
+        let templates = CatalogNode::folder(&root, FolderKind::IndexTemplates);
+        let kinds = [NodeKind::SearchIndex];
+        assert_eq!(
+            TreeCatalog::new(&tree, &config)
+                .missing_top_level()
+                .unrequested,
+            std::slice::from_ref(&root)
+        );
+        load(&mut tree, &root, vec![indices.clone(), templates.clone()]);
+        assert_eq!(
+            TreeCatalog::new(&tree, &config)
+                .missing_top_level()
+                .unrequested,
+            [indices.path.clone(), templates.path.clone()]
+        );
+        load(
+            &mut tree,
+            &indices.path,
+            vec![
+                node(indices.path.child(NodeKind::SearchIndex, "orders"), false),
+                node(indices.path.child(NodeKind::SearchIndex, ".kibana"), true),
+            ],
+        );
+        load(
+            &mut tree,
+            &templates.path,
+            vec![node(
+                templates.path.child(NodeKind::IndexTemplate, "logs"),
+                false,
+            )],
+        );
+        let catalog = TreeCatalog::new(&tree, &config);
+        assert!(!catalog.missing_top_level().is_pending());
+        assert_eq!(catalog.top_level_names(&kinds), ["orders"]);
     }
 }
