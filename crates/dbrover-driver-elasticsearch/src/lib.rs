@@ -25,8 +25,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use dbrover_core::{
     CancelHandle, CatalogNode, CatalogPath, ChildrenPage, ChildrenQuery, Connection, DriverError,
-    ElasticsearchConfig, Password, Rejection, RelationName, ResultCursor, Route, ServerInfo,
-    TableConstraints, TableDescription, TableName, TransactionStatus,
+    ElasticsearchConfig, Password, Rejection, RejectionKind, RelationName, ResultCursor, Route,
+    ServerInfo, TableConstraints, TableDescription, TableName, TransactionStatus,
 };
 use dbrover_document::Value;
 use dbrover_language::search::{self, Method, Request};
@@ -134,6 +134,21 @@ impl SearchConnection {
     }
 }
 
+/// Where a search's or a count's query is validated, and the query: `None` for any other
+/// request, and for one without a query, which matches every document.
+fn validation(request: &Request) -> Option<(String, &Value)> {
+    if !matches!(request.method, Method::Get | Method::Post) {
+        return None;
+    }
+    let indices = match request.segments().as_slice() {
+        ["_search" | "_count"] => String::new(),
+        [indices, "_search" | "_count"] => format!("/{indices}"),
+        _ => return None,
+    };
+    let query = request.body_field("query")?;
+    Some((format!("{indices}/_validate/query?explain=true"), query))
+}
+
 /// The request's target, with `format=json` added to a `_cat` request that doesn't name a
 /// format, so its answer is documents rather than a text table.
 fn with_json_format(request: &Request) -> String {
@@ -224,12 +239,53 @@ impl Connection for SearchConnection {
         Ok(TableConstraints::default())
     }
 
-    /// Reads the request only: asking the server comes with N3·5.
+    /// Reads the request, and asks the server whether a search's or a count's query is valid
+    /// with `_validate/query`, which runs nothing: an unknown query or a value its field can't
+    /// hold is caught. Any other request is only read.
     async fn validate(&mut self, text: &str) -> Result<Option<Rejection>, DriverError> {
-        Ok(search::parse(text).err().map(|error| Rejection {
-            position: Some(error.range.start),
-            message: error.message,
-            kind: dbrover_core::RejectionKind::Syntax,
+        let request = match search::parse(text) {
+            Ok(request) => request,
+            Err(error) => {
+                return Ok(Some(Rejection {
+                    position: Some(error.range.start),
+                    message: error.message,
+                    kind: RejectionKind::Syntax,
+                }));
+            }
+        };
+        let Some((target, query)) = validation(&request) else {
+            return Ok(None);
+        };
+        let body = object([("query", query.clone())]);
+        let answer = self
+            .client
+            .send(Call::json(hyper::Method::POST, &target, &body))
+            .await
+            .map_err(errors::connection)?;
+        if !answer.status.is_success() {
+            return Ok(Some(Rejection {
+                message: Refused::of(&answer).message,
+                position: None,
+                kind: RejectionKind::Other,
+            }));
+        }
+        let verdict = answer.json().map_err(errors::connection)?;
+        if json::field(&verdict, "valid") != Some(&Value::Bool(false)) {
+            return Ok(None);
+        }
+        let first_explanation = match json::field(&verdict, "explanations") {
+            Some(Value::Array(explanations)) => explanations
+                .iter()
+                .find_map(|explanation| text_of(explanation, "error")),
+            _ => None,
+        };
+        let message = text_of(&verdict, "error")
+            .or(first_explanation)
+            .unwrap_or_else(|| "the server says the query isn't valid".to_owned());
+        Ok(Some(Rejection {
+            message,
+            position: None,
+            kind: RejectionKind::Other,
         }))
     }
 
