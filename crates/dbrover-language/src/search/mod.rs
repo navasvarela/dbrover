@@ -14,6 +14,7 @@
 //! numbers keep every digit and the server reads what is on screen.
 
 mod classify;
+mod edit;
 mod lexer;
 mod parser;
 #[cfg(test)]
@@ -25,6 +26,7 @@ use std::ops::Range;
 use dbrover_document::Value;
 use dbrover_sql::{StatementKind, Token, Unclassified};
 
+pub use edit::{IndexView, typed_value};
 pub use parser::{Body, Method, ParseError, Request, parse};
 
 pub(crate) use lexer::tokenize;
@@ -62,6 +64,80 @@ pub(crate) fn split(script: &str) -> Vec<Range<usize>> {
 /// it, read a page at a time.
 pub fn search_all(index: &str) -> String {
     format!("GET /{index}/_search\n{{\n  \"query\": {{ \"match_all\": {{}} }}\n}}")
+}
+
+/// Keys of a search's body after which it runs as typed: what it asks for isn't a list of
+/// hits DbRover could page, or it pages itself.
+const AS_TYPED_KEYS: &[&str] = &[
+    "aggregations",
+    "aggs",
+    "collapse",
+    "from",
+    "pit",
+    "profile",
+    "rescore",
+    "search_after",
+    "suggest",
+];
+
+/// Query-string parameters a paged search keeps on every page. Any other (`scroll`,
+/// `routing`, `filter_path`, …) has the search run as typed: a search through a point in time
+/// may not name its own routing or preference, and the rest change what the answer holds.
+pub const KEPT_PARAMETERS: &[&str] = &[
+    "_source",
+    "_source_excludes",
+    "_source_includes",
+    "allow_partial_search_results",
+    "analyze_wildcard",
+    "analyzer",
+    "default_operator",
+    "df",
+    "docvalue_fields",
+    "error_trace",
+    "human",
+    "lenient",
+    "pretty",
+    "q",
+    "request_cache",
+    "seq_no_primary_term",
+    "stored_fields",
+    "timeout",
+    "track_scores",
+    "version",
+];
+
+/// The keys a hit's document starts with, which name the hit rather than hold its source's
+/// fields.
+pub const HIT_KEYS: [&str; 3] = ["_index", "_id", "_score"];
+
+/// Whether `request` is a search whose hits are read a page at a time and shown as documents:
+/// a search with no parameter or body key that asks for something else, and whose `size`, if
+/// it has one, is a number other than 0. Any other search runs as typed, its answer one
+/// document.
+pub fn pages_hits(request: &Request) -> bool {
+    if !matches!(request.segments().as_slice(), ["_search"] | [_, "_search"])
+        || !matches!(request.method, Method::Get | Method::Post)
+    {
+        return false;
+    }
+    let kept = request
+        .parameters()
+        .all(|(name, value)| match (name, value) {
+            ("size", Some(size)) => size.parse::<u64>().is_ok_and(|size| size > 0),
+            _ => KEPT_PARAMETERS.contains(&name),
+        });
+    let body_reads_hits = match &request.body {
+        None => true,
+        Some(Body::Json {
+            value: Value::Object(fields),
+            ..
+        }) => fields.iter().all(|(name, value)| match name.as_str() {
+            "size" => matches!(value, Value::Number(size) if size.parse::<u64>().is_ok_and(|size| size > 0)),
+            name => !AS_TYPED_KEYS.contains(&name),
+        }),
+        Some(_) => false,
+    };
+    kept && body_reads_hits
 }
 
 /// Whether `request` is a search of an index's documents: `GET` or `POST` to `_search`, with

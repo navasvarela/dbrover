@@ -11,6 +11,7 @@
 //! variants, so a language added for a new engine changes no other crate (see
 //! `docs/nosql.md`, N0a).
 
+mod documents;
 pub mod mongo;
 pub mod redis;
 pub mod search;
@@ -25,14 +26,15 @@ use dbrover_sql::Dialect;
 pub use dbrover_sql::{
     Analysis, ExplainDepth, NamedSchemas, StatementKind, Token, TokenKind, Unclassified,
 };
+pub use documents::{DocumentEdit, DocumentView};
 
 /// How the grid's edits of rows are applied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditsRun {
     /// In a transaction of the dialect's, all or none.
     Transaction(Dialect),
-    /// One command at a time, each taking effect as it runs: Redis and MongoDB have no
-    /// transaction to undo the ones before a command that fails.
+    /// One command at a time, each taking effect as it runs: Redis, MongoDB and Elasticsearch
+    /// have no transaction to undo the ones before a command that fails.
     OneByOne,
 }
 
@@ -95,8 +97,7 @@ impl QueryLanguage {
     pub fn edits_run(self) -> Option<EditsRun> {
         match self {
             Self::Sql(dialect) => Some(EditsRun::Transaction(dialect)),
-            Self::Redis | Self::Mongo => Some(EditsRun::OneByOne),
-            Self::Search => None,
+            Self::Redis | Self::Mongo | Self::Search => Some(EditsRun::OneByOne),
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
         }
@@ -197,15 +198,30 @@ impl QueryLanguage {
         }
     }
 
-    /// The collection `command` reads, when its documents can be edited in the grid a command
-    /// at a time: a MongoDB `find` on one collection. `None` for any other command, and in
-    /// another language.
-    pub fn collection_view(self, command: &str) -> Option<mongo::CollectionView> {
+    /// Where the documents `command` reads can be changed, when they can be edited in the grid
+    /// a command at a time: a MongoDB `find` on one collection, or a search whose hits are
+    /// documents. `None` for any other command, and in another language.
+    pub fn document_view(self, command: &str) -> Option<DocumentView> {
         match self {
-            Self::Mongo => mongo::CollectionView::of(command),
-            Self::Sql(_) | Self::Redis | Self::Search => None,
+            Self::Mongo => mongo::CollectionView::of(command).map(DocumentView::Collection),
+            Self::Search => search::IndexView::of(command).map(DocumentView::Index),
+            Self::Sql(_) | Self::Redis => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
+        }
+    }
+
+    /// Why a result of documents that [`Self::document_view`] has no view of can't be edited.
+    pub fn uneditable_documents(self) -> &'static str {
+        match self {
+            Self::Search => {
+                "Only the hits of a search can be edited, not an aggregation's or another answer"
+            }
+            Self::Mongo | Self::Sql(_) | Self::Redis => {
+                "Only the documents a find returns from one collection can be edited"
+            }
+            #[cfg(any(test, feature = "test-language"))]
+            Self::Test => "This language's documents can't be edited",
         }
     }
 

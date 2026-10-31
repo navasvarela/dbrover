@@ -1348,3 +1348,133 @@ mod mongo_documents {
         assert!(error.contains("32-bit integer"), "{error}");
     }
 }
+
+/// A search's hits are edited a request per change, each found by its own `_index` and `_id`
+/// (`docs/nosql.md`, N3·6).
+mod search_hits {
+    use dbrover_core::ColumnInfo;
+
+    use super::*;
+
+    /// A console that ran `request`, whose hits were `documents`.
+    fn shown(request: &str, documents: &[&str]) -> QueryConsole {
+        let mut console = console_in(request, QueryLanguage::Search);
+        let statements = console.statements_to_run(RunScope::All);
+        let run = RunId(1);
+        console.begin_run(run, &statements);
+        console.apply(&Event::StatementStarted {
+            run,
+            statement: 0,
+            columns: vec![ColumnInfo {
+                name: "document".to_owned(),
+                type_name: None,
+            }],
+            shape: ResultShape::Documents,
+        });
+        console.apply(&Event::RowsFetched {
+            run,
+            statement: 0,
+            rows: documents
+                .iter()
+                .map(|document| vec![Some((*document).to_owned())])
+                .collect(),
+            more: false,
+        });
+        assert!(console.tables_to_describe().is_empty());
+        console
+    }
+
+    fn statement(console: &mut QueryConsole) -> &mut StatementView {
+        &mut console.run.as_mut().unwrap().statements[0]
+    }
+
+    fn column(console: &mut QueryConsole, name: &str) -> usize {
+        statement(console)
+            .columns
+            .iter()
+            .position(|column| column.name == name)
+            .unwrap()
+    }
+
+    #[test]
+    fn edits_hits_by_index_and_id_keeping_their_types() {
+        let mut console = shown(
+            "GET /orders-live/_search",
+            &[
+                r#"{"_index":"orders-2026","_id":"1","_score":1.0,"total":12.5,"status":"open"}"#,
+                r#"{"_index":"orders-2025","_id":"2","_score":1.0,"total":3}"#,
+            ],
+        );
+        let (index, id, score, total, status) = (
+            column(&mut console, "_index"),
+            column(&mut console, "_id"),
+            column(&mut console, "_score"),
+            column(&mut console, "total"),
+            column(&mut console, "status"),
+        );
+        let shown = statement(&mut console);
+        assert!(matches!(shown.edits.editability, Editability::Documents(_)));
+        for key in [index, id, score] {
+            assert!(!shown.edits.is_editable(edit::RowRef::Loaded(0), key));
+        }
+        assert!(shown.edits.is_editable(edit::RowRef::Loaded(0), total));
+        let rows = shown.rows.clone();
+        shown
+            .edits
+            .pending
+            .set(&rows, edit::RowRef::Loaded(0), total, Some("13".to_owned()));
+        shown.edits.pending.set(
+            &rows,
+            edit::RowRef::Loaded(1),
+            status,
+            Some("done".to_owned()),
+        );
+        shown.edits.add_row();
+        shown
+            .edits
+            .pending
+            .set(&rows, edit::RowRef::New(0), status, Some("new".to_owned()));
+        shown.edits.delete_rows(&[edit::RowRef::Loaded(1)]);
+
+        let Some(Command::ApplyEdits { statements, .. }) = console.submit_edits() else {
+            panic!(
+                "nothing submitted: {:?}",
+                statement(&mut console).edits.error
+            );
+        };
+        let requests: Vec<&str> = statements.iter().map(|edit| edit.sql.as_str()).collect();
+        assert_eq!(
+            requests,
+            [
+                "DELETE /orders-2025/_doc/2?refresh=true",
+                "POST /orders-2026/_update/1?refresh=true\n{\"doc\":{\"total\":13}}",
+                "POST /orders-live/_doc?refresh=true\n{\"status\":\"new\"}",
+            ]
+        );
+        for edit in &statements {
+            assert_eq!(
+                QueryLanguage::Search.classify(&edit.sql),
+                Ok(dbrover_language::StatementKind::Write),
+                "{}",
+                edit.sql
+            );
+        }
+        console.apply(&Event::EditsApplied {
+            console: ConsoleId(1),
+            result: Ok(()),
+        });
+        assert!(console.take_reload().is_some(), "the hits are read again");
+    }
+
+    #[test]
+    fn an_aggregations_answer_is_read_only() {
+        let mut console = shown(
+            "GET /orders/_search\n{ \"size\": 0, \"aggs\": {} }",
+            &[r#"{"took":1}"#],
+        );
+        let Editability::ReadOnly(reason) = &statement(&mut console).edits.editability else {
+            panic!("an aggregation's answer can be edited");
+        };
+        assert!(reason.contains("hits of a search"), "{reason}");
+    }
+}

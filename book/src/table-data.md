@@ -198,3 +198,33 @@ change outside a replica set's sessions, so if one fails, those before it stay m
 documents are then read again, so the grid and the tree show what the server stored. Each
 command is checked against the data source's safety level, written to the log and recorded in
 the history with the command that would undo it.
+
+## Elasticsearch and OpenSearch hits
+
+On an Elasticsearch or OpenSearch data source, **Open data** on an index, alias or data stream
+runs a `match_all` search of it, and the hits it returns can be edited in the grid, as can those
+of any search typed in a console whose hits show as documents. A search for its aggregations,
+or any other answer, can't.
+
+Each hit is found by its own `_index` and `_id`, which, with `_score`, can't be typed over, so
+the hits of an alias or a pattern such as `logs-*` are edited in the index each came from. A
+document indexed with its own routing is changed with that routing.
+
+- **Changing a field** sends `POST /<index>/_update/<id>?refresh=true` with a partial document
+  holding the field, an expanded column's by its path (`{"doc": {"address": {"city": …}}}`).
+  The value keeps the JSON type the field had: `8` typed over a number is the number `8`, over a
+  string the string `"8"`, and over `true` or `false` it must be one of them. Text that can't be
+  the field's type, such as `seven` over a number, is refused before anything is sent. Over an
+  object, an array or `null`, and in a field the document didn't have, JSON is taken as
+  written and other text is a string. An array's items aren't columns of the grid: set the whole
+  array, or send `_update` in a console.
+- **Add row** indexes a document of the fields typed into it, in the search's index, or in the
+  one typed into `_index` (which a search of several indices needs). A typed `_id` names it;
+  otherwise the server gives it one.
+- **Delete rows** sends `DELETE /<index>/_doc/<id>?refresh=true` for each.
+
+Each request asks the index to refresh, so the hits read again show the change. **Submit**
+sends them one at a time: neither server has transactions, so if one fails, those before it
+stay made. Each is checked against the data source's safety level, written to the log and
+recorded in the history with the request that would undo it. A partial update has the server
+write the document's source again, so a number typed as `2.50` reads back as `2.5`.
