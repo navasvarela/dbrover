@@ -19,7 +19,7 @@ mod test_language;
 
 use std::ops::Range;
 
-use dbrover_core::{DriverKind, Quoting, ResultShape, ServerInfo};
+use dbrover_core::{DriverKind, NodeKind, Quoting, ResultShape, ServerInfo};
 use dbrover_plan::PlanFormat;
 use dbrover_sql::Dialect;
 pub use dbrover_sql::{
@@ -262,6 +262,19 @@ impl QueryLanguage {
     /// commands follow the case being typed.
     pub fn completion_keeps_case(self) -> bool {
         matches!(self, Self::Mongo | Self::Search)
+    }
+
+    /// The kinds of catalog objects completion offers by name, from what the explorer has
+    /// loaded: an Elasticsearch cluster's indices, aliases and data streams. Empty for SQL,
+    /// whose names completion finds by the clause, and for a language whose commands name no
+    /// object of the explorer's.
+    pub fn named_objects(self) -> &'static [NodeKind] {
+        match self {
+            Self::Search => &[NodeKind::SearchIndex],
+            Self::Sql(_) | Self::Redis | Self::Mongo => &[],
+            #[cfg(any(test, feature = "test-language"))]
+            Self::Test => &[],
+        }
     }
 
     /// What completion shows beside `word`, one of [`Self::completion_words`]: the arguments

@@ -231,15 +231,17 @@ impl Consoles {
     }
 
     /// Opens a console that selects everything from the table or view at `path`, reads the
-    /// Redis key there whole, or finds every document of the MongoDB collection there, and
+    /// Redis key there whole, finds every document of the MongoDB collection there, or
+    /// searches every document of the Elasticsearch index, alias or data stream there, and
     /// runs it.
     pub fn open_data(
         &mut self,
         data_source: &DataSource,
         path: &CatalogPath,
     ) -> Option<(ConsoleKey, Command)> {
-        if let Some(text) =
-            key_viewer(data_source, path).or_else(|| collection_viewer(data_source, path))
+        if let Some(text) = key_viewer(data_source, path)
+            .or_else(|| collection_viewer(data_source, path))
+            .or_else(|| search_index_viewer(path))
         {
             return self.open_query(data_source, text);
         }
@@ -665,6 +667,18 @@ fn collection_viewer(data_source: &DataSource, path: &CatalogPath) -> Option<Str
     ))
 }
 
+/// The search that reads every document of the Elasticsearch index, alias or data stream at
+/// `path`. `None` for a path that isn't one.
+fn search_index_viewer(path: &CatalogPath) -> Option<String> {
+    let index = path
+        .last()
+        .filter(|last| last.kind == NodeKind::SearchIndex)?;
+    Some(format!(
+        "{}\n",
+        dbrover_language::search::search_all(&index.name)
+    ))
+}
+
 /// A console's tab title: the data source's name, numbered from the second console on, as
 /// `shop`, `shop (2)`; or with the file's name if the user named it.
 fn title(data_source: &str, name: &ConsoleName) -> String {
@@ -859,6 +873,26 @@ mod tests {
             };
             assert_eq!(statements, [expected], "{path}");
         }
+    }
+
+    #[test]
+    fn opens_an_elasticsearch_index_with_a_search_of_every_document() {
+        let mut consoles = Consoles::default();
+        let search = data_source("search");
+        let path = CatalogPath::root()
+            .child(
+                NodeKind::Folder(dbrover_core::FolderKind::Aliases),
+                "aliases",
+            )
+            .child(NodeKind::SearchIndex, "orders-live");
+        let (_, command) = consoles.open_data(&search, &path).unwrap();
+        let Command::Execute { statements, .. } = command else {
+            panic!("expected a run, got {command:?}");
+        };
+        assert_eq!(
+            statements,
+            ["GET /orders-live/_search\n{\n  \"query\": { \"match_all\": {} }\n}"]
+        );
     }
 
     #[test]

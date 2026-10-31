@@ -57,6 +57,12 @@ pub(crate) fn split(script: &str) -> Vec<Range<usize>> {
     requests
 }
 
+/// What **Open data** runs on an index, alias or data stream: a search of every document of
+/// it, read a page at a time.
+pub fn search_all(index: &str) -> String {
+    format!("GET /{index}/_search\n{{\n  \"query\": {{ \"match_all\": {{}} }}\n}}")
+}
+
 /// The one request `text` holds, read.
 fn single(text: &str) -> Result<Request, Unclassified> {
     match split(text).as_slice() {

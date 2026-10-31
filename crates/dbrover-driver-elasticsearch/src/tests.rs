@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 
 use dbrover_core::conformance;
 use dbrover_core::{
-    ElasticsearchAuth, NodeKind, Port, ResultShape, Row, ServerConfig, TlsMode, describe_error,
+    CatalogPath, ChildrenQuery, ElasticsearchAuth, FolderKind, NodeKind, Port, ResultShape, Row,
+    ServerConfig, TlsMode, describe_error,
 };
 use dbrover_document::Value;
 
@@ -184,19 +185,237 @@ async fn fails_to_connect_to_a_closed_port_or_with_a_wrong_password() {
     }
 }
 
+/// Runs each request, ignoring how it went: clearing what an earlier run left.
+async fn clear(connection: &mut SearchConnection, requests: &[&str]) {
+    for request in requests {
+        let _ = connection.execute(request).await;
+    }
+}
+
+fn folder(kind: FolderKind) -> CatalogPath {
+    CatalogPath::root().child(NodeKind::Folder(kind), kind.label())
+}
+
+async fn labelled(
+    connection: &mut SearchConnection,
+    path: &CatalogPath,
+) -> Vec<(String, Option<String>)> {
+    connection
+        .children(path)
+        .await
+        .unwrap_or_else(|error| panic!("{path}: {}", describe_error(&error)))
+        .into_iter()
+        .map(|node| (node.label, node.detail))
+        .collect()
+}
+
+/// The tree's folders, and each kind in them: an index with its count and its fields by path,
+/// an alias with its index, a data stream with its backing index, a template with its
+/// patterns.
 #[tokio::test]
-async fn lists_indices_and_rejects_paths_it_never_gave() {
+async fn lists_indices_aliases_data_streams_and_templates() {
     for server in test_servers() {
         let mut connection = server.connect().await;
+        clear(
+            &mut connection,
+            &[
+                "DELETE /_data_stream/dbrover-catalog-stream",
+                "DELETE /_index_template/dbrover_catalog_template",
+                "DELETE /dbrover_catalog_mapped",
+            ],
+        )
+        .await;
         fill(&mut connection, "dbrover_catalog", 3).await;
-        let nodes = conformance::walk_catalog(&mut connection, 2).await;
-        let index = nodes
-            .iter()
-            .find(|node| node.label == "dbrover_catalog")
-            .unwrap_or_else(|| panic!("{}: no index in {nodes:?}", server.name));
-        assert_eq!(index.kind(), Some(NodeKind::SearchIndex));
-        assert_eq!(index.detail.as_deref(), Some("3 documents"));
+        for request in [
+            "PUT /dbrover_catalog_mapped\n{ \"aliases\": { \"dbrover_catalog_alias\": {} }, \"mappings\": { \"properties\": { \"address\": { \"properties\": { \"city\": { \"type\": \"text\", \"fields\": { \"keyword\": { \"type\": \"keyword\" } } } } }, \"tags\": { \"type\": \"nested\", \"properties\": { \"name\": { \"type\": \"keyword\" } } } } } }",
+            "PUT /_index_template/dbrover_catalog_template\n{ \"index_patterns\": [\"dbrover-catalog-stream*\"], \"data_stream\": {}, \"template\": { \"mappings\": { \"properties\": { \"@timestamp\": { \"type\": \"date\" } } } } }",
+            "PUT /_data_stream/dbrover-catalog-stream",
+        ] {
+            run(&mut connection, request).await;
+        }
+
+        let root: Vec<String> = labelled(&mut connection, &CatalogPath::root())
+            .await
+            .into_iter()
+            .map(|(label, _)| label)
+            .collect();
+        assert_eq!(
+            root,
+            ["indices", "aliases", "data streams", "index templates"]
+        );
+        conformance::walk_catalog(&mut connection, 2).await;
+
+        let indices = labelled(&mut connection, &folder(FolderKind::Indices)).await;
+        assert!(
+            indices.contains(&("dbrover_catalog".to_owned(), Some("3 documents".to_owned()))),
+            "{}: {indices:?}",
+            server.name
+        );
+        let mapped =
+            folder(FolderKind::Indices).child(NodeKind::SearchIndex, "dbrover_catalog_mapped");
+        let fields = labelled(&mut connection, &mapped).await;
+        let expected = [
+            ("address.city", "text"),
+            ("address.city.keyword", "keyword"),
+            ("tags", "nested"),
+            ("tags.name", "keyword"),
+        ]
+        .map(|(name, kind)| (name.to_owned(), Some(kind.to_owned())));
+        assert_eq!(fields, expected, "{}", server.name);
+
+        let aliases = labelled(&mut connection, &folder(FolderKind::Aliases)).await;
+        assert!(
+            aliases.contains(&(
+                "dbrover_catalog_alias".to_owned(),
+                Some("→ dbrover_catalog_mapped".to_owned())
+            )),
+            "{}: {aliases:?}",
+            server.name
+        );
+        let streams = labelled(&mut connection, &folder(FolderKind::DataStreams)).await;
+        assert!(
+            streams.contains(&(
+                "dbrover-catalog-stream".to_owned(),
+                Some("1 backing index".to_owned())
+            )),
+            "{}: {streams:?}",
+            server.name
+        );
+        let templates = labelled(&mut connection, &folder(FolderKind::IndexTemplates)).await;
+        assert!(
+            templates.contains(&(
+                "dbrover_catalog_template".to_owned(),
+                Some("dbrover-catalog-stream*".to_owned())
+            )),
+            "{}: {templates:?}",
+            server.name
+        );
         conformance::check_invalid_path(&mut connection).await;
+    }
+}
+
+/// What **Show definition** gives runs again as written: an index made from its definition
+/// under another name has the same definition, and so has a template; an alias's actions
+/// can be sent again.
+#[tokio::test]
+async fn definitions_run_again_as_written() {
+    for server in test_servers() {
+        let mut connection = server.connect().await;
+        clear(
+            &mut connection,
+            &[
+                "DELETE /dbrover_definition",
+                "DELETE /dbrover_definition_copy",
+                "DELETE /_index_template/dbrover_definition_template",
+                "DELETE /_index_template/dbrover_definition_template_copy",
+            ],
+        )
+        .await;
+        run(
+            &mut connection,
+            "PUT /dbrover_definition\n{ \"settings\": { \"number_of_replicas\": 0, \"refresh_interval\": \"5s\" }, \"aliases\": { \"dbrover_definition_alias\": { \"filter\": { \"term\": { \"status\": \"open\" } } } }, \"mappings\": { \"properties\": { \"status\": { \"type\": \"keyword\" }, \"total\": { \"type\": \"scaled_float\", \"scaling_factor\": 100 } } } }",
+        )
+        .await;
+        run(
+            &mut connection,
+            "PUT /_index_template/dbrover_definition_template\n{ \"index_patterns\": [\"dbrover-definition-*\"], \"priority\": 7, \"template\": { \"settings\": { \"number_of_shards\": 1 } } }",
+        )
+        .await;
+        let cases = [
+            (
+                FolderKind::Indices,
+                NodeKind::SearchIndex,
+                "dbrover_definition",
+            ),
+            (
+                FolderKind::IndexTemplates,
+                NodeKind::IndexTemplate,
+                "dbrover_definition_template",
+            ),
+        ];
+        for (kind, node, name) in cases {
+            let path = folder(kind).child(node, name);
+            let definition = connection.definition(&path).await.unwrap_or_else(|error| {
+                panic!("{}: {name}: {}", server.name, describe_error(&error))
+            });
+            let copy = format!("{name}_copy");
+            // Two templates may not match the same names at the same priority.
+            let made_again = definition
+                .replacen(name, &copy, 1)
+                .replace("dbrover-definition-*", "dbrover-copied-*");
+            run(&mut connection, &made_again).await;
+            let again = connection
+                .definition(&folder(kind).child(node, &copy))
+                .await
+                .unwrap_or_else(|error| {
+                    panic!("{}: {copy}: {}", server.name, describe_error(&error))
+                });
+            assert_eq!(again, made_again, "{}", server.name);
+        }
+        let alias =
+            folder(FolderKind::Aliases).child(NodeKind::SearchIndex, "dbrover_definition_alias");
+        let definition = connection
+            .definition(&alias)
+            .await
+            .expect("the alias's definition");
+        assert!(
+            definition.contains("\"filter\""),
+            "{}: {definition}",
+            server.name
+        );
+        run(&mut connection, &definition).await;
+    }
+}
+
+/// The indices page by name, the filter applied by the server, in any case.
+#[tokio::test]
+async fn pages_indices_by_name_with_the_filter_on_the_server() {
+    for server in test_servers() {
+        let mut connection = server.connect().await;
+        for n in 0..7 {
+            let _ = connection
+                .execute(&format!("PUT /dbrover_paging_{n}"))
+                .await;
+        }
+        let mut query = ChildrenQuery {
+            filter: Some("DBROVER_PAGING_".to_owned()),
+            after: None,
+            limit: Some(3),
+        };
+        let mut pages = Vec::new();
+        loop {
+            let page = connection
+                .children_page(&folder(FolderKind::Indices), &query)
+                .await
+                .expect("a page");
+            pages.push(
+                page.nodes
+                    .iter()
+                    .map(|node| node.label.clone())
+                    .collect::<Vec<_>>(),
+            );
+            match page.next {
+                Some(next) => query = query.after(next),
+                None => break,
+            }
+        }
+        let expected: Vec<Vec<String>> = [vec![0, 1, 2], vec![3, 4, 5], vec![6]]
+            .into_iter()
+            .map(|page| {
+                page.into_iter()
+                    .map(|n| format!("dbrover_paging_{n}"))
+                    .collect()
+            })
+            .collect();
+        assert_eq!(pages, expected, "{}", server.name);
+        let none = connection
+            .children_page(
+                &folder(FolderKind::Indices),
+                &ChildrenQuery::first_page(Some("no/such".to_owned())),
+            )
+            .await
+            .expect("an empty page");
+        assert!(none.nodes.is_empty(), "{}", server.name);
     }
 }
 
