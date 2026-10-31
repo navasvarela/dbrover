@@ -68,7 +68,7 @@ pub(super) async fn run_script(
             .context
             .dialect()
             .and_then(|dialect| dialect.explain_setting()),
-        RunPurpose::Run => None,
+        RunPurpose::Run | RunPurpose::ExplainAnalyse => None,
     };
     match setting {
         Some(setting) => explain_with_setting(worker, script, setting).await,

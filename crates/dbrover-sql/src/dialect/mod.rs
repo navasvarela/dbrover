@@ -106,6 +106,15 @@ pub struct ExplainSetting {
     pub off: &'static str,
 }
 
+/// How far a plan goes: what the database expects, or also what happened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExplainDepth {
+    /// The database's estimates, without running the statement.
+    Estimated,
+    /// The estimates and what each step did, by running the statement: `EXPLAIN ANALYZE`.
+    Analysed,
+}
+
 /// How to have the database explain a statement with a plan DbRover can draw as a tree, and
 /// what it answers with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -379,13 +388,17 @@ impl Dialect {
     }
 
     /// How to ask the database for a plan DbRover draws as a tree: `EXPLAIN (FORMAT JSON)` on
-    /// PostgreSQL. `None` where the database's plan is text without costs to weigh, or where
-    /// DbRover doesn't read its format yet: [`explain_prefix`](Self::explain_prefix) then
-    /// explains the statement as rows.
-    pub fn plan_request(self) -> Option<PlanRequest> {
+    /// PostgreSQL, with `ANALYZE` when analysed. `None` where the database's plan is text
+    /// without costs to weigh, or where DbRover doesn't read its format yet:
+    /// [`explain_prefix`](Self::explain_prefix) then explains the statement as rows, and it
+    /// can't be analysed.
+    pub fn plan_request(self, depth: ExplainDepth) -> Option<PlanRequest> {
         match self {
             Self::Postgres => Some(PlanRequest {
-                prefix: "EXPLAIN (FORMAT JSON) ",
+                prefix: match depth {
+                    ExplainDepth::Estimated => "EXPLAIN (FORMAT JSON) ",
+                    ExplainDepth::Analysed => "EXPLAIN (ANALYZE, FORMAT JSON) ",
+                },
                 format: PlanFormat::PostgresJson,
             }),
             Self::Sqlite | Self::Mysql | Self::SqlServer | Self::DuckDb | Self::ClickHouse => None,
@@ -645,13 +658,23 @@ mod tests {
 
     #[test]
     fn asks_for_a_plan_to_draw_where_dbrover_reads_the_format() {
-        let request = Dialect::Postgres.plan_request();
+        let prefix = |depth| {
+            Dialect::Postgres
+                .plan_request(depth)
+                .map(|request| (request.prefix, request.format))
+        };
         assert_eq!(
-            request.map(|request| (request.prefix, request.format)),
+            prefix(ExplainDepth::Estimated),
             Some(("EXPLAIN (FORMAT JSON) ", PlanFormat::PostgresJson))
         );
+        assert_eq!(
+            prefix(ExplainDepth::Analysed),
+            Some(("EXPLAIN (ANALYZE, FORMAT JSON) ", PlanFormat::PostgresJson))
+        );
         for dialect in [Dialect::Sqlite, Dialect::DuckDb, Dialect::ClickHouse] {
-            assert_eq!(dialect.plan_request(), None, "{dialect:?}");
+            for depth in [ExplainDepth::Estimated, ExplainDepth::Analysed] {
+                assert_eq!(dialect.plan_request(depth), None, "{dialect:?}");
+            }
         }
     }
 

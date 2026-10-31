@@ -162,7 +162,7 @@ fn explains_the_statement_at_the_cursor_and_marks_errors_in_it() {
     let mut console = console(text);
     console.selection = second..second;
 
-    let statements = console.statements_to_run(RunScope::Explain);
+    let statements = console.statements_to_run(RunScope::Explain(ExplainDepth::Estimated));
 
     assert_eq!(
         sqls(&statements),
@@ -185,7 +185,7 @@ fn explains_the_statement_at_the_cursor_and_marks_errors_in_it() {
 #[test]
 fn reads_the_plan_an_explain_returns() {
     let mut console = console("select * from orders");
-    let statements = console.statements_to_run(RunScope::Explain);
+    let statements = console.statements_to_run(RunScope::Explain(ExplainDepth::Estimated));
     assert_eq!(
         statements[0].plan,
         Some(dbrover_plan::PlanFormat::PostgresJson)
@@ -585,7 +585,7 @@ mod test_language {
         );
         console.selection = 40..40;
         let explained: Vec<String> = console
-            .statements_to_run(RunScope::Explain)
+            .statements_to_run(RunScope::Explain(ExplainDepth::Estimated))
             .into_iter()
             .map(|statement| statement.sql)
             .collect();
@@ -594,7 +594,11 @@ mod test_language {
             ["db.orders.find({a: 1}).explain(\"executionStats\")"]
         );
         console.selection = 3..3;
-        assert!(console.statements_to_run(RunScope::Explain).is_empty());
+        assert!(
+            console
+                .statements_to_run(RunScope::Explain(ExplainDepth::Estimated))
+                .is_empty()
+        );
     }
 
     #[test]
@@ -621,7 +625,11 @@ mod test_language {
     fn leaves_out_what_only_sql_has() {
         let mut console = console_in("get a", QueryLanguage::Test);
         assert_eq!(console.dialect(), None);
-        assert!(console.statements_to_run(RunScope::Explain).is_empty());
+        assert!(
+            console
+                .statements_to_run(RunScope::Explain(ExplainDepth::Estimated))
+                .is_empty()
+        );
 
         console.format(FormatScope::All, &FormatOptions::default(), Instant::now());
         assert_eq!(console.text, "get a");

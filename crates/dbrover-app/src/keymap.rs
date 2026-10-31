@@ -17,6 +17,8 @@ pub enum Action {
     RunCurrent,
     RunAll,
     Explain,
+    /// Explain the statement at the cursor by running it: `EXPLAIN ANALYZE`.
+    ExplainAnalyse,
     Cancel,
     ShowHistory,
     Commit,
@@ -44,11 +46,12 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Self; 32] = [
+    pub const ALL: [Self; 33] = [
         Self::Complete,
         Self::RunCurrent,
         Self::RunAll,
         Self::Explain,
+        Self::ExplainAnalyse,
         Self::Cancel,
         Self::ShowHistory,
         Self::Commit,
@@ -85,6 +88,7 @@ impl Action {
             Self::RunCurrent => "console.run",
             Self::RunAll => "console.run-all",
             Self::Explain => "console.explain",
+            Self::ExplainAnalyse => "console.explain-analyse",
             Self::Cancel => "console.cancel",
             Self::ShowHistory => "console.history",
             Self::Commit => "console.commit",
@@ -115,6 +119,9 @@ impl Action {
             Self::RunCurrent => "Run the selection or the statement at the cursor",
             Self::RunAll => "Run every statement in the console",
             Self::Explain => "Explain the statement at the cursor",
+            Self::ExplainAnalyse => {
+                "Run the statement at the cursor and explain what each step did"
+            }
             Self::Cancel => "Stop the running statement or discard unread rows",
             Self::ShowHistory => "Open the data source's query history",
             Self::Commit => "Commit the console's transaction",
@@ -152,6 +159,10 @@ impl Action {
             Self::RunCurrent => shortcut(Modifiers::COMMAND, Key::Enter),
             Self::RunAll => shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::Enter),
             Self::Explain => shortcut(Modifiers::COMMAND | Modifiers::ALT, Key::E),
+            Self::ExplainAnalyse => shortcut(
+                Modifiers::COMMAND | Modifiers::ALT | Modifiers::SHIFT,
+                Key::E,
+            ),
             Self::Cancel => shortcut(Modifiers::COMMAND, Key::Period),
             // A common reformat key in IDEs, and the same with ⇧ for the whole console.
             Self::Format => shortcut(Modifiers::COMMAND | Modifiers::ALT, Key::L),

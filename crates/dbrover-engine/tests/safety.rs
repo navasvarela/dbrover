@@ -60,6 +60,18 @@ fn run(
     run: u64,
     sql: &str,
 ) -> Option<String> {
+    run_for(engine, (console, data_source), run, sql, RunPurpose::Run)
+}
+
+/// Runs one statement for `purpose` on the console and data source, and returns its failure
+/// message, or `None` if it succeeded.
+fn run_for(
+    engine: &mut TestEngine,
+    (console, data_source): (ConsoleId, DataSourceId),
+    run: u64,
+    sql: &str,
+    purpose: RunPurpose,
+) -> Option<String> {
     engine.send(Command::Execute {
         console,
         data_source,
@@ -67,7 +79,7 @@ fn run(
         statements: vec![sql.to_owned()],
         parameters: dbrover_sql::ParameterValues::default(),
         transactions: TransactionMode::Auto,
-        purpose: RunPurpose::Run,
+        purpose,
         origin: RunOrigin::Console,
     });
     let mut failure = None;
@@ -279,6 +291,19 @@ fn a_read_only_postgres_data_source_refuses_writes_even_inside_a_function() {
         &format!("SELECT count(*) FROM {table}"),
     );
     let pages = page_through(&mut engine, production.id, 14);
+    // Explain analyse runs the statement, so it is checked and runs read-only as a run does.
+    let analyse = |engine: &mut TestEngine, run: u64, sql: String| {
+        run_for(
+            engine,
+            (READ_ONLY_CONSOLE, production.id),
+            run,
+            &format!("EXPLAIN (ANALYZE, FORMAT JSON) {sql}"),
+            RunPurpose::ExplainAnalyse,
+        )
+    };
+    let analysed_read = analyse(&mut engine, 15, format!("SELECT count(*) FROM {table}"));
+    let analysed_delete = analyse(&mut engine, 16, format!("DELETE FROM {table}"));
+    let analysed_hidden = analyse(&mut engine, 17, format!("SELECT {table}_add()"));
 
     for (number, sql) in [
         format!("DROP FUNCTION {table}_add()"),
@@ -304,6 +329,13 @@ fn a_read_only_postgres_data_source_refuses_writes_even_inside_a_function() {
     assert!(hidden.contains("read-only transaction"), "{hidden}");
     assert_eq!(read, None);
     assert_eq!(pages, vec![500, 500, 200]);
+    assert_eq!(analysed_read, None);
+    assert_eq!(analysed_delete, Some(refused("changes data")));
+    let analysed_hidden = analysed_hidden.expect("the analysed write was refused");
+    assert!(
+        analysed_hidden.contains("read-only transaction"),
+        "{analysed_hidden}"
+    );
 }
 
 /// Reads 1,200 rows a page at a time on the read-only console, which keeps its read-only
