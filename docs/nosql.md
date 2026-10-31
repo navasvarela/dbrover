@@ -3,7 +3,8 @@
 Status: **N0a, N0b and N1 built** (2026-10-30) and **N2 built** (2026-10-31), in the layers
 listed under [N0a](#n0a--groundwork-languages-safety-and-the-explorer),
 [N0b](#n0b--groundwork-documents), [N1](#n1--redis-valkey-and-dragonfly) and
-[N2](#n2--mongodb); N3 is next. W7 (exports) has landed.
+[N2](#n2--mongodb); **N3 is being built**, in the layers listed under
+[N3](#n3--elasticsearch-and-opensearch). W7 (exports) has landed.
 
 DbRover speaks seven SQL engines. Many of the teams that use them keep a Redis beside their
 PostgreSQL, documents in MongoDB, or logs in Elasticsearch, and today they open another tool for
@@ -808,12 +809,122 @@ console), N2·4 (the explorer), N2·5 (explain and results to a file), N2·6 (ed
   gigabytes of memory, `vm.max_map_count` raised, and its security set up or switched off. One
   of them (Elasticsearch, the more used) runs with the pull request suite if it keeps the Linux
   job under about 15 minutes with its heap held to 512 MB; otherwise both run in a separate job
-  or nightly. Measure before deciding.
+  or nightly. Measured when N3 started (2026-10-31), on a laptop: Elasticsearch 9.5.5 and
+  OpenSearch 3.9.0, each a single node with a 512 MB heap, were both healthy 17 seconds after
+  `docker compose up`, using about 1 GB of memory each, with no `vm.max_map_count` change (a
+  single node skips the bootstrap checks). The Linux job took about 7 minutes then, so **both
+  run with the pull request suite** (see N3·3), and the job's time is checked again there.
 
 **Exit:** I connect to Elasticsearch 9 and OpenSearch 3; browse indices and their fields; run a
 search with a sort and page past its first hundred hits; see an aggregation as a tree; run a
 `_sql` query as rows; edit a field of a document; ⌘. a slow search; and a read-only data source
 refuses a `_delete_by_query`.
+
+#### Layers
+
+Each layer is one pull request in a stack, useful and tested on its own, as N1's and N2's
+were. From N3·3 on, each runs against both servers in CI (see N3·3).
+
+- **N3·1 — Plan:** this list, the decisions N3 takes (in [Decisions](#decisions)), and the
+  roadmap's status.
+- **N3·2 — The request language:** a `search` module of `dbrover-language`, with no driver
+  yet:
+  - tokens for the method, the path and its query string, and JSON for the body: strings,
+    numbers, `true`, `false` and `null`, punctuation, and comments (`#` and `//` lines, as
+    Kibana's console allows), so the editor highlights a body as JSON;
+  - a script splits where a line starts with a method (`GET`, `POST`, `PUT`, `DELETE`,
+    `HEAD`, in any case), so a body may span any number of lines;
+  - a parser into DbRover's own request: the method, the path split into its parts and its
+    query string, and the body, read with `dbrover-document` as one JSON value, or as one
+    value per line for `_bulk`, `_msearch` and the other endpoints that take NDJSON. A
+    missing leading `/` is added, as Kibana does; a body that isn't JSON is an error that
+    points at it;
+  - classification by method and path, from a table of the endpoints: `GET` and `HEAD` read,
+    and so do `POST` to `_search`, `_msearch`, `_count`, `_mget`, `_field_caps`, `_explain`,
+    `_validate/query`, `_termvectors`, `_render/template`, the point-in-time endpoints and the
+    SQL endpoints when their statement reads; `_doc`, `_create`, `_update`, `_bulk`,
+    `_update_by_query`, `_delete_by_query`, `_reindex` and `DELETE` of a document write;
+    creating, changing and deleting indices, mappings, settings, aliases, data streams and
+    templates (`PUT /<index>`, `_mapping`, `_settings`, `_aliases`, `_index_template`,
+    `_rollover`, `_open`, `_close`, …) changes the schema; `_cluster`, `_nodes`,
+    `_snapshot`, `_tasks`, `_ilm`, `_ingest`, `_security`, `_plugins/_security` and any path
+    the table doesn't know are administration. A `GET` of an administration path still
+    reads;
+  - warnings for `_delete_by_query` and `_update_by_query` whose query matches everything
+    (`match_all`, or none), and for `DELETE` of an index name with a wildcard or `_all`;
+  - completion of the methods, the common endpoints and the query DSL's words, each endpoint
+    with its methods. Index names join it in N3·4, from the explorer.
+
+  Tests: a classification corpus, as the other languages have; the splitter and the parser
+  against requests from both servers' documentation; errors that point at a body that isn't
+  JSON.
+- **N3·3 — The driver and the console:** a new crate, `dbrover-driver-elasticsearch`, over
+  HTTP with hyper and `dbrover-tls`, as the ClickHouse driver is:
+  - the **Elasticsearch / OpenSearch** data source: the shared server form (port 9200) with
+    a user and password, or an API key in the password's place, kept in the keychain the same
+    way. An Elastic Cloud deployment is its address, port 443 and `verify-full`. TLS from the
+    data source's mode: HTTPS is a port of its own, so `prefer` is plain HTTP, as on
+    ClickHouse. SSH tunnels. Test connection reports Elasticsearch or OpenSearch and the
+    version, from `GET /`;
+  - each request is sent as written, with its body as typed. A search's hits are documents
+    (N0b): `_index`, `_id` and `_score` first, then `_source`'s fields; a search without a
+    `size` reads every hit, a page at a time as the grid asks, through a point in time and
+    `search_after` with `_shard_doc` as the tiebreaker, and one with a `size` reads at most
+    that many. A search with `from`, `scroll` or aggregations runs as typed and shows its
+    answer whole. `_sql` (Elasticsearch, with `format=json`) and `_plugins/_sql`
+    (OpenSearch) answer as rows with their columns' names and types, following the answer's
+    cursor for more pages. `_cat` answers come as JSON, each line a document. Any other
+    answer is one document, browsed as a tree;
+  - each request carries an `X-Opaque-Id` unique to the run; ⌘. finds its tasks with the
+    tasks API, cancels them, and drops the request. Elasticsearch also stops a search when
+    its client goes away;
+  - an error answer shows the server's `type` and `reason` (`index_not_found_exception: no
+    such index [orders]`), and its line and column for a body the server couldn't read;
+  - `transaction_status` is always idle, and manual commit mode isn't offered;
+  - the explorer lists the indices.
+
+  Tests: the parts of the shared conformance suite that apply (lifecycle, connect failure,
+  catalog walk, invalid paths, cancel), on both servers; a search paged past 1,000 hits with
+  a sort, an aggregation as one document, `_sql` as rows on each server, a `_cat` answer as
+  documents, a slow search cancelled, TLS with the test authority, an API key, and an engine
+  test of a console and a read-only data source refusing a `_delete_by_query`. Manual: the
+  data source and the console.
+- **N3·4 — The explorer:** folders of indices, aliases, data streams and index templates;
+  system and hidden indices (a name starting with `.`) only with **System** ticked. An
+  index shows its document count and size, and under it its fields from the mapping, an
+  object's fields named by their path (`address.city`) with their type. **Show definition**
+  gives `PUT /<index>` with its mappings, its settings that can be set again and its aliases;
+  `PUT /_index_template/<name>` for a template; the alias's actions for an alias. **Open data**
+  opens a console with a `match_all` search of the index, alias or data stream, run at once.
+  A cluster with many indices pages them by name, with the filter as a wildcard pattern sent
+  to the server. Completion offers the index names the explorer has loaded. Tests: the
+  catalog walk with each kind, the definitions run again as written, and paging 1,100
+  indices.
+- **N3·5 — Explain, validate and results to a file:** ⌥⌘E runs the search at the cursor with
+  `profile` set and shows the answer, the profile in it, as a tree; `validate` asks the
+  server's `_validate/query` about a search's query without running it; **Run to file** and
+  **All documents** write every hit of a search to JSON or JSON Lines, through a point in
+  time. Tests: a profiled search, an unknown query caught before running, and a run to file
+  of more than one page.
+- **N3·6 — Editing:** a `_source` field changed in the grid becomes
+  `POST /<index>/_update/<id>?refresh=true` with that field in a partial document, its value
+  written with the JSON type the old one had; **Add row** indexes a new document
+  (`POST /<index>/_doc?refresh=true`), and **Delete rows** deletes one
+  (`DELETE /<index>/_doc/<id>?refresh=true`). Each runs as a typed request does, one at a
+  time: checked, logged and recorded in the history. Each hit's own `_index` is used, so the
+  hits of an alias or a pattern are edited too. Tests: a field of each JSON type edited and
+  read back, an expanded field edited by its path, a document added and deleted, and
+  kittests of the console's edits.
+- **N3·7 — Safety and MCP:** the read-only level's dialog suggests a user or API key with
+  only the `read` and `view_index_metadata` privileges; the MCP server serves the data
+  source only through its MCP login, its `query` tool takes one request, and `list_objects`
+  lists the explorer's levels, paged. Tests: on the Elasticsearch test server, a user with a
+  read-only role serves as the MCP login, searches an index, and is refused a
+  `_delete_by_query` by the server as well as by the check.
+
+The manual changes in the layer that changes what a user sees: N3·3 (the data source and the
+console), N3·4 (the explorer), N3·5 (explain and results to a file), N3·6 (editing) and N3·7
+(read-only data sources and MCP logins).
 
 ### N4 — Cassandra and ScyllaDB
 
@@ -887,7 +998,11 @@ milestone starts.
 | Where the shell's syntax is read (N2) | **In `dbrover-language`'s `mongo` module, into DbRover's own tree of a command,** with no `bson` in that crate; the driver turns the tree into BSON. | Classification, warnings, completion and the MCP server read the same tree the driver runs, and the app needs no MongoDB crate. |
 | Where a cancel comes from (N2) | **The console's own client**, a pool, which opens a second connection as the same user to send `$currentOp` (own operations only) and `killOp`. | Each console's cancel works without the explorer's session, as on the other engines, and any user may kill their own operations. |
 | What an edit is (N2) | **A command per changed field, from the grid,** `updateOne` by `_id` with `$set` on the field's path, run one at a time as Redis's are. | Each edit is checked, logged and recorded as a typed command is. Editing in the tree waits: the grid's flattened columns, an expanded field's included, reach every field but an array's items. |
-| One search driver or two | **One**, for Elasticsearch and OpenSearch, with their differences keyed off the server's answer to `GET /`. | One crate and data source type, "Elasticsearch / OpenSearch". |
+| One search driver or two | **One**, for Elasticsearch and OpenSearch, with their differences keyed off the server's answer to `GET /`. | One crate and data source type, "Elasticsearch / OpenSearch". Confirmed when N3 started: the two differ in the point-in-time endpoints (`_pit` against `_search/point_in_time`) and the SQL endpoint and its answer, nothing else N3 uses. |
+| The HTTP client (N3) | **hyper, through `hyper-util`'s client, with `hyper-rustls` and `dbrover-tls`'s configuration,** as the ClickHouse driver's, HTTP/1.1 only. Bodies with `http-body-util`. No `reqwest`, and neither vendor's crate. | Nothing new is built: every one of these is in the build already, for ClickHouse. TLS has `dbrover-tls`'s modes, a CA file included, with ring. |
+| The console's syntax (N3) | **Kibana's Dev Tools requests,** a method and path, then a body, **sent as typed.** DbRover reads the body only to classify it and to find a search's paging; it never writes it again, except to add a point in time, `search_after` and `size` to a search it pages. | Requests copied from either vendor's documentation run as they are, numbers keep every digit, and the body the server reads is the one on screen. Kibana's triple-quoted strings and variables aren't read, and the error says so. |
+| How a search pages (N3) | **A search without `size` reads every hit,** as a `SELECT` without `LIMIT` does, through a point in time, `search_after` and `_shard_doc` as the tiebreaker, as the grid asks for pages. With `size`, at most that many; with `from`, `scroll` or aggregations, as typed, the answer whole. | The grid pages any search, and Run to file writes every hit. A search for its aggregations shows them as a tree rather than its first ten hits as rows. Kibana's habit, ten hits unless told otherwise, isn't DbRover's; the manual says so. |
+| An API key (N3) | **In the password's place:** the data source says which it holds, and the key, Elasticsearch's encoded form, is kept in the keychain as a password is, and sent as `Authorization: ApiKey …`. | No second secret per data source: the keychain, password commands and `${NAME}` placeholders work for a key as they do for a password. |
 | Cassandra's language | **A `Dialect` of `dbrover-sql`**, since CQL lexes and splits like SQL, with its own small classifier, as `sqlparser` has no CQL dialect. | The SQL tooling (splitting, highlighting, completion) works for CQL with a new set of rules, not a new language. |
 | Where languages live (N0a) | **A crate of their own, `dbrover-language`,** on top of `dbrover-sql`. It owns `QueryLanguage`; Redis's and MongoDB's languages become modules of it. `StatementKind` and `Unclassified` stay in `dbrover-sql` and are re-exported, and highlighting keeps `dbrover-sql`'s token kinds. | `dbrover-sql` stays about SQL. Code outside the crate asks a language through its methods and never matches on its variants, so a variant added for a new engine, or the test language, changes no other crate. |
 | The test language (N0a) | **A variant behind a `test-language` feature,** turned on only in dev-dependencies. | It is compiled into tests only, yet it runs through the same console, check and warnings as a real language. |
