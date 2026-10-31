@@ -126,6 +126,9 @@ fn explains_a_join_as_a_tree_with_its_costliest_step_highlighted() {
         egui::Key::E,
     );
     step_until_visible(&mut harness, "Costliest");
+    // The table sizes its columns on its first frame, and its rows move on the next: a click
+    // aimed at the first frame's rows lands a row off.
+    harness.run_steps(2);
     let plan = shown_plan(&harness).unwrap();
     let outline = plan.outline();
     let costliest: Vec<String> = outline
