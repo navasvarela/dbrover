@@ -924,7 +924,7 @@ were. From N3·3 on, each runs against both servers in CI (see N3·3).
     documents; aliases, data streams, templates and fields come with N3·4;
   - CI starts both servers with the others: Elasticsearch with security and HTTPS, so TLS,
     users and API keys are tested; OpenSearch with its security plugin off, so plain HTTP is.
-- **N3·4 — The explorer:** folders of indices, aliases, data streams and index templates;
+- **N3·4 — The explorer** (built): folders of indices, aliases, data streams and index templates;
   system and hidden indices (a name starting with `.`) only with **System** ticked. An
   index shows its document count and size, and under it its fields from the mapping, an
   object's fields named by their path (`address.city`) with their type. **Show definition**
@@ -934,7 +934,24 @@ were. From N3·3 on, each runs against both servers in CI (see N3·3).
   A cluster with many indices pages them by name, with the filter as a wildcard pattern sent
   to the server. Completion offers the index names the explorer has loaded. Tests: the
   catalog walk with each kind, the definitions run again as written, and paging 1,100
-  indices.
+  indices. How it came out:
+  - an index, an alias and a data stream are all `NodeKind::SearchIndex`, told apart by their
+    folder, so they share **Open data**; a template is `NodeKind::IndexTemplate`. A field is a
+    `NodeKind::Column` named by its path; a `nested` field shows before its fields, and a
+    field's multi-fields (`status.keyword`) after it;
+  - a data stream has no definition: `PUT /_data_stream/<name>` would say nothing its template
+    doesn't, so **Show definition** is the template's. An index's definition leaves out the
+    settings the server sets (`uuid`, `creation_date`, `version`, `provided_name`, `resize`),
+    a template's its dates;
+  - Elasticsearch's managed templates (`_meta.managed`) and hidden data streams are system
+    objects; OpenSearch refuses `expand_wildcards` on `_data_stream`, so it is asked only of
+    Elasticsearch;
+  - the paging test pages seven indices three at a time, with a filter in capitals, rather
+    than 1,100: a node holds at most 1,000 shards unless told otherwise, and each index takes
+    a cluster state update, which would cost CI about a minute per server;
+  - completion asks a language which catalog objects its commands name
+    (`QueryLanguage::named_objects`), and offers the loaded ones at the tree's top or one
+    folder down, so a search console completes index names without a SQL dialect.
 - **N3·5 — Explain, validate and results to a file:** ⌥⌘E runs the search at the cursor with
   `profile` set and shows the answer, the profile in it, as a tree; `validate` asks the
   server's `_validate/query` about a search's query without running it; **Run to file** and

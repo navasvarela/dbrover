@@ -341,8 +341,8 @@ left out. The body is JSON, and for `_bulk` and `_msearch` one JSON value a line
 the body to know what the request does, and sends it as you typed it, so numbers keep every
 digit. Kibana's triple-quoted strings (`"""…"""`) aren't read: write the string in JSON, with
 `\n` for its line breaks. Completion offers the methods, the common endpoints, each with how it
-is called, and the query's words (`match_all`, `bool`, `date_histogram`), inside the key you are
-typing too.
+is called, the query's words (`match_all`, `bool`, `date_histogram`), inside the key you are
+typing too, and the names of the indices, aliases and data streams the explorer has loaded.
 
 What each answer shows:
 
