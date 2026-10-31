@@ -117,9 +117,12 @@ goes through up to three layers, and the strongest layer the engine offers decid
    - **MySQL and MariaDB:** `START TRANSACTION READ ONLY`, then a rollback.
    - **SQLite:** the connection is opened read-only, as the existing `read_only` option already
      does.
+   - **ClickHouse and DuckDB files** (W11, [well-rounded.md](well-rounded.md#w11--read-only-on-every-engine)):
+     every ClickHouse request carries `readonly = 2`, and a DuckDB file is opened read-only and
+     held only while a call runs. Both are served for reading only.
    - **SQL Server and later engines:** each engine's plan states its equivalent before its MCP
      support is switched on. For an engine without a read-only mode, the equivalent is the MCP
-     login itself (N0a, [nosql.md](nosql.md)): SQL Server, ClickHouse, Redis, MongoDB and
+     login itself (N0a, [nosql.md](nosql.md)): SQL Server, Redis, MongoDB and
      Elasticsearch data sources are
      served for reading only, and only through an MCP login whose grants allow nothing but
      reading; on Redis, an ACL user with `+@read` (N1); on MongoDB, a user with the `read`
@@ -262,7 +265,8 @@ permissions with their fallback to the defaults. Also the separate MCP login per
   server warns at start-up for each data source without one.
 - SQL Server stays unserved: a read-only login, now possible, is its likely equivalent, but
   isn't switched on yet. *N0a update:* it is now, for SQL Server and ClickHouse, for reading only
-  (see [nosql.md](nosql.md)).
+  (see [nosql.md](nosql.md)). *W11 update:* ClickHouse and DuckDB files are served in their own
+  read-only modes, without an MCP login ([well-rounded.md](well-rounded.md#w11--read-only-on-every-engine)).
 
 ### MCP3 — In the app
 

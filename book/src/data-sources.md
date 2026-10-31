@@ -108,7 +108,7 @@ SQL Server 2022).
 | User | `default` | |
 | TLS | `disable` | `disable`, `require` or `verify-full`; see below. |
 | Password | none | Stored in the keychain when you save. |
-| MCP login | none | Required for AI assistants, since DbRover doesn't use ClickHouse's read-only setting yet; see [The MCP login](mcp.md#the-mcp-login). |
+| MCP login | none | Another user for AI assistants, optional: they read in ClickHouse's read-only mode either way. See [The MCP login](mcp.md#the-mcp-login). |
 | MCP password | none | Shown once there is an MCP login. Stored in the keychain apart from the password. |
 
 ClickHouse serves HTTPS on a port of its own (8443) rather than offering encryption on the HTTP
@@ -199,7 +199,11 @@ sign-in is planned.
 
 - **File** — a DuckDB database file (`.duckdb`), with **File**, **Browse…**, **New…** and
   **Read-only** as for SQLite. Only one program at a time may have a DuckDB file open for
-  writing, so connecting fails while another program (the `duckdb` command, say) has it open.
+  writing, and no other may have it open at all meanwhile, so connecting fails while another
+  program (the `duckdb` command, say) has it open for writing. Within DbRover, a file is open
+  one way at a time too: a data source that opens it read-only (its **Read-only** box, or the
+  read-only safety level) can't connect while another has it open for writing, or the other
+  way round, and the error says which to disconnect.
 - **In memory** — an empty database that lives as long as the connection, for querying files
   rather than storing data: DuckDB reads CSV, Parquet and JSON files directly. Each console has
   its own, and everything created in it is gone when it disconnects.
@@ -291,13 +295,19 @@ Read-only uses the same checks as an AI assistant's read-only projects (see
 [Connecting an AI assistant](mcp.md)):
 
 - **PostgreSQL** runs each statement in `BEGIN READ ONLY`, **MySQL and MariaDB** in
-  `START TRANSACTION READ ONLY`, rolled back once its rows are read. **SQLite** opens the file
-  read-only.
-- **SQL Server**, **DuckDB** and **ClickHouse** have no read-only mode DbRover uses yet:
-  statements are still checked, but a write inside a procedure or function isn't stopped. The
-  dialog says so. On SQL Server and ClickHouse, sign in as a user with read-only grants to have
-  the database refuse it; [The MCP login](mcp.md#the-mcp-login) shows how to make one. (A
-  DuckDB file can also be opened with its own **Read-only** box ticked.)
+  `START TRANSACTION READ ONLY`, rolled back once its rows are read. **SQLite** and **DuckDB**
+  open the file read-only, so `SELECT nextval('orders_id')` fails on DuckDB, since it advances
+  the sequence. **ClickHouse** sends `readonly = 2` with every statement: ClickHouse then
+  refuses changes, and lifting the setting, while a query's own `SETTINGS` still run.
+- **SQL Server**, **Redis**, **MongoDB**, **Elasticsearch** and **OpenSearch** have no
+  read-only mode for one connection: statements are still checked, but a write inside a
+  procedure, a function or a script isn't stopped. The dialog says so. Sign in as a user who
+  may only read to have the database refuse it; [The MCP login](mcp.md#the-mcp-login) shows how
+  to make one on each.
+- A **DuckDB** database **in memory** can't be opened read-only: statements are checked, and
+  what it holds is gone when it disconnects anyway. The dialog says so.
+- A read-only mode guards the database it opened. A DuckDB console can still reach other files,
+  with `COPY … TO` or `ATTACH`, which the check refuses as administration.
 - Anything that isn't a plain read is refused, including `SET`, `BEGIN` and statements DbRover
   can't parse, since what they do can't be told.
 
