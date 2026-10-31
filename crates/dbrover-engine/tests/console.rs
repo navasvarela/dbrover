@@ -1230,6 +1230,73 @@ fn runs_search_requests_and_shows_hits_as_documents() {
     }
 }
 
+/// Run to file of a search: every hit, past the first page, written as JSON Lines as the
+/// driver pages them, each line the hit as the grid would have it. Needs
+/// `DBROVER_TEST_ELASTICSEARCH_URL` or `DBROVER_TEST_OPENSEARCH_URL`; skipped without.
+#[test]
+fn runs_a_search_straight_to_a_file() {
+    for (name, config, password) in search_test_servers() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+        engine.expect_started(vec![]);
+        let data_source = DataSource {
+            id: DataSourceId::generate(),
+            name: "search".to_owned(),
+            color: None,
+            safety: dbrover_core::SafetyLevel::Normal,
+            project: None,
+            mcp_login: None,
+            config: ConnectionConfig::Elasticsearch(config),
+        };
+        let id = data_source.id;
+        engine.send(Command::SaveDataSource {
+            data_source,
+            password,
+            ssh_secret: PasswordUpdate::Keep,
+        });
+        assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
+        let mut bulk = "POST /dbrover_engine_file/_bulk?refresh=true\n".to_owned();
+        for n in 0..1_200 {
+            bulk.push_str(&format!(
+                "{{\"index\":{{\"_id\":\"{n}\"}}}}\n{{\"n\":{n}}}\n"
+            ));
+        }
+        execute(
+            &engine,
+            id,
+            1,
+            &["DELETE /dbrover_engine_file?ignore_unavailable=true", &bulk],
+        );
+        finish_run(&mut engine, 1);
+
+        let path = dir.path().join("hits.jsonl");
+        engine.send(Command::RunToFile {
+            console: CONSOLE,
+            data_source: id,
+            export: dbrover_engine::ExportAll {
+                run: RunId(2),
+                sql: "GET /dbrover_engine_file/_search\n{ \"sort\": [\"n\"] }".to_owned(),
+                parameters: dbrover_sql::ParameterValues::default(),
+                path: path.clone(),
+                spec: dbrover_export::ExportSpec::JsonLinesDocuments,
+            },
+        });
+        let result = loop {
+            if let Event::ExportFinished { result, .. } = next_run_event(&mut engine) {
+                break result;
+            }
+        };
+        assert_eq!(result, Ok(1_200), "{name}");
+        let written = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = written.lines().collect();
+        assert_eq!(lines.len(), 1_200, "{name}");
+        assert_eq!(
+            lines[700], r#"{"_index":"dbrover_engine_file","_id":"700","_score":null,"n":700}"#,
+            "{name}"
+        );
+    }
+}
+
 /// Grid edits on DuckDB: standard quoting, and, since DuckDB has no savepoints, a refusal
 /// inside a transaction the console opened rather than a failed edit only `ROLLBACK` could
 /// undo.

@@ -531,6 +531,28 @@ mod test_language {
         assert!(console.statements_to_run(RunScope::Explain).is_empty());
     }
 
+    /// ⌥⌘E on a search runs it with `"profile": true` at the end of its body; a request with
+    /// nothing to profile, such as a count, is left alone.
+    #[test]
+    fn explains_a_search_at_the_cursor() {
+        let mut console = console_in(
+            "GET /orders/_count\nGET /orders/_search\n{ \"size\": 5 }",
+            QueryLanguage::Search,
+        );
+        console.selection = 30..30;
+        let explained: Vec<String> = console
+            .statements_to_run(RunScope::Explain)
+            .into_iter()
+            .map(|statement| statement.sql)
+            .collect();
+        assert_eq!(
+            explained,
+            ["GET /orders/_search\n{ \"size\": 5, \"profile\": true }"]
+        );
+        console.selection = 3..3;
+        assert!(console.statements_to_run(RunScope::Explain).is_empty());
+    }
+
     #[test]
     fn completes_mongodb_methods_as_written_whatever_the_case_typed() {
         let mut console = console_in("db.orders.insertO", QueryLanguage::Mongo);
