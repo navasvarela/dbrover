@@ -52,3 +52,7 @@ harness = false
 [[test]]
 name = "mongodb"
 harness = false
+
+[[test]]
+name = "elasticsearch"
+harness = false

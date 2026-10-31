@@ -1,10 +1,10 @@
 # NoSQL databases
 
-Status: **N0a, N0b and N1 built** (2026-10-30) and **N2 built** (2026-10-31), in the layers
-listed under [N0a](#n0a--groundwork-languages-safety-and-the-explorer),
-[N0b](#n0b--groundwork-documents), [N1](#n1--redis-valkey-and-dragonfly) and
-[N2](#n2--mongodb); **N3 is being built**, in the layers listed under
-[N3](#n3--elasticsearch-and-opensearch). W7 (exports) has landed.
+Status: **N0a, N0b and N1 built** (2026-10-30) and **N2 and N3 built** (2026-10-31), in the
+layers listed under [N0a](#n0a--groundwork-languages-safety-and-the-explorer),
+[N0b](#n0b--groundwork-documents), [N1](#n1--redis-valkey-and-dragonfly),
+[N2](#n2--mongodb) and [N3](#n3--elasticsearch-and-opensearch); N4 is next. W7 (exports) has
+landed.
 
 DbRover speaks seven SQL engines. Many of the teams that use them keep a Redis beside their
 PostgreSQL, documents in MongoDB, or logs in Elasticsearch, and today they open another tool for
@@ -992,12 +992,31 @@ were. From N3·3 on, each runs against both servers in CI (see N3·3).
   - **Add row** indexes into the search's one index or alias, or into the `_index` typed in;
   - a partial update has Elasticsearch write the source again, so a number reads back as the
     server writes it (`2.5` for `2.50`).
-- **N3·7 — Safety and MCP:** the read-only level's dialog suggests a user or API key with
-  only the `read` and `view_index_metadata` privileges; the MCP server serves the data
+- **N3·7 — Safety and MCP** (built): the read-only level's dialog suggests a user or API key
+  with only the `read` and `view_index_metadata` privileges; the MCP server serves the data
   source only through its MCP login, its `query` tool takes one request, and `list_objects`
   lists the explorer's levels, paged. Tests: on the Elasticsearch test server, a user with a
   read-only role serves as the MCP login, searches an index, and is refused a
-  `_delete_by_query` by the server as well as by the check.
+  `_delete_by_query` by the server as well as by the check. How it came out:
+  - a user with index privileges alone can't connect: `GET /` needs the cluster's `monitor`
+    privilege, and so do the explorer's `_cat` and the tasks API that ⌘. uses, and an index's
+    count in the explorer needs `monitor` on the index. Both are read-only, so the advice is a
+    role with the cluster's `monitor` and `read`, `view_index_metadata` and `monitor` on the
+    indices, which the test's MCP login has;
+  - the guard, the advice and `list_objects`' paging were already every engine's (N0a, N1), so
+    Elasticsearch took them as they were: this layer is the test binary `elasticsearch` of
+    `dbrover-mcp`, the advice's wording, the tools' descriptions, the manual's role, and the
+    website;
+  - a data source signing in with an API key takes a second API key as its MCP password; the
+    MCP login is then only its name;
+  - the test runs on Elasticsearch only: OpenSearch's test server has its security plugin off,
+    so it has no users to sign in as.
+
+N3 is built. What the exit needs by hand, before release: an Elastic Cloud deployment through
+its endpoint with an API key and `verify-full` against the public authorities, OpenSearch with
+its security plugin on (its demo certificates, with `require`), and Amazon OpenSearch Service
+with a fine-grained access control user. CI runs Elasticsearch 9.5.5 with HTTPS and users, and
+OpenSearch 3.9.0 without its security plugin.
 
 The manual changes in the layer that changes what a user sees: N3·3 (the data source and the
 console), N3·4 (the explorer), N3·5 (explain and results to a file), N3·6 (editing) and N3·7
