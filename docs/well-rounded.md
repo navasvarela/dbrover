@@ -4,7 +4,8 @@ Status: **W1 to W7 built** (see the [roadmap](roadmap.md#well-rounded-track); W5
 design is in [Power in the grid](grid-power.md), W7's in
 [Exports and your own formats](exports.md)); W8 planned, designed there too. W10, the visual
 explain plan, designed on 2026-10-31 [below](#w10--a-visual-explain-plan) and built. W11,
-read-only on every engine, designed on 2026-10-31 [below](#w11--read-only-on-every-engine).
+read-only on every engine, designed on 2026-10-31 [below](#w11--read-only-on-every-engine) and
+built.
 Proposed on 2026-10-24.
 
 DbRover browses, queries and edits PostgreSQL, SQLite, MySQL and MariaDB, and ships as a
