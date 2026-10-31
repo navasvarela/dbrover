@@ -23,6 +23,7 @@ mod export_sources_dialog;
 mod feedback;
 mod file_picker;
 mod fonts;
+mod form;
 mod hazard_dialog;
 mod history_window;
 mod host_key_prompt;

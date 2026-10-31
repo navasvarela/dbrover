@@ -16,14 +16,16 @@ Rows leave DbRover in the same formats, with the same options, wherever they sta
 
 ![The export dialog: rows, format, its options and a preview of the file](images/export-dialog.png)
 
-- **Rows**: **Loaded rows**, the rows loaded so far in the order and with the filter the grid
-  shows them, or **All rows**, every row the query returns. For all rows the query runs again,
-  sorted and filtered if the database is doing that, and its rows are written to the file as
-  they arrive, so even a very large result never has to fit in memory.
-- **Format**, and its **Options** (below).
+- **Loaded rows** or **All rows**, at the top right: the rows loaded so far, in the order and
+  with the filter the grid shows them, or every row the query returns. For all rows the query
+  runs again, sorted and filtered if the database is doing that, and its rows are written to
+  the file as they arrive, so even a very large result never has to fit in memory.
+- **Format**: a tile for each format. A format that can't write these rows is greyed out; hover
+  over it to see why.
+- **Options**: the format's own (below), a row each, switched on and off or chosen side by side.
 - **Preview**: the file's first lines, or for Excel and Parquet what each column becomes.
 
-**Export…** then asks where to save the file. The dialog starts from the format and options you
+**Export…**, the highlighted button, then asks where to save the file. The dialog starts from the format and options you
 used last, each format remembering its own.
 
 ## Formats

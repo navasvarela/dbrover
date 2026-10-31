@@ -1528,10 +1528,6 @@ fn export_dialog(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
     run_all(harness, "Add row");
     harness.get_by_label("Export…").click();
     harness.run_ok();
-    harness
-        .get_by(|node| node.role() == Role::ComboBox && node.value().as_deref() == Some("CSV"))
-        .click();
-    harness.run_ok();
     harness.get_by_label("CSV for Excel").click();
     harness.run_ok();
 }

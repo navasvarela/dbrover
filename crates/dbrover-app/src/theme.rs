@@ -25,6 +25,9 @@ const TAB_BAR_HEIGHT: f32 = 30.0;
 const ACTIVE_TAB_TINT: f32 = 0.14;
 /// How strongly the results grid's header is tinted with the primary colour.
 pub const GRID_HEADER_TINT: f32 = 0.1;
+/// How far a dark theme's cards are lifted from the panel towards the text colour: enough to
+/// see the card, not so much that it competes with the fields in it.
+const DARK_CARD_LIFT: f32 = 0.04;
 
 /// The colours of one theme, by role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,6 +144,17 @@ impl Palette {
     /// `color` faded into the panel: a tint for backgrounds that must not compete with text.
     pub fn tint(&self, color: Color32, amount: f32) -> Color32 {
         mix(self.panel, color, amount)
+    }
+
+    /// Cards that group a form's rows. A step up from the panel: the field colour in the light
+    /// theme, where it is the lightest there is, and the panel lifted towards the text in the
+    /// dark theme, where fields are darker than the panel.
+    pub fn raised(&self) -> Color32 {
+        if self.dark {
+            mix(self.panel, self.text, DARK_CARD_LIFT)
+        } else {
+            self.field
+        }
     }
 
     /// The shade of a data source colour for this theme.
@@ -599,6 +613,7 @@ fn text_pairs(palette: &Palette) -> Vec<(&'static str, Color32, &'static str, Co
             ("base", palette.base),
             ("control", palette.control),
             ("hovered control", palette.control_hover),
+            ("card", palette.raised()),
             ("selection", palette.selection),
             (
                 "grid header",
@@ -614,6 +629,7 @@ fn text_pairs(palette: &Palette) -> Vec<(&'static str, Color32, &'static str, Co
             ("field", palette.field),
             ("base", palette.base),
             ("control", palette.control),
+            ("card", palette.raised()),
         ],
         &[("weak text", palette.text_weak)],
     );

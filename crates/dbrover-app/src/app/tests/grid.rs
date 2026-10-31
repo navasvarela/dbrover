@@ -319,7 +319,6 @@ fn asks_which_table_to_insert_rows_of_no_one_table_into() {
     step_until_visible(&mut harness, "Read-only");
 
     open_export_dialog(&mut harness, "Loaded rows", None);
-    open_format_list(&mut harness);
     assert!(
         harness
             .get_by_label("SQL UPDATE")
@@ -364,13 +363,11 @@ fn remembers_the_format_and_options_used_last() {
     open_orders(&mut harness, "1 row");
 
     open_export_dialog(&mut harness, "Loaded rows", Some("CSV for Excel"));
-    harness
-        .get_by(|node| node.role() == Role::ComboBox && node.value().as_deref() == Some("Comma"))
-        .click();
-    harness.run();
     harness.get_by_label("Semicolon").click();
     harness.run();
-    harness.get_by_label("Header with the column names").click();
+    harness
+        .get_by_role_and_label(Role::CheckBox, "Header with the column names")
+        .click();
     harness.run();
     confirm_export(&mut harness);
     step_until_visible(&mut harness, "Exported 1 rows");
@@ -381,8 +378,7 @@ fn remembers_the_format_and_options_used_last() {
 
     open_export_dialog(&mut harness, "Loaded rows", None);
     for shown in ["CSV", "Semicolon"] {
-        harness
-            .get_by(|node| node.role() == Role::ComboBox && node.value().as_deref() == Some(shown));
+        assert!(is_chosen(&harness, shown), "{shown} is chosen");
     }
     assert_eq!(
         harness.state().export_choices.format,
@@ -522,7 +518,6 @@ fn runs_a_statement_straight_to_a_file() {
     );
     step_until_visible(&mut harness, "Run to file");
     harness.run_steps(2);
-    open_format_list(&mut harness);
     harness.get_by_label("JSON Lines").click();
     harness.run();
     confirm_export(&mut harness);

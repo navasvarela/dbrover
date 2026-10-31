@@ -4130,29 +4130,18 @@ mod tests {
         harness.get_by_label_contains(rows).click();
         harness.run_steps(2);
         if let Some(format) = format {
-            open_format_list(harness);
             harness.get_by_label(format).click();
             harness.run_steps(2);
         }
     }
 
-    /// Opens the export dialog's format list: the list showing a format's name.
-    fn open_format_list(harness: &mut Harness<'_, DbRoverApp>) {
-        let names: Vec<&str> = dbrover_export::export_choices(
-            &dbrover_export::RowSource::untabled(dbrover_sql::Dialect::Sqlite),
-        )
-        .iter()
-        .map(|choice| choice.name)
-        .collect();
-        harness
-            .get_by(|node| {
-                node.role() == Role::ComboBox
-                    && node
-                        .value()
-                        .is_some_and(|value| names.contains(&value.as_str()))
-            })
-            .click();
-        harness.run_steps(2);
+    /// Whether the export dialog's choice (a format tile, a separator) named `label` is the one
+    /// chosen.
+    fn is_chosen(harness: &Harness<'_, DbRoverApp>, label: &str) -> bool {
+        use egui_kittest::kittest::NodeT;
+
+        harness.get_by_label(label).accesskit_node().toggled()
+            == Some(egui::accesskit::Toggled::True)
     }
 
     /// Clicks the export dialog's Export…, the last on screen: the toolbar has one too. One
