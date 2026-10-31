@@ -74,25 +74,31 @@ GPU. wgpu's Direct3D 12 backend can draw with it.
 
 ## Costs
 
-Measured on 2026-10-31. Baselines are v0.18.0's release assets and its release run; the
-wgpu numbers are this change's release dry run on `windows-2022`.
+Measured on 2026-10-31. Baselines are v0.18.0's release run and assets; the wgpu numbers come
+from this change's release dry run on `windows-2022` and its CI run on `windows-latest`.
 
-**Size**, Windows only (macOS and Linux build exactly as before):
+**Size**, Windows only. macOS and Linux build exactly as before: their dry-run artifacts were
+within 0.1 MB of v0.18.0's, which is the two commits merged since then.
 
 | Artefact | v0.18.0 | With wgpu (Direct3D 12) | Change |
 | --- | --- | --- | --- |
-| `dbrover.exe` | 67.9 MB | TBD | TBD |
-| **Windows installer** | **27.4 MB** | **TBD** | **TBD** |
+| `dbrover.exe` | 67.9 MB | 72.9 MB | +5.0 MB (+7.4%) |
+| **Windows installer** | **27.4 MB** | **28.8 MB** | **+1.4 MB (+5.1%)** |
+
+The Windows release build took 17m19s, against v0.18.0's 17m21s.
 
 **Start-up**, time from `run_native` to the first frame:
 
 | Where | glow | wgpu |
 | --- | --- | --- |
 | macOS, Apple silicon (release build, minimal app) | 0.57 s | 0.82 s (Metal, only to compare) |
-| Windows CI runner, no GPU | TBD | TBD (WARP) |
+| Windows CI runner, no GPU (debug build, minimal app) | fails: OpenGL 1.1 | 1.53 s on WARP, the process's first window |
+| Same runner, `RENDERERS` in order | | 0.75 s, the failed glow attempt included |
 
-On machines where glow works, nothing changes: the wgpu code is never reached. Where glow
-fails, the failed attempt costs TBD before wgpu starts.
+On machines where glow works, nothing changes, because the wgpu code is never reached. The
+0.75 s run came second in its process, so Direct3D's libraries were already loaded. A first
+start on a GPU-less machine is closer to the 1.5 s run. The test doesn't time the failed glow
+attempt on its own.
 
 ## Testing
 
