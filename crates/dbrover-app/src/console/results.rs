@@ -4,6 +4,7 @@
 use dbrover_core::SafetyLevel;
 use dbrover_core::{Cell, ColumnInfo, Row};
 use dbrover_engine::{RunId, StatementSummary};
+use dbrover_language::ExplainDepth;
 use dbrover_language::redis::KeyView;
 use dbrover_sql::first_word;
 use dbrover_store::{ActionId, CustomAction};
@@ -79,7 +80,14 @@ pub fn show(
         key_bar(ui, &view, &mut statement.key_bar, read_only, actions);
     }
     if let Some(plan) = statement.plan.as_mut().filter(|plan| plan.is_read()) {
-        plan::show(ui, plan);
+        let analyse = match language.can_explain(ExplainDepth::Analysed) {
+            false => plan::AnalyseButton::Hidden,
+            true if running => plan::AnalyseButton::Disabled,
+            true => plan::AnalyseButton::Enabled,
+        };
+        if plan::show(ui, plan, analyse) {
+            actions.extend(console.analyse_shown_plan().map(ConsoleAction::Run));
+        }
         return;
     }
     let load_clicked = summary(ui, statement, running, dialect);

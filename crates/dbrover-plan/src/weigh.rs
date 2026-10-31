@@ -131,9 +131,7 @@ fn add_lines<'a>(
 fn inclusive(step: &Step, measure: Measure) -> Option<f64> {
     match measure {
         Measure::Cost => step.estimate.total_cost,
-        Measure::Time => step
-            .actual
-            .and_then(|actual| actual.time.map(|time| time.last_row_ms * actual.loops)),
+        Measure::Time => step.actual.and_then(|actual| actual.total_ms()),
     }
 }
 

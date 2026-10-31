@@ -36,7 +36,7 @@ impl Sendable {
         let inlined = dbrover_sql::inline(sql, dialect, values)?;
         let prepared = match purpose {
             RunPurpose::Run => dbrover_sql::bind(sql, dialect, values)?,
-            RunPurpose::Explain => inlined.clone(),
+            RunPurpose::Explain | RunPurpose::ExplainAnalyse => inlined.clone(),
         };
         let recorded = match dbrover_sql::values_comment(sql, dialect, values) {
             Some(comment) => format!("{sql}\n{comment}"),

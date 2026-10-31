@@ -19,9 +19,8 @@ use crate::theme::Palette;
 use crate::widgets::{self, IconButton};
 use dbrover_core::{CatalogPath, RelationName};
 use dbrover_core::{SafetyLevel, TransactionStatus};
-use dbrover_engine::{
-    RunId, RunOrigin, RunOutcome, RunPurpose, SessionState, TransactionEnd, TransactionMode,
-};
+use dbrover_engine::{RunId, RunOrigin, RunOutcome, SessionState, TransactionEnd, TransactionMode};
+use dbrover_language::ExplainDepth;
 use dbrover_language::redis::KeyView;
 use dbrover_sql::{Dialect, ProblemSource, Severity};
 use dbrover_store::{ActionId, CustomAction, Snippet};
@@ -29,12 +28,13 @@ use dbrover_store::{ActionId, CustomAction, Snippet};
 use crate::custom_actions::GridCells;
 
 /// What the console's keys can do while its editor has focus.
-const EDITOR_ACTIONS: [Action; 17] = [
+const EDITOR_ACTIONS: [Action; 18] = [
     Action::Complete,
     Action::RunCurrent,
     Action::RunToFile,
     Action::RunAll,
     Action::Explain,
+    Action::ExplainAnalyse,
     Action::Cancel,
     Action::ShowHistory,
     Action::Commit,
@@ -237,7 +237,8 @@ fn perform(console: &QueryConsole, action: Action, actions: &mut Vec<ConsoleActi
     let scope = match action {
         Action::RunCurrent => RunScope::Current,
         Action::RunAll => RunScope::All,
-        Action::Explain => RunScope::Explain,
+        Action::Explain => RunScope::Explain(ExplainDepth::Estimated),
+        Action::ExplainAnalyse => RunScope::Explain(ExplainDepth::Analysed),
         Action::Cancel => {
             actions.extend(console.cancellable_run().map(ConsoleAction::Cancel));
             return;
@@ -284,10 +285,7 @@ fn perform(console: &QueryConsole, action: Action, actions: &mut Vec<ConsoleActi
         | Action::FindPrevious => return,
     };
     let statements = console.statements_to_run(scope);
-    let purpose = match scope {
-        RunScope::Explain => RunPurpose::Explain,
-        RunScope::Current | RunScope::All => RunPurpose::Run,
-    };
+    let purpose = scope.purpose();
     if !statements.is_empty() {
         actions.push(ConsoleAction::Run(SubmittedRun {
             statements,
@@ -309,7 +307,8 @@ fn needs_sql(action: Action) -> bool {
 /// in SQL and MongoDB. Hidden and disabled where it doesn't.
 fn offered(console: &QueryConsole, action: Action) -> bool {
     match action {
-        Action::Explain => console.language().can_explain(),
+        Action::Explain => console.language().can_explain(ExplainDepth::Estimated),
+        Action::ExplainAnalyse => console.language().can_explain(ExplainDepth::Analysed),
         action => !needs_sql(action) || console.dialect().is_some(),
     }
 }
@@ -319,9 +318,11 @@ fn is_enabled(console: &QueryConsole, action: Action) -> bool {
         return false;
     }
     match action {
-        Action::RunCurrent | Action::RunAll | Action::Explain | Action::RunToFile => {
-            !console.is_running()
-        }
+        Action::RunCurrent
+        | Action::RunAll
+        | Action::Explain
+        | Action::ExplainAnalyse
+        | Action::RunToFile => !console.is_running(),
         Action::Cancel => console.cancellable_run().is_some(),
         Action::Commit | Action::Rollback => console.has_open_transaction(),
         Action::ShowHistory
@@ -385,6 +386,7 @@ fn toolbar_icon(action: Action) -> Option<(&'static str, Role)> {
         Action::Format => Some((icons::TEXT_INDENT, Role::Primary)),
         Action::Commit
         | Action::Rollback
+        | Action::ExplainAnalyse
         | Action::RunToFile
         | Action::FormatAll
         | Action::NextProblem

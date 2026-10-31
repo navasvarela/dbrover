@@ -42,7 +42,7 @@ pub use ddl::{
     rebuild_refusal, view_query,
 };
 pub use dialect::{
-    Capabilities, Dialect, ExplainSetting, ForeignKeySwitch, PlanRequest, Savepoint,
+    Capabilities, Dialect, ExplainDepth, ExplainSetting, ForeignKeySwitch, PlanRequest, Savepoint,
     SchemaCreation, TableChange, UserModel, ViewReplacement,
 };
 pub use dml::{ColumnValue, RowSql, Table, TypedColumn};

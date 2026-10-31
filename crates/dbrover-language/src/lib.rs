@@ -21,7 +21,9 @@ use std::ops::Range;
 use dbrover_core::{DriverKind, Quoting, ResultShape, ServerInfo};
 use dbrover_plan::PlanFormat;
 use dbrover_sql::Dialect;
-pub use dbrover_sql::{Analysis, NamedSchemas, StatementKind, Token, TokenKind, Unclassified};
+pub use dbrover_sql::{
+    Analysis, ExplainDepth, NamedSchemas, StatementKind, Token, TokenKind, Unclassified,
+};
 
 /// How the grid's edits of rows are applied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,21 +108,34 @@ impl QueryLanguage {
         }
     }
 
-    /// Whether the language has a way to show a command's plan.
-    pub fn can_explain(self) -> bool {
-        self.explain_style().is_some()
+    /// Whether the language has a way to show a command's plan to `depth`.
+    pub fn can_explain(self, depth: ExplainDepth) -> bool {
+        match (self.explain_style(), depth) {
+            (None, _) => false,
+            (Some(_), ExplainDepth::Estimated) => true,
+            (Some(ExplainStyle::Prefix(dialect)), ExplainDepth::Analysed) => {
+                dialect.plan_request(depth).is_some()
+            }
+            (Some(ExplainStyle::MongoShell), ExplainDepth::Analysed) => false,
+        }
     }
 
-    /// `command` made to show its plan rather than run, on `server`: SQL's `EXPLAIN` prefix,
+    /// `command` made to show its plan, to `depth`, on `server`: SQL's `EXPLAIN` prefix,
     /// asking for a plan to draw where the dialect has one, or a MongoDB `find` or `aggregate`
     /// with `.explain("executionStats")` after it. `None` for a command, or a language, that
-    /// has no plan to show.
-    pub fn explain(self, command: &str, server: Option<&ServerInfo>) -> Option<Explained> {
-        match self.explain_style()? {
-            ExplainStyle::Prefix(dialect) => {
-                let (prefix, plan) = match dialect.plan_request() {
-                    Some(request) => (request.prefix, Some(request.format)),
-                    None => (dialect.explain_prefix(server), None),
+    /// has no plan to show to that depth: only a drawn plan is analysed.
+    pub fn explain(
+        self,
+        command: &str,
+        server: Option<&ServerInfo>,
+        depth: ExplainDepth,
+    ) -> Option<Explained> {
+        match (self.explain_style()?, depth) {
+            (ExplainStyle::Prefix(dialect), depth) => {
+                let (prefix, plan) = match (dialect.plan_request(depth), depth) {
+                    (Some(request), _) => (request.prefix, Some(request.format)),
+                    (None, ExplainDepth::Estimated) => (dialect.explain_prefix(server), None),
+                    (None, ExplainDepth::Analysed) => return None,
                 };
                 Some(Explained {
                     text: format!("{prefix}{command}"),
@@ -128,11 +143,14 @@ impl QueryLanguage {
                     plan,
                 })
             }
-            ExplainStyle::MongoShell => mongo::explain(command).map(|text| Explained {
-                text,
-                prefix_len: 0,
-                plan: None,
-            }),
+            (ExplainStyle::MongoShell, ExplainDepth::Estimated) => {
+                mongo::explain(command).map(|text| Explained {
+                    text,
+                    prefix_len: 0,
+                    plan: None,
+                })
+            }
+            (ExplainStyle::MongoShell, ExplainDepth::Analysed) => None,
         }
     }
 

@@ -823,6 +823,11 @@ pub enum RunPurpose {
     /// setting instead (SQL Server's `SHOWPLAN_XML`), the engine switches that on before the
     /// statements and off after them, whatever happens.
     Explain,
+    /// Having the database run them and describe how it did (`EXPLAIN ANALYZE`), the console
+    /// having put the prefix in front. They run as [`RunPurpose::Run`]'s do: in the console's
+    /// transaction mode and, on a read-only data source, checked and inside the read-only
+    /// transaction. Like [`RunPurpose::Explain`], their parameters are written in as literals.
+    ExplainAnalyse,
 }
 
 /// What started a run, which the history records with its statements.

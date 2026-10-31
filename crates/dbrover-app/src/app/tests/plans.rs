@@ -29,9 +29,14 @@ struct Shop<'a> {
 }
 
 impl<'a> Shop<'a> {
-    fn create(server: &PostgresTestServer, runtime: &'a tokio::runtime::Runtime) -> Self {
+    /// `test` tells apart the schemas of tests running at once.
+    fn create(
+        server: &PostgresTestServer,
+        runtime: &'a tokio::runtime::Runtime,
+        test: &str,
+    ) -> Self {
         let mut admin = server.open(runtime, &server.database);
-        let schema = format!("dbrover_w10_{}", std::process::id());
+        let schema = format!("dbrover_w10_{test}_{}", std::process::id());
         first_value(
             runtime,
             &mut admin,
@@ -98,27 +103,47 @@ fn shown_plan(harness: &Harness<'_, DbRoverApp>) -> Option<dbrover_plan::Plan> {
         .find_map(|console| console.shown_plan().cloned())
 }
 
-/// W10's exit, its first half: ⌥⌘E on a join of orders and customers shows the plan as a
-/// tree, the costliest step highlighted, and as text one click away, both copied.
+/// The app, with one data source named "pg" on the test server at `safety`.
+fn start_on(
+    server: &PostgresTestServer,
+    dir: &Path,
+    safety: dbrover_core::SafetyLevel,
+) -> Harness<'static, DbRoverApp> {
+    let source = dbrover_core::DataSource {
+        safety,
+        ..server.data_source(&server.database, "pg")
+    };
+    DataSourceFile::new(dir.join("data_sources.toml"))
+        .save(std::slice::from_ref(&source))
+        .unwrap();
+    let (_layer, feed) = log_console::pipeline();
+    crate::test_support::start_app(
+        harness_at_default_size(),
+        dir,
+        feed,
+        server.secrets(&source),
+    )
+}
+
+fn explain_analyse(harness: &mut Harness<'_, DbRoverApp>) {
+    harness.key_press_modifiers(
+        egui::Modifiers::COMMAND | egui::Modifiers::ALT | egui::Modifiers::SHIFT,
+        egui::Key::E,
+    );
+}
+
+/// W10's exit: ⌥⌘E on a join of orders and customers shows the plan as a tree, the costliest
+/// step highlighted, and as text one click away, both copied; Explain analyse adds the actual
+/// rows.
 #[test]
 fn explains_a_join_as_a_tree_with_its_costliest_step_highlighted() {
     let Some(server) = PostgresTestServer::from_env() else {
         return;
     };
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    let shop = Shop::create(&server, &runtime);
-    let source = server.data_source(&server.database, "pg");
+    let shop = Shop::create(&server, &runtime, "exit");
     let dir = tempfile::tempdir().unwrap();
-    DataSourceFile::new(dir.path().join("data_sources.toml"))
-        .save(std::slice::from_ref(&source))
-        .unwrap();
-    let (_layer, feed) = log_console::pipeline();
-    let mut harness = crate::test_support::start_app(
-        harness_at_default_size(),
-        dir.path(),
-        feed,
-        server.secrets(&source),
-    );
+    let mut harness = start_on(&server, dir.path(), dbrover_core::SafetyLevel::Normal);
     console_with(&mut harness, "pg", &shop.join());
 
     harness.key_press_modifiers(
@@ -165,4 +190,42 @@ fn explains_a_join_as_a_tree_with_its_costliest_step_highlighted() {
     });
     let text = copied(&harness).unwrap();
     assert!(text.contains("->  Seq Scan on orders o  (cost="), "{text}");
+
+    harness.get_by_label("Tree").click();
+    harness.run_steps(2);
+    harness.get_by_label("Explain analyse").click();
+    step_until_visible(&mut harness, "Actual rows");
+    let plan = shown_plan(&harness).unwrap();
+    assert!(plan.is_analysed());
+    let outline = plan.outline();
+    let orders = outline
+        .iter()
+        .find(|line| line.step.title() == "Seq Scan on orders o")
+        .and_then(|line| line.step.actual)
+        .unwrap();
+    assert_eq!((orders.rows, orders.loops), (20000.0, 1.0));
+    harness.get_by_label_contains("Analysed plan · ran in");
+}
+
+/// On a careful data source Explain analyse asks first, since it runs the statement, even a
+/// `SELECT` that running wouldn't ask about; Explain doesn't.
+#[test]
+fn explain_analyse_asks_first_on_a_careful_data_source() {
+    let Some(server) = PostgresTestServer::from_env() else {
+        return;
+    };
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let shop = Shop::create(&server, &runtime, "careful");
+    let dir = tempfile::tempdir().unwrap();
+    let mut harness = start_on(&server, dir.path(), dbrover_core::SafetyLevel::Careful);
+    console_with(&mut harness, "pg", &shop.join());
+
+    explain_analyse(&mut harness);
+    step_until_visible(&mut harness, "Explain analyse on \u{201c}pg\u{201d}?");
+    harness.get_by_label_contains("Explain analyse runs this statement");
+    // The modal is measured on its first frame and placed on the next.
+    harness.run_steps(2);
+    harness.get_by_label("Run anyway").click();
+    step_until_visible(&mut harness, "Actual rows");
+    assert!(shown_plan(&harness).unwrap().is_analysed());
 }

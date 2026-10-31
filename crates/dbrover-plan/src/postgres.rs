@@ -398,6 +398,23 @@ mod tests {
             ]
         );
         assert_eq!(scan.misestimate(), Some(1.0));
+        assert!(!scan.is_misestimated());
+    }
+
+    #[test]
+    fn flags_steps_whose_rows_were_ten_times_off() {
+        let plan = fixture("join_analysed");
+        let outline = plan.outline();
+        let flagged: Vec<String> = outline
+            .iter()
+            .filter(|line| line.step.is_misestimated())
+            .map(|line| line.step.title())
+            .collect();
+        // The sort expected all 333 groups, but the limit above it stopped it after 10.
+        assert_eq!(flagged, ["Sort"]);
+        let mut step = plan.root.clone();
+        step.estimate.rows = Some(1.0);
+        assert!(step.is_misestimated());
     }
 
     #[test]

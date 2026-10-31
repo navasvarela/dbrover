@@ -41,7 +41,7 @@ use dbrover_export::{ExportColumn, ExportOptions, ExportSpec, RowSource};
 use crate::export_dialog::{ExportPreview, PREVIEW_ROWS};
 use dbrover_language::mongo::CollectionView;
 use dbrover_language::redis::{KeyView, ViewShape};
-use dbrover_language::{EditsRun, QueryLanguage, command_at};
+use dbrover_language::{EditsRun, ExplainDepth, QueryLanguage, command_at};
 use dbrover_plan::PlanFormat;
 use dbrover_sql::{Dialect, FormatOptions, ParameterValues, format_ranges};
 use dbrover_store::{ConsoleKey, Snippet, SnippetBody, SqlFileContents};
@@ -152,8 +152,19 @@ pub enum RunScope {
     Current,
     /// Every statement in the console.
     All,
-    /// The statement under the cursor (or the first one selected), explained rather than run.
-    Explain,
+    /// The statement under the cursor (or the first one selected), explained to this depth.
+    Explain(ExplainDepth),
+}
+
+impl RunScope {
+    /// What running the scope's statements is for.
+    pub fn purpose(self) -> RunPurpose {
+        match self {
+            Self::Current | Self::All => RunPurpose::Run,
+            Self::Explain(ExplainDepth::Estimated) => RunPurpose::Explain,
+            Self::Explain(ExplainDepth::Analysed) => RunPurpose::ExplainAnalyse,
+        }
+    }
 }
 
 pub struct QueryConsole {
@@ -1692,16 +1703,13 @@ impl QueryConsole {
                 submit(0, current.into_iter().collect(), &self.text)
             }
             RunScope::All => submit(0, self.language.split(&self.text), &self.text),
-            RunScope::Explain => {
-                let server = match &self.session {
-                    SessionState::Connected(server) => Some(server),
-                    _ => None,
-                };
+            RunScope::Explain(depth) => {
+                let server = self.server();
                 self.statements_to_run(RunScope::Current)
                     .into_iter()
                     .take(1)
                     .filter_map(|statement| {
-                        let explained = self.language.explain(&statement.sql, server)?;
+                        let explained = self.language.explain(&statement.sql, server, depth)?;
                         Some(SubmittedStatement {
                             sql: explained.text,
                             prefix_len: explained.prefix_len,
@@ -1753,6 +1761,39 @@ impl QueryConsole {
             state: RunState::Running,
             selected: 0,
         });
+    }
+
+    /// The shown plan's statement, to explain again by running it: Explain analyse from the
+    /// plan's bar. `None` unless a plan is shown and the language can analyse it.
+    pub fn analyse_shown_plan(&self) -> Option<SubmittedRun> {
+        let run = self.run.as_ref()?;
+        let statement = run.statements.get(run.selected)?;
+        statement.plan.as_ref()?;
+        let typed = statement.sql.get(statement.prefix_len..)?;
+        let explained = self
+            .language
+            .explain(typed, self.server(), ExplainDepth::Analysed)?;
+        Some(SubmittedRun {
+            statements: vec![SubmittedStatement {
+                sql: explained.text,
+                range: statement.range.clone(),
+                prefix_len: explained.prefix_len,
+                in_database: None,
+                plan: explained.plan,
+            }],
+            purpose: RunPurpose::ExplainAnalyse,
+            parameters: ParameterValues::default(),
+            origin: RunOrigin::Console,
+            destination: RunDestination::Grid,
+        })
+    }
+
+    /// The server the console is connected to, which decides how some dialects explain.
+    fn server(&self) -> Option<&dbrover_core::ServerInfo> {
+        match &self.session {
+            SessionState::Connected(server) => Some(server),
+            _ => None,
+        }
     }
 
     /// The run to cancel: one still running, or one whose rows are still open.

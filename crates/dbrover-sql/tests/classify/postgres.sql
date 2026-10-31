@@ -22,6 +22,10 @@ VALUES (1, 2);
 -- expect: read
 EXPLAIN SELECT * FROM t;
 -- expect: read
+EXPLAIN (FORMAT JSON) SELECT * FROM t;
+-- expect: read
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT * FROM t;
+-- expect: read
 SHOW search_path;
 
 -- Writing, including writes hidden in a WITH.
@@ -55,6 +59,8 @@ SELECT * FROM t FOR SHARE;
 EXPLAIN ANALYZE DELETE FROM t;
 -- expect: write
 EXPLAIN DELETE FROM t;
+-- expect: write
+EXPLAIN (ANALYZE, FORMAT JSON) DELETE FROM t;
 -- expect: write
 LOCK TABLE t IN ACCESS EXCLUSIVE MODE;
 

@@ -3,7 +3,9 @@ use dbrover_sql::commits_implicitly;
 use dbrover_store::ConsoleKey;
 use egui::{Align, Id, Layout, Modal};
 
-use crate::console::{ChangeCount, SubmittedRun};
+use dbrover_engine::RunPurpose;
+
+use crate::console::{ChangeCount, SubmittedRun, SubmittedStatement};
 
 pub enum HazardChoice {
     RunAnyway,
@@ -51,18 +53,29 @@ pub struct ReviewContext<'a> {
 
 /// Checks each command for one its language says may touch everything, such as an `UPDATE`
 /// without `WHERE`, and, when the user relies on Rollback, for one that commits by itself.
+///
+/// Explain analyse runs its statement, so the statement is reviewed as running it would be,
+/// without its `EXPLAIN` prefix, and a careful data source always asks: that it runs is easy to
+/// forget, even of a `SELECT`.
 pub fn review(console: ConsoleKey, run: SubmittedRun, context: ReviewContext<'_>) -> Review {
+    let analysed = run.purpose == RunPurpose::ExplainAnalyse;
     let warnings: Vec<String> = run
         .statements
         .iter()
-        .flat_map(|statement| statement_warnings(&statement.sql, context))
+        .flat_map(|statement| match analysed {
+            true => analysed_warnings(statement, context),
+            false => statement_warnings(&statement.sql, context),
+        })
         .collect();
     if warnings.is_empty() {
         return Review::Safe(run);
     }
-    let heading = match context.careful {
-        Some(data_source) => format!("Run on \u{201c}{data_source}\u{201d}?"),
-        None => "Run anyway?".to_owned(),
+    let heading = match (context.careful, analysed) {
+        (Some(data_source), true) => {
+            format!("Explain analyse on \u{201c}{data_source}\u{201d}?")
+        }
+        (Some(data_source), false) => format!("Run on \u{201c}{data_source}\u{201d}?"),
+        (None, _) => "Run anyway?".to_owned(),
     };
     Review::NeedsConfirmation(HazardConfirmation {
         console,
@@ -117,6 +130,27 @@ impl HazardConfirmation {
         }
         modal.inner
     }
+}
+
+/// What running an explained statement would warn of, and on a careful data source that
+/// Explain analyse runs it.
+fn analysed_warnings(statement: &SubmittedStatement, context: ReviewContext<'_>) -> Vec<String> {
+    let typed = statement
+        .sql
+        .get(statement.prefix_len..)
+        .unwrap_or(&statement.sql);
+    let runs = context.careful.map(|data_source| {
+        warning(
+            &format!(
+                "\u{201c}{data_source}\u{201d} is careful, and Explain analyse runs this \
+                 statement."
+            ),
+            typed,
+        )
+    });
+    runs.into_iter()
+        .chain(statement_warnings(typed, context))
+        .collect()
 }
 
 fn statement_warnings(sql: &str, context: ReviewContext<'_>) -> Vec<String> {
@@ -224,6 +258,56 @@ mod tests {
             );
         }
         assert_eq!(statement_warnings("DELETE FROM orders", context).len(), 2);
+    }
+
+    #[test]
+    fn explain_analyse_asks_on_a_careful_data_source_and_reviews_the_statement_it_runs() {
+        use crate::console::RunDestination;
+        let run = |sql: &str| {
+            let prefix = "EXPLAIN (ANALYZE, FORMAT JSON) ";
+            SubmittedRun {
+                statements: vec![SubmittedStatement {
+                    sql: format!("{prefix}{sql}"),
+                    range: 0..sql.len(),
+                    prefix_len: prefix.len(),
+                    in_database: None,
+                    plan: None,
+                }],
+                purpose: RunPurpose::ExplainAnalyse,
+                parameters: dbrover_sql::ParameterValues::default(),
+                origin: dbrover_engine::RunOrigin::Console,
+                destination: RunDestination::Grid,
+            }
+        };
+        let context = |careful| ReviewContext {
+            language: QueryLanguage::Sql(Dialect::Postgres),
+            relies_on_rollback: false,
+            careful,
+        };
+        let key = || ConsoleKey {
+            data_source: dbrover_core::DataSourceId::generate(),
+            name: dbrover_store::ConsoleName::numbered(1),
+        };
+        let warnings = |sql: &str, careful| match review(key(), run(sql), context(careful)) {
+            Review::Safe(_) => Vec::new(),
+            Review::NeedsConfirmation(confirmation) => confirmation
+                .warnings
+                .iter()
+                .map(|warning| warning.lines().next().unwrap_or_default().to_owned())
+                .collect(),
+        };
+
+        assert!(warnings("SELECT * FROM orders", None).is_empty());
+        assert_eq!(
+            warnings("SELECT * FROM orders", Some("production")),
+            ["\u{201c}production\u{201d} is careful, and Explain analyse runs this statement."]
+        );
+        assert_eq!(
+            warnings("DELETE FROM orders", None).len(),
+            1,
+            "a DELETE without WHERE asks, as running it would"
+        );
+        assert_eq!(warnings("DELETE FROM orders", Some("production")).len(), 3);
     }
 
     #[test]

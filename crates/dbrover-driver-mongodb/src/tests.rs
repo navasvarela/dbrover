@@ -593,7 +593,7 @@ async fn explains_and_validates_reads_on_the_server() {
         "db.numbers.aggregate([{$match: {n: {$gt: 4}}}, {$group: {_id: null, total: {$sum: '$n'}}}])",
     ] {
         let explained = dbrover_language::QueryLanguage::Mongo
-            .explain(command, None)
+            .explain(command, None, dbrover_language::ExplainDepth::Estimated)
             .expect("an explained command");
         let plan = value(&mut connection, &explained.text)
             .await

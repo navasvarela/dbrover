@@ -77,6 +77,20 @@ pub struct Timing {
     pub last_row_ms: f64,
 }
 
+impl Actual {
+    /// How long the step took over every time it ran, its children's time included, when the
+    /// database timed it.
+    pub fn total_ms(&self) -> Option<f64> {
+        self.time.map(|time| time.last_row_ms * self.loops)
+    }
+}
+
+/// How far a step's actual rows must be from its estimate for the estimate to be called wrong:
+/// ten times more or fewer. The planner chooses joins and scans by row counts, and a factor of
+/// ten is where the usual advice says its choice is likely to be off; smaller misses are
+/// everyday noise.
+pub const MISESTIMATE_FACTOR: f64 = 10.0;
+
 /// A fact about a step or a plan, labelled as the database labels it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Detail {
@@ -107,6 +121,12 @@ impl Step {
             Some(target) => format!("{} {target}", self.operation),
             None => self.operation.clone(),
         }
+    }
+
+    /// Whether the actual rows were [`MISESTIMATE_FACTOR`] times or more off the estimate.
+    pub fn is_misestimated(&self) -> bool {
+        self.misestimate()
+            .is_some_and(|factor| factor >= MISESTIMATE_FACTOR)
     }
 
     /// How far the actual rows were from the estimate, as a factor of at least 1, when the step
