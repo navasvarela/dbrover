@@ -1478,3 +1478,32 @@ mod search_hits {
         assert!(reason.contains("hits of a search"), "{reason}");
     }
 }
+
+#[test]
+fn the_empty_results_panel_names_the_run_keys_the_keymap_has() {
+    use crate::keymap::{Action, Keymap};
+    use crate::test_support::ui_harness;
+    use egui_kittest::kittest::Queryable;
+
+    let file = [
+        ("console.run".to_owned(), vec!["f5".to_owned()]),
+        ("console.run-all".to_owned(), vec!["shift+f5".to_owned()]),
+    ]
+    .into_iter()
+    .collect();
+    let keymap = Keymap::from_file(&file, &[]);
+    let mut console = console("select 1");
+    let harness = ui_harness(|ui| {
+        let mut actions = Vec::new();
+        results::show(ui, &mut console, &keymap, &[], &mut actions);
+    });
+    let hint = |action| keymap.hint(&harness.ctx, action).unwrap_or_default();
+    let (current, all) = (hint(Action::RunCurrent), hint(Action::RunAll));
+    assert!(
+        current.contains("F5") && all.contains("F5"),
+        "{current} {all}"
+    );
+    harness.get_by_label(&format!(
+        "Run the statement at the cursor with {current}, or the whole console with {all}."
+    ));
+}

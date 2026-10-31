@@ -66,7 +66,7 @@ pub fn show(
         return;
     }
     let Some(run) = console.run.as_mut() else {
-        ui.weak("Run the statement at the cursor with ⌘↵, or the whole console with ⇧⌘↵.");
+        ui.weak(run_hint(ui.ctx(), keymap));
         return;
     };
     if run.statements.len() > 1 {
@@ -140,6 +140,23 @@ pub fn show(
         && let Some(run) = console.request_more()
     {
         actions.push(ConsoleAction::FetchMore(run));
+    }
+}
+
+/// What the empty results panel says, with the run shortcuts written as the keymap and the
+/// platform have them, like the menus' and tooltips': `⌘Enter` on macOS, `Ctrl+Enter`
+/// elsewhere, or whatever the user bound. A fixed `⌘↵` was wrong off macOS, and SF Pro, the
+/// macOS look's face, has no `↵`.
+fn run_hint(ctx: &egui::Context, keymap: &Keymap) -> String {
+    let current = keymap.hint(ctx, Action::RunCurrent);
+    let all = keymap.hint(ctx, Action::RunAll);
+    match (current, all) {
+        (Some(current), Some(all)) => format!(
+            "Run the statement at the cursor with {current}, or the whole console with {all}."
+        ),
+        (Some(current), None) => format!("Run the statement at the cursor with {current}."),
+        (None, Some(all)) => format!("Run the whole console with {all}."),
+        (None, None) => "Run the statement at the cursor with Run in the toolbar.".to_owned(),
     }
 }
 
