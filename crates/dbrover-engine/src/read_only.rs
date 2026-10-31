@@ -89,7 +89,8 @@ pub fn read_only_login(driver: DriverKind) -> &'static str {
         DriverKind::Redis => "an ACL user with only +@read",
         DriverKind::Mongo => "a user with only the read role",
         DriverKind::Elasticsearch => {
-            "a user or API key with only the read and view_index_metadata privileges"
+            "a user or API key with only the monitor cluster privilege and read, \
+             view_index_metadata and monitor on its indices"
         }
         DriverKind::Postgres
         | DriverKind::Sqlite

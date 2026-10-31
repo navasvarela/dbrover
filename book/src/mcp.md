@@ -86,7 +86,7 @@ Each statement it runs shows up in the data source's **History**, marked **MCP**
 | `list_objects` | One level of a data source's catalog, as the explorer shows it. Each object comes with the `path` that lists its children. A large level, such as a Redis database's keys or a schema of thousands of tables, comes 1,000 objects at a time, with a `next` to ask for the rest; a `filter` keeps the objects whose name contains it, searched by the database. |
 | `describe_table` | A table's columns with their types, its primary key, indexes and constraints. |
 | `get_definition` | The source of a view, function, trigger or index. |
-| `query` | Runs one statement that only reads (on Redis, one command, such as `HGETALL`; on MongoDB, one shell command, such as `db.orders.find({status: "open"})`, whose documents come as canonical Extended JSON), and returns its rows as text: as JSON, or with `format` set to `csv`, `markdown` or `jsonl`, as that text, ready to save or paste. |
+| `query` | Runs one statement that only reads (on Redis, one command, such as `HGETALL`; on MongoDB, one shell command, such as `db.orders.find({status: "open"})`, whose documents come as canonical Extended JSON; on Elasticsearch and OpenSearch, one request, such as a search, whose hits come as documents, or a `_sql` query), and returns its rows as text: as JSON, or with `format` set to `csv`, `markdown` or `jsonl`, as that text, ready to save or paste. |
 | `explain` | Shows how the database would run one read statement, without running it. |
 | `execute` | Runs statements that change something, in one transaction. Only offered when the project allows `write`, `schema` or `admin`. |
 
@@ -146,7 +146,7 @@ Project settings warns when a project allows changes and one of its data sources
 login.
 
 SQL Server has no read-only transaction, DbRover doesn't use ClickHouse's read-only setting
-yet, and Redis and MongoDB have no read-only session at all, so their data sources are served to MCP clients
+yet, and Redis, MongoDB, Elasticsearch and OpenSearch have no read-only session at all, so their data sources are served to MCP clients
 only through an [MCP login](#the-mcp-login) whose grants allow nothing but reading. Without one, a data source
 isn't served, and the server's log says why when it starts; Project settings lists it too. They
 are served for reading only: `execute` is refused on them, whatever the project allows, since
@@ -211,6 +211,27 @@ command by its method, so `insertOne` or `deleteMany` is refused before it is se
 server refuses it again; `$where`, `$function` and `$accumulator`, which run JavaScript, and any
 `db.runCommand` outside a short list of reads count as administration, which an MCP project
 never allows.
+
+On Elasticsearch, a user whose role has the cluster's read-only `monitor` privilege, and `read`,
+`view_index_metadata` and `monitor` on the indices it may search (`monitor` lists the indices
+and their counts, and lets **Cancel** find the user's own tasks):
+
+```text
+PUT /_security/role/assistant
+{ "cluster": ["monitor"], "indices": [{ "names": ["orders*", "logs-*"], "privileges": ["read", "view_index_metadata", "monitor"] }] }
+
+PUT /_security/user/assistant
+{ "password": "…", "roles": ["assistant"] }
+```
+
+A data source that signs in with an API key takes a second API key, made with the same
+privileges, as its **MCP password**: the key says who it is, so the **MCP login** is only its
+name. OpenSearch's security plugin grants the same through its own action groups:
+`cluster_monitor`, and `read` and `indices_monitor` on the indices, with
+`indices:admin/mappings/get` for an index's fields. DbRover classifies each
+request by its method and path, so a `_delete_by_query` or a `PUT` of a document is refused
+before it is sent, and the server refuses it again; any path DbRover doesn't know, other than a
+`GET`, counts as administration, which an MCP project never allows.
 
 The MCP password is kept in the keychain under its own entry, separate from the data source's
 password. If it is missing, the server refuses to connect; it never falls back to the data

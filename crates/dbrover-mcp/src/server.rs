@@ -99,9 +99,11 @@ struct DefinitionArgs {
 struct StatementArgs {
     /// The data source's name, as list_data_sources gives it (or its id).
     data_source: String,
-    /// One statement that only reads, in the data source's language: a SELECT in SQL, or a
-    /// Redis command such as GET or HGETALL, or a MongoDB shell command such as
-    /// db.orders.find({status: "open"}).
+    /// One statement that only reads, in the data source's language: a SELECT in SQL, a
+    /// Redis command such as GET or HGETALL, a MongoDB shell command such as
+    /// db.orders.find({status: "open"}), or an Elasticsearch or OpenSearch request: a method
+    /// and path, then a JSON body on the next lines, such as
+    /// GET /orders/_search followed by {"query": {"match": {"status": "open"}}}.
     sql: String,
 }
 
@@ -110,9 +112,11 @@ struct StatementArgs {
 struct QueryArgs {
     /// The data source's name, as list_data_sources gives it (or its id).
     data_source: String,
-    /// One statement that only reads, in the data source's language: a SELECT in SQL, or a
-    /// Redis command such as GET or HGETALL, or a MongoDB shell command such as
-    /// db.orders.find({status: "open"}).
+    /// One statement that only reads, in the data source's language: a SELECT in SQL, a
+    /// Redis command such as GET or HGETALL, a MongoDB shell command such as
+    /// db.orders.find({status: "open"}), or an Elasticsearch or OpenSearch request: a method
+    /// and path, then a JSON body on the next lines, such as
+    /// GET /orders/_search followed by {"query": {"match": {"status": "open"}}}.
     sql: String,
     /// How the rows come back: json (the default), as columns and rows of text; or csv,
     /// markdown or jsonl, as that text in `text`, a header line first for csv and markdown.
@@ -288,7 +292,9 @@ impl DbRoverMcp {
     /// Lists one level of a data source's catalog, as DbRover's explorer shows it: databases,
     /// schemas, folders of tables and views, then tables, then their columns, indexes and
     /// constraints; on Redis, databases, then keys grouped by their prefixes; on MongoDB,
-    /// databases, then collections, then their indexes. Pass a node's
+    /// databases, then collections, then their indexes; on Elasticsearch and OpenSearch,
+    /// folders of indices, aliases, data streams and index templates, then an index's fields.
+    /// Pass a node's
     /// `path` to list its children. A large level comes 1,000 objects at a time: when the
     /// answer has `next`, pass it as `after` for the rest.
     #[tool(annotations(read_only_hint = true, open_world_hint = false))]
@@ -311,7 +317,7 @@ impl DbRoverMcp {
     }
 
     /// Runs one statement that only reads, such as a SELECT, in a read-only transaction that
-    /// is then rolled back; or one Redis command that only reads, such as HGETALL; or one MongoDB shell command that only reads, such as db.orders.find({status: "open"}). Returns at most the project's row limit, with `truncated` set
+    /// is then rolled back; or one Redis command that only reads, such as HGETALL; or one MongoDB shell command that only reads, such as db.orders.find({status: "open"}); or one Elasticsearch or OpenSearch request that only reads, such as a search, whose hits come as documents, or a _sql query, whose answer comes as rows. Returns at most the project's row limit, with `truncated` set
     /// when there were more rows; cells are text, or null. With `format` csv, markdown or
     /// jsonl, the rows come back as that text instead, ready to save or paste.
     #[tool(annotations(read_only_hint = true, open_world_hint = false))]
