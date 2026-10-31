@@ -237,18 +237,27 @@ jobs:
           tool: cargo-packager@${{ env.CARGO_PACKAGER_VERSION }}
       - run: packaging/duckdb/fetch.sh x86_64-pc-windows-msvc "$RUNNER_TEMP/duckdb" | tee -a "$GITHUB_ENV"
       - run: cargo build --release --locked -p dbrover-app
-      # dbrover.exe loads duckdb.dll from its own folder. cargo-packager's resources apply to
-      # every platform, so the Windows package gets a configuration of its own: the one in
-      # Cargo.toml plus the DLL, written beside Cargo.toml so its relative paths still resolve.
+      # dbrover.exe loads duckdb.dll, and both load the Visual C++ runtime, from its own folder:
+      # a clean Windows has no runtime (packaging/windows/vc-runtime.sh). cargo-packager's
+      # resources apply to every platform, so the Windows package gets a configuration of its
+      # own: the one in Cargo.toml plus the DLLs, written beside Cargo.toml so its relative paths
+      # still resolve. The runtime's file names are kept for the installer's smoke test.
       - name: Package
         run: |
-          dll="$(cygpath -m "$DUCKDB_LIB_DIR")/duckdb.dll"
-          cp "$dll" target/release/
+          duckdb="$(cygpath -m "$DUCKDB_LIB_DIR")/duckdb.dll"
+          # Through a file rather than `< <(…)`, so that the script failing fails the step.
+          packaging/windows/vc-runtime.sh target/release/dbrover.exe "$duckdb" > "$RUNNER_TEMP/vc-runtime-paths.txt"
+          mapfile -t runtime < "$RUNNER_TEMP/vc-runtime-paths.txt"
+          printf '%s\n' "${runtime[@]##*/}" | tee "$RUNNER_TEMP/vc-runtime.txt"
+          cp "$duckdb" "${runtime[@]}" target/release/
+          resources="$(printf '%s\n' "$duckdb" "${runtime[@]}" |
+            jq -R '{src: ., target: (split("/") | last)}' | jq -s .)"
           cargo metadata --format-version 1 --no-deps | jq \
-            --arg dll "$dll" --arg version "$VERSION" --arg bin "$(cygpath -m "$PWD/target/release")" \
+            --argjson dlls "$resources" --arg version "$VERSION" \
+            --arg bin "$(cygpath -m "$PWD/target/release")" \
             '.packages[] | select(.name == "dbrover-app") | .metadata.packager
               + {name: "dbrover-app", version: $version, binariesDir: $bin}
-              | .resources += [{src: $dll, target: "duckdb.dll"}]' \
+              | .resources += $dlls' \
             > crates/dbrover-app/packager-windows.json
           cargo packager --config crates/dbrover-app/packager-windows.json --release --formats nsis \
             --out-dir "$(cygpath -m "$GITHUB_WORKSPACE/dist")"
@@ -273,7 +282,9 @@ jobs:
         run: |
           target/release/dbrover.exe --version | tee version.txt
           grep -q "dbrover $VERSION" version.txt
-      # The installed copy, with no DuckDB on PATH: it must find the DLL beside itself.
+      # The installed copy, with no DuckDB on PATH: it must find the DLL beside itself. The
+      # runner has the Visual C++ runtime installed, so running it can't show the runtime is
+      # missing; the check is that the installer put each runtime DLL beside dbrover.exe.
       - name: Smoke test the installer
         shell: pwsh
         run: |
@@ -282,6 +293,9 @@ jobs:
             -ArgumentList '/S', "/D=$env:RUNNER_TEMP\dbrover-installed"
           if ($installer.ExitCode -ne 0) { throw "installer exit code $($installer.ExitCode)" }
           Get-ChildItem "$env:RUNNER_TEMP\dbrover-installed"
+          foreach ($dll in Get-Content "$env:RUNNER_TEMP\vc-runtime.txt") {
+            if (-not (Test-Path "$env:RUNNER_TEMP\dbrover-installed\$dll")) { throw "the installer left out $dll" }
+          }
           $version = & "$env:RUNNER_TEMP\dbrover-installed\dbrover.exe" --version
           $version
           if ("$version" -notlike "dbrover $env:VERSION*") { throw "unexpected version: $version" }

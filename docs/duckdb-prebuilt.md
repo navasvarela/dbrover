@@ -136,8 +136,19 @@ static library.
   `Cargo.toml` still resolve, and passes it with `--config`. The installer puts `duckdb.dll`
   in `$INSTDIR`, beside `dbrover.exe`. The uninstaller removes it with the other resources.
 
-A smoke test installs silently (`/S /D=…`), removes every DuckDB folder from `PATH`, and runs
-the installed `dbrover.exe --version`. In the spike, the installer held `dbrover.exe` (48.3 MB)
+**The Visual C++ runtime.** `duckdb.dll` is DuckDB's own MSVC build and imports the dynamic
+Visual C++ runtime (`vcruntime140.dll`, `msvcp140.dll` and the like), as does `dbrover.exe`. A
+clean Windows doesn't have it, and then DbRover can't start. winget's validation flagged the
+launch of the first package's installed copy, the likeliest cause being this. Linking `dbrover.exe`'s runtime statically (`+crt-static`) can't fix
+it, because the DLL would still need it. So the installer ships the runtime DLLs beside
+`dbrover.exe`, which Microsoft calls app-local deployment:
+`packaging/windows/vc-runtime.sh` reads both binaries' imports with `dumpbin`, follows them into
+the runner's Visual Studio redistributable folder, and prints the DLLs found there. The
+Windows job adds them to the resources like `duckdb.dll`.
+
+A smoke test installs silently (`/S /D=…`), removes every DuckDB folder from `PATH`, checks
+that each runtime DLL is in the install folder (the runner has the runtime installed, so
+running DbRover can't show one missing), and runs the installed `dbrover.exe --version`. In the spike, the installer held `dbrover.exe` (48.3 MB)
 and `duckdb.dll` (36.7 MB).
 
 **Parquet and JSON: included.** The DLL passes the same version and extension test in CI.
