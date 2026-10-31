@@ -827,7 +827,7 @@ were. From N3·3 on, each runs against both servers in CI (see N3·3).
 
 - **N3·1 — Plan:** this list, the decisions N3 takes (in [Decisions](#decisions)), and the
   roadmap's status.
-- **N3·2 — The request language:** a `search` module of `dbrover-language`, with no driver
+- **N3·2 — The request language** (built): a `search` module of `dbrover-language`, with no driver
   yet:
   - tokens for the method, the path and its query string, and JSON for the body: strings,
     numbers, `true`, `false` and `null`, punctuation, and comments (`#` and `//` lines, as
@@ -857,7 +857,19 @@ were. From N3·3 on, each runs against both servers in CI (see N3·3).
 
   Tests: a classification corpus, as the other languages have; the splitter and the parser
   against requests from both servers' documentation; errors that point at a body that isn't
-  JSON.
+  JSON. How it came out:
+  - a body may start on the request line, after the path, as well as on the line after it;
+  - a comment line inside a body isn't sent: it becomes spaces, so the server's line and
+    column for an error still match the body on screen;
+  - an NDJSON value typed over several lines is sent on one, its line breaks made spaces;
+  - a string not yet closed at the end of its line is its quote and a word, so completion
+    offers the query's words while a key is being typed; a closed string is highlighted as a
+    string;
+  - the SQL endpoints are classified by their statement's first word: `SELECT`, `SHOW`,
+    `DESCRIBE`, `EXPLAIN` and `WITH` read, anything else (OpenSearch's `DELETE`) writes;
+    PPL, ES|QL (`POST /_query`), EQL and async searches read;
+  - `DELETE` of one index warns too, as MongoDB's `drop()` does;
+  - Kibana's triple-quoted strings are an error that says how to write the string in JSON.
 - **N3·3 — The driver and the console:** a new crate, `dbrover-driver-elasticsearch`, over
   HTTP with hyper and `dbrover-tls`, as the ClickHouse driver is:
   - the **Elasticsearch / OpenSearch** data source: the shared server form (port 9200) with
