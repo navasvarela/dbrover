@@ -20,6 +20,9 @@ use crate::fonts;
 use crate::icons::{self, Icon, Role};
 use crate::keymap::Keymap;
 use crate::log_console::LogConsole;
+use crate::mcp_settings::McpDefaultsEditor;
+use crate::settings::AppSettings;
+use crate::settings_tab::{SettingsAction, SettingsTab, SettingsView};
 use crate::state::DataSources;
 use crate::theme::{self, Palette};
 use crate::welcome;
@@ -50,6 +53,8 @@ pub enum Tab {
     /// A console, by its file. Restored at start-up once the engine has read the console
     /// files; see [`restore_consoles`].
     QueryConsole(ConsoleKey),
+    /// View › Settings…, beside the consoles.
+    Settings,
 }
 
 /// The consoles whose tabs the layout holds, so they can be reopened at start-up.
@@ -82,9 +87,29 @@ pub fn close_console_tab(layout: &mut DockState<Tab>, key: &ConsoleKey) {
 /// Adds a console tab next to the other consoles (or the Welcome tab), and makes it the
 /// active tab and its area the focused one.
 pub fn open_console_tab(layout: &mut DockState<Tab>, key: ConsoleKey) {
-    let tab = Tab::QueryConsole(key.clone());
+    open_in_main_area(layout, Tab::QueryConsole(key));
+}
+
+/// Makes the console's tab the active tab and its area the focused one, if the tab exists.
+pub fn focus_console_tab(layout: &mut DockState<Tab>, key: &ConsoleKey) {
+    focus_tab(layout, &Tab::QueryConsole(key.clone()));
+}
+
+/// Brings the Settings tab to the front, opening it beside the consoles the first time, as an
+/// editor opens its settings.
+pub fn open_settings_tab(layout: &mut DockState<Tab>) {
+    if !focus_tab(layout, &Tab::Settings) {
+        open_in_main_area(layout, Tab::Settings);
+    }
+}
+
+/// Adds `tab` next to the consoles (or the Welcome or Settings tab), and makes it the active
+/// tab and its area the focused one.
+fn open_in_main_area(layout: &mut DockState<Tab>, tab: Tab) {
     let tree = layout.main_surface_mut();
-    match tree.find_tab_from(|tab| matches!(tab, Tab::QueryConsole(_) | Tab::Welcome)) {
+    let in_main_area =
+        |tab: &Tab| matches!(tab, Tab::QueryConsole(_) | Tab::Welcome | Tab::Settings);
+    match tree.find_tab_from(in_main_area) {
         Some((node, _)) => tree[node].append_tab(tab.clone()),
         // The consoles' area was closed; give them a new one beside everything else, taking
         // what the main area would.
@@ -92,17 +117,19 @@ pub fn open_console_tab(layout: &mut DockState<Tab>, key: ConsoleKey) {
             tree.split_right(NodeIndex::root(), EXPLORER_SHARE, vec![tab.clone()]);
         }
     }
-    focus_console_tab(layout, &key);
+    focus_tab(layout, &tab);
 }
 
-/// Makes the console's tab the active tab and its area the focused one, if the tab exists.
-pub fn focus_console_tab(layout: &mut DockState<Tab>, key: &ConsoleKey) {
-    if let Some(path) = layout.find_tab(&Tab::QueryConsole(key.clone())) {
-        // The tab was just found, so activating it can't fail.
-        let _ = layout.set_active_tab(path);
-        // Focused too, so menus acting on "the current console" act on this one.
-        layout.set_focused_node_and_surface(path.node_path());
-    }
+/// Makes `tab` the active tab and its area the focused one. Returns whether the tab exists.
+fn focus_tab(layout: &mut DockState<Tab>, tab: &Tab) -> bool {
+    let Some(path) = layout.find_tab(tab) else {
+        return false;
+    };
+    // The tab was just found, so activating it can't fail.
+    let _ = layout.set_active_tab(path);
+    // Focused too, so menus acting on "the current console" act on this one.
+    layout.set_focused_node_and_surface(path.node_path());
+    true
 }
 
 pub fn default_layout() -> DockState<Tab> {
@@ -141,6 +168,11 @@ pub struct Panels<'a> {
     /// Consoles whose tabs the user asked to close this frame. The tabs stay until the app
     /// closes them, which may first ask about rolling back an open transaction.
     pub close_requests: &'a mut Vec<ConsoleKey>,
+    pub settings_tab: &'a mut SettingsTab,
+    pub settings: &'a AppSettings,
+    pub mcp_defaults: &'a mut McpDefaultsEditor,
+    /// What the user asked of the Settings tab this frame.
+    pub settings_actions: &'a mut Vec<SettingsAction>,
 }
 
 impl TabViewer for Panels<'_> {
@@ -170,6 +202,13 @@ impl TabViewer for Panels<'_> {
                     role: Role::Weak,
                 },
                 "Log console",
+            ),
+            Tab::Settings => tool_window(
+                Icon {
+                    glyph: icons::GEAR,
+                    role: Role::Primary,
+                },
+                "Settings",
             ),
             Tab::QueryConsole(key) => {
                 let title = self
@@ -220,6 +259,14 @@ impl TabViewer for Panels<'_> {
             ),
             Tab::Welcome => welcome::show(ui, self.data_sources, self.explorer_actions),
             Tab::LogConsole => self.log_console.ui(ui),
+            Tab::Settings => self.settings_tab.show(
+                ui,
+                SettingsView {
+                    settings: self.settings,
+                    mcp: self.mcp_defaults,
+                },
+                self.settings_actions,
+            ),
             Tab::QueryConsole(key) => match self.consoles.get_mut(key) {
                 Some(query_console) => {
                     let data_source = query_console.data_source();
@@ -277,7 +324,7 @@ impl TabViewer for Panels<'_> {
 
     /// The explorer and log console can't be reopened from a menu yet, so they can't be closed.
     fn is_closeable(&self, tab: &Tab) -> bool {
-        matches!(tab, Tab::Welcome | Tab::QueryConsole(_))
+        matches!(tab, Tab::Welcome | Tab::QueryConsole(_) | Tab::Settings)
     }
 
     fn on_close(&mut self, tab: &mut Tab) -> OnCloseResponse {

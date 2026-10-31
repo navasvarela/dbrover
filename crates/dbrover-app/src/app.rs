@@ -53,7 +53,7 @@ use crate::project_dialog::{
 use crate::project_settings::{ProjectSettingsAction, ProjectSettingsDialog};
 use crate::rollback_dialog::{Closing, RollbackChoice, RollbackConfirmation};
 use crate::settings::AppSettings;
-use crate::settings_window::{self, SettingsWindowAction};
+use crate::settings_tab::{SettingsAction, SettingsTab};
 use crate::sql_files::{self, Destination, OpenFileAction, OpenFileDialog, SqlFiles};
 use crate::state::{AppState, DataSources, EngineStatus};
 use crate::system_look::SystemLook;
@@ -105,6 +105,7 @@ pub struct DbRoverApp {
     project_settings: Option<ProjectSettingsDialog>,
     /// View › Settings › MCP's draft, kept while the window is closed.
     mcp_defaults: McpDefaultsEditor,
+    settings_tab: SettingsTab,
     delete_project_confirmation: Option<DeleteProjectConfirmation>,
     /// The object helper being used: New table, Drop…, and so on.
     object_dialog: Option<ObjectDialog>,
@@ -218,6 +219,7 @@ impl DbRoverApp {
             project_dialog: None,
             project_settings: None,
             mcp_defaults: McpDefaultsEditor::new(&McpPermissions::default()),
+            settings_tab: SettingsTab::default(),
             delete_project_confirmation: None,
             object_dialog: None,
             copying_ddl: None,
@@ -1708,7 +1710,7 @@ impl DbRoverApp {
             AppCommand::Theme(preference) => ctx.set_theme(preference),
             AppCommand::ShowKeymap => self.keymap_window_open = true,
             AppCommand::ShowActions => self.actions_window_open = true,
-            AppCommand::ShowSettings => self.settings.window_open = true,
+            AppCommand::ShowSettings => workspace::open_settings_tab(&mut self.dock),
             AppCommand::ResetLayout => {
                 self.dock = workspace::default_layout();
                 tracing::info!("layout reset");
@@ -1988,21 +1990,20 @@ impl DbRoverApp {
         }
     }
 
-    fn show_settings_window(&mut self, ctx: &egui::Context) {
-        if !self.settings.window_open {
-            return;
-        }
-        match settings_window::show(ctx, &self.settings, &mut self.mcp_defaults) {
-            Some(SettingsWindowAction::SaveMcpDefaults(defaults)) => {
+    fn handle_settings_action(&mut self, action: SettingsAction, ctx: &egui::Context) {
+        match action {
+            SettingsAction::SaveMcpDefaults(defaults) => {
                 self.send(Command::SaveMcpDefaults(defaults));
             }
-            Some(SettingsWindowAction::Save(settings)) => {
+            SettingsAction::Save(settings) => {
                 self.settings.set(settings.clone());
                 self.send(Command::SaveSettings(settings));
             }
-            Some(SettingsWindowAction::Reload) => self.send(Command::ReloadSettings),
-            Some(SettingsWindowAction::Close) => self.settings.window_open = false,
-            None => {}
+            SettingsAction::Reload => self.send(Command::ReloadSettings),
+            SettingsAction::Theme(preference) => {
+                self.run_command(AppCommand::Theme(preference), ctx)
+            }
+            SettingsAction::Run(command) => self.run_command(command, ctx),
         }
     }
 
@@ -2152,6 +2153,7 @@ impl eframe::App for DbRoverApp {
         let mut explorer_actions = Vec::new();
         let mut console_actions = Vec::new();
         let mut close_requests = Vec::new();
+        let mut settings_actions = Vec::new();
         let palette = &Palette::for_visuals(ui.visuals());
         let lint = self.settings.lint_options();
         let (open_consoles, saved_consoles, recent_completions) =
@@ -2179,6 +2181,10 @@ impl eframe::App for DbRoverApp {
                     recent_completions,
                     console_actions: &mut console_actions,
                     close_requests: &mut close_requests,
+                    settings_tab: &mut self.settings_tab,
+                    settings: &self.settings,
+                    mcp_defaults: &mut self.mcp_defaults,
+                    settings_actions: &mut settings_actions,
                 },
             );
         if let Some(text) = self.clipboard.take() {
@@ -2186,6 +2192,9 @@ impl eframe::App for DbRoverApp {
         }
         for action in explorer_actions {
             self.handle_explorer_action(action, &ctx);
+        }
+        for action in settings_actions {
+            self.handle_settings_action(action, &ctx);
         }
         for (console, action) in console_actions {
             match action {
@@ -2257,7 +2266,6 @@ impl eframe::App for DbRoverApp {
         self.show_about(&ctx);
         self.show_adoption_notice(&ctx);
         self.show_update_dialog(&ctx);
-        self.show_settings_window(&ctx);
 
         // Entries logged on the UI thread don't wake the UI (see `UiWaker`), so collect any
         // logged during this frame and ask for one more frame to show them.
@@ -2309,6 +2317,7 @@ mod tests {
     mod modify_table;
     mod parameters;
     mod password_commands;
+    mod settings;
     mod title_bar;
 
     use std::path::Path;
@@ -3000,7 +3009,7 @@ mod tests {
     }
 
     #[test]
-    fn saves_the_mcp_defaults_from_the_settings_window() {
+    fn saves_the_mcp_defaults_from_the_settings_tab() {
         let dir = tempfile::tempdir().unwrap();
         save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
         let (_layer, feed) = log_console::pipeline();
@@ -3011,8 +3020,7 @@ mod tests {
         harness.run();
         harness.get_by_label_contains("Settings…").click();
         harness.run();
-        // The window scrolls, and the MCP section is at its bottom, out of reach of clicks.
-        harness.get_by_label("Save MCP defaults").scroll_to_me();
+        harness.get_by_label("MCP").click();
         harness.run();
         harness.get_by_label("Schema").click();
         harness.run();
@@ -4135,6 +4143,15 @@ mod tests {
         }
     }
 
+    /// Closes the Settings tab, as its × does, so the console beside it is in front again.
+    /// egui_dock's close buttons have no accessible name to click them by.
+    fn close_settings_tab(harness: &mut Harness<'_, DbRoverApp>) {
+        let dock = &mut harness.state_mut().dock;
+        let path = dock.find_tab(&Tab::Settings).expect("the Settings tab");
+        dock.remove_tab(path);
+        harness.run_steps(2);
+    }
+
     /// Whether the export dialog's choice (a format tile, a separator) named `label` is the one
     /// chosen.
     fn is_chosen(harness: &Harness<'_, DbRoverApp>, label: &str) -> bool {
@@ -4837,8 +4854,11 @@ mod tests {
         harness.run_steps(2);
         harness.get_by_label_contains("Settings…").click();
         harness.run_steps(2);
+        harness.get_by_label("Editor").click();
+        harness.run_steps(2);
         harness.get_by_label("lower").click();
         harness.run_steps(2);
+        close_settings_tab(&mut harness);
         harness.get_by_label("Code").click();
         harness.run_steps(2);
         harness.get_by_label_contains("Format all").click();

@@ -53,7 +53,7 @@ mod rollback_dialog;
 #[cfg(test)]
 mod screenshots;
 mod settings;
-mod settings_window;
+mod settings_tab;
 mod sql_files;
 mod state;
 mod system_look;
