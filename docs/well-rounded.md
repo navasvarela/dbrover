@@ -2,7 +2,8 @@
 
 Status: **W1 to W7 built** (see the [roadmap](roadmap.md#well-rounded-track); W5's
 design is in [Power in the grid](grid-power.md), W7's in
-[Exports and your own formats](exports.md)); W8 planned, designed there too.
+[Exports and your own formats](exports.md)); W8 planned, designed there too. W10, the visual
+explain plan, designed on 2026-10-31 [below](#w10--a-visual-explain-plan).
 Proposed on 2026-10-24.
 
 DbRover browses, queries and edits PostgreSQL, SQLite, MySQL and MariaDB, and ships as a
@@ -226,6 +227,95 @@ The design, layer by layer, is in [Exports and your own formats](exports.md).
 
 **Exit:** a preset, a template and a program each appear in the export dialog and **Copy as ›**.
 
+## W10 — A visual explain plan
+
+Today **Explain** (⌥⌘E) puts the database's plan in the grid as text: one line per row on
+PostgreSQL, one XML value on SQL Server. Reading it means knowing each engine's format and
+doing arithmetic on nested costs. W10 draws the plan as a tree of steps instead, the same way
+on every engine that has a structured plan, and points at the steps that cost the most.
+
+- **The plan of the statement at the cursor, as a tree** in the results panel, in place of the
+  grid:
+  - each step shows what it does (`Hash Join`, `Seq Scan on orders o`), its estimated cost and
+    rows, and how much of the whole plan it accounts for, as a bar;
+  - its other facts (the join condition, the filter, the sort key, the index) show when the step
+    is hovered or selected;
+  - steps fold and unfold, as the explorer's nodes do.
+- **The costliest steps highlighted.** A step's own cost is its cost minus its children's,
+  since each engine reports a step's cost with everything under it. The step whose own cost is
+  the largest share of the plan is marked **Costliest**, and any other step with at least a
+  quarter of it is tinted too. Once the plan is analysed, time decides instead of the estimate.
+- **Explain analyse** (⌥⇧⌘E, and a button above the plan) runs the statement and shows, beside
+  each step's estimate, the rows it actually returned, how many times it ran, and how long it
+  took. A step whose actual rows are ten times more or fewer than estimated is flagged, since a
+  wrong estimate is the usual reason for a bad plan.
+- **The text plan stays one click away:** **Tree** and **Text** switch the view. The text is
+  written from the same plan, laid out as PostgreSQL's `EXPLAIN` lays it out (a line per step,
+  indented under its parent, with its facts below it), so it reads the same on every engine and
+  switching never runs the statement again.
+- **Both can be copied:** **Copy text** copies the text plan, and **Copy JSON** (or **Copy XML**
+  on SQL Server) copies the plan as the database returned it, for tools that read that format.
+- **Engines:**
+  - **PostgreSQL** first, from `EXPLAIN (FORMAT JSON)` and `EXPLAIN (ANALYZE, FORMAT JSON)`.
+  - **MySQL 8.3 and later**, from `EXPLAIN FORMAT=JSON` with `explain_json_format_version = 2`,
+    whose steps are the iterators MySQL runs, with estimated cost and rows and, under
+    `EXPLAIN ANALYZE`, actual rows, loops and time. The setting is a session variable: it is
+    switched on before the statement and put back to what it was after, the way SQL Server's
+    `SHOWPLAN_XML` is switched today. MySQL 8.0 and MariaDB answer only the older format
+    (`query_block`, nested loops of tables), which is read too, with MariaDB's
+    `ANALYZE FORMAT=JSON` for actuals.
+  - **SQL Server**, from the XML showplan: `SET SHOWPLAN_XML` for the estimated plan and
+    `SET STATISTICS XML` for the actual one, which SQL Server sends as a further result after
+    the statement's rows, so the driver keeps that result rather than the rows while the
+    setting is on.
+  - SQLite, DuckDB, ClickHouse and MongoDB keep today's plan in the grid: their plans are text
+    or documents without costs to compare.
+- **Safety (W2):** Explain analyse runs the statement, so it runs it as **Run** would: in the
+  console's transaction mode, so a manual-commit console keeps a change open to roll back, and
+  through the same checks. On a **careful** data source it always asks first, saying that
+  Explain analyse runs the statement, even for a `SELECT`, which is easy to forget. On a
+  **read-only** one, a change is refused before it is sent and the rest runs inside the
+  read-only transaction, so the database refuses a write hidden in a function.
+
+### How it's built
+
+- **One plan type,** in a new crate, `dbrover-plan`, with no database and no UI: a `Plan` is a
+  tree of `Step`s, each with an operation, what it reads, an estimate (cost, rows), an actual
+  (rows, loops, time) once analysed, and the rest of the database's facts as labelled values.
+  It weighs its steps (each one's share of the plan, and the costliest) and writes the text
+  plan, so the view only draws.
+- **One parser per format,** pure functions from the database's text to a `Plan`, each tested
+  against plans recorded from the test servers and kept as fixtures beside it: PostgreSQL's JSON,
+  MySQL's two JSON formats, SQL Server's XML (with `roxmltree`, which the build already has
+  for SVG icons).
+- **Asking for the plan** stays where explaining is today: the dialect (`dbrover-sql`) says what
+  to put before the statement, which session setting to switch around it, and which format
+  comes back, for an estimated or an analysed plan and the server the console is connected to.
+  The console sends it as a run whose purpose is **Explain** or **Explain analyse**; the engine
+  switches the setting around it, binds no parameters (they are written in, as for Explain
+  today), and for **Explain analyse** opens transactions and applies the read-only rules as for
+  **Run**.
+- **The console** parses the run's one value into a `Plan` when the statement finishes. If the
+  value can't be read as a plan, the grid shows it as before, with the reason above it.
+
+### Layers
+
+Each layer is a pull request of one stack, and each works on its own:
+
+1. **W10a — The plan type and PostgreSQL:** `dbrover-plan`, its weighing and text, and the
+   PostgreSQL parser with recorded plans; this design.
+2. **W10b — The plan view:** ⌥⌘E draws PostgreSQL's plan as a tree, with the costliest step
+   highlighted, **Tree** and **Text**, and the copy buttons.
+3. **W10c — Explain analyse:** the action and its key, actual rows, loops and time, flagged
+   estimates, and the safety rules, with engine tests on PostgreSQL's read-only transaction.
+4. **W10d — MySQL and MariaDB:** both JSON formats, the session setting, `EXPLAIN ANALYZE` and
+   MariaDB's `ANALYZE`.
+5. **W10e — SQL Server:** the XML showplan, estimated and actual.
+6. **W10f — The manual:** a chapter on reading plans, and the roadmap's demo note.
+
+**Exit:** on the PostgreSQL test server, ⌥⌘E on a join of `orders` and `customers` shows a tree
+whose costliest step is highlighted, and **Explain analyse** adds the actual rows.
+
 ## Decisions
 
 Proposed defaults; each is confirmed when its milestone starts.
@@ -238,6 +328,11 @@ Proposed defaults; each is confirmed when its milestone starts.
 | SSH | **`russh`, with host keys checked against `known_hosts`** | Nothing to install. An unknown host asks, and a changed key is refused. |
 | Grid edits in the history | **Store the values they replaced**, and offer the statement to put them back, never undo silently | It explains every change, without DbRover ever writing anything you didn't review. |
 | Database-side sort and filter | **Off by default**, a switch per grid | Today's behaviour stays. Re-running a query is a deliberate step. |
+| Where plans are parsed | **In the app, by a pure crate**, from the explain's one value | The engine and the drivers stay as they are; each parser is tested from recorded plans without a server. |
+| The text plan | **Written from the parsed plan**, in PostgreSQL's layout, rather than asked for again | One layout on every engine, and Explain analyse never runs the statement twice. |
+| What "costliest" means | **A step's own share**: its cost minus its children's, by time once analysed | The step to look at first, rather than the root, whose cost includes everything. |
+| Explain analyse on a careful data source | **Always asks**, even for a `SELECT` | That it runs the statement is easy to forget; a run of the same `SELECT` doesn't ask. |
+| A change under Explain analyse | **Runs as Run would**, not rolled back on its own | One rule for running; a manual-commit console keeps it open to roll back. |
 
 ## Risks
 
@@ -251,3 +346,7 @@ Proposed defaults; each is confirmed when its milestone starts.
   shows.
 - **History size.** Storing before values makes the history grow faster. Retention bounds it,
   and large values are stored truncated with a note.
+- **Plan formats change.** Each engine adds facts to its plans between versions. Parsers read
+  the facts they know into the step and keep every other one as a labelled value, so a new key
+  shows rather than breaks the plan; a value that can't be read as a plan falls back to the
+  grid.
