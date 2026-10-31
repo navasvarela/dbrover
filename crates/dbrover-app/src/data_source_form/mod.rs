@@ -12,6 +12,7 @@ use dbrover_core::{
     SafetyLevel, SourceColor, SqlServerConfig, SqliteConfig, TemplateError, has_placeholder,
 };
 use dbrover_engine::PasswordUpdate;
+use dbrover_engine::read_only::Storage;
 
 pub use elasticsearch::ElasticsearchFields;
 pub use mongo::{MongoFields, MongoTarget};
@@ -365,6 +366,17 @@ impl DataSourceForm {
 
     pub fn driver(&self) -> DriverKind {
         self.fields.driver()
+    }
+
+    /// Where the database is kept, which with the engine decides its read-only guard.
+    pub fn storage(&self) -> Storage {
+        match &self.fields {
+            DriverFields::DuckDb(DuckDbFields {
+                location: DuckDbLocation::InMemory,
+                ..
+            }) => Storage::InMemory,
+            _ => Storage::Kept,
+        }
     }
 
     pub fn to_data_source(&self, id: DataSourceId) -> Result<DataSource, FormError> {

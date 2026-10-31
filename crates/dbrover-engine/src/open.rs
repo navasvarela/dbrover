@@ -18,6 +18,7 @@ use crate::environment::ProcessEnvironment;
 use crate::events::EventSink;
 use crate::password_commands::{PasswordCommandError, PasswordCommands};
 use crate::passwords::{self, PasswordNeeded, Prompting};
+use crate::read_only;
 use crate::tunnels::{Tunnelled, Tunnels};
 use crate::{DatabaseFile, Event, PasswordUpdate};
 
@@ -352,6 +353,7 @@ pub(crate) async fn test_connection(
         events,
     } = services;
     tracing::info!(data_source = %data_source.name, "testing connection to {}", data_source.config);
+    let data_source = read_only::session_config(data_source);
     let connector = Connector {
         secrets: &secrets,
         tunnels: &tunnels,

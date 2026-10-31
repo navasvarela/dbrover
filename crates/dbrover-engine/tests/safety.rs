@@ -11,7 +11,10 @@ use common::{
     TestEngine, clickhouse_test_server, mongo_test_server, postgres_test_server,
     redis_test_servers, search_test_servers, sqlite_data_source, sqlite_database,
 };
-use dbrover_core::{ConnectionConfig, DataSource, DataSourceId, SafetyLevel};
+use dbrover_core::{
+    Connection as _, ConnectionConfig, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase,
+    SafetyLevel,
+};
 use dbrover_engine::{
     Command, ConsoleId, EditFailure, Event, PasswordUpdate, RunId, RunOrigin, RunOutcome,
     RunPurpose, TransactionMode,
@@ -159,6 +162,77 @@ fn a_read_only_sqlite_data_source_refuses_changes_and_edits() {
         .query_row("SELECT count(*) FROM sqlite_master", [], |row| row.get(0))
         .unwrap();
     assert_eq!(tables, 1, "the database was changed");
+}
+
+/// W11's exit on DuckDB: a read-only data source opens its file read-only, so DuckDB itself
+/// refuses a write hidden in a function, which the check reads as a `SELECT`, besides the
+/// `INSERT` the check refuses first.
+#[test]
+fn a_read_only_duckdb_data_source_refuses_a_write_inside_a_function() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("lake.duckdb");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        dbrover_driver_duckdb::create_database(&path).await.unwrap();
+        let config = DuckDbConfig {
+            database: DuckDbDatabase::File {
+                path: path.clone(),
+                read_only: false,
+            },
+        };
+        let mut writer = dbrover_driver_duckdb::connect(&config).await.unwrap();
+        for sql in [
+            "CREATE TABLE orders (id integer)",
+            "CREATE SEQUENCE orders_id",
+        ] {
+            writer.execute(sql).await.unwrap().finish().await.unwrap();
+        }
+        Box::new(writer).close().await.unwrap();
+    });
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let lake = DataSource {
+        id: DataSourceId::generate(),
+        name: "lake".to_owned(),
+        color: None,
+        safety: SafetyLevel::Normal,
+        project: None,
+        mcp_login: None,
+        config: ConnectionConfig::DuckDb(DuckDbConfig {
+            database: DuckDbDatabase::File {
+                path,
+                read_only: false,
+            },
+        }),
+    };
+    let production = read_only(&lake);
+    save(&mut engine, &production, PasswordUpdate::Keep);
+    let cases = [
+        (
+            "INSERT INTO orders VALUES (1)",
+            Some(refused("changes data")),
+        ),
+        ("SELECT count(*) FROM orders", None),
+    ];
+    for (number, (sql, expected)) in cases.into_iter().enumerate() {
+        let failure = run(
+            &mut engine,
+            READ_ONLY_CONSOLE,
+            production.id,
+            number as u64 + 1,
+            sql,
+        );
+        assert_eq!(failure, expected, "{sql}");
+    }
+    let hidden = run(
+        &mut engine,
+        READ_ONLY_CONSOLE,
+        production.id,
+        9,
+        "SELECT nextval('orders_id')",
+    )
+    .expect("DuckDB refused the write inside the function");
+    assert!(hidden.contains("read-only mode"), "{hidden}");
 }
 
 /// W11's exit on ClickHouse: a read-only data source refuses an `INSERT` before sending it, and

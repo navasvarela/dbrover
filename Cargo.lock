@@ -1953,6 +1953,7 @@ name = "dbrover-mcp"
 version = "0.19.1"
 dependencies = [
  "dbrover-core",
+ "dbrover-driver-duckdb",
  "dbrover-engine",
  "dbrover-export",
  "dbrover-language",

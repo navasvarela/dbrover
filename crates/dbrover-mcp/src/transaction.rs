@@ -17,9 +17,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dbrover_core::{
-    CancelHandle, ColumnInfo, Connection, DriverError, DriverKind, Row, describe_error,
+    CancelHandle, ColumnInfo, Connection, ConnectionConfig, DriverError, Row, describe_error,
 };
-use dbrover_engine::read_only::{self, Guard, ReadOnlyMode};
+use dbrover_engine::read_only::{self, Guard, ReadOnlyMode, Storage};
 use dbrover_engine::read_write::{self, WriteMode};
 
 /// How long a cancelled statement gets to give up before its connection is given up on.
@@ -79,12 +79,13 @@ pub(crate) enum CallMode {
     Write(WriteMode),
 }
 
-/// How a call with `access` runs on `driver`, or `None` when the engine has no such mode.
-/// `writable` says whether the connection was opened to run changes too
-/// (`Changes::open_writable`).
-pub(crate) fn mode(driver: DriverKind, access: Access, writable: bool) -> Option<CallMode> {
+/// How a call with `access` runs on a data source connected with `config`, or `None` when its
+/// database has no such mode. `writable` says whether the connection was opened to run
+/// changes too (`Changes::open_writable`).
+pub(crate) fn mode(config: &ConnectionConfig, access: Access, writable: bool) -> Option<CallMode> {
+    let driver = config.driver();
     match access {
-        Access::Read => match read_only::guard(driver) {
+        Access::Read => match read_only::guard(driver, Storage::of(config)) {
             Guard::Session(_) if writable => {
                 read_only::mode_on_writable_connection(driver).map(CallMode::Read)
             }
