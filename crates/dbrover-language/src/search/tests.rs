@@ -309,3 +309,35 @@ fn opening_an_index_searches_every_document() {
     assert_eq!(read.path, "/orders-live/_search");
     assert_eq!(classify(&text), Ok(StatementKind::Read));
 }
+
+#[test]
+fn explains_a_search_by_profiling_it() {
+    let cases: [(&str, Option<&str>); 6] = [
+        (
+            "GET /orders/_search",
+            Some("GET /orders/_search\n{ \"profile\": true }"),
+        ),
+        (
+            "POST /orders/_search\n{\n  \"query\": { \"match_all\": {} }\n}\n# done",
+            Some(
+                "POST /orders/_search\n{\n  \"query\": { \"match_all\": {} }, \"profile\": true\n}\n# done",
+            ),
+        ),
+        ("GET /_search {}", Some("GET /_search {\"profile\": true}")),
+        (
+            "GET /orders/_search\n{ \"profile\": true }",
+            Some("GET /orders/_search\n{ \"profile\": true }"),
+        ),
+        ("GET /orders/_count", None),
+        ("DELETE /orders/_search", None),
+    ];
+    for (request, expected) in cases {
+        let explained = explain(request);
+        assert_eq!(explained.as_deref(), expected, "{request}");
+        if let Some(explained) = explained {
+            assert_eq!(classify(&explained), Ok(StatementKind::Read), "{explained}");
+        }
+    }
+    assert!(returns_documents("GET /orders/_search"));
+    assert!(!returns_documents("GET /orders/_count"));
+}

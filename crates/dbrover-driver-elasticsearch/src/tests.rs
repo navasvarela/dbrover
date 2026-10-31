@@ -707,6 +707,67 @@ async fn signs_in_with_an_api_key() {
     }
 }
 
+/// ⌥⌘E's request shows the search's profile, and a query's mistakes are caught by the server
+/// before it runs.
+#[tokio::test]
+async fn explains_and_validates_searches_on_the_server() {
+    for server in test_servers() {
+        let mut connection = server.connect().await;
+        fill(&mut connection, "dbrover_explain", 10).await;
+        let explained = dbrover_language::QueryLanguage::Search
+            .explain(
+                "GET /dbrover_explain/_search\n{ \"query\": { \"range\": { \"n\": { \"gt\": 4 } } } }",
+                None,
+            )
+            .expect("an explained search");
+        let (_, rows) = run(&mut connection, &explained.text).await;
+        let [answer] = documents(&rows).try_into().expect("one document");
+        assert!(
+            json::at(&answer, &["profile", "shards"]).is_some(),
+            "{}: {answer:?}",
+            server.name
+        );
+        for (request, caught) in [
+            (
+                "GET /dbrover_explain/_search\n{ \"query\": { \"bogus\": {} } }",
+                "bogus",
+            ),
+            (
+                "POST /dbrover_explain/_count\n{ \"query\": { \"range\": { \"n\": { \"gte\": \"abc\" } } } }",
+                "abc",
+            ),
+        ] {
+            let rejection = connection.validate(request).await.expect("validated");
+            assert!(
+                rejection
+                    .as_ref()
+                    .is_some_and(|rejection| rejection.message.contains(caught)),
+                "{}: {request}: {rejection:?}",
+                server.name
+            );
+        }
+        for valid in [
+            "GET /dbrover_explain/_search\n{ \"query\": { \"term\": { \"n\": 3 } } }",
+            "GET /dbrover_explain/_search",
+            // A write is only read: nothing is sent, so nothing is deleted.
+            "POST /dbrover_explain/_delete_by_query\n{ \"query\": { \"match_all\": {} } }",
+        ] {
+            assert_eq!(
+                connection.validate(valid).await.expect("validated"),
+                None,
+                "{}: {valid}",
+                server.name
+            );
+        }
+        let (_, rows) = run(&mut connection, "GET /dbrover_explain/_count").await;
+        let [answer] = documents(&rows).try_into().expect("one document");
+        assert_eq!(
+            field(&answer, "count"),
+            Some(&Value::Number("10".to_owned()))
+        );
+    }
+}
+
 #[test]
 fn a_hit_is_its_metadata_then_its_source() {
     let hit = Value::parse(

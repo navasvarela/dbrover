@@ -22,6 +22,7 @@ mod words;
 
 use std::ops::Range;
 
+use dbrover_document::Value;
 use dbrover_sql::{StatementKind, Token, Unclassified};
 
 pub use parser::{Body, Method, ParseError, Request, parse};
@@ -61,6 +62,53 @@ pub(crate) fn split(script: &str) -> Vec<Range<usize>> {
 /// it, read a page at a time.
 pub fn search_all(index: &str) -> String {
     format!("GET /{index}/_search\n{{\n  \"query\": {{ \"match_all\": {{}} }}\n}}")
+}
+
+/// Whether `request` is a search of an index's documents: `GET` or `POST` to `_search`, with
+/// or without indices before it.
+pub fn is_search(request: &Request) -> bool {
+    matches!(request.method, Method::Get | Method::Post)
+        && matches!(request.segments().as_slice(), [.., "_search"])
+}
+
+/// Whether `request` returns documents, as Run to file must know before it runs: a search,
+/// whose hits are documents, or whose whole answer is one.
+pub fn returns_documents(request: &str) -> bool {
+    parse(request).is_ok_and(|request| is_search(&request))
+}
+
+/// `request`, a search, with `"profile": true` at the end of its body, which runs it and
+/// says what each part of its query cost on each shard; `None` for any other request. The
+/// text before the insertion is kept, so a position in it still points where it did.
+pub fn explain(request: &str) -> Option<String> {
+    let parsed = parse(request).ok()?;
+    if !is_search(&parsed) {
+        return None;
+    }
+    let Some(body) = &parsed.body else {
+        return Some(format!("{}\n{{ \"profile\": true }}", request.trim_end()));
+    };
+    let Body::Json {
+        text,
+        value: Value::Object(fields),
+        offset,
+    } = body
+    else {
+        return None;
+    };
+    if fields.iter().any(|(name, _)| name == "profile") {
+        return Some(request.to_owned());
+    }
+    // The body's text ends with the object's closing brace; the field goes after the last
+    // thing before it.
+    let close = offset + text.len() - 1;
+    let at = request[..close].trim_end().len();
+    let separator = if fields.is_empty() { "" } else { ", " };
+    Some(format!(
+        "{}{separator}\"profile\": true{}",
+        &request[..at],
+        &request[at..]
+    ))
 }
 
 /// The one request `text` holds, read.

@@ -362,6 +362,13 @@ What each answer shows:
 - **Any other answer** is one document; an answer that isn't JSON shows a line a row. `HEAD`
   answers its status alone: `200`, or `404` for what isn't there.
 
+**Explain** (⌥⌘E) on a search runs it with `"profile": true` at the end of its body: the answer
+is one document whose `profile` says what each part of the query cost on each shard. Pick
+**Tree** above the result to browse it. **Run to file** (⌥⌘↵) on a search writes every hit to a
+JSON or JSON Lines file, a page at a time as the server returns them, without loading the grid;
+**Export…** of its result offers **All documents** as well as the loaded ones, in the JSON
+formats, as for MongoDB.
+
 An error shows the server's type and reason (`index_not_found_exception: no such index
 [orders]`), and the cursor goes to the place in the body the server names. Neither server has
 transactions, so each request takes effect on its own and there is no transaction mode.
