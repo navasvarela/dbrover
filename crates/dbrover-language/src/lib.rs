@@ -355,6 +355,7 @@ impl From<DriverKind> for QueryLanguage {
             DriverKind::ClickHouse => Self::Sql(Dialect::ClickHouse),
             DriverKind::Redis => Self::Redis,
             DriverKind::Mongo => Self::Mongo,
+            DriverKind::Elasticsearch => Self::Search,
         }
     }
 }
@@ -387,10 +388,15 @@ mod tests {
                 Some(Dialect::ClickHouse),
                 None,
                 None,
+                None,
             ]
         );
         assert_eq!(QueryLanguage::from(DriverKind::Redis), QueryLanguage::Redis);
         assert_eq!(QueryLanguage::from(DriverKind::Mongo), QueryLanguage::Mongo);
+        assert_eq!(
+            QueryLanguage::from(DriverKind::Elasticsearch),
+            QueryLanguage::Search
+        );
     }
 
     #[test]

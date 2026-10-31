@@ -2691,6 +2691,65 @@ mod tests {
         );
     }
 
+    /// An Elasticsearch data source has no Database row; signing in with an API key hides the
+    /// user and saves none, and the key goes where a password would.
+    #[test]
+    fn adds_an_elasticsearch_data_source_with_an_api_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "No data sources yet.");
+
+        harness
+            .get_all_by_label("New data source")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("Elasticsearch / OpenSearch").click();
+        harness.run();
+        harness.get_by_label_contains("New Elasticsearch / OpenSearch data source");
+        assert!(harness.query_by_label("Database").is_none());
+        harness.get_by_label("User");
+        harness.get_by_label("API key").click();
+        harness.run();
+        assert!(harness.query_by_label("User").is_none());
+        harness
+            .get_by_role_and_label(Role::PasswordInput, "API key")
+            .focus();
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::PasswordInput, "API key")
+            .type_text("aWQ6a2V5");
+        harness.run();
+        harness.get_by_label("Save").click();
+
+        step_until_visible(&mut harness, "Expand localhost");
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        let [saved] = saved.as_slice() else {
+            panic!("expected one data source, got {saved:?}");
+        };
+        let dbrover_core::ConnectionConfig::Elasticsearch(config) = &saved.config else {
+            panic!("expected an Elasticsearch data source, got {saved:?}");
+        };
+        assert_eq!(
+            (
+                config.server.user.as_str(),
+                config.server.database.as_str(),
+                config.server.port.to_string(),
+                config.auth,
+            ),
+            (
+                "",
+                "",
+                "9200".to_owned(),
+                dbrover_core::ElasticsearchAuth::ApiKey
+            )
+        );
+    }
+
     #[test]
     fn adds_a_clickhouse_data_source_whose_port_follows_its_tls_mode() {
         let dir = tempfile::tempdir().unwrap();

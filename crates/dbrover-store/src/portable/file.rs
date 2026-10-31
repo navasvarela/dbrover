@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 
 use dbrover_core::{
     ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase,
-    McpLogin, MongoConfig, MysqlConfig, PasswordCommand, Port, PostgresConfig, ProjectId,
-    RedisConfig, SafetyLevel, ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, SshConfig,
-    SshLogin, TlsMode,
+    ElasticsearchAuth, ElasticsearchConfig, McpLogin, MongoConfig, MysqlConfig, PasswordCommand,
+    Port, PostgresConfig, ProjectId, RedisConfig, SafetyLevel, ServerConfig, SourceColor,
+    SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode,
 };
 use serde::{Deserialize, Serialize};
 
@@ -164,6 +164,7 @@ enum PortableConfig {
     Redis(PortableRedis),
     #[serde(rename = "mongodb")]
     Mongo(PortableMongo),
+    Elasticsearch(PortableElasticsearch),
 }
 
 impl PortableConfig {
@@ -196,6 +197,12 @@ impl PortableConfig {
                 auth_database: auth_database.clone(),
                 connection_string: connection_string.clone(),
             }),
+            ConnectionConfig::Elasticsearch(ElasticsearchConfig { server, auth }) => {
+                Self::Elasticsearch(PortableElasticsearch {
+                    server: PortableServer::export(server, path),
+                    auth: *auth,
+                })
+            }
             ConnectionConfig::Sqlite(SqliteConfig {
                 path: file,
                 read_only,
@@ -247,6 +254,12 @@ impl PortableConfig {
                 auth_database,
                 connection_string,
             }),
+            Self::Elasticsearch(PortableElasticsearch { server, auth }) => {
+                ConnectionConfig::Elasticsearch(ElasticsearchConfig {
+                    server: server.import(path),
+                    auth,
+                })
+            }
             Self::Sqlite(PortableSqlite {
                 path: file,
                 read_only,
@@ -293,6 +306,16 @@ struct PortableMongo {
     auth_database: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     connection_string: Option<String>,
+}
+
+/// An Elasticsearch or OpenSearch node, with what it signs in with written only for an API
+/// key, as in `data_sources.toml`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PortableElasticsearch {
+    #[serde(flatten)]
+    server: PortableServer,
+    #[serde(default, skip_serializing_if = "ElasticsearchAuth::is_password")]
+    auth: ElasticsearchAuth,
 }
 
 fn default_separator() -> String {

@@ -870,7 +870,7 @@ were. From N3·3 on, each runs against both servers in CI (see N3·3).
     PPL, ES|QL (`POST /_query`), EQL and async searches read;
   - `DELETE` of one index warns too, as MongoDB's `drop()` does;
   - Kibana's triple-quoted strings are an error that says how to write the string in JSON.
-- **N3·3 — The driver and the console:** a new crate, `dbrover-driver-elasticsearch`, over
+- **N3·3 — The driver and the console** (built): a new crate, `dbrover-driver-elasticsearch`, over
   HTTP with hyper and `dbrover-tls`, as the ClickHouse driver is:
   - the **Elasticsearch / OpenSearch** data source: the shared server form (port 9200) with
     a user and password, or an API key in the password's place, kept in the keychain the same
@@ -900,7 +900,30 @@ were. From N3·3 on, each runs against both servers in CI (see N3·3).
   a sort, an aggregation as one document, `_sql` as rows on each server, a `_cat` answer as
   documents, a slow search cancelled, TLS with the test authority, an API key, and an engine
   test of a console and a read-only data source refusing a `_delete_by_query`. Manual: the
-  data source and the console.
+  data source and the console. How it came out:
+  - the client is hyper's, with `hyper-rustls` and `dbrover-tls`, built directly rather than
+    through ClickHouse's client crate; `hyper` and `http-body-util` became workspace
+    dependencies at the versions already built, so nothing new is compiled;
+  - a paged search keeps only the query-string parameters that don't change what a page holds
+    (`q`, `_source`, `timeout`, …); any other, such as `routing` or `filter_path`, runs it as
+    typed. It sets `track_total_hits` to `false` unless the search says otherwise, since the grid
+    doesn't show the count, and reads one hit past each page, so the grid knows when the
+    hits end. A point in time the server let go of, after a grid sat longer than its five
+    minutes, is opened again and the page asked for again;
+  - a hit's document is its `_index`, `_id` and `_score`, its source's fields, then the rest of
+    the hit (`highlight`, `fields`, …), without its sort values; should a source field share a
+    name with one of those, the source stays whole under `_source`, so nothing is hidden;
+  - OpenSearch's SQL plugin is asked for pages of 500 (`fetch_size`) when the statement doesn't
+    say, since without it the plugin answers at most 200 rows and no cursor; PPL has no cursor
+    and answers whole;
+  - a node without security still takes a password, which may be empty, as a Redis or MongoDB
+    server without one does: the engine asks for a data source's password when none is saved;
+  - listing tasks needs the `monitor` cluster privilege, which a user who may only read lacks;
+    ⌘. then drops the request alone, which Elasticsearch takes as a cancel;
+  - the explorer lists every index, hidden ones among the system ones, with its number of
+    documents; aliases, data streams, templates and fields come with N3·4;
+  - CI starts both servers with the others: Elasticsearch with security and HTTPS, so TLS,
+    users and API keys are tested; OpenSearch with its security plugin off, so plain HTTP is.
 - **N3·4 — The explorer:** folders of indices, aliases, data streams and index templates;
   system and hidden indices (a name starting with `.`) only with **System** ticked. An
   index shows its document count and size, and under it its fields from the mapping, an

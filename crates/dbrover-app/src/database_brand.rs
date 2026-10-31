@@ -77,5 +77,13 @@ pub fn of(driver: DriverKind) -> DatabaseBrand {
             light: Color32::from_rgb(0x3B, 0x8A, 0x3C),
             dark: Color32::from_rgb(0x6C, 0xC6, 0x6D),
         },
+        // Elastic's teal on the light theme, as it is; a lighter teal on the dark one. Also
+        // shown for OpenSearch, which the same driver serves.
+        DriverKind::Elasticsearch => DatabaseBrand {
+            logo_uri: "bytes://logos/elasticsearch.svg",
+            logo_svg: include_bytes!("../../../assets/icons/databases/elasticsearch.svg"),
+            light: Color32::from_rgb(0x00, 0x55, 0x71),
+            dark: Color32::from_rgb(0x4F, 0xB8, 0xD4),
+        },
     }
 }

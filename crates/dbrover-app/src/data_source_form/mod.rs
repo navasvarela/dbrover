@@ -1,6 +1,7 @@
 //! The editable fields behind the data source dialog, and their validation. No egui here, so
 //! the rules are testable without a UI.
 
+mod elasticsearch;
 mod mongo;
 mod server;
 mod ssh;
@@ -12,6 +13,7 @@ use dbrover_core::{
 };
 use dbrover_engine::PasswordUpdate;
 
+pub use elasticsearch::ElasticsearchFields;
 pub use mongo::{MongoFields, MongoTarget};
 pub use server::{DatabaseField, ServerDefaults, ServerFields, TlsChoice, TlsOffer, UserField};
 pub use ssh::{SshFields, SshLoginChoice};
@@ -149,6 +151,7 @@ pub enum DriverFields {
     ClickHouse(ClickHouseFields),
     Redis(RedisFields),
     Mongo(MongoFields),
+    Elasticsearch(ElasticsearchFields),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -229,6 +232,7 @@ impl DriverFields {
                 separator: RedisConfig::DEFAULT_SEPARATOR.to_owned(),
             }),
             DriverKind::Mongo => Self::Mongo(MongoFields::new()),
+            DriverKind::Elasticsearch => Self::Elasticsearch(ElasticsearchFields::new()),
         }
     }
 
@@ -267,6 +271,9 @@ impl DriverFields {
                 separator: config.separator.clone(),
             }),
             ConnectionConfig::Mongo(config) => Self::Mongo(MongoFields::from_config(config)),
+            ConnectionConfig::Elasticsearch(config) => {
+                Self::Elasticsearch(ElasticsearchFields::from_config(config))
+            }
         }
     }
 
@@ -280,6 +287,7 @@ impl DriverFields {
             Self::ClickHouse(_) => DriverKind::ClickHouse,
             Self::Redis(_) => DriverKind::Redis,
             Self::Mongo(_) => DriverKind::Mongo,
+            Self::Elasticsearch(_) => DriverKind::Elasticsearch,
         }
     }
 
@@ -292,6 +300,7 @@ impl DriverFields {
             Self::ClickHouse(fields) => Some(&fields.server),
             Self::Redis(fields) => Some(&fields.server),
             Self::Mongo(fields) => Some(&fields.server),
+            Self::Elasticsearch(fields) => Some(&fields.server),
             Self::Sqlite(_) | Self::DuckDb(_) => None,
         }
     }
@@ -317,6 +326,7 @@ impl DriverFields {
                 separator: fields.separator.clone(),
             }),
             Self::Mongo(fields) => ConnectionConfig::Mongo(fields.to_config()?),
+            Self::Elasticsearch(fields) => ConnectionConfig::Elasticsearch(fields.to_config()?),
         })
     }
 }

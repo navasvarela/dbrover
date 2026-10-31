@@ -8,7 +8,7 @@ keychain, never in that file.
 
 Click **+** at the top of the explorer (or **New data source** on the Welcome tab) and choose
 **PostgreSQL**, **SQLite**, **MySQL / MariaDB**, **SQL Server**, **DuckDB**, **ClickHouse**,
-**Redis / Valkey** or **MongoDB**.
+**Redis / Valkey**, **MongoDB** or **Elasticsearch / OpenSearch**.
 
 ![The New PostgreSQL data source dialog](images/data-source-dialog.png)
 
@@ -155,6 +155,25 @@ connection string. Choose which under **Connect with**:
 **Test connection** says which server it reached and its version ("Connected to MongoDB 8.2.1").
 Passwords (SCRAM) work today; X.509 certificates and AWS sign-in are planned.
 
+**Elasticsearch / OpenSearch** connects to one node of a cluster, Elasticsearch's or
+OpenSearch's, over its REST API. It has no database: a cluster's indices belong to none. Choose
+what it signs in with under **Sign in with**:
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| Host | `localhost` | The name or IP address of one node. For an Elastic Cloud deployment, its Elasticsearch endpoint's host name, such as `my-deployment.es.us-east-1.aws.elastic.cloud`. |
+| Port | `9200` | `443` for Elastic Cloud. |
+| User | `elastic` | With **User and password**. Leave it empty for a node without security. |
+| Password | none | With **User and password**. Stored in the keychain when you save. |
+| API key | none | With **API key**: the encoded key Elasticsearch gives (`POST /_security/api_key` answers it as `encoded`, and Kibana shows it when you create one). Stored in the keychain, in the password's place; it says who it signs in as, so there is no user. |
+| TLS | `disable` | `disable`, `require` or `verify-full`. A node serves HTTPS or HTTP on its port, not both, so there is no `prefer`. Elastic Cloud needs `verify-full`, with no CA file. A node whose security was set up when it was installed serves HTTPS with its own authority: point **CA file** at its `http_ca.crt`. |
+| MCP login | none | Required for AI assistants, since neither server has a read-only mode: a user or API key with only the `read` and `view_index_metadata` privileges. |
+| MCP password | none | Shown once there is an MCP login. Stored in the keychain apart from the password. |
+
+**Test connection** says which server it reached and its version ("Connected to
+Elasticsearch 9.5.5", or "Connected to OpenSearch 3.9.0"). Amazon OpenSearch Service's AWS
+sign-in is planned.
+
 **SQLite** adds:
 
 ![The New SQLite data source dialog](images/sqlite-data-source-dialog.png)
@@ -193,8 +212,9 @@ version it is ("Connected to DuckDB 1.5.6").
 Many databases only accept connections from inside their own network, through a *jump host*
 (or *bastion*) you reach with SSH. Tick **Connect through an SSH server** and DbRover opens an
 SSH tunnel for you before connecting: no `ssh -L` to run first, and nothing to install. Every
-server engine has it: PostgreSQL, MySQL and MariaDB, SQL Server, ClickHouse, Redis, and
-MongoDB with the **Server** form (a connection string may name several servers, or none).
+server engine has it: PostgreSQL, MySQL and MariaDB, SQL Server, ClickHouse, Redis,
+Elasticsearch and OpenSearch, and MongoDB with the **Server** form (a connection string may name
+several servers, or none).
 
 ![A PostgreSQL data source behind a bastion, signing in with a key file](images/ssh-data-source-dialog.png)
 

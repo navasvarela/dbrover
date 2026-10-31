@@ -147,6 +147,16 @@ the server. `system.` collections are system ones.
 definition** gives the commands that make it again: `db.createCollection(…)` with its options and
 validator, or `db.createView(…)`, then a `createIndex(…)` for each index but `_id`'s.
 
+**Elasticsearch / OpenSearch**, where the explorer lists the cluster's indices, each with its
+number of documents (or `closed`). Indices whose name starts with `.` are system or hidden ones,
+shown only with **System** ticked.
+
+```text
+data source
+├─ logs-2026.10.31          an index, with its number of documents
+└─ orders
+```
+
 **Redis / Valkey**, where the server's numbered databases hold keys, grouped by the data
 source's **Key separator** (`:` unless you set another):
 

@@ -59,7 +59,13 @@ pub struct Request {
 /// A request's body: one JSON value, or one a line for the endpoints that take NDJSON.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Body {
-    Json { text: String, value: Value },
+    Json {
+        text: String,
+        value: Value,
+        /// Where `text` starts in the request, so a server's line and column in it can be
+        /// pointed at.
+        offset: usize,
+    },
     Lines(Vec<(String, Value)>),
 }
 
@@ -253,9 +259,11 @@ fn body(
             at..(at + 1).min(text.len()),
         )
     })?;
+    let leading = source.len() - source.trim_start().len();
     Ok(Some(Body::Json {
         text: source.trim().to_owned(),
         value,
+        offset: start + leading,
     }))
 }
 
