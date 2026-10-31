@@ -13,6 +13,7 @@ the New data source menu and in the data source dialog.
 | `clickhouse.svg` | ClickHouse (its yellow is darkened to an amber on the light theme) | `#FFCC01` |
 | `redis.svg` | Redis (also shown for Valkey and Dragonfly, which the same driver serves; its red is darkened on the light theme) | `#FF4438` |
 | `mongodb.svg` | MongoDB (its green is darkened a little on the light theme) | `#47A248` |
+| `elasticsearch.svg` | Elasticsearch (also shown for OpenSearch, which the same driver serves; its teal is lightened on the dark theme) | `#005571` |
 
 ## Source and licence
 

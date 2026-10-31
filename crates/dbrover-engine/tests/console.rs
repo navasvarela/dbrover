@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 use common::{
     TestEngine, clickhouse_test_server, mongo_test_server, mysql_test_servers,
-    postgres_test_server, redis_test_servers, sqlite_data_source, sqlite_database,
-    sqlserver_test_server,
+    postgres_test_server, redis_test_servers, search_test_servers, sqlite_data_source,
+    sqlite_database, sqlserver_test_server,
 };
 use dbrover_core::{
     ConnectionConfig, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase, Identifier,
@@ -1155,6 +1155,79 @@ fn runs_a_mongodb_find_straight_to_a_file() {
     let lines: Vec<&str> = written.lines().collect();
     assert_eq!(lines.len(), 1_200);
     assert_eq!(lines[700], r#"{"n":{"$numberInt":"700"}}"#);
+}
+
+/// An Elasticsearch or OpenSearch console sends requests as typed: a search's hits reach the
+/// console as documents, `_index`, `_id` and `_score` first, and a `_sql` statement as rows.
+/// Needs `DBROVER_TEST_ELASTICSEARCH_URL` or `DBROVER_TEST_OPENSEARCH_URL`; skipped without.
+#[test]
+fn runs_search_requests_and_shows_hits_as_documents() {
+    for (name, config, password) in search_test_servers() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+        engine.expect_started(vec![]);
+        let data_source = DataSource {
+            id: DataSourceId::generate(),
+            name: "search".to_owned(),
+            color: None,
+            safety: dbrover_core::SafetyLevel::Normal,
+            project: None,
+            mcp_login: None,
+            config: ConnectionConfig::Elasticsearch(config),
+        };
+        let id = data_source.id;
+        engine.send(Command::SaveDataSource {
+            data_source,
+            password,
+            ssh_secret: PasswordUpdate::Keep,
+        });
+        assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
+
+        execute(
+            &engine,
+            id,
+            1,
+            &[
+                "DELETE /dbrover_engine_console?ignore_unavailable=true",
+                "PUT /dbrover_engine_console/_doc/1?refresh=true\n{ \"address\": { \"city\": \"Madrid\" } }",
+                "GET /dbrover_engine_console/_search",
+            ],
+        );
+        let (shape, rows) = loop {
+            match next_run_event(&mut engine) {
+                Event::StatementStarted {
+                    statement: 2,
+                    shape,
+                    ..
+                } => {
+                    let Event::RowsFetched { rows, .. } = next_run_event(&mut engine) else {
+                        panic!("{name}: expected the hits");
+                    };
+                    break (shape, rows);
+                }
+                Event::StatementFinished {
+                    statement,
+                    result: Err(error),
+                    ..
+                } if statement > 0 => panic!("{name}: {}", error.message),
+                _ => {}
+            }
+        };
+        assert_eq!(
+            shape,
+            dbrover_core::ResultShape::Documents,
+            "{name}: {rows:?}"
+        );
+        assert_eq!(
+            rows,
+            [[Some(
+                r#"{"_index":"dbrover_engine_console","_id":"1","_score":1.0,"address":{"city":"Madrid"}}"#
+                    .to_owned()
+            )]],
+            "{name}"
+        );
+        finish_run(&mut engine, 1);
+    }
 }
 
 /// Grid edits on DuckDB: standard quoting, and, since DuckDB has no savepoints, a refusal

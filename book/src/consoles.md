@@ -315,6 +315,59 @@ need a replica set and a session, which DbRover doesn't open, so each command co
 and there is no transaction mode. **Cancel** finds the command on the server by a comment
 DbRover tags it with and stops it with `killOp`, so a slow `find` or aggregation ends at once.
 
+### Elasticsearch and OpenSearch requests
+
+An Elasticsearch or OpenSearch console runs requests as Kibana's Dev Tools and OpenSearch
+Dashboards write them: a line with the method and the path, then, when the request has one, its
+body.
+
+```text
+GET /orders/_search
+{
+  "query": { "match": { "status": "open" } },
+  "sort": [{ "created": "desc" }]
+}
+
+POST /orders/_doc?refresh=true
+{ "status": "open", "total": 12.50 }
+
+# A line that starts with # or // is a comment.
+GET /_cat/indices?s=index
+```
+
+A request starts at a line that starts with a method (`GET`, `POST`, `PUT`, `DELETE` or
+`HEAD`), so its body may take as many lines as it needs, and the leading `/` of the path may be
+left out. The body is JSON, and for `_bulk` and `_msearch` one JSON value a line. DbRover reads
+the body to know what the request does, and sends it as you typed it, so numbers keep every
+digit. Kibana's triple-quoted strings (`"""…"""`) aren't read: write the string in JSON, with
+`\n` for its line breaks. Completion offers the methods, the common endpoints, each with how it
+is called, and the query's words (`match_all`, `bool`, `date_histogram`), inside the key you are
+typing too.
+
+What each answer shows:
+
+- **A search's hits** are documents: `_index`, `_id` and `_score` first, then the fields of the
+  hit's `_source`, browsed as columns and with **Tree** and **JSON**. A search without a `size`
+  reads every hit, 500 at a time as you scroll, as a `SELECT` without `LIMIT` does; one with a
+  `size` reads at most that many. This differs from Kibana, which shows the first ten hits
+  unless told otherwise. DbRover pages through a point in time with `search_after`, so the hits
+  stay in order and none is repeated or skipped while you scroll.
+- **A search for its aggregations**, or one with `from`, `scroll`, `collapse` or `profile`, runs
+  as typed, and its answer is one document: pick **Tree** to browse the aggregations.
+- **SQL**: `POST /_sql` on Elasticsearch and `POST /_plugins/_sql` (or `_plugins/_ppl`) on
+  OpenSearch answer as rows, with their columns' names and types, read past the first page with
+  the answer's cursor. Ask for another `format` (`txt`, `csv`) to see the server's own text.
+- **`_cat`** answers are documents, a line each: DbRover asks for JSON unless the request names
+  a format.
+- **Any other answer** is one document; an answer that isn't JSON shows a line a row. `HEAD`
+  answers its status alone: `200`, or `404` for what isn't there.
+
+An error shows the server's type and reason (`index_not_found_exception: no such index
+[orders]`), and the cursor goes to the place in the body the server names. Neither server has
+transactions, so each request takes effect on its own and there is no transaction mode.
+**Cancel** cancels the request's tasks on the server, found by an `X-Opaque-Id` DbRover tags
+each run's requests with, and drops the request.
+
 The toolbar shows how the last run went: **Done in 12 ms**, **Failed** or **Cancelled**. While a
 statement runs, Run, Run all and Explain are disabled.
 

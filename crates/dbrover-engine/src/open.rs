@@ -324,6 +324,9 @@ async fn connect(
         ConnectionConfig::Mongo(config) => {
             Box::new(dbrover_driver_mongodb::connect(config, password, route).await?)
         }
+        ConnectionConfig::Elasticsearch(config) => {
+            Box::new(dbrover_driver_elasticsearch::connect(config, password, route).await?)
+        }
     })
 }
 

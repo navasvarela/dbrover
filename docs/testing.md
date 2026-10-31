@@ -88,6 +88,17 @@ Each driver crate runs the suite against its own backend:
   start on Linux kernels 6.19 to 7.0.13, which GitHub's Ubuntu runners have in October 2026
   ([SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912)). Move CI back to 8 once
   the runners' kernel is 7.0.14 or later.
+- **Elasticsearch and OpenSearch**: the `elasticsearch` container (9.5, port 59200, with security
+  on and HTTPS with the `postgres-tls` certificate) and the `opensearch` container (3.9, port
+  59201, plain HTTP with its security plugin off), each a single node with a 512 MB heap,
+  skipped when `DBROVER_TEST_ELASTICSEARCH_URL` and `DBROVER_TEST_OPENSEARCH_URL` are unset.
+  Each test runs on every server that is set, in indices of its own made again first. They run
+  `check_lifecycle`, `check_connect_failure`, `walk_catalog`, `check_invalid_path` and
+  `check_cancel`, the last with a count whose script query loops a million times on each of
+  60,000 documents. `check_lost` doesn't apply: HTTP keeps no session to lose. Besides: a
+  search paged past 1,000 hits in its sort's order, a search's `size`, an aggregation as one
+  document, `_sql` and `_plugins/_sql` as rows past their first page, `_cat` as documents,
+  errors pointing into the body, TLS and an API key on Elasticsearch.
 - **SQL Server**: the `sqlserver` container (2022, port 51433), skipped when
   `DBROVER_TEST_SQLSERVER_URL` is unset. Its image is x86-64 only: native on CI's Linux runner,
   emulated (slowly, and it can crash) by Docker on an Apple-silicon Mac. The image can't

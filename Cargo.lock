@@ -1771,6 +1771,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "dbrover-driver-elasticsearch"
+version = "0.18.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "dbrover-core",
+ "dbrover-document",
+ "dbrover-language",
+ "dbrover-tls",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "rustls",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "dbrover-driver-mongodb"
 version = "0.18.0"
 dependencies = [
@@ -1872,6 +1893,7 @@ dependencies = [
  "dbrover-core",
  "dbrover-driver-clickhouse",
  "dbrover-driver-duckdb",
+ "dbrover-driver-elasticsearch",
  "dbrover-driver-mongodb",
  "dbrover-driver-mysql",
  "dbrover-driver-postgres",
