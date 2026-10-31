@@ -78,6 +78,7 @@ pub async fn connect(
         client: Arc::new(Mutex::new(client)),
         cancel: Arc::new(execution::CancelSlot::default()),
         server_info,
+        statistics_xml: false,
     })
 }
 
@@ -200,6 +201,10 @@ pub struct SqlServerConnection {
     client: Arc<Mutex<SqlClient>>,
     cancel: Arc<execution::CancelSlot>,
     server_info: ServerInfo,
+    /// Whether the session's `STATISTICS XML` is on, as the last statement that switched it
+    /// left it: each statement's reply then ends with its actual plan, which is what the
+    /// statement answers with (Explain analyse, W10).
+    statistics_xml: bool,
 }
 
 impl SqlServerConnection {
@@ -208,6 +213,26 @@ impl SqlServerConnection {
     async fn client(&self) -> Result<tokio::sync::MutexGuard<'_, SqlClient>, DriverError> {
         self.cancel.ensure_in_step()?;
         Ok(self.client.lock().await)
+    }
+
+    /// Runs a user's statement, answering with its actual plan while `STATISTICS XML` is on,
+    /// and noting a statement that switches it.
+    async fn run(
+        &mut self,
+        sql: &str,
+        values: &[Cell],
+    ) -> Result<Box<dyn ResultCursor>, DriverError> {
+        self.cancel.ensure_in_step()?;
+        let answer = if self.statistics_xml {
+            execution::Answer::ActualPlan
+        } else {
+            execution::Answer::Rows
+        };
+        let cursor = execution::execute(&self.client, &self.cancel, sql, values, answer).await?;
+        if let Some(on) = execution::statistics_xml_switch(sql) {
+            self.statistics_xml = on;
+        }
+        Ok(cursor)
     }
 }
 
@@ -230,8 +255,7 @@ impl Connection for SqlServerConnection {
     }
 
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError> {
-        self.cancel.ensure_in_step()?;
-        execution::execute(&self.client, &self.cancel, sql, &[]).await
+        self.run(sql, &[]).await
     }
 
     async fn execute_bound(
@@ -239,8 +263,7 @@ impl Connection for SqlServerConnection {
         sql: &str,
         values: &[Cell],
     ) -> Result<Box<dyn ResultCursor>, DriverError> {
-        self.cancel.ensure_in_step()?;
-        execution::execute(&self.client, &self.cancel, sql, values).await
+        self.run(sql, values).await
     }
 
     async fn describe_table(

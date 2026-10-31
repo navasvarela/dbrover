@@ -391,6 +391,8 @@ impl Dialect {
     /// `server` (`None` before it has connected):
     ///
     /// - PostgreSQL: `EXPLAIN (FORMAT JSON)`, with `ANALYZE` when analysed.
+    /// - SQL Server: no prefix; [`explain_setting`](Self::explain_setting) has it answer with
+    ///   its XML showplan, estimated or actual.
     /// - MySQL and MariaDB: `EXPLAIN FORMAT=JSON`. Analysed, `EXPLAIN ANALYZE FORMAT=JSON` on
     ///   MySQL 8.3 and later, where [`explain_setting`](Self::explain_setting) switches on the
     ///   iterator format that `EXPLAIN ANALYZE` needs, and MariaDB's `ANALYZE FORMAT=JSON`.
@@ -413,10 +415,12 @@ impl Dialect {
                 Some(MysqlFlavour::Iterators) => "EXPLAIN ANALYZE FORMAT=JSON ",
                 Some(MysqlFlavour::QueryBlocks) | None => return None,
             },
-            (Self::Sqlite | Self::SqlServer | Self::DuckDb | Self::ClickHouse, _) => return None,
+            (Self::SqlServer, _) => "",
+            (Self::Sqlite | Self::DuckDb | Self::ClickHouse, _) => return None,
         };
         let format = match self {
             Self::Mysql => PlanFormat::MysqlJson,
+            Self::SqlServer => PlanFormat::SqlServerXml,
             _ => PlanFormat::PostgresJson,
         };
         Some(PlanRequest { prefix, format })
@@ -518,7 +522,9 @@ impl Dialect {
     /// `depth` on `server`, which is how the database the engine is connected to answers:
     ///
     /// - SQL Server's `SHOWPLAN_XML`, which answers with the estimated plan as one XML document
-    ///   and must be set in a batch of its own.
+    ///   and must be set in a batch of its own, or, analysed, `STATISTICS XML`, which runs the
+    ///   statement and follows its results with its actual plan, which the driver reads in
+    ///   their place.
     /// - MySQL 8.3 and later's `explain_json_format_version = 2`, for plans as a tree of the
     ///   iterators MySQL runs, which `EXPLAIN ANALYZE FORMAT=JSON` requires. It is a session
     ///   variable, so its value is kept in a user variable and put back afterwards.
@@ -534,6 +540,10 @@ impl Dialect {
                 on: "SET SHOWPLAN_XML ON",
                 off: "SET SHOWPLAN_XML OFF",
             }),
+            (Self::SqlServer, ExplainDepth::Analysed) => Some(ExplainSetting {
+                on: "SET STATISTICS XML ON",
+                off: "SET STATISTICS XML OFF",
+            }),
             (Self::Mysql, _) if server.map(mysql_flavour) == Some(MysqlFlavour::Iterators) => {
                 Some(ExplainSetting {
                     on: "SET @dbrover_explain_json_format_version = \
@@ -543,8 +553,9 @@ impl Dialect {
                           @dbrover_explain_json_format_version",
                 })
             }
-            (Self::Postgres | Self::Sqlite | Self::Mysql | Self::DuckDb | Self::ClickHouse, _)
-            | (Self::SqlServer, ExplainDepth::Analysed) => None,
+            (Self::Postgres | Self::Sqlite | Self::Mysql | Self::DuckDb | Self::ClickHouse, _) => {
+                None
+            }
         }
     }
 
@@ -777,6 +788,13 @@ mod tests {
             for depth in [ExplainDepth::Estimated, ExplainDepth::Analysed] {
                 assert_eq!(dialect.plan_request(depth, None), None, "{dialect:?}");
             }
+        }
+        for depth in [ExplainDepth::Estimated, ExplainDepth::Analysed] {
+            let request = Dialect::SqlServer.plan_request(depth, None);
+            assert_eq!(
+                request.map(|request| (request.prefix, request.format)),
+                Some(("", PlanFormat::SqlServerXml))
+            );
         }
         // Only MySQL with iterator plans needs its format switched, for either depth.
         let switched = |server| {

@@ -119,6 +119,41 @@ enum CancelError {
     Unacknowledged(#[source] tiberius::error::Error),
 }
 
+/// The column SQL Server names the actual plan it sends under `STATISTICS XML`.
+const SHOWPLAN_COLUMN: &str = "Microsoft SQL Server 2005 XML Showplan";
+
+/// What a statement's reply is read for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Answer {
+    /// The rows of its first result; a batch's further results are read and dropped.
+    Rows,
+    /// The actual plan SQL Server sends after the statement's own results while the session's
+    /// `STATISTICS XML` is on. The statement's results are read and dropped, and the plan is
+    /// the one row of one value it answers with, as `SHOWPLAN_XML`'s estimated plan is.
+    ActualPlan,
+}
+
+/// Whether `sql` switches the session's `STATISTICS XML` on (`Some(true)`) or off. Only the
+/// statement as DbRover's Explain analyse sends it is recognised; one that switches other
+/// statistics with it is not.
+pub(crate) fn statistics_xml_switch(sql: &str) -> Option<bool> {
+    let words: Vec<String> = sql
+        .split_whitespace()
+        .map(|word| word.trim_end_matches(';').to_ascii_lowercase())
+        .filter(|word| !word.is_empty())
+        .collect();
+    match words
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        ["set", "statistics", "xml", "on"] => Some(true),
+        ["set", "statistics", "xml", "off"] => Some(false),
+        _ => None,
+    }
+}
+
 /// What the statement task reports once the server has answered: the result's columns, or,
 /// for a statement without rows, how many it changed.
 struct Started {
@@ -138,12 +173,14 @@ struct Channels {
     pages: mpsc::Sender<Result<Page, DriverError>>,
 }
 
-/// Runs `sql`, with `values` bound to its `@P1`, `@P2`, … placeholders if there are any.
+/// Runs `sql`, with `values` bound to its `@P1`, `@P2`, … placeholders if there are any, and
+/// reads its reply for `answer`.
 pub(crate) async fn execute(
     client: &Arc<Mutex<SqlClient>>,
     cancel: &Arc<CancelSlot>,
     sql: &str,
     values: &[Cell],
+    answer: Answer,
 ) -> Result<Box<dyn ResultCursor>, DriverError> {
     let client = Arc::clone(client).lock_owned().await;
     // Armed before the statement is sent, so a cancel that arrives as soon as it is running
@@ -163,6 +200,7 @@ pub(crate) async fn execute(
         Statement {
             sql: sql.to_owned(),
             values: values.to_vec(),
+            answer,
         },
         channels,
         Arc::clone(cancel),
@@ -241,10 +279,11 @@ async fn run_statement(
     }
 }
 
-/// A statement to run, and the values for its placeholders.
+/// A statement to run, the values for its placeholders, and what its reply is read for.
 struct Statement {
     sql: String,
     values: Vec<Cell>,
+    answer: Answer,
 }
 
 impl Statement {
@@ -270,23 +309,26 @@ async fn read_statement(
     cancellation: &mut Cancellation,
 ) -> Outcome {
     let sql = statement.sql.as_str();
+    // Sending waits for the statement's first result set, or the end of its reply: a
+    // statement that takes long before it answers is cancelled here.
+    let mut stream =
+        match until_cancelled(statement.send(client), GRACE_BEFORE_ROWS, cancellation).await {
+            Next::Cancelled => return Outcome::Cancelled(Report::Started(channels.started)),
+            Next::Done(Ok(stream)) => stream,
+            Next::Done(Err(error)) => {
+                let _ = channels.started.send(Err(statement_error(error, sql)));
+                return Outcome::Ended(Ok(()));
+            }
+        };
+    if statement.answer == Answer::ActualPlan {
+        return read_actual_plan(stream, sql, channels, cancellation).await;
+    }
     let Channels {
         started,
         demand,
         pages,
     } = channels;
     let channels = PageChannels { demand, pages };
-    // Sending waits for the statement's first result set, or the end of its reply: a
-    // statement that takes long before it answers is cancelled here.
-    let mut stream =
-        match until_cancelled(statement.send(client), GRACE_BEFORE_ROWS, cancellation).await {
-            Next::Cancelled => return Outcome::Cancelled(Report::Started(started)),
-            Next::Done(Ok(stream)) => stream,
-            Next::Done(Err(error)) => {
-                let _ = started.send(Err(statement_error(error, sql)));
-                return Outcome::Ended(Ok(()));
-            }
-        };
     let columns = match until_cancelled(stream.columns(), GRACE_BEFORE_ROWS, cancellation).await {
         Next::Cancelled => return Outcome::Cancelled(Report::Started(started)),
         Next::Done(Err(error)) => {
@@ -326,6 +368,69 @@ async fn read_statement(
         return ended;
     }
     discard_rest(&mut stream, sql, cancellation).await
+}
+
+/// Reads a statement's whole reply under `STATISTICS XML`, keeping the first actual plan in
+/// it, and answers with that plan as one row, or with no rows if there was none (a `SET`).
+async fn read_actual_plan(
+    mut stream: QueryStream<'_>,
+    sql: &str,
+    channels: Channels,
+    cancellation: &mut Cancellation,
+) -> Outcome {
+    let Channels {
+        started,
+        mut demand,
+        pages,
+    } = channels;
+    let mut plan: Option<(Vec<ColumnInfo>, Row)> = None;
+    let mut plan_columns: Option<Vec<ColumnInfo>> = None;
+    loop {
+        match until_cancelled(stream.try_next(), GRACE_WITHIN_ROWS, cancellation).await {
+            Next::Cancelled => return Outcome::Cancelled(Report::Started(started)),
+            Next::Done(Ok(Some(QueryItem::Metadata(metadata)))) => {
+                let is_plan = metadata
+                    .columns()
+                    .first()
+                    .is_some_and(|column| column.name() == SHOWPLAN_COLUMN);
+                plan_columns = (is_plan && plan.is_none())
+                    .then(|| metadata.columns().iter().map(values::column_info).collect());
+            }
+            Next::Done(Ok(Some(QueryItem::Row(row)))) => {
+                if let Some(columns) = plan_columns.take() {
+                    plan = Some((columns, values::cells(row)));
+                }
+            }
+            Next::Done(Ok(None)) => break,
+            Next::Done(Err(error)) => {
+                let _ = started.send(Err(statement_error(error, sql)));
+                return Outcome::Ended(Ok(()));
+            }
+        }
+    }
+    drop(stream);
+    let Some((columns, row)) = plan else {
+        let _ = started.send(Ok(Started {
+            columns: Vec::new(),
+            rows_changed: None,
+        }));
+        return Outcome::Ended(Ok(()));
+    };
+    let cursor_waits = started
+        .send(Ok(Started {
+            columns,
+            rows_changed: None,
+        }))
+        .is_ok();
+    if cursor_waits && demand.recv().await.is_some() {
+        let _ = pages
+            .send(Ok(Page {
+                rows: vec![row],
+                exhausted: true,
+            }))
+            .await;
+    }
+    Outcome::Ended(Ok(()))
 }
 
 /// The cursor's half of [`Channels`], once the statement has started.
@@ -549,5 +654,19 @@ mod tests {
             slot.ensure_in_step(),
             Err(DriverError::Connection(_))
         ));
+    }
+
+    #[test]
+    fn recognises_the_statements_that_switch_statistics_xml() {
+        let cases = [
+            ("SET STATISTICS XML ON", Some(true)),
+            ("set  statistics xml off;", Some(false)),
+            ("SET STATISTICS XML, IO ON", None),
+            ("SET SHOWPLAN_XML ON", None),
+            ("SELECT 'SET STATISTICS XML ON'", None),
+        ];
+        for (sql, expected) in cases {
+            assert_eq!(statistics_xml_switch(sql), expected, "{sql}");
+        }
     }
 }

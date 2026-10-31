@@ -8,7 +8,7 @@ mod common;
 
 use std::sync::Arc;
 
-use common::{TestEngine, mysql_test_servers, postgres_test_server};
+use common::{TestEngine, mysql_test_servers, postgres_test_server, sqlserver_test_server};
 use dbrover_core::{ConnectionConfig, DataSource, DataSourceId, Password, ServerInfo};
 use dbrover_engine::{
     Command, ConsoleId, Event, PasswordUpdate, RunId, RunOrigin, RunPurpose, SessionState,
@@ -227,4 +227,51 @@ fn explains_on_mysql_and_mariadb_and_puts_the_format_back() {
             assert_eq!(format, Some("1".to_owned()), "{server}");
         }
     }
+}
+
+/// SQL Server: the estimated plan through `SHOWPLAN_XML`, the actual one through `STATISTICS
+/// XML`, which the driver reads in place of the statement's rows; afterwards statements answer
+/// with their rows again.
+#[test]
+fn explains_on_sqlserver_estimated_and_actual() {
+    let Some((config, password)) = sqlserver_test_server() else {
+        return;
+    };
+    let mut console = Console::connect(
+        ConnectionConfig::SqlServer(config),
+        password,
+        Dialect::SqlServer,
+    );
+    let table = format!("w10_engine_{}", std::process::id());
+    console.run(&format!("DROP TABLE IF EXISTS dbo.{table}"));
+    console.run(&format!(
+        "CREATE TABLE dbo.{table} (id int PRIMARY KEY, total decimal(10, 2))"
+    ));
+    console.run(&format!(
+        "INSERT INTO dbo.{table} VALUES (1, 2.50), (2, 7.25), (3, 9.00)"
+    ));
+    let query = format!("SELECT SUM(total) FROM dbo.{table} WHERE total > 5");
+
+    let estimated = console.plan(&query, ExplainDepth::Estimated).unwrap();
+    let actual = console.plan(&query, ExplainDepth::Analysed).unwrap();
+    let after = console.first_value(&query, RunPurpose::Run).unwrap();
+    console.run(&format!("DROP TABLE dbo.{table}"));
+
+    assert!(!estimated.is_analysed());
+    assert!(
+        titles(&estimated)
+            .iter()
+            .any(|title| title.contains(&format!("[{table}]"))),
+        "{:?}",
+        titles(&estimated)
+    );
+    assert!(actual.is_analysed());
+    let scan = actual
+        .outline()
+        .iter()
+        .find(|line| line.step.target.is_some())
+        .and_then(|line| line.step.actual)
+        .unwrap();
+    assert_eq!(scan.loops, 1.0);
+    assert_eq!(after, Some("16.25".to_owned()));
 }

@@ -128,6 +128,9 @@ rfd = "0.17.2"
 # tests add the client to drive it.
 rmcp = { version = "3.7.0", default-features = false, features = ["macros", "server", "transport-io"] }
 rusqlite = { version = "0.40.2", features = ["bundled", "column_decltype"] }
+# Reads SQL Server's XML showplans (dbrover-plan): the version resvg already builds for the
+# database logos, so nothing new is compiled.
+roxmltree = "0.20.0"
 # Writes `.xlsx` exports (dbrover-export), a row at a time in constant memory, which keeps
 # each sheet's rows in a temporary file rather than in memory. 0.100.0 rather than the newer
 # 0.101 and 0.102, released in the two weeks before W7d, to let a release settle; it is the
