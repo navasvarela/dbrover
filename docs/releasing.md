@@ -14,8 +14,10 @@ updates on Windows), v0.14.0 (Help › Report a problem… and Ask a question…
 (exports in every common format, Copy as, Run to file), v0.16.0 (passwords from a command,
 SQL Server and ClickHouse over MCP through an MCP login, an explorer that pages through large
 schemas), v0.17.0 (Redis, Valkey and Dragonfly, JSON documents as a tree and flattened into
-columns), v0.18.0 (MongoDB, with the shell's syntax in the console) and v0.19.0 (Settings as a
-searchable tab, a restyled export dialog, the Visual C++ runtime in the Windows installer). R3's update notice is built, ahead of R2 (see [R3](#r3--updates)).
+columns), v0.18.0 (MongoDB, with the shell's syntax in the console), v0.19.0 (Settings as a
+searchable tab, a restyled export dialog, the Visual C++ runtime in the Windows installer) and
+v0.19.1 (a Direct3D fallback on Windows without OpenGL 2, and an error message when DbRover
+can't start). R3's update notice is built, ahead of R2 (see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
 Today the only way to run DbRover is to install Rust and build it from source (see the manual's
