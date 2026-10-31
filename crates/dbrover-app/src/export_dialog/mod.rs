@@ -476,8 +476,9 @@ fn format_tile(
     width: f32,
 ) -> Response {
     let palette = Palette::for_visuals(ui.visuals());
+    // The selected text's colour: the system's accent on a Mac.
     let icon_color = if selected {
-        palette.primary
+        ui.visuals().selection.stroke.color
     } else {
         palette.text_weak
     };
