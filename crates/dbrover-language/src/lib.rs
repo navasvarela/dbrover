@@ -13,6 +13,7 @@
 
 pub mod mongo;
 pub mod redis;
+pub mod search;
 #[cfg(any(test, feature = "test-language"))]
 mod test_language;
 
@@ -52,6 +53,8 @@ pub enum QueryLanguage {
     Redis,
     /// A subset of the MongoDB shell's syntax, read by DbRover itself.
     Mongo,
+    /// Requests to Elasticsearch's and OpenSearch's REST APIs, as Kibana's Dev Tools write them.
+    Search,
     /// A language of one command per line, built only for tests: it has no dialect, so it runs
     /// through the paths a non-SQL engine will take.
     #[cfg(any(test, feature = "test-language"))]
@@ -65,6 +68,7 @@ impl QueryLanguage {
             Self::Sql(dialect) => dialect.display_name(),
             Self::Redis => "Redis",
             Self::Mongo => "MongoDB",
+            Self::Search => "Elasticsearch",
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => "the test language",
         }
@@ -74,7 +78,7 @@ impl QueryLanguage {
     pub fn dialect(self) -> Option<Dialect> {
         match self {
             Self::Sql(dialect) => Some(dialect),
-            Self::Redis | Self::Mongo => None,
+            Self::Redis | Self::Mongo | Self::Search => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
         }
@@ -86,6 +90,7 @@ impl QueryLanguage {
         match self {
             Self::Sql(dialect) => Some(EditsRun::Transaction(dialect)),
             Self::Redis | Self::Mongo => Some(EditsRun::OneByOne),
+            Self::Search => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
         }
@@ -96,7 +101,7 @@ impl QueryLanguage {
     pub fn key_view(self, command: &str) -> Option<redis::KeyView> {
         match self {
             Self::Redis => redis::KeyView::of(command),
-            Self::Sql(_) | Self::Mongo => None,
+            Self::Sql(_) | Self::Mongo | Self::Search => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
         }
@@ -130,7 +135,7 @@ impl QueryLanguage {
         match self {
             Self::Sql(dialect) => Some(ExplainStyle::Prefix(dialect)),
             Self::Mongo => Some(ExplainStyle::MongoShell),
-            Self::Redis => None,
+            Self::Redis | Self::Search => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
         }
@@ -143,7 +148,7 @@ impl QueryLanguage {
         match self {
             Self::Sql(_) => Some(ResultShape::Rows),
             Self::Mongo => mongo::returns_documents(command).then_some(ResultShape::Documents),
-            Self::Redis => None,
+            Self::Redis | Self::Search => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
         }
@@ -155,7 +160,7 @@ impl QueryLanguage {
     pub fn collection_view(self, command: &str) -> Option<mongo::CollectionView> {
         match self {
             Self::Mongo => mongo::CollectionView::of(command),
-            Self::Sql(_) | Self::Redis => None,
+            Self::Sql(_) | Self::Redis | Self::Search => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
         }
@@ -177,6 +182,7 @@ impl QueryLanguage {
             Self::Sql(dialect) => dbrover_sql::split_statements(script, dialect),
             Self::Redis => redis::split(script),
             Self::Mongo => mongo::split(script),
+            Self::Search => search::split(script),
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => test_language::split(script),
         }
@@ -189,18 +195,21 @@ impl QueryLanguage {
             Self::Sql(dialect) => dbrover_sql::tokenize(text, dialect),
             Self::Redis => redis::tokenize(text),
             Self::Mongo => mongo::tokenize(text),
+            Self::Search => search::tokenize(text),
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => test_language::tokenize(text),
         }
     }
 
     /// Whether `word`, a [`TokenKind::Word`], is highlighted as one of the language's own
-    /// words: ignoring case, except in MongoDB's case-sensitive shell.
+    /// words: ignoring case, except in MongoDB's case-sensitive shell and a search request's
+    /// endpoints.
     pub fn is_keyword(self, word: &str) -> bool {
         match self {
             Self::Sql(_) => dbrover_sql::is_keyword(word),
             Self::Redis => redis::is_command(word),
             Self::Mongo => mongo::is_keyword(word),
+            Self::Search => search::is_keyword(word),
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => test_language::is_keyword(word),
         }
@@ -213,24 +222,28 @@ impl QueryLanguage {
             Self::Sql(_) => dbrover_sql::keywords(),
             Self::Redis => redis::completion_words(),
             Self::Mongo => mongo::completion_words(),
+            Self::Search => search::completion_words(),
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => test_language::KEYWORDS,
         }
     }
 
     /// Whether completion inserts the language's words as listed, whatever the case typed:
-    /// MongoDB's methods and operators are case-sensitive (`insertOne`), while SQL's keywords
-    /// and Redis's commands follow the case being typed.
+    /// MongoDB's methods and operators are case-sensitive (`insertOne`), and so are a search
+    /// request's endpoints and keys (`_search`, `match_all`), while SQL's keywords and Redis's
+    /// commands follow the case being typed.
     pub fn completion_keeps_case(self) -> bool {
-        matches!(self, Self::Mongo)
+        matches!(self, Self::Mongo | Self::Search)
     }
 
     /// What completion shows beside `word`, one of [`Self::completion_words`]: the arguments
-    /// a Redis command or a MongoDB method takes. `None` where the language has nothing to add.
+    /// a Redis command or a MongoDB method takes, or how a search endpoint is called. `None`
+    /// where the language has nothing to add.
     pub fn completion_detail(self, word: &str) -> Option<&'static str> {
         match self {
             Self::Redis => redis::syntax(word),
             Self::Mongo => mongo::syntax(word),
+            Self::Search => search::syntax(word),
             Self::Sql(_) => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
@@ -247,6 +260,7 @@ impl QueryLanguage {
             }
             Self::Redis => redis::hazard(command),
             Self::Mongo => mongo::hazard(command),
+            Self::Search => search::hazard(command),
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => test_language::hazard(command),
         }
@@ -277,6 +291,10 @@ impl QueryLanguage {
                 schemas: NamedSchemas::Unknown,
             }),
             Self::Mongo => mongo::classify(command).map(|kind| Analysis {
+                kind,
+                schemas: NamedSchemas::Unknown,
+            }),
+            Self::Search => search::classify(command).map(|kind| Analysis {
                 kind,
                 schemas: NamedSchemas::Unknown,
             }),
