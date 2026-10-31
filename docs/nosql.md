@@ -967,7 +967,7 @@ were. From N3·3 on, each runs against both servers in CI (see N3·3).
     only SQL to be validated: its checker of problems is written around SQL's;
   - every search returns documents for Run to file and **All documents**, a search for its
     aggregations among them, whose one document is the whole answer.
-- **N3·6 — Editing:** a `_source` field changed in the grid becomes
+- **N3·6 — Editing** (built): a `_source` field changed in the grid becomes
   `POST /<index>/_update/<id>?refresh=true` with that field in a partial document, its value
   written with the JSON type the old one had; **Add row** indexes a new document
   (`POST /<index>/_doc?refresh=true`), and **Delete rows** deletes one
@@ -975,7 +975,23 @@ were. From N3·3 on, each runs against both servers in CI (see N3·3).
   time: checked, logged and recorded in the history. Each hit's own `_index` is used, so the
   hits of an alias or a pattern are edited too. Tests: a field of each JSON type edited and
   read back, an expanded field edited by its path, a document added and deleted, and
-  kittests of the console's edits.
+  kittests of the console's edits. How it came out:
+  - what the grid's edits of documents need from a language is one type in
+    `dbrover-language`, `DocumentView`: MongoDB's `CollectionView` or a search's `IndexView`,
+    each naming a document's key columns and writing the command for a deletion, a changed
+    field and an added document, with its undo. The app's edits of documents moved there from
+    their MongoDB-only form, unchanged for MongoDB;
+  - which searches show their hits as documents is decided once, in `dbrover-language`
+    (`search::pages_hits`), for the driver's paging and the grid's edits alike;
+  - an undo is written for each change: the old value as a partial document; a field the
+    document didn't have removed by a script, its names passed as parameters; a deleted hit
+    put back whole, unless its document holds one of a hit's own keys (`highlight`, `fields`),
+    which can't be told from its source's;
+  - a hit indexed with its own routing carries it on every request; an id is percent-encoded
+    in the path, so one holding `/` or `?` stays one part;
+  - **Add row** indexes into the search's one index or alias, or into the `_index` typed in;
+  - a partial update has Elasticsearch write the source again, so a number reads back as the
+    server writes it (`2.5` for `2.50`).
 - **N3·7 — Safety and MCP:** the read-only level's dialog suggests a user or API key with
   only the `read` and `view_index_metadata` privileges; the MCP server serves the data
   source only through its MCP login, its `query` tool takes one request, and `list_objects`
