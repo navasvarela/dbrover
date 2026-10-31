@@ -13,14 +13,14 @@ use std::time::Duration;
 use std::str::FromStr;
 
 use dbrover_core::{
-    ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind, MongoConfig,
-    MysqlConfig, Password, PostgresConfig, RedisConfig, SafetyLevel, ServerConfig, SqlServerConfig,
-    SqliteConfig, SshConfig, SshLogin, TlsMode,
+    ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind, ElasticsearchAuth,
+    ElasticsearchConfig, MongoConfig, MysqlConfig, Password, PostgresConfig, RedisConfig,
+    SafetyLevel, ServerConfig, SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode,
 };
 use dbrover_engine::{
     Command, EngineConfig, EngineHandle, Event, InstallError, InstallSupport, InstalledUpdate,
-    ProcessRunner, Release, ReleaseError, ReleaseFeed, Repaint, Restart, SessionState,
-    UpdateInstaller,
+    PasswordUpdate, ProcessRunner, Release, ReleaseError, ReleaseFeed, Repaint, Restart,
+    SessionState, UpdateInstaller,
 };
 use dbrover_language::QueryLanguage;
 use dbrover_sql::Dialect;
@@ -459,6 +459,53 @@ pub fn mongo_test_server(database: &str) -> Option<(MongoConfig, Password)> {
         connection_string: None,
     };
     Some((config, password))
+}
+
+/// The search test servers, from `DBROVER_TEST_ELASTICSEARCH_URL` and
+/// `DBROVER_TEST_OPENSEARCH_URL` (`http[s]://[user:password@]host:port`), each with its name. An
+/// HTTPS server's certificate is checked against the test authority.
+pub fn search_test_servers() -> Vec<(&'static str, ElasticsearchConfig, PasswordUpdate)> {
+    let mut servers = Vec::new();
+    for name in [
+        "DBROVER_TEST_ELASTICSEARCH_URL",
+        "DBROVER_TEST_OPENSEARCH_URL",
+    ] {
+        let Ok(url) = std::env::var(name) else {
+            eprintln!("skipping: {name} is not set");
+            continue;
+        };
+        let (tls, rest) = match url.split_once("://") {
+            Some(("https", rest)) => (
+                TlsMode::VerifyFull {
+                    ca_file: Some(
+                        Path::new(env!("CARGO_MANIFEST_DIR"))
+                            .join("../../docker/postgres-tls/ca.crt"),
+                    ),
+                },
+                rest,
+            ),
+            _ => (TlsMode::Disable, url.split_once("://").expect("a URL").1),
+        };
+        let (credentials, address) = rest.rsplit_once('@').unwrap_or(("", rest));
+        let (user, password) = credentials.split_once(':').unwrap_or((credentials, ""));
+        let (host, port) = address.rsplit_once(':').expect("host:port");
+        let config = ElasticsearchConfig {
+            server: ServerConfig {
+                host: host.to_owned(),
+                port: u16::from_str(port).expect("numeric port").into(),
+                database: String::new(),
+                user: user.to_owned(),
+                tls,
+                ssh: None,
+                password_command: None,
+            },
+            auth: ElasticsearchAuth::Password,
+        };
+        // A node without security takes an empty password, saved as a user would save one
+        // in the dialog, so the engine doesn't ask for it.
+        servers.push((name, config, PasswordUpdate::Set(Password::new(password))));
+    }
+    servers
 }
 
 /// The `ssh` compose service and the PostgreSQL service as it reaches it, from

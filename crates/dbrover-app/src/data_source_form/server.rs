@@ -29,6 +29,9 @@ pub enum DatabaseField {
     Name,
     /// One of Redis's numbered databases.
     Number,
+    /// None: an Elasticsearch cluster's indices belong to no database. The form has no
+    /// Database row, and the setting is left empty.
+    Absent,
 }
 
 impl DatabaseField {
@@ -36,10 +39,14 @@ impl DatabaseField {
         match self {
             Self::Name => "Database",
             Self::Number => "Database number",
+            Self::Absent => "",
         }
     }
 
     fn parse(self, text: &str) -> Result<String, FormError> {
+        if self == Self::Absent {
+            return Ok(String::new());
+        }
         let database = required(text, FormError::DatabaseMissing)?;
         match self {
             Self::Name => Ok(database),
@@ -47,6 +54,7 @@ impl DatabaseField {
                 Ok(database)
             }
             Self::Number => Err(FormError::InvalidDatabaseNumber),
+            Self::Absent => Ok(String::new()),
         }
     }
 }

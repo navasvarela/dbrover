@@ -204,6 +204,8 @@ pub enum ConnectionConfig {
     Redis(RedisConfig),
     #[serde(rename = "mongodb")]
     Mongo(MongoConfig),
+    /// Elasticsearch and OpenSearch: one driver serves both.
+    Elasticsearch(ElasticsearchConfig),
 }
 
 impl ConnectionConfig {
@@ -224,6 +226,7 @@ impl ConnectionConfig {
             Self::ClickHouse(config) => Some(&config.server),
             Self::Redis(config) => Some(&config.server),
             Self::Mongo(config) => Some(&config.server),
+            Self::Elasticsearch(config) => Some(&config.server),
             Self::Sqlite(_) | Self::DuckDb(_) => None,
         }
     }
@@ -236,6 +239,7 @@ impl ConnectionConfig {
             Self::ClickHouse(config) => Some(&mut config.server),
             Self::Redis(config) => Some(&mut config.server),
             Self::Mongo(config) => Some(&mut config.server),
+            Self::Elasticsearch(config) => Some(&mut config.server),
             Self::Sqlite(_) | Self::DuckDb(_) => None,
         }
     }
@@ -250,13 +254,14 @@ impl ConnectionConfig {
             Self::ClickHouse(_) => DriverKind::ClickHouse,
             Self::Redis(_) => DriverKind::Redis,
             Self::Mongo(_) => DriverKind::Mongo,
+            Self::Elasticsearch(_) => DriverKind::Elasticsearch,
         }
     }
 
     /// The database a connection opens, on engines whose catalog has databases above its
     /// schemas; the explorer lists that database's schemas. MySQL's and ClickHouse's databases
-    /// are their schemas, so they have no such level, Redis's numbered databases hold keys, and
-    /// MongoDB's hold collections.
+    /// are their schemas, so they have no such level, Redis's numbered databases hold keys,
+    /// MongoDB's hold collections, and Elasticsearch has none.
     pub fn database(&self) -> Option<&str> {
         match self {
             Self::Postgres(config) => Some(&config.server.database),
@@ -266,7 +271,8 @@ impl ConnectionConfig {
             | Self::Mysql(_)
             | Self::ClickHouse(_)
             | Self::Redis(_)
-            | Self::Mongo(_) => None,
+            | Self::Mongo(_)
+            | Self::Elasticsearch(_) => None,
         }
     }
 
@@ -287,6 +293,8 @@ impl ConnectionConfig {
             Self::Redis(config) => &config.server.database,
             // The database a console's commands run in until `use` changes it.
             Self::Mongo(config) => &config.server.database,
+            // Empty: indices belong to no database.
+            Self::Elasticsearch(config) => &config.server.database,
         }
     }
 
@@ -328,6 +336,10 @@ impl ConnectionConfig {
                     })
                     .transpose()?,
             }),
+            Self::Elasticsearch(config) => Self::Elasticsearch(ElasticsearchConfig {
+                server: config.server.resolve(variables)?,
+                auth: config.auth,
+            }),
             Self::Sqlite(config) => Self::Sqlite(SqliteConfig {
                 path: expand_path(&config.path, variables)
                     .map_err(PlaceholderError::in_setting(Setting::File))?,
@@ -357,6 +369,8 @@ impl ConnectionConfig {
             // `db0@localhost`, as the explorer labels a numbered database.
             Self::Redis(config) => format!("db{}", config.server.default_name()),
             Self::Mongo(config) => config.server.default_name(),
+            // The host alone: a cluster has no database to name.
+            Self::Elasticsearch(config) => config.server.host.clone(),
             Self::Sqlite(config) => file_name(&config.path),
             Self::DuckDb(config) => match &config.database {
                 DuckDbDatabase::File { path, .. } => file_name(path),
@@ -376,7 +390,8 @@ impl DriverKind {
             | Self::SqlServer
             | Self::ClickHouse
             | Self::Redis
-            | Self::Mongo => true,
+            | Self::Mongo
+            | Self::Elasticsearch => true,
             Self::Sqlite | Self::DuckDb => false,
         }
     }
@@ -395,6 +410,7 @@ impl fmt::Display for ConnectionConfig {
                 Some(_) => write!(f, "{} (connection string)", config.server.host),
                 None => config.server.fmt(f),
             },
+            Self::Elasticsearch(config) => config.server.fmt(f),
             Self::Sqlite(config) if config.read_only => {
                 write!(f, "{} (read-only)", config.path.display())
             }
@@ -786,6 +802,41 @@ impl MongoConfig {
     pub const DEFAULT_AUTH_DATABASE: &str = "admin";
 }
 
+/// An Elasticsearch or OpenSearch cluster, reached through one of its nodes. Its `database` is
+/// empty, since indices belong to no database, and its user is used only when it signs in with
+/// a password.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ElasticsearchConfig {
+    #[serde(flatten)]
+    pub server: ServerConfig,
+    /// Written only for an API key.
+    #[serde(default, skip_serializing_if = "ElasticsearchAuth::is_password")]
+    pub auth: ElasticsearchAuth,
+}
+
+impl ElasticsearchConfig {
+    /// The REST API's port, plain or over TLS, as the servers configure it.
+    pub const DEFAULT_PORT: u16 = 9200;
+}
+
+/// What an Elasticsearch data source signs in with. Either way the secret is kept where a
+/// password is (the keychain, or a password command), so there is one per data source.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ElasticsearchAuth {
+    /// The server's user and its password, over HTTP basic authentication.
+    #[default]
+    Password,
+    /// An API key, in Elasticsearch's encoded form (base64 of `id:key`), in the password's place.
+    ApiKey,
+}
+
+impl ElasticsearchAuth {
+    pub fn is_password(&self) -> bool {
+        *self == Self::Password
+    }
+}
+
 /// A DuckDB database: a file, or one in memory that starts empty each time, for querying CSV,
 /// Parquet and JSON files with DuckDB's table functions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -836,10 +887,11 @@ pub enum DriverKind {
     ClickHouse,
     Redis,
     Mongo,
+    Elasticsearch,
 }
 
 impl DriverKind {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Postgres,
         Self::Sqlite,
         Self::Mysql,
@@ -848,6 +900,7 @@ impl DriverKind {
         Self::ClickHouse,
         Self::Redis,
         Self::Mongo,
+        Self::Elasticsearch,
     ];
 
     pub fn display_name(self) -> &'static str {
@@ -860,6 +913,7 @@ impl DriverKind {
             Self::ClickHouse => "ClickHouse",
             Self::Redis => "Redis / Valkey",
             Self::Mongo => "MongoDB",
+            Self::Elasticsearch => "Elasticsearch / OpenSearch",
         }
     }
 }
@@ -1004,6 +1058,49 @@ mod tests {
             file.data_source[0].config.to_string(),
             "cluster0.example.mongodb.net (connection string)"
         );
+    }
+
+    #[test]
+    fn an_elasticsearch_data_source_writes_its_api_key_choice_only_when_made() {
+        let data_source = |auth| DataSource {
+            id: DataSourceId::generate(),
+            name: "logs".to_owned(),
+            color: None,
+            safety: SafetyLevel::Normal,
+            project: None,
+            mcp_login: None,
+            config: ConnectionConfig::Elasticsearch(ElasticsearchConfig {
+                server: ServerConfig {
+                    host: "search.example.com".to_owned(),
+                    port: ElasticsearchConfig::DEFAULT_PORT.into(),
+                    database: String::new(),
+                    user: String::new(),
+                    tls: TlsMode::VerifyFull { ca_file: None },
+                    ssh: None,
+                    password_command: None,
+                },
+                auth,
+            }),
+        };
+        for (auth, written) in [
+            (ElasticsearchAuth::Password, None),
+            (ElasticsearchAuth::ApiKey, Some("auth = \"api_key\"")),
+        ] {
+            let file = File {
+                data_source: vec![data_source(auth)],
+            };
+            let text = toml::to_string(&file).unwrap();
+            assert!(text.contains("driver = \"elasticsearch\""), "{text}");
+            assert_eq!(text.contains("auth ="), written.is_some(), "{text}");
+            if let Some(written) = written {
+                assert!(text.contains(written), "{text}");
+            }
+            assert_eq!(toml::from_str::<File>(&text).unwrap(), file);
+            assert_eq!(
+                file.data_source[0].config.default_name(),
+                "search.example.com"
+            );
+        }
     }
 
     #[test]

@@ -55,7 +55,8 @@ Planned separately:
   Redis, Valkey and Dragonfly (N1) are built: the explorer, a viewer per key type, the
   console and MCP through a read-only ACL user. MongoDB (N2) is built: the shell's syntax in
   the console, collections in the explorer, documents edited in the grid, and MCP through a
-  user with the `read` role.
+  user with the `read` role. Elasticsearch and OpenSearch (N3) are being built: their data
+  source and console come first.
 
 Left out on purpose:
 

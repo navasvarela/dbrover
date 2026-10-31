@@ -142,8 +142,8 @@ pub const TEMPLATE: &str = r#"# DbRover custom actions. Uncomment and change an 
 # applies_to: node kinds (database, schema, table, view, materialized_view, function, procedure,
 #   sequence, column, index, constraint, trigger, role, …), data_source, grid.selection (once for
 #   the selected cells) or grid.row (once per selected row).
-# drivers: postgres, sqlite, mysql, sqlserver, duckdb, clickhouse, redis, mongodb; every driver when
-#   left out.
+# drivers: postgres, sqlite, mysql, sqlserver, duckdb, clickhouse, redis, mongodb, elasticsearch;
+#   every driver when left out.
 # run = false opens the SQL in a console to edit first.
 #
 # Placeholders, never pasted in as text: names are quoted, values become literals.

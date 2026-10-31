@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use dbrover_core::{
-    DataSource, DataSourceId, DriverKind, MongoConfig, SafetyLevel, ServerInfo, SourceColor,
-    expand, expand_path, has_placeholder,
+    DataSource, DataSourceId, DriverKind, ElasticsearchAuth, MongoConfig, SafetyLevel, ServerInfo,
+    SourceColor, expand, expand_path, has_placeholder,
 };
 use dbrover_engine::read_only::{self, Guard};
 use dbrover_engine::{DatabaseFile, Event, PasswordUpdate, ProcessEnvironment};
@@ -14,9 +14,9 @@ use egui::{
 };
 
 use crate::data_source_form::{
-    DataSourceForm, DriverFields, DuckDbFields, DuckDbLocation, FormError, McpLoginFields,
-    McpPasswordChange, MongoFields, MongoTarget, ServerFields, SshFields, SshLoginChoice,
-    TlsChoice,
+    DataSourceForm, DatabaseField, DriverFields, DuckDbFields, DuckDbLocation, ElasticsearchFields,
+    FormError, McpLoginFields, McpPasswordChange, MongoFields, MongoTarget, ServerFields,
+    SshFields, SshLoginChoice, TlsChoice,
 };
 use crate::file_picker::{self, FileEngine};
 use crate::icons;
@@ -184,6 +184,10 @@ impl DataSourceDialog {
                         mongo_rows(ui, fields, password_hint);
                         None
                     }
+                    DriverFields::Elasticsearch(fields) => {
+                        elasticsearch_rows(ui, fields, password_hint);
+                        None
+                    }
                     DriverFields::Sqlite(fields) => {
                         return file_rows(
                             ui,
@@ -332,25 +336,63 @@ fn server_rows(ui: &mut Ui, fields: &mut ServerFields, password_hint: &str) {
     let default_port = fields.default_port().to_string();
     setting_row(ui, "Host", &mut fields.host, defaults.host, Resolve::Text);
     setting_row(ui, "Port", &mut fields.port, &default_port, Resolve::Text);
-    setting_row(
-        ui,
-        defaults.database_field.label(),
-        &mut fields.database,
-        defaults.database,
-        Resolve::Text,
-    );
+    if defaults.database_field != DatabaseField::Absent {
+        setting_row(
+            ui,
+            defaults.database_field.label(),
+            &mut fields.database,
+            defaults.database,
+            Resolve::Text,
+        );
+    }
     setting_row(ui, "User", &mut fields.user, defaults.user, Resolve::Text);
     password_rows(ui, fields, password_hint);
     tls_rows(ui, fields);
     ssh_rows(ui, &mut fields.ssh, password_hint);
 }
 
+/// Elasticsearch's rows: the shared server rows, or, signing in with an API key, the same rows
+/// with the key in the password's place and no user.
+fn elasticsearch_rows(ui: &mut Ui, fields: &mut ElasticsearchFields, password_hint: &str) {
+    ui.label("Sign in with");
+    ui.horizontal(|ui| {
+        ui.radio_value(
+            &mut fields.auth,
+            ElasticsearchAuth::Password,
+            "User and password",
+        );
+        ui.radio_value(&mut fields.auth, ElasticsearchAuth::ApiKey, "API key");
+    });
+    ui.end_row();
+    let server = &mut fields.server;
+    match fields.auth {
+        ElasticsearchAuth::Password => server_rows(ui, server, password_hint),
+        ElasticsearchAuth::ApiKey => {
+            let defaults = server.defaults;
+            let default_port = server.default_port().to_string();
+            setting_row(ui, "Host", &mut server.host, defaults.host, Resolve::Text);
+            setting_row(ui, "Port", &mut server.port, &default_port, Resolve::Text);
+            secret_rows(ui, server, "API key", password_hint);
+            ui.label("");
+            ui.weak("The encoded key Elasticsearch gives, kept in the keychain as a password is.");
+            ui.end_row();
+            tls_rows(ui, server);
+            ssh_rows(ui, &mut server.ssh, password_hint);
+        }
+    }
+}
+
 /// The password to save in the keychain, or the command that prints one on every connection.
 fn password_rows(ui: &mut Ui, fields: &mut ServerFields, password_hint: &str) {
+    secret_rows(ui, fields, "Password", password_hint);
+}
+
+/// [`password_rows`] for a secret with another name, such as an API key.
+fn secret_rows(ui: &mut Ui, fields: &mut ServerFields, name: &str, password_hint: &str) {
     if fields.password_from_command {
         password_command_row(ui, &mut fields.password_command);
     } else {
-        let label = ui.label("Password");
+        let label = ui.label(name);
         ui.add(
             TextEdit::singleline(&mut fields.password)
                 .password(true)

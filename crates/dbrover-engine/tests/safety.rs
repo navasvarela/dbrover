@@ -8,8 +8,8 @@ mod common;
 use std::sync::Arc;
 
 use common::{
-    TestEngine, mongo_test_server, postgres_test_server, redis_test_servers, sqlite_data_source,
-    sqlite_database,
+    TestEngine, mongo_test_server, postgres_test_server, redis_test_servers, search_test_servers,
+    sqlite_data_source, sqlite_database,
 };
 use dbrover_core::{ConnectionConfig, DataSource, DataSourceId, SafetyLevel};
 use dbrover_engine::{
@@ -382,5 +382,56 @@ fn a_read_only_mongodb_data_source_refuses_delete_many() {
             command,
         );
         assert_eq!(failure, expected, "{command}");
+    }
+}
+
+/// N3's exit: a read-only Elasticsearch or OpenSearch data source refuses a
+/// `_delete_by_query` before sending it, and still searches. Needs
+/// `DBROVER_TEST_ELASTICSEARCH_URL` or `DBROVER_TEST_OPENSEARCH_URL`; skipped without.
+#[test]
+fn a_read_only_search_data_source_refuses_delete_by_query() {
+    for (name, config, password) in search_test_servers() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+        engine.expect_started(vec![]);
+        let search = DataSource {
+            id: DataSourceId::generate(),
+            name: "search".to_owned(),
+            color: None,
+            safety: SafetyLevel::Normal,
+            project: None,
+            mcp_login: None,
+            config: ConnectionConfig::Elasticsearch(config),
+        };
+        let production = read_only(&search);
+        save(&mut engine, &production, password);
+        let cases = [
+            (
+                "POST /dbrover_engine_safety/_delete_by_query\n{ \"query\": { \"match_all\": {} } }",
+                Some(refused("changes data")),
+            ),
+            (
+                "DELETE /dbrover_engine_safety",
+                Some(refused("changes the schema")),
+            ),
+            (
+                "PUT /_cluster/settings\n{ \"transient\": {} }",
+                Some(refused("administers the database")),
+            ),
+            (
+                "GET /_search\n{ \"query\": { \"match_all\": {} }, \"size\": 1 }",
+                None,
+            ),
+        ];
+        for (number, (request, expected)) in cases.into_iter().enumerate() {
+            let failure = run(
+                &mut engine,
+                READ_ONLY_CONSOLE,
+                production.id,
+                number as u64 + 1,
+                request,
+            );
+            assert_eq!(failure, expected, "{name}: {request}");
+        }
     }
 }
