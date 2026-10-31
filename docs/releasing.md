@@ -177,6 +177,10 @@ To upgrade DuckDB:
   registry and installs over it, which is what updates rely on (see
   [R4](#r4--windows-parity)).
 - **Passwords:** go to the Windows Credential Manager through the same `keyring` crate.
+- **No graphics driver:** where Windows offers only OpenGL 1.1 (virtual machines, Windows
+  Sandbox, some remote desktop sessions), DbRover draws with wgpu on Direct3D 12's software
+  renderer instead of OpenGL, and a failed start is shown in a message box. See
+  [Renderers](renderers.md).
 - **SmartScreen:** it blocks the unsigned installer's first run ("Windows protected your PC"),
   as it did on that machine, and does so again for every new release while they are unsigned;
   the manual's Install chapter shows how to get past it (**More info › Run anyway**). Updates

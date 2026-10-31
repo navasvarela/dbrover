@@ -1717,6 +1717,8 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "wgpu",
+ "winit",
 ]
 
 [[package]]
