@@ -952,12 +952,21 @@ were. From N3·3 on, each runs against both servers in CI (see N3·3).
   - completion asks a language which catalog objects its commands name
     (`QueryLanguage::named_objects`), and offers the loaded ones at the tree's top or one
     folder down, so a search console completes index names without a SQL dialect.
-- **N3·5 — Explain, validate and results to a file:** ⌥⌘E runs the search at the cursor with
+- **N3·5 — Explain, validate and results to a file** (built): ⌥⌘E runs the search at the cursor with
   `profile` set and shows the answer, the profile in it, as a tree; `validate` asks the
   server's `_validate/query` about a search's query without running it; **Run to file** and
   **All documents** write every hit of a search to JSON or JSON Lines, through a point in
   time. Tests: a profiled search, an unknown query caught before running, and a run to file
-  of more than one page.
+  of more than one page. How it came out:
+  - `"profile": true` goes at the end of the body, before its closing brace, so a position
+    the server gives in the rest of the body still points where it did; a search without a
+    body gets one. A profiled search runs as typed (N3·3), so its answer is one document,
+    browsed with **Tree**, as MongoDB's plans are;
+  - `validate` sends a search's or a count's `query` to `_validate/query` with `explain`, and
+    shows the server's error; any other request is only read. As for MongoDB, the console asks
+    only SQL to be validated: its checker of problems is written around SQL's;
+  - every search returns documents for Run to file and **All documents**, a search for its
+    aggregations among them, whose one document is the whole answer.
 - **N3·6 — Editing:** a `_source` field changed in the grid becomes
   `POST /<index>/_update/<id>?refresh=true` with that field in a partial document, its value
   written with the JSON type the old one had; **Add row** indexes a new document

@@ -121,13 +121,17 @@ impl QueryLanguage {
             (Some(ExplainStyle::Prefix(dialect)), ExplainDepth::Analysed) => {
                 dialect.plan_request(depth, server).is_some()
             }
-            (Some(ExplainStyle::MongoShell), ExplainDepth::Analysed) => false,
+            (
+                Some(ExplainStyle::MongoShell | ExplainStyle::SearchProfile),
+                ExplainDepth::Analysed,
+            ) => false,
         }
     }
 
     /// `command` made to show its plan, to `depth`, on `server`: SQL's `EXPLAIN` prefix,
-    /// asking for a plan to draw where the dialect has one, or a MongoDB `find` or `aggregate`
-    /// with `.explain("executionStats")` after it. `None` for a command, or a language, that
+    /// asking for a plan to draw where the dialect has one, a MongoDB `find` or `aggregate`
+    /// with `.explain("executionStats")` after it, or a search with `"profile": true` in its
+    /// body, which runs it and shows its profile. `None` for a command, or a language, that
     /// has no plan to show to that depth: only a drawn plan is analysed.
     pub fn explain(
         self,
@@ -156,6 +160,14 @@ impl QueryLanguage {
                 })
             }
             (ExplainStyle::MongoShell, ExplainDepth::Analysed) => None,
+            (ExplainStyle::SearchProfile, ExplainDepth::Estimated) => {
+                search::explain(command).map(|text| Explained {
+                    text,
+                    prefix_len: 0,
+                    plan: None,
+                })
+            }
+            (ExplainStyle::SearchProfile, ExplainDepth::Analysed) => None,
         }
     }
 
@@ -163,20 +175,23 @@ impl QueryLanguage {
         match self {
             Self::Sql(dialect) => Some(ExplainStyle::Prefix(dialect)),
             Self::Mongo => Some(ExplainStyle::MongoShell),
-            Self::Redis | Self::Search => None,
+            Self::Search => Some(ExplainStyle::SearchProfile),
+            Self::Redis => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
         }
     }
 
     /// What `command` returns, as Run to file must know before it runs: rows for SQL, and
-    /// documents for a MongoDB `find` or `aggregate`. `None` for a command whose result DbRover
+    /// documents for a MongoDB `find` or `aggregate` and for a search. `None` for a command
+    /// whose result DbRover
     /// doesn't write straight to a file.
     pub fn result_shape(self, command: &str) -> Option<ResultShape> {
         match self {
             Self::Sql(_) => Some(ResultShape::Rows),
             Self::Mongo => mongo::returns_documents(command).then_some(ResultShape::Documents),
-            Self::Redis | Self::Search => None,
+            Self::Search => search::returns_documents(command).then_some(ResultShape::Documents),
+            Self::Redis => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
         }
@@ -355,6 +370,8 @@ enum ExplainStyle {
     Prefix(Dialect),
     /// `.explain("executionStats")` after a `find` or `aggregate`.
     MongoShell,
+    /// `"profile": true` in a search's body.
+    SearchProfile,
 }
 
 impl From<DriverKind> for QueryLanguage {
