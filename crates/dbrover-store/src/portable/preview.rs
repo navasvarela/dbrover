@@ -445,6 +445,12 @@ fn data_source_settings(data_source: &DataSource, names: &ProjectNames) -> Setti
         ConnectionConfig::SqlServer(config) => server_settings(&config.server, &mut settings),
         ConnectionConfig::ClickHouse(config) => server_settings(&config.server, &mut settings),
         ConnectionConfig::Redis(config) => server_settings(&config.server, &mut settings),
+        ConnectionConfig::Elasticsearch(config) => {
+            server_settings(&config.server, &mut settings);
+            if config.auth == dbrover_core::ElasticsearchAuth::ApiKey {
+                settings.push(("Signs in with", "an API key".to_owned()));
+            }
+        }
         ConnectionConfig::Mongo(config) => {
             server_settings(&config.server, &mut settings);
             if !config.auth_database.is_empty() {
@@ -527,6 +533,7 @@ fn paths(config: &ConnectionConfig) -> Vec<(&'static str, &Path)> {
         ConnectionConfig::ClickHouse(config) => &config.server,
         ConnectionConfig::Redis(config) => &config.server,
         ConnectionConfig::Mongo(config) => &config.server,
+        ConnectionConfig::Elasticsearch(config) => &config.server,
     };
     let ca_file = match &server.tls {
         TlsMode::VerifyFull {

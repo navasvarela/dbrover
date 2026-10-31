@@ -51,6 +51,9 @@ pub enum NodeKind {
     /// A MongoDB collection of documents: a plain one, a view or a time-series collection, as
     /// the node's detail says.
     Collection,
+    /// What an Elasticsearch or OpenSearch search reads documents from: an index, an alias or
+    /// a data stream, by its name.
+    SearchIndex,
 }
 
 /// The type of a Redis key's value, as `TYPE` answers.
@@ -248,8 +251,11 @@ impl CatalogPath {
             NodeKind::Column | NodeKind::Constraint | NodeKind::Trigger | NodeKind::Role => {
                 Some(quote(&object.name))
             }
-            // A key's or a collection's name as a command takes it: it belongs to no schema.
-            NodeKind::Key(_) | NodeKind::Collection => Some(object.name.clone()),
+            // A key's, a collection's or an index's name as a command takes it: it belongs to
+            // no schema.
+            NodeKind::Key(_) | NodeKind::Collection | NodeKind::SearchIndex => {
+                Some(object.name.clone())
+            }
             NodeKind::Database | NodeKind::Schema | NodeKind::Folder(_) | NodeKind::KeyPrefix => {
                 None
             }

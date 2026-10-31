@@ -248,6 +248,63 @@ services:
       timeout: 10s
       retries: 30
 
+  # Elasticsearch 9 as a single node, with security on (the `elastic` superuser, password
+  # `dbrover`) and HTTPS on its one port, with the PostgreSQL test pair, so the tests cover TLS,
+  # users and API keys. Its heap is held to 512 MB: with both search servers and the rest, a CI
+  # runner's memory is shared by every service. A single node skips the bootstrap checks, so
+  # `vm.max_map_count` needn't be raised; machine learning, which wants more memory and
+  # downloads models, is off, as is the disk watermark, which would refuse writes on a full
+  # laptop disk. Paths in its settings are read inside its config directory, where the pair is
+  # mounted.
+  elasticsearch:
+    image: elasticsearch:9.5.5
+    ports:
+      - "59200:9200"
+    environment:
+      discovery.type: single-node
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+      ELASTIC_PASSWORD: dbrover
+      xpack.security.enabled: "true"
+      xpack.security.http.ssl.enabled: "true"
+      xpack.security.http.ssl.certificate: tls/server.crt
+      xpack.security.http.ssl.key: tls/server.key
+      xpack.security.http.ssl.certificate_authorities: tls/ca.crt
+      xpack.security.transport.ssl.enabled: "false"
+      xpack.ml.enabled: "false"
+      cluster.routing.allocation.disk.threshold_enabled: "false"
+    volumes:
+      - ./docker/postgres-tls:/usr/share/elasticsearch/config/tls:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          curl -sf --cacert config/tls/ca.crt -u elastic:dbrover
+          'https://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=1s'
+      interval: 2s
+      timeout: 5s
+      retries: 90
+
+  # OpenSearch 3 as a single node with its security plugin off: plain HTTP and no user, the
+  # other half of what the search driver tests (Elasticsearch has TLS and users). Heap, disk
+  # watermark and bootstrap checks as for Elasticsearch.
+  opensearch:
+    image: opensearchproject/opensearch:3.9.0
+    ports:
+      - "59201:9200"
+    environment:
+      discovery.type: single-node
+      OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+      DISABLE_SECURITY_PLUGIN: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      cluster.routing.allocation.disk.threshold_enabled: "false"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -sf 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=1s'
+      interval: 2s
+      timeout: 5s
+      retries: 90
+
   # OpenSSH on Alpine (docker/ssh), for the SSH tunnel tests: signs in `dbrover` with the test
   # keys there or its password, and forwards only to the postgres service. Built from a few
   # lines rather than pulled, so it stays a 10 MB image with fixed host and client keys.

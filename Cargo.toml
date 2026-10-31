@@ -16,6 +16,7 @@ dbrover-driver-mongodb = { path = "crates/dbrover-driver-mongodb" }
 dbrover-driver-mysql = { path = "crates/dbrover-driver-mysql" }
 dbrover-driver-clickhouse = { path = "crates/dbrover-driver-clickhouse" }
 dbrover-driver-duckdb = { path = "crates/dbrover-driver-duckdb" }
+dbrover-driver-elasticsearch = { path = "crates/dbrover-driver-elasticsearch" }
 dbrover-driver-postgres = { path = "crates/dbrover-driver-postgres" }
 dbrover-driver-redis = { path = "crates/dbrover-driver-redis" }
 dbrover-driver-sqlite = { path = "crates/dbrover-driver-sqlite" }
@@ -146,9 +147,13 @@ zip = { version = "9.1.0", default-features = false, features = ["deflate"] }
 # and `rsa` keeps RSA keys and host keys working. 0.64.1 rather than the 0.65.0 released the
 # day W3 started, to let a new release settle.
 russh = { version = "0.64.1", default-features = false, features = ["ring", "rsa"] }
-# The HTTP client ClickHouse's client runs on, with rustls for HTTPS.
+# The HTTP client ClickHouse's client runs on, with rustls for HTTPS. The Elasticsearch driver
+# uses it directly (docs/nosql.md, N3), with hyper's own types and http-body-util's bodies, all
+# at the versions ClickHouse's client already builds.
+hyper = { version = "1.12.0", default-features = false, features = ["client", "http1"] }
 hyper-rustls = { version = "0.27.7", default-features = false, features = ["http1", "tls12"] }
 hyper-util = { version = "0.1.19", features = ["client-legacy", "http1", "tokio"] }
+http-body-util = "0.1.5"
 # TLS for network connections. rustls rather than OpenSSL leaves nothing to link (see
 # docs/releasing.md), and the ring provider builds with only a C compiler, where aws-lc-rs
 # also wants CMake and NASM on Windows.

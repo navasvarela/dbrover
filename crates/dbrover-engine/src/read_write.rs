@@ -43,7 +43,8 @@ pub fn mode(driver: DriverKind) -> Option<WriteMode> {
         | DriverKind::DuckDb
         | DriverKind::ClickHouse
         | DriverKind::Redis
-        | DriverKind::Mongo => None,
+        | DriverKind::Mongo
+        | DriverKind::Elasticsearch => None,
     }
 }
 

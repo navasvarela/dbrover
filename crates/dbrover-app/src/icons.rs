@@ -120,6 +120,7 @@ pub fn node(kind: NodeKind) -> Icon {
         NodeKind::KeyPrefix => Icon::new(glyph::FOLDER_SIMPLE, Role::Warning),
         NodeKind::Key(key_type) => key(key_type),
         NodeKind::Collection => Icon::new(glyph::FILES, Role::Primary),
+        NodeKind::SearchIndex => Icon::new(glyph::MAGNIFYING_GLASS, Role::Primary),
     }
 }
 
