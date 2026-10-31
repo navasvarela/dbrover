@@ -39,7 +39,6 @@ use dbrover_engine::{
 use dbrover_export::{ExportColumn, ExportOptions, ExportSpec, RowSource};
 
 use crate::export_dialog::{ExportPreview, PREVIEW_ROWS};
-use dbrover_language::mongo::CollectionView;
 use dbrover_language::redis::{KeyView, ViewShape};
 use dbrover_language::{EditsRun, ExplainDepth, QueryLanguage, command_at};
 use dbrover_plan::PlanFormat;
@@ -319,18 +318,18 @@ fn key_editability(view: KeyView, columns: &[ColumnInfo], read_only: Option<&str
     }
 }
 
-/// Whether a result of documents can be edited in the grid: a `find`'s, on one collection.
+/// Whether a result of documents can be edited in the grid: a `find`'s on one collection, or a
+/// search's hits.
 fn documents_editability(
-    view: Option<CollectionView>,
+    language: QueryLanguage,
+    command: &str,
     columns: &[ColumnInfo],
     read_only: Option<&str>,
 ) -> Editability {
-    match (view, read_only) {
+    match (language.document_view(command), read_only) {
         (_, Some(reason)) => Editability::ReadOnly(reason.to_owned()),
         (Some(view), None) => Editability::Documents(edit::DocumentsTarget::new(view, columns)),
-        (None, None) => Editability::ReadOnly(
-            "Only the documents a find returns from one collection can be edited".to_owned(),
-        ),
+        (None, None) => Editability::ReadOnly(language.uneditable_documents().to_owned()),
     }
 }
 
@@ -686,7 +685,8 @@ impl QueryConsole {
             }
             if statement.documents.is_some() {
                 statement.edits.editability = documents_editability(
-                    language.collection_view(&statement.sql),
+                    language,
+                    &statement.sql,
                     &statement.columns,
                     read_only.as_deref(),
                 );

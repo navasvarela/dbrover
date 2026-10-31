@@ -341,3 +341,224 @@ fn explains_a_search_by_profiling_it() {
     assert!(returns_documents("GET /orders/_search"));
     assert!(!returns_documents("GET /orders/_count"));
 }
+
+mod edits {
+    use dbrover_document::{Path, Step, Value};
+
+    use crate::{DocumentView, QueryLanguage};
+
+    use super::super::typed_value;
+
+    fn view(command: &str) -> DocumentView {
+        QueryLanguage::Search
+            .document_view(command)
+            .unwrap_or_else(|| panic!("{command} has no view"))
+    }
+
+    fn hit(json: &str) -> Value {
+        Value::parse(json).unwrap()
+    }
+
+    fn path(names: &[&str]) -> Path {
+        names.iter().fold(Path::default(), |path, name| {
+            path.child(Step::Field((*name).to_owned()))
+        })
+    }
+
+    #[test]
+    fn only_a_searchs_hits_are_edited() {
+        let search = QueryLanguage::Search;
+        assert!(search.document_view("GET /orders/_search").is_some());
+        assert!(
+            search
+                .document_view("GET /orders,logs/_search?q=a")
+                .is_some()
+        );
+        for command in [
+            "GET /orders/_search\n{ \"aggs\": {} }",
+            "GET /orders/_search\n{ \"size\": 0 }",
+            "GET /orders/_count",
+            "GET /_cat/indices",
+        ] {
+            assert!(search.document_view(command).is_none(), "{command}");
+        }
+        let orders = view("GET /orders/_search");
+        assert_eq!(orders.name(), "orders");
+        assert_eq!(view("GET /_search").name(), "_all");
+        for (column, key) in [
+            ("_index", true),
+            ("_id", true),
+            ("_score", true),
+            ("total", false),
+        ] {
+            assert_eq!(orders.is_key(column), key, "{column}");
+        }
+    }
+
+    #[test]
+    fn a_changed_field_is_a_partial_document_with_its_old_type() {
+        let orders = view("GET /orders/_search");
+        let document = hit(
+            r#"{"_index":"orders-2026","_id":"a/1","_score":1.0,"total":12.50,"address":{"city":"Madrid"}}"#,
+        );
+        let (edit, label) = orders
+            .update(
+                &document,
+                &path(&["address", "city"]),
+                Some(&Value::String("Madrid".to_owned())),
+                Some("8"),
+            )
+            .unwrap();
+        assert_eq!(label, "address.city");
+        assert_eq!(
+            edit.command,
+            "POST /orders-2026/_update/a%2F1?refresh=true\n{\"doc\":{\"address\":{\"city\":\"8\"}}}"
+        );
+        assert_eq!(
+            edit.revert.as_deref(),
+            Some(
+                "POST /orders-2026/_update/a%2F1?refresh=true\n{\"doc\":{\"address\":{\"city\":\"Madrid\"}}}"
+            )
+        );
+        assert_eq!(
+            edit.key,
+            [
+                ("_index".to_owned(), "orders-2026".to_owned()),
+                ("_id".to_owned(), "a/1".to_owned())
+            ]
+        );
+        let (edit, _) = orders
+            .update(&document, &path(&["note"]), None, Some("[1, 2]"))
+            .unwrap();
+        assert!(
+            edit.command.ends_with("{\"doc\":{\"note\":[1,2]}}"),
+            "{}",
+            edit.command
+        );
+        let revert = edit.revert.unwrap();
+        assert!(
+            revert.contains("ctx._source.remove(params.last)"),
+            "{revert}"
+        );
+        let wrong = orders.update(
+            &document,
+            &path(&["total"]),
+            Some(&Value::Number("12.50".to_owned())),
+            Some("abc"),
+        );
+        assert_eq!(wrong, Err("\u{201c}abc\u{201d} isn't a number".to_owned()));
+        assert!(
+            orders
+                .update(&document, &path(&["_id"]), None, Some("2"))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_deleted_hit_can_be_put_back_with_its_routing() {
+        let orders = view("GET /orders/_search");
+        let edit = orders
+            .delete(&hit(
+                r#"{"_index":"orders","_id":"1","_score":null,"_routing":"eu","status":"open"}"#,
+            ))
+            .unwrap();
+        assert_eq!(
+            edit.command,
+            "DELETE /orders/_doc/1?refresh=true&routing=eu"
+        );
+        assert_eq!(
+            edit.revert.as_deref(),
+            Some("PUT /orders/_doc/1?refresh=true&routing=eu\n{\"status\":\"open\"}")
+        );
+        let highlighted = orders
+            .delete(&hit(
+                r#"{"_index":"orders","_id":"2","highlight":{"a":["x"]}}"#,
+            ))
+            .unwrap();
+        assert_eq!(highlighted.revert, None);
+        assert!(orders.delete(&hit(r#"{"_id":"3"}"#)).is_err());
+    }
+
+    #[test]
+    fn an_added_row_is_a_new_document_in_the_searchs_index() {
+        let orders = view("GET /orders/_search");
+        assert_eq!(
+            orders.insert(&[("status", Some("open")), ("address.city", Some("Madrid")), ("total", Some("12.50"))]),
+            Ok("POST /orders/_doc?refresh=true\n{\"status\":\"open\",\"address\":{\"city\":\"Madrid\"},\"total\":12.50}".to_owned())
+        );
+        assert_eq!(
+            orders.insert(&[("_id", Some("7")), ("n", Some("1"))]),
+            Ok("PUT /orders/_doc/7?refresh=true\n{\"n\":1}".to_owned())
+        );
+        let every = view("GET /_search");
+        assert!(every.insert(&[("n", Some("1"))]).is_err());
+        assert_eq!(
+            every.insert(&[("_index", Some("logs")), ("n", Some("1"))]),
+            Ok("POST /logs/_doc?refresh=true\n{\"n\":1}".to_owned())
+        );
+        assert!(orders.insert(&[]).is_err());
+        let edits = [
+            orders.insert(&[("n", Some("1"))]).unwrap(),
+            orders
+                .delete(&hit(r#"{"_index":"orders","_id":"1"}"#))
+                .unwrap()
+                .command,
+        ];
+        for edit in edits {
+            assert_eq!(
+                QueryLanguage::Search.classify(&edit),
+                Ok(StatementKind::Write),
+                "{edit}"
+            );
+        }
+    }
+
+    /// A field's old value, the text typed over it, and what it becomes.
+    type TypedCase = (Option<Value>, Option<&'static str>, Result<Value, String>);
+
+    #[test]
+    fn typed_text_keeps_the_old_values_json_type() {
+        let cases: [TypedCase; 8] = [
+            (
+                Some(Value::String("a".to_owned())),
+                Some("8"),
+                Ok(Value::String("8".to_owned())),
+            ),
+            (
+                Some(Value::Number("1".to_owned())),
+                Some("8.50"),
+                Ok(Value::Number("8.50".to_owned())),
+            ),
+            (
+                Some(Value::Bool(true)),
+                Some("false"),
+                Ok(Value::Bool(false)),
+            ),
+            (
+                Some(Value::Bool(true)),
+                Some("no"),
+                Err("\u{201c}no\u{201d} isn't true or false".to_owned()),
+            ),
+            (None, Some("12"), Ok(Value::Number("12".to_owned()))),
+            (None, Some("open"), Ok(Value::String("open".to_owned()))),
+            (
+                Some(Value::Null),
+                Some("{\"a\": 1}"),
+                Ok(Value::Object(vec![(
+                    "a".to_owned(),
+                    Value::Number("1".to_owned()),
+                )])),
+            ),
+            (Some(Value::Number("1".to_owned())), None, Ok(Value::Null)),
+        ];
+        for (old, text, expected) in cases {
+            assert_eq!(
+                typed_value(old.as_ref(), text),
+                expected,
+                "{old:?} {text:?}"
+            );
+        }
+    }
+
+    use dbrover_sql::StatementKind;
+}

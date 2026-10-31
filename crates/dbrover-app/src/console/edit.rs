@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use dbrover_core::{Cell, ColumnInfo, Identifier, RelationName, Row, TableDescription};
 use dbrover_engine::RowEdit;
 use dbrover_export::{SourceTable, SqlTable};
-use dbrover_language::mongo::{self, CollectionView};
+use dbrover_language::DocumentView;
 use dbrover_language::redis::KeyView;
 use dbrover_sql::{ColumnValue, Dialect, RowSql, Token, TokenKind, first_word, tokenize};
 use dbrover_store::{NamedCell, ReplacedCell, RowChange, RowChangeKind};
@@ -44,20 +44,23 @@ pub enum Editability {
     ReadOnly(String),
 }
 
-/// What editing a `find`'s documents needs: the collection, and the column of `_id`, which
-/// names each document and so isn't typed over.
+/// What editing a result's documents needs: where they can be changed, and the columns that
+/// name each loaded document (`_id`, a hit's `_index`), which aren't typed over.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocumentsTarget {
-    pub view: CollectionView,
-    id_column: Option<usize>,
+    pub view: DocumentView,
+    key_columns: Vec<usize>,
 }
 
 impl DocumentsTarget {
-    pub fn new(view: CollectionView, columns: &[ColumnInfo]) -> Self {
-        Self {
-            view,
-            id_column: columns.iter().position(|column| column.name == "_id"),
-        }
+    pub fn new(view: DocumentView, columns: &[ColumnInfo]) -> Self {
+        let key_columns = columns
+            .iter()
+            .enumerate()
+            .filter(|(_, column)| view.is_key(&column.name))
+            .map(|(index, _)| index)
+            .collect();
+        Self { view, key_columns }
     }
 }
 
@@ -305,7 +308,7 @@ impl EditSession {
             return false;
         }
         if let Some(documents) = self.documents() {
-            return matches!(row, RowRef::New(_)) || documents.id_column != Some(column);
+            return matches!(row, RowRef::New(_)) || !documents.key_columns.contains(&column);
         }
         match (self.target(), self.key_view(), row) {
             (Some(target), _, _) => target.is_editable(column),
@@ -603,15 +606,16 @@ impl PendingEdits {
         Ok(edits)
     }
 
-    /// One MongoDB command per change to `target`'s documents, with the row it is for and, for
-    /// the history, what it does, in the order [`Self::statements`] gives SQL's: deletions,
-    /// changed fields, then added documents. A document is found by its `_id`; a field is set
-    /// with the type it had (see `dbrover_language::mongo::typed_value`).
+    /// One command per change to `target`'s documents, in their language, with the row it is
+    /// for and, for the history, what it does, in the order [`Self::statements`] gives SQL's:
+    /// deletions, changed fields, then added documents. A document is found by its `_id` (and a
+    /// hit by its `_index` too); a field is set with the type it had (see
+    /// `dbrover_language::DocumentView::update`).
     ///
     /// # Errors
     ///
-    /// Which row's change can't be written: a document without `_id`, text that isn't a value
-    /// of the field's type, an added document with nothing typed in.
+    /// Which row's change can't be written: a document that can't be named, text that isn't a
+    /// value of the field's type, an added document with nothing typed in.
     pub fn document_commands(
         &self,
         target: &DocumentsTarget,
@@ -887,10 +891,10 @@ impl KeyCommands<'_> {
     }
 }
 
-/// Writes each change to a collection's documents as its command, and the change it makes,
-/// with the command that would undo it, for the history.
+/// Writes each change to a result's documents as its command, in the language that read them,
+/// and the change it makes, with the command that would undo it, for the history.
 struct DocumentCommands<'a> {
-    view: &'a CollectionView,
+    view: &'a DocumentView,
     documents: &'a DocumentResult,
     columns: &'a [ColumnInfo],
 }
@@ -904,95 +908,74 @@ impl DocumentCommands<'_> {
 
     fn delete(&self, row: usize) -> Result<RowEdit, String> {
         let document = self.document(row)?;
-        let id = mongo::document_id(document)?;
-        let revert = mongo::shell_value(document)
-            .ok()
-            .map(|whole| self.view.insert(&whole));
+        let edit = self.view.delete(document)?;
         Ok(self.edit(
-            self.view.delete(&id),
+            edit.command,
             RowChangeKind::Deleted {
-                key: vec![named("_id", Some(id))],
+                key: key_cells(edit.key),
                 row: vec![named("document", Some(document.to_json()))],
             },
-            revert,
+            edit.revert,
         ))
     }
 
     fn update(&self, row: usize, column: usize, value: &Cell) -> Result<RowEdit, String> {
-        let id = mongo::document_id(self.document(row)?)?;
+        let document = self.document(row)?;
         let field = self
             .documents
             .field_of(column)
             .ok_or_else(|| "this column isn't a field".to_owned())?;
-        let path = mongo::update_path(field)?;
         let old = self.documents.value(row, column);
-        let new = mongo::typed_value(old, value.as_deref())?;
-        let revert = match old {
-            Some(old) => mongo::shell_value(old)
-                .ok()
-                .map(|old| self.view.update(&id, &path, Some(&old))),
-            None => Some(self.view.update(&id, &path, None)),
-        };
+        let (edit, path) = self.view.update(document, field, old, value.as_deref())?;
         Ok(self.edit(
-            self.view.update(&id, &path, Some(&new)),
+            edit.command,
             RowChangeKind::Updated {
-                key: vec![named("_id", Some(id))],
+                key: key_cells(edit.key),
                 cells: vec![ReplacedCell {
                     column: path,
                     old: old.map(dbrover_document::Value::to_json),
                     new: value.clone(),
                 }],
             },
-            revert,
+            edit.revert,
         ))
     }
 
     fn insert(&self, values: &BTreeMap<usize, Cell>) -> Result<RowEdit, String> {
         let mut fields = Vec::new();
-        let mut typed = Vec::new();
         for (&column, value) in values {
             let name = &self
                 .columns
                 .get(column)
                 .ok_or_else(|| "this column isn't a field".to_owned())?
                 .name;
-            if name.contains('.') {
-                return Err(format!(
-                    "type {name} in its whole object's column, which an added document needs"
-                ));
-            }
-            let field = if mongo::is_plain_name(name) {
-                name.clone()
-            } else {
-                mongo::quote(name)
-            };
-            fields.push(format!(
-                "{field}: {}",
-                mongo::typed_value(None, value.as_deref())?
-            ));
-            typed.push(named(name, value.clone()));
+            fields.push((name.as_str(), value.as_deref()));
         }
-        if fields.is_empty() {
-            return Err("type a field first".to_owned());
-        }
-        let document = format!("{{{}}}", fields.join(", "));
-        Ok(self.edit(
-            self.view.insert(&document),
-            RowChangeKind::Inserted { values: typed },
-            None,
-        ))
+        let command = self.view.insert(&fields)?;
+        let typed = fields
+            .iter()
+            .map(|(name, value)| named(name, value.map(str::to_owned)))
+            .collect();
+        Ok(self.edit(command, RowChangeKind::Inserted { values: typed }, None))
     }
 
     fn edit(&self, command: String, kind: RowChangeKind, revert: Option<String>) -> RowEdit {
         RowEdit {
             sql: command,
             change: Some(RowChange {
-                table: self.view.collection().to_owned(),
+                table: self.view.name().to_owned(),
                 kind,
                 revert,
             }),
         }
     }
+}
+
+/// What names a document, as the history records a row's key.
+fn key_cells(key: Vec<(String, String)>) -> Vec<NamedCell> {
+    key.into_iter()
+        .map(|(column, value)| named(&column, Some(value)))
+        .collect()
 }
 
 fn named(column: &str, value: Cell) -> NamedCell {

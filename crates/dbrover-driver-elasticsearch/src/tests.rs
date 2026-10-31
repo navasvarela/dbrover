@@ -769,6 +769,82 @@ async fn explains_and_validates_searches_on_the_server() {
     }
 }
 
+/// The first document `request` answers with.
+async fn first_document(connection: &mut SearchConnection, request: &str) -> Value {
+    let (_, rows) = run(connection, request).await;
+    documents(&rows).into_iter().next().expect("a document")
+}
+
+/// What the grid's edits send: each field set with its JSON type and read back so, an
+/// object's field by its path, a document added, deleted, and put back by the deletion's undo.
+#[tokio::test]
+async fn edits_hits_keeping_each_fields_type() {
+    use dbrover_document::{Path, Step};
+    use dbrover_language::{DocumentView, QueryLanguage};
+
+    for server in test_servers() {
+        let mut connection = server.connect().await;
+        let _ = connection.execute("DELETE /dbrover_edits").await;
+        run(
+            &mut connection,
+            "PUT /dbrover_edits/_doc/1?refresh=true\n{ \"text\": \"a\", \"number\": 1, \"flag\": true, \"address\": { \"city\": \"Madrid\" } }",
+        )
+        .await;
+        let search = "GET /dbrover_edits/_search";
+        let view = QueryLanguage::Search
+            .document_view(search)
+            .expect("a search's hits are edited");
+        let path = |names: &[&str]| {
+            names.iter().fold(Path::default(), |path, name| {
+                path.child(Step::Field((*name).to_owned()))
+            })
+        };
+        let cases: [(&[&str], &str, Value); 4] = [
+            (&["text"], "8", Value::String("8".to_owned())),
+            (&["number"], "2.5", Value::Number("2.5".to_owned())),
+            (&["flag"], "false", Value::Bool(false)),
+            (
+                &["address", "city"],
+                "Paris",
+                Value::String("Paris".to_owned()),
+            ),
+        ];
+        for (names, typed, expected) in cases {
+            let document = first_document(&mut connection, search).await;
+            let old = names
+                .iter()
+                .try_fold(&document, |value, name| json::field(value, name));
+            let (edit, _) = view
+                .update(&document, &path(names), old, Some(typed))
+                .unwrap_or_else(|error| panic!("{}: {names:?}: {error}", server.name));
+            run(&mut connection, &edit.command).await;
+            let document = first_document(&mut connection, search).await;
+            let new = names
+                .iter()
+                .try_fold(&document, |value, name| json::field(value, name));
+            assert_eq!(new, Some(&expected), "{}: {names:?}", server.name);
+        }
+
+        let added = view
+            .insert(&[("_id", Some("2")), ("text", Some("b"))])
+            .expect("an added document");
+        run(&mut connection, &added).await;
+        let (_, rows) = run(&mut connection, search).await;
+        assert_eq!(rows.len(), 2, "{}", server.name);
+        let document = first_document(&mut connection, search).await;
+        let DocumentView::Index(_) = &view else {
+            panic!("a search's view is an index's");
+        };
+        let deleted = view.delete(&document).expect("a deletion");
+        run(&mut connection, &deleted.command).await;
+        let (_, rows) = run(&mut connection, search).await;
+        assert_eq!(rows.len(), 1, "{}", server.name);
+        run(&mut connection, &deleted.revert.expect("an undo")).await;
+        let (_, rows) = run(&mut connection, search).await;
+        assert_eq!(rows.len(), 2, "{}", server.name);
+    }
+}
+
 #[test]
 fn a_hit_is_its_metadata_then_its_source() {
     let hit = Value::parse(

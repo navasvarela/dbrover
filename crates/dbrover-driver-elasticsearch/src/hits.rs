@@ -11,7 +11,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use dbrover_core::{ColumnInfo, DriverError, ResultCursor, ResultShape, Row};
 use dbrover_document::Value;
-use dbrover_language::search::{Body, Method, Request};
+use dbrover_language::search::{self, Body, Request};
 
 use crate::Flavor;
 use crate::answer::{DOCUMENT_COLUMN, columns};
@@ -28,49 +28,6 @@ const KEEP_ALIVE: &str = "5m";
 /// How many hits the first request reads: the grid's first page, and one more, so the grid
 /// knows whether there are others.
 const FIRST_FETCH: usize = 501;
-
-/// Keys of a search's body after which it runs as typed: what it asks for isn't a list of
-/// hits DbRover could page, or it pages itself.
-const AS_TYPED_KEYS: &[&str] = &[
-    "aggregations",
-    "aggs",
-    "collapse",
-    "from",
-    "pit",
-    "profile",
-    "rescore",
-    "search_after",
-    "suggest",
-];
-
-/// Query-string parameters a paged search keeps on every page. Any other (`scroll`,
-/// `routing`, `filter_path`, …) has the search run as typed: a search through a point in time
-/// may not name its own routing or preference, and the rest change what the answer holds.
-const KEPT_PARAMETERS: &[&str] = &[
-    "_source",
-    "_source_excludes",
-    "_source_includes",
-    "allow_partial_search_results",
-    "analyze_wildcard",
-    "analyzer",
-    "default_operator",
-    "df",
-    "docvalue_fields",
-    "error_trace",
-    "human",
-    "lenient",
-    "pretty",
-    "q",
-    "request_cache",
-    "seq_no_primary_term",
-    "stored_fields",
-    "timeout",
-    "track_scores",
-    "version",
-];
-
-/// The fields of a hit that come first in its document.
-const HIT_FIELDS: &[&str] = &["_index", "_id", "_score"];
 
 /// Fields of a hit left out of its document: its source becomes the document's own fields,
 /// and its sort values are DbRover's paging.
@@ -94,48 +51,31 @@ impl Paging {
     /// How `request` is paged, when it is a search DbRover pages: `GET` or `POST` to
     /// `_search`, with no parameter or body key that asks for something else.
     pub(crate) fn of(request: &Request) -> Option<Self> {
-        if !matches!(request.method, Method::Get | Method::Post) {
+        if !search::pages_hits(request) {
             return None;
         }
         let indices = match request.segments().as_slice() {
-            ["_search"] => "*".to_owned(),
             [indices, "_search"] => (*indices).to_owned(),
-            _ => return None,
+            _ => "*".to_owned(),
         };
         let mut limit = None;
         let mut kept = Vec::new();
         for (name, value) in request.parameters() {
             match (name, value) {
-                ("size", Some(size)) => limit = Some(size.parse::<u64>().ok()?),
-                _ if KEPT_PARAMETERS.contains(&name) => kept.push(match value {
-                    Some(value) => format!("{name}={value}"),
-                    None => name.to_owned(),
-                }),
-                _ => return None,
+                ("size", Some(size)) => limit = size.parse::<u64>().ok(),
+                (name, Some(value)) => kept.push(format!("{name}={value}")),
+                (name, None) => kept.push(name.to_owned()),
             }
         }
         let mut body = match &request.body {
-            None => Vec::new(),
             Some(Body::Json {
                 value: Value::Object(fields),
                 ..
             }) => fields.clone(),
-            Some(_) => return None,
+            _ => Vec::new(),
         };
-        if body
-            .iter()
-            .any(|(name, _)| AS_TYPED_KEYS.contains(&name.as_str()))
-        {
-            return None;
-        }
-        if let Some(size) = take(&mut body, "size") {
-            let Value::Number(size) = size else {
-                return None;
-            };
-            limit = Some(size.parse::<u64>().ok()?);
-        }
-        if limit == Some(0) {
-            return None;
+        if let Some(Value::Number(size)) = take(&mut body, "size") {
+            limit = size.parse::<u64>().ok();
         }
         let sort = sort_with_tiebreaker(take(&mut body, "sort"));
         if field(&Value::Object(body.clone()), "track_total_hits").is_none() {
@@ -210,21 +150,23 @@ pub(crate) fn hit_document(hit: &Value) -> Value {
     let Value::Object(fields) = hit else {
         return hit.clone();
     };
-    let mut document: Vec<(String, Value)> = HIT_FIELDS
+    let mut document: Vec<(String, Value)> = search::HIT_KEYS
         .iter()
         .filter_map(|name| Some(((*name).to_owned(), field(hit, name)?.clone())))
         .collect();
     let rest: Vec<(String, Value)> = fields
         .iter()
         .filter(|(name, _)| {
-            !HIT_FIELDS.contains(&name.as_str()) && !HIDDEN_HIT_FIELDS.contains(&name.as_str())
+            !search::HIT_KEYS.contains(&name.as_str())
+                && !HIDDEN_HIT_FIELDS.contains(&name.as_str())
         })
         .cloned()
         .collect();
     match field(hit, "_source") {
         Some(Value::Object(source))
             if !source.iter().any(|(name, _)| {
-                HIT_FIELDS.contains(&name.as_str()) || rest.iter().any(|(other, _)| other == name)
+                search::HIT_KEYS.contains(&name.as_str())
+                    || rest.iter().any(|(other, _)| other == name)
             }) =>
         {
             document.extend(source.iter().cloned());
