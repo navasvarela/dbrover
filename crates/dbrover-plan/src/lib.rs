@@ -10,6 +10,7 @@
 mod json;
 mod mysql;
 mod postgres;
+mod sqlserver;
 mod text;
 mod weigh;
 
@@ -161,6 +162,9 @@ pub enum PlanFormat {
     /// MySQL's `EXPLAIN FORMAT=JSON`, in either of its formats, with or without `ANALYZE`, and
     /// MariaDB's `EXPLAIN FORMAT=JSON` and `ANALYZE FORMAT=JSON`.
     MysqlJson,
+    /// SQL Server's XML showplan, estimated (`SET SHOWPLAN_XML`) or actual
+    /// (`SET STATISTICS XML`).
+    SqlServerXml,
 }
 
 impl PlanFormat {
@@ -173,6 +177,7 @@ impl PlanFormat {
         match self {
             Self::PostgresJson => postgres::parse(text),
             Self::MysqlJson => mysql::parse(text),
+            Self::SqlServerXml => sqlserver::parse(text),
         }
     }
 
@@ -180,6 +185,7 @@ impl PlanFormat {
     pub fn notation(self) -> &'static str {
         match self {
             Self::PostgresJson | Self::MysqlJson => "JSON",
+            Self::SqlServerXml => "XML",
         }
     }
 }
@@ -189,6 +195,8 @@ impl PlanFormat {
 pub enum PlanError {
     #[error("the plan isn't JSON: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("the plan isn't XML: {0}")]
+    Xml(#[from] roxmltree::Error),
     /// The text is in the right notation, but not shaped as the format's plans are.
     #[error("the plan isn't shaped as expected: {0}")]
     Shape(String),
