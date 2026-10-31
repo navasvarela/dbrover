@@ -629,8 +629,8 @@ impl DbRoverMcp {
         access: Access,
         work: impl for<'c> FnOnce(&'c mut dyn Connection, Watchdog) -> Work<'c, T>,
     ) -> Result<T, RunError> {
-        let writable = self.inner.project.changes.any();
         let driver = data_source.config.driver();
+        let writable = self.inner.project.changes.open_writable(driver);
         // `ServedProject` leaves out data sources that can't be read safely, so only changes
         // on an engine without a read-write mode, which `execute` refuses first, end here.
         let Some(mode) = transaction::mode(driver, access, writable) else {

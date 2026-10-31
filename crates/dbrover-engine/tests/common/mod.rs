@@ -419,7 +419,13 @@ pub fn clickhouse_test_server() -> Option<(ClickHouseConfig, Password)> {
         .strip_prefix("clickhouse://")
         .expect("clickhouse:// URL");
     let (server, password) = parse_server(rest, "8123");
-    Some((ClickHouseConfig { server }, password))
+    Some((
+        ClickHouseConfig {
+            server,
+            read_only: false,
+        },
+        password,
+    ))
 }
 
 /// The Redis and Valkey test servers that are set, from `DBROVER_TEST_REDIS_URL` and

@@ -148,6 +148,7 @@ fn every_kind(home: &Path, beside: &Path, project: ProjectId) -> Vec<DataSource>
                     }),
                     ..server("ch.internal", 8443, TlsMode::Require)
                 },
+                read_only: false,
             }),
         ),
         data_source(

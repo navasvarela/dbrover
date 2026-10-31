@@ -2,8 +2,9 @@
 
 use std::time::Duration;
 
-use dbrover_core::DataSource;
+use dbrover_core::{DataSource, DriverKind};
 use dbrover_engine::read_only::McpServing;
+use dbrover_engine::read_write;
 use dbrover_store::{
     DataSourceFile, McpPermissions, Project, ProjectFile, ProjectStoreError, SchemaScope,
     StoreError,
@@ -79,6 +80,13 @@ impl Changes {
 
     pub fn any(self) -> bool {
         self.write || self.schema || self.admin
+    }
+
+    /// Whether a connection to `driver` is opened to run changes too: only if this allows
+    /// some and the engine has a transaction to run them in. Otherwise it is opened read-only,
+    /// which on SQLite and ClickHouse is the engine's own read-only mode.
+    pub fn open_writable(self, driver: DriverKind) -> bool {
+        self.any() && read_write::mode(driver).is_some()
     }
 
     pub fn allows(self, permission: Permission) -> bool {
@@ -157,7 +165,7 @@ impl ServedProject {
             .map(|data_source| {
                 // Opening SQLite files read-only is stronger than the `query_only` each read
                 // sets on a file opened to run changes too.
-                if changes.any() {
+                if changes.open_writable(data_source.config.driver()) {
                     data_source
                 } else {
                     dbrover_engine::read_only::connection_config(data_source)

@@ -318,6 +318,7 @@ impl ConnectionConfig {
             }),
             Self::ClickHouse(config) => Self::ClickHouse(ClickHouseConfig {
                 server: config.server.resolve(variables)?,
+                read_only: config.read_only,
             }),
             Self::Redis(config) => Self::Redis(RedisConfig {
                 server: config.server.resolve(variables)?,
@@ -732,6 +733,11 @@ pub enum TlsMode {
 pub struct ClickHouseConfig {
     #[serde(flatten)]
     pub server: ServerConfig,
+    /// Whether every request carries `readonly = 2`, so the server refuses any change. Never
+    /// saved: a read-only data source's connections are opened with it, and its safety level
+    /// is the setting users see.
+    #[serde(skip)]
+    pub read_only: bool,
 }
 
 impl ClickHouseConfig {

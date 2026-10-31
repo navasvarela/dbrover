@@ -53,7 +53,15 @@ const REQUEST_SETTINGS: &[(&str, &str)] = &[
     ("cancel_http_readonly_queries_on_client_close", "1"),
 ];
 
-/// Opens a session, over HTTPS unless `config.server.tls` is `disable` or `prefer`.
+/// Sent with every request of a read-only connection, so the server refuses writes, DDL and
+/// lifting the setting itself. `2` rather than `1`, which would also refuse a query's own
+/// `SETTINGS` (`SELECT … SETTINGS max_threads = 1`), and can't be sent at all as a user whose
+/// profile already has `readonly = 2`. The server checks a request's settings against the
+/// user's own `readonly` and only then applies them, so [`REQUEST_SETTINGS`] still go through.
+const READ_ONLY_SETTING: (&str, &str) = ("readonly", "2");
+
+/// Opens a session, over HTTPS unless `config.server.tls` is `disable` or `prefer`, and
+/// read-only if `config.read_only` says so.
 ///
 /// # Errors
 ///
@@ -133,10 +141,13 @@ fn client(
         .with_url(format!("{scheme}://{address}"))
         .with_user(&server.user)
         .with_password(password.map_or("", Password::expose));
+    let read_only = config.read_only.then_some(READ_ONLY_SETTING);
     Ok(REQUEST_SETTINGS
         .iter()
+        .copied()
+        .chain(read_only)
         .fold(client, |client, (name, value)| {
-            client.with_setting(*name, *value)
+            client.with_setting(name, value)
         }))
 }
 

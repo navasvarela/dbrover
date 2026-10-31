@@ -21,7 +21,7 @@ pub struct WriteMode {
 }
 
 /// The engine's read-write transaction, or `None` for engines DbRover doesn't run changes on
-/// for MCP clients: those without a read-only mode, which aren't served at all.
+/// for MCP clients, which serve such an engine for reading only.
 pub fn mode(driver: DriverKind) -> Option<WriteMode> {
     match driver {
         DriverKind::Postgres => Some(WriteMode {
@@ -38,7 +38,8 @@ pub fn mode(driver: DriverKind) -> Option<WriteMode> {
             begin: &["PRAGMA query_only = OFF", "BEGIN"],
             sets_timeout: false,
         }),
-        // Not served to MCP clients at all; see `read_only::mode`.
+        // ClickHouse has no transactions in practice, SQL Server's and DuckDB's are left for
+        // later (docs/nosql.md, N0a), and the others have none DbRover uses.
         DriverKind::SqlServer
         | DriverKind::DuckDb
         | DriverKind::ClickHouse

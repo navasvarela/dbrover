@@ -8,8 +8,8 @@ mod common;
 use std::sync::Arc;
 
 use common::{
-    TestEngine, mongo_test_server, postgres_test_server, redis_test_servers, search_test_servers,
-    sqlite_data_source, sqlite_database,
+    TestEngine, clickhouse_test_server, mongo_test_server, postgres_test_server,
+    redis_test_servers, search_test_servers, sqlite_data_source, sqlite_database,
 };
 use dbrover_core::{ConnectionConfig, DataSource, DataSourceId, SafetyLevel};
 use dbrover_engine::{
@@ -159,6 +159,64 @@ fn a_read_only_sqlite_data_source_refuses_changes_and_edits() {
         .query_row("SELECT count(*) FROM sqlite_master", [], |row| row.get(0))
         .unwrap();
     assert_eq!(tables, 1, "the database was changed");
+}
+
+/// W11's exit on ClickHouse: a read-only data source refuses an `INSERT` before sending it, and
+/// ClickHouse itself refuses what the check reads as a `SELECT` but changes the session's
+/// `readonly` setting. ClickHouse's functions don't write, so this is the write that hides from
+/// the check there; the driver's tests send an `INSERT` past it. A query's own settings still
+/// run. Needs `DBROVER_TEST_CLICKHOUSE_URL`; skipped without it.
+#[test]
+fn a_read_only_clickhouse_data_source_is_refused_by_clickhouse_itself() {
+    let Some((config, password)) = clickhouse_test_server() else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let events = DataSource {
+        id: DataSourceId::generate(),
+        name: "events".to_owned(),
+        color: None,
+        safety: SafetyLevel::Normal,
+        project: None,
+        mcp_login: None,
+        config: ConnectionConfig::ClickHouse(config),
+    };
+    let production = read_only(&events);
+    save(&mut engine, &production, PasswordUpdate::Set(password));
+    let cases = [
+        (
+            "INSERT INTO dbrover_events VALUES (1)",
+            Some(refused("changes data")),
+        ),
+        (
+            "SELECT number FROM numbers(1) SETTINGS max_threads = 1",
+            None,
+        ),
+    ];
+    for (number, (sql, expected)) in cases.into_iter().enumerate() {
+        let failure = run(
+            &mut engine,
+            READ_ONLY_CONSOLE,
+            production.id,
+            number as u64 + 1,
+            sql,
+        );
+        assert_eq!(failure, expected, "{sql}");
+    }
+    let lifted = run(
+        &mut engine,
+        READ_ONLY_CONSOLE,
+        production.id,
+        9,
+        "SELECT number FROM numbers(1) SETTINGS readonly = 0",
+    )
+    .expect("ClickHouse refused to lift readonly");
+    assert!(
+        lifted.contains("Cannot modify 'readonly' setting in readonly mode"),
+        "{lifted}"
+    );
 }
 
 /// N1's exit: a read-only Redis data source refuses `SET` before sending it, and still reads.
