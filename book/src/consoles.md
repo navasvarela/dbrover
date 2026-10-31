@@ -114,9 +114,9 @@ whether it would accept each statement, without running it, so the database's ow
 show up too ("The database says: …"). This never happens while results are still loading or a
 transaction is open.
 
-**View → Settings…** switches each kind of warning off, and asking the database too.
+**View → Settings… › Editor** switches each kind of warning off, and asking the database too.
 
-**View → Settings…** chooses how keywords are written (UPPER, lower, or as you typed them) and
+**View → Settings… › Editor** chooses how keywords are written (UPPER, lower, or as you typed them) and
 how many spaces each level is indented. They're saved in `settings.toml` (see
 [Where DbRover keeps its files](files.md)).
 

@@ -184,12 +184,11 @@ fn keeps_the_history_as_long_as_the_settings_say() {
     harness.run_steps(2);
     harness.get_by_label_contains("Settings…").click();
     harness.run_steps(2);
-    // The window scrolls, and the history comes after formatting, linting and updates.
+    harness.get_by_label("Query history").click();
+    harness.run_steps(2);
     let no_limit = |node: &egui_kittest::kittest::AccessKitNode<'_>| {
         node.role() == Role::ComboBox && node.value().as_deref() == Some("no limit")
     };
-    harness.get_all_by(no_limit).next().unwrap().scroll_to_me();
-    harness.run();
     harness.get_all_by(no_limit).next().unwrap().click();
     harness.run();
     harness.get_by_label("a year").click();
@@ -198,9 +197,8 @@ fn keeps_the_history_as_long_as_the_settings_say() {
             .is_ok_and(|text| text.contains("max_age_days = 365"))
     });
 
-    // The window covers the console's toolbar.
-    harness.get_by_label("Close window").click();
-    harness.run();
+    // The tab is in front of the console and its toolbar.
+    close_settings_tab(&mut harness);
     open_history(&mut harness, 1);
     assert!(harness.query_by_label("SELECT 'from 1970'").is_none());
 }

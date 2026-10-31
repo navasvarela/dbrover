@@ -344,6 +344,13 @@ const SCENES: &[Scene] = &[
         needs: &[],
     },
     Scene {
+        name: "settings",
+        data_sources: FixtureSources::Shop,
+        play: settings_editor,
+        keeps_pointer: false,
+        needs: &[],
+    },
+    Scene {
         name: "settings-mcp",
         data_sources: FixtureSources::Shop,
         play: settings_mcp,
@@ -1272,12 +1279,22 @@ fn project_settings(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixtur
     harness.run_ok();
 }
 
+/// View › Settings…, on the Editor page.
+fn settings_editor(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    open_settings_page(harness, "Editor");
+}
+
 fn settings_mcp(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    open_settings_page(harness, "MCP");
+}
+
+/// Opens the Settings tab on its page `category`.
+fn open_settings_page(harness: &mut Harness<'static, DbRoverApp>, category: &str) {
     harness.get_by_label("View").click();
     harness.run_ok();
     harness.get_by_label_contains("Settings…").click();
     harness.run_ok();
-    harness.get_by_label("Save MCP defaults").scroll_to_me();
+    harness.get_by_label(category).click();
     harness.run_ok();
 }
 

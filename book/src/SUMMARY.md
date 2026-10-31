@@ -15,6 +15,7 @@
 - [Exporting and copying rows](exporting.md)
 - [The query history](history.md)
 - [Keyboard shortcuts](shortcuts.md)
+- [Settings](settings.md)
 - [Actions, snippets and themes](customising.md)
 - [Connecting an AI assistant](mcp.md)
 - [Where DbRover keeps its files](files.md)

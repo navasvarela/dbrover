@@ -7,7 +7,7 @@ use std::num::{NonZeroU32, NonZeroU64};
 use dbrover_store::{McpOverrides, McpPermissions, SchemaScope, StatementTimeout};
 use egui::{DragValue, Grid, TextEdit, Ui, WidgetType};
 
-use crate::widgets;
+use crate::{form, widgets};
 
 /// What each permission allows, as the plan's table puts it (`docs/mcp-server.md`).
 const READ: &str = "Browse the catalog, SELECT, EXPLAIN, SHOW";
@@ -111,10 +111,6 @@ impl McpDefaultsEditor {
 
     /// Draws the section. Returns the defaults to save when Save is clicked.
     pub fn show(&mut self, ui: &mut Ui) -> Option<McpPermissions> {
-        ui.weak(
-            "What a project allows MCP clients when it doesn't say otherwise. Servers already \
-             running keep what they started with.",
-        );
         edit_defaults(ui, &mut self.draft, &mut self.schemas);
         if let Some(error) = &self.error {
             ui.colored_label(
@@ -125,12 +121,9 @@ impl McpDefaultsEditor {
         let changed = self.draft != self.saved;
         let valid = self.schemas.scope().is_some();
         let save = ui.horizontal(|ui| {
-            let save = ui
-                .add_enabled(
-                    changed && valid && !self.saving,
-                    egui::Button::new("Save MCP defaults"),
-                )
-                .clicked();
+            let save =
+                form::primary_button(ui, "Save MCP defaults", changed && valid && !self.saving)
+                    .clicked();
             if ui
                 .add_enabled(changed && !self.saving, egui::Button::new("Discard"))
                 .clicked()

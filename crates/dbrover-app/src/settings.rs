@@ -20,7 +20,6 @@ pub struct AppSettings {
     /// Why the file couldn't be read or written; the settings in use are then the last good
     /// ones (or the defaults).
     error: Option<String>,
-    pub window_open: bool,
 }
 
 impl AppSettings {
