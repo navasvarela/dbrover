@@ -1,0 +1,84 @@
+{
+  "limit": 10,
+  "query": "/* select#1 */ select `c`.`name` AS `name`,sum(`o`.`total`) AS `sum(o.total)` from `dbrover`.`w10_orders` `o` join `dbrover`.`w10_customers` `c` where ((`o`.`customer_id` = `c`.`id`) and (`c`.`country` = 'ES')) group by `c`.`name` order by sum(`o`.`total`) desc limit 10",
+  "inputs": [
+    {
+      "inputs": [
+        {
+          "inputs": [
+            {
+              "inputs": [
+                {
+                  "inputs": [
+                    {
+                      "inputs": [
+                        {
+                          "alias": "c",
+                          "operation": "Table scan on c",
+                          "table_name": "w10_customers",
+                          "access_type": "table",
+                          "schema_name": "dbrover",
+                          "used_columns": [
+                            "id",
+                            "name",
+                            "country"
+                          ],
+                          "estimated_rows": 1000.0,
+                          "estimated_total_cost": 101.25
+                        }
+                      ],
+                      "condition": "(c.country = 'ES')",
+                      "operation": "Filter: (c.country = 'ES')",
+                      "access_type": "filter",
+                      "estimated_rows": 100.00000149011612,
+                      "estimated_total_cost": 101.25
+                    },
+                    {
+                      "alias": "o",
+                      "covering": false,
+                      "operation": "Index lookup on o using customer_id (customer_id=c.id)",
+                      "index_name": "customer_id",
+                      "table_name": "w10_orders",
+                      "access_type": "index",
+                      "schema_name": "dbrover",
+                      "used_columns": [
+                        "id",
+                        "customer_id",
+                        "total"
+                      ],
+                      "estimated_rows": 19.70400047302246,
+                      "lookup_condition": "customer_id=c.id",
+                      "index_access_type": "index_lookup",
+                      "estimated_total_cost": 4.945704118435025
+                    }
+                  ],
+                  "join_type": "inner join",
+                  "operation": "Nested loop inner join",
+                  "access_type": "join",
+                  "estimated_rows": 1970.400076663495,
+                  "join_algorithm": "nested_loop",
+                  "estimated_total_cost": 790.8900268322233
+                }
+              ],
+              "operation": "Aggregate using temporary table",
+              "access_type": "temp_table_aggregate"
+            }
+          ],
+          "operation": "Table scan on <temporary>",
+          "table_name": "<temporary>",
+          "access_type": "table"
+        }
+      ],
+      "operation": "Sort: sum(o.total) DESC, limit input to 10 row(s) per chunk",
+      "access_type": "sort",
+      "sort_fields": [
+        "sum(o.total) DESC"
+      ],
+      "per_chunk_limit": 10
+    }
+  ],
+  "operation": "Limit: 10 row(s)",
+  "query_type": "select",
+  "access_type": "limit",
+  "limit_offset": 0
+}

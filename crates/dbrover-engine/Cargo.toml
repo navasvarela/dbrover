@@ -35,6 +35,8 @@ ureq.workspace = true
 
 [dev-dependencies]
 dbrover-language = { workspace = true, features = ["test-language"] }
+# Reads the plans the explain tests get back, as the app does.
+dbrover-plan.workspace = true
 rusqlite.workspace = true
 tempfile.workspace = true
 

@@ -108,13 +108,13 @@ impl QueryLanguage {
         }
     }
 
-    /// Whether the language has a way to show a command's plan to `depth`.
-    pub fn can_explain(self, depth: ExplainDepth) -> bool {
+    /// Whether the language has a way to show a command's plan to `depth`, on `server`.
+    pub fn can_explain(self, depth: ExplainDepth, server: Option<&ServerInfo>) -> bool {
         match (self.explain_style(), depth) {
             (None, _) => false,
             (Some(_), ExplainDepth::Estimated) => true,
             (Some(ExplainStyle::Prefix(dialect)), ExplainDepth::Analysed) => {
-                dialect.plan_request(depth).is_some()
+                dialect.plan_request(depth, server).is_some()
             }
             (Some(ExplainStyle::MongoShell), ExplainDepth::Analysed) => false,
         }
@@ -132,7 +132,7 @@ impl QueryLanguage {
     ) -> Option<Explained> {
         match (self.explain_style()?, depth) {
             (ExplainStyle::Prefix(dialect), depth) => {
-                let (prefix, plan) = match (dialect.plan_request(depth), depth) {
+                let (prefix, plan) = match (dialect.plan_request(depth, server), depth) {
                     (Some(request), _) => (request.prefix, Some(request.format)),
                     (None, ExplainDepth::Estimated) => (dialect.explain_prefix(server), None),
                     (None, ExplainDepth::Analysed) => return None,

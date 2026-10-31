@@ -387,22 +387,39 @@ impl Dialect {
         }
     }
 
-    /// How to ask the database for a plan DbRover draws as a tree: `EXPLAIN (FORMAT JSON)` on
-    /// PostgreSQL, with `ANALYZE` when analysed. `None` where the database's plan is text
-    /// without costs to weigh, or where DbRover doesn't read its format yet:
-    /// [`explain_prefix`](Self::explain_prefix) then explains the statement as rows, and it
-    /// can't be analysed.
-    pub fn plan_request(self, depth: ExplainDepth) -> Option<PlanRequest> {
-        match self {
-            Self::Postgres => Some(PlanRequest {
-                prefix: match depth {
-                    ExplainDepth::Estimated => "EXPLAIN (FORMAT JSON) ",
-                    ExplainDepth::Analysed => "EXPLAIN (ANALYZE, FORMAT JSON) ",
-                },
-                format: PlanFormat::PostgresJson,
-            }),
-            Self::Sqlite | Self::Mysql | Self::SqlServer | Self::DuckDb | Self::ClickHouse => None,
-        }
+    /// How to ask the database for a plan DbRover draws as a tree, for a console connected to
+    /// `server` (`None` before it has connected):
+    ///
+    /// - PostgreSQL: `EXPLAIN (FORMAT JSON)`, with `ANALYZE` when analysed.
+    /// - MySQL and MariaDB: `EXPLAIN FORMAT=JSON`. Analysed, `EXPLAIN ANALYZE FORMAT=JSON` on
+    ///   MySQL 8.3 and later, where [`explain_setting`](Self::explain_setting) switches on the
+    ///   iterator format that `EXPLAIN ANALYZE` needs, and MariaDB's `ANALYZE FORMAT=JSON`.
+    ///   Older MySQL, and a console not connected yet, only get the estimate.
+    ///
+    /// `None` where the database's plan is text without costs to weigh, or where DbRover
+    /// doesn't read its format yet: [`explain_prefix`](Self::explain_prefix) then explains the
+    /// statement as rows, and it can't be analysed.
+    pub fn plan_request(
+        self,
+        depth: ExplainDepth,
+        server: Option<&ServerInfo>,
+    ) -> Option<PlanRequest> {
+        let prefix = match (self, depth) {
+            (Self::Postgres, ExplainDepth::Estimated) => "EXPLAIN (FORMAT JSON) ",
+            (Self::Postgres, ExplainDepth::Analysed) => "EXPLAIN (ANALYZE, FORMAT JSON) ",
+            (Self::Mysql, ExplainDepth::Estimated) => "EXPLAIN FORMAT=JSON ",
+            (Self::Mysql, ExplainDepth::Analysed) => match server.map(mysql_flavour) {
+                Some(MysqlFlavour::MariaDb) => "ANALYZE FORMAT=JSON ",
+                Some(MysqlFlavour::Iterators) => "EXPLAIN ANALYZE FORMAT=JSON ",
+                Some(MysqlFlavour::QueryBlocks) | None => return None,
+            },
+            (Self::Sqlite | Self::SqlServer | Self::DuckDb | Self::ClickHouse, _) => return None,
+        };
+        let format = match self {
+            Self::Mysql => PlanFormat::MysqlJson,
+            _ => PlanFormat::PostgresJson,
+        };
+        Some(PlanRequest { prefix, format })
     }
 
     /// Whether the database has transactions a console can open and end. ClickHouse's are
@@ -497,17 +514,37 @@ impl Dialect {
         })
     }
 
-    /// The setting to switch on around a statement, after the
-    /// [`explain_prefix`](Self::explain_prefix), to have it explained: SQL Server's
-    /// `SHOWPLAN_XML`, which answers with the estimated plan as one XML document and must be
-    /// set in a batch of its own. `None` where the prefix alone explains.
-    pub fn explain_setting(self) -> Option<ExplainSetting> {
-        match self {
-            Self::Postgres | Self::Sqlite | Self::Mysql | Self::DuckDb | Self::ClickHouse => None,
-            Self::SqlServer => Some(ExplainSetting {
+    /// The setting to switch on around a statement, after its prefix, to have it explained to
+    /// `depth` on `server`, which is how the database the engine is connected to answers:
+    ///
+    /// - SQL Server's `SHOWPLAN_XML`, which answers with the estimated plan as one XML document
+    ///   and must be set in a batch of its own.
+    /// - MySQL 8.3 and later's `explain_json_format_version = 2`, for plans as a tree of the
+    ///   iterators MySQL runs, which `EXPLAIN ANALYZE FORMAT=JSON` requires. It is a session
+    ///   variable, so its value is kept in a user variable and put back afterwards.
+    ///
+    /// `None` where the prefix alone explains.
+    pub fn explain_setting(
+        self,
+        depth: ExplainDepth,
+        server: Option<&ServerInfo>,
+    ) -> Option<ExplainSetting> {
+        match (self, depth) {
+            (Self::SqlServer, ExplainDepth::Estimated) => Some(ExplainSetting {
                 on: "SET SHOWPLAN_XML ON",
                 off: "SET SHOWPLAN_XML OFF",
             }),
+            (Self::Mysql, _) if server.map(mysql_flavour) == Some(MysqlFlavour::Iterators) => {
+                Some(ExplainSetting {
+                    on: "SET @dbrover_explain_json_format_version = \
+                         @@SESSION.explain_json_format_version, \
+                         @@SESSION.explain_json_format_version = 2",
+                    off: "SET @@SESSION.explain_json_format_version = \
+                          @dbrover_explain_json_format_version",
+                })
+            }
+            (Self::Postgres | Self::Sqlite | Self::Mysql | Self::DuckDb | Self::ClickHouse, _)
+            | (Self::SqlServer, ExplainDepth::Analysed) => None,
         }
     }
 
@@ -605,16 +642,41 @@ impl Dialect {
 
 /// `EXPLAIN FORMAT=TREE` arrived in MySQL 8.0.16; MariaDB has never had it.
 fn has_tree_explain(server: &ServerInfo) -> bool {
+    server.product == "MySQL" && version(server) >= (8, 0, 16)
+}
+
+/// Which JSON plans a MySQL driver's server writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MysqlFlavour {
+    /// MariaDB: query blocks, and `ANALYZE` for actual figures.
+    MariaDb,
+    /// MySQL 8.3 and later: iterator plans, once `explain_json_format_version` is 2, which
+    /// `EXPLAIN ANALYZE FORMAT=JSON` needs.
+    Iterators,
+    /// Older MySQL: query blocks, and no `EXPLAIN ANALYZE` in JSON.
+    QueryBlocks,
+}
+
+/// `explain_json_format_version` arrived in MySQL 8.3.0.
+fn mysql_flavour(server: &ServerInfo) -> MysqlFlavour {
+    match server.product.as_str() {
+        "MySQL" if version(server) >= (8, 3, 0) => MysqlFlavour::Iterators,
+        "MySQL" => MysqlFlavour::QueryBlocks,
+        _ => MysqlFlavour::MariaDb,
+    }
+}
+
+/// The server's major, minor and patch version; a part that isn't a number counts as 0.
+fn version(server: &ServerInfo) -> (u32, u32, u32) {
     let mut numbers = server
         .version
         .split(['.', '-'])
         .map(|part| part.parse::<u32>().unwrap_or(0));
-    let version = (
+    (
         numbers.next().unwrap_or(0),
         numbers.next().unwrap_or(0),
         numbers.next().unwrap_or(0),
-    );
-    server.product == "MySQL" && version >= (8, 0, 16)
+    )
 }
 
 /// The dialect each engine speaks.
@@ -658,24 +720,78 @@ mod tests {
 
     #[test]
     fn asks_for_a_plan_to_draw_where_dbrover_reads_the_format() {
-        let prefix = |depth| {
-            Dialect::Postgres
-                .plan_request(depth)
-                .map(|request| (request.prefix, request.format))
+        let server = |product: &str, version: &str| ServerInfo {
+            product: product.to_owned(),
+            version: version.to_owned(),
         };
+        let mysql_84 = server("MySQL", "8.4.13");
+        let mysql_80 = server("MySQL", "8.0.40");
+        let mariadb = server("MariaDB", "11.4.13");
+        let cases = [
+            (
+                Dialect::Postgres,
+                None,
+                "EXPLAIN (FORMAT JSON) ",
+                Some("EXPLAIN (ANALYZE, FORMAT JSON) "),
+            ),
+            (
+                Dialect::Mysql,
+                Some(&mysql_84),
+                "EXPLAIN FORMAT=JSON ",
+                Some("EXPLAIN ANALYZE FORMAT=JSON "),
+            ),
+            (
+                Dialect::Mysql,
+                Some(&mysql_80),
+                "EXPLAIN FORMAT=JSON ",
+                None,
+            ),
+            (
+                Dialect::Mysql,
+                Some(&mariadb),
+                "EXPLAIN FORMAT=JSON ",
+                Some("ANALYZE FORMAT=JSON "),
+            ),
+            (Dialect::Mysql, None, "EXPLAIN FORMAT=JSON ", None),
+        ];
+        for (dialect, server, estimated, analysed) in cases {
+            let prefix = |depth| {
+                dialect
+                    .plan_request(depth, server)
+                    .map(|request| request.prefix)
+            };
+            assert_eq!(
+                prefix(ExplainDepth::Estimated),
+                Some(estimated),
+                "{server:?}"
+            );
+            assert_eq!(prefix(ExplainDepth::Analysed), analysed, "{server:?}");
+        }
         assert_eq!(
-            prefix(ExplainDepth::Estimated),
-            Some(("EXPLAIN (FORMAT JSON) ", PlanFormat::PostgresJson))
-        );
-        assert_eq!(
-            prefix(ExplainDepth::Analysed),
-            Some(("EXPLAIN (ANALYZE, FORMAT JSON) ", PlanFormat::PostgresJson))
+            Dialect::Mysql
+                .plan_request(ExplainDepth::Estimated, None)
+                .map(|request| request.format),
+            Some(PlanFormat::MysqlJson)
         );
         for dialect in [Dialect::Sqlite, Dialect::DuckDb, Dialect::ClickHouse] {
             for depth in [ExplainDepth::Estimated, ExplainDepth::Analysed] {
-                assert_eq!(dialect.plan_request(depth), None, "{dialect:?}");
+                assert_eq!(dialect.plan_request(depth, None), None, "{dialect:?}");
             }
         }
+        // Only MySQL with iterator plans needs its format switched, for either depth.
+        let switched = |server| {
+            Dialect::Mysql
+                .explain_setting(ExplainDepth::Estimated, server)
+                .is_some()
+        };
+        assert!(switched(Some(&mysql_84)));
+        assert!(!switched(Some(&mysql_80)));
+        assert!(!switched(Some(&mariadb)));
+        assert!(
+            Dialect::SqlServer
+                .explain_setting(ExplainDepth::Estimated, None)
+                .is_some()
+        );
     }
 
     #[test]

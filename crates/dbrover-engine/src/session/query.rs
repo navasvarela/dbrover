@@ -11,7 +11,7 @@ use dbrover_core::{CancelHandle, DriverError, ResultCursor, describe_error};
 use dbrover_store::{HistoryEntry, HistoryOutcome, HistorySource, redact_secrets};
 use jiff::Timestamp;
 
-use dbrover_sql::{ExplainSetting, controls_transactions};
+use dbrover_sql::{ExplainDepth, ExplainSetting, controls_transactions};
 
 use super::guard::{self, ReadOnly};
 use super::parameters::Sendable;
@@ -63,27 +63,32 @@ pub(super) async fn run_script(
     worker: &mut Worker<'_>,
     script: &Script,
 ) -> Result<Option<Parked>, Disconnected> {
-    let setting = match script.purpose {
-        RunPurpose::Explain => worker
-            .context
-            .dialect()
-            .and_then(|dialect| dialect.explain_setting()),
-        RunPurpose::Run | RunPurpose::ExplainAnalyse => None,
+    // An estimate runs nothing, so it needs no transaction; Explain analyse runs the
+    // statements, in the console's transaction mode as a run would.
+    let (depth, transactions) = match script.purpose {
+        RunPurpose::Run => return run_statements(worker, script, script.transactions).await,
+        RunPurpose::Explain => (ExplainDepth::Estimated, TransactionMode::Auto),
+        RunPurpose::ExplainAnalyse => (ExplainDepth::Analysed, script.transactions),
     };
+    let server = worker.connection.server_info();
+    let setting = worker
+        .context
+        .dialect()
+        .and_then(|dialect| dialect.explain_setting(depth, Some(server)));
     match setting {
-        Some(setting) => explain_with_setting(worker, script, setting).await,
+        Some(setting) => explain_with_setting(worker, script, setting, transactions).await,
         None => run_statements(worker, script, script.transactions).await,
     }
 }
 
 /// Explains the script's statements with the session setting switched on, in a batch of its
 /// own before them, and switches it off afterwards whatever happened, so the console's next
-/// statements run again. No transaction is opened for them: with the setting on, nothing
-/// runs.
+/// statements run as they did before.
 async fn explain_with_setting(
     worker: &mut Worker<'_>,
     script: &Script,
     setting: ExplainSetting,
+    transactions: TransactionMode,
 ) -> Result<Option<Parked>, Disconnected> {
     let switched_on = StatementRef {
         run: script.run,
@@ -101,7 +106,7 @@ async fn explain_with_setting(
         });
         return Ok(None);
     }
-    let parked = run_statements(worker, script, TransactionMode::Auto).await?;
+    let parked = run_statements(worker, script, transactions).await?;
     // The setting can only be switched off once nothing holds the connection. A plan is one
     // row, so this only ever drops the plans of a batch's further statements.
     if let Some(parked) = parked {

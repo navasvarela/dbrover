@@ -1881,6 +1881,7 @@ dependencies = [
  "dbrover-driver-sqlserver",
  "dbrover-export",
  "dbrover-language",
+ "dbrover-plan",
  "dbrover-sql",
  "dbrover-ssh",
  "dbrover-store",

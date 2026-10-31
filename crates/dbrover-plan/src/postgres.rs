@@ -5,6 +5,7 @@
 
 use serde_json::{Map, Value};
 
+use crate::json::{flag, number, text};
 use crate::{Actual, Detail, Estimate, Plan, PlanError, Step, Timing};
 
 /// The keys a step is built from, which aren't repeated among its details. `Plan Width`,
@@ -175,14 +176,14 @@ fn actual(node: &Map<String, Value>) -> Option<Actual> {
         number(node, "Actual Startup Time"),
         number(node, "Actual Total Time"),
     ) {
-        (Some(first_row_ms), Some(last_row_ms)) => Some(Timing {
+        (first_row_ms @ Some(_), Some(last_row_ms)) => Some(Timing {
             first_row_ms,
             last_row_ms,
         }),
         _ => None,
     };
     Some(Actual {
-        rows: number(node, "Actual Rows").unwrap_or(0.0),
+        rows: number(node, "Actual Rows"),
         loops,
         time,
     })
@@ -240,18 +241,6 @@ fn value_text(key: &str, value: &Value) -> String {
             .join(", "),
         Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_) => value.to_string(),
     }
-}
-
-fn text(node: &Map<String, Value>, key: &str) -> Option<String> {
-    node.get(key).and_then(Value::as_str).map(str::to_owned)
-}
-
-fn number(node: &Map<String, Value>, key: &str) -> Option<f64> {
-    node.get(key).and_then(Value::as_f64)
-}
-
-fn flag(node: &Map<String, Value>, key: &str) -> bool {
-    node.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -326,7 +315,7 @@ mod tests {
         assert_eq!(plan.measure(), Measure::Time);
         let sort = &plan.root.children[0];
         let actual = sort.actual.unwrap();
-        assert_eq!((actual.rows, actual.loops), (10.0, 1.0));
+        assert_eq!((actual.rows, actual.loops), (Some(10.0), 1.0));
         assert!(actual.time.is_some());
         assert!(
             sort.details

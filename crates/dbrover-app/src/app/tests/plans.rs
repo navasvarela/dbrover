@@ -203,7 +203,7 @@ fn explains_a_join_as_a_tree_with_its_costliest_step_highlighted() {
         .find(|line| line.step.title() == "Seq Scan on orders o")
         .and_then(|line| line.step.actual)
         .unwrap();
-    assert_eq!((orders.rows, orders.loops), (20000.0, 1.0));
+    assert_eq!((orders.rows, orders.loops), (Some(20000.0), 1.0));
     harness.get_by_label_contains("Analysed plan · ran in");
 }
 

@@ -20,6 +20,18 @@ SHOW COLUMNS FROM t;
 DESCRIBE t;
 -- expect: read
 EXPLAIN SELECT * FROM t;
+-- expect: read
+EXPLAIN FORMAT=JSON SELECT * FROM t;
+-- expect: read
+EXPLAIN ANALYZE FORMAT=JSON SELECT * FROM t;
+-- expect: read
+ANALYZE FORMAT=JSON SELECT * FROM t;
+-- expect: write
+EXPLAIN ANALYZE FORMAT=JSON DELETE FROM t;
+-- expect: write
+ANALYZE FORMAT=JSON DELETE FROM t;
+-- expect: admin
+ANALYZE TABLE t;
 
 -- Writing.
 -- expect: write

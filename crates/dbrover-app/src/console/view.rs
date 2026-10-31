@@ -307,8 +307,12 @@ fn needs_sql(action: Action) -> bool {
 /// in SQL and MongoDB. Hidden and disabled where it doesn't.
 fn offered(console: &QueryConsole, action: Action) -> bool {
     match action {
-        Action::Explain => console.language().can_explain(ExplainDepth::Estimated),
-        Action::ExplainAnalyse => console.language().can_explain(ExplainDepth::Analysed),
+        Action::Explain => console
+            .language()
+            .can_explain(ExplainDepth::Estimated, console.server()),
+        Action::ExplainAnalyse => console
+            .language()
+            .can_explain(ExplainDepth::Analysed, console.server()),
         action => !needs_sql(action) || console.dialect().is_some(),
     }
 }
