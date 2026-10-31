@@ -621,6 +621,38 @@ mod test_language {
         assert_eq!(insert_one, Some(Some("document, options".to_owned())));
     }
 
+    /// In an Elasticsearch console, a path's endpoint completes in a request line and a query
+    /// word inside the string being typed in a body, as written.
+    #[test]
+    fn completes_search_endpoints_and_query_words_as_written() {
+        let recent = RecentCompletions::default();
+        let cases = [
+            ("GET /orders/_se", "_search", Some("GET /<index>/_search")),
+            (
+                "POST /orders/_search\n{ \"query\": { \"match_a",
+                "match_all",
+                Some("query"),
+            ),
+        ];
+        for (text, word, detail) in cases {
+            let mut console = console_in(text, QueryLanguage::Search);
+            console.selection = text.len()..text.len();
+            console.open_completion(false);
+            let _ = console.refresh_completion(None, &recent, &[]);
+            let found = console
+                .completion
+                .as_ref()
+                .and_then(|completion| {
+                    completion
+                        .candidates
+                        .iter()
+                        .find(|candidate| candidate.insert == word)
+                })
+                .map(|candidate| candidate.detail.clone());
+            assert_eq!(found, Some(detail.map(str::to_owned)), "{text}");
+        }
+    }
+
     #[test]
     fn leaves_out_what_only_sql_has() {
         let mut console = console_in("get a", QueryLanguage::Test);
