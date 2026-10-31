@@ -483,6 +483,13 @@ const SCENES: &[Scene] = &[
         keeps_pointer: false,
         needs: &[POSTGRES_URL],
     },
+    Scene {
+        name: "explain-plan",
+        data_sources: FixtureSources::Shop,
+        play: explain_plan,
+        keeps_pointer: false,
+        needs: &[POSTGRES_URL],
+    },
 ];
 
 #[test]
@@ -913,6 +920,45 @@ fn console_reconnect(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixtu
         .type_text("SELECT status, count(*) FROM orders GROUP BY status;\n");
     harness.run_ok();
     run_all(harness, "reconnect to go on");
+}
+
+/// Customers and their orders as temporary tables, the console's own, so nothing is left on
+/// the test server; analysed, so the plan's estimates are the same every time.
+const EXPLAINED_SHOP: &str = "\
+CREATE TEMP TABLE customers AS
+  SELECT g AS id, 'customer ' || g AS name, CASE WHEN g % 3 = 0 THEN 'ES' ELSE 'FR' END AS country
+  FROM generate_series(1, 1000) g;
+CREATE TEMP TABLE orders AS
+  SELECT g AS id, 1 + g % 1000 AS customer_id, (g % 97) * 1.5 AS total
+  FROM generate_series(1, 20000) g;
+ANALYZE customers;
+ANALYZE orders;
+";
+
+/// A join of orders and their customers explained by running it (W10): the plan as a tree,
+/// the costliest step highlighted and selected, with what each step did.
+fn explain_plan(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
+    let Some((postgres, _)) = &fixture.postgres else {
+        return;
+    };
+    open_console(harness, &postgres.name, EXPLAINED_SHOP);
+    run_all(harness, "Done in");
+    harness.get_by_role(Role::MultilineTextInput).focus();
+    harness.run_ok();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    harness.get_by_role(Role::MultilineTextInput).type_text(
+        "SELECT c.country, count(*) AS orders, sum(o.total) AS total\n\
+         FROM orders o\n\
+         JOIN customers c ON c.id = o.customer_id\n\
+         GROUP BY c.country\n\
+         ORDER BY total DESC;",
+    );
+    harness.run_ok();
+    harness.key_press_modifiers(
+        egui::Modifiers::COMMAND | egui::Modifiers::ALT | egui::Modifiers::SHIFT,
+        egui::Key::E,
+    );
+    step_until_visible(harness, "Actual rows");
 }
 
 fn password_prompt(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {

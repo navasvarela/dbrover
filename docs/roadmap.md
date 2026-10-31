@@ -1228,7 +1228,7 @@ three to five, **L** a track of its own).
   password on every connection, through an SSH tunnel, a failing command, the dialog's test),
   store tests of the trust file and the export, and a kittest test of the dialog and the
   prompt.
-- **W10 — A visual explain plan (M):** designed on 2026-10-31 in
+- **W10 — A visual explain plan (M):** built; designed on 2026-10-31 in
   [A well-rounded app](well-rounded.md#w10--a-visual-explain-plan). The plan of the statement at
   the cursor as a tree of steps, each with its estimated cost and rows and, after **Explain
   analyse**, the actual rows and time, the costliest steps highlighted.
@@ -1251,6 +1251,28 @@ three to five, **L** a track of its own).
   - **W10e — SQL Server:** the XML showplan, estimated (`SHOWPLAN_XML`) and actual
     (`STATISTICS XML`).
   - **W10f — Manual:** a chapter on reading plans, and this demo note.
+
+  **W10 demo note:** built in #291, #294, #296, #302 and #303, with the manual chapter
+  [Reading query plans](../book/src/explain-plans.md). On the PostgreSQL test server, type a
+  join of `orders` and `customers` and press ⌥⌘E: the results panel shows the plan as a tree,
+  each step with its share of the plan as a bar, its estimated cost and rows, and the costliest
+  step tinted and marked **Costliest** (`Seq Scan on orders o` when there are twenty orders a
+  customer), selected so its facts show under the tree. **Explain analyse** (⇧⌥⌘E, or the button
+  above the plan) runs the join and adds **Actual rows**, **Loops** and **Time**, the shares
+  going by time, and a ⚠ on rows ten times off their estimate. **Text** shows the plan in
+  PostgreSQL's layout; **Copy text** and **Copy JSON** copy either. The same works on MySQL 8.4
+  (iterator plans, with `explain_json_format_version` switched to 2 around the explain and put
+  back), MariaDB (`ANALYZE FORMAT=JSON`), MySQL 8.0 (estimates only) and SQL Server
+  (`SHOWPLAN_XML`, and `STATISTICS XML` for the actual plan, which the driver reads in place of
+  the statement's rows). On a careful data source Explain analyse asks first; on a read-only
+  one an analysed `DELETE` is refused and a write hidden in a function fails in the read-only
+  transaction. Departures from the design: none of substance; the costliest step's facts show
+  under the tree rather than only on hover, and MariaDB's query blocks have a time but no row
+  count, so plans carry actual rows as optional. Covered by parser tests on plans recorded from
+  every server, engine tests explaining to both depths on PostgreSQL, MySQL, MariaDB and SQL
+  Server, the read-only engine test, and kittest tests of the view and of the exit on the
+  PostgreSQL test server. Still to try by eye: a plan of a few hundred steps, for scrolling and
+  folding.
 
   **Exit:** on the PostgreSQL test server, ⌥⌘E on a join of `orders` and `customers` shows a
   tree whose costliest step is highlighted, and **Explain analyse** adds the actual rows.

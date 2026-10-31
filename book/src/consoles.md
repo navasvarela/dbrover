@@ -130,7 +130,7 @@ The toolbar's buttons, and their shortcuts while the editor has focus:
 | --- | --- | --- |
 | **Run** (▷) | ⌘↵ | Runs the selected text if there is a selection, otherwise the statement at the cursor. |
 | **Run all** (▷▷) | ⇧⌘↵ | Runs every statement in the console, in order, stopping at the first one that fails. |
-| **Explain** | ⌥⌘E | Shows how the database would run the statement at the cursor: on PostgreSQL, MySQL, MariaDB and SQL Server its plan as a tree of steps, the costliest highlighted, with **Text** for the plan as text, buttons to copy either, and **Explain analyse** (⇧⌥⌘E, everywhere but MySQL before 8.3), which runs the statement and adds what each step did; `EXPLAIN QUERY PLAN` on SQLite, `EXPLAIN` on DuckDB, whose plan is drawn as a tree in text, and `EXPLAIN` on ClickHouse, one step of the plan per row. |
+| **Explain** | ⌥⌘E | Shows how the database would run the statement at the cursor: on PostgreSQL, MySQL, MariaDB and SQL Server its plan as a tree of steps, the costliest highlighted, with **Text** for the plan as text, buttons to copy either, and **Explain analyse** (⇧⌥⌘E, everywhere but MySQL before 8.3), which runs the statement and adds what each step did (see [Reading query plans](explain-plans.md)); `EXPLAIN QUERY PLAN` on SQLite, `EXPLAIN` on DuckDB, whose plan is drawn as a tree in text, and `EXPLAIN` on ClickHouse, one step of the plan per row. |
 | **Cancel** (□) | ⌘. | Stops the running statement, or discards rows not yet loaded. |
 | **History** | — | Opens the data source's query history. |
 | **Format** | ⌥⌘L | Formats the selected text, or the statement at the cursor (see [The editor](#the-editor)). |
