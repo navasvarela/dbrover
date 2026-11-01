@@ -84,6 +84,11 @@ impl ExportFormat {
         }
     }
 
+    /// The format whose [`ExportFormat::id`] is `id`.
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|format| format.id() == id)
+    }
+
     /// Whether the format writes text, which can go on the clipboard or into an MCP answer,
     /// rather than only files.
     pub fn writes_text(self) -> bool {

@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
+use dbrover_export::CustomFormatId;
 use dbrover_store::{ActionId, KeymapBindings};
 use egui::{InputState, Key, KeyboardShortcut, Modifiers};
 
@@ -213,6 +214,9 @@ pub struct Keymap {
     /// Custom actions from `actions.toml`, which have no keys until `keymap.toml` gives them
     /// some as `custom.<id>`.
     custom: BTreeMap<ActionId, Vec<KeyboardShortcut>>,
+    /// Copying as formats from `exports.toml`, which have no keys until `keymap.toml` gives
+    /// them some as `export.<id>`.
+    formats: BTreeMap<CustomFormatId, Vec<KeyboardShortcut>>,
     /// What in the file couldn't be used, for Settings › Keymap. Each was skipped.
     problems: Vec<String>,
 }
@@ -225,16 +229,21 @@ impl Default for Keymap {
                 .map(|action| (action, action.default_bindings()))
                 .collect(),
             custom: BTreeMap::new(),
+            formats: BTreeMap::new(),
             problems: Vec::new(),
         }
     }
 }
 
 impl Keymap {
-    /// The defaults overridden by `file`, with keys for the custom actions `custom` names.
-    /// Unknown actions and unreadable shortcuts are skipped and listed as problems, so one typo
-    /// doesn't cost every other binding.
-    pub fn from_file(file: &KeymapBindings, custom: &[&ActionId]) -> Self {
+    /// The defaults overridden by `file`, with keys for the custom actions `custom` names and
+    /// for copying as the formats `formats` names. Unknown actions and unreadable shortcuts are
+    /// skipped and listed as problems, so one typo doesn't cost every other binding.
+    pub fn from_file(
+        file: &KeymapBindings,
+        custom: &[&ActionId],
+        formats: &[&CustomFormatId],
+    ) -> Self {
         let mut keymap = Self::default();
         for (id, shortcuts) in file {
             let parsed = keymap.parse_shortcuts(id, shortcuts);
@@ -242,10 +251,16 @@ impl Keymap {
                 keymap.bindings.insert(action, parsed);
             } else if let Some(action) = custom_action(id, custom) {
                 keymap.custom.insert(action.clone(), parsed);
+            } else if let Some(format) = custom_format(id, formats) {
+                keymap.formats.insert(format.clone(), parsed);
             } else if id.starts_with(ActionId::KEYMAP_PREFIX) {
                 keymap
                     .problems
                     .push(format!("{id:?} is not an action in actions.toml"));
+            } else if id.starts_with(CustomFormatId::KEYMAP_PREFIX) {
+                keymap.problems.push(format!(
+                    "{id:?} is not a format in exports.toml that can be copied"
+                ));
             } else {
                 keymap.problems.push(format!(
                     "{id:?} is not an action; see Settings › Keymap for the ids"
@@ -290,24 +305,20 @@ impl Keymap {
         self.custom.get(action).map_or(&[], Vec::as_slice)
     }
 
+    /// The keys `keymap.toml` gives copying as a custom format, minus any taken before.
+    pub fn format_bindings(&self, format: &CustomFormatId) -> &[KeyboardShortcut] {
+        self.formats.get(format).map_or(&[], Vec::as_slice)
+    }
+
     /// Consumes this frame's key presses bound to custom actions, and returns the actions.
     pub fn consume_custom(&self, input: &mut InputState) -> Vec<ActionId> {
-        let mut candidates: Vec<(&ActionId, KeyboardShortcut)> = self
-            .custom
-            .iter()
-            .flat_map(|(action, shortcuts)| {
-                shortcuts.iter().map(move |&shortcut| (action, shortcut))
-            })
-            .collect();
-        candidates
-            .sort_by_key(|(_, shortcut)| std::cmp::Reverse(modifier_count(shortcut.modifiers)));
-        let mut triggered = Vec::new();
-        for (action, shortcut) in candidates {
-            if input.consume_shortcut(&shortcut) && !triggered.contains(action) {
-                triggered.push(action.clone());
-            }
-        }
-        triggered
+        consume_bound(&self.custom, input)
+    }
+
+    /// Consumes this frame's key presses bound to copying as custom formats, and returns the
+    /// formats.
+    pub fn consume_formats(&self, input: &mut InputState) -> Vec<CustomFormatId> {
+        consume_bound(&self.formats, input)
     }
 
     /// The action's first shortcut, as the platform writes it (`⌘↵`), for tooltips.
@@ -342,7 +353,8 @@ impl Keymap {
 
     /// Reports shortcuts given twice. Between built-in actions the first in `Action`'s order
     /// keeps it; a custom action loses one a built-in action has, or another custom action has
-    /// first, since the console and the app consume their keys before custom actions'.
+    /// first, since the console and the app consume their keys before custom actions'; and
+    /// copying as a custom format loses one any action has.
     fn report_conflicts(&mut self) {
         let mut seen: Vec<(KeyboardShortcut, String)> = Vec::new();
         for (&action, shortcuts) in &self.bindings {
@@ -356,24 +368,72 @@ impl Keymap {
                 }
             }
         }
-        for (action, shortcuts) in &mut self.custom {
-            let id = action.keymap_id();
-            shortcuts.retain(
-                |shortcut| match seen.iter().find(|(taken, _)| taken == shortcut) {
-                    Some((_, first)) => {
-                        self.problems.push(format!(
-                            "{first} and {id} share a shortcut; {first} gets it"
-                        ));
-                        false
-                    }
-                    None => {
-                        seen.push((*shortcut, id.clone()));
-                        true
-                    }
-                },
-            );
+        drop_taken(
+            &mut self.custom,
+            ActionId::keymap_id,
+            &mut seen,
+            &mut self.problems,
+        );
+        drop_taken(
+            &mut self.formats,
+            CustomFormatId::keymap_id,
+            &mut seen,
+            &mut self.problems,
+        );
+    }
+}
+
+/// Removes from `bound` the shortcuts `seen` has already, each a problem, and adds the rest to
+/// it: what custom actions and custom formats lose to whatever consumed its keys first.
+fn drop_taken<K>(
+    bound: &mut BTreeMap<K, Vec<KeyboardShortcut>>,
+    keymap_id: impl Fn(&K) -> String,
+    seen: &mut Vec<(KeyboardShortcut, String)>,
+    problems: &mut Vec<String>,
+) {
+    for (key, shortcuts) in bound {
+        let id = keymap_id(key);
+        shortcuts.retain(
+            |shortcut| match seen.iter().find(|(taken, _)| taken == shortcut) {
+                Some((_, first)) => {
+                    problems.push(format!(
+                        "{first} and {id} share a shortcut; {first} gets it"
+                    ));
+                    false
+                }
+                None => {
+                    seen.push((*shortcut, id.clone()));
+                    true
+                }
+            },
+        );
+    }
+}
+
+/// Consumes this frame's key presses bound in `bound`, trying shortcuts with more modifiers
+/// first, as [`Keymap::consume`] does, and returns what they are bound to.
+fn consume_bound<K: Clone + PartialEq>(
+    bound: &BTreeMap<K, Vec<KeyboardShortcut>>,
+    input: &mut InputState,
+) -> Vec<K> {
+    let mut candidates: Vec<(&K, KeyboardShortcut)> = bound
+        .iter()
+        .flat_map(|(key, shortcuts)| shortcuts.iter().map(move |&shortcut| (key, shortcut)))
+        .collect();
+    candidates.sort_by_key(|(_, shortcut)| std::cmp::Reverse(modifier_count(shortcut.modifiers)));
+    let mut triggered = Vec::new();
+    for (key, shortcut) in candidates {
+        if input.consume_shortcut(&shortcut) && !triggered.contains(key) {
+            triggered.push(key.clone());
         }
     }
+    triggered
+}
+
+/// The custom format an `export.<id>` binding names, if `exports.toml` has it.
+fn custom_format<'a>(id: &str, formats: &[&'a CustomFormatId]) -> Option<&'a CustomFormatId> {
+    let id = id.strip_prefix(CustomFormatId::KEYMAP_PREFIX)?;
+    formats.iter().copied().find(|format| format.as_str() == id)
 }
 
 /// The custom action a `custom.<id>` binding names, if `actions.toml` has it.
@@ -548,8 +608,35 @@ mod tests {
 
     impl Keymap {
         fn from_file_for_tests(file: &KeymapBindings) -> Self {
-            Self::from_file(file, &[])
+            Self::from_file(file, &[], &[])
         }
+    }
+
+    #[test]
+    fn binds_copying_as_custom_formats_and_reports_the_rest() {
+        let semicolon = CustomFormatId::new("semicolon").unwrap();
+        let keymap = Keymap::from_file(
+            &bindings(&[
+                ("export.semicolon", &["cmd+alt+c", "cmd+enter"]),
+                ("export.gone", &["f7"]),
+            ]),
+            &[],
+            &[&semicolon],
+        );
+        assert_eq!(
+            keymap.format_bindings(&semicolon),
+            [KeyboardShortcut::new(
+                Modifiers::COMMAND | Modifiers::ALT,
+                Key::C
+            )]
+        );
+        assert_eq!(
+            keymap.problems(),
+            [
+                "\"export.gone\" is not a format in exports.toml that can be copied",
+                "console.run and export.semicolon share a shortcut; console.run gets it",
+            ]
+        );
     }
 
     #[test]
@@ -563,6 +650,7 @@ mod tests {
                 ("custom.gone", &["f7"]),
             ]),
             &[&row_count, &latest],
+            &[],
         );
 
         assert_eq!(
@@ -627,7 +715,7 @@ mod tests {
                 (id.clone(), shortcuts)
             })
             .collect();
-        let keymap = Keymap::from_file(&file, &[]);
+        let keymap = Keymap::from_file(&file, &[], &[]);
         assert!(keymap.problems().is_empty(), "{:?}", keymap.problems());
         for action in Action::ALL {
             assert_eq!(

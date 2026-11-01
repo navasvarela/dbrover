@@ -8,7 +8,7 @@ use dbrover_engine::{
     Command, EngineConfig, EngineError, EngineHandle, Event, PasswordKept, Repaint, Restart,
     RunOrigin,
 };
-use dbrover_export::{ExportFormat, ExportSpec};
+use dbrover_export::{CustomFormatId, ExportSpec};
 use dbrover_language::QueryLanguage;
 use dbrover_store::{
     ActionBody, ActionId, ConsoleKey, CustomFileKind, DiagramFolder, DiagramKey, DiagramName,
@@ -20,10 +20,13 @@ use egui_dock::{DockArea, DockState};
 use crate::about_dialog;
 use crate::command_runs::{CommandRuns, Finished};
 use crate::commands::{self, AppCommand, CommandState};
-use crate::console::{ConsoleAction, ExportedRows, FormatScope, RowsToOpen, RunDestination};
+use crate::console::{
+    ClipboardCopy, ConsoleAction, ExportedRows, FormatScope, RowsToOpen, RunDestination,
+};
 use crate::consoles::Consoles;
 use crate::csv_import::{CsvImportAction, CsvImportDialog};
 use crate::custom_actions::{self, Subject, SubjectKind, SubjectOn};
+use crate::custom_exports;
 use crate::custom_files::{self, CustomFiles, FileWindowAction};
 use crate::data_source_dialog::{DataSourceDialog, DialogAction};
 use crate::data_source_form::McpPasswordChange;
@@ -34,7 +37,7 @@ use crate::diagram::{
 };
 use crate::explorer::{ExplorerAction, ExplorerOptions};
 use crate::export_dialog::{
-    self, ExportChoices, ExportDialog, ExportDialogAction, ExportPreview, ExportSubject,
+    self, ExportChoices, ExportDialog, ExportDialogAction, ExportPreview, ExportSubject, FileType,
     TableTarget,
 };
 use crate::export_sources_dialog::{ExportAction, ExportSourcesDialog};
@@ -49,7 +52,7 @@ use crate::log_console::{LogConsole, LogFeed};
 use crate::mcp_client_config;
 use crate::mcp_settings::McpDefaultsEditor;
 use crate::menu_bar;
-use crate::native_menu::{Chosen, NativeMenu};
+use crate::native_menu::{Chosen, CustomEntries, NativeMenu};
 use crate::object_dialog::{self, ObjectDialog, ObjectDialogAction, Target};
 use crate::password_command_prompt::{PasswordCommandAction, PasswordCommandPrompt};
 use crate::password_prompt::{PasswordPrompt, PromptAction};
@@ -79,7 +82,7 @@ use crate::{feedback, fonts, relaunch, repaint, version, welcome, widgets};
 const LAYOUT_STORAGE_KEY: &str = "dock_layout_v2";
 
 /// Asks where to export `what` ("rows", "history") in a format; `None` if cancelled.
-type PickExportPath = dyn Fn(ExportFormat, &str) -> Option<PathBuf>;
+type PickExportPath = dyn Fn(&FileType, &str) -> Option<PathBuf>;
 
 /// Asks for a folder, starting beside the one given.
 type PickFolder = dyn Fn(&Path) -> Option<PathBuf>;
@@ -492,7 +495,8 @@ impl DbRoverApp {
             self.send_if(check);
         }
         match self.custom_files.apply(event) {
-            Some(CustomFileKind::Actions) => self.rebuild_keymap(),
+            // Both can be bound in keymap.toml.
+            Some(CustomFileKind::Actions | CustomFileKind::Exports) => self.rebuild_keymap(),
             Some(CustomFileKind::Theme) => self.theme_changed = true,
             Some(CustomFileKind::Snippets) | None => {}
         }
@@ -709,8 +713,15 @@ impl DbRoverApp {
             .iter()
             .map(|action| &action.id)
             .collect();
+        let formats: Vec<&CustomFormatId> = self
+            .custom_files
+            .exports()
+            .iter()
+            .filter(|format| format.writes_text())
+            .map(|format| &format.id)
+            .collect();
         self.keymap = match &self.keymap_file {
-            Ok(bindings) => Keymap::from_file(bindings, &custom),
+            Ok(bindings) => Keymap::from_file(bindings, &custom, &formats),
             Err(error) => Keymap::unreadable(error.clone()),
         };
     }
@@ -720,6 +731,26 @@ impl DbRoverApp {
         let triggered = ctx.input_mut(|input| self.keymap.consume_custom(input));
         for action in triggered {
             self.run_action_on_selection(&action);
+        }
+    }
+
+    /// The keys `keymap.toml` gives copying as custom formats: the focused console's selected
+    /// cells, copied as the Edit menu would.
+    fn custom_format_shortcuts(&mut self, ctx: &egui::Context) {
+        let triggered = ctx.input_mut(|input| self.keymap.consume_formats(input));
+        for id in triggered {
+            let format = self
+                .custom_files
+                .exports()
+                .iter()
+                .find(|format| format.id == id)
+                .cloned();
+            if let Some(format) = format {
+                self.run_command(
+                    AppCommand::Copy(ClipboardCopy::Custom(Box::new(format))),
+                    ctx,
+                );
+            }
         }
     }
 
@@ -1737,7 +1768,7 @@ impl DbRoverApp {
                 self.consoles.insert_statement(&console, &sql);
             }
             HistoryAction::Export(spec) => {
-                if let Some(path) = (self.pick_export_path)(spec.format(), "history")
+                if let Some(path) = (self.pick_export_path)(&FileType::of(spec.format()), "history")
                     && let Some(window) = &mut self.history_window
                 {
                     let command = window.export(path, spec);
@@ -1791,7 +1822,11 @@ impl DbRoverApp {
             .map(|file| file.path.clone())
             .collect();
         if let Some(menu) = &mut self.native_menu {
-            menu.sync(&state, &self.keymap, &recent, self.custom_files.actions());
+            let custom = CustomEntries {
+                actions: self.custom_files.actions(),
+                formats: self.custom_files.exports(),
+            };
+            menu.sync(&state, &self.keymap, &recent, custom);
         }
     }
 
@@ -1828,6 +1863,7 @@ impl DbRoverApp {
             AppCommand::Theme(preference) => ctx.set_theme(preference),
             AppCommand::ShowKeymap => self.open_settings_page(Page::Keymap),
             AppCommand::ShowActions => self.open_settings_page(Page::Actions),
+            AppCommand::ShowExports => self.open_settings_page(Page::Exports),
             AppCommand::ShowSettings => workspace::open_settings_tab(&mut self.dock),
             AppCommand::ResetLayout => {
                 self.dock = workspace::default_layout();
@@ -1884,7 +1920,12 @@ impl DbRoverApp {
     fn open_export_dialog(&mut self, console: ConsoleKey) {
         if let Some(preview) = self.consoles.export_preview(&console) {
             let subject = ExportSubject::Grid(console);
-            self.export_dialog = Some(ExportDialog::new(subject, preview, &self.export_choices));
+            self.export_dialog = Some(ExportDialog::new(
+                subject,
+                preview,
+                &self.export_choices,
+                self.custom_files.exports(),
+            ));
         }
     }
 
@@ -1915,7 +1956,12 @@ impl DbRoverApp {
             },
         };
         let subject = ExportSubject::Statement { console, run };
-        self.export_dialog = Some(ExportDialog::new(subject, preview, &self.export_choices));
+        self.export_dialog = Some(ExportDialog::new(
+            subject,
+            preview,
+            &self.export_choices,
+            self.custom_files.exports(),
+        ));
     }
 
     /// Export data… on a table or view: the export dialog, while the table is described.
@@ -1927,7 +1973,12 @@ impl DbRoverApp {
         if let Some((target, describe)) = opened {
             let preview = target.preview();
             let subject = ExportSubject::Table(target);
-            self.export_dialog = Some(ExportDialog::new(subject, preview, &self.export_choices));
+            self.export_dialog = Some(ExportDialog::new(
+                subject,
+                preview,
+                &self.export_choices,
+                self.custom_files.exports(),
+            ));
             self.send(describe);
         }
     }
@@ -2010,11 +2061,11 @@ impl DbRoverApp {
             return;
         };
         match dialog.show(ctx) {
-            Some(ExportDialogAction::Export(spec)) => {
+            Some(ExportDialogAction::Export(spec, file)) => {
                 self.export_choices = dialog.choices().clone();
                 let subject = dialog.subject().clone();
                 let rows = dialog.rows();
-                self.export_to_file(subject, rows, spec);
+                self.export_to_file(subject, rows, spec, &file);
             }
             Some(ExportDialogAction::Cancel(run)) => {
                 if let ExportSubject::Table(target) = dialog.subject() {
@@ -2029,12 +2080,18 @@ impl DbRoverApp {
 
     /// Asks where to save, then exports `subject` there: a console's rows and a statement in
     /// the console, which shows how it goes, and a table in the dialog, which stays open.
-    fn export_to_file(&mut self, subject: ExportSubject, rows: ExportedRows, spec: ExportSpec) {
+    fn export_to_file(
+        &mut self,
+        subject: ExportSubject,
+        rows: ExportedRows,
+        spec: ExportSpec,
+        file: &FileType,
+    ) {
         let what = match &subject {
             ExportSubject::Table(target) => target.table.name.clone(),
             ExportSubject::Grid(_) | ExportSubject::Statement { .. } => "rows".to_owned(),
         };
-        let Some(path) = (self.pick_export_path)(spec.format(), &what) else {
+        let Some(path) = (self.pick_export_path)(file, &what) else {
             return;
         };
         let command = match subject {
@@ -2198,6 +2255,10 @@ impl DbRoverApp {
                 text: keymap::template(),
             }),
             SettingsAction::ReloadCustomFiles => self.send(Command::ReloadCustomFiles),
+            SettingsAction::CreateExports => self.send(Command::CreateCustomFile {
+                kind: CustomFileKind::Exports,
+                text: custom_exports::TEMPLATE.to_owned(),
+            }),
             SettingsAction::CreateActions => self.send(Command::CreateCustomFile {
                 kind: CustomFileKind::Actions,
                 text: custom_actions::TEMPLATE.to_owned(),
@@ -2346,6 +2407,7 @@ impl DbRoverApp {
             if count > 0 && widgets::problems_link(ui, kind.file_name(), count, color).clicked() {
                 match kind {
                     CustomFileKind::Actions => self.open_settings_page(Page::Actions),
+                    CustomFileKind::Exports => self.open_settings_page(Page::Exports),
                     CustomFileKind::Snippets | CustomFileKind::Theme => {
                         self.custom_files.window = Some(kind);
                     }
@@ -2405,6 +2467,7 @@ impl eframe::App for DbRoverApp {
         let ctx = ui.ctx().clone();
         self.file_shortcuts(&ctx);
         self.custom_action_shortcuts(&ctx);
+        self.custom_format_shortcuts(&ctx);
         self.program_shortcuts(&ctx);
         self.open_dropped_files(&ctx);
         // The base colour shows in the gaps between the dock's islands.
@@ -2442,6 +2505,7 @@ impl eframe::App for DbRoverApp {
                     saved_consoles,
                     explorer_options: &mut self.explorer_options,
                     custom_actions: self.custom_files.actions(),
+                    custom_formats: self.custom_files.exports(),
                     snippets: self.custom_files.snippets(),
                     explorer_actions: &mut explorer_actions,
                     consoles: open_consoles,
@@ -2594,6 +2658,7 @@ mod tests {
     mod commands;
     mod customisation;
     mod diagrams;
+    mod exports;
     mod files;
     mod find;
     mod grid;

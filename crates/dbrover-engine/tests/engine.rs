@@ -339,10 +339,16 @@ fn reloads_the_customisation_files_with_their_problems() {
     )
     .unwrap();
     std::fs::write(dir.path().join("theme.toml"), "not toml").unwrap();
+    std::fs::write(
+        dir.path().join("exports.toml"),
+        "[[export]]\nid = \"semicolon\"\nname = \"Semicolon\"\nformat = \"csv\"\n\
+         separator = \";\"\n\n[[export]]\nid = \"x\"\nname = \"X\"\nformat = \"pdf\"\n",
+    )
+    .unwrap();
 
     engine.send(Command::ReloadCustomFiles);
 
-    let [actions, snippets, theme] = engine.expect_custom_files().try_into().unwrap();
+    let [actions, snippets, theme, exports] = engine.expect_custom_files().try_into().unwrap();
     assert!(actions.problems().is_empty());
     let CustomFile::Snippets(snippets) = snippets else {
         panic!("{snippets:?}");
@@ -350,6 +356,11 @@ fn reloads_the_customisation_files_with_their_problems() {
     assert_eq!(snippets.value.len(), 1);
     assert_eq!(snippets.problems, ["snippet 2: missing field `trigger`"]);
     assert_eq!(theme.problems().len(), 1, "{:?}", theme.problems());
+    let CustomFile::Exports(exports) = exports else {
+        panic!("{exports:?}");
+    };
+    assert_eq!(exports.value.len(), 1);
+    assert_eq!(exports.problems.len(), 1, "{:?}", exports.problems);
 }
 
 #[test]

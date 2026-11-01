@@ -12,8 +12,11 @@ use egui_dock::{DockState, NodeIndex, TabStyle, TabViewer};
 use serde::{Deserialize, Serialize};
 
 use crate::command_runs::CommandRuns;
+use dbrover_export::CustomFormat;
+
 use crate::console::{
-    self, ConsoleAction, ConsoleContext, LintOptions, QueryConsole, RecentCompletions, TreeCatalog,
+    self, CellMenuItems, ConsoleAction, ConsoleContext, LintOptions, QueryConsole,
+    RecentCompletions, TreeCatalog,
 };
 use crate::consoles::SavedConsoles;
 use crate::custom_actions::{SubjectKind, SubjectOn};
@@ -197,6 +200,8 @@ pub struct Panels<'a> {
     pub explorer_options: &'a mut ExplorerOptions,
     /// From `actions.toml`, for the explorer's and the grid's menus.
     pub custom_actions: &'a [CustomAction],
+    /// The formats from `exports.toml`, for Copy as.
+    pub custom_formats: &'a [CustomFormat],
     /// From `snippets.toml`, for completion in the consoles.
     pub snippets: &'a [Snippet],
     /// What the user asked for in the explorer this frame, for the app to act on.
@@ -376,7 +381,10 @@ impl TabViewer for Panels<'_> {
                         catalog: entry.map(|entry| {
                             TreeCatalog::new(&entry.catalog, &entry.data_source.config)
                         }),
-                        cell_actions: &cell_actions,
+                        cell_menu: CellMenuItems {
+                            actions: &cell_actions,
+                            copy_formats: self.custom_formats,
+                        },
                         snippets: &snippets,
                     };
                     let mut actions = Vec::new();

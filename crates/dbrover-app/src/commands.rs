@@ -8,6 +8,8 @@ use std::path::PathBuf;
 use dbrover_store::CustomAction;
 use egui::{Event, Key, KeyboardShortcut, Modifiers, ThemePreference};
 
+use dbrover_export::CustomFormat;
+
 use crate::console::{ClipboardCopy, ClipboardFormat};
 use crate::custom_actions::SubjectKind;
 use crate::keymap::Keymap;
@@ -26,6 +28,7 @@ pub enum AppCommand {
     Theme(ThemePreference),
     ShowKeymap,
     ShowActions,
+    ShowExports,
     ShowSettings,
     ResetLayout,
     Format,
@@ -74,7 +77,11 @@ impl AppCommand {
     pub fn id(&self) -> Cow<'static, str> {
         let id = match self {
             Self::RunAction(action) => return Cow::Owned(action.id.keymap_id()),
-            Self::Copy(copy) => copy_action(*copy).id(),
+            Self::Copy(ClipboardCopy::Custom(format)) => return Cow::Owned(format.id.keymap_id()),
+            Self::Copy(copy) => match copy_action(copy) {
+                Some(action) => action.id(),
+                None => "edit.copy-as",
+            },
             Self::OpenFile => keymap::Action::OpenFile.id(),
             Self::Save => keymap::Action::Save.id(),
             Self::SaveAs => keymap::Action::SaveAs.id(),
@@ -91,6 +98,7 @@ impl AppCommand {
             Self::Theme(ThemePreference::Dark) => "view.theme.dark",
             Self::ShowKeymap => "view.keymap",
             Self::ShowActions => "view.actions",
+            Self::ShowExports => "view.exports",
             Self::ResetLayout => "view.reset-layout",
             Self::CheckForUpdates => "help.check-for-updates",
             Self::About => "help.about",
@@ -107,6 +115,7 @@ impl AppCommand {
             Self::RunAction(action) => return Cow::Borrowed(&action.name),
             Self::Copy(ClipboardCopy::WithHeaders) => "Copy with headers",
             Self::Copy(ClipboardCopy::As(format)) => format.format().name(),
+            Self::Copy(ClipboardCopy::Custom(format)) => return Cow::Borrowed(&format.name),
             Self::OpenRecent(path) => {
                 return path.file_name().map_or_else(
                     || Cow::Owned(path.display().to_string()),
@@ -124,6 +133,7 @@ impl AppCommand {
             Self::Theme(ThemePreference::Dark) => "Dark",
             Self::ShowKeymap => "Keymap…",
             Self::ShowActions => "Custom actions…",
+            Self::ShowExports => "Exports…",
             Self::ShowSettings => "Settings…",
             Self::ResetLayout => "Reset layout",
             Self::Format => "Format",
@@ -149,16 +159,18 @@ impl AppCommand {
             Self::FormatAll => Some(keymap::Action::FormatAll),
             Self::RunToFile => Some(keymap::Action::RunToFile),
             Self::ShowSettings => Some(keymap::Action::Settings),
-            Self::Copy(copy) => Some(copy_action(*copy)),
+            Self::Copy(copy) => copy_action(copy),
             _ => None,
         }
     }
 
-    /// The keys that run the command too, which the menu shows: its keymap action's, or for a
-    /// custom action what `keymap.toml` gives `custom.<id>`.
+    /// The keys that run the command too, which the menu shows: its keymap action's, for a
+    /// custom action what `keymap.toml` gives `custom.<id>`, and for copying as a custom format
+    /// what it gives `export.<id>`.
     pub fn shortcuts<'k>(&self, keymap: &'k Keymap) -> &'k [KeyboardShortcut] {
         match (self, self.shortcut()) {
             (Self::RunAction(action), _) => keymap.custom_bindings(&action.id),
+            (Self::Copy(ClipboardCopy::Custom(format)), _) => keymap.format_bindings(&format.id),
             (_, Some(action)) => keymap.bindings(action),
             (_, None) => &[],
         }
@@ -207,6 +219,9 @@ impl AppCommand {
             Self::ShowActions => Some(Cow::Borrowed(
                 "The custom actions in actions.toml, and what it got wrong",
             )),
+            Self::ShowExports => Some(Cow::Borrowed(
+                "Your own export formats in exports.toml, and what it got wrong",
+            )),
             Self::ReportProblem => Some(Cow::Borrowed(
                 "Opens a new GitHub issue with this version and system filled in",
             )),
@@ -219,6 +234,7 @@ impl AppCommand {
                     .collect();
                 Some(Cow::Owned(format!("On {}", targets.join(", "))))
             }
+            Self::Copy(ClipboardCopy::Custom(format)) => Some(Cow::Owned(format.summary())),
             _ => None,
         }
     }
@@ -364,26 +380,42 @@ pub enum SystemItem {
 pub const WINDOW_MENU: &str = "Window";
 pub const HELP_MENU: &str = "Help";
 
-/// The keymap action whose keys copy this way.
-fn copy_action(copy: ClipboardCopy) -> keymap::Action {
+/// The keymap action whose keys copy this way; `None` for a custom format, whose keys are its
+/// own `export.<id>`.
+fn copy_action(copy: &ClipboardCopy) -> Option<keymap::Action> {
     match copy {
-        ClipboardCopy::WithHeaders => keymap::Action::CopyWithHeaders,
-        ClipboardCopy::As(format) => keymap::Action::CopyAs(format),
+        ClipboardCopy::WithHeaders => Some(keymap::Action::CopyWithHeaders),
+        ClipboardCopy::As(format) => Some(keymap::Action::CopyAs(*format)),
+        ClipboardCopy::Custom(_) => None,
     }
 }
 
-/// Edit › Copy as: each format the clipboard takes.
+/// Edit › Copy as: each format the clipboard takes, then each of `formats` that writes text.
 #[cfg_attr(
     not(target_os = "macos"),
     allow(dead_code, reason = "only the macOS menu bar has an Edit menu")
 )]
-fn copy_as() -> Menu {
+fn copy_as(formats: &[CustomFormat]) -> Menu {
+    let mut entries: Vec<Entry> = ClipboardFormat::ALL
+        .into_iter()
+        .map(|format| Entry::Command(AppCommand::Copy(ClipboardCopy::As(format))))
+        .collect();
+    let custom: Vec<Entry> = formats
+        .iter()
+        .filter(|format| format.writes_text())
+        .map(|format| {
+            Entry::Command(AppCommand::Copy(ClipboardCopy::Custom(Box::new(
+                format.clone(),
+            ))))
+        })
+        .collect();
+    if !custom.is_empty() {
+        entries.push(Entry::Separator);
+        entries.extend(custom);
+    }
     Menu {
         title: "Copy as",
-        entries: ClipboardFormat::ALL
-            .into_iter()
-            .map(|format| Entry::Command(AppCommand::Copy(ClipboardCopy::As(format))))
-            .collect(),
+        entries,
     }
 }
 
@@ -443,6 +475,7 @@ pub fn egui_menu_bar(
                 Submenu(theme()),
                 Command(C::ShowKeymap),
                 Command(C::ShowActions),
+                Command(C::ShowExports),
                 Command(C::ShowSettings),
                 Command(C::ResetLayout),
             ],
@@ -471,6 +504,7 @@ pub fn egui_menu_bar(
 pub fn macos_menu_bar(
     recent_files: impl IntoIterator<Item = PathBuf>,
     actions: &[CustomAction],
+    formats: &[CustomFormat],
 ) -> Vec<Menu> {
     use AppCommand as C;
     use Entry::{Command, Edit, Separator, Submenu, System};
@@ -515,7 +549,7 @@ pub fn macos_menu_bar(
                 Edit(EditCommand::Cut),
                 Edit(EditCommand::Copy),
                 Command(C::Copy(ClipboardCopy::WithHeaders)),
-                Submenu(copy_as()),
+                Submenu(copy_as(formats)),
                 Edit(EditCommand::Paste),
                 Edit(EditCommand::SelectAll),
             ],
@@ -526,6 +560,7 @@ pub fn macos_menu_bar(
                 Submenu(theme()),
                 Command(C::ShowKeymap),
                 Command(C::ShowActions),
+                Command(C::ShowExports),
                 Command(C::ResetLayout),
                 Separator,
                 System(SystemItem::FullScreen),
@@ -656,7 +691,7 @@ mod tests {
     fn ids_are_unique() {
         for menus in [
             egui_menu_bar([PathBuf::from("/tmp/a.sql")], &[]),
-            macos_menu_bar([PathBuf::from("/tmp/a.sql")], &[]),
+            macos_menu_bar([PathBuf::from("/tmp/a.sql")], &[], &[]),
         ] {
             let mut seen = HashSet::new();
             for command in commands_in(&menus) {
@@ -668,7 +703,7 @@ mod tests {
     #[test]
     fn the_macos_menu_bar_has_every_command_of_egui_s() {
         let recent = || [PathBuf::from("/tmp/a.sql")];
-        let macos_menus = macos_menu_bar(recent(), &[]);
+        let macos_menus = macos_menu_bar(recent(), &[], &[]);
         let macos = commands_in(&macos_menus);
         for command in commands_in(&egui_menu_bar(recent(), &[])) {
             assert!(macos.contains(&command), "{command:?} is missing on macOS");
@@ -844,6 +879,7 @@ mod tests {
         let keymap = Keymap::from_file(
             &[("custom.row-count".to_owned(), vec!["f6".to_owned()])].into(),
             &[&id],
+            &[],
         );
         assert_eq!(
             command.shortcuts(&keymap),

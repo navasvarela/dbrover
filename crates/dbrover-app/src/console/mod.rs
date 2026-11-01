@@ -57,6 +57,7 @@ pub use edit::ChangeCount;
 pub use file::Disk;
 pub use find::Found;
 pub use keys::RowsToOpen;
+pub use results::CellMenuItems;
 
 pub use catalog_source::TreeCatalog;
 pub use completion::{Candidate, RecentCompletions};

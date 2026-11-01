@@ -11,8 +11,9 @@ use std::path::PathBuf;
 use dbrover_core::{ResultShape, Row, ValueKind};
 use dbrover_engine::{Event, Exporter, RunId};
 use dbrover_export::{
-    CSV_FOR_EXCEL, CsvOptions, ExportChoice, ExportColumn, ExportFormat, ExportOptions, ExportSpec,
-    RowSource, SourceTable, SqlTable, export_choices, render,
+    CSV_FOR_EXCEL, CsvOptions, CustomFormat, CustomFormatId, ExportChoice, ExportColumn,
+    ExportFormat, ExportOptions, ExportSpec, RowSource, SourceTable, SqlTable, export_choices,
+    render,
 };
 use egui::{
     Button, Id, Response, RichText, ScrollArea, TextEdit, TextStyle, Ui, WidgetInfo, WidgetType,
@@ -50,6 +51,32 @@ const DOCUMENTS_AS_JSON: &str =
 pub struct ExportChoices {
     pub format: ExportFormat,
     pub options: ExportOptions,
+    /// The format from `exports.toml` chosen last, by id, in place of `format`. One that is no
+    /// longer in the file leaves `format` chosen.
+    pub custom: Option<CustomFormatId>,
+}
+
+/// What the save dialog offers to save as: a format's name and its file name extension.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileType {
+    pub name: String,
+    pub extension: String,
+}
+
+impl FileType {
+    pub fn of(format: ExportFormat) -> Self {
+        Self {
+            name: format.name().to_owned(),
+            extension: format.extension().to_owned(),
+        }
+    }
+
+    pub fn of_custom(format: &CustomFormat) -> Self {
+        Self {
+            name: format.name.clone(),
+            extension: format.extension.clone(),
+        }
+    }
 }
 
 /// What the dialog needs of the rows: their columns, the first few as the grid shows them,
@@ -67,8 +94,8 @@ pub struct ExportPreview {
 }
 
 pub enum ExportDialogAction {
-    /// Ask where to save, then export.
-    Export(ExportSpec),
+    /// Ask where to save a file of this type, then export.
+    Export(ExportSpec, FileType),
     /// Stop the table's export.
     Cancel(RunId),
     Close,
@@ -84,6 +111,8 @@ pub struct ExportDialog {
     table: TableInput,
     texts: OptionTexts,
     progress: TableProgress,
+    /// The formats from `exports.toml`, offered after the built-in ones.
+    custom: Vec<CustomFormat>,
 }
 
 /// A table name typed in, with its schema if one is given.
@@ -120,7 +149,12 @@ impl TableInput {
 const TABLE_FIELD_WIDTH: f32 = 200.0;
 
 impl ExportDialog {
-    pub fn new(subject: ExportSubject, preview: ExportPreview, remembered: &ExportChoices) -> Self {
+    pub fn new(
+        subject: ExportSubject,
+        preview: ExportPreview,
+        remembered: &ExportChoices,
+        custom: &[CustomFormat],
+    ) -> Self {
         Self {
             subject,
             rows: ExportedRows::Loaded,
@@ -129,6 +163,7 @@ impl ExportDialog {
             preview,
             table: TableInput::default(),
             progress: TableProgress::Choosing,
+            custom: custom.to_vec(),
         }
     }
 
@@ -215,14 +250,19 @@ impl ExportDialog {
         form::section(ui, "Format", |ui| {
             ui.add_enabled_ui(choosing, |ui| self.format_choice(ui));
         });
-        let format = self.choices.format;
+        let format = self.format();
         let asks_for_table = format == ExportFormat::SqlInsert
             && self.preview.source.table.is_none()
             && self.can_name_table();
         form::section(ui, "Options", |ui| {
             ui.add_enabled_ui(choosing, |ui| {
                 form::card(ui, |rows| {
-                    options_ui(rows, format, &mut self.choices.options, &mut self.texts);
+                    match self.chosen_custom().cloned() {
+                        Some(custom) => preset_options(rows, &custom),
+                        None => {
+                            options_ui(rows, format, &mut self.choices.options, &mut self.texts)
+                        }
+                    }
                     if asks_for_table {
                         self.table.show(rows);
                     }
@@ -251,7 +291,7 @@ impl ExportDialog {
             );
         }
         match (clicked, closed, spec) {
-            (true, _, Ok(spec)) => Some(ExportDialogAction::Export(spec)),
+            (true, _, Ok(spec)) => Some(ExportDialogAction::Export(spec, self.file_type())),
             (_, true, _) => Some(ExportDialogAction::Close),
             _ => None,
         }
@@ -341,14 +381,19 @@ impl ExportDialog {
         .then_some(DOCUMENTS_AS_JSON)
     }
 
-    /// Why `choice` can't write these rows, or `None` when it can. `INSERT` stays available for
-    /// SQL rows of no known table, since a table can be named below.
-    fn unavailable(&self, choice: &ExportChoice) -> Option<&'static str> {
-        if let Some(refusal) = self.refusal(choice.format) {
+    /// Why a choice writing `format` as `spec` can't write these rows, or `None` when it can.
+    /// `INSERT` stays available for SQL rows of no known table, since a table can be named
+    /// below.
+    fn unavailable(
+        &self,
+        format: ExportFormat,
+        spec: &Result<ExportSpec, &'static str>,
+    ) -> Option<&'static str> {
+        if let Some(refusal) = self.refusal(format) {
             return Some(refusal);
         }
-        match &choice.spec {
-            Err(_) if choice.format == ExportFormat::SqlInsert && self.can_name_table() => None,
+        match spec {
+            Err(_) if format == ExportFormat::SqlInsert && self.can_name_table() => None,
             Err(reason) => Some(*reason),
             Ok(_) => None,
         }
@@ -361,43 +406,104 @@ impl ExportDialog {
         source.dialect.is_some() && source.shape == ResultShape::Rows
     }
 
-    /// The formats as tiles, with CSV for Excel after CSV. A format that can't write these rows
-    /// is greyed out, saying why.
+    /// The formats as tiles, with CSV for Excel after CSV and the formats from `exports.toml`
+    /// last. A format that can't write these rows is greyed out, saying why.
     fn format_choice(&mut self, ui: &mut Ui) {
-        let current = self.format_label();
         let spacing = ui.spacing().item_spacing.x;
         let tile_width =
             (ui.available_width() - spacing * (FORMAT_COLUMNS - 1) as f32) / FORMAT_COLUMNS as f32;
-        let choices = export_choices(&self.preview.source);
-        for line in choices.chunks(FORMAT_COLUMNS) {
+        let tiles = self.tiles();
+        let mut clicked = None;
+        for line in tiles.chunks(FORMAT_COLUMNS) {
             ui.horizontal(|ui| {
-                for choice in line {
-                    let selected = current == choice.name;
-                    let unavailable = self.unavailable(choice);
-                    let tile = format_tile(ui, choice, selected, unavailable, tile_width);
-                    if tile.clicked() {
-                        self.choose(choice.name, choice.format);
+                for tile in line {
+                    if format_tile(ui, tile, tile_width).clicked() {
+                        clicked = Some(tile.choice.clone());
                     }
                 }
             });
         }
-    }
-
-    fn choose(&mut self, name: &str, format: ExportFormat) {
-        self.choices.format = format;
-        if name == CSV_FOR_EXCEL {
-            self.choices.options.csv = CsvOptions::for_excel();
-            self.texts = OptionTexts::new(&self.choices.options);
+        if let Some(choice) = clicked {
+            self.choose(choice);
         }
     }
 
-    /// The format's name, or CSV for Excel while CSV has that preset's options.
-    fn format_label(&self) -> &'static str {
+    /// Every format's tile, built-in then custom, in the grid's order.
+    fn tiles(&self) -> Vec<Tile> {
+        let built_in_label = self.built_in_label();
+        let built_in =
+            export_choices(&self.preview.source)
+                .into_iter()
+                .map(|choice: ExportChoice| Tile {
+                    selected: built_in_label == Some(choice.name),
+                    unavailable: self.unavailable(choice.format, &choice.spec),
+                    glyph: built_in_glyph(&choice),
+                    name: choice.name.to_owned(),
+                    description: choice.description.to_owned(),
+                    choice: Choice::BuiltIn {
+                        name: choice.name,
+                        format: choice.format,
+                    },
+                });
+        let custom = self.custom.iter().map(|format| Tile {
+            selected: self.choices.custom.as_ref() == Some(&format.id)
+                && self.chosen_custom().is_some(),
+            unavailable: self.unavailable(format.builtin(), &format.spec(&self.preview.source)),
+            glyph: glyph(format.builtin()),
+            name: format.name.clone(),
+            description: format.summary(),
+            choice: Choice::Custom(format.id.clone()),
+        });
+        built_in.chain(custom).collect()
+    }
+
+    fn choose(&mut self, choice: Choice) {
+        match choice {
+            Choice::BuiltIn { name, format } => {
+                self.choices.format = format;
+                self.choices.custom = None;
+                if name == CSV_FOR_EXCEL {
+                    self.choices.options.csv = CsvOptions::for_excel();
+                    self.texts = OptionTexts::new(&self.choices.options);
+                }
+            }
+            Choice::Custom(id) => self.choices.custom = Some(id),
+        }
+    }
+
+    /// The format from `exports.toml` chosen, while it is still in the file.
+    fn chosen_custom(&self) -> Option<&CustomFormat> {
+        let id = self.choices.custom.as_ref()?;
+        self.custom.iter().find(|format| format.id == *id)
+    }
+
+    /// The built-in format written: the chosen one's, or the one a custom format is a preset of.
+    fn format(&self) -> ExportFormat {
+        self.chosen_custom()
+            .map_or(self.choices.format, CustomFormat::builtin)
+    }
+
+    /// The chosen built-in format's name, or CSV for Excel while CSV has that preset's options;
+    /// `None` while a custom format is chosen.
+    fn built_in_label(&self) -> Option<&'static str> {
+        if self.chosen_custom().is_some() {
+            return None;
+        }
         let format = self.choices.format;
-        if format == ExportFormat::Csv && self.choices.options.csv == CsvOptions::for_excel() {
-            CSV_FOR_EXCEL
-        } else {
-            format.name()
+        Some(
+            if format == ExportFormat::Csv && self.choices.options.csv == CsvOptions::for_excel() {
+                CSV_FOR_EXCEL
+            } else {
+                format.name()
+            },
+        )
+    }
+
+    /// What the save dialog offers: the chosen format's name and extension.
+    fn file_type(&self) -> FileType {
+        match self.chosen_custom() {
+            Some(custom) => FileType::of_custom(custom),
+            None => FileType::of(self.choices.format),
         }
     }
 
@@ -421,20 +527,25 @@ impl ExportDialog {
 
     /// The format and options chosen, or what is wrong with them.
     fn spec(&self) -> Result<ExportSpec, String> {
-        self.texts.problem(self.choices.format)?;
-        if let Some(refusal) = self.refusal(self.choices.format) {
+        let custom = self.chosen_custom();
+        let format = self.format();
+        if custom.is_none() {
+            self.texts.problem(format)?;
+        }
+        if let Some(refusal) = self.refusal(format) {
             return Err(refusal.to_owned());
         }
         let source = self.source();
-        self.choices
-            .options
-            .spec(self.choices.format, &source)
-            .map_err(|reason| match self.choices.format {
-                ExportFormat::SqlInsert if self.can_name_table() => {
-                    "Name the table to insert into".to_owned()
-                }
-                _ => reason.to_owned(),
-            })
+        let spec = match custom {
+            Some(custom) => custom.spec(&source),
+            None => self.choices.options.spec(format, &source),
+        };
+        spec.map_err(|reason| match format {
+            ExportFormat::SqlInsert if self.can_name_table() => {
+                "Name the table to insert into".to_owned()
+            }
+            _ => reason.to_owned(),
+        })
     }
 
     /// The file's first lines for a text format; for Excel and Parquet, what each column
@@ -467,43 +578,89 @@ impl ExportDialog {
     }
 }
 
-/// A format's tile: its icon and name, chosen like a radio button.
-fn format_tile(
-    ui: &mut Ui,
-    choice: &ExportChoice,
+/// One of the formats to choose from.
+#[derive(Debug, Clone)]
+enum Choice {
+    /// A built-in format, or CSV for Excel, which is CSV with options of its own.
+    BuiltIn {
+        name: &'static str,
+        format: ExportFormat,
+    },
+    Custom(CustomFormatId),
+}
+
+/// A format's tile, as drawn.
+struct Tile {
+    choice: Choice,
+    name: String,
+    description: String,
+    glyph: &'static str,
     selected: bool,
-    unavailable: Option<&str>,
-    width: f32,
-) -> Response {
+    /// Why it can't write these rows.
+    unavailable: Option<&'static str>,
+}
+
+/// A format's tile: its icon and name, chosen like a radio button.
+fn format_tile(ui: &mut Ui, tile: &Tile, width: f32) -> Response {
     let palette = Palette::for_visuals(ui.visuals());
     // The selected text's colour: the system's accent on a Mac.
-    let icon_color = if selected {
+    let icon_color = if tile.selected {
         ui.visuals().selection.stroke.color
     } else {
         palette.text_weak
     };
-    let text = widgets::icon_text(ui, format_glyph(choice), icon_color, choice.name);
-    let tile = Button::selectable(selected, text)
+    let text = widgets::icon_text(ui, tile.glyph, icon_color, &tile.name);
+    let button = Button::selectable(tile.selected, text)
         .frame_when_inactive(true)
         .min_size(vec2(width, FORMAT_TILE_HEIGHT));
-    let available = unavailable.is_none();
+    let available = tile.unavailable.is_none();
     let mut response = ui
-        .add_enabled(available, tile)
-        .on_hover_text(choice.description);
-    if let Some(reason) = unavailable {
+        .add_enabled(available, button)
+        .on_hover_text(&tile.description);
+    if let Some(reason) = tile.unavailable {
         response = response.on_disabled_hover_text(reason);
     }
     response.widget_info(|| {
-        WidgetInfo::selected(WidgetType::RadioButton, available, selected, choice.name)
+        WidgetInfo::selected(
+            WidgetType::RadioButton,
+            available,
+            tile.selected,
+            &tile.name,
+        )
     });
     response
 }
 
-fn format_glyph(choice: &ExportChoice) -> &'static str {
+/// A preset's options as `exports.toml` sets them, for reading: they are changed in the file.
+fn preset_options(rows: &mut form::Rows<'_>, custom: &CustomFormat) {
+    rows.full(|ui| {
+        form::description_label(
+            ui,
+            &format!("Set in exports.toml as “{}”; change them there", custom.id),
+        );
+    });
+    let dbrover_export::CustomFormatKind::Preset(preset) = &custom.kind;
+    let mut options = preset.options.clone();
+    let mut texts = OptionTexts::new(&options);
+    rows.full(|ui| {
+        ui.add_enabled_ui(false, |ui| {
+            form::card(ui, |rows| {
+                options_ui(rows, preset.format, &mut options, &mut texts);
+            });
+        });
+    });
+}
+
+fn built_in_glyph(choice: &ExportChoice) -> &'static str {
     if choice.name == CSV_FOR_EXCEL {
-        return icons::MICROSOFT_EXCEL_LOGO;
+        icons::MICROSOFT_EXCEL_LOGO
+    } else {
+        glyph(choice.format)
     }
-    match choice.format {
+}
+
+fn glyph(format: ExportFormat) -> &'static str {
+    match format {
         ExportFormat::Csv => icons::FILE_CSV,
         ExportFormat::Xlsx => icons::FILE_XLS,
         ExportFormat::Tsv => icons::FILE_TXT,
@@ -599,8 +756,8 @@ fn becomes(format: ExportFormat, kind: ValueKind) -> &'static str {
 /// Blocks the UI thread until the dialog closes, unlike everything else in the UI (see
 /// ADR-0003): the dialog is modal anyway, and macOS requires it to run on the main thread.
 /// The file itself is written by the engine.
-pub fn pick_export_path(format: ExportFormat, what: &str) -> Option<PathBuf> {
-    let (name, extension) = (format.name(), format.extension());
+pub fn pick_export_path(file: &FileType, what: &str) -> Option<PathBuf> {
+    let FileType { name, extension } = file;
     rfd::FileDialog::new()
         .set_title(format!("Export {what} as {name}"))
         .add_filter(name, &[extension])

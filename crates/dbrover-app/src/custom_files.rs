@@ -1,9 +1,10 @@
-//! What `actions.toml`, `snippets.toml` and `theme.toml` hold, as the engine last read them, and
-//! the window that lists a file's problems. See `docs/hackability.md`.
+//! What `actions.toml`, `snippets.toml`, `theme.toml` and `exports.toml` hold, as the engine
+//! last read them, and the window that lists a file's problems. See `docs/hackability.md`.
 
 use std::path::{Path, PathBuf};
 
 use dbrover_engine::Event;
+use dbrover_export::CustomFormat;
 use dbrover_store::{
     Checked, CustomAction, CustomFile, CustomFileKind, Snippet, ThemeOverrides, ThemeToken,
 };
@@ -13,11 +14,15 @@ use crate::theme::Palettes;
 
 const WINDOW_SIZE: [f32; 2] = [560.0, 280.0];
 
+/// What **Reload** reads, for its tooltip wherever it is.
+pub const RELOAD_HINT: &str = "Read actions.toml, snippets.toml, theme.toml and exports.toml again";
+
 #[derive(Debug, Default)]
 pub struct CustomFiles {
     actions: Loaded<Vec<CustomAction>>,
     snippets: Loaded<Vec<Snippet>>,
     theme: Loaded<ThemeOverrides>,
+    exports: Loaded<Vec<CustomFormat>>,
     /// The palettes `theme.toml` makes.
     palettes: Palettes,
     /// The file whose problems window is open.
@@ -56,12 +61,18 @@ impl CustomFiles {
                 let unreadable = self.palettes.contrast_problems();
                 self.theme.checked.problems.extend(unreadable);
             }
+            CustomFile::Exports(checked) => self.exports.set(path, checked),
         }
         Some(file.kind())
     }
 
     pub fn actions(&self) -> &[CustomAction] {
         &self.actions.checked.value
+    }
+
+    /// The formats `exports.toml` adds, in the file's order.
+    pub fn exports(&self) -> &[CustomFormat] {
+        &self.exports.checked.value
     }
 
     pub fn palettes(&self) -> Palettes {
@@ -77,6 +88,7 @@ impl CustomFiles {
             CustomFileKind::Actions => &self.actions.checked.problems,
             CustomFileKind::Snippets => &self.snippets.checked.problems,
             CustomFileKind::Theme => &self.theme.checked.problems,
+            CustomFileKind::Exports => &self.exports.checked.problems,
         }
     }
 
@@ -85,6 +97,7 @@ impl CustomFiles {
             CustomFileKind::Actions => self.actions.path.as_deref(),
             CustomFileKind::Snippets => self.snippets.path.as_deref(),
             CustomFileKind::Theme => self.theme.path.as_deref(),
+            CustomFileKind::Exports => self.exports.path.as_deref(),
         }
     }
 
@@ -101,6 +114,7 @@ impl CustomFiles {
                     count(theme.dark.len(), "colour")
                 )
             }
+            CustomFileKind::Exports => count(self.exports.checked.value.len(), "format"),
         }
     }
 }
@@ -166,10 +180,7 @@ fn header(ui: &mut egui::Ui, path: Option<&Path>, summary: &str) -> bool {
         if let Some(path) = path {
             ui.weak(path.display().to_string());
         }
-        reload = ui
-            .button("Reload")
-            .on_hover_text("Read actions.toml, snippets.toml and theme.toml again")
-            .clicked();
+        reload = ui.button("Reload").on_hover_text(RELOAD_HINT).clicked();
     });
     ui.label(summary);
     reload
