@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 use async_trait::async_trait;
 use dbrover_core::{
     CancelHandle, CatalogNode, CatalogPath, Cell, ChildrenPage, ChildrenQuery, Connection,
-    DataSourceId, DriverError, Rejection, RelationName, ResultCursor, RoleDescription, ServerInfo,
-    SshConfig, TableConstraints, TableDescription, TableName, TransactionStatus,
+    DataSourceId, DriverError, FullScan, Rejection, RelationName, ResultCursor, RoleDescription,
+    ServerInfo, SshConfig, TableConstraints, TableDescription, TableName, TransactionStatus,
 };
 use dbrover_ssh::{SshError, Tunnel, TunnelRequest};
 
@@ -153,6 +153,10 @@ impl Connection for Tunnelled {
 
     async fn validate(&mut self, sql: &str) -> Result<Option<Rejection>, DriverError> {
         self.connection.validate(sql).await
+    }
+
+    async fn full_scan(&mut self, statement: &str) -> Result<Option<FullScan>, DriverError> {
+        self.connection.full_scan(statement).await
     }
 
     async fn transaction_status(&mut self) -> Result<TransactionStatus, DriverError> {

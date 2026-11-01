@@ -223,6 +223,23 @@ impl ConnectionConfig {
         Some(config)
     }
 
+    /// The data source's cost guard, on an engine that bills each read; `None` elsewhere.
+    pub fn cost_guard(&self) -> Option<CostGuard> {
+        match self {
+            Self::DynamoDb(config) => Some(config.cost_guard),
+            Self::Postgres(_)
+            | Self::Sqlite(_)
+            | Self::Mysql(_)
+            | Self::SqlServer(_)
+            | Self::DuckDb(_)
+            | Self::ClickHouse(_)
+            | Self::Redis(_)
+            | Self::Mongo(_)
+            | Self::Elasticsearch(_)
+            | Self::Cassandra(_) => None,
+        }
+    }
+
     /// Where the server is, for engines that connect over the network.
     pub fn server(&self) -> Option<&ServerConfig> {
         match self {
@@ -922,6 +939,9 @@ pub struct DynamoDbConfig {
     /// emulator needs one.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub endpoint: String,
+    /// Written only when turned off.
+    #[serde(default, skip_serializing_if = "CostGuard::is_default")]
+    pub cost_guard: CostGuard,
 }
 
 impl DynamoDbConfig {
@@ -934,6 +954,7 @@ impl DynamoDbConfig {
             profile: expand_setting(&self.profile, Setting::Profile)?,
             region: expand_setting(&self.region, Setting::Region)?,
             endpoint: expand_setting(&self.endpoint, Setting::Endpoint)?,
+            cost_guard: self.cost_guard,
         })
     }
 
@@ -965,6 +986,26 @@ impl fmt::Display for DynamoDbConfig {
                 write!(f, "{endpoint} ({region}) as profile {profile}")
             }
         }
+    }
+}
+
+/// What a data source on an engine that bills each read does before a statement that would
+/// read a whole table: C0's cost guard (`docs/cloud-data.md`), DynamoDB's first
+/// (`docs/nosql.md`, N5). Kept in the engine's own settings while DynamoDB is the only engine
+/// that has one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CostGuard {
+    /// A console asks first; Run to file and the MCP server refuse.
+    #[default]
+    AskBeforeScans,
+    /// Nothing asks. Each page a result shows still reads only so much.
+    Off,
+}
+
+impl CostGuard {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
     }
 }
 
@@ -1234,6 +1275,7 @@ mod tests {
         let emulator = DynamoDbConfig {
             sign_in: DynamoDbSignIn::LocalEmulator,
             endpoint: "http://localhost:8000".to_owned(),
+            cost_guard: CostGuard::Off,
             ..DynamoDbConfig::default()
         };
         for (config, written, name, shown) in [
@@ -1251,7 +1293,7 @@ mod tests {
             ),
             (
                 emulator,
-                "sign_in = \"local-emulator\"\nendpoint = \"http://localhost:8000\"",
+                "sign_in = \"local-emulator\"\nendpoint = \"http://localhost:8000\"\ncost_guard = \"off\"",
                 "http://localhost:8000",
                 "http://localhost:8000 (local emulator, the profile's region)",
             ),
@@ -1262,7 +1304,7 @@ mod tests {
             let text = toml::to_string(&file).unwrap();
             assert!(text.contains("driver = \"dynamodb\""), "{text}");
             assert!(text.contains(written), "{text}");
-            for key in ["sign_in", "profile", "region", "endpoint"] {
+            for key in ["sign_in", "profile", "region", "endpoint", "cost_guard"] {
                 assert_eq!(
                     text.contains(&format!("{key} =")),
                     written.contains(&format!("{key} =")),
@@ -1274,6 +1316,12 @@ mod tests {
             assert_eq!(config.default_name(), name);
             assert_eq!(config.to_string(), shown);
             assert!(!config.driver().uses_password());
+            assert_eq!(
+                config
+                    .cost_guard()
+                    .is_some_and(|guard| guard == CostGuard::Off),
+                written.contains("cost_guard")
+            );
         }
     }
 

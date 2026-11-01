@@ -3003,6 +3003,7 @@ mod tests {
                 profile: String::new(),
                 region: String::new(),
                 endpoint: "http://localhost:58000".to_owned(),
+                cost_guard: dbrover_core::CostGuard::AskBeforeScans,
             })
         );
     }

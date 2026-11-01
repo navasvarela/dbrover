@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use dbrover_core::{
-    DataSource, DataSourceId, DriverKind, DynamoDbSignIn, ElasticsearchAuth, MongoConfig,
-    SafetyLevel, ServerInfo, SourceColor, expand, expand_path, has_placeholder,
+    CostGuard, DataSource, DataSourceId, DriverKind, DynamoDbSignIn, ElasticsearchAuth,
+    MongoConfig, SafetyLevel, ServerInfo, SourceColor, expand, expand_path, has_placeholder,
 };
 use dbrover_engine::read_only::{self, Guard};
 use dbrover_engine::{DatabaseFile, Event, PasswordUpdate, ProcessEnvironment};
@@ -454,6 +454,21 @@ fn dynamodb_rows(ui: &mut Ui, fields: &mut DynamoDbFields) {
             setting_row(ui, "Region", &mut fields.region, "us-east-1", Resolve::Text);
         }
     }
+    ui.label("Cost guard");
+    let mut asks = fields.cost_guard == CostGuard::AskBeforeScans;
+    let checkbox = ui
+        .checkbox(&mut asks, "Ask before reading a whole table")
+        .on_hover_text(
+            "A SELECT without = or IN on the partition key reads every item, and DynamoDB \
+             bills each one. Run to file and MCP clients are refused one instead.",
+        );
+    if checkbox.changed() {
+        fields.cost_guard = match asks {
+            true => CostGuard::AskBeforeScans,
+            false => CostGuard::Off,
+        };
+    }
+    ui.end_row();
 }
 
 /// The password to save in the keychain, or the command that prints one on every connection.

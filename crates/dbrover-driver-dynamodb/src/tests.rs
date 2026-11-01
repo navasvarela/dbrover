@@ -31,6 +31,7 @@ fn emulator(endpoint: &str) -> DynamoDbConfig {
         profile: String::new(),
         region: String::new(),
         endpoint: endpoint.to_owned(),
+        cost_guard: dbrover_core::CostGuard::AskBeforeScans,
     }
 }
 
@@ -384,6 +385,62 @@ async fn pages_tables_by_name_a_hundred_at_a_time_with_the_filter() {
     for table in tables {
         table.drop().await;
     }
+}
+
+/// The scan guard's question, answered from each table's or index's own partition key.
+#[tokio::test]
+async fn tells_a_scan_from_a_read_by_key_with_the_keys_of_what_it_reads() {
+    let Some(config) = test_config() else { return };
+    let mut connection = connected(&config).await;
+    let name = unique("guarded");
+    create_indexed_table(&connection, &name).await;
+    let table = TestTable {
+        client: connection.client.clone(),
+        name,
+    };
+    let name = &table.name;
+    let scan = |index: Option<&str>, partition_key: &str| {
+        Some(FullScan {
+            table: name.clone(),
+            index: index.map(str::to_owned),
+            partition_key: partition_key.to_owned(),
+        })
+    };
+    let cases = [
+        (
+            format!("SELECT * FROM \"{name}\" WHERE customer = 'c'"),
+            None,
+        ),
+        (
+            format!("SELECT * FROM \"{name}\" WHERE customer IN ['a', 'b'] AND placed > '2026'"),
+            None,
+        ),
+        (
+            format!("SELECT * FROM \"{name}\" WHERE status = 'open'"),
+            scan(None, "customer"),
+        ),
+        (format!("SELECT * FROM \"{name}\""), scan(None, "customer")),
+        (
+            format!("SELECT * FROM \"{name}\".\"by-status\" WHERE status = 'open'"),
+            None,
+        ),
+        (
+            format!("SELECT * FROM \"{name}\".\"by-status\" WHERE customer = 'c'"),
+            scan(Some("by-status"), "status"),
+        ),
+        (
+            format!("UPDATE \"{name}\" SET n = 1 WHERE customer = 'c' AND placed = 'p'"),
+            None,
+        ),
+        // DynamoDB's own error says more when it runs.
+        ("SELECT * FROM \"no-such-table\"".to_owned(), None),
+        ("SELECT * FROM".to_owned(), None),
+    ];
+    for (statement, expected) in cases {
+        let answer = connection.full_scan(&statement).await.expect("an answer");
+        assert_eq!(answer, expected, "{statement}");
+    }
+    table.drop().await;
 }
 
 #[tokio::test]

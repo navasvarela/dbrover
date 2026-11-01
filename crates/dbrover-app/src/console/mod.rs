@@ -34,8 +34,8 @@ use dbrover_core::{
 };
 use dbrover_engine::{
     Command, ConsoleId, EditFailure, Event, Export, ExportAll, Exporter, RowEdit, RunId, RunOrigin,
-    RunOutcome, RunPurpose, SessionState, StatementFailure, StatementSummary, TransactionEnd,
-    TransactionMode, WatchedFile,
+    RunOutcome, RunPurpose, ScanApproval, SessionState, StatementFailure, StatementSummary,
+    TransactionEnd, TransactionMode, WatchedFile,
 };
 use dbrover_export::{ExportColumn, ExportOptions, ExportSpec, RowSource};
 
@@ -100,6 +100,9 @@ pub struct SubmittedRun {
     /// What the history records the statements as coming from.
     pub origin: RunOrigin,
     pub destination: RunDestination,
+    /// Whether a statement that would read a whole table runs, on a data source whose cost
+    /// guard asks first.
+    pub scans: ScanApproval,
 }
 
 /// Where a run's rows go.
@@ -860,6 +863,7 @@ impl QueryConsole {
             parameters: self.parameters.clone(),
             origin: RunOrigin::Console,
             destination: RunDestination::Grid,
+            scans: ScanApproval::Ask,
         })
     }
 
@@ -878,6 +882,7 @@ impl QueryConsole {
             parameters: self.parameters.clone(),
             origin: RunOrigin::Console,
             destination: RunDestination::Grid,
+            scans: ScanApproval::Ask,
         })
     }
 
@@ -910,6 +915,7 @@ impl QueryConsole {
             parameters: dbrover_sql::ParameterValues::default(),
             origin: RunOrigin::Console,
             destination: RunDestination::Grid,
+            scans: ScanApproval::Ask,
         })
     }
 
@@ -1587,6 +1593,7 @@ impl QueryConsole {
             parameters: self.parameters.clone(),
             origin: RunOrigin::Console,
             destination: RunDestination::Grid,
+            scans: ScanApproval::Ask,
         })
     }
 
@@ -1842,6 +1849,7 @@ impl QueryConsole {
             parameters: ParameterValues::default(),
             origin: RunOrigin::Console,
             destination: RunDestination::Grid,
+            scans: ScanApproval::Ask,
         })
     }
 
@@ -1990,6 +1998,32 @@ impl QueryConsole {
             }
             _ => {}
         }
+    }
+
+    /// The statements of `run`, this console's latest, from the one at `from` on: what runs
+    /// again once the user allows the scan its data source's cost guard held back there.
+    pub fn rest_of_run(&self, run: RunId, from: usize) -> Option<SubmittedRun> {
+        let view = self.run.as_ref().filter(|view| view.id == run)?;
+        let statements = view
+            .statements
+            .get(from..)?
+            .iter()
+            .map(|statement| SubmittedStatement {
+                sql: statement.sql.clone(),
+                range: statement.range.clone(),
+                prefix_len: statement.prefix_len,
+                in_database: None,
+                plan: None,
+            })
+            .collect();
+        Some(SubmittedRun {
+            statements,
+            purpose: RunPurpose::Run,
+            parameters: ParameterValues::default(),
+            origin: RunOrigin::Console,
+            destination: RunDestination::Grid,
+            scans: ScanApproval::Ask,
+        })
     }
 
     /// The latest run, if it is `run`: events for older runs are stale and ignored.

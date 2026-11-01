@@ -11,8 +11,8 @@ use std::sync::Arc;
 use common::{TestEngine, mysql_test_servers, postgres_test_server, sqlserver_test_server};
 use dbrover_core::{ConnectionConfig, DataSource, DataSourceId, Password, ServerInfo};
 use dbrover_engine::{
-    Command, ConsoleId, Event, PasswordUpdate, RunId, RunOrigin, RunPurpose, SessionState,
-    TransactionMode,
+    Command, ConsoleId, Event, PasswordUpdate, RunId, RunOrigin, RunPurpose, ScanApproval,
+    SessionState, TransactionMode,
 };
 use dbrover_plan::Plan;
 use dbrover_sql::{Dialect, ExplainDepth};
@@ -78,6 +78,7 @@ impl Console {
             transactions: TransactionMode::Auto,
             purpose,
             origin: RunOrigin::Console,
+            scans: ScanApproval::Ask,
         });
         let mut value = None;
         let mut failure = None;

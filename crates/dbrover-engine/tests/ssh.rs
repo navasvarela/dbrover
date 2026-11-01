@@ -12,7 +12,7 @@ use dbrover_core::ChildrenQuery;
 use dbrover_core::{CatalogPath, DataSource, DataSourceId, SshLogin};
 use dbrover_engine::{
     Command, ConsoleId, Event, PasswordKept, PasswordNeeded, PasswordUpdate, RunId, RunOrigin,
-    RunOutcome, RunPurpose, SessionState, TransactionMode,
+    RunOutcome, RunPurpose, ScanApproval, SessionState, TransactionMode,
 };
 use dbrover_store::Secret;
 
@@ -69,6 +69,7 @@ impl Machine {
             transactions: TransactionMode::Auto,
             purpose: RunPurpose::Run,
             origin: RunOrigin::Console,
+            scans: ScanApproval::Ask,
         });
         loop {
             if let Event::RunFinished {

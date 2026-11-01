@@ -1488,12 +1488,33 @@ From N5·4 on, each runs against DynamoDB Local in CI.
     without the SQL dialect its tables would otherwise need;
   - the paging test makes 105 tables, filtered by a prefix unique to the run, since other
     tests' tables share the server.
-- **N5·6 — The scan guard:** the guard on the data source (`CostGuard`, written only when it
-  isn't the engine's default), `Connection::full_scan`, the engine's check before each
+- **N5·6 — The scan guard** (built): the guard on the data source (`CostGuard`, written only
+  when it isn't the engine's default), `Connection::full_scan`, the engine's check before each
   statement and Run to file, the console's question, the MCP server's refusal, and the read
   units after each statement. Tests: the guard's answer for each kind of `SELECT` against
   DynamoDB Local's tables, an engine test of a Scan held until allowed, a kittest of the
-  question, and the MCP refusal.
+  question, and the MCP refusal. How it came out:
+  - the guard is a setting of the DynamoDB data source, **Ask before reading a whole table**,
+    written `cost_guard = "off"` when turned off, rather than one of every data source: only
+    DynamoDB bills reads yet, and `ConnectionConfig::cost_guard` is where C0 will find it for
+    the engines that come next;
+  - the engine asks the driver before each statement of a run (`Connection::full_scan`, which
+    every engine but DynamoDB answers with `None`); a statement that scans isn't sent, the
+    console learns which (`Event::ScanHeld`) and the run stops there, a failure that says why.
+    The question is **Read all of orders?**, with the reason and **Scan anyway**, which runs
+    that statement and the ones after it, allowed once (`ScanApproval::AllowFirst`): a later
+    statement that scans too is asked about again. **Open data** runs allowed
+    (`ScanApproval::Allow`);
+  - **Run to file** and **All documents** refuse a Scan, rather than ask, saying to turn the
+    guard off to export a whole table: they read every page by design, which is what the guard
+    is there to stop;
+  - the MCP server's refusal comes with N5·8: until DynamoDB has an MCP profile, the server
+    doesn't serve it at all;
+  - an unknown table, or a statement DbRover can't read, isn't held: DynamoDB's own error says
+    more when it runs. A table whose keys can't be read (no `dynamodb:DescribeTable`) isn't run,
+    and the error says why;
+  - the read units after each statement wait for C0's status line for jobs, as the milestone
+    says.
 - **N5·7 — Editing:** `DocumentView` gains DynamoDB's `TableView`: keys from the table's
   description, values written in PartiQL with their types, and an undo for each change. Tests:
   an attribute of each type edited and read back with its type, a set edited, an item added
