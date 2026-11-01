@@ -1,6 +1,7 @@
 //! The dockable panel layout: which tabs exist, where they start, and what each one draws.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use dbrover_core::SourceColor;
 use dbrover_store::{ConsoleKey, CustomAction, DiagramKey, Project, Snippet};
@@ -199,6 +200,7 @@ pub struct Panels<'a> {
     pub explorer_actions: &'a mut Vec<ExplorerAction>,
     pub consoles: &'a mut BTreeMap<ConsoleKey, QueryConsole>,
     pub keymap: &'a Keymap,
+    pub keymap_path: Option<&'a Path>,
     pub lint: &'a LintOptions,
     pub recent_completions: &'a RecentCompletions,
     /// What the user asked of each console this frame.
@@ -315,6 +317,9 @@ impl TabViewer for Panels<'_> {
                 SettingsView {
                     settings: self.settings,
                     mcp: self.mcp_defaults,
+                    keymap: self.keymap,
+                    keymap_path: self.keymap_path,
+                    custom_actions: self.custom_actions,
                 },
                 self.settings_actions,
             ),

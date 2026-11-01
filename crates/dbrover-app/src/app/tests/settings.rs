@@ -88,9 +88,11 @@ fn searches_every_category() {
 
     search(&mut harness, "history");
 
-    harness.get_by_label("2 settings");
+    harness.get_by_label("3 matches");
     harness.get_by_label("Keep statements for");
     harness.get_by_label("Keep per data source");
+    harness.get_by_label("Keymap › Console");
+    harness.get_by_label("Open the data source's query history");
     assert!(
         harness.query_by_label("Theme").is_none(),
         "Appearance's isn't found"
@@ -140,15 +142,68 @@ fn changes_the_theme_and_saves_a_switch() {
     );
 }
 
-/// Keymap… in the sidebar opens the keymap's window.
+/// The Keymap page lists every action's keys in a card per part of the app, with the custom
+/// actions' ids.
 #[test]
-fn opens_the_keymap_from_the_sidebar() {
+fn lists_the_keymap_as_a_page() {
     let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("actions.toml"),
+        "[[action]]\nid = \"row-count\"\nname = \"Row count\"\napplies_to = [\"table\"]\n\
+         sql = \"SELECT count(*) FROM {qualified_name}\"\n",
+    )
+    .unwrap();
     let mut harness = start_without_data_sources(dir.path());
     open_settings(&mut harness);
 
-    harness.get_by_label("Keymap…").click();
+    harness
+        .get_by_role_and_label(Role::Button, "Keymap")
+        .click();
     harness.run();
 
-    assert!(harness.state().keymap_window_open);
+    harness
+        .get_by_label("The keys for each action. Change them in keymap.toml, then click Reload.");
+    harness.get_by_label("Console");
+    harness.get_by_label("Format the selection, or the statement at the cursor");
+    harness.get_by_label("console.format");
+    harness.get_by_label("Custom actions");
+    harness.get_by_label("Row count");
+    harness.get_by_label("custom.row-count");
+}
+
+/// View › Keymap… opens Settings on the Keymap page, and the status bar's link to the file's
+/// problems does too; Create keymap.toml writes the file, keeping one that exists.
+#[test]
+fn opens_the_keymap_page_from_the_menu_and_the_status_bar() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut harness = start_without_data_sources(dir.path());
+
+    harness.get_by_label("View").click();
+    harness.run();
+    harness.get_by_label("Keymap…").click();
+    harness.run();
+    assert_eq!(settings_tabs(&harness), 1);
+    harness.get_by_label("Create keymap.toml").click();
+    let keymap = dir.path().join("keymap.toml");
+    step_until(&mut harness, "keymap.toml to be written", |_| {
+        keymap.exists()
+    });
+    assert!(
+        std::fs::read_to_string(&keymap)
+            .unwrap()
+            .contains("# \"console.format\"")
+    );
+
+    std::fs::write(&keymap, "[bindings]\n\"console.walk\" = \"f6\"\n").unwrap();
+    harness.get_by_label("Reload").click();
+    step_until_visible(&mut harness, "keymap.toml: 1 problem");
+    harness
+        .get_by_role_and_label(Role::Button, "Appearance")
+        .click();
+    harness.run();
+    harness.get_by_label("keymap.toml: 1 problem").click();
+    harness.run();
+
+    harness.get_by_label_contains("\"console.walk\" is not an action");
+    harness.get_by_label("console.format");
 }

@@ -32,7 +32,6 @@ mod icons;
 mod import_dialog;
 mod json_tree;
 mod keymap;
-mod keymap_window;
 mod log_console;
 #[cfg(target_os = "macos")]
 mod macos;
