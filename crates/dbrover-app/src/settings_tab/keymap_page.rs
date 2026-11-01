@@ -7,7 +7,7 @@ use std::path::Path;
 use dbrover_store::CustomAction;
 use egui::{KeyboardShortcut, RichText, Ui};
 
-use super::{SettingsAction, file_line, problems, search};
+use super::{SettingsAction, problems, search, source_line};
 use crate::form::{self, Rows};
 use crate::keymap::{Action, Keymap};
 use crate::theme::Palette;
@@ -110,8 +110,7 @@ pub fn show(
     shortcuts: &[Shortcut<'_>],
     actions: &mut Vec<SettingsAction>,
 ) {
-    let about = path.map(|path| format!("Read from {}", path.display()));
-    file_line(ui, about.as_deref(), |ui| {
+    source_line(ui, path, |ui| {
         if ui
             .link("Reload")
             .on_hover_text("Read keymap.toml again, after editing it")

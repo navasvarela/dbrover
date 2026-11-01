@@ -99,14 +99,14 @@ again, please report it with the day's log file.
 ## "keymap.toml: N problems" in the status bar
 
 Some lines of `keymap.toml` couldn't be used: an unknown action, a shortcut that can't be read,
-or a shortcut two actions share. Click the message to open **View → Keymap…**, which lists each
-problem; fix the file and click **Reload**. Everything else in the file still applies.
+or a shortcut two actions share. Click the message to open **Settings › Keymap**, which lists
+each problem; fix the file and click **Reload**. Everything else in the file still applies.
 
 ## "actions.toml: N problems" in the status bar
 
 The same for `actions.toml`, `snippets.toml` or `theme.toml`: an entry that couldn't be used was
-skipped, and the rest of the file applies. Click the message to see each problem, fix the file
-and click **Reload**. For `theme.toml` it can also be a colour that leaves some text too faint to
+skipped, and the rest of the file applies. Click the message to see each problem (for
+`actions.toml`, on **Settings › Custom actions**), fix the file and click **Reload**. For `theme.toml` it can also be a colour that leaves some text too faint to
 read; that colour still applies. See [Actions, snippets and themes](customising.md).
 
 ## A password command fails

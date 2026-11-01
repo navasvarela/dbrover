@@ -7,7 +7,7 @@ explain plan, designed on 2026-10-31 [below](#w10--a-visual-explain-plan) and bu
 read-only on every engine, designed on 2026-10-31 [below](#w11--read-only-on-every-engine) and
 built. W12, charts from results, designed on 2026-11-01 [below](#w12--charts-from-results) and
 built. W14, every setting in the Settings tab, designed on 2026-11-01
-[below](#w14--settings-in-one-place).
+[below](#w14--settings-in-one-place) and built.
 Proposed on 2026-10-24.
 
 DbRover browses, queries and edits PostgreSQL, SQLite, MySQL and MariaDB, and ships as a
@@ -640,8 +640,8 @@ setting DbRover has, and its search finds them all.
 +-------------------------+----------------------------------------------+
 | [ Search settings     ] | Keymap                                       |
 |                         | The keys for each action. Change them in     |
-|   Appearance            | keymap.toml.                                 |
-|   Editor                |                                              |
+|   Appearance            | keymap.toml, then click Reload.              |
+|   Editor                | Read from ~/…/keymap.toml  Reload  Create …  |
 |   Query history         | ! keymap.toml: "ctrl+shfit+f" isn't a key    |
 |   MCP                   |                                              |
 |   Updates               | CONSOLE                                      |
@@ -651,8 +651,8 @@ setting DbRover has, and its search finds them all.
 | PROJECTS                | | Format the selection, or…     Alt+Cmd+L  | |
 |   Reporting           * | | console.format                           | |
 |   Web shop              | +------------------------------------------+ |
-|                         | Saved in ~/…/keymap.toml  Reload             |
-|                         | Create keymap.toml                           |
+|                         | GRID                                         |
+|                         | …                                            |
 +-------------------------+----------------------------------------------+
 ```
 
@@ -661,8 +661,9 @@ setting DbRover has, and its search finds them all.
   order. A project with unsaved changes shows a dot. Without projects, the caption reads "No
   projects yet" under it, and nothing else.
 - **Every page reads alike:** a title and a line under it, the file's problems at the top as
-  the Settings page shows `settings.toml`'s, cards of rows (the `form` kit's), and the file's
-  path with its buttons at the bottom.
+  the Settings page shows `settings.toml`'s, and cards of rows (the `form` kit's). The Keymap
+  and Custom actions pages, which are long, have the file's path and its links at the top,
+  under the title; the settings' pages keep theirs at the bottom.
 - **Search** finds settings, shortcuts, custom actions and projects, and the sidebar counts
   what each page has that matches, as it counts categories today.
 

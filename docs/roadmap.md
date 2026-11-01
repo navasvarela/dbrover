@@ -1379,7 +1379,7 @@ three to five, **L** a track of its own).
 
   **Exit:** comparing two PostgreSQL schemas that differ by a column and an index lists both
   differences, and running the script on one makes the comparison come back empty.
-- **W14 — Settings in one place (M):** planned; designed on 2026-11-01 in
+- **W14 — Settings in one place (M):** built; designed on 2026-11-01 in
   [A well-rounded app](well-rounded.md#w14--settings-in-one-place). The keymap, the custom
   actions and each project's settings become pages of the Settings tab, in place of the keymap
   and actions windows and the Project settings modal, and its search finds them all.
@@ -1400,6 +1400,28 @@ three to five, **L** a track of its own).
   - **W14d — Projects:** the project pages; the modal goes.
   - **W14e — Manual:** settings, shortcuts, customising, MCP and explorer chapters, the
     pictures, and the demo note.
+
+  **W14 demo note:** built in #346, #348, #350, #355 and the manual's layer, described in
+  [Settings](../book/src/settings.md). Open **View → Settings…**: below Updates are **Keymap**
+  and **Custom actions**, then **Projects** with each project. **Keymap** lists every action in
+  cards (Console, Grid, Editor, File, App, then your custom actions), with its id and keys;
+  write `"console.walk" = "f6"` in `keymap.toml` and click **Reload** at the top of the page,
+  and the problem is listed there, while the status bar's **keymap.toml: 1 problem** opens the
+  same page. **Custom actions** shows each action of `actions.toml` in a card, a command with
+  its stdin, output, timeout and whether it is trusted. Type *format* in **Search settings**:
+  the Format and Format all shortcuts show under **Keymap › Console** beside the Editor's
+  formatting settings, and the sidebar counts them. Right-click a project → **Project
+  settings…**: the tab opens on its page; switch on MCP and tick **Write**, go to another page
+  and back, and the change is still there, with a dot by the project's name; **Save project
+  settings** writes `projects.toml` and the dot goes. **View → Keymap…** and **View → Custom
+  actions…** (renamed from Actions…) open their pages, and no keymap, actions or project
+  settings window is left. Departures from the design: the Keymap and Custom actions pages have
+  their file's path and links at the top rather than the bottom, since they are long; a
+  search's heading counts matches ("3 matches"), as not everything found is a setting. Covered
+  by kittest tests of each page, of the menus and status bar links that open them, of search
+  across settings, shortcuts, actions and projects, and of a project's draft kept across pages,
+  saved and discarded, with unit tests of the keymap's sections and search. Still to try by
+  eye: a sidebar with many projects, on a small window.
 
   **Exit:** **View → Settings…** lists Keymap, Custom actions and each project in its sidebar;
   right-click a project → **Project settings…** opens its page, where allowing writes and
