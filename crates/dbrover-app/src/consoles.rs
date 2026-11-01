@@ -371,6 +371,16 @@ impl Consoles {
         self.open.get_mut(key)?.copy(copy, options)
     }
 
+    /// The console's selected cells as an export program reads them, and `format`'s program
+    /// to run on them, if it is open and they can be.
+    pub fn program_input(
+        &mut self,
+        key: &ConsoleKey,
+        format: &dbrover_export::CustomFormat,
+    ) -> Option<(dbrover_export::ProgramSpec, String)> {
+        self.open.get_mut(key)?.program_input(format)
+    }
+
     /// What a template is told about exporting the rows of `sql` from the console, if it is
     /// open.
     pub fn context_for(

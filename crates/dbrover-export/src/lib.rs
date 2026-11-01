@@ -10,6 +10,7 @@ mod column;
 mod custom;
 mod options;
 mod parquet;
+mod program;
 mod spec;
 mod template;
 mod text;
@@ -20,6 +21,7 @@ pub use column::ExportColumn;
 pub use custom::{CustomFormat, CustomFormatId, CustomFormatKind, Preset};
 pub use options::ExportOptions;
 pub use parquet::{ParquetCompression, ParquetOptions};
+pub use program::{ExportPipe, ExportProgram, ProgramFormat, ProgramSpec};
 pub use spec::{CSV_FOR_EXCEL, ExportChoice, ExportFormat, ExportSpec, export_choices};
 pub use template::{
     Escape, ExportContext, Part, TemplateContext, TemplateEngine, TemplateError, TemplateLimits,

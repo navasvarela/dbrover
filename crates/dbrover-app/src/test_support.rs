@@ -126,9 +126,9 @@ impl UpdateInstaller for FakeInstaller {
     }
 }
 
-/// Plays the part of command actions' programs, so UI tests start no processes; the engine's
-/// own tests run real ones. The program's name says what it does:
-/// - `echo` writes its stdin back;
+/// Plays the part of command actions' and export programs, so UI tests start no processes; the
+/// engine's own tests run real ones. The program's name says what it does:
+/// - `echo` writes its stdin back, or for an export, into the file;
 /// - `print` writes its arguments, one a line;
 /// - `fail` exits with status 3, after writing "it went wrong" to stderr;
 /// - `hang` runs until it is stopped.
@@ -156,6 +156,45 @@ impl ProgramRunner for ScriptedPrograms {
                 "{other} is not a scripted program"
             ))),
         }
+    }
+
+    fn start_export(
+        &self,
+        invocation: Invocation,
+        out: std::fs::File,
+        _: std::time::Duration,
+    ) -> std::io::Result<Box<dyn dbrover_export::ExportPipe>> {
+        match invocation.program.as_str() {
+            "echo" | "fail" => Ok(Box::new(ScriptedPipe {
+                out,
+                fails: invocation.program == "fail",
+            })),
+            other => Err(std::io::Error::other(ProgramFailure::CouldNotStart(
+                format!("{other} is not a scripted program"),
+            ))),
+        }
+    }
+}
+
+/// A scripted export program: `echo` writes its input to the file, `fail` fails at the end.
+struct ScriptedPipe {
+    out: std::fs::File,
+    fails: bool,
+}
+
+impl dbrover_export::ExportPipe for ScriptedPipe {
+    fn send(&mut self, input: &[u8]) -> std::io::Result<()> {
+        use std::io::Write;
+        self.out.write_all(input)
+    }
+
+    fn finish(self: Box<Self>) -> std::io::Result<()> {
+        if self.fails {
+            return Err(std::io::Error::other(
+                "fail failed (exit status: 3): it went wrong",
+            ));
+        }
+        Ok(())
     }
 }
 

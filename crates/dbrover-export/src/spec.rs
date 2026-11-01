@@ -2,12 +2,14 @@
 
 use std::io;
 use std::path::Path;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
 use crate::ExportColumn;
 use crate::options::ExportOptions;
 use crate::parquet::ParquetOptions;
+use crate::program::{ExportProgram, ProgramFile, ProgramSpec};
 use crate::template::{TemplateFormat, TemplateSpec};
 use crate::text::{
     Csv, CsvOptions, Html, HtmlOptions, Insert, InsertSpec, Json, JsonDocuments, JsonLines,
@@ -160,6 +162,8 @@ pub enum ExportSpec {
     SqlUpdate(Box<UpdateSpec>),
     /// A template from `exports.toml` (W8c), with what it writes about.
     Template(Box<TemplateSpec>),
+    /// A program from `exports.toml` (W8d), which writes only files.
+    Program(Box<ProgramSpec>),
 }
 
 impl ExportSpec {
@@ -176,7 +180,7 @@ impl ExportSpec {
             Self::Parquet(_) => ExportFormat::Parquet,
             Self::Html(_) => ExportFormat::Html,
             Self::SqlUpdate(_) => ExportFormat::SqlUpdate,
-            Self::Template(_) => return None,
+            Self::Template(_) | Self::Program(_) => return None,
         })
     }
 
@@ -199,6 +203,7 @@ impl ExportSpec {
         Writer::Text(match self {
             Self::Xlsx(options) => return Writer::Xlsx(options.clone()),
             Self::Parquet(_) => return Writer::Engine,
+            Self::Program(spec) => return Writer::Program(spec.prepared.clone()),
             Self::Csv(options) => Box::new(Csv::new(options.clone())),
             Self::Tsv(options) => Box::new(Tsv::new(options.clone())),
             Self::Markdown(options) => Box::new(Markdown::new(options.clone())),
@@ -226,6 +231,15 @@ impl ExportSpec {
         Ok(match self.writer() {
             Writer::Text(format) => Box::new(TextFile::create(path, format, columns)?),
             Writer::Xlsx(options) => Box::new(XlsxFile::create(path, options, columns)?),
+            Writer::Program(Some(program)) => {
+                Box::new(ProgramFile::start(program.as_ref(), path, columns)?)
+            }
+            Writer::Program(None) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "the program hasn't been trusted to run yet; export again to be asked",
+                ));
+            }
             Writer::Engine => {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
@@ -240,7 +254,7 @@ impl ExportSpec {
     pub(crate) fn text_format(&self) -> Option<Box<dyn TextFormat>> {
         match self.writer() {
             Writer::Text(format) => Some(format),
-            Writer::Xlsx(_) | Writer::Engine => None,
+            Writer::Xlsx(_) | Writer::Engine | Writer::Program(_) => None,
         }
     }
 }
@@ -251,6 +265,8 @@ enum Writer {
     Xlsx(XlsxOptions),
     /// Written by the engine, with DuckDB.
     Engine,
+    /// Written by a program, once the engine has prepared it.
+    Program(Option<Arc<dyn ExportProgram>>),
 }
 
 /// The name of the CSV preset Excel opens with accents intact.

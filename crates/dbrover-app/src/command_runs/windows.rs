@@ -5,7 +5,8 @@ use dbrover_engine::{Command, ProgramFailure};
 use egui::{Align, Grid, Id, Layout, RichText, Window};
 
 use super::{
-    CommandRuns, OutputWindow, Question, command_text, output_text, stdin_text, timeout_text,
+    CommandRuns, OutputWindow, Pending, Question, command_text, output_text, stdin_text,
+    timeout_text,
 };
 use crate::console::cell_viewer;
 use crate::form;
@@ -52,31 +53,75 @@ impl CommandRuns {
     }
 }
 
+/// What the question shows of a program: whose it is, its command in full, and what goes in
+/// and out of it.
+pub struct ProgramFacts<'a> {
+    pub name: &'a str,
+    /// The file it comes from: `actions.toml` or `exports.toml`.
+    pub file: &'a str,
+    pub command: &'a [String],
+    pub stdin: &'a str,
+    pub output: &'a str,
+    /// How the timeout reads: "after 60s", or "after 60s without progress".
+    pub stopped: String,
+}
+
+/// The heart of the question, for every program asked about: what it runs and with what.
+pub fn program_facts(ui: &mut egui::Ui, facts: &ProgramFacts<'_>) {
+    ui.heading("Run a program?");
+    ui.label(format!(
+        "\u{201c}{}\u{201d} runs this command from {}:",
+        facts.name, facts.file
+    ));
+    ui.label(RichText::new(command_text(facts.command)).monospace());
+    Grid::new("command_question_details")
+        .num_columns(2)
+        .show(ui, |ui| {
+            ui.label("On stdin it gets");
+            ui.label(facts.stdin);
+            ui.end_row();
+            ui.label("Its output is");
+            ui.label(facts.output);
+            ui.end_row();
+            ui.label("It is stopped");
+            ui.label(&facts.stopped);
+            ui.end_row();
+        });
+    ui.weak("DbRover won't ask again until the command changes.");
+}
+
 impl Question {
+    fn facts(&self) -> ProgramFacts<'_> {
+        match &self.run {
+            Pending::Action(request) => {
+                let command = &request.command;
+                ProgramFacts {
+                    name: &self.name,
+                    file: "actions.toml",
+                    command: command.command.source(),
+                    stdin: stdin_text(command.stdin),
+                    output: output_text(command.output),
+                    stopped: format!("after {}", timeout_text(command.timeout)),
+                }
+            }
+            Pending::Copy(request) => {
+                let program = &request.spec.program;
+                ProgramFacts {
+                    name: &self.name,
+                    file: "exports.toml",
+                    command: program.command.source(),
+                    stdin: "the selected cells, as JSON Lines",
+                    output: "copied to the clipboard",
+                    stopped: format!("after {}", timeout_text(program.timeout)),
+                }
+            }
+        }
+    }
+
     /// `Some(true)` to run, `Some(false)` to cancel, `None` while unanswered.
     fn show(&self, ctx: &egui::Context) -> Option<bool> {
-        let command = &self.request.command;
         let modal = widgets::dialog(ctx, Id::new("command_question")).show(ctx, |ui| {
-            ui.heading("Run a program?");
-            ui.label(format!(
-                "\u{201c}{}\u{201d} runs this command from actions.toml:",
-                self.name
-            ));
-            ui.label(RichText::new(command_text(command.command.source())).monospace());
-            Grid::new("command_question_details")
-                .num_columns(2)
-                .show(ui, |ui| {
-                    ui.label("On stdin it gets");
-                    ui.label(stdin_text(command.stdin));
-                    ui.end_row();
-                    ui.label("Its output is");
-                    ui.label(output_text(command.output));
-                    ui.end_row();
-                    ui.label("It is stopped after");
-                    ui.label(timeout_text(command.timeout));
-                    ui.end_row();
-                });
-            ui.weak("DbRover won't ask again until the command changes.");
+            program_facts(ui, &self.facts());
             ui.separator();
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if form::primary_button(ui, "Run", true).clicked() {

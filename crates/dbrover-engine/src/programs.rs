@@ -46,7 +46,7 @@ const DRAIN_AFTER_EXIT: Duration = Duration::from_secs(1);
 /// Hides the console window Windows would otherwise open for a console program started from a
 /// GUI app (`CREATE_NO_WINDOW` in the Win32 process creation flags).
 #[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Identifies one run of a command action. Chosen by the UI, unique for the app's lifetime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -99,7 +99,7 @@ pub enum ProgramFailure {
     Output(String),
 }
 
-fn seconds(duration: Duration) -> String {
+pub(crate) fn seconds(duration: Duration) -> String {
     match jiff::SignedDuration::try_from(duration) {
         // `#` selects jiff's friendly format ("30s") over ISO 8601 ("PT30S").
         Ok(duration) => format!("{duration:#}"),
@@ -125,6 +125,21 @@ pub trait ProgramRunner: Send + Sync {
     /// Runs the program to its end. Dropping the future must stop the program: that is how
     /// timeouts and stops reach it.
     async fn run(&self, invocation: Invocation) -> Result<ProgramOutput, ProgramFailure>;
+
+    /// Starts the program for an export from `exports.toml` (W8d), with its stdout going to
+    /// `out`: the rows are written to the pipe it returns, which waits up to `timeout` for the
+    /// program to take each page, and for it to finish. Dropping the pipe must stop the
+    /// program.
+    ///
+    /// # Errors
+    ///
+    /// The program couldn't start.
+    fn start_export(
+        &self,
+        invocation: Invocation,
+        out: std::fs::File,
+        timeout: Duration,
+    ) -> io::Result<Box<dyn dbrover_export::ExportPipe>>;
 }
 
 /// Runs real programs with tokio's process support, directly, never through a shell.
@@ -180,6 +195,17 @@ impl ProgramRunner for ProcessRunner {
             Err(exited(&invocation.program, status, output.stderr))
         }
     }
+
+    fn start_export(
+        &self,
+        invocation: Invocation,
+        out: std::fs::File,
+        timeout: Duration,
+    ) -> io::Result<Box<dyn dbrover_export::ExportPipe>> {
+        Ok(Box::new(crate::export_programs::ProcessPipe::start(
+            invocation, out, timeout,
+        )?))
+    }
 }
 
 fn command(invocation: &Invocation) -> tokio::process::Command {
@@ -206,7 +232,7 @@ fn command(invocation: &Invocation) -> tokio::process::Command {
 
 /// A program that can't start. One that isn't found names the `PATH` it was looked for in: a
 /// Mac app started from the Finder gets a shorter one than a terminal has.
-fn start_failure(program: &str, error: &io::Error) -> ProgramFailure {
+pub(crate) fn start_failure(program: &str, error: &io::Error) -> ProgramFailure {
     let is_a_name = !program.contains(['/', '\\']);
     if error.kind() == io::ErrorKind::NotFound && is_a_name {
         let path = std::env::var("PATH").unwrap_or_default();
