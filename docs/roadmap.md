@@ -1349,40 +1349,51 @@ they show what a database holds better than any list. Planned, not a top priorit
 after the near-term work above, W9 to W12 included. ER diagrams were a non-goal in
 [Vision](vision.md) until 2026-10-29.
 
-- **ER1 — Read-only ER diagrams (planned, not scheduled):** a diagram of the tables you pick,
-  or of a whole schema, with their columns and the foreign keys between them. It shows the
-  schema and changes nothing in it: editing from the diagram is out of scope.
+- **ER1 — Read-only ER diagrams (M):** designed on 2026-11-01 in
+  [ER diagrams](diagrams.md). A diagram of the tables you pick, or of a whole schema, with their
+  columns and the foreign keys between them. It shows the schema and changes nothing in it:
+  editing from the diagram is out of scope.
   - **Opening one:** right-click a schema → **Diagram…** picks its tables, all of them by
     default, with **Add the tables these reference** to grow the choice by one step of foreign
     keys. On a table, **Diagram with related tables** starts from it and the tables its keys
     join. The explorer selects one node at a time, so choosing tables happens in this dialog,
-    not by multi-selecting in the tree.
+    not by multi-selecting in the tree. ClickHouse has no foreign keys, so the menus aren't
+    offered there, nor on the engines without SQL.
   - **What loads:** each table's description, through the drivers' `describe_table`, which
     already returns columns, the primary key and foreign keys both ways (W5's
-    `foreign_keys` and `referenced_by`). A command describes a list of tables, a few at a
-    time, on the explorer's connection, so a schema of a hundred tables doesn't open a
-    hundred connections. ClickHouse has no foreign keys, so the menus aren't offered there.
-  - **Layout:** automatic and layered (Sugiyama's method): referenced tables in the first
-    layer, the tables pointing at them in the next, cycles broken at a self-reference or the
-    last key found, and crossings reduced by sweeping the layers in barycentre order. It is a
-    pure function from tables and keys to boxes and lines, tested without a window.
+    `foreign_keys` and `referenced_by`). `Command::DescribeTables` describes a list of tables
+    on the explorer's connection; the tab asks for eight at a time, so a schema of a hundred
+    tables neither opens a hundred connections nor holds the explorer up.
+  - **Layout:** automatic and layered (Sugiyama's method), in a new crate, `dbrover-diagram`:
+    referenced tables in the first column, the tables pointing at them in the next, cycles
+    broken at a self-reference or the last key found, crossings reduced by sweeping the layers
+    in barycentre order, and tables no key joins in columns of their own. It is a pure
+    function from boxes and keys to positions, tested without a window.
   - **The view:** a dock tab with egui 0.36's `Scene` for pan and zoom. Tables are boxes with
     their columns, the primary key and foreign-key columns marked, coloured like the
     explorer's icons; each key is a line from its columns to the table it references. Drag a
-    table to move it; **Arrange** lays everything out again.
-  - **Saved per project:** the tables in a diagram and where each one sits go in a file in the
-    settings folder, `diagrams/<project>/<name>.toml`, so a diagram reopens as it was left and
-    can be kept in Git with the rest. A table dropped from the database is shown as missing
-    rather than removed from the file.
+    table to move it; **Arrange** lays everything out again, **Fit** shows it all.
+  - **Saved per project:** the data source, the tables in a diagram and where each one sits go
+    in `diagrams/<project>/<name>.toml` in the settings folder, or `diagrams/_none/` for a data
+    source in no project, so a diagram reopens as it was left and can be kept in Git. Columns
+    and keys are described again on opening. A table dropped from the database is shown as
+    missing rather than removed from the file. The data source's menu lists its diagrams.
   - **Export:** SVG, written from the same boxes and lines, and PNG at 1×, 2× or 3×, drawn from
-    that SVG with `resvg`, which `egui_extras` already brings into the build.
-  - **Manual:** a chapter on diagrams, a demo note here, and a clip for the site.
-
-  Open questions:
-  - Where a data source outside any project keeps its diagrams: under `diagrams/_none/`, or
-    only once it joins a project.
-  - How big a diagram may get before the dialog asks to narrow it; 150 tables is a first
-    guess, to be measured.
+    that SVG with `resvg`, which `egui_extras` already brings into the build. That copy draws
+    no text, so its `text` feature is turned on, with the app's bundled fonts.
+  - **Decided:** a data source outside any project keeps its diagrams in `diagrams/_none/`,
+    since most are in none; the dialog asks to narrow a choice of more than 150 tables, to be
+    confirmed by measurement in ER1b and ER1c. Reasons are in
+    [the design](diagrams.md#decisions).
+  - **ER1a — The plan:** the design and this entry.
+  - **ER1b — Describing many tables, and the layout:** `Command::DescribeTables`, and the
+    `dbrover-diagram` crate's layered layout.
+  - **ER1c — The diagram tab:** the menus, the dialog, loading a few at a time, and the
+    `Scene` view with dragging, **Arrange** and **Fit**.
+  - **ER1d — Saving and reopening:** the `diagrams/` folder, the **Diagrams** menu, tabs
+    restored at start-up, missing tables, adding and removing tables.
+  - **ER1e — Export:** SVG, and PNG through resvg.
+  - **ER1f — Manual:** a chapter on diagrams and this demo note. The site's clip comes later.
 
   **Exit:** on the PostgreSQL test server, right-click `public` → **Diagram…**, pick `orders`
   and tick **Add the tables these reference**: `orders`, `customers` and `products` appear,
