@@ -1,7 +1,6 @@
 //! The DbRover desktop application.
 
 mod about_dialog;
-mod actions_window;
 mod app;
 mod brand;
 mod catalog_tree;

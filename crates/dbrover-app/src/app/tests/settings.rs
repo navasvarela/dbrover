@@ -29,6 +29,10 @@ fn settings_tabs(harness: &Harness<'_, DbRoverApp>) -> usize {
         .count()
 }
 
+const ROW_COUNT: &str = "[[action]]\nid = \"row-count\"\nname = \"Row count\"\n\
+                         applies_to = [\"table\", \"view\"]\n\
+                         sql = \"SELECT count(*) FROM {qualified_name}\"\nrun = false\n";
+
 fn search(harness: &mut Harness<'_, DbRoverApp>, query: &str) {
     harness
         .get_by_role_and_label(Role::TextInput, "Search settings")
@@ -166,7 +170,11 @@ fn lists_the_keymap_as_a_page() {
     harness.get_by_label("Console");
     harness.get_by_label("Format the selection, or the statement at the cursor");
     harness.get_by_label("console.format");
-    harness.get_by_label("Custom actions");
+    assert_eq!(
+        harness.query_all_by_label("Custom actions").count(),
+        2,
+        "the sidebar's page, and the keymap's card"
+    );
     harness.get_by_label("Row count");
     harness.get_by_label("custom.row-count");
 }
@@ -206,4 +214,25 @@ fn opens_the_keymap_page_from_the_menu_and_the_status_bar() {
 
     harness.get_by_label_contains("\"console.walk\" is not an action");
     harness.get_by_label("console.format");
+}
+
+/// A search finds a custom action by what it runs, and Open shows it on the Custom actions page,
+/// which lists what it applies to and what it runs.
+#[test]
+fn finds_a_custom_action_and_opens_its_page() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("actions.toml"), ROW_COUNT).unwrap();
+    let mut harness = start_without_data_sources(dir.path());
+    open_settings(&mut harness);
+
+    search(&mut harness, "count qualified_name");
+    harness.get_by_label("Custom actions › Actions");
+    harness.get_by_label("Open").click();
+    harness.run();
+
+    harness.get_by_label("1 action");
+    harness.get_by_label("table, view");
+    harness.get_by_label("all");
+    harness.get_by_label("SELECT count(*) FROM {qualified_name}");
+    harness.get_by_label("Opens in a console to edit before running");
 }

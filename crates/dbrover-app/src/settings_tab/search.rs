@@ -2,14 +2,17 @@
 //! counts and the results page both come from [`Found`], so a page whose items are added here
 //! is searched and counted alike.
 
-use super::Page;
+use dbrover_store::CustomAction;
+
 use super::keymap_page::Shortcut;
 use super::setting::Setting;
+use super::{Page, actions_page};
 
 /// One thing a search can find, with the page it belongs to.
 pub enum Found<'a> {
     Setting(Setting),
     Shortcut(Shortcut<'a>),
+    Action(&'a CustomAction),
 }
 
 impl Found<'_> {
@@ -17,6 +20,7 @@ impl Found<'_> {
         match self {
             Self::Setting(setting) => Page::Settings(setting.category()),
             Self::Shortcut(_) => Page::Keymap,
+            Self::Action(_) => Page::Actions,
         }
     }
 
@@ -25,6 +29,7 @@ impl Found<'_> {
         match self {
             Self::Setting(setting) => setting.section(),
             Self::Shortcut(shortcut) => shortcut.section.title(),
+            Self::Action(_) => "Actions",
         }
     }
 
@@ -32,6 +37,7 @@ impl Found<'_> {
         match self {
             Self::Setting(setting) => setting.matches(query),
             Self::Shortcut(shortcut) => shortcut.matches(query),
+            Self::Action(action) => actions_page::matches(action, query),
         }
     }
 }
