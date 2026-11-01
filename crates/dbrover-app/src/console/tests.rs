@@ -1129,7 +1129,7 @@ mod test_language {
             let keymap = crate::keymap::Keymap::default();
             let mut harness = ui_harness(|ui| {
                 let mut actions = Vec::new();
-                results::show(ui, &mut console, &keymap, &[], &mut actions);
+                results::show(ui, &mut console, &keymap, CellMenuItems::NONE, &mut actions);
             });
             harness.get_by_label("3 documents");
             harness.get_by_label("{2 fields}");
@@ -1615,11 +1615,11 @@ fn the_empty_results_panel_names_the_run_keys_the_keymap_has() {
     ]
     .into_iter()
     .collect();
-    let keymap = Keymap::from_file(&file, &[]);
+    let keymap = Keymap::from_file(&file, &[], &[]);
     let mut console = console("select 1");
     let harness = ui_harness(|ui| {
         let mut actions = Vec::new();
-        results::show(ui, &mut console, &keymap, &[], &mut actions);
+        results::show(ui, &mut console, &keymap, CellMenuItems::NONE, &mut actions);
     });
     let hint = |action| keymap.hint(&harness.ctx, action).unwrap_or_default();
     let (current, all) = (hint(Action::RunCurrent), hint(Action::RunAll));
@@ -1715,7 +1715,7 @@ mod charts {
         let keymap = crate::keymap::Keymap::default();
         let mut harness = ui_harness(|ui| {
             let mut actions = Vec::new();
-            results::show(ui, &mut console, &keymap, &[], &mut actions);
+            results::show(ui, &mut console, &keymap, CellMenuItems::NONE, &mut actions);
         });
         harness.get_by_label("2026-02");
         harness.get_by_label("Chart").click();
@@ -1748,7 +1748,7 @@ mod charts {
         let keymap = crate::keymap::Keymap::default();
         let mut harness = ui_harness(|ui| {
             let mut actions = Vec::new();
-            results::show(ui, &mut console, &keymap, &[], &mut actions);
+            results::show(ui, &mut console, &keymap, CellMenuItems::NONE, &mut actions);
         });
         harness.get_by_label("Chart").click();
         harness.run();
@@ -1768,7 +1768,7 @@ mod charts {
         let keymap = crate::keymap::Keymap::default();
         let mut harness = ui_harness(|ui| {
             let mut actions = Vec::new();
-            results::show(ui, &mut console, &keymap, &[], &mut actions);
+            results::show(ui, &mut console, &keymap, CellMenuItems::NONE, &mut actions);
         });
         harness.get_by_label("Chart").click();
         harness.run();
@@ -1782,7 +1782,7 @@ mod charts {
         {
             let mut harness = ui_harness(|ui| {
                 let mut actions = Vec::new();
-                results::show(ui, &mut console, &keymap, &[], &mut actions);
+                results::show(ui, &mut console, &keymap, CellMenuItems::NONE, &mut actions);
             });
             harness.get_by_label("Chart").click();
             harness.run();
@@ -1797,7 +1797,7 @@ mod charts {
         );
         let harness = ui_harness(|ui| {
             let mut actions = Vec::new();
-            results::show(ui, &mut console, &keymap, &[], &mut actions);
+            results::show(ui, &mut console, &keymap, CellMenuItems::NONE, &mut actions);
         });
         harness.get_by_label("Charting 1 row");
         drop(harness);
@@ -1812,7 +1812,7 @@ mod charts {
         );
         let mut harness = ui_harness(|ui| {
             let mut actions = Vec::new();
-            results::show(ui, &mut console, &keymap, &[], &mut actions);
+            results::show(ui, &mut console, &keymap, CellMenuItems::NONE, &mut actions);
         });
         harness.run();
         drop(harness);

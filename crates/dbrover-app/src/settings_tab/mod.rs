@@ -7,6 +7,7 @@
 
 mod actions_page;
 mod controls;
+mod exports_page;
 mod keymap_page;
 mod project_page;
 mod search;
@@ -61,10 +62,12 @@ pub enum SettingsAction {
     ReloadKeymap,
     /// Write a starting `keymap.toml`, unless there is one.
     CreateKeymap,
-    /// Read `actions.toml`, `snippets.toml` and `theme.toml` again.
+    /// Read `actions.toml`, `snippets.toml`, `theme.toml` and `exports.toml` again.
     ReloadCustomFiles,
     /// Write a starting `actions.toml`, unless there is one.
     CreateActions,
+    /// Write a starting `exports.toml`, unless there is one.
+    CreateExports,
     /// Write a project's MCP settings to `projects.toml`.
     SaveProject {
         id: ProjectId,
@@ -103,6 +106,7 @@ pub enum Page {
     Settings(Category),
     Keymap,
     Actions,
+    Exports,
     /// A project's MCP settings, under the sidebar's Projects caption.
     Project(ProjectId),
 }
@@ -116,10 +120,11 @@ impl Default for Page {
 impl Page {
     /// The pages above the projects, in the sidebar's order.
     fn listed() -> impl Iterator<Item = Self> {
-        Category::ALL
-            .into_iter()
-            .map(Self::Settings)
-            .chain([Self::Keymap, Self::Actions])
+        Category::ALL.into_iter().map(Self::Settings).chain([
+            Self::Keymap,
+            Self::Actions,
+            Self::Exports,
+        ])
     }
 
     fn title(self) -> &'static str {
@@ -127,6 +132,7 @@ impl Page {
             Self::Settings(category) => category.title(),
             Self::Keymap => "Keymap",
             Self::Actions => "Custom actions",
+            Self::Exports => "Exports",
             // A project's page is titled with its name, which the page doesn't hold.
             Self::Project(_) => "Project",
         }
@@ -137,6 +143,7 @@ impl Page {
             Self::Settings(category) => category.glyph(),
             Self::Keymap => icons::KEYBOARD,
             Self::Actions => icons::LIGHTNING,
+            Self::Exports => icons::EXPORT,
             Self::Project(_) => icons::FOLDER_SIMPLE,
         }
     }
@@ -151,6 +158,10 @@ impl Page {
             Self::Actions => {
                 "Your own actions from actions.toml, in the Actions menu, on right-click, and on \
                  the keys the keymap gives them."
+            }
+            Self::Exports => {
+                "Your own export formats from exports.toml, in the export dialog and under \
+                 Copy as."
             }
             Self::Project(_) => project_page::SUMMARY,
         }
@@ -215,14 +226,17 @@ impl SettingsTab {
             |shortcut| ctx.format_shortcut(shortcut),
             view.keymap,
             view.custom_files.actions(),
+            view.custom_files.exports(),
         );
         let actions = view.custom_files.actions().iter().map(Found::Action);
+        let exports = view.custom_files.exports().iter().map(Found::Export);
         let projects = view.projects.iter().map(Found::Project);
         Setting::all()
             .into_iter()
             .map(Found::Setting)
             .chain(shortcuts.into_iter().map(Found::Shortcut))
             .chain(actions)
+            .chain(exports)
             .chain(projects)
             .filter(|found| found.matches(&self.query))
             .collect()
@@ -268,7 +282,7 @@ impl SettingsTab {
         let count = found.iter().filter(|found| found.page() == page).count();
         let unsaved = match page {
             Page::Project(id) => self.projects.changed(id),
-            Page::Settings(_) | Page::Keymap | Page::Actions => false,
+            Page::Settings(_) | Page::Keymap | Page::Actions | Page::Exports => false,
         };
         let badge = if self.searching() {
             Some(count.to_string())
@@ -314,6 +328,7 @@ impl SettingsTab {
                     |shortcut| ui.ctx().format_shortcut(shortcut),
                     view.keymap,
                     view.custom_files.actions(),
+                    view.custom_files.exports(),
                 );
                 keymap_page::show(ui, view.keymap, view.keymap_path, &shortcuts, actions);
             }
@@ -324,6 +339,7 @@ impl SettingsTab {
                 view.command_runs,
                 actions,
             ),
+            Page::Exports => exports_page::show(ui, view.custom_files, view.keymap, actions),
             Page::Project(_) => {}
         }
     }
@@ -411,6 +427,11 @@ fn settings_page(
                         Found::Shortcut(shortcut) => keymap_page::row(rows, shortcut),
                         Found::Action(action) => {
                             if actions_page::found_row(rows, action) {
+                                opened = Some(found.page());
+                            }
+                        }
+                        Found::Export(format) => {
+                            if exports_page::found_row(rows, format) {
                                 opened = Some(found.page());
                             }
                         }

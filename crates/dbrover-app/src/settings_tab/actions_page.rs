@@ -7,7 +7,7 @@ use egui::{RichText, Ui};
 
 use super::{SettingsAction, problems, search, source_line};
 use crate::command_runs::{CommandRuns, command_text, timeout_text};
-use crate::custom_files::CustomFiles;
+use crate::custom_files::{CustomFiles, RELOAD_HINT};
 use crate::form::{self, Rows};
 use crate::keymap::Keymap;
 use crate::theme::Palette;
@@ -38,11 +38,7 @@ pub fn show(
 ) {
     let kind = CustomFileKind::Actions;
     source_line(ui, files.path(kind), |ui| {
-        if ui
-            .link("Reload")
-            .on_hover_text("Read actions.toml, snippets.toml and theme.toml again")
-            .clicked()
-        {
+        if ui.link("Reload").on_hover_text(RELOAD_HINT).clicked() {
             actions.push(SettingsAction::ReloadCustomFiles);
         }
         if ui
