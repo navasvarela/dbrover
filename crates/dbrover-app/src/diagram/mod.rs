@@ -5,15 +5,19 @@
 mod dialog;
 mod geometry;
 mod model;
+mod svg;
 mod view;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use dbrover_core::DataSourceId;
-use dbrover_engine::{Command, Event, SessionState};
+use dbrover_engine::{Command, Event, Picture, SessionState};
 use dbrover_store::{DiagramFile, DiagramFolder, DiagramKey, DiagramName, SavedDiagram};
 use egui::{Rect, Ui};
+
+use crate::picture::PictureFormat;
 
 pub use dialog::{DiagramDialog, DiagramDialogAction};
 #[cfg(test)]
@@ -29,11 +33,14 @@ const SAVE_DELAY: Duration = Duration::from_secs(1);
 pub enum DiagramAction {
     /// **Delete diagram…**, confirmed: remove its file and close its tab.
     Delete(DiagramKey),
+    /// **Export ›**: ask where, then write the picture.
+    Export(DiagramKey, PictureFormat),
 }
 
 /// What a diagram's tab asks of the collection, which knows its key.
 enum TabAction {
     Delete,
+    Export(PictureFormat),
 }
 
 /// A diagram's tab: the diagram, the part of it the tab shows, and how its file stands.
@@ -51,6 +58,8 @@ pub struct DiagramTab {
     /// Why the last save failed, until one succeeds.
     save_error: Option<String>,
     confirming_delete: bool,
+    /// How the last export went: where it was written, or why it wasn't.
+    exported: Option<Result<PathBuf, String>>,
     /// From the diagram's coordinates to the screen's, as last drawn. Widgets in a `Scene`
     /// report their bounds to accessibility in the scene's own coordinates, so tests need it
     /// to point at a table.
@@ -79,6 +88,8 @@ pub struct Diagrams {
     saved: SavedDiagrams,
     /// Saves of diagrams whose tab closed before their last change was saved.
     closing_saves: Vec<Command>,
+    /// The diagram each export being written is of, by the file it is written to.
+    exporting: HashMap<PathBuf, DiagramKey>,
 }
 
 impl Diagrams {
@@ -123,6 +134,7 @@ impl Diagrams {
             changed: None,
             save_error: None,
             confirming_delete: false,
+            exported: None,
             #[cfg(test)]
             to_screen: egui::emath::TSTransform::IDENTITY,
         };
@@ -181,6 +193,16 @@ impl Diagrams {
                     .iter()
                     .map(|SavedDiagram { key, file }| (key.clone(), file.clone()));
                 self.saved.0.extend(files);
+                Vec::new()
+            }
+            Event::PictureExported { path, result } => {
+                let tab = self
+                    .exporting
+                    .remove(path)
+                    .and_then(|key| self.open.get_mut(&key));
+                if let Some(tab) = tab {
+                    tab.exported = Some(result.clone().map(|()| path.clone()));
+                }
                 Vec::new()
             }
             Event::DiagramSaveFailed { key, error } => {
@@ -270,7 +292,34 @@ impl Diagrams {
         };
         match view::show(ui, tab, key)? {
             TabAction::Delete => Some(DiagramAction::Delete(key.clone())),
+            TabAction::Export(format) => Some(DiagramAction::Export(key.clone(), format)),
         }
+    }
+
+    /// The command that writes the open diagram `key` to `path` as `format`, or `None` while
+    /// none of its boxes is placed. Its tab says how the export went once it is written.
+    pub fn export(
+        &mut self,
+        key: &DiagramKey,
+        format: PictureFormat,
+        path: &Path,
+    ) -> Option<Command> {
+        let tab = self.open.get_mut(key)?;
+        let svg = svg::svg(&tab.diagram)?;
+        let picture = match format {
+            PictureFormat::Svg => Picture::Svg(svg),
+            PictureFormat::Png { scale } => Picture::Png {
+                svg,
+                scale: f32::from(scale),
+                fonts: crate::fonts::bundled_files(),
+            },
+        };
+        tab.exported = None;
+        self.exporting.insert(path.to_owned(), key.clone());
+        Some(Command::ExportPicture {
+            path: path.to_owned(),
+            picture,
+        })
     }
 
     /// The open diagrams, for tests that look at what they hold.

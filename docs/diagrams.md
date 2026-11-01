@@ -91,7 +91,9 @@ throwing away where the user moved things.
   tables, keys and columns.
 - **Each key is a line** from its first column's row, on the side facing the referenced table,
   to the referenced table's matching row, as a curve with a mark at the referenced end. Lines
-  are drawn under the boxes. A self-reference loops back to the same table's side.
+  are drawn under the boxes, and a line that would pass behind a box on its way bends above or
+  below it, whichever is nearer, so it never looks as if it ended there. A self-reference
+  loops back to the same table's side.
 - **Drag a table to move it**; lines follow. Hovering a table highlights its lines.
 - **Toolbar:** **Arrange**, **Fit**, **Export ▾**, and how loading is going ("Loading 24 of 80
   tables…") or what failed.
@@ -154,6 +156,8 @@ throwing away where the user moved things.
   loaded from the app's own bundled Inter and JetBrains Mono, never the system's, so a PNG looks
   the same on every machine. That adds eight small pure-Rust crates (`fontdb`, `ttf-parser`,
   `rustybuzz` and its Unicode tables), no C and no new CI job.
+  The PNG is drawn in a small crate of its own, `dbrover-picture`, and the engine's
+  `ExportPicture` writes either format, so other pictures (W12's charts) export the same way.
 - **Where:** the export runs in the engine, off the UI thread, since a big diagram at 3× takes a
   moment, and writes beside the final name before renaming, as other exports do. A PNG larger
   than 64 megapixels (256 MB in memory) is refused with a suggestion to pick a smaller scale or
@@ -198,8 +202,9 @@ Each layer is a pull request of one stack, and each works on its own:
   catalog queries. Batches keep the explorer usable meanwhile, the tab draws tables as they
   arrive, and the size limit asks before a very large one.
 - **A dense schema lays out poorly**: barycentre sweeps reduce crossings but don't remove them,
-  and a table referenced by everything pulls lines across the diagram. Dragging and saving
-  positions is the answer; better routing is a later change.
+  and a table referenced by everything pulls lines across the diagram. Lines bend around the
+  boxes in their way, but not around each other. Dragging and saving positions is the answer;
+  routing lines along the layout's dummy vertices is a later change.
 - **Fonts differ in a browser**: the SVG names Inter, which a browser may not have, so text may
   be a little wider or narrower than its box. Boxes leave room at the right for it.
 - **Huge PNGs**: refused past 64 megapixels rather than running out of memory.

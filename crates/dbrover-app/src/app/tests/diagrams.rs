@@ -230,3 +230,50 @@ fn keeps_a_moved_table_where_it_was_left_and_a_dropped_one_as_missing() {
         "nothing dropped from the file"
     );
 }
+
+#[test]
+fn exports_the_diagram_as_svg_and_as_png() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(dir.path(), SHOP);
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    let pictures = dir.path().join("pictures");
+    std::fs::create_dir_all(&pictures).unwrap();
+    let answer = pictures.clone();
+    harness.state_mut().pick_picture =
+        Box::new(move |name, format| Some(answer.join(format!("{name}.{}", format.extension()))));
+    diagram_of_main(&mut harness);
+    loaded_diagram(&mut harness);
+
+    for (item, file) in [("SVG…", "main.svg"), ("PNG at 2×…", "main.png")] {
+        harness.get_by_label("Export").click();
+        harness.run_steps(2);
+        harness.get_by_label(item).click();
+        step_until_visible(
+            &mut harness,
+            &format!("Exported to {}", pictures.join(file).display()),
+        );
+    }
+
+    let svg = std::fs::read_to_string(pictures.join("main.svg")).unwrap();
+    for table in ["customers", "orders", "order_items", "products", "notes"] {
+        assert!(
+            svg.contains(&format!(">{table}</text>")),
+            "{table} in the SVG"
+        );
+    }
+    let curves = svg
+        .lines()
+        .filter(|line| line.starts_with("<path d=\"M") && line.contains(" C"));
+    assert_eq!(curves.count(), 4, "a curve per key");
+    let png = std::fs::read(pictures.join("main.png")).unwrap();
+    assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+    let svg_width: f32 = svg
+        .split("width=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .and_then(|width| width.parse().ok())
+        .unwrap();
+    let png_width = u32::from_be_bytes([png[16], png[17], png[18], png[19]]);
+    assert_eq!(png_width, (svg_width * 2.0) as u32, "drawn at 2×");
+}

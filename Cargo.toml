@@ -27,6 +27,7 @@ dbrover-engine = { path = "crates/dbrover-engine" }
 dbrover-export = { path = "crates/dbrover-export" }
 dbrover-language = { path = "crates/dbrover-language" }
 dbrover-mcp = { path = "crates/dbrover-mcp" }
+dbrover-picture = { path = "crates/dbrover-picture" }
 dbrover-plan = { path = "crates/dbrover-plan" }
 dbrover-sql = { path = "crates/dbrover-sql" }
 dbrover-ssh = { path = "crates/dbrover-ssh" }
@@ -130,6 +131,10 @@ rfd = "0.17.2"
 # tests add the client to drive it.
 rmcp = { version = "3.7.0", default-features = false, features = ["macros", "server", "transport-io"] }
 rusqlite = { version = "0.40.2", features = ["bundled", "column_decltype"] }
+# Draws PNG exports, such as ER diagrams', from their SVG (dbrover-picture): the version egui_extras
+# already builds for the database logos, plus its `text` feature, without which a PNG would have
+# boxes and no words. No system fonts: the app hands it its own bundled ones.
+resvg = { version = "0.45.1", default-features = false, features = ["text"] }
 # Reads SQL Server's XML showplans (dbrover-plan): the version resvg already builds for the
 # database logos, so nothing new is compiled.
 roxmltree = "0.20.0"
