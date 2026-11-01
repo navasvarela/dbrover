@@ -8,7 +8,7 @@
 //! implicit conversion), which is how text from the grid (ADR-0004) goes back in without
 //! DbRover knowing the types.
 
-use dbrover_core::{Cell, Quoting, TableDescription, TableName, ValueKind};
+use dbrover_core::{Cell, ColumnDescription, Quoting, TableDescription, TableName, ValueKind};
 
 use crate::Dialect;
 
@@ -58,6 +58,9 @@ pub struct TypedColumn<'a> {
 pub struct RowSql<'a> {
     dialect: Dialect,
     table: Table<'a>,
+    /// The table's columns, for a dialect that converts no string literal to a column's type
+    /// (CQL), whose values are written as their types read them.
+    columns: &'a [ColumnDescription],
 }
 
 impl<'a> RowSql<'a> {
@@ -65,6 +68,15 @@ impl<'a> RowSql<'a> {
         Self {
             dialect,
             table: table.into(),
+            columns: &[],
+        }
+    }
+
+    /// For the described `table`, whose columns' types say how CQL's values are written.
+    pub fn for_table(dialect: Dialect, table: &'a TableDescription) -> Self {
+        Self {
+            columns: &table.columns,
+            ..Self::new(dialect, table)
         }
     }
 
@@ -76,7 +88,7 @@ impl<'a> RowSql<'a> {
                 format!(
                     "{} = {}",
                     self.name(assigned.column),
-                    self.literal(assigned.value)
+                    self.column_literal(assigned.column, assigned.value)
                 )
             })
             .collect();
@@ -101,7 +113,7 @@ impl<'a> RowSql<'a> {
         let columns: Vec<String> = values.iter().map(|value| self.name(value.column)).collect();
         let literals: Vec<String> = values
             .iter()
-            .map(|value| self.literal(value.value))
+            .map(|value| self.column_literal(value.column, value.value))
             .collect();
         format!(
             "INSERT INTO {} ({}) VALUES ({})",
@@ -206,6 +218,22 @@ impl<'a> RowSql<'a> {
         }
     }
 
+    /// `value` for `column`: a literal of its CQL type where the dialect needs one and the
+    /// table's columns are known, a string literal otherwise.
+    fn column_literal(&self, column: &str, value: &Cell) -> String {
+        let cql_type = (self.dialect == Dialect::Cassandra)
+            .then(|| {
+                self.columns
+                    .iter()
+                    .find(|described| described.name == column)
+            })
+            .flatten();
+        match (cql_type, value) {
+            (Some(described), Some(text)) => crate::cql_value::literal(&described.data_type, text),
+            _ => self.literal(value),
+        }
+    }
+
     fn typed_literal(&self, value: &Cell, kind: ValueKind) -> String {
         let numeric = matches!(
             kind,
@@ -222,7 +250,11 @@ impl<'a> RowSql<'a> {
         key.iter()
             .map(|part| match part.value {
                 None => format!("{} IS NULL", self.name(part.column)),
-                value => format!("{} = {}", self.name(part.column), self.literal(value)),
+                value => format!(
+                    "{} = {}",
+                    self.name(part.column),
+                    self.column_literal(part.column, value)
+                ),
             })
             .collect::<Vec<_>>()
             .join(" AND ")

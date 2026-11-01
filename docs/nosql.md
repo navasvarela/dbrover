@@ -1188,7 +1188,7 @@ nightly job (see the CI measurement below).
     lock, since a walk that meets another test's keyspace while it is dropped fails;
   - the explorer's menu offered the SQL object helpers for a CQL table: it now asks
     `Dialect::writes_ddl` for them, and keeps **Open data** and **Export data…**.
-- **N4·5 — Editing:** a cell changed in the grid becomes
+- **N4·5 — Editing** (built): a cell changed in the grid becomes
   `UPDATE ks.t SET c = … WHERE` every partition and clustering key column `= …`, when the
   result is a `SELECT` of one table that holds its whole primary key; **Add row** becomes an
   `INSERT`, and **Delete rows** a `DELETE` by the same key. Values are written as literals of
@@ -1197,7 +1197,19 @@ nightly job (see the CI measurement below).
   Redis's and MongoDB's do: each is checked, logged and recorded in the history, and one that
   fails leaves the ones before it done, which the grid says. Tests: a cell of each type edited
   and read back, a row added and deleted, a key column refused, and kittests of the console's
-  edits.
+  edits. How it came out:
+  - the grid's SQL edits took CQL with three changes: `RowSql::for_table` writes each value as
+    a literal of its column's type from the table's description (`dbrover-sql`'s `cql_value`),
+    `QueryLanguage::edits_run` runs a dialect without transactions one statement at a time, and
+    `Dialect::updates_keys` keeps a loaded row's key cells as they are;
+  - a value written bare (a number, a UUID, a blob, a duration) is first checked to be one, and
+    is sent as a string otherwise, so the server refuses the wrong type rather than read text
+    from the grid as CQL;
+  - the driver describes a table from `system_schema`, resolving an unqualified name in the
+    session's keyspace and an unquoted one in lowercase, as CQL does; a materialized view isn't
+    a table to describe, so its rows stay read-only;
+  - the edits run as the SQL engines' do, the deletions, then the changes, then the new rows,
+    each with the statement that would undo it in the history.
 - **N4·6 — Safety, MCP and the manual:** the read-only level's dialog suggests a role with
   only the `SELECT` permission; the MCP server serves the data source only through its MCP
   login, its `query` tool takes one statement, and `list_objects` lists the explorer's levels.

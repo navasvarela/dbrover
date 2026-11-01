@@ -545,6 +545,103 @@ fn a_cql_console_completes_its_words_and_has_no_explain() {
     );
 }
 
+/// A CQL table's rows are edited by the whole primary key: a loaded row's key cells stay as they
+/// are, an added row's take values, and each value is written as its column's type reads it.
+#[test]
+fn edits_cql_rows_by_their_key_with_typed_literals() {
+    use dbrover_core::ColumnDescription;
+
+    let mut console = console_with("SELECT p, n, tags FROM shop.t", Dialect::Cassandra);
+    let statements = console.statements_to_run(RunScope::All);
+    let run = RunId(1);
+    console.begin_run(run, &statements);
+    let typed = |name: &str, type_name: &str| ColumnInfo {
+        name: name.to_owned(),
+        type_name: Some(type_name.to_owned()),
+    };
+    let columns = [
+        typed("p", "text"),
+        typed("n", "int"),
+        typed("tags", "map<text, int>"),
+    ];
+    console.apply(&Event::StatementStarted {
+        run,
+        statement: 0,
+        columns: columns.to_vec(),
+        shape: ResultShape::Rows,
+    });
+    console.apply(&Event::RowsFetched {
+        run,
+        statement: 0,
+        rows: vec![vec![
+            Some("x".to_owned()),
+            Some("1".to_owned()),
+            Some(r#"{"a": 1}"#.to_owned()),
+        ]],
+        more: false,
+    });
+    let tables = console.tables_to_describe();
+    let [table] = tables.as_slice() else {
+        panic!("expected the table to be described: {tables:?}");
+    };
+    let description = TableDescription {
+        schema: "shop".to_owned(),
+        name: "t".to_owned(),
+        columns: columns
+            .iter()
+            .map(|column| ColumnDescription {
+                name: column.name.clone(),
+                data_type: column.type_name.clone().unwrap_or_default(),
+                nullable: column.name == "tags",
+                default: None,
+                identity: None,
+            })
+            .collect(),
+        primary_key: vec!["p".to_owned(), "n".to_owned()],
+        foreign_keys: vec![],
+        referenced_by: vec![],
+    };
+    console.apply(&Event::TableDescribed {
+        data_source: console.data_source(),
+        table: table.clone(),
+        result: Ok(Some(description)),
+    });
+
+    let shown = &mut console.run.as_mut().unwrap().statements[0];
+    assert!(
+        !shown.edits.is_editable(edit::RowRef::Loaded(0), 1),
+        "a key cell"
+    );
+    assert!(shown.edits.is_editable(edit::RowRef::Loaded(0), 2));
+    let rows = shown.rows.clone();
+    shown.edits.pending.set(
+        &rows,
+        edit::RowRef::Loaded(0),
+        2,
+        Some(r#"{"b": 2}"#.to_owned()),
+    );
+    shown.edits.add_row();
+    assert!(shown.edits.is_editable(edit::RowRef::New(0), 1));
+    for (column, value) in [(0, "y"), (1, "2")] {
+        shown
+            .edits
+            .pending
+            .set(&rows, edit::RowRef::New(0), column, Some(value.to_owned()));
+    }
+
+    let Some(Command::ApplyEdits { statements, .. }) = console.submit_edits() else {
+        panic!("nothing submitted");
+    };
+    let sql: Vec<&str> = statements.iter().map(|edit| edit.sql.as_str()).collect();
+    assert_eq!(
+        sql,
+        [
+            r#"UPDATE "shop"."t" SET "tags" = fromJson('{"b": 2}') WHERE "p" = 'x' AND "n" = 1"#,
+            r#"INSERT INTO "shop"."t" ("p", "n") VALUES ('y', 2)"#,
+        ]
+    );
+}
+
 mod test_language {
     use super::*;
 

@@ -228,3 +228,27 @@ sends them one at a time: neither server has transactions, so if one fails, thos
 stay made. Each is checked against the data source's safety level, written to the log and
 recorded in the history with the request that would undo it. A partial update has the server
 write the document's source again, so a number typed as `2.50` reads back as `2.5`.
+
+## Cassandra and ScyllaDB rows
+
+On a Cassandra or ScyllaDB data source, the rows of a `SELECT` from one table that holds the
+table's whole primary key (its partition key's columns and its clustering key's) can be edited,
+as on the SQL databases: **Open data** selects every column, so its rows always can. A
+materialized view's rows can't: the server writes them from their table.
+
+- **Changing a value** sends an `UPDATE` of that column by the row's whole primary key. A loaded
+  row's key cells can't be typed over: a row's key is where it is stored, and CQL can't change it.
+- **Add row** sends an `INSERT` of the cells typed into it, which must hold the whole key.
+- **Delete rows** sends a `DELETE` by each row's key.
+
+Each value is written as its column's type reads it, since CQL converts no text to another type:
+numbers, `true` and `false`, UUIDs, blobs (`0xcafe`) and durations (`1h30m`) bare, text, dates,
+times, timestamps and addresses quoted. A list, set, map, tuple or user-defined type is typed as
+the JSON the grid shows (`{"a": 1}`, `["x", "y"]`) and written with `fromJson()`. Text that isn't
+a value of its column's type, such as `seven` in an `int` column, is sent as text, and the server
+refuses it. A counter can't be set, only increased with an `UPDATE` typed in the console.
+
+**Submit** sends the statements one at a time: CQL has no transactions, so if one fails, those
+before it stay made, and the message names the row that failed. Each is checked against the
+data source's safety level, written to the log and recorded in the history with the statement
+that would undo it.

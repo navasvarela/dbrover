@@ -33,8 +33,8 @@ pub use documents::{DocumentEdit, DocumentView};
 pub enum EditsRun {
     /// In a transaction of the dialect's, all or none.
     Transaction(Dialect),
-    /// One command at a time, each taking effect as it runs: Redis, MongoDB and Elasticsearch
-    /// have no transaction to undo the ones before a command that fails.
+    /// One command at a time, each taking effect as it runs: Redis, MongoDB, Elasticsearch and
+    /// CQL have no transaction to undo the ones before a command that fails.
     OneByOne,
 }
 
@@ -96,7 +96,10 @@ impl QueryLanguage {
     /// `None` for one whose results it can't.
     pub fn edits_run(self) -> Option<EditsRun> {
         match self {
-            Self::Sql(dialect) => Some(EditsRun::Transaction(dialect)),
+            Self::Sql(dialect) if dialect.has_transactions() => {
+                Some(EditsRun::Transaction(dialect))
+            }
+            Self::Sql(_) => Some(EditsRun::OneByOne),
             Self::Redis | Self::Mongo | Self::Search => Some(EditsRun::OneByOne),
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,

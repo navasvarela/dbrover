@@ -9,6 +9,7 @@ use dbrover_core::{
     CatalogPath, FolderKind, NodeKind, Port, RejectionKind, Row, ServerConfig, TlsMode,
     describe_error,
 };
+use dbrover_sql::Dialect;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -735,6 +736,200 @@ async fn lists_every_kind_of_object_with_definitions_that_run_again() {
             nodes.len(),
             "{}: the definitions made the keyspace again",
             server.name
+        );
+        run(&mut connection, &format!("DROP KEYSPACE {keyspace}")).await;
+    }
+}
+
+/// A table is described with its key, partition then clustering columns, and each column's CQL
+/// type; the grid's statements, written from that description, edit a value of every type and
+/// read it back as it was typed, add a row and delete it. A view isn't a table to edit.
+#[tokio::test]
+async fn edits_rows_by_their_primary_key() {
+    use dbrover_core::{Identifier, RelationName};
+    use dbrover_sql::{ColumnValue, RowSql};
+
+    let _schema = SCHEMA.lock().await;
+    for server in test_servers() {
+        let mut connection = server.connect().await;
+        let keyspace = server.keyspace(&mut connection, "edits").await;
+        run(
+            &mut connection,
+            &format!("CREATE TYPE {keyspace}.address (city text, zip int)"),
+        )
+        .await;
+        let columns = [
+            ("a_int", "int", "1", "-42"),
+            ("a_bigint", "bigint", "1", "9223372036854775807"),
+            ("a_decimal", "decimal", "1.0", "12.50"),
+            ("a_double", "double", "1.0", "2.5"),
+            ("a_boolean", "boolean", "false", "true"),
+            ("a_text", "text", "'a'", "it's"),
+            ("a_date", "date", "'2026-01-01'", "2026-11-01"),
+            (
+                "a_timestamp",
+                "timestamp",
+                "'2026-01-01 00:00:00+0000'",
+                "2026-11-01 09:30:00.123+0000",
+            ),
+            (
+                "a_uuid",
+                "uuid",
+                "123e4567-e89b-12d3-a456-426614174000",
+                "00000000-0000-0000-0000-000000000001",
+            ),
+            ("a_blob", "blob", "0x00", "0xcafe"),
+            ("a_duration", "duration", "1h", "1d2h"),
+            ("a_inet", "inet", "'10.0.0.1'", "::1"),
+            ("a_list", "list<int>", "[1]", "[3, 2]"),
+            ("a_map", "map<text, int>", "{'a': 1}", r#"{"b": 2, "c": 3}"#),
+            (
+                "a_address",
+                "frozen<address>",
+                "{city: 'a', zip: 1}",
+                r#"{"city": "O'Hare", "zip": 60666}"#,
+            ),
+        ];
+        let definitions: Vec<String> = columns
+            .iter()
+            .map(|(name, column_type, ..)| format!("{name} {column_type}"))
+            .collect();
+        run(
+            &mut connection,
+            &format!(
+                "CREATE TABLE {keyspace}.t (p text, c int, {}, PRIMARY KEY (p, c))",
+                definitions.join(", ")
+            ),
+        )
+        .await;
+        let names: Vec<&str> = columns.iter().map(|(name, ..)| *name).collect();
+        let initial: Vec<&str> = columns.iter().map(|(_, _, initial, _)| *initial).collect();
+        run(
+            &mut connection,
+            &format!(
+                "INSERT INTO {keyspace}.t (p, c, {}) VALUES ('x', 1, {})",
+                names.join(", "),
+                initial.join(", ")
+            ),
+        )
+        .await;
+
+        let relation = |schema: Option<&str>, name: &str| RelationName {
+            schema: schema.map(|schema| Identifier {
+                name: schema.to_owned(),
+                quoted: false,
+            }),
+            name: Identifier {
+                name: name.to_owned(),
+                quoted: false,
+            },
+        };
+        let table = connection
+            .describe_table(&relation(Some(&keyspace), "T"))
+            .await
+            .expect("describe")
+            .expect("a table");
+        assert_eq!(table.primary_key, ["p", "c"], "{}", server.name);
+        assert_eq!(
+            table
+                .columns
+                .iter()
+                .find(|column| column.name == "a_map")
+                .map(|column| column.data_type.as_str()),
+            Some("map<text, int>")
+        );
+
+        let sql = RowSql::for_table(Dialect::Cassandra, &table);
+        let key_values = [Some("x".to_owned()), Some("1".to_owned())];
+        let key = [
+            ColumnValue {
+                column: "p",
+                value: &key_values[0],
+            },
+            ColumnValue {
+                column: "c",
+                value: &key_values[1],
+            },
+        ];
+        for (name, _, _, edited) in columns {
+            let value = Some(edited.to_owned());
+            let update = sql.update(
+                &[ColumnValue {
+                    column: name,
+                    value: &value,
+                }],
+                &key,
+            );
+            run(&mut connection, &update).await;
+            let read = run(
+                &mut connection,
+                &format!("SELECT {name} FROM {keyspace}.t WHERE p = 'x' AND c = 1"),
+            )
+            .await;
+            assert_eq!(texts(&read), [[edited]], "{}: {update}", server.name);
+        }
+
+        let added = [
+            Some("y".to_owned()),
+            Some("2".to_owned()),
+            Some("[7]".to_owned()),
+        ];
+        let insert = sql.insert(&[
+            ColumnValue {
+                column: "p",
+                value: &added[0],
+            },
+            ColumnValue {
+                column: "c",
+                value: &added[1],
+            },
+            ColumnValue {
+                column: "a_list",
+                value: &added[2],
+            },
+        ]);
+        run(&mut connection, &insert).await;
+        let count = format!("SELECT count(*) FROM {keyspace}.t");
+        assert_eq!(texts(&run(&mut connection, &count).await), [["2"]]);
+        run(
+            &mut connection,
+            &sql.delete(&[
+                ColumnValue {
+                    column: "p",
+                    value: &added[0],
+                },
+                ColumnValue {
+                    column: "c",
+                    value: &added[1],
+                },
+            ]),
+        )
+        .await;
+        assert_eq!(texts(&run(&mut connection, &count).await), [["1"]]);
+
+        run(
+            &mut connection,
+            &format!(
+                "CREATE MATERIALIZED VIEW {keyspace}.by_c AS SELECT p, c FROM {keyspace}.t \
+                 WHERE c IS NOT NULL AND p IS NOT NULL PRIMARY KEY (c, p)"
+            ),
+        )
+        .await;
+        assert_eq!(
+            connection
+                .describe_table(&relation(Some(&keyspace), "by_c"))
+                .await
+                .expect("describe"),
+            None
+        );
+        run(&mut connection, &format!("USE {keyspace}")).await;
+        assert!(
+            connection
+                .describe_table(&relation(None, "t"))
+                .await
+                .expect("describe")
+                .is_some(),
+            "an unqualified name resolves in the session's keyspace"
         );
         run(&mut connection, &format!("DROP KEYSPACE {keyspace}")).await;
     }
