@@ -20,7 +20,6 @@ use crate::consoles::SavedConsoles;
 use crate::custom_actions;
 use crate::diagram::SavedDiagrams;
 use crate::icons;
-use crate::mcp_client_config;
 use crate::state::{DataSourceEntry, DataSources};
 use crate::theme::Palette;
 use crate::widgets::{self, IconButton};
@@ -59,6 +58,8 @@ pub enum ExplorerAction {
     RenameProject(ProjectId),
     /// Opens the project's page in Settings, where MCP access is set.
     ProjectSettings(ProjectId),
+    /// The entry an MCP client's configuration needs to serve the project.
+    CopyMcpConfiguration(ProjectId),
     DeleteProject(ProjectId),
     /// Puts the data source in the project, or in no project.
     MoveToProject(DataSourceId, Option<ProjectId>),
@@ -374,7 +375,7 @@ fn group_menu(ui: &mut Ui, header: GroupHeader<'_>, actions: &mut Vec<ExplorerAc
             "The entry an MCP client's configuration needs to run dbrover mcp for this project",
         );
         if copy.clicked() {
-            copy_mcp_configuration(ui, project);
+            actions.push(ExplorerAction::CopyMcpConfiguration(project.id));
         }
         if widgets::menu_item(ui, icons::TRASH, "Delete…").clicked() {
             actions.push(ExplorerAction::DeleteProject(project.id));
@@ -382,20 +383,6 @@ fn group_menu(ui: &mut Ui, header: GroupHeader<'_>, actions: &mut Vec<ExplorerAc
         ui.separator();
     }
     new_project_item(ui, None, actions);
-}
-
-pub fn copy_mcp_configuration(ui: &Ui, project: &Project) {
-    match mcp_client_config::executable() {
-        Ok(executable) => {
-            let text = mcp_client_config::client_configuration(&project.slug, &executable);
-            ui.ctx().copy_text(text);
-            tracing::info!(project = %project.slug, "copied the MCP configuration");
-        }
-        Err(error) => tracing::error!(
-            "could not find DbRover's executable for the MCP configuration: {}",
-            dbrover_core::describe_error(&error)
-        ),
-    }
 }
 
 fn new_project_item(

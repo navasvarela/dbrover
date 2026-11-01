@@ -15,7 +15,7 @@ use super::{SettingsAction, search};
 use crate::form::{self, Rows};
 use crate::mcp_settings::{self, SchemasField};
 use crate::theme::Palette;
-use crate::{explorer, icons, widgets};
+use crate::{icons, widgets};
 
 /// What a project's page edits: the two things `Command::SaveProjectMcp` saves.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,7 +171,9 @@ impl ProjectDrafts {
             .or_insert_with(|| ProjectDraft::new(project, view.defaults));
         draft.follow(project, view.defaults);
         form::section(ui, "MCP clients", |ui| {
-            form::card(ui, |rows| clients(rows, project, &mut draft.draft.enabled));
+            form::card(ui, |rows| {
+                clients(rows, project, &mut draft.draft.enabled, actions);
+            });
         });
         form::section(ui, "What MCP clients may do", |ui| {
             form::card(ui, |rows| {
@@ -237,7 +239,12 @@ impl ProjectDrafts {
 }
 
 /// The switch, the command an MCP client runs, and Copy MCP configuration.
-fn clients(rows: &mut Rows<'_>, project: &Project, enabled: &mut bool) {
+fn clients(
+    rows: &mut Rows<'_>,
+    project: &Project,
+    enabled: &mut bool,
+    actions: &mut Vec<SettingsAction>,
+) {
     let title = "Allow MCP clients to use this project";
     let command = format!(
         "An MCP client runs it as: dbrover mcp --project {}",
@@ -251,7 +258,7 @@ fn clients(rows: &mut Rows<'_>, project: &Project, enabled: &mut bool) {
         Some("The entry an MCP client's configuration needs to run DbRover for this project"),
         |ui| {
             if ui.button("Copy").clicked() {
-                explorer::copy_mcp_configuration(ui, project);
+                actions.push(SettingsAction::CopyMcpConfiguration(project.id));
             }
         },
     );

@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use dbrover_core::{CatalogPath, ChildrenQuery, DataSource, DataSourceId, NodeKind, TableName};
+use dbrover_core::{
+    CatalogPath, ChildrenQuery, DataSource, DataSourceId, NodeKind, ProjectId, TableName,
+};
 use dbrover_engine::{
     Command, EngineConfig, EngineError, EngineHandle, Event, PasswordKept, Repaint, RunOrigin,
 };
@@ -36,11 +38,13 @@ use crate::export_dialog::{
 };
 use crate::export_sources_dialog::{ExportAction, ExportSourcesDialog};
 use crate::file_picker;
+use crate::folder_notice::FolderNotice;
 use crate::history_window::{HistoryAction, HistoryWindow};
 use crate::host_key_prompt::{HostKeyAction, HostKeyPrompt};
 use crate::import_dialog::{ImportAction, ImportDialog};
 use crate::keymap::{self, Keymap};
 use crate::log_console::{LogConsole, LogFeed};
+use crate::mcp_client_config;
 use crate::mcp_settings::McpDefaultsEditor;
 use crate::menu_bar;
 use crate::native_menu::{Chosen, NativeMenu};
@@ -48,7 +52,6 @@ use crate::object_dialog::{self, ObjectDialog, ObjectDialogAction, Target};
 use crate::password_command_prompt::{PasswordCommandAction, PasswordCommandPrompt};
 use crate::password_prompt::{PasswordPrompt, PromptAction};
 use crate::picture::PictureFormat;
-use crate::previous_install::AdoptionNotice;
 use crate::project_dialog::{
     DeleteProjectChoice, DeleteProjectConfirmation, ProjectDialogAction, ProjectNameDialog,
 };
@@ -146,8 +149,11 @@ pub struct DbRoverApp {
     action_problem: Option<String>,
     command_runs: CommandRuns,
     about_open: bool,
-    /// What happened to the previous install's files on this first start, until dismissed.
-    adoption_notice: Option<AdoptionNotice>,
+    /// What happened to the settings folder at start-up, until dismissed.
+    folder_notice: Option<FolderNotice>,
+    /// The settings folder Copy MCP configuration names, when it came from `--config-dir` or
+    /// `DBROVER_CONFIG_DIR`, which an MCP client doesn't get.
+    mcp_config_dir: Option<PathBuf>,
     settings: AppSettings,
     updates: Updates,
     /// Asks where to export rows or the history (named by the `&str`). The platform's save
@@ -254,7 +260,8 @@ impl DbRoverApp {
             action_problem: None,
             command_runs: CommandRuns::default(),
             about_open: false,
-            adoption_notice: None,
+            folder_notice: None,
+            mcp_config_dir: None,
             settings: AppSettings::default(),
             updates: Updates::new(install_support),
             consoles: Consoles::default(),
@@ -282,10 +289,17 @@ impl DbRoverApp {
         self
     }
 
-    /// Tells the user once what happened to the previous install's files (see
-    /// `previous_install`).
-    pub fn with_adoption_notice(mut self, notice: Option<AdoptionNotice>) -> Self {
-        self.adoption_notice = notice;
+    /// Tells the user once what happened to the settings folder at start-up (see
+    /// `settings_folder`).
+    pub fn with_folder_notice(mut self, notice: Option<FolderNotice>) -> Self {
+        self.folder_notice = notice;
+        self
+    }
+
+    /// The settings folder MCP clients must be told about, if any (see
+    /// `Session::folder_for_mcp_clients`).
+    pub fn with_mcp_config_dir(mut self, folder: Option<PathBuf>) -> Self {
+        self.mcp_config_dir = folder;
         self
     }
 
@@ -1148,6 +1162,7 @@ impl DbRoverApp {
                 }
             }
             ExplorerAction::ProjectSettings(id) => self.open_settings_page(Page::Project(id)),
+            ExplorerAction::CopyMcpConfiguration(id) => self.copy_mcp_configuration(id, ctx),
             ExplorerAction::DeleteProject(id) => {
                 if let Some(project) = self.state.projects.get(id) {
                     let members = self
@@ -2088,13 +2103,13 @@ impl DbRoverApp {
         }
     }
 
-    fn show_adoption_notice(&mut self, ctx: &egui::Context) {
+    fn show_folder_notice(&mut self, ctx: &egui::Context) {
         if self
-            .adoption_notice
+            .folder_notice
             .as_ref()
             .is_some_and(|notice| notice.show(ctx))
         {
-            self.adoption_notice = None;
+            self.folder_notice = None;
         }
     }
 
@@ -2156,6 +2171,15 @@ impl DbRoverApp {
                 mcp_enabled,
                 overrides,
             }),
+            SettingsAction::CopyMcpConfiguration(id) => self.copy_mcp_configuration(id, ctx),
+        }
+    }
+
+    /// Puts the entry an MCP client needs for the project on the clipboard, naming the
+    /// settings folder when the client couldn't find it by itself.
+    fn copy_mcp_configuration(&self, id: ProjectId, ctx: &egui::Context) {
+        if let Some(project) = self.state.projects.get(id) {
+            mcp_client_config::copy(ctx, &project.slug, self.mcp_config_dir.as_deref());
         }
     }
 
@@ -2402,7 +2426,7 @@ impl eframe::App for DbRoverApp {
         let commands = self.command_runs.show(&ctx);
         self.send_all(commands);
         self.show_about(&ctx);
-        self.show_adoption_notice(&ctx);
+        self.show_folder_notice(&ctx);
         self.show_update_dialog(&ctx);
 
         // Entries logged on the UI thread don't wake the UI (see `UiWaker`), so collect any

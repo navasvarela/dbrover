@@ -4,7 +4,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use dbrover_store::ProjectSlug;
+use dbrover_store::{CONFIG_DIR_FLAG, ProjectSlug};
 use serde_json::json;
 
 /// Set by the AppImage runtime to the `.AppImage` file itself. The running executable is
@@ -23,14 +23,38 @@ pub fn executable() -> io::Result<PathBuf> {
     Ok(current.canonicalize().unwrap_or(current))
 }
 
+/// Puts `slug`'s entry on the clipboard, with this machine's path to DbRover.
+pub fn copy(ctx: &egui::Context, slug: &ProjectSlug, config_dir: Option<&Path>) {
+    match executable() {
+        Ok(executable) => {
+            ctx.copy_text(client_configuration(slug, &executable, config_dir));
+            tracing::info!(project = %slug, "copied the MCP configuration");
+        }
+        Err(error) => tracing::error!(
+            "could not find DbRover's executable for the MCP configuration: {}",
+            dbrover_core::describe_error(&error)
+        ),
+    }
+}
+
 /// The `mcpServers` entry for `slug`, as the JSON clients such as Claude Desktop, Claude Code
-/// and Cursor read, named `dbrover-<slug>` so several projects can sit side by side.
-pub fn client_configuration(slug: &ProjectSlug, executable: &Path) -> String {
+/// and Cursor read, named `dbrover-<slug>` so several projects can sit side by side. With
+/// `config_dir`, the server is told the settings folder, which it would otherwise find as the
+/// app does, without the app's flag or environment.
+pub fn client_configuration(
+    slug: &ProjectSlug,
+    executable: &Path,
+    config_dir: Option<&Path>,
+) -> String {
+    let mut args = vec!["mcp".to_owned(), "--project".to_owned(), slug.to_string()];
+    if let Some(folder) = config_dir {
+        args.extend([CONFIG_DIR_FLAG.to_owned(), folder.display().to_string()]);
+    }
     let configuration = json!({
         "mcpServers": {
             format!("dbrover-{slug}"): {
                 "command": executable.display().to_string(),
-                "args": ["mcp", "--project", slug.as_str()],
+                "args": args,
             }
         }
     });
@@ -48,6 +72,7 @@ mod tests {
         let text = client_configuration(
             &slug,
             Path::new("/Applications/DbRover.app/Contents/MacOS/dbrover"),
+            None,
         );
 
         let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
@@ -61,6 +86,28 @@ mod tests {
                     }
                 }
             })
+        );
+    }
+
+    #[test]
+    fn names_a_settings_folder_the_client_would_not_find() {
+        let slug = ProjectSlug::from_name("Analytics");
+        let text = client_configuration(
+            &slug,
+            Path::new("/usr/bin/dbrover"),
+            Some(Path::new("/home/ada/work/dbrover")),
+        );
+
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            parsed["mcpServers"]["dbrover-analytics"]["args"],
+            json!([
+                "mcp",
+                "--project",
+                "analytics",
+                "--config-dir",
+                "/home/ada/work/dbrover"
+            ])
         );
     }
 
