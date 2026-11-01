@@ -6,10 +6,11 @@ use std::time::{Duration, Instant};
 
 use dbrover_core::{DataSource, DataSourceId};
 use dbrover_store::ConsoleKey;
-use egui::{Align, Id, Layout, Modal};
+use egui::{Align, Id, Layout};
 use serde::{Deserialize, Serialize};
 
 use crate::form;
+use crate::widgets;
 
 /// How many files File › Open recent lists.
 pub const RECENT_FILES: usize = 10;
@@ -176,7 +177,7 @@ impl OpenFileDialog {
         ctx: &egui::Context,
         data_sources: &[&DataSource],
     ) -> Option<OpenFileAction> {
-        let modal = Modal::new(Id::new("open_file_dialog")).show(ctx, |ui| match self {
+        let modal = widgets::dialog(ctx, Id::new("open_file_dialog")).show(ctx, |ui| match self {
             Self::ChooseDataSource { path, chosen } => {
                 choose_data_source(ui, path, chosen, data_sources)
             }

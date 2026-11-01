@@ -1,10 +1,11 @@
 use dbrover_engine::{InstallSupport, Restart};
-use egui::{Align, Id, Layout, Modal, OpenUrl, ProgressBar, RichText};
+use egui::{Align, Id, Layout, OpenUrl, ProgressBar, RichText};
 
 use crate::form;
 use crate::theme::Palette;
 use crate::updates::{InstallState, UpdateStatus, Updates};
 use crate::version;
+use crate::widgets;
 
 /// What the user asked of the updates dialog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,7 +18,7 @@ pub enum UpdateAction {
 /// Help › Check for updates, and the status bar's notice: whether a newer release is out,
 /// installing it when this copy can replace itself, and its release page.
 pub fn show(ctx: &egui::Context, updates: &Updates) -> Option<UpdateAction> {
-    let modal = Modal::new(Id::new("check_for_updates")).show(ctx, |ui| {
+    let modal = widgets::dialog(ctx, Id::new("check_for_updates")).show(ctx, |ui| {
         let palette = &Palette::for_visuals(ui.visuals());
         ui.set_min_width(360.0);
         ui.heading("Updates");

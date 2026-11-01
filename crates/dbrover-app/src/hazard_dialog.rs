@@ -1,13 +1,14 @@
 use dbrover_language::{QueryLanguage, StatementKind};
 use dbrover_sql::commits_implicitly;
 use dbrover_store::ConsoleKey;
-use egui::{Align, Id, Layout, Modal};
+use egui::{Align, Id, Layout};
 
 use dbrover_core::FullScan;
 use dbrover_engine::{RunPurpose, ScanApproval};
 
 use crate::console::{ChangeCount, SubmittedRun, SubmittedStatement};
 use crate::form;
+use crate::widgets;
 
 pub enum HazardChoice {
     RunAnyway,
@@ -134,7 +135,7 @@ impl HazardConfirmation {
             Pending::Edits => "Apply",
             Pending::Scan(_) => "Scan anyway",
         };
-        let modal = Modal::new(Id::new("hazard_confirmation")).show(ctx, |ui| {
+        let modal = widgets::dialog(ctx, Id::new("hazard_confirmation")).show(ctx, |ui| {
             ui.heading(&self.heading);
             for warning in &self.warnings {
                 ui.label(warning);

@@ -5,10 +5,11 @@
 use dbrover_core::{DataSource, DataSourceId, Password, SshLogin};
 use dbrover_engine::{Event, PasswordKept, PasswordNeeded};
 use dbrover_store::Secret;
-use egui::{Align, Id, Layout, Modal, RichText, TextEdit};
+use egui::{Align, Id, Layout, RichText, TextEdit};
 
 use crate::form;
 use crate::theme::Palette;
+use crate::widgets;
 
 const FIELD_WIDTH: f32 = 260.0;
 
@@ -92,7 +93,8 @@ impl PasswordPrompt {
     }
 
     pub fn show(&mut self, ctx: &egui::Context) -> Option<PromptAction> {
-        let modal = Modal::new(Id::new("password_prompt")).show(ctx, |ui| self.contents(ui));
+        let modal =
+            widgets::dialog(ctx, Id::new("password_prompt")).show(ctx, |ui| self.contents(ui));
         if modal.should_close() {
             return Some(PromptAction::Cancel);
         }

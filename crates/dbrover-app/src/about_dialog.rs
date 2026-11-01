@@ -1,8 +1,9 @@
-use egui::{Align, Id, Layout, Modal, RichText};
+use egui::{Align, Id, Layout, RichText};
 
 use crate::brand;
 use crate::theme::Palette;
 use crate::version;
+use crate::widgets;
 
 const LOGO_SIZE: f32 = 72.0;
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
@@ -11,7 +12,7 @@ const LICENSE: &str = env!("CARGO_PKG_LICENSE");
 /// Help › About DbRover: the version and commit to quote in a bug report, the licence, and where
 /// the project lives. Returns `true` once the user closes it.
 pub fn show(ctx: &egui::Context) -> bool {
-    let modal = Modal::new(Id::new("about_dbrover")).show(ctx, |ui| {
+    let modal = widgets::dialog(ctx, Id::new("about_dbrover")).show(ctx, |ui| {
         let palette = &Palette::for_visuals(ui.visuals());
         ui.vertical_centered(|ui| {
             ui.add(brand::logo().max_size(egui::vec2(LOGO_SIZE, LOGO_SIZE)));

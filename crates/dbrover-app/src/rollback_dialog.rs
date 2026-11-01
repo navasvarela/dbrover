@@ -3,9 +3,10 @@
 
 use dbrover_core::DataSourceId;
 use dbrover_store::ConsoleKey;
-use egui::{Align, Id, Layout, Modal};
+use egui::{Align, Id, Layout};
 
 use crate::form;
+use crate::widgets;
 
 /// An action that closes console connections.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,7 +54,7 @@ impl RollbackConfirmation {
 
     pub fn show(&self, ctx: &egui::Context) -> Option<RollbackChoice> {
         let verb = self.closing.verb();
-        let modal = Modal::new(Id::new("rollback_confirmation")).show(ctx, |ui| {
+        let modal = widgets::dialog(ctx, Id::new("rollback_confirmation")).show(ctx, |ui| {
             ui.heading("Roll back open transactions?");
             ui.label(format!(
                 "These consoles have uncommitted changes: {}. If you {verb}, they are rolled back.",

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use dbrover_core::{DataSource, DataSourceId, ProjectId};
 use dbrover_engine::{Command, Event};
 use dbrover_store::Project;
-use egui::{Align, Id, Layout, Modal, RichText, ScrollArea, Ui};
+use egui::{Align, Id, Layout, RichText, ScrollArea, Ui};
 
 use crate::form;
 use crate::icons;
@@ -78,7 +78,7 @@ impl ExportSourcesDialog {
         projects: &[Project],
         data_sources: &[DataSource],
     ) -> Option<ExportAction> {
-        let modal = Modal::new(Id::new("export_data_sources"))
+        let modal = widgets::dialog(ctx, Id::new("export_data_sources"))
             .show(ctx, |ui| self.contents(ui, projects, data_sources));
         if modal.should_close() {
             return Some(ExportAction::Close);

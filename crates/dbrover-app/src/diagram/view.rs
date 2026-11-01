@@ -5,8 +5,8 @@ use dbrover_core::TableDescription;
 use egui::epaint::CubicBezierShape;
 use egui::epaint::FontsView;
 use egui::{
-    Align, Align2, Color32, CornerRadius, FontId, Id, Layout, Modal, Painter, Rect, Response,
-    Scene, Sense, Shape, Stroke, StrokeKind, Ui, Vec2, WidgetInfo, WidgetType, pos2, vec2,
+    Align, Align2, Color32, CornerRadius, FontId, Id, Layout, Painter, Rect, Response, Scene,
+    Sense, Shape, Stroke, StrokeKind, Ui, Vec2, WidgetInfo, WidgetType, pos2, vec2,
 };
 
 use dbrover_store::DiagramKey;
@@ -75,7 +75,7 @@ fn confirm_delete(ui: &Ui, tab: &mut DiagramTab, key: &DiagramKey) -> bool {
     if !tab.confirming_delete {
         return false;
     }
-    let modal = Modal::new(Id::new(("delete_diagram", key))).show(ui.ctx(), |ui| {
+    let modal = widgets::dialog(ui.ctx(), Id::new(("delete_diagram", key))).show(ui.ctx(), |ui| {
         ui.heading(format!("Delete the diagram {}?", key.name));
         ui.label("Its file is removed. The database and its tables are untouched.");
         ui.separator();

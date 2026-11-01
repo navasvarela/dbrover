@@ -4,10 +4,11 @@
 
 use dbrover_core::{DataSource, DataSourceId};
 use dbrover_engine::{Event, HostKey};
-use egui::{Align, Id, Layout, Modal, RichText, TextEdit};
+use egui::{Align, Id, Layout, RichText, TextEdit};
 
 use crate::form;
 use crate::theme::Palette;
+use crate::widgets;
 
 const DIALOG_WIDTH: f32 = 460.0;
 
@@ -62,7 +63,8 @@ impl HostKeyPrompt {
     }
 
     pub fn show(&mut self, ctx: &egui::Context) -> Option<HostKeyAction> {
-        let modal = Modal::new(Id::new("host_key_prompt")).show(ctx, |ui| self.contents(ui));
+        let modal =
+            widgets::dialog(ctx, Id::new("host_key_prompt")).show(ctx, |ui| self.contents(ui));
         if modal.should_close() {
             return Some(HostKeyAction::Cancel);
         }

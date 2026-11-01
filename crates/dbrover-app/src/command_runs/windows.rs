@@ -2,7 +2,7 @@
 //! program opens, and the status bar's note of what is running.
 
 use dbrover_engine::{Command, ProgramFailure};
-use egui::{Align, Grid, Id, Layout, Modal, RichText, Window};
+use egui::{Align, Grid, Id, Layout, RichText, Window};
 
 use super::{
     CommandRuns, OutputWindow, Question, command_text, output_text, stdin_text, timeout_text,
@@ -10,6 +10,7 @@ use super::{
 use crate::console::cell_viewer;
 use crate::form;
 use crate::theme::Palette;
+use crate::widgets;
 
 /// Says so when a program wrote more than the engine keeps of it.
 pub(super) const CUT_SHORT: &str = "the program wrote more than 4 MB and was stopped; this is \
@@ -55,7 +56,7 @@ impl Question {
     /// `Some(true)` to run, `Some(false)` to cancel, `None` while unanswered.
     fn show(&self, ctx: &egui::Context) -> Option<bool> {
         let command = &self.request.command;
-        let modal = Modal::new(Id::new("command_question")).show(ctx, |ui| {
+        let modal = widgets::dialog(ctx, Id::new("command_question")).show(ctx, |ui| {
             ui.heading("Run a program?");
             ui.label(format!(
                 "\u{201c}{}\u{201d} runs this command from actions.toml:",

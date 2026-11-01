@@ -573,7 +573,7 @@ pub fn menu_style(style: &mut Style) {
 }
 
 /// The menu bar's titles: frameless until hovered or open, like a menu's entries, but no
-/// taller than before the other controls grew.
+/// taller than before.
 pub fn menu_bar_style(style: &mut Style) {
     menu_style(style);
     style.spacing.button_padding = MENU_BAR_PADDING;

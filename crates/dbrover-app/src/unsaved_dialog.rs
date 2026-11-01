@@ -1,10 +1,11 @@
 //! Asks before closing a console, or quitting, would lose changes not written to `.sql` files.
 
 use dbrover_store::ConsoleKey;
-use egui::{Align, Id, Layout, Modal};
+use egui::{Align, Id, Layout};
 
 use crate::form;
 use crate::rollback_dialog::Closing;
+use crate::widgets;
 
 pub enum UnsavedChoice {
     /// Write the files, then close.
@@ -27,7 +28,7 @@ impl UnsavedConfirmation {
             .iter()
             .map(|(_, title)| title.as_str())
             .collect();
-        let modal = Modal::new(Id::new("unsaved_confirmation")).show(ctx, |ui| {
+        let modal = widgets::dialog(ctx, Id::new("unsaved_confirmation")).show(ctx, |ui| {
             ui.heading(match names.as_slice() {
                 [name] => format!("Save the changes to {name}?"),
                 _ => "Save the changes to these files?".to_owned(),
