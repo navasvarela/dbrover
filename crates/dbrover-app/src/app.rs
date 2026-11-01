@@ -41,7 +41,6 @@ use crate::history_window::{HistoryAction, HistoryWindow};
 use crate::host_key_prompt::{HostKeyAction, HostKeyPrompt};
 use crate::import_dialog::{ImportAction, ImportDialog};
 use crate::keymap::{self, Keymap};
-use crate::keymap_window::{self, KeymapWindowAction};
 use crate::log_console::{LogConsole, LogFeed};
 use crate::mcp_settings::McpDefaultsEditor;
 use crate::menu_bar;
@@ -57,7 +56,7 @@ use crate::project_dialog::{
 use crate::project_settings::{ProjectSettingsAction, ProjectSettingsDialog};
 use crate::rollback_dialog::{Closing, RollbackChoice, RollbackConfirmation};
 use crate::settings::AppSettings;
-use crate::settings_tab::{SettingsAction, SettingsTab};
+use crate::settings_tab::{Page, SettingsAction, SettingsTab};
 use crate::sql_files::{self, Destination, OpenFileAction, OpenFileDialog, SqlFiles};
 use crate::state::{AppState, DataSources, EngineStatus};
 use crate::system_look::SystemLook;
@@ -143,7 +142,6 @@ pub struct DbRoverApp {
     keymap_file: Result<KeymapBindings, String>,
     /// Where `keymap.toml` is, once the engine has reported it.
     keymap_path: Option<PathBuf>,
-    keymap_window_open: bool,
     custom_files: CustomFiles,
     actions_window_open: bool,
     /// `theme.toml` was read, and its colours are yet to be installed.
@@ -256,7 +254,6 @@ impl DbRoverApp {
             keymap: Keymap::default(),
             keymap_file: Ok(KeymapBindings::new()),
             keymap_path: None,
-            keymap_window_open: false,
             custom_files: CustomFiles::default(),
             actions_window_open: false,
             theme_changed: false,
@@ -1822,7 +1819,7 @@ impl DbRoverApp {
             }
             AppCommand::ImportDataSources => self.import_data_sources(),
             AppCommand::Theme(preference) => ctx.set_theme(preference),
-            AppCommand::ShowKeymap => self.keymap_window_open = true,
+            AppCommand::ShowKeymap => self.open_settings_page(Page::Keymap),
             AppCommand::ShowActions => self.actions_window_open = true,
             AppCommand::ShowSettings => workspace::open_settings_tab(&mut self.dock),
             AppCommand::ResetLayout => {
@@ -2189,8 +2186,18 @@ impl DbRoverApp {
             SettingsAction::Theme(preference) => {
                 self.run_command(AppCommand::Theme(preference), ctx)
             }
+            SettingsAction::ReloadKeymap => self.send(Command::ReloadKeymap),
+            SettingsAction::CreateKeymap => self.send(Command::CreateKeymap {
+                text: keymap::template(),
+            }),
             SettingsAction::Run(command) => self.run_command(command, ctx),
         }
+    }
+
+    /// Opens the Settings tab, or brings it to the front, on `page`.
+    fn open_settings_page(&mut self, page: Page) {
+        self.settings_tab.show_page(page);
+        workspace::open_settings_tab(&mut self.dock);
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
@@ -2236,7 +2243,7 @@ impl DbRoverApp {
     fn problem_links(&mut self, ui: &mut egui::Ui, color: egui::Color32) {
         let keymap = self.keymap.problems().len();
         if keymap > 0 && widgets::problems_link(ui, "keymap.toml", keymap, color).clicked() {
-            self.keymap_window_open = true;
+            self.open_settings_page(Page::Keymap);
         }
         for kind in CustomFileKind::ALL {
             let count = self.custom_files.problems(kind).len();
@@ -2270,21 +2277,6 @@ impl DbRoverApp {
         match custom_files::show(ctx, &self.custom_files) {
             Some(FileWindowAction::Reload) => self.send(Command::ReloadCustomFiles),
             Some(FileWindowAction::Close) => self.custom_files.window = None,
-            None => {}
-        }
-    }
-
-    fn show_keymap_window(&mut self, ctx: &egui::Context) {
-        if !self.keymap_window_open {
-            return;
-        }
-        let custom = self.custom_files.actions();
-        match keymap_window::show(ctx, &self.keymap, self.keymap_path.as_deref(), custom) {
-            Some(KeymapWindowAction::Reload) => self.send(Command::ReloadKeymap),
-            Some(KeymapWindowAction::Create) => self.send(Command::CreateKeymap {
-                text: keymap::template(),
-            }),
-            Some(KeymapWindowAction::Close) => self.keymap_window_open = false,
             None => {}
         }
     }
@@ -2364,6 +2356,7 @@ impl eframe::App for DbRoverApp {
                     explorer_actions: &mut explorer_actions,
                     consoles: open_consoles,
                     keymap: &self.keymap,
+                    keymap_path: self.keymap_path.as_deref(),
                     lint: &lint,
                     recent_completions,
                     console_actions: &mut console_actions,
@@ -2453,7 +2446,6 @@ impl eframe::App for DbRoverApp {
             self.definition_window = None;
         }
         self.show_history_window(&ctx);
-        self.show_keymap_window(&ctx);
         self.show_custom_file_window(&ctx);
         self.show_actions_window(&ctx);
         let commands = self.command_runs.show(&ctx);

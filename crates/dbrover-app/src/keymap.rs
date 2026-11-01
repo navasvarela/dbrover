@@ -248,7 +248,7 @@ impl Keymap {
                     .push(format!("{id:?} is not an action in actions.toml"));
             } else {
                 keymap.problems.push(format!(
-                    "{id:?} is not an action; see View → Keymap for the ids"
+                    "{id:?} is not an action; see Settings › Keymap for the ids"
                 ));
             }
         }
