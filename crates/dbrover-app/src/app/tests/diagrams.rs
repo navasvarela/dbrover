@@ -428,7 +428,7 @@ fn draws_moves_reopens_and_exports_a_diagram_on_postgres() {
 
     let svg_path = dir.path().join("public.svg");
     let answer = svg_path.clone();
-    harness.state_mut().pick_diagram_picture = Box::new(move |_, _| Some(answer.clone()));
+    harness.state_mut().pick_picture = Box::new(move |_, _| Some(answer.clone()));
     harness.get_by_label("Export").click();
     harness.run_steps(2);
     harness.get_by_label("SVG…").click();
