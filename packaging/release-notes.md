@@ -1,3 +1,15 @@
+## Your settings moved
+
+DbRover now keeps your settings in `~/.config/dbrover` and this machine's own files in
+`~/.local/share/dbrover` on every platform. On Linux nothing moves. On macOS and Windows, the
+first start of 0.21 copies your data sources, projects, consoles, diagrams, history, settings,
+shortcuts, actions, snippets and theme from `~/Library/Application Support/dbrover/` or
+`%APPDATA%\dbrover\`, and a window says where they were copied from and to. The old folder is
+left as it was; once DbRover shows everything you had, you can delete it. Saved passwords stay
+in the keychain, and MCP clients need no change. To keep settings in a synced folder instead,
+choose one in **Settings › Files** (see
+[Where DbRover keeps its files](https://dbrover.org/manual/files.html)).
+
 ## Install
 
 | Platform | Download |
