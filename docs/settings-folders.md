@@ -206,8 +206,9 @@ pass on; otherwise the configuration is what it is today. `dbrover mcp --help` l
 - [Persistence](persistence.md), "Migrating existing installs" in
   [Releasing](releasing.md), `README.md` and the measurement script's notes.
 - The release notes: the move is a breaking change to where saved files are (`feat!`), so the
-  release that ships it calls it out first, and `packaging/release-notes.md` gets a short
-  "Your settings moved" paragraph that the release after it removes.
+  release that ships it calls it out first: its release PR adds a short "Your settings moved"
+  paragraph to `packaging/release-notes.md` (changing that file builds every package, which
+  the release PR does anyway), and the release after it removes the paragraph.
 
 ## How it's built
 

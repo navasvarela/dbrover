@@ -942,7 +942,8 @@ Customisation without rebuilding DbRover, from files to commands to plugins. The
     window, and Copy MCP configuration.
   - **H4e — Settings › Files:** the row, **Choose…**, **Use the default folder** and the
     restart.
-  - **H4f — Manual and docs,** the release-notes paragraph, and the demo note.
+  - **H4f — Manual and docs,** and the demo note. The release-notes paragraph comes with the
+    release PR that ships H4.
 
   **Exit:** on macOS, an install from 0.20 starts with everything it had, read from
   `~/.config/dbrover`; choosing an empty synced folder and restarting copies the settings

@@ -1,12 +1,3 @@
-## Your settings moved
-
-DbRover now keeps your settings in `~/.config/dbrover` and this machine's own files in
-`~/.local/share/dbrover`, on every platform. On macOS and Windows, the first start copies them
-from `~/Library/Application Support/dbrover` or `%APPDATA%\dbrover` and says so; the old folder
-is left as it was, and can be deleted once everything is there. On Linux nothing moves. To keep
-your settings somewhere else, such as a synced folder, use **Settings › Files**. See
-[Where DbRover keeps its files](https://dbrover.org/manual/files.html).
-
 ## Install
 
 | Platform | Download |
