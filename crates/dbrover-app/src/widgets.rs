@@ -8,6 +8,8 @@ use crate::fonts;
 
 /// Icon size in toolbars, a little larger than text so thin glyphs stay legible.
 const TOOLBAR_ICON_SIZE: f32 = 15.0;
+/// Between a toolbar's buttons: their hover highlights nearly touch, but don't merge.
+const TOOLBAR_SPACING: f32 = 3.0;
 
 /// A frameless button that shows only an icon. Its label is the tooltip and the accessible
 /// name, so screen readers (and UI tests) find it by what it does rather than by its glyph.
@@ -106,13 +108,12 @@ pub fn name(response: Response, kind: WidgetType, label: &str, enabled: bool) ->
 /// A row of tightly spaced icon buttons and controls along the top of a panel.
 pub fn toolbar<R>(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui) -> R) -> R {
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
+        ui.spacing_mut().item_spacing.x = TOOLBAR_SPACING;
         add_contents(ui)
     })
     .inner
 }
 
-/// The muted number after a tree label, like "tables 4".
 /// The status bar's link to a config file's problems: `keymap.toml: 2 problems`.
 pub fn problems_link(ui: &mut Ui, file_name: &str, count: usize, color: Color32) -> Response {
     let text = match count {
@@ -122,6 +123,7 @@ pub fn problems_link(ui: &mut Ui, file_name: &str, count: usize, color: Color32)
     ui.link(RichText::new(text).small().color(color))
 }
 
+/// The muted number after a tree label, like "tables 4".
 pub fn count_badge(ui: &mut Ui, count: usize) {
     ui.label(
         RichText::new(count.to_string())
