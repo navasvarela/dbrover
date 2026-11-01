@@ -20,6 +20,7 @@ use crate::custom_actions::{SubjectKind, SubjectOn};
 use crate::custom_files::CustomFiles;
 use crate::diagram::{DiagramAction, Diagrams};
 use crate::explorer::{self, ExplorerAction, ExplorerOptions};
+use crate::folder_switch::FolderInUse;
 use crate::fonts;
 use crate::icons::{self, Icon, Role};
 use crate::keymap::Keymap;
@@ -217,6 +218,7 @@ pub struct Panels<'a> {
     pub settings_tab: &'a mut SettingsTab,
     pub settings: &'a AppSettings,
     pub mcp_defaults: &'a mut McpDefaultsEditor,
+    pub folder_in_use: Option<&'a FolderInUse>,
     /// What the user asked of the Settings tab this frame.
     pub settings_actions: &'a mut Vec<SettingsAction>,
     pub diagrams: &'a mut Diagrams,
@@ -330,6 +332,7 @@ impl TabViewer for Panels<'_> {
                     projects: self.projects,
                     data_sources: self.data_sources,
                     mcp_defaults: self.mcp_defaults_saved,
+                    folder: self.folder_in_use,
                 },
                 self.settings_actions,
             ),

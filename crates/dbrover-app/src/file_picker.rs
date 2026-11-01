@@ -141,6 +141,16 @@ fn starting_directory(current: &str) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
+/// Shows the folder dialog for a settings folder, starting beside `current`, or `None` if it
+/// was cancelled.
+pub fn pick_settings_folder(current: &Path) -> Option<PathBuf> {
+    let mut dialog = rfd::FileDialog::new().set_title("Choose a settings folder");
+    if let Some(parent) = current.parent().filter(|parent| parent.is_dir()) {
+        dialog = dialog.set_directory(parent);
+    }
+    dialog.pick_folder()
+}
+
 /// Shows the open-file dialog for a CSV file to import into a table, or `None` if it was
 /// cancelled. Files of any extension can be chosen: tab-separated files are often `.tsv` or
 /// `.txt`.

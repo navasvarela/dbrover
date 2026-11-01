@@ -5,7 +5,8 @@ use dbrover_core::{
     CatalogPath, ChildrenQuery, DataSource, DataSourceId, NodeKind, ProjectId, TableName,
 };
 use dbrover_engine::{
-    Command, EngineConfig, EngineError, EngineHandle, Event, PasswordKept, Repaint, RunOrigin,
+    Command, EngineConfig, EngineError, EngineHandle, Event, PasswordKept, Repaint, Restart,
+    RunOrigin,
 };
 use dbrover_export::{ExportFormat, ExportSpec};
 use dbrover_language::QueryLanguage;
@@ -39,6 +40,7 @@ use crate::export_dialog::{
 use crate::export_sources_dialog::{ExportAction, ExportSourcesDialog};
 use crate::file_picker;
 use crate::folder_notice::FolderNotice;
+use crate::folder_switch::{FolderInUse, FolderRequest, FolderSwitch, PendingSwitch, SwitchAction};
 use crate::history_window::{HistoryAction, HistoryWindow};
 use crate::host_key_prompt::{HostKeyAction, HostKeyPrompt};
 use crate::import_dialog::{ImportAction, ImportDialog};
@@ -78,6 +80,9 @@ const LAYOUT_STORAGE_KEY: &str = "dock_layout_v2";
 
 /// Asks where to export `what` ("rows", "history") in a format; `None` if cancelled.
 type PickExportPath = dyn Fn(ExportFormat, &str) -> Option<PathBuf>;
+
+/// Asks for a folder, starting beside the one given.
+type PickFolder = dyn Fn(&Path) -> Option<PathBuf>;
 
 /// How long typing in the explorer's filter must pause before a level the server pages is asked
 /// for again with it. Chosen to sit between keystrokes of steady typing, and short enough that
@@ -154,6 +159,14 @@ pub struct DbRoverApp {
     /// The settings folder Copy MCP configuration names, when it came from `--config-dir` or
     /// `DBROVER_CONFIG_DIR`, which an MCP client doesn't get.
     mcp_config_dir: Option<PathBuf>,
+    /// The settings folder, for Settings › Files. Unknown in tests that don't give one.
+    folder_in_use: Option<FolderInUse>,
+    /// Confirming a switch of the settings folder.
+    folder_switch: Option<FolderSwitch>,
+    /// A switch confirmed, saved once DbRover has quit and written everything.
+    pending_switch: Option<PendingSwitch>,
+    /// Asks for a settings folder. A field so tests can answer it.
+    pub(crate) pick_settings_folder: Box<PickFolder>,
     settings: AppSettings,
     updates: Updates,
     /// Asks where to export rows or the history (named by the `&str`). The platform's save
@@ -262,6 +275,10 @@ impl DbRoverApp {
             about_open: false,
             folder_notice: None,
             mcp_config_dir: None,
+            folder_in_use: None,
+            folder_switch: None,
+            pending_switch: None,
+            pick_settings_folder: Box::new(file_picker::pick_settings_folder),
             settings: AppSettings::default(),
             updates: Updates::new(install_support),
             consoles: Consoles::default(),
@@ -300,6 +317,12 @@ impl DbRoverApp {
     /// `Session::folder_for_mcp_clients`).
     pub fn with_mcp_config_dir(mut self, folder: Option<PathBuf>) -> Self {
         self.mcp_config_dir = folder;
+        self
+    }
+
+    /// The settings folder in use, which Settings › Files shows and changes.
+    pub fn with_folder_in_use(mut self, folder: FolderInUse) -> Self {
+        self.folder_in_use = Some(folder);
         self
     }
 
@@ -2172,6 +2195,59 @@ impl DbRoverApp {
                 overrides,
             }),
             SettingsAction::CopyMcpConfiguration(id) => self.copy_mcp_configuration(id, ctx),
+            SettingsAction::SettingsFolder(request) => self.ask_to_switch_folder(request),
+        }
+    }
+
+    /// Opens the window that confirms switching to the folder picked, or the default one.
+    fn ask_to_switch_folder(&mut self, request: FolderRequest) {
+        let Some(in_use) = &self.folder_in_use else {
+            return;
+        };
+        let folder = match request {
+            FolderRequest::Choose => (self.pick_settings_folder)(&in_use.folders.settings),
+            FolderRequest::UseDefault => Some(in_use.default_settings.clone()),
+        };
+        if let Some(folder) = folder {
+            self.folder_switch = Some(in_use.switch_to(folder));
+        }
+    }
+
+    fn show_folder_switch(&mut self, ctx: &egui::Context) {
+        let (Some(switch), Some(in_use)) = (&mut self.folder_switch, &self.folder_in_use) else {
+            return;
+        };
+        match switch.show(ctx, &in_use.folders.settings) {
+            Some(SwitchAction::Cancel) => self.folder_switch = None,
+            // Quits the usual way, so unsaved consoles and open transactions are dealt with
+            // first; `on_exit` saves the choice once everything is written.
+            Some(SwitchAction::Restart(pending)) => {
+                self.folder_switch = None;
+                self.pending_switch = Some(pending);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            None => {}
+        }
+    }
+
+    /// Saves a confirmed switch for the next start, and starts DbRover again to make it.
+    fn save_pending_switch(&mut self) {
+        let (Some(pending), Some(in_use)) = (self.pending_switch.take(), &self.folder_in_use)
+        else {
+            return;
+        };
+        match in_use.save(&pending) {
+            Ok(()) => {
+                tracing::info!(
+                    "switching the settings folder to {}",
+                    pending.folder.display()
+                );
+                relaunch::request(Restart::Relaunch);
+            }
+            Err(error) => tracing::error!(
+                "could not switch the settings folder: {}",
+                dbrover_core::describe_error(&error)
+            ),
         }
     }
 
@@ -2341,6 +2417,7 @@ impl eframe::App for DbRoverApp {
                     settings_tab: &mut self.settings_tab,
                     settings: &self.settings,
                     mcp_defaults: &mut self.mcp_defaults,
+                    folder_in_use: self.folder_in_use.as_ref(),
                     settings_actions: &mut settings_actions,
                     diagrams: &mut self.diagrams,
                     diagram_actions: &mut diagram_actions,
@@ -2427,6 +2504,7 @@ impl eframe::App for DbRoverApp {
         self.send_all(commands);
         self.show_about(&ctx);
         self.show_folder_notice(&ctx);
+        self.show_folder_switch(&ctx);
         self.show_update_dialog(&ctx);
 
         // Entries logged on the UI thread don't wake the UI (see `UiWaker`), so collect any
@@ -2456,6 +2534,7 @@ impl eframe::App for DbRoverApp {
         if let Some(restart) = self.updates.restart_after_quit() {
             relaunch::request(restart.clone());
         }
+        self.save_pending_switch();
     }
 }
 
@@ -3387,6 +3466,57 @@ mod tests {
             dbrover_store::SchemaScope::Only(vec!["public".to_owned(), "reports".to_owned()])
         );
         assert!(defaults.read && !defaults.write, "only what was changed");
+    }
+
+    #[test]
+    fn switches_the_settings_folder_from_the_files_page_when_dbrover_quits() {
+        use egui_kittest::kittest::NodeT;
+
+        let dir = tempfile::tempdir().unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        let data = dir.path().join("data");
+        let in_use = FolderInUse {
+            folders: dbrover_store::InstallFolders {
+                settings: dir.path().to_owned(),
+                data: data.clone(),
+            },
+            source: dbrover_store::SettingsFolder::Default,
+            default_settings: dir.path().to_owned(),
+            chosen_file: dbrover_store::ChosenFolderFile::new(data.join("settings_folder.toml")),
+        };
+        let synced = tempfile::tempdir().unwrap();
+        let picked = synced.path().to_owned();
+        harness.state_mut().folder_in_use = Some(in_use);
+        harness.state_mut().pick_settings_folder = Box::new(move |_| Some(picked.clone()));
+
+        harness.get_by_label("View").click();
+        harness.run_steps(2);
+        harness.get_by_label_contains("Settings…").click();
+        harness.run_steps(2);
+        harness.get_by_label("Files").click();
+        harness.run_steps(2);
+        harness.get_by_label(&dir.path().display().to_string());
+        assert!(
+            harness
+                .get_by_label("Use the default folder")
+                .accesskit_node()
+                .is_disabled(),
+            "this is the default folder"
+        );
+        harness.get_by_label("Choose…").click();
+        harness.run_steps(2);
+        harness.get_by_label("Restart DbRover").click();
+        harness.run_steps(2);
+
+        assert_eq!(
+            harness.state().pending_switch,
+            Some(PendingSwitch {
+                folder: synced.path().to_owned(),
+                copy_from: Some(dir.path().to_owned()),
+            })
+        );
+        assert!(harness.query_by_label("Restart DbRover").is_none());
     }
 
     #[test]

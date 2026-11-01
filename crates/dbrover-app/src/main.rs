@@ -23,6 +23,7 @@ mod export_sources_dialog;
 mod feedback;
 mod file_picker;
 mod folder_notice;
+mod folder_switch;
 mod fonts;
 mod form;
 mod hazard_dialog;
@@ -154,6 +155,7 @@ fn open_window(session: Session, log_feed: LogFeed, files: Vec<PathBuf>) -> anyh
     let paths = session.paths();
     let folder_notice = session.notice();
     let mcp_config_dir = session.folder_for_mcp_clients();
+    let folder_in_use = session.folder_in_use();
     let engine_config = EngineConfig {
         data_sources: DataSourceFile::new(paths.data_sources_file()),
         projects: ProjectFile::new(paths.projects_file()),
@@ -206,7 +208,8 @@ fn open_window(session: Session, log_feed: LogFeed, files: Vec<PathBuf>) -> anyh
         let app = DbRoverApp::new(cc, log_feed, engine_config)?
             .with_files_to_open(files)
             .with_folder_notice(folder_notice)
-            .with_mcp_config_dir(mcp_config_dir);
+            .with_mcp_config_dir(mcp_config_dir)
+            .with_folder_in_use(folder_in_use);
         #[cfg(target_os = "macos")]
         let app = app
             .with_native_menu(native_menu::NativeMenu::install(&cc.egui_ctx))

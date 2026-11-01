@@ -17,15 +17,17 @@ pub enum Category {
     History,
     Mcp,
     Updates,
+    Files,
 }
 
 impl Category {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Appearance,
         Self::Editor,
         Self::History,
         Self::Mcp,
         Self::Updates,
+        Self::Files,
     ];
 
     pub fn title(self) -> &'static str {
@@ -35,6 +37,7 @@ impl Category {
             Self::History => "Query history",
             Self::Mcp => "MCP",
             Self::Updates => "Updates",
+            Self::Files => "Files",
         }
     }
 
@@ -45,6 +48,7 @@ impl Category {
             Self::History => icons::CLOCK_COUNTER_CLOCKWISE,
             Self::Mcp => icons::PLUGS_CONNECTED,
             Self::Updates => icons::ARROWS_CLOCKWISE,
+            Self::Files => icons::FOLDER_SIMPLE,
         }
     }
 
@@ -56,6 +60,7 @@ impl Category {
             Self::History => "How long the query history keeps what ran.",
             Self::Mcp => "What MCP clients may do in a project that doesn't say otherwise.",
             Self::Updates => "Whether DbRover looks for a new release.",
+            Self::Files => "Where DbRover keeps your settings.",
         }
     }
 }
@@ -71,6 +76,7 @@ pub enum Setting {
     HistoryCount,
     CheckForUpdates,
     McpDefaults,
+    SettingsFolder,
 }
 
 impl Setting {
@@ -88,6 +94,7 @@ impl Setting {
             Self::HistoryCount,
             Self::McpDefaults,
             Self::CheckForUpdates,
+            Self::SettingsFolder,
         ]);
         settings
     }
@@ -101,6 +108,7 @@ impl Setting {
             Self::HistoryAge | Self::HistoryCount => Category::History,
             Self::McpDefaults => Category::Mcp,
             Self::CheckForUpdates => Category::Updates,
+            Self::SettingsFolder => Category::Files,
         }
     }
 
@@ -113,6 +121,7 @@ impl Setting {
             Self::HistoryAge | Self::HistoryCount => "Keeping statements",
             Self::McpDefaults => "Defaults for every project",
             Self::CheckForUpdates => "New releases",
+            Self::SettingsFolder => "Settings folder",
         }
     }
 
@@ -127,6 +136,7 @@ impl Setting {
             Self::HistoryCount => "Keep per data source".into(),
             Self::CheckForUpdates => "Check for a new release when DbRover starts".into(),
             Self::McpDefaults => "What MCP clients may do".into(),
+            Self::SettingsFolder => "Settings folder".into(),
         }
     }
 
@@ -145,6 +155,11 @@ impl Setting {
                 "Asks GitHub once per start. Help › Check for updates works either way.".into()
             }
             Self::McpDefaults => "Servers already running keep what they started with.".into(),
+            Self::SettingsFolder => {
+                "Your data sources, projects, consoles and own files. A change applies when \
+                 DbRover restarts."
+                    .into()
+            }
         };
         Some(text)
     }
@@ -168,6 +183,7 @@ impl Setting {
                 "permissions",
                 "agent",
             ],
+            Self::SettingsFolder => &["folder", "config", "directory", "sync", "dotfiles"],
         }
     }
 

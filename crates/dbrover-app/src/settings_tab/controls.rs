@@ -3,9 +3,10 @@
 use std::num::NonZeroU32;
 
 use dbrover_store::{KeywordCase, McpPermissions, Settings};
-use egui::{ThemePreference, Ui};
+use egui::{Button, RichText, ThemePreference, Ui};
 
 use super::setting::Setting;
+use crate::folder_switch::{FolderInUse, FolderRequest};
 use crate::form::{self, Rows, Segment};
 use crate::mcp_settings::McpDefaultsEditor;
 use crate::settings::INDENT_WIDTHS;
@@ -18,10 +19,17 @@ pub struct Draft<'a> {
     pub mcp: &'a mut McpDefaultsEditor,
     /// The MCP defaults to save, once their Save button is clicked.
     pub mcp_to_save: Option<McpPermissions>,
+    /// The settings folder in use; unknown in tests that don't give one.
+    pub folder: Option<&'a FolderInUse>,
+    pub folder_request: Option<FolderRequest>,
 }
 
 /// Draws `setting` as a row of `rows`.
 pub fn row(rows: &mut Rows<'_>, setting: Setting, draft: &mut Draft<'_>) {
+    if setting == Setting::SettingsFolder {
+        rows.full(|ui| draft.folder_request = settings_folder(ui, setting, draft.folder));
+        return;
+    }
     if setting == Setting::McpDefaults {
         let title = setting.title();
         rows.full(|ui| {
@@ -79,8 +87,46 @@ fn control(ui: &mut Ui, setting: Setting, title: &str, draft: &mut Draft<'_>) {
             form::toggle(ui, &mut settings.updates.check_on_start, title);
         }
         // Drawn across the whole card by `row`.
-        Setting::McpDefaults => {}
+        Setting::McpDefaults | Setting::SettingsFolder => {}
     }
+}
+
+/// The folder in use, where that came from, and the buttons that change it, unless the flag or
+/// the variable set it for this start.
+fn settings_folder(
+    ui: &mut Ui,
+    setting: Setting,
+    folder: Option<&FolderInUse>,
+) -> Option<FolderRequest> {
+    ui.label(setting.title().as_ref());
+    if let Some(description) = setting.description() {
+        form::description_label(ui, &description);
+    }
+    let folder = folder?;
+    ui.add_space(ui.spacing().item_spacing.y);
+    ui.label(RichText::new(folder.folders.settings.display().to_string()).monospace());
+    form::description_label(ui, &folder.describe_source());
+    let locked = folder.locked_because();
+    ui.horizontal(|ui| {
+        let unlocked = locked.is_none();
+        let mut choose = ui.add_enabled(unlocked, Button::new("Choose…"));
+        let mut default = ui.add_enabled(
+            unlocked && !folder.is_default(),
+            Button::new("Use the default folder"),
+        );
+        if let Some(reason) = &locked {
+            choose = choose.on_disabled_hover_text(reason);
+            default = default.on_disabled_hover_text(reason);
+        }
+        if choose.clicked() {
+            Some(FolderRequest::Choose)
+        } else if default.clicked() {
+            Some(FolderRequest::UseDefault)
+        } else {
+            None
+        }
+    })
+    .inner
 }
 
 fn theme(ui: &mut Ui, preference: &mut ThemePreference) {
