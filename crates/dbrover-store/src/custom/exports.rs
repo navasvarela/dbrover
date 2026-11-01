@@ -3,12 +3,15 @@
 
 use std::sync::Arc;
 
+use dbrover_core::{CommandTemplate, Placeholder};
 use dbrover_export::{
-    CustomFormat, CustomFormatId, CustomFormatKind, Escape, ExportFormat, Preset, TemplateSource,
-    check_template,
+    CustomFormat, CustomFormatId, CustomFormatKind, Escape, ExportFormat, Preset, ProgramFormat,
+    TemplateSource, check_template,
 };
 
+use super::commands::DEFAULT_COMMAND_TIMEOUT;
 use super::{Checked, entries, entry_label, serde_problem};
+use crate::StatementTimeout;
 
 /// Checks the text of `exports.toml`.
 pub fn parse_exports(text: &str) -> Checked<Vec<CustomFormat>> {
@@ -59,11 +62,38 @@ impl Fields {
     fn has(&self, key: &str) -> bool {
         self.0.contains_key(key)
     }
+
+    fn boolean(&mut self, key: &str) -> Result<Option<bool>, String> {
+        match self.0.remove(key) {
+            None => Ok(None),
+            Some(toml::Value::Boolean(value)) => Ok(Some(value)),
+            Some(other) => Err(format!(
+                "{key} must be true or false, not a {}",
+                other.type_str()
+            )),
+        }
+    }
+
+    fn strings(&mut self, key: &str) -> Result<Vec<String>, String> {
+        let not_a_list =
+            || format!("{key} must be a list of strings, as [\"program\", \"--flag\"]");
+        match self.0.remove(key) {
+            Some(toml::Value::Array(items)) => items
+                .into_iter()
+                .map(|item| match item {
+                    toml::Value::String(text) => Ok(text),
+                    _ => Err(not_a_list()),
+                })
+                .collect(),
+            _ => Err(not_a_list()),
+        }
+    }
 }
 
 /// The key that only each kind of export has, which says what an entry is.
 const PRESET_KEY: &str = "format";
 const TEMPLATE_KEY: &str = "row";
+const PROGRAM_KEY: &str = "command";
 
 fn check(table: toml::Table) -> Result<CustomFormat, String> {
     let mut fields = Fields(table);
@@ -84,27 +114,41 @@ fn check(table: toml::Table) -> Result<CustomFormat, String> {
         .string("extension")?
         .map(checked_extension)
         .transpose()?;
-    let (kind, extension) = match (fields.has(PRESET_KEY), fields.has(TEMPLATE_KEY)) {
-        (true, true) => {
-            return Err("an export is a preset (format) or a template (row), not both".to_owned());
-        }
-        (true, false) => {
+    let kinds = [PRESET_KEY, TEMPLATE_KEY, PROGRAM_KEY].map(|key| fields.has(key));
+    if kinds.iter().filter(|&&has| has).count() > 1 {
+        return Err(
+            "an export is one of a preset (format), a template (row) or a program \
+                    (command), not more"
+                .to_owned(),
+        );
+    }
+    let (kind, extension) = match kinds {
+        [true, _, _] => {
             let format = fields.required_string(PRESET_KEY)?;
             let preset = preset(&format, fields)?;
             let extension = extension.unwrap_or_else(|| preset.format.extension().to_owned());
             (CustomFormatKind::Preset(preset), extension)
         }
-        (false, true) => {
+        [_, true, _] => {
             let extension = extension.ok_or_else(|| {
                 "a template needs an extension for its files, such as extension = \"txt\""
                     .to_owned()
             })?;
             (CustomFormatKind::Template(template(fields)?), extension)
         }
-        (false, false) => {
+        [_, _, true] => {
+            let extension = extension.ok_or_else(|| {
+                "a program needs the extension of the files it writes, such as extension = \
+                 \"pdf\""
+                    .to_owned()
+            })?;
+            (CustomFormatKind::Program(program(fields)?), extension)
+        }
+        [false, false, false] => {
             return Err(
-                "the export has neither a format nor a row: write format = \"csv\" \
-                        for a preset of a built-in format, or row = \"…\" for a template"
+                "the export is none of a preset, a template or a program: write \
+                        format = \"csv\" for a preset of a built-in format, row = \"…\" for a \
+                        template, or command = [\"…\"] for a program"
                     .to_owned(),
             );
         }
@@ -116,6 +160,59 @@ fn check(table: toml::Table) -> Result<CustomFormat, String> {
         extension,
         kind,
     })
+}
+
+/// A program from the entry's `command`, `timeout` and `text`.
+fn program(mut fields: Fields) -> Result<Arc<ProgramFormat>, String> {
+    let command =
+        CommandTemplate::parse(&fields.strings(PROGRAM_KEY)?).map_err(|error| error.to_string())?;
+    if let Some(placeholder) = command
+        .placeholders()
+        .find(|placeholder| !fills(placeholder))
+    {
+        return Err(format!(
+            "{placeholder} can't be filled for an export; a program gets the rows on stdin, \
+             and its arguments can name {{table}}, {{schema}}, {{database}}, {{data_source}}, \
+             {{host}}, {{port}}, {{user}} and {{file}}"
+        ));
+    }
+    let timeout = match fields.string("timeout")? {
+        Some(text) => StatementTimeout::try_from(text)
+            .map_err(|error| format!("timeout: {error}"))?
+            .duration(),
+        None => DEFAULT_COMMAND_TIMEOUT,
+    };
+    let text = fields.boolean("text")?.unwrap_or(false);
+    if let Some(unknown) = fields.0.keys().next() {
+        return Err(format!(
+            "{unknown:?} is not part of a program; a program has command, timeout and text"
+        ));
+    }
+    Ok(Arc::new(ProgramFormat {
+        command,
+        timeout,
+        text,
+    }))
+}
+
+/// Whether an export can fill `placeholder`: what it knows of the data source and the table,
+/// but no cells, which go to stdin.
+fn fills(placeholder: &Placeholder) -> bool {
+    match placeholder {
+        Placeholder::Database
+        | Placeholder::Schema
+        | Placeholder::Table
+        | Placeholder::DataSource
+        | Placeholder::Host
+        | Placeholder::Port
+        | Placeholder::User
+        | Placeholder::File => true,
+        Placeholder::QualifiedName
+        | Placeholder::Column { .. }
+        | Placeholder::Value
+        | Placeholder::Values
+        | Placeholder::Row(_) => false,
+    }
 }
 
 /// A template of the entry's `header`, `row` and `footer`, checked by compiling each part.
@@ -278,12 +375,38 @@ mod tests {
             ),
             (
                 "id = \"a\"\nname = \"N\"",
-                "export \"a\": the export has neither a format nor a row: write format = \
-                 \"csv\" for a preset of a built-in format, or row = \"…\" for a template",
+                "export \"a\": the export is none of a preset, a template or a program: \
+                 write format = \"csv\" for a preset of a built-in format, row = \"…\" for a \
+                 template, or command = [\"…\"] for a program",
             ),
             (
                 "id = \"a\"\nname = \"N\"\nformat = \"csv\"\nrow = \"x\"",
-                "export \"a\": an export is a preset (format) or a template (row), not both",
+                "export \"a\": an export is one of a preset (format), a template (row) or a \
+                 program (command), not more",
+            ),
+            (
+                "id = \"a\"\nname = \"N\"\ncommand = [\"pdf\"]",
+                "export \"a\": a program needs the extension of the files it writes, such as \
+                 extension = \"pdf\"",
+            ),
+            (
+                "id = \"a\"\nname = \"N\"\nextension = \"pdf\"\ncommand = \"pdf --a\"",
+                "export \"a\": command must be a list of strings, as [\"program\", \"--flag\"]",
+            ),
+            (
+                "id = \"a\"\nname = \"N\"\nextension = \"pdf\"\ncommand = [\"pdf\", \"{value}\"]",
+                "export \"a\": {value} can't be filled for an export; a program gets the rows \
+                 on stdin, and its arguments can name {table}, {schema}, {database}, \
+                 {data_source}, {host}, {port}, {user} and {file}",
+            ),
+            (
+                "id = \"a\"\nname = \"N\"\nextension = \"pdf\"\ncommand = [\"pdf\"]\ntext = \"yes\"",
+                "export \"a\": text must be true or false, not a string",
+            ),
+            (
+                "id = \"a\"\nname = \"N\"\nextension = \"pdf\"\ncommand = [\"pdf\"]\nstdin = \"json\"",
+                "export \"a\": \"stdin\" is not part of a program; a program has command, \
+                 timeout and text",
             ),
             (
                 "id = \"a\"\nname = \"N\"\nrow = \"x\"",
@@ -375,6 +498,42 @@ mod tests {
         };
         assert_eq!(template.escape, Escape::Html);
         assert_eq!(template.header, "");
+    }
+
+    #[test]
+    fn reads_the_plans_program() {
+        let checked = parse_exports(
+            r#"
+            [[export]]
+            id = "pdf-report"
+            name = "PDF report"
+            extension = "pdf"
+            command = ["/Users/me/bin/rows-to-pdf", "--title", "{table}"]
+
+            [[export]]
+            id = "yaml"
+            name = "YAML"
+            extension = "yaml"
+            command = ["yq", "-P"]
+            timeout = "5s"
+            text = true
+            "#,
+        );
+        assert!(checked.problems.is_empty(), "{:?}", checked.problems);
+        let [pdf, yaml] = checked.value.as_slice() else {
+            panic!("{:?}", checked.value);
+        };
+        let CustomFormatKind::Program(program) = &pdf.kind else {
+            panic!("{pdf:?}");
+        };
+        assert_eq!(program.command.program(), "/Users/me/bin/rows-to-pdf");
+        assert_eq!(program.timeout, DEFAULT_COMMAND_TIMEOUT);
+        assert!(!pdf.writes_text());
+        let CustomFormatKind::Program(program) = &yaml.kind else {
+            panic!("{yaml:?}");
+        };
+        assert_eq!(program.timeout, std::time::Duration::from_secs(5));
+        assert!(yaml.writes_text());
     }
 
     #[test]

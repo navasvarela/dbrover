@@ -37,7 +37,10 @@ use dbrover_engine::{
     RunOutcome, RunPurpose, ScanApproval, SessionState, StatementFailure, StatementSummary,
     TransactionEnd, TransactionMode, WatchedFile,
 };
-use dbrover_export::{ExportColumn, ExportContext, ExportOptions, ExportSpec, RowSource, SqlTable};
+use dbrover_export::{
+    CustomFormat, ExportColumn, ExportContext, ExportOptions, ExportSpec, ProgramSpec, RowSource,
+    SqlTable, render,
+};
 
 use crate::export_dialog::{ExportPreview, PREVIEW_ROWS};
 use dbrover_language::redis::{KeyView, ViewShape};
@@ -941,6 +944,26 @@ impl QueryConsole {
                 None
             }
         }
+    }
+
+    /// The selected cells as JSON Lines, which an export program reads, and `format`'s program
+    /// to run on them. `None` without a selection, or for a format that isn't a program; an
+    /// error is shown where an export's would be.
+    pub fn program_input(&mut self, format: &CustomFormat) -> Option<(ProgramSpec, String)> {
+        let run = self.run.as_ref()?;
+        let statement = run.statements.get(run.selected)?;
+        let context = self.export_context(statement);
+        let selection = statement.selection(self.dialect(), context)?;
+        let spec = match format.spec(&selection.source, &selection.context) {
+            Ok(ExportSpec::Program(spec)) => *spec,
+            Ok(_) => return None,
+            Err(reason) => {
+                self.export_status = Some(Err(reason.to_owned()));
+                return None;
+            }
+        };
+        let stdin = render(&ExportSpec::JsonLines, &selection.columns, &selection.rows)?;
+        Some((spec, stdin))
     }
 
     /// The one statement at the cursor, or selected, as Run to file runs it; `None` if there

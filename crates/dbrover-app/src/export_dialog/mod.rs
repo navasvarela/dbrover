@@ -15,6 +15,7 @@ use dbrover_export::{
     ExportColumn, ExportContext, ExportFormat, ExportOptions, ExportSpec, RowSource, SourceTable,
     SqlTable, export_choices, try_render,
 };
+use dbrover_store::TrustedCommand;
 use egui::{
     Button, Id, Response, RichText, ScrollArea, TextEdit, TextStyle, Ui, WidgetInfo, WidgetType,
     vec2,
@@ -24,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use self::options::{OptionTexts, options_ui};
 use self::subject::TableProgress;
 pub use self::subject::{ExportSubject, TableTarget};
+use crate::command_runs::{CommandRuns, ProgramFacts, command_text, program_facts, timeout_text};
 use crate::console::ExportedRows;
 use crate::theme::Palette;
 use crate::{form, icons, widgets};
@@ -112,8 +114,13 @@ pub fn export_context(
 }
 
 pub enum ExportDialogAction {
-    /// Ask where to save a file of this type, then export.
-    Export(ExportSpec, FileType),
+    /// Ask where to save a file of this type, then export; trusting a program first, if the
+    /// user agreed to run it.
+    Export {
+        spec: ExportSpec,
+        file: FileType,
+        trust: Option<TrustedCommand>,
+    },
     /// Stop the table's export.
     Cancel(RunId),
     Close,
@@ -131,6 +138,9 @@ pub struct ExportDialog {
     progress: TableProgress,
     /// The formats from `exports.toml`, offered after the built-in ones.
     custom: Vec<CustomFormat>,
+    /// A program the user is asked about before it first runs, with what to export once
+    /// trusted.
+    asking: Option<(TrustedCommand, ExportSpec)>,
 }
 
 /// A table name typed in, with its schema if one is given.
@@ -182,6 +192,7 @@ impl ExportDialog {
             table: TableInput::default(),
             progress: TableProgress::Choosing,
             custom: custom.to_vec(),
+            asking: None,
         }
     }
 
@@ -234,15 +245,22 @@ impl ExportDialog {
         &self.choices
     }
 
-    pub fn show(&mut self, ctx: &egui::Context) -> Option<ExportDialogAction> {
-        let modal = widgets::dialog(ctx, Id::new("export_rows")).show(ctx, |ui| self.contents(ui));
+    /// Draws the dialog. `runs` says which programs run without asking.
+    pub fn show(&mut self, ctx: &egui::Context, runs: &CommandRuns) -> Option<ExportDialogAction> {
+        let modal = widgets::dialog(ctx, Id::new("export_rows")).show(ctx, |ui| {
+            if self.asking.is_some() {
+                self.question(ui)
+            } else {
+                self.contents(ui, runs)
+            }
+        });
         if modal.should_close() {
             return Some(ExportDialogAction::Close);
         }
         modal.inner
     }
 
-    fn contents(&mut self, ui: &mut Ui) -> Option<ExportDialogAction> {
+    fn contents(&mut self, ui: &mut Ui, runs: &CommandRuns) -> Option<ExportDialogAction> {
         ui.set_width(DIALOG_WIDTH);
         let (title, subtitle) = (self.subject.heading(), self.subtitle());
         let header = form::Header {
@@ -258,7 +276,53 @@ impl ExportDialog {
         // Not in a scroll area: one sizes itself from the frame before, so the modal would
         // grow over several frames, and a click meant for one format would land on the next.
         let spec = self.body(ui);
-        form::footer(ui, |ui| self.actions(ui, spec))
+        form::footer(ui, |ui| self.actions(ui, spec, runs))
+    }
+
+    /// The question before a program's first run: its command in full, then **Run** to trust
+    /// it and export, or **Back** to the formats.
+    fn question(&mut self, ui: &mut Ui) -> Option<ExportDialogAction> {
+        ui.set_width(DIALOG_WIDTH);
+        let Some(CustomFormat {
+            name,
+            kind: CustomFormatKind::Program(program),
+            ..
+        }) = self.chosen_custom()
+        else {
+            self.asking = None;
+            return None;
+        };
+        program_facts(
+            ui,
+            &ProgramFacts {
+                name,
+                file: "exports.toml",
+                command: program.command.source(),
+                stdin: "every row exported, as JSON Lines",
+                output: "the file",
+                stopped: format!(
+                    "after {} without taking rows or finishing",
+                    timeout_text(program.timeout)
+                ),
+            },
+        );
+        let (run, back) = form::footer(ui, |ui| {
+            let run = form::primary_button(ui, "Run and export…", true).clicked();
+            (run, ui.button("Back").clicked())
+        });
+        if back {
+            self.asking = None;
+            return None;
+        }
+        if !run {
+            return None;
+        }
+        let (trust, spec) = self.asking.take()?;
+        Some(ExportDialogAction::Export {
+            spec,
+            file: self.file_type(),
+            trust: Some(trust),
+        })
     }
 
     /// The rows, the format, its options and the preview. Returns the format and options
@@ -297,7 +361,12 @@ impl ExportDialog {
 
     /// Export… and Cancel while choosing, the problem with the options if any; then how a
     /// table's export goes.
-    fn actions(&self, ui: &mut Ui, spec: Result<ExportSpec, String>) -> Option<ExportDialogAction> {
+    fn actions(
+        &mut self,
+        ui: &mut Ui,
+        spec: Result<ExportSpec, String>,
+        runs: &CommandRuns,
+    ) -> Option<ExportDialogAction> {
         if self.progress != TableProgress::Choosing {
             return self.progress_row(ui);
         }
@@ -312,7 +381,24 @@ impl ExportDialog {
             );
         }
         match (clicked, closed, spec) {
-            (true, _, Ok(spec)) => Some(ExportDialogAction::Export(spec, self.file_type())),
+            (true, _, Ok(ExportSpec::Program(program))) => {
+                let trusted = TrustedCommand::export(&program.id, &program.program);
+                let spec = ExportSpec::Program(program);
+                if runs.trusts(&trusted) {
+                    return Some(ExportDialogAction::Export {
+                        spec,
+                        file: self.file_type(),
+                        trust: None,
+                    });
+                }
+                self.asking = Some((trusted, spec));
+                None
+            }
+            (true, _, Ok(spec)) => Some(ExportDialogAction::Export {
+                spec,
+                file: self.file_type(),
+                trust: None,
+            }),
             (_, true, _) => Some(ExportDialogAction::Close),
             _ => None,
         }
@@ -669,6 +755,20 @@ fn format_tile(ui: &mut Ui, tile: &Tile, width: f32) -> Response {
 fn custom_options(rows: &mut form::Rows<'_>, custom: &CustomFormat) {
     let preset = match &custom.kind {
         CustomFormatKind::Preset(preset) => preset,
+        CustomFormatKind::Program(program) => {
+            rows.full(|ui| {
+                form::description_label(
+                    ui,
+                    &format!(
+                        "Written by the program “{}” in exports.toml, which gets the rows as \
+                         JSON Lines; change it there",
+                        custom.id
+                    ),
+                );
+                ui.label(RichText::new(command_text(program.command.source())).monospace());
+            });
+            return;
+        }
         CustomFormatKind::Template(template) => {
             rows.full(|ui| {
                 form::description_label(

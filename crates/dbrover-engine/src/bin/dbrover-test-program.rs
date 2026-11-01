@@ -7,6 +7,7 @@
 //!   stdin;
 //! - `print-file` writes the file its second argument names to stdout, as a password command
 //!   whose output the test changes between runs;
+//! - `copy` writes its stdin to its stdout as it reads it, as an export program would;
 //! - `fail` writes to stderr and exits with status 3;
 //! - `wait` sleeps until it is killed;
 //! - `flood` writes to stdout until it is killed, even once nobody reads it.
@@ -40,6 +41,9 @@ fn run() -> io::Result<ExitCode> {
         "print-file" => {
             let path = arguments.next().unwrap_or_default();
             io::stdout().write_all(&std::fs::read(path)?)?;
+        }
+        "copy" => {
+            io::copy(&mut io::stdin().lock(), &mut io::stdout().lock())?;
         }
         "fail" => {
             eprint!("it went wrong");

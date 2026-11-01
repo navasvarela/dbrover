@@ -3,10 +3,11 @@
 //! `docs/exports.md`.
 
 use dbrover_export::{CustomFormat, CustomFormatKind, Escape};
-use dbrover_store::CustomFileKind;
+use dbrover_store::{CustomFileKind, TrustedCommand};
 use egui::{RichText, Ui};
 
 use super::{SettingsAction, problems, search, source_line};
+use crate::command_runs::{CommandRuns, command_text, timeout_text};
 use crate::custom_files::{CustomFiles, RELOAD_HINT};
 use crate::form::{self, Rows};
 use crate::keymap::Keymap;
@@ -28,7 +29,13 @@ pub fn matches(format: &CustomFormat, query: &str) -> bool {
 }
 
 /// Draws the page below its title.
-pub fn show(ui: &mut Ui, files: &CustomFiles, keymap: &Keymap, actions: &mut Vec<SettingsAction>) {
+pub fn show(
+    ui: &mut Ui,
+    files: &CustomFiles,
+    keymap: &Keymap,
+    runs: &CommandRuns,
+    actions: &mut Vec<SettingsAction>,
+) {
     let file = CustomFileKind::Exports;
     source_line(ui, files.path(file), |ui| {
         if ui.link("Reload").on_hover_text(RELOAD_HINT).clicked() {
@@ -56,7 +63,7 @@ pub fn show(ui: &mut Ui, files: &CustomFiles, keymap: &Keymap, actions: &mut Vec
     }
     for format in files.exports() {
         form::section(ui, &format.name, |ui| {
-            form::card(ui, |rows| card(rows, format, keymap));
+            form::card(ui, |rows| card(rows, format, keymap, runs));
         });
     }
 }
@@ -68,7 +75,7 @@ pub fn found_row(rows: &mut Rows<'_>, format: &CustomFormat) -> bool {
     rows.row(&format.name, Some(&id), |ui| ui.link("Open").clicked())
 }
 
-fn card(rows: &mut Rows<'_>, format: &CustomFormat, keymap: &Keymap) {
+fn card(rows: &mut Rows<'_>, format: &CustomFormat, keymap: &Keymap, runs: &CommandRuns) {
     rows.row("Id", None, |ui| {
         ui.label(RichText::new(format.id.keymap_id()).monospace());
     });
@@ -108,6 +115,26 @@ fn card(rows: &mut Rows<'_>, format: &CustomFormat, keymap: &Keymap) {
                 }
             });
         }
+        CustomFormatKind::Program(program) => rows.full(|ui| {
+            ui.label("Runs the program");
+            ui.label(RichText::new(command_text(program.command.source())).monospace());
+            form::description_label(
+                ui,
+                &format!(
+                    "stdin the rows as JSON Lines · stopped after {} without progress",
+                    timeout_text(program.timeout)
+                ),
+            );
+            let trusted = runs.trusts(&TrustedCommand::export(&format.id, program));
+            form::description_label(
+                ui,
+                if trusted {
+                    "Trusted: runs without asking"
+                } else {
+                    "Asks before it next runs"
+                },
+            );
+        }),
         CustomFormatKind::Template(template) => {
             let parts = [
                 ("Header", &template.header),
@@ -128,6 +155,7 @@ fn card(rows: &mut Rows<'_>, format: &CustomFormat, keymap: &Keymap) {
 fn kind(format: &CustomFormat) -> String {
     match &format.kind {
         CustomFormatKind::Preset(preset) => format!("Preset of {}", preset.format.name()),
+        CustomFormatKind::Program(_) => "Program".to_owned(),
         CustomFormatKind::Template(template) => match template.escape {
             Escape::None => "Template".to_owned(),
             Escape::Html => "Template, values HTML-escaped".to_owned(),

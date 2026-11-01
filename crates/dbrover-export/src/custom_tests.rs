@@ -163,3 +163,88 @@ fn reads_formats_by_their_ids() {
     }
     assert_eq!(ExportFormat::from_id("excel"), None);
 }
+
+/// A program that keeps what it is sent and writes it to the file when it finishes.
+struct Recording;
+
+struct RecordingPipe {
+    path: std::path::PathBuf,
+    input: Vec<u8>,
+}
+
+impl ExportProgram for Recording {
+    fn start(&self, path: &std::path::Path) -> std::io::Result<Box<dyn ExportPipe>> {
+        Ok(Box::new(RecordingPipe {
+            path: path.to_owned(),
+            input: Vec::new(),
+        }))
+    }
+}
+
+impl ExportPipe for RecordingPipe {
+    fn send(&mut self, input: &[u8]) -> std::io::Result<()> {
+        self.input.extend_from_slice(input);
+        Ok(())
+    }
+
+    fn finish(self: Box<Self>) -> std::io::Result<()> {
+        std::fs::write(&self.path, &self.input)
+    }
+}
+
+fn program_spec(prepared: Option<std::sync::Arc<dyn ExportProgram>>) -> ProgramSpec {
+    ProgramSpec {
+        id: CustomFormatId::new("rows").unwrap(),
+        program: std::sync::Arc::new(ProgramFormat {
+            command: dbrover_core::CommandTemplate::parse(&["rows-to-pdf".to_owned()]).unwrap(),
+            timeout: std::time::Duration::from_secs(60),
+            text: false,
+        }),
+        table: None,
+        prepared,
+    }
+}
+
+#[test]
+fn a_program_gets_the_rows_as_json_lines_a_page_at_a_time() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("rows.pdf");
+    let spec = ExportSpec::Program(Box::new(program_spec(Some(std::sync::Arc::new(Recording)))));
+    let columns = ["id", "note", "id"].map(ExportColumn::text).to_vec();
+    let mut writer = ExportWriter::create(&path, &spec, &columns).unwrap();
+    writer
+        .write(&[vec![text("1"), text("a \"b\""), None]])
+        .unwrap();
+    writer.write(&[vec![text("2"), None, text("7")]]).unwrap();
+    writer.finish().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "{\"id\":\"1\",\"note\":\"a \\\"b\\\"\",\"id_2\":null}\n\
+         {\"id\":\"2\",\"note\":null,\"id_2\":\"7\"}\n"
+    );
+    assert!(
+        render(&spec, &columns, &[]).is_none(),
+        "programs write only files"
+    );
+}
+
+#[test]
+fn a_program_the_engine_hasnt_prepared_writes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("rows.pdf");
+    let spec = ExportSpec::Program(Box::new(program_spec(None)));
+    let error = ExportWriter::create(&path, &spec, &[]).err().unwrap();
+    assert!(
+        std::error::Error::source(&error)
+            .unwrap()
+            .to_string()
+            .contains("hasn't been trusted"),
+        "{error}"
+    );
+    assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none());
+    assert_eq!(
+        program_spec(None),
+        program_spec(Some(std::sync::Arc::new(Recording))),
+        "a prepared program is the same export"
+    );
+}

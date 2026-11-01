@@ -201,6 +201,15 @@ mod tests {
                 .push(invocation);
             self.answer.clone()
         }
+
+        fn start_export(
+            &self,
+            _: Invocation,
+            _: std::fs::File,
+            _: Duration,
+        ) -> std::io::Result<Box<dyn dbrover_export::ExportPipe>> {
+            unreachable!("password commands are never export programs")
+        }
     }
 
     fn scripted(answer: Result<ProgramOutput, ProgramFailure>) -> Arc<Scripted> {

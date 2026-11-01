@@ -1,6 +1,6 @@
-//! `trusted_commands.toml`: the commands the user chose to run, command actions' and data
-//! sources' password commands (W9), each by its exact definition, so a command that changes
-//! asks again. See `docs/hackability.md`.
+//! `trusted_commands.toml`: the commands the user chose to run, command actions', data
+//! sources' password commands (W9) and export programs (W8d), each by its exact definition, so
+//! a command that changes asks again. See `docs/hackability.md`.
 //!
 //! It lives in the data folder, not beside `actions.toml`: a config folder synced from another
 //! machine, or copied from a colleague, brings its actions but none of this file's trust. An
@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::{fs, io};
 
 use dbrover_core::{DataSourceId, PasswordCommand};
+use dbrover_export::{CustomFormatId, ProgramFormat};
 use serde::{Deserialize, Serialize};
 
 use super::actions::ActionId;
@@ -18,8 +19,8 @@ use crate::atomic::write_atomically;
 
 const HEADER: &str = "\
 # Commands DbRover runs without asking first, each as it was when you chose Run: command
-# actions from actions.toml, and data sources' password commands. DbRover writes this file;
-# remove an entry to be asked again.
+# actions from actions.toml, data sources' password commands, and programs from exports.toml.
+# DbRover writes this file; remove an entry to be asked again.
 
 ";
 
@@ -41,6 +42,8 @@ enum Owner {
     Action { id: String, stdin: StdinFormat },
     /// A data source's password command, which reads nothing.
     DataSource { data_source: DataSourceId },
+    /// A program from `exports.toml`, which reads rows as JSON Lines.
+    Export { export: CustomFormatId },
 }
 
 impl Owner {
@@ -51,8 +54,10 @@ impl Owner {
             (Self::DataSource { data_source }, Self::DataSource { data_source: other }) => {
                 data_source == other
             }
-            (Self::Action { .. }, Self::DataSource { .. })
-            | (Self::DataSource { .. }, Self::Action { .. }) => false,
+            (Self::Export { export }, Self::Export { export: other }) => export == other,
+            (Self::Action { .. }, _) | (Self::DataSource { .. }, _) | (Self::Export { .. }, _) => {
+                false
+            }
         }
     }
 }
@@ -65,6 +70,13 @@ impl TrustedCommand {
                 stdin: action.stdin,
             },
             command: action.command.source().to_vec(),
+        }
+    }
+
+    pub fn export(id: &CustomFormatId, program: &ProgramFormat) -> Self {
+        Self {
+            owner: Owner::Export { export: id.clone() },
+            command: program.command.source().to_vec(),
         }
     }
 
@@ -266,6 +278,40 @@ mod tests {
         assert!(retrusted.contains(&changed));
         assert!(!retrusted.contains(&printf));
         assert!(retrusted.contains(&command("jq", r#"["jq", "."]"#, "json")));
+    }
+
+    #[test]
+    fn keeps_export_programs_beside_the_others_each_by_its_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = TrustedCommandsFile::new(dir.path().join("trusted_commands.toml"));
+        let program = |id: &str, command: &str| {
+            let checked = crate::parse_exports(&format!(
+                "[[export]]\nid = {id:?}\nname = \"N\"\nextension = \"pdf\"\ncommand = {command}\n"
+            ));
+            let Some(format) = checked.value.first() else {
+                panic!("{:?}", checked.problems);
+            };
+            let dbrover_export::CustomFormatKind::Program(program) = &format.kind else {
+                panic!("{format:?}");
+            };
+            TrustedCommand::export(&format.id, program)
+        };
+        let pdf = program("pdf", r#"["rows-to-pdf", "{table}"]"#);
+        let mut trusted = TrustedCommands::default();
+        trusted.trust(command("pdf", r#"["jq", "."]"#, "json"));
+        trusted.trust(pdf.clone());
+        file.save(&trusted).unwrap();
+        let text = fs::read_to_string(file.path()).unwrap();
+        assert!(text.contains("export = \"pdf\""), "{text}");
+        let loaded = file.load().unwrap();
+        assert_eq!(loaded, trusted);
+        assert!(loaded.contains(&pdf));
+        assert!(
+            loaded.contains(&command("pdf", r#"["jq", "."]"#, "json")),
+            "an action with the same id is someone else"
+        );
+        assert!(!loaded.contains(&program("pdf", r#"["rows-to-pdf"]"#)));
+        assert!(!loaded.contains(&program("other", r#"["rows-to-pdf", "{table}"]"#)));
     }
 
     #[test]
