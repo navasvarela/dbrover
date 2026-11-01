@@ -22,10 +22,10 @@ use aws_sdk_dynamodb::Client;
 use dbrover_cloud::aws::{AwsCredentials, AwsSignIn};
 use dbrover_core::{
     CancelHandle, CatalogNode, CatalogPath, ChildrenPage, ChildrenQuery, Connection, DriverError,
-    DynamoDbConfig, DynamoDbSignIn, Rejection, RejectionKind, RelationName, ResultCursor,
+    DynamoDbConfig, DynamoDbSignIn, FullScan, Rejection, RejectionKind, RelationName, ResultCursor,
     ServerInfo, TableConstraints, TableDescription, TableName, TransactionStatus,
 };
-use dbrover_language::partiql::{self, Verb};
+use dbrover_language::partiql::{self, Access, Verb};
 
 use crate::cursor::{ItemCursor, PageBound};
 use crate::errors::Refused;
@@ -174,6 +174,44 @@ impl Connection for DynamoConnection {
             message: error.message,
             kind: RejectionKind::Syntax,
         }))
+    }
+
+    /// Reads the statement and its table's keys: a `SELECT` without `=` or `IN` on the
+    /// partition key of what it reads, at the top of its `WHERE`, scans.
+    async fn full_scan(&mut self, text: &str) -> Result<Option<FullScan>, DriverError> {
+        let Ok(statement) = partiql::parse(text) else {
+            return Ok(None);
+        };
+        if statement.verb != Verb::Select {
+            return Ok(None);
+        }
+        let index = statement.index.as_deref();
+        let keys = match self.keys.of(&self.client, &statement.table, index).await {
+            Ok(keys) => keys,
+            // DynamoDB's own error for a table that isn't there is clearer, when it runs.
+            Err(_)
+                if self
+                    .keys
+                    .describe(&self.client, &statement.table)
+                    .await?
+                    .is_none() =>
+            {
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        };
+        let partition_key = match index.and_then(|index| keys.indexes.get(index)) {
+            Some(index_keys) => &index_keys.partition,
+            None => &keys.table.partition,
+        };
+        Ok(match statement.access(partition_key) {
+            Access::Partitions => None,
+            Access::Scan => Some(FullScan {
+                table: statement.table.clone(),
+                index: statement.index.clone(),
+                partition_key: partition_key.clone(),
+            }),
+        })
     }
 
     async fn transaction_status(&mut self) -> Result<TransactionStatus, DriverError> {

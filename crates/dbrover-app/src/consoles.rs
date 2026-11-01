@@ -5,9 +5,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use dbrover_core::{CatalogPath, DataSource, DataSourceId, NodeKind, SafetyLevel};
+use dbrover_core::{CatalogPath, DataSource, DataSourceId, FullScan, NodeKind, SafetyLevel};
 use dbrover_engine::{
-    Command, ConsoleId, Event, RunId, RunOrigin, RunPurpose, TransactionMode, WatchedFile,
+    Command, ConsoleId, Event, RunId, RunOrigin, RunPurpose, ScanApproval, TransactionMode,
+    WatchedFile,
 };
 use dbrover_export::ExportSpec;
 use dbrover_language::QueryLanguage;
@@ -276,6 +277,9 @@ impl Consoles {
             parameters: ParameterValues::default(),
             origin: RunOrigin::Console,
             destination: RunDestination::Grid,
+            // What the explorer opens reads one page and then only what the user pages
+            // through, so a scan's cost guard has nothing to ask (docs/nosql.md, N5).
+            scans: ScanApproval::Allow,
         };
         let command = self.start_run(&key, run)?;
         Some((key, command))
@@ -303,6 +307,7 @@ impl Consoles {
             parameters: ParameterValues::default(),
             origin,
             destination: RunDestination::Grid,
+            scans: ScanApproval::Ask,
         };
         let command = self.submit(&key, run);
         (key, command)
@@ -451,6 +456,26 @@ impl Consoles {
         for console in self.open.values_mut() {
             console.apply(event);
         }
+        if let Event::ScanHeld {
+            run,
+            statement,
+            scan,
+        } = event
+        {
+            self.ask_to_scan(*run, *statement, scan);
+        }
+    }
+
+    /// Asks whether to run, after all, the statement the cost guard held back in `run`, and
+    /// the ones after it.
+    fn ask_to_scan(&mut self, run: RunId, statement: usize, scan: &FullScan) {
+        let held = self.open.iter().find_map(|(key, console)| {
+            let rest = console.rest_of_run(run, statement)?;
+            Some((key.clone(), console.data_source_name().to_owned(), rest))
+        });
+        if let Some((key, data_source, rest)) = held {
+            self.hazard = Some(hazard_dialog::confirm_scan(key, &data_source, scan, rest));
+        }
     }
 
     pub fn handle(&mut self, key: &ConsoleKey, action: ConsoleAction) -> Option<Command> {
@@ -594,6 +619,7 @@ impl Consoles {
                 .collect(),
             parameters: submitted.parameters,
             origin: submitted.origin,
+            scans: submitted.scans,
         })
     }
 
@@ -618,7 +644,7 @@ impl Consoles {
         let choice = self.hazard.as_ref()?.show(ctx)?;
         let confirmation = self.hazard.take()?;
         match (choice, confirmation.pending) {
-            (HazardChoice::RunAnyway, Pending::Run(run)) => {
+            (HazardChoice::RunAnyway, Pending::Run(run) | Pending::Scan(run)) => {
                 self.start_run(&confirmation.console, run)
             }
             (HazardChoice::RunAnyway, Pending::Edits) => {
@@ -735,6 +761,7 @@ mod tests {
             parameters,
             origin: RunOrigin::Console,
             destination: RunDestination::Grid,
+            scans: ScanApproval::Ask,
         })
     }
 
@@ -922,6 +949,62 @@ mod tests {
             };
             assert_eq!(statements, [expected], "{path}");
         }
+    }
+
+    /// A statement the cost guard held back is asked about, and runs again from there, with
+    /// the ones after it, allowed to scan once.
+    #[test]
+    fn asks_to_run_a_held_scan_and_the_statements_after_it() {
+        let mut consoles = Consoles::default();
+        let dynamodb = DataSource {
+            config: ConnectionConfig::DynamoDb(dbrover_core::DynamoDbConfig::default()),
+            ..data_source("orders")
+        };
+        let key = consoles.open(&dynamodb, String::new());
+        let statement = |sql: &str| SubmittedStatement {
+            sql: sql.to_owned(),
+            range: 0..sql.len(),
+            prefix_len: 0,
+            in_database: None,
+            plan: None,
+        };
+        let run = SubmittedRun {
+            statements: vec![
+                statement("INSERT INTO orders VALUE {'pk': 'a'}"),
+                statement("SELECT * FROM orders"),
+                statement("SELECT * FROM orders WHERE pk = 'a'"),
+            ],
+            purpose: RunPurpose::Run,
+            parameters: ParameterValues::default(),
+            origin: RunOrigin::Console,
+            destination: RunDestination::Grid,
+            scans: ScanApproval::Ask,
+        };
+        let Some(Command::Execute { run: id, scans, .. }) = consoles.start_run(&key, run) else {
+            panic!("expected a run");
+        };
+        assert_eq!(scans, ScanApproval::Ask);
+        consoles.apply(&Event::ScanHeld {
+            run: id,
+            statement: 1,
+            scan: FullScan {
+                table: "orders".to_owned(),
+                index: None,
+                partition_key: "pk".to_owned(),
+            },
+        });
+        let Some(Pending::Scan(rest)) = consoles.hazard.take().map(|hazard| hazard.pending) else {
+            panic!("expected to be asked about the scan");
+        };
+        let sql: Vec<&str> = rest.statements.iter().map(|s| s.sql.as_str()).collect();
+        assert_eq!(
+            sql,
+            [
+                "SELECT * FROM orders",
+                "SELECT * FROM orders WHERE pk = 'a'"
+            ]
+        );
+        assert_eq!(rest.scans, ScanApproval::AllowFirst);
     }
 
     #[test]

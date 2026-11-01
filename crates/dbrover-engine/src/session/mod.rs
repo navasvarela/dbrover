@@ -4,6 +4,7 @@
 //! query never holds up browsing or another console.
 
 mod catalog;
+mod cost;
 mod ddl;
 mod edits;
 mod export;
@@ -39,7 +40,7 @@ use crate::read_only;
 use crate::tunnels::Tunnels;
 use crate::{
     ConsoleId, Event, ExportAll, Exporter, RowEdit, RowsImport, RunId, RunOrigin, RunPurpose,
-    SessionState, TableExport, TransactionEnd, TransactionMode,
+    ScanApproval, SessionState, TableExport, TransactionEnd, TransactionMode,
 };
 use guard::ReadOnly;
 use loss::{Loss, Watched};
@@ -76,6 +77,7 @@ pub(crate) struct Script {
     pub(crate) transactions: TransactionMode,
     pub(crate) purpose: RunPurpose,
     pub(crate) origin: RunOrigin,
+    pub(crate) scans: ScanApproval,
 }
 
 /// Who a session works for, which decides how its state changes are reported.

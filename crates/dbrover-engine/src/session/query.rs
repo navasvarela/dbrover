@@ -15,7 +15,9 @@ use dbrover_sql::{ExplainDepth, ExplainSetting, controls_transactions};
 
 use super::guard::{self, ReadOnly};
 use super::parameters::Sendable;
-use super::{Disconnected, Script, SessionContext, Worker, cancel_running_statement, transaction};
+use super::{
+    Disconnected, Script, SessionContext, Worker, cancel_running_statement, cost, transaction,
+};
 use crate::{
     Event, RunId, RunOrigin, RunOutcome, RunPurpose, StatementFailure, StatementSummary,
     TransactionMode,
@@ -183,6 +185,29 @@ async fn run_statements(
             report_failure(worker, &statement, Duration::ZERO, &error);
             outcome = RunOutcome::Failed;
             break;
+        }
+        if script.scans.asks(index) {
+            match cost::held_scan(worker, &checked).await? {
+                Ok(None) => {}
+                Ok(Some(scan)) => {
+                    let message = scan.describe();
+                    worker.context.send(Event::ScanHeld {
+                        run,
+                        statement: index,
+                        scan,
+                    });
+                    guard::close(worker).await?;
+                    report_refusal(worker.context, &statement, message);
+                    outcome = RunOutcome::Failed;
+                    break;
+                }
+                Err(error) => {
+                    guard::close(worker).await?;
+                    report_failure(worker, &statement, Duration::ZERO, &error);
+                    outcome = RunOutcome::Failed;
+                    break;
+                }
+            }
         }
         tracing::info!(data_source = %worker.context.name(), "running {}", preview(&redact_secrets(sql)));
         let end = run_statement(worker, statement, index == last).await?;

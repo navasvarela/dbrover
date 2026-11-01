@@ -1,7 +1,7 @@
 //! A DynamoDB data source's fields: a profile, a region and an endpoint, each empty for AWS's
 //! own choice, or a local emulator at an endpoint. Nothing secret is typed here.
 
-use dbrover_core::{DynamoDbConfig, DynamoDbSignIn};
+use dbrover_core::{CostGuard, DynamoDbConfig, DynamoDbSignIn};
 
 use super::FormError;
 
@@ -11,6 +11,7 @@ pub struct DynamoDbFields {
     pub profile: String,
     pub region: String,
     pub endpoint: String,
+    pub cost_guard: CostGuard,
 }
 
 impl DynamoDbFields {
@@ -20,6 +21,7 @@ impl DynamoDbFields {
             profile: config.profile.clone(),
             region: config.region.clone(),
             endpoint: config.endpoint.clone(),
+            cost_guard: config.cost_guard,
         }
     }
 
@@ -42,6 +44,7 @@ impl DynamoDbFields {
             profile,
             region: self.region.trim().to_owned(),
             endpoint,
+            cost_guard: self.cost_guard,
         })
     }
 }
@@ -57,6 +60,7 @@ mod tests {
             profile: "dev".into(),
             region: " eu-west-1 ".into(),
             endpoint: String::new(),
+            cost_guard: CostGuard::Off,
         };
         assert_eq!(fields.to_config(), Err(FormError::EndpointMissing));
         fields.endpoint = "http://localhost:8000".into();
@@ -69,6 +73,7 @@ mod tests {
         fields.endpoint.clear();
         let config = fields.to_config().unwrap();
         assert_eq!(config.profile, "dev");
+        assert_eq!(config.cost_guard, CostGuard::Off);
         assert_eq!(DynamoDbFields::from_config(&config).profile, "dev");
     }
 }

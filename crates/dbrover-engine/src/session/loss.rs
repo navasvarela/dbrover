@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use async_trait::async_trait;
 use dbrover_core::{
     CancelHandle, CatalogNode, CatalogPath, Cell, ChildrenPage, ChildrenQuery, ColumnInfo,
-    Connection, DriverError, Rejection, RelationName, ResultCursor, ResultShape, RoleDescription,
-    Row, ServerInfo, TableConstraints, TableDescription, TableName, TransactionStatus,
-    describe_error,
+    Connection, DriverError, FullScan, Rejection, RelationName, ResultCursor, ResultShape,
+    RoleDescription, Row, ServerInfo, TableConstraints, TableDescription, TableName,
+    TransactionStatus, describe_error,
 };
 
 use super::{SessionContext, SessionOwner, SessionRequest};
@@ -126,6 +126,10 @@ impl Connection for Watched {
 
     async fn validate(&mut self, sql: &str) -> Result<Option<Rejection>, DriverError> {
         self.loss.watch(self.connection.validate(sql).await)
+    }
+
+    async fn full_scan(&mut self, statement: &str) -> Result<Option<FullScan>, DriverError> {
+        self.loss.watch(self.connection.full_scan(statement).await)
     }
 
     async fn transaction_status(&mut self) -> Result<TransactionStatus, DriverError> {

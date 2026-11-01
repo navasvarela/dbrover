@@ -560,6 +560,7 @@ pub fn dynamodb_test_config() -> Option<DynamoDbConfig> {
         profile: String::new(),
         region: String::new(),
         endpoint,
+        cost_guard: dbrover_core::CostGuard::AskBeforeScans,
     })
 }
 
