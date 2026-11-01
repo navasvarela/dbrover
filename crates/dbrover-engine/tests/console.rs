@@ -10,9 +10,10 @@ mod parameters;
 use std::sync::Arc;
 
 use common::{
-    TestEngine, clickhouse_test_server, cql_test_servers, mongo_test_server, mysql_test_servers,
-    postgres_test_server, redis_test_servers, search_test_servers, sqlite_data_source,
-    sqlite_database, sqlserver_test_server,
+    TestEngine, clickhouse_test_server, cql_test_servers, create_dynamodb_table,
+    dynamodb_test_config, mongo_test_server, mysql_test_servers, postgres_test_server,
+    redis_test_servers, search_test_servers, sqlite_data_source, sqlite_database,
+    sqlserver_test_server,
 };
 use dbrover_core::{
     ConnectionConfig, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase, Identifier,
@@ -1228,6 +1229,66 @@ fn runs_search_requests_and_shows_hits_as_documents() {
         );
         finish_run(&mut engine, 1);
     }
+}
+
+/// A DynamoDB console runs PartiQL: an `INSERT` answers nothing, and a `SELECT`'s items reach
+/// the console as documents, the table's key first. Needs `DBROVER_TEST_DYNAMODB_URL`; skipped
+/// without.
+#[test]
+fn runs_partiql_and_shows_items_as_documents() {
+    let Some(config) = dynamodb_test_config() else {
+        return;
+    };
+    let table = create_dynamodb_table(&config, "engine-console");
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let data_source = DataSource {
+        id: DataSourceId::generate(),
+        name: "dynamodb".to_owned(),
+        color: None,
+        safety: dbrover_core::SafetyLevel::Normal,
+        project: None,
+        mcp_login: None,
+        config: ConnectionConfig::DynamoDb(config),
+    };
+    let id = data_source.id;
+    engine.send(Command::SaveDataSource {
+        data_source,
+        password: PasswordUpdate::Keep,
+        ssh_secret: PasswordUpdate::Keep,
+    });
+    assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
+    let insert =
+        format!("INSERT INTO \"{table}\" VALUE {{'pk': 'a', 'city': 'Madrid', 'sizes': <<1, 2>>}}");
+    let select = format!("SELECT * FROM \"{table}\" WHERE pk = 'a'");
+    execute(&engine, id, 1, &[&insert, &select]);
+    let (shape, rows) = loop {
+        match next_run_event(&mut engine) {
+            Event::StatementStarted {
+                statement: 1,
+                shape,
+                ..
+            } => {
+                let Event::RowsFetched { rows, .. } = next_run_event(&mut engine) else {
+                    panic!("expected the items");
+                };
+                break (shape, rows);
+            }
+            Event::StatementFinished {
+                result: Err(error), ..
+            } => panic!("{}", error.message),
+            _ => {}
+        }
+    };
+    assert_eq!(shape, dbrover_core::ResultShape::Documents);
+    assert_eq!(
+        rows,
+        [[Some(
+            r#"{"pk":"a","city":"Madrid","sizes":{"$numberSet":[1,2]}}"#.to_owned()
+        )]]
+    );
+    finish_run(&mut engine, 1);
 }
 
 /// Run to file of a search: every hit, past the first page, written as JSON Lines as the

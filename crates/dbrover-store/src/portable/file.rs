@@ -12,9 +12,9 @@ use std::path::{Path, PathBuf};
 
 use dbrover_core::{
     CassandraConfig, ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DuckDbConfig,
-    DuckDbDatabase, ElasticsearchAuth, ElasticsearchConfig, McpLogin, MongoConfig, MysqlConfig,
-    PasswordCommand, Port, PostgresConfig, ProjectId, RedisConfig, SafetyLevel, ServerConfig,
-    SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode,
+    DuckDbDatabase, DynamoDbConfig, ElasticsearchAuth, ElasticsearchConfig, McpLogin, MongoConfig,
+    MysqlConfig, PasswordCommand, Port, PostgresConfig, ProjectId, RedisConfig, SafetyLevel,
+    ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode,
 };
 use serde::{Deserialize, Serialize};
 
@@ -167,6 +167,9 @@ enum PortableConfig {
     Mongo(PortableMongo),
     Elasticsearch(PortableElasticsearch),
     Cassandra(PortableCassandra),
+    /// Nothing in it is a secret or a path, so it travels as `data_sources.toml` writes it.
+    #[serde(rename = "dynamodb")]
+    DynamoDb(DynamoDbConfig),
 }
 
 impl PortableConfig {
@@ -216,6 +219,7 @@ impl PortableConfig {
                 local_datacenter: local_datacenter.clone(),
                 statement_timeout: *statement_timeout,
             }),
+            ConnectionConfig::DynamoDb(config) => Self::DynamoDb(config.clone()),
             ConnectionConfig::Sqlite(SqliteConfig {
                 path: file,
                 read_only,
@@ -283,6 +287,7 @@ impl PortableConfig {
                 local_datacenter,
                 statement_timeout,
             }),
+            Self::DynamoDb(config) => ConnectionConfig::DynamoDb(config),
             Self::Sqlite(PortableSqlite {
                 path: file,
                 read_only,

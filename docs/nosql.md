@@ -1421,7 +1421,7 @@ From N5·4 on, each runs against DynamoDB Local in CI.
 
 - **N5·1 — Plan:** this section, the decisions N5 takes (in [Decisions](#decisions)), the cloud
   plan's C0 and the roadmap's status.
-- **N5·2 — The PartiQL language:** a `partiql` module of `dbrover-language`, with no driver
+- **N5·2 — The PartiQL language** (built): a `partiql` module of `dbrover-language`, with no driver
   yet:
   - a lexer: `"names"` and unquoted names, `'strings'` with `''` for a quote, numbers, `?`,
     punctuation with `<<` and `>>`, and `--` and `/* */` comments;
@@ -1435,14 +1435,14 @@ From N5·4 on, each runs against DynamoDB Local in CI.
 
   Tests: a classification corpus, as the other languages have; the splitter and parser against
   statements from DynamoDB's documentation; a table of `WHERE`s and the access each makes.
-- **N5·3 — AWS sign-in:** a new crate, `dbrover-cloud`, C0's, with its `aws` module:
+- **N5·3 — AWS sign-in** (built): a new crate, `dbrover-cloud`, C0's, with its `aws` module:
   `AwsSignIn` (a profile, or a local emulator), a region and an endpoint in, the SDK's
   configuration out, through `aws-config`'s default chain and the ring HTTPS client; no secret
   is read by DbRover or written anywhere. The data source types (`DynamoDbConfig`) are in
   `dbrover-core`. Tests: a profile, its region and its credentials read from files the test
   writes and passes in (never the user's), an emulator refused without an endpoint, and a
   check that no AWS crate brings aws-lc-rs.
-- **N5·4 — The driver and the console:** a new crate, `dbrover-driver-dynamodb`, on
+- **N5·4 — The driver and the console** (built): a new crate, `dbrover-driver-dynamodb`, on
   `aws-sdk-dynamodb`, and `DriverKind::DynamoDb` through the core, the engine, the language and
   the app: the data source form (profile, region, endpoint, sign in with), its logo, each
   statement run through `ExecuteStatement` with the per-page bound and `NextToken` paging,
@@ -1451,7 +1451,22 @@ From N5·4 on, each runs against DynamoDB Local in CI.
   Tests: the parts of the shared conformance suite that apply (lifecycle, connect failure,
   catalog walk, invalid paths, cancel), each attribute type through to Extended JSON, a
   `SELECT` paged past 500 items, a filtered Scan's short pages, an engine test of a console,
-  and a kittest of the form.
+  and a kittest of the form. How it came out:
+  - the logo is DbRover's own, a cylinder with a bolt through it: Simple Icons carries no
+    Amazon logo;
+  - each document starts with the keys of the table (or index) it was read from, from
+    `DescribeTable`, kept for the connection's life, then the rest by name, since DynamoDB keeps
+    no order of attributes;
+  - DynamoDB keeps all of a number's 38 digits but not a trailing zero, so `1.10` comes back
+    `1.1`, and is shown as it comes;
+  - a write answers nothing unless it says `RETURNING`, and then its items are documents;
+  - Test connection reports DynamoDB with the region, and the endpoint when one is set;
+  - `check_cancel` doesn't fit DynamoDB Local, which answers every request in milliseconds, so
+    cancel is tested against a server that takes a request and never answers: the run stops
+    at once with an error that says a request already received may still have been applied;
+  - a read-only data source refuses `INSERT`, `UPDATE` and `DELETE` by the check alone. Until
+    N5·8 gives it an MCP profile, the MCP server doesn't serve a DynamoDB data source: signed in
+    by a profile, not a login with a password, it has no guard the server can count on.
 - **N5·5 — The explorer:** keys, indexes, counts and sizes, **Show definition**, **Open data**
   on tables and indexes, tables paged 100 at a time, and table names in completion. Tests: the
   catalog walk with a table of each shape (partition key only, with a sort key, with a GSI and

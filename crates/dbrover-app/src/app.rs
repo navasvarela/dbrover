@@ -2949,6 +2949,64 @@ mod tests {
         );
     }
 
+    /// A DynamoDB data source names a profile, a region and an endpoint, nothing secret; a local
+    /// emulator needs its endpoint, and its profile isn't kept.
+    #[test]
+    fn adds_a_dynamodb_data_source_for_a_local_emulator() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "No data sources yet.");
+
+        harness
+            .get_all_by_label("New data source")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("DynamoDB").click();
+        harness.run();
+        harness.get_by_label_contains("New DynamoDB data source");
+        assert!(harness.query_by_label("Password").is_none());
+        harness.get_by_label("Profile").focus();
+        harness.run();
+        harness.get_by_label("Profile").type_text("analytics");
+        harness.run();
+        harness.get_by_label("Local emulator").click();
+        harness.run();
+        assert!(harness.query_by_label("Profile").is_none());
+        harness.get_by_label("Save").click();
+        harness.run();
+        step_until_visible(
+            &mut harness,
+            "Endpoint is required to sign in as a local emulator.",
+        );
+        harness.get_by_label("Endpoint").focus();
+        harness.run();
+        harness
+            .get_by_label("Endpoint")
+            .type_text("http://localhost:58000");
+        harness.run();
+        harness.get_by_label("Save").click();
+
+        step_until_visible(&mut harness, "Expand http://localhost:58000");
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        let [saved] = saved.as_slice() else {
+            panic!("expected one data source, got {saved:?}");
+        };
+        assert_eq!(
+            saved.config,
+            dbrover_core::ConnectionConfig::DynamoDb(dbrover_core::DynamoDbConfig {
+                sign_in: dbrover_core::DynamoDbSignIn::LocalEmulator,
+                profile: String::new(),
+                region: String::new(),
+                endpoint: "http://localhost:58000".to_owned(),
+            })
+        );
+    }
+
     #[test]
     fn adds_a_clickhouse_data_source_whose_port_follows_its_tls_mode() {
         let dir = tempfile::tempdir().unwrap();
