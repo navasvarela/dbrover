@@ -3,6 +3,7 @@
 use dbrover_core::{DataSource, ProjectId};
 use dbrover_engine::Event;
 use dbrover_engine::read_only::McpServing;
+use dbrover_engine::read_write;
 use dbrover_store::{McpOverrides, McpPermissions, Project, ProjectSlug};
 use egui::{Align, Button, Id, Label, Layout, Modal, RichText, Ui};
 
@@ -172,10 +173,11 @@ fn warnings(ui: &mut Ui, permissions: &McpPermissions, members: &[&DataSource]) 
             ui.add(Label::new(RichText::new(text).color(palette.warning)).wrap());
         });
     }
-    let without_logins = members
-        .iter()
-        .filter(served)
-        .any(|data_source| !data_source.config.driver().uses_password());
+    // DuckDB files have no logins either, but the MCP server runs no changes on them.
+    let without_logins = members.iter().filter(served).any(|data_source| {
+        let driver = data_source.config.driver();
+        !driver.uses_password() && read_write::mode(driver).is_some()
+    });
     if changes && without_logins {
         ui.weak("SQLite files have no logins: for them, DbRover's own checks are all there is.");
     }
@@ -197,7 +199,8 @@ fn warnings(ui: &mut Ui, permissions: &McpPermissions, members: &[&DataSource]) 
     let not_served = unserved(McpServing::NotServed);
     if !not_served.is_empty() {
         ui.weak(format!(
-            "Not served to MCP clients yet, since DbRover can't make their engine read-only: {}.",
+            "Not served to MCP clients, since their database can't be opened read-only (a \
+             DuckDB database in memory): {}.",
             not_served.join(", ")
         ));
     }

@@ -24,6 +24,7 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+dbrover-driver-duckdb.workspace = true
 dbrover-language = { workspace = true, features = ["test-language"] }
 rmcp = { workspace = true, features = ["client", "transport-child-process"] }
 rusqlite.workspace = true
@@ -59,4 +60,8 @@ harness = false
 
 [[test]]
 name = "clickhouse"
+harness = false
+
+[[test]]
+name = "duckdb"
 harness = false

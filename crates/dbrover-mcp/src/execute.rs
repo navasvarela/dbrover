@@ -93,7 +93,7 @@ impl DbRoverMcp {
         );
         self.check_allowed(tool, data_source, &planned)?;
         let driver = data_source.config.driver();
-        if transaction::mode(driver, Access::Write, true).is_none() {
+        if transaction::mode(&data_source.config, Access::Write, true).is_none() {
             let reason = format!(
                 "DbRover can't run changes on {} for MCP clients yet: this data source is \
                  served for reading only",

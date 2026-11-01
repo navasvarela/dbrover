@@ -361,3 +361,69 @@ async fn connections_to_one_file_share_its_database() {
         [text(&[Some("2")])]
     );
 }
+
+/// What running `sql` fails with, whether starting it or reading it to its end fails.
+async fn failure(connection: &mut DuckDbConnection, sql: &str) -> String {
+    let error = match connection.execute(sql).await {
+        Ok(cursor) => cursor.finish().await.err(),
+        Err(error) => Some(error),
+    };
+    let error = error.unwrap_or_else(|| panic!("{sql} succeeded"));
+    dbrover_core::describe_error(&error)
+}
+
+/// A file opened read-only, as a read-only data source's sessions open it: DuckDB itself
+/// refuses a change, a write hidden in a function included, while reading works.
+#[tokio::test]
+async fn a_read_only_file_refuses_changes_with_duckdbs_own_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("orders.duckdb");
+    create_database(&path).await.unwrap();
+    let mut writer = connect(&file(&path, false)).await.unwrap();
+    run(&mut writer, "CREATE TABLE orders (id integer)").await;
+    run(&mut writer, "CREATE SEQUENCE orders_id").await;
+    Box::new(writer).close().await.unwrap();
+
+    let mut reader = connect(&file(&path, true)).await.unwrap();
+    assert_eq!(
+        rows(&mut reader, "SELECT count(*) FROM orders").await,
+        [text(&[Some("0")])]
+    );
+    for sql in [
+        "INSERT INTO orders VALUES (1)",
+        // Reads as a SELECT, but advances the sequence.
+        "SELECT nextval('orders_id')",
+    ] {
+        let error = failure(&mut reader, sql).await;
+        assert!(error.contains("read-only mode"), "{sql}: {error}");
+    }
+    Box::new(reader).close().await.unwrap();
+}
+
+/// A file is open one way at a time in this process, as DuckDB's lock makes it between
+/// processes: neither read-only beside a writer, nor for writing beside a reader.
+#[tokio::test]
+async fn opens_a_file_one_way_at_a_time() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("lake.duckdb");
+    create_database(&path).await.unwrap();
+
+    let writer = connect(&file(&path, false)).await.unwrap();
+    let refused = connect(&file(&path, true)).await.err().unwrap();
+    let message = dbrover_core::describe_error(&refused);
+    assert!(
+        message.contains("is already open for writing in DbRover"),
+        "{message}"
+    );
+    Box::new(writer).close().await.unwrap();
+
+    let reader = connect(&file(&path, true)).await.unwrap();
+    let second_reader = connect(&file(&path, true)).await.unwrap();
+    let refused = connect(&file(&path, false)).await.err().unwrap();
+    let message = dbrover_core::describe_error(&refused);
+    assert!(message.contains("is already open read-only"), "{message}");
+    Box::new(second_reader).close().await.unwrap();
+    Box::new(reader).close().await.unwrap();
+
+    connect(&file(&path, false)).await.unwrap();
+}

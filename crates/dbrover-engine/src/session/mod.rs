@@ -134,12 +134,12 @@ impl Session {
         let (requests, request_receiver) = mpsc::unbounded_channel();
         let (cancel, cancel_signal) = watch::channel(None);
         let read_only = (data_source.safety == SafetyLevel::ReadOnly).then(|| ReadOnly {
-            mode: read_only::mode(data_source.config.driver()),
+            mode: read_only::mode(
+                data_source.config.driver(),
+                read_only::Storage::of(&data_source.config),
+            ),
         });
-        let data_source = match read_only {
-            Some(_) => read_only::connection_config(data_source),
-            None => data_source,
-        };
+        let data_source = read_only::session_config(data_source);
         let context = SessionContext {
             data_source,
             idle_ping_after,

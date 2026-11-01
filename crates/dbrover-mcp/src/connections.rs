@@ -1,12 +1,15 @@
 //! One connection per data source, opened on first use and closed after a while unused, so
 //! a server that lives as long as a client session doesn't hold connections all that time.
+//! A DuckDB file's is closed as soon as each call ends ([`Keep`]).
 
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use dbrover_core::{Connection, DataSource, DataSourceId, ServerInfo, describe_error};
+use dbrover_core::{
+    Connection, ConnectionConfig, DataSource, DataSourceId, ServerInfo, describe_error,
+};
 use dbrover_engine::{OpenError, PasswordCommands, Tunnels, open_data_source_for_mcp};
 use dbrover_store::SecretStore;
 use tokio::sync::{MappedMutexGuard, Mutex, MutexGuard};
@@ -27,11 +30,32 @@ pub(crate) struct Connections {
 
 struct Slot {
     data_source: DataSource,
+    keep: Keep,
     /// Held for a whole call, so calls on one data source run one at a time, each in its own
     /// transaction on the one connection.
     open: Mutex<Option<OpenConnection>>,
     /// What the server reported when last connected, for `list_data_sources`.
     server: std::sync::Mutex<Option<ServerInfo>>,
+}
+
+/// How long a connection stays open once a call is done with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Keep {
+    /// Until unused for [`IDLE_AFTER`], so an assistant's run of calls reuses it.
+    UntilIdle,
+    /// Only while a call runs. A program that has a DuckDB file open, even read-only, locks
+    /// out every program that would write it, the app included: held until idle, the file
+    /// couldn't be opened for writing for minutes after an assistant's last question.
+    DuringCalls,
+}
+
+impl Keep {
+    fn of(config: &ConnectionConfig) -> Self {
+        match config {
+            ConnectionConfig::DuckDb(_) => Self::DuringCalls,
+            _ => Self::UntilIdle,
+        }
+    }
 }
 
 struct OpenConnection {
@@ -85,6 +109,7 @@ impl Connections {
             .map(|data_source| {
                 let slot = Slot {
                     data_source: data_source.clone(),
+                    keep: Keep::of(&data_source.config),
                     open: Mutex::new(None),
                     server: std::sync::Mutex::new(None),
                 };
@@ -128,6 +153,22 @@ impl Connections {
                 tracing::info!(data_source = %slot.data_source.name, "closing an idle connection");
                 close(&slot.data_source, open.connection).await;
             }
+        }
+    }
+
+    /// Closes the data source's connection now that a call is done with it, if it is kept only
+    /// during calls. Another call may have taken it up meanwhile; it is closed after that one.
+    pub(crate) async fn release(&self, id: DataSourceId) {
+        let Some(slot) = self
+            .slots
+            .get(&id)
+            .filter(|slot| slot.keep == Keep::DuringCalls)
+        else {
+            return;
+        };
+        let open = slot.open.lock().await.take();
+        if let Some(open) = open {
+            close(&slot.data_source, open.connection).await;
         }
     }
 

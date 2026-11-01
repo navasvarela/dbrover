@@ -34,8 +34,9 @@ const PRODUCT: &str = "DuckDB";
 ///
 /// # Errors
 ///
-/// [`DriverError::Connect`] if the file doesn't exist, isn't a DuckDB database, or another
-/// process holds it open for writing.
+/// [`DriverError::Connect`] if the file doesn't exist, isn't a DuckDB database, another
+/// process holds it open for writing, or this process has it open the other way (see
+/// [`SharedDatabase`]).
 pub async fn connect(config: &DuckDbConfig) -> Result<DuckDbConnection, DriverError> {
     let database = config.database.clone();
     let (connection, shared, version) = tokio::task::spawn_blocking(move || open(&database))
@@ -84,11 +85,19 @@ fn open(database: &DuckDbDatabase) -> Result<Opened, DriverError> {
 /// changes, in the process that opened it. Two databases opened on one file each see only
 /// their own changes (and can overwrite each other's), so the explorer's connection and a
 /// console's must share one: rows imported through the explorer then show in the console.
-struct SharedDatabase(Mutex<duckdb::Connection>);
+///
+/// That holds for a read-only database beside a writable one too, which DuckDB allows in one
+/// process: the reader wouldn't see the writer's later commits, and could read blocks the
+/// writer's checkpoint has reused. So a file is open one way at a time, as DuckDB's lock makes
+/// it between processes: a second configuration of an open file is refused.
+struct SharedDatabase {
+    first: Mutex<duckdb::Connection>,
+    read_only: bool,
+}
 
-/// The databases open in this process, by file and whether opened read-only. Entries whose
-/// last connection has closed are dead, and replaced when the file is opened again.
-type OpenDatabases = HashMap<(PathBuf, bool), Weak<SharedDatabase>>;
+/// The databases open in this process, by file. Entries whose last connection has closed are
+/// dead, and replaced when the file is opened again.
+type OpenDatabases = HashMap<PathBuf, Weak<SharedDatabase>>;
 
 static OPEN_DATABASES: LazyLock<Mutex<OpenDatabases>> = LazyLock::new(Mutex::default);
 
@@ -100,11 +109,14 @@ fn open_file(
     if !path.is_file() {
         return Err(connect_error(format!("{} doesn't exist", path.display())));
     }
-    let key = (fs::canonicalize(path).map_err(connect_error)?, read_only);
+    let key = fs::canonicalize(path).map_err(connect_error)?;
     let mut databases = OPEN_DATABASES.lock().map_err(|_| poisoned())?;
     if let Some(shared) = databases.get(&key).and_then(Weak::upgrade) {
+        if shared.read_only != read_only {
+            return Err(connect_error(open_the_other_way(path, shared.read_only)));
+        }
         let connection = shared
-            .0
+            .first
             .lock()
             .map_err(|_| poisoned())?
             .try_clone()
@@ -121,9 +133,26 @@ fn open_file(
         .map_err(connect_error)?;
     let first = duckdb::Connection::open_with_flags(path, config).map_err(connect_error)?;
     let connection = first.try_clone().map_err(connect_error)?;
-    let shared = Arc::new(SharedDatabase(Mutex::new(first)));
+    let shared = Arc::new(SharedDatabase {
+        first: Mutex::new(first),
+        read_only,
+    });
     databases.insert(key, Arc::downgrade(&shared));
     Ok((connection, shared))
+}
+
+/// Why a file this process has open can't be opened the other way too.
+fn open_the_other_way(path: &Path, open_read_only: bool) -> String {
+    let (open, wanted) = if open_read_only {
+        ("read-only", "for writing")
+    } else {
+        ("for writing", "read-only")
+    };
+    format!(
+        "{} is already open {open} in DbRover, and DuckDB opens a file one way at a time: \
+         disconnect the data source that has it open to open it {wanted}",
+        path.display()
+    )
 }
 
 /// Creates a new, empty database file at `path`, which must not exist yet.

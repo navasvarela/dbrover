@@ -620,10 +620,22 @@ impl DbRoverMcp {
     }
 
     /// Runs `work` on the data source's connection inside a transaction for `access`,
-    /// committed or rolled back as [`transaction::end`] decides. A connection the server
-    /// closed while it sat idle fails on `BEGIN`; that is retried once on a new connection,
-    /// before `work` has run.
+    /// committed or rolled back as [`transaction::end`] decides, then lets go of a connection
+    /// kept only during calls.
     pub(crate) async fn run_call<T: Send>(
+        &self,
+        data_source: &DataSource,
+        access: Access,
+        work: impl for<'c> FnOnce(&'c mut dyn Connection, Watchdog) -> Work<'c, T>,
+    ) -> Result<T, RunError> {
+        let outcome = self.run_in_transaction(data_source, access, work).await;
+        self.inner.connections.release(data_source.id).await;
+        outcome
+    }
+
+    /// [`Self::run_call`]'s call. A connection the server closed while it sat idle fails on
+    /// `BEGIN`; that is retried once on a new connection, before `work` has run.
+    async fn run_in_transaction<T: Send>(
         &self,
         data_source: &DataSource,
         access: Access,
@@ -633,7 +645,7 @@ impl DbRoverMcp {
         let writable = self.inner.project.changes.open_writable(driver);
         // `ServedProject` leaves out data sources that can't be read safely, so only changes
         // on an engine without a read-write mode, which `execute` refuses first, end here.
-        let Some(mode) = transaction::mode(driver, access, writable) else {
+        let Some(mode) = transaction::mode(&data_source.config, access, writable) else {
             return Err(RunError::NoTransaction(driver.display_name()));
         };
         let timeout = self.inner.project.limits.statement_timeout;

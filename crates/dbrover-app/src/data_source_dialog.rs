@@ -205,7 +205,7 @@ impl DataSourceDialog {
                     text_row(ui, "Key separator", &mut fields.separator, "none");
                 }
                 // Only where `dbrover mcp` can serve the engine; elsewhere it would never be used.
-                match read_only::guard(self.form.driver()) {
+                match read_only::guard(self.form.driver(), self.form.storage()) {
                     Guard::Session(_) => mcp_login_rows(ui, &mut self.form.mcp_login, false),
                     Guard::Login => mcp_login_rows(ui, &mut self.form.mcp_login, true),
                     Guard::CheckOnly => {}
@@ -766,13 +766,15 @@ fn safety_rows(ui: &mut Ui, form: &mut DataSourceForm) {
     }
     let unchecked = "has no read-only mode DbRover can use: statements are checked, but a write \
                      inside a procedure or function isn't stopped.";
-    let partly = match read_only::guard(form.driver()) {
+    let partly = match read_only::guard(form.driver(), form.storage()) {
         Guard::Session(_) => None,
         Guard::Login => Some(format!(
             "{unchecked} Sign in as {} to have the database refuse it.",
             read_only::read_only_login(form.driver())
         )),
-        Guard::CheckOnly => Some(unchecked.to_owned()),
+        Guard::CheckOnly => {
+            Some("can't open this database read-only: only the statements are checked.".to_owned())
+        }
     };
     if let Some(partly) = partly.filter(|_| form.safety == SafetyLevel::ReadOnly) {
         ui.label("");

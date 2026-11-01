@@ -11,7 +11,10 @@
 
 use std::time::Duration;
 
-use dbrover_core::{Connection, ConnectionConfig, DataSource, DriverError, DriverKind};
+use dbrover_core::{
+    Connection, ConnectionConfig, DataSource, DriverError, DriverKind, DuckDbConfig,
+    DuckDbDatabase, SafetyLevel,
+};
 use dbrover_language::{QueryLanguage, StatementKind, Unclassified};
 
 /// How an engine refuses writes on its own, whatever the statement.
@@ -24,8 +27,8 @@ pub enum ReadOnlyMode {
         /// a runaway statement even if a cancel can't get through.
         sets_timeout: bool,
     },
-    /// The connection itself is opened read-only, for its whole life: a SQLite file, or a
-    /// ClickHouse session whose every request carries the `readonly` setting. See
+    /// The connection itself is opened read-only, for its whole life: a SQLite or DuckDB file,
+    /// or a ClickHouse session whose every request carries the `readonly` setting. See
     /// [`connection_config`].
     Connection,
     /// A writable SQLite connection told to refuse writes with `PRAGMA query_only`, for one
@@ -35,27 +38,53 @@ pub enum ReadOnlyMode {
     QueryOnly,
 }
 
-/// The engine's read-only mode, or `None` when it has none DbRover can use.
-pub fn mode(driver: DriverKind) -> Option<ReadOnlyMode> {
-    match driver {
-        DriverKind::Postgres => Some(ReadOnlyMode::Transaction {
+/// Where a data source's database is kept, which decides whether DuckDB has a read-only mode
+/// for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Storage {
+    /// On a server, or in a file.
+    Kept,
+    /// In the connection's memory, gone when it disconnects.
+    InMemory,
+}
+
+impl Storage {
+    pub fn of(config: &ConnectionConfig) -> Self {
+        match config {
+            ConnectionConfig::DuckDb(DuckDbConfig {
+                database: DuckDbDatabase::InMemory,
+            }) => Self::InMemory,
+            _ => Self::Kept,
+        }
+    }
+}
+
+/// The engine's read-only mode for a database kept in `storage`, or `None` when it has none
+/// DbRover can use.
+pub fn mode(driver: DriverKind, storage: Storage) -> Option<ReadOnlyMode> {
+    match (driver, storage) {
+        (DriverKind::Postgres, _) => Some(ReadOnlyMode::Transaction {
             begin: "BEGIN READ ONLY",
             sets_timeout: true,
         }),
-        DriverKind::Mysql => Some(ReadOnlyMode::Transaction {
+        (DriverKind::Mysql, _) => Some(ReadOnlyMode::Transaction {
             begin: "START TRANSACTION READ ONLY",
             sets_timeout: false,
         }),
-        DriverKind::Sqlite | DriverKind::ClickHouse => Some(ReadOnlyMode::Connection),
-        // SQL Server has no read-only transaction, and DuckDB's read-only mode is a choice of
-        // the data source, not of the connection MCP would open. Redis, MongoDB and
-        // Elasticsearch have no read-only session at all. A user who may only read is their
-        // guard (docs/nosql.md, N0a to N3).
-        DriverKind::SqlServer
-        | DriverKind::DuckDb
-        | DriverKind::Redis
-        | DriverKind::Mongo
-        | DriverKind::Elasticsearch => None,
+        (DriverKind::Sqlite | DriverKind::ClickHouse, _) | (DriverKind::DuckDb, Storage::Kept) => {
+            Some(ReadOnlyMode::Connection)
+        }
+        // DuckDB refuses to open a database in memory read-only. SQL Server has no read-only
+        // transaction, and Redis, MongoDB and Elasticsearch no read-only session at all: a
+        // user who may only read is their guard (docs/nosql.md, N0a to N3).
+        (DriverKind::DuckDb, Storage::InMemory)
+        | (
+            DriverKind::SqlServer
+            | DriverKind::Redis
+            | DriverKind::Mongo
+            | DriverKind::Elasticsearch,
+            _,
+        ) => None,
     }
 }
 
@@ -68,13 +97,14 @@ pub enum Guard {
     /// but reading makes the database refuse writes. The MCP server serves such a data source
     /// only through its MCP login (`docs/nosql.md`, N0a).
     Login,
-    /// Neither, as for a DuckDB file: the check is all there is, so MCP clients aren't served.
+    /// Neither, as for a DuckDB database in memory: the check is all there is, so MCP clients
+    /// aren't served.
     CheckOnly,
 }
 
-/// The database's own guard on `driver`'s data sources.
-pub fn guard(driver: DriverKind) -> Guard {
-    match mode(driver) {
+/// The database's own guard on `driver`'s data sources kept in `storage`.
+pub fn guard(driver: DriverKind, storage: Storage) -> Guard {
+    match mode(driver, storage) {
         Some(mode) => Guard::Session(mode),
         None if driver.uses_password() => Guard::Login,
         None => Guard::CheckOnly,
@@ -108,13 +138,14 @@ pub enum McpServing {
     /// The engine has no read-only mode: the data source is served once it has an MCP login
     /// whose grants allow only reading.
     NeedsMcpLogin,
-    /// The engine has neither a read-only mode nor logins.
+    /// The database has no read-only mode, and the engine no logins.
     NotServed,
 }
 
 impl McpServing {
     pub fn of(data_source: &DataSource) -> Self {
-        match guard(data_source.config.driver()) {
+        let config = &data_source.config;
+        match guard(config.driver(), Storage::of(config)) {
             Guard::Session(_) => Self::Served,
             Guard::Login if data_source.mcp_login.is_some() => Self::Served,
             Guard::Login => Self::NeedsMcpLogin,
@@ -131,7 +162,9 @@ impl McpServing {
                 "{engine} has no read-only mode, so it is served only through an MCP login \
                  whose grants allow nothing but reading"
             )),
-            Self::NotServed => Some(format!("DbRover can't make {engine} read-only yet")),
+            Self::NotServed => Some(format!(
+                "{engine} can't open this database read-only, and has no logins to read as"
+            )),
         }
     }
 }
@@ -139,26 +172,38 @@ impl McpServing {
 /// The read-only mode on a connection that also runs changes, or `None` where a connection
 /// must be opened read-only to refuse them. A read-only transaction works on any connection;
 /// a SQLite file opened to run changes is told [`ReadOnlyMode::QueryOnly`] instead. ClickHouse
-/// has no such switch, and no transaction to run changes in, so a connection that runs them is
-/// never opened there.
+/// and DuckDB have no such switch, and no transaction DbRover runs changes in, so a connection
+/// that runs them is never opened there.
 pub fn mode_on_writable_connection(driver: DriverKind) -> Option<ReadOnlyMode> {
-    match (mode(driver)?, driver) {
+    match (mode(driver, Storage::Kept)?, driver) {
         (ReadOnlyMode::Connection, DriverKind::Sqlite) => Some(ReadOnlyMode::QueryOnly),
         (ReadOnlyMode::Connection, _) => None,
         (other, _) => Some(other),
     }
 }
 
-/// The settings to connect with: a SQLite file is opened read-only, and a ClickHouse session
-/// sends the `readonly` setting with every request, each the engine's own equivalent of a
-/// read-only transaction. Other engines connect as usual.
+/// The settings to connect with: a SQLite or DuckDB file is opened read-only, and a ClickHouse
+/// session sends the `readonly` setting with every request, each the engine's own equivalent
+/// of a read-only transaction. Other engines connect as usual.
 pub fn connection_config(mut data_source: DataSource) -> DataSource {
     match &mut data_source.config {
         ConnectionConfig::Sqlite(config) => config.read_only = true,
         ConnectionConfig::ClickHouse(config) => config.read_only = true,
+        ConnectionConfig::DuckDb(DuckDbConfig {
+            database: DuckDbDatabase::File { read_only, .. },
+        }) => *read_only = true,
         _ => {}
     }
     data_source
+}
+
+/// The settings a data source's own sessions connect with, and its connection is tested
+/// with: a read-only one's as [`connection_config`] says, so a test connects as they will.
+pub fn session_config(data_source: DataSource) -> DataSource {
+    match data_source.safety {
+        SafetyLevel::ReadOnly => connection_config(data_source),
+        SafetyLevel::Normal | SafetyLevel::Careful => data_source,
+    }
 }
 
 /// Why [`check`] refused a statement.
@@ -307,21 +352,25 @@ mod tests {
 
     #[test]
     fn guards_each_engine_with_its_read_only_mode_or_a_login() {
-        let guards = DriverKind::ALL.map(|driver| (driver, guard(driver)));
+        let guards = DriverKind::ALL.map(|driver| (driver, guard(driver, Storage::Kept)));
         for (driver, guard) in guards {
             let expected = match driver {
                 DriverKind::Postgres
                 | DriverKind::Mysql
                 | DriverKind::Sqlite
-                | DriverKind::ClickHouse => matches!(guard, Guard::Session(_)),
+                | DriverKind::ClickHouse
+                | DriverKind::DuckDb => matches!(guard, Guard::Session(_)),
                 DriverKind::SqlServer
                 | DriverKind::Redis
                 | DriverKind::Mongo
                 | DriverKind::Elasticsearch => guard == Guard::Login,
-                DriverKind::DuckDb => guard == Guard::CheckOnly,
             };
             assert!(expected, "{driver:?}: {guard:?}");
         }
+        assert_eq!(
+            guard(DriverKind::DuckDb, Storage::InMemory),
+            Guard::CheckOnly
+        );
         assert_eq!(
             read_only_login(DriverKind::Redis),
             "an ACL user with only +@read"
@@ -335,7 +384,11 @@ mod tests {
         let cases = [
             (DriverKind::Sqlite, Some(ReadOnlyMode::QueryOnly)),
             (DriverKind::ClickHouse, None),
-            (DriverKind::Postgres, mode(DriverKind::Postgres)),
+            (
+                DriverKind::Postgres,
+                mode(DriverKind::Postgres, Storage::Kept),
+            ),
+            (DriverKind::DuckDb, None),
             (DriverKind::SqlServer, None),
         ];
         for (driver, expected) in cases {
