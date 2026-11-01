@@ -1,11 +1,13 @@
-//! The first start under a new name: copying what the previous name saved, before anything
-//! reads or creates the current folders. See "Migrating existing installs" in
-//! `docs/releasing.md`.
+//! The first start on new folders: copying what an earlier version saved, under the previous
+//! name or in the platform's folders, before anything reads or creates the current folders.
+//! See "Migrating existing installs" in `docs/releasing.md` and `docs/settings-folders.md`.
 
 use std::path::PathBuf;
 
 use dbrover_core::describe_error;
-use dbrover_store::{Adoption, AdoptionError, AppPaths, CopiedInstall, adopt_previous_install};
+use dbrover_store::{
+    Adoption, AdoptionError, AppPaths, CopiedInstall, adopt_previous_install, find_previous_install,
+};
 use egui::{Align, Id, Layout, Modal, RichText};
 
 use crate::theme::Palette;
@@ -18,7 +20,11 @@ pub struct Adopted {
 
 enum Outcome {
     NotNeeded,
-    Copied(CopiedInstall),
+    /// `to` is the settings folder it was copied to.
+    Copied {
+        copied: CopiedInstall,
+        to: PathBuf,
+    },
     /// `paths` are the previous folders this session; `from` is their settings folder.
     Failed {
         from: PathBuf,
@@ -26,32 +32,36 @@ enum Outcome {
     },
 }
 
-/// Copies the previous name's folders to `current`'s, if they haven't been yet.
+/// Copies the newest previous install's folders to `current`'s, if they haven't been yet.
 ///
-/// Runs before logging starts: on macOS the log folder is inside the settings folder, and
-/// creating it would make the copy look done. [`Adopted::log`] reports the outcome once logging
-/// is up. When the copy fails, this session uses the previous folders, as the previous version
-/// did: starting empty would create the current settings folder, and the copy would never be
-/// tried again.
+/// Runs before logging starts: the log folder is inside the data folder, and creating it would
+/// make the copy leave out the previous window layout and trusted commands. [`Adopted::log`]
+/// reports the outcome once logging is up. When the copy fails, this session uses the previous
+/// folders, as the previous version did: starting empty would create the current settings
+/// folder, and the copy would never be tried again.
 pub fn adopt(current: AppPaths) -> Adopted {
-    let Some(previous) = AppPaths::discover_previous() else {
+    let Some(previous) = find_previous_install(AppPaths::previous_installs(), current.folders())
+    else {
         return Adopted {
             paths: current,
             outcome: Outcome::NotNeeded,
         };
     };
-    let from = previous.folders().settings;
-    match adopt_previous_install(&previous.folders(), &current.folders()) {
+    let from = previous.settings.clone();
+    match adopt_previous_install(&previous, current.folders()) {
         Ok(Adoption::NotNeeded) => Adopted {
             paths: current,
             outcome: Outcome::NotNeeded,
         },
         Ok(Adoption::Copied(copied)) => Adopted {
+            outcome: Outcome::Copied {
+                to: current.folders().settings.clone(),
+                copied,
+            },
             paths: current,
-            outcome: Outcome::Copied(copied),
         },
         Err(error) => Adopted {
-            paths: previous,
+            paths: current.in_folders(previous),
             outcome: Outcome::Failed { from, error },
         },
     }
@@ -61,8 +71,12 @@ impl Adopted {
     pub fn log(&self) {
         match &self.outcome {
             Outcome::NotNeeded => {}
-            Outcome::Copied(copied) => {
-                tracing::info!("copied the previous install from {}", copied.from.display());
+            Outcome::Copied { copied, to } => {
+                tracing::info!(
+                    "copied the previous install from {} to {}",
+                    copied.from.display(),
+                    to.display()
+                );
                 if let Some(error) = &copied.history_read_as_files {
                     tracing::warn!(
                         "the previous history couldn't be read, so its files were copied as \
@@ -89,8 +103,9 @@ impl Adopted {
     pub fn notice(&self) -> Option<AdoptionNotice> {
         match &self.outcome {
             Outcome::NotNeeded => None,
-            Outcome::Copied(copied) => Some(AdoptionNotice::Copied {
+            Outcome::Copied { copied, to } => Some(AdoptionNotice::Copied {
                 from: copied.from.clone(),
+                to: to.clone(),
             }),
             Outcome::Failed { from, error } => Some(AdoptionNotice::Failed {
                 from: from.clone(),
@@ -102,7 +117,7 @@ impl Adopted {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AdoptionNotice {
-    Copied { from: PathBuf },
+    Copied { from: PathBuf, to: PathBuf },
     Failed { from: PathBuf, reason: String },
 }
 
@@ -113,16 +128,18 @@ impl AdoptionNotice {
             let palette = &Palette::for_visuals(ui.visuals());
             ui.set_max_width(420.0);
             match self {
-                Self::Copied { from } => {
+                Self::Copied { from, to } => {
                     ui.heading("Your data was copied");
                     ui.label(
-                        "Your data sources, projects, consoles, history and settings were \
-                         copied from the previous version's folder:",
+                        "DbRover now keeps your data sources, projects, consoles, history and \
+                         settings in",
                     );
+                    ui.label(RichText::new(to.display().to_string()).monospace());
+                    ui.label("They were copied from the folder an earlier version used:");
                     ui.label(RichText::new(from.display().to_string()).monospace());
                     ui.label(
-                        "That folder is left as it was. Saved passwords move over the first \
-                         time each one is used.",
+                        "That folder is left as it was, and isn't read any more. Saved \
+                         passwords stay in your keychain.",
                     );
                 }
                 Self::Failed { from, reason } => {
@@ -159,6 +176,7 @@ mod tests {
             (
                 AdoptionNotice::Copied {
                     from: PathBuf::from("/home/ada/.config/old-name"),
+                    to: PathBuf::from("/home/ada/.config/dbrover"),
                 },
                 "Your data was copied",
             ),

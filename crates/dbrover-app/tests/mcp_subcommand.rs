@@ -19,13 +19,9 @@ use serde_json::{Value, json};
 
 const BINARY: &str = env!("CARGO_BIN_EXE_dbrover");
 
-/// Where DbRover keeps its settings under `home`, as the `directories` crate places them.
+/// Where DbRover keeps its settings under `home`, with the XDG variables unset.
 fn config_dir(home: &Path) -> PathBuf {
-    if cfg!(target_os = "macos") {
-        home.join("Library/Application Support/dbrover")
-    } else {
-        home.join(".config/dbrover")
-    }
+    home.join(".config/dbrover")
 }
 
 fn command(home: &Path) -> Command {

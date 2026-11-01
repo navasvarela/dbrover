@@ -1,11 +1,11 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use directories::{BaseDirs, ProjectDirs};
 
 use crate::{CustomFiles, InstallFolders, TrustedCommandsFile};
 
-/// The application name used for platform directories and the OS keychain. Also the eframe app
-/// id, so the window/layout state eframe persists lands in the same folder.
+/// The application name used for DbRover's folders and the OS keychain. Also the eframe app
+/// id.
 pub const APP_NAME: &str = "dbrover";
 
 /// The name the app had before [`APP_NAME`], whose folders the first start under the new name
@@ -16,34 +16,52 @@ pub const PREVIOUS_APP_NAME: &str = "dbdesk";
 /// The query history database's file name, in the settings folder.
 pub(crate) const HISTORY_FILE_NAME: &str = "history.sqlite";
 
-/// DbRover's directories on this machine (`~/Library/Application Support/dbrover` on macOS).
+/// eframe's saved state, in the data folder.
+pub(crate) const WINDOW_STATE_FILE_NAME: &str = "app.ron";
+
+/// The commands the user trusted, in the data folder.
+pub(crate) const TRUSTED_COMMANDS_FILE_NAME: &str = "trusted_commands.toml";
+
+/// DbRover's folders on this machine: `~/.config/dbrover` for the settings and
+/// `~/.local/share/dbrover` for the machine's own files. See `docs/settings-folders.md`.
 #[derive(Debug, Clone)]
 pub struct AppPaths {
-    dirs: ProjectDirs,
+    folders: InstallFolders,
     home: PathBuf,
 }
 
 impl AppPaths {
-    /// Resolves the platform directories, or `None` if the OS reports no home directory.
+    /// DbRover's default folders, or `None` if the OS reports no home directory.
     pub fn discover() -> Option<Self> {
-        Self::named(APP_NAME)
-    }
-
-    /// The directories of [`PREVIOUS_APP_NAME`], which may not exist.
-    pub fn discover_previous() -> Option<Self> {
-        Self::named(PREVIOUS_APP_NAME)
-    }
-
-    fn named(name: &str) -> Option<Self> {
+        let base = BaseDirs::new()?;
         Some(Self {
-            dirs: ProjectDirs::from("", "", name)?,
-            home: BaseDirs::new()?.home_dir().to_owned(),
+            folders: default_folders(&base),
+            home: base.home_dir().to_owned(),
         })
     }
 
+    /// Where earlier versions kept their files, newest first, whether or not they exist: this
+    /// name's platform folders (`~/Library/Application Support/dbrover` on macOS), then
+    /// [`PREVIOUS_APP_NAME`]'s.
+    pub fn previous_installs() -> Vec<InstallFolders> {
+        [APP_NAME, PREVIOUS_APP_NAME]
+            .into_iter()
+            .filter_map(|name| ProjectDirs::from("", "", name))
+            .map(|dirs| InstallFolders::of(&dirs))
+            .collect()
+    }
+
+    /// These paths, but in `folders`: a previous install's, for a session whose copy failed.
+    pub fn in_folders(&self, folders: InstallFolders) -> Self {
+        Self {
+            folders,
+            home: self.home.clone(),
+        }
+    }
+
     /// The folders this name keeps its files in.
-    pub fn folders(&self) -> InstallFolders {
-        InstallFolders::of(&self.dirs)
+    pub fn folders(&self) -> &InstallFolders {
+        &self.folders
     }
 
     /// OpenSSH's file of trusted host keys, which SSH tunnels share with `ssh`. Not
@@ -52,62 +70,126 @@ impl AppPaths {
         self.home.join(".ssh").join("known_hosts")
     }
 
-    /// eframe's saved state: the window, the layout and open tabs. Where eframe would put it
-    /// for [`APP_NAME`], but following these paths when they are another name's. Not guaranteed
-    /// to exist yet.
+    /// eframe's saved state: the window, the layout and open tabs. Not guaranteed to exist
+    /// yet.
     pub fn window_state_file(&self) -> PathBuf {
-        self.dirs.data_dir().join("app.ron")
+        self.folders.data.join(WINDOW_STATE_FILE_NAME)
     }
 
     /// Rolling log files. Not guaranteed to exist yet.
     pub fn logs_dir(&self) -> PathBuf {
-        self.dirs.data_dir().join("logs")
+        self.folders.data.join("logs")
     }
 
     /// Saved data sources. Not guaranteed to exist yet.
     pub fn data_sources_file(&self) -> PathBuf {
-        self.dirs.config_dir().join("data_sources.toml")
+        self.folders.settings.join("data_sources.toml")
     }
 
     /// Projects and their MCP permissions. Not guaranteed to exist yet.
     pub fn projects_file(&self) -> PathBuf {
-        self.dirs.config_dir().join("projects.toml")
+        self.folders.settings.join("projects.toml")
     }
 
     /// ER diagram files, one folder per project. Not guaranteed to exist yet.
     pub fn diagrams_dir(&self) -> PathBuf {
-        self.dirs.config_dir().join("diagrams")
+        self.folders.settings.join("diagrams")
     }
 
     /// Query console files, one folder per data source. Not guaranteed to exist yet.
     pub fn consoles_dir(&self) -> PathBuf {
-        self.dirs.config_dir().join("consoles")
+        self.folders.settings.join("consoles")
     }
 
     /// Key bindings, if the user wrote any. Not guaranteed to exist.
     pub fn keymap_file(&self) -> PathBuf {
-        self.dirs.config_dir().join("keymap.toml")
+        self.folders.settings.join("keymap.toml")
     }
 
     /// Preferences, such as how SQL is formatted. Not guaranteed to exist.
     pub fn settings_file(&self) -> PathBuf {
-        self.dirs.config_dir().join("settings.toml")
+        self.folders.settings.join("settings.toml")
     }
 
     /// `actions.toml`, `snippets.toml` and `theme.toml`, if the user wrote them, beside the
     /// keymap.
     pub fn custom_files(&self) -> CustomFiles {
-        CustomFiles::new(self.dirs.config_dir())
+        CustomFiles::new(&self.folders.settings)
     }
 
     /// The command actions the user chose to run. In the data folder rather than beside
     /// `actions.toml`, so a config folder copied from elsewhere brings no trust with it.
     pub fn trusted_commands_file(&self) -> TrustedCommandsFile {
-        TrustedCommandsFile::new(self.dirs.data_dir().join("trusted_commands.toml"))
+        TrustedCommandsFile::new(self.folders.data.join(TRUSTED_COMMANDS_FILE_NAME))
     }
 
     /// The query history database. Not guaranteed to exist yet.
     pub fn history_file(&self) -> PathBuf {
-        self.dirs.config_dir().join(HISTORY_FILE_NAME)
+        self.folders.settings.join(HISTORY_FILE_NAME)
+    }
+}
+
+/// `~/.config/dbrover` and `~/.local/share/dbrover`. On Linux and the BSDs the XDG variables
+/// move them, as they always have; on macOS and Windows they don't count, because an app
+/// started from the Dock or the Start menu doesn't see a shell's variables, and would use
+/// another folder than the same app started from a terminal.
+fn default_folders(base: &BaseDirs) -> InstallFolders {
+    if cfg!(any(target_os = "macos", target_os = "windows")) {
+        InstallFolders::under_home(base.home_dir())
+    } else {
+        InstallFolders {
+            settings: base.config_dir().join(APP_NAME),
+            data: base.data_dir().join(APP_NAME),
+        }
+    }
+}
+
+impl InstallFolders {
+    /// The default folders in `home`, ignoring the XDG variables.
+    fn under_home(home: &Path) -> Self {
+        Self {
+            settings: home.join(".config").join(APP_NAME),
+            data: home.join(".local").join("share").join(APP_NAME),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keeps_settings_in_dot_config_and_the_rest_in_dot_local_share() {
+        let folders = InstallFolders::under_home(Path::new("/home/ada"));
+
+        assert_eq!(folders.settings, Path::new("/home/ada/.config/dbrover"));
+        assert_eq!(folders.data, Path::new("/home/ada/.local/share/dbrover"));
+    }
+
+    #[test]
+    fn the_default_folders_are_under_the_home_folder() {
+        let Some(paths) = AppPaths::discover() else {
+            return;
+        };
+        let folders = paths.folders();
+        assert!(folders.settings.ends_with("dbrover"));
+        assert_ne!(folders.settings, folders.data);
+        if cfg!(any(target_os = "macos", target_os = "windows")) {
+            assert_eq!(folders, &InstallFolders::under_home(&paths.home));
+        }
+    }
+
+    #[test]
+    fn previous_installs_are_this_name_then_the_previous_one() {
+        let previous = AppPaths::previous_installs();
+
+        assert_eq!(previous.len(), 2);
+        assert!(previous[0].settings.to_string_lossy().contains(APP_NAME));
+        assert!(
+            previous[1]
+                .settings
+                .to_string_lossy()
+                .contains(PREVIOUS_APP_NAME)
+        );
     }
 }

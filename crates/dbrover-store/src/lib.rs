@@ -48,6 +48,7 @@ pub use portable::{
 };
 pub use previous_install::{
     Adoption, AdoptionError, CopiedInstall, InstallFolders, adopt_previous_install,
+    find_previous_install,
 };
 pub use projects::{
     InvalidSchemaScope, InvalidSlug, InvalidTimeout, McpOverrides, McpPermissions, Project,
