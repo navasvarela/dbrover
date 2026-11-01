@@ -55,6 +55,25 @@ the gap is the separator, painted in `base`.
   and UI tests find "Run all" rather than a private-use character.
 - The status bar is a single line of small, weak text with a dot for the engine's state.
 
+## Buttons, menus and dialogs
+
+Controls are 24 points tall and buttons padded 10 × 4 (`theme.rs` names each value), roomier
+than egui's defaults but still dense where the data is. The design is in
+[Buttons and menus](../buttons-and-menus.md).
+
+- **Buttons have a role.** A secondary button (egui's `ui.button`) and a field are outlined
+  in `border` at rest. A screen's one main action is `form::primary_button`, filled with
+  `primary`; an action that destroys something is `form::danger_button`, filled with `error`.
+  Both step towards the text colour when hovered and pressed (`Palette::hovered`,
+  `Palette::pressed`), and text on every step is held to WCAG AA. Icon buttons are square.
+- **Menus are DbRover's, not egui's.** egui's own menu style pads entries by 2 × 0 points;
+  `theme::menu_style` gives them a control's height plus a little, button padding, and a
+  hover highlight with no gaps between entries. Open menus with `widgets::context_menu` and
+  `widgets::menu_button`, never `Response::context_menu` or `Ui::menu_button`, so a menu and
+  its submenus take the style.
+- **Dialogs open through `widgets::dialog`**, which gives a `Modal` the window margin instead of
+  egui's popup frame, sized for menus.
+
 ## Typography
 
 Three typefaces ship in `assets/fonts/`, each with its OFL licence:
