@@ -317,7 +317,9 @@ pub fn show(ui: &mut Ui, tab: &mut ChartTab, source: &Source<'_>) {
         return;
     }
     let font = TextStyle::Small.resolve(ui.style());
-    let note_height = ui.text_style_height(&TextStyle::Body) + ui.spacing().item_spacing.y;
+    // A label's row is as tall as a control, not only its text: room for less clipped the
+    // line under the chart at the bottom of the panel.
+    let note_height = ui.spacing().interact_size.y + ui.spacing().item_spacing.y;
     let available = ui.available_size() - Vec2::new(0.0, note_height);
     let (response, painter) = ui.allocate_painter(available.max(Vec2::ZERO), Sense::hover());
     let size = Size {
