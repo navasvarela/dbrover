@@ -1734,6 +1734,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "dbrover-chart"
+version = "0.20.0"
+dependencies = [
+ "dbrover-core",
+ "jiff",
+]
+
+[[package]]
 name = "dbrover-core"
 version = "0.20.0"
 dependencies = [

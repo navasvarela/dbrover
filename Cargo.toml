@@ -11,6 +11,7 @@ repository = "https://github.com/navasvarela/dbrover"
 publish = false
 
 [workspace.dependencies]
+dbrover-chart = { path = "crates/dbrover-chart" }
 dbrover-core = { path = "crates/dbrover-core" }
 dbrover-diagram = { path = "crates/dbrover-diagram" }
 dbrover-driver-mongodb = { path = "crates/dbrover-driver-mongodb" }

@@ -1,0 +1,16 @@
+[package]
+name = "dbrover-chart"
+description = "Charts of a result's columns: which columns to draw, read from rows as text, laid out as marks to paint or export, with no UI in it."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+dbrover-core.workspace = true
+jiff.workspace = true
+
+[lints]
+workspace = true
