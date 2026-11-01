@@ -142,8 +142,10 @@ Settings…**.
 DbRover was called dbdesk until version 0.12. Another database client called DBDesk was there
 first, so this one has a name of its own; nothing else changed.
 
-**Your data comes along.** The first time DbRover starts, it copies dbdesk's folders (the same
-places as in [Where DbRover keeps its files](files.md), with `dbdesk` instead of `dbrover`):
+**Your data comes along.** The first time DbRover starts, it copies dbdesk's folders
+(`~/Library/Application Support/dbdesk/` on macOS, `~/.config/dbdesk/` and
+`~/.local/share/dbdesk/` on Linux, `%APPDATA%\dbdesk\` on Windows) to
+[DbRover's](files.md):
 your data sources, projects, consoles, history, settings, shortcuts, actions, snippets and
 theme. A window then says where they were copied from. dbdesk's folder is left as it was, with
 a note in it; DbRover doesn't read it again, so once DbRover shows everything you had, you can
@@ -169,6 +171,21 @@ project ([Copy the configuration](mcp.md#2-copy-the-configuration)) and replace 
 entry. On macOS the old path, `…/Contents/MacOS/dbdesk`, keeps working until DbRover 0.16, and
 the server says so in the client's log. Elsewhere the old path runs the old dbdesk, with its own
 copy of your data, until you remove it.
+
+## Settings moved to ~/.config/dbrover
+
+From version 0.21, DbRover keeps your settings in `~/.config/dbrover` and this machine's own
+files in `~/.local/share/dbrover` on every platform (see
+[Where DbRover keeps its files](files.md)). On Linux nothing moves. On macOS and Windows, the
+first start of 0.21 copies what DbRover kept in `~/Library/Application Support/dbrover/` or
+`%APPDATA%\dbrover\`: your data sources, projects, consoles, diagrams, history, settings,
+shortcuts, actions, snippets and theme, the window's layout, and the commands you trusted. A
+window then says where they were copied from and to.
+
+The old folder is left as it was, with a note in it; DbRover doesn't read it again, so once
+DbRover shows everything you had, you can delete it. Saved passwords stay in the keychain, and
+MCP clients need no change. If the copy fails, DbRover uses the old folder for that session,
+says why, and tries again the next time it starts.
 
 ## Build from source
 

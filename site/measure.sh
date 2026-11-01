@@ -38,7 +38,7 @@ plist_value() {
 }
 
 # The `open` arguments that point each app at its throwaway configuration.
-#  - DbRover keeps its files under $HOME (~/Library/Application Support/dbrover), so a home of
+#  - DbRover keeps its files under $HOME (~/.config/dbrover, ~/.local/share/dbrover), so a home of
 #    its own is a clean start. Saved passwords still go to the login keychain.
 #  - DBX runs on the user's own home: it needs the login keychain as it starts, and macOS finds
 #    that keychain through $HOME. Its folder (~/Library/Application Support/com.dbx.app) is

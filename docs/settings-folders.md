@@ -133,10 +133,12 @@ settings folder" later.
 **Use the default folder** follows the same rules with the default folder, which may hold the
 settings from before the switch, or nothing.
 
-Then **Restart DbRover** writes `settings_folder.toml` and restarts through the updater's
-existing relaunch. The switch takes effect at the next start because every file the engine
-uses is opened at start-up from the paths it was given; swapping them while it runs would mean
-reloading every store, consoles with unsaved edits included.
+Then **Restart DbRover** quits the usual way (unsaved consoles and open transactions are dealt
+with first), writes `settings_folder.toml` once the engine has stopped and everything is
+written, and starts again through the updater's existing relaunch. The switch takes effect at
+the next start because every file the engine uses is opened at start-up from the paths it was
+given; swapping them while it runs would mean reloading every store, consoles with unsaved edits
+included.
 
 **The copy happens at that next start, not in the running app,** and through the same code as
 the migration, with `copy_from` as the previous install and the chosen folder as the new one.

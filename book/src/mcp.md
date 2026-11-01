@@ -71,6 +71,18 @@ One entry serves one project. For several projects, add one entry per project.
 The client starts DbRover itself, as `dbrover mcp --project <slug>`, and talks to it over standard
 input and output. The DbRover window doesn't need to be open.
 
+### Another settings folder
+
+The server finds DbRover's settings as the app does, including a folder chosen in **Settings ›
+Files** (see [Choosing the settings folder](files.md#choosing-the-settings-folder)), so a
+client needs no change after you choose one. When DbRover itself was started with
+`--config-dir` or `DBROVER_CONFIG_DIR`, which a client doesn't get, the copied entry adds the
+folder to the arguments:
+
+```json
+"args": ["mcp", "--project", "analytics", "--config-dir", "/Users/ada/work/dbrover"]
+```
+
 On macOS, the first time the server reads a saved password, the system asks whether `dbrover`
 may use it, as it does for the app; choose **Always Allow**. Until DbRover's builds are signed,
 it asks again after each update.
@@ -294,6 +306,9 @@ The client's log for the server shows what DbRover said when it stopped:
   you have trusted it in DbRover. Connect to the data source in DbRover once, choose
   **Run and connect**, then restart the server.
 - **"unknown argument"**: the client's `args` have a typo; each one is checked.
+- **"the settings folder chosen in Settings, …, isn't there"**: the folder you chose is on a
+  drive that isn't connected, or was moved. Connect it, or choose another in **Settings ›
+  Files**. The server stops rather than serve the default folder's projects.
 
 The server reads `projects.toml`, `data_sources.toml` and `trusted_commands.toml` when it
 starts. After changing any of them, restart the server.

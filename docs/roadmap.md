@@ -916,7 +916,8 @@ Customisation without rebuilding DbRover, from files to commands to plugins. The
   terminals) were not run by hand in the app for it.
 - **H3 — WebAssembly plugins (later):** sandboxed and capability-based, over the same extension
   points, started once at least three real needs outgrow H1 and H2.
-- **H4 — Settings folders (M):** designed on 2026-11-01 in [Settings folders](settings-folders.md).
+- **H4 — Settings folders (M):** built; designed on 2026-11-01 in
+  [Settings folders](settings-folders.md).
   `~/.config/dbrover` is the settings folder on every platform, and the settings folder can be
   one the user chooses.
   - **Defaults:** settings in `~/.config/dbrover` and the machine's own files (`app.ron`,
@@ -946,6 +947,23 @@ Customisation without rebuilding DbRover, from files to commands to plugins. The
   **Exit:** on macOS, an install from 0.20 starts with everything it had, read from
   `~/.config/dbrover`; choosing an empty synced folder and restarting copies the settings
   there, and an MCP client configured before the switch serves the project from it.
+
+  **H4 demo note:** built. A macOS install that kept its files in
+  `~/Library/Application Support/dbrover` starts with them in `~/.config/dbrover`, and its
+  window layout and trusted commands in `~/.local/share/dbrover`; the window says where they
+  came from, and the old folder has a note in it. **View › Settings… › Files** shows the folder
+  and where it came from. **Choose…** an empty folder, keep **Copy my settings there**, click
+  **Restart DbRover**: DbRover quits, starts again, and reads everything from the new folder,
+  which `settings_folder.toml` in the data folder names. A folder with another install's files
+  is used as it is, and `~/Documents` is refused. Unmount the folder's drive and DbRover starts on
+  the default folder and says why; `dbrover mcp` stops with the folder's name instead.
+  `dbrover --config-dir ~/work/dbrover` and `DBROVER_CONFIG_DIR` set the folder for one start,
+  lock the Files page, and add `--config-dir` to Copy MCP configuration. Covered by migration
+  tests of every previous layout against temporary folders, store tests of the order, the
+  choice file, the pending copy and the folder checks, app tests of the start-up decisions and
+  the Files page, and the `mcp_subcommand` test running the real binary with the flag, the
+  variable, a saved choice and a missing folder. The relaunch and the copy at the next start
+  were not run by hand in the app for this note.
 
 ## Well-rounded track
 
