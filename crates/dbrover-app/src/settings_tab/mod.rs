@@ -28,6 +28,7 @@ use self::search::Found;
 use self::setting::{Category, Setting};
 use crate::command_runs::CommandRuns;
 use crate::custom_files::CustomFiles;
+use crate::folder_switch::{FolderInUse, FolderRequest};
 use crate::form;
 use crate::icons;
 use crate::keymap::Keymap;
@@ -72,6 +73,8 @@ pub enum SettingsAction {
     },
     /// Put the entry an MCP client needs for the project on the clipboard.
     CopyMcpConfiguration(ProjectId),
+    /// Change the settings folder, from Files.
+    SettingsFolder(FolderRequest),
 }
 
 /// What the tab needs of the app to draw itself.
@@ -90,6 +93,8 @@ pub struct SettingsView<'a> {
     pub data_sources: &'a DataSources,
     /// The MCP defaults as saved, which each project's settings start from.
     pub mcp_defaults: &'a McpPermissions,
+    /// The settings folder in use; unknown in tests that don't give one.
+    pub folder: Option<&'a FolderInUse>,
 }
 
 /// A page of the tab, listed in the sidebar.
@@ -391,6 +396,8 @@ fn settings_page(
         theme,
         mcp: view.mcp,
         mcp_to_save: None,
+        folder: view.folder,
+        folder_request: None,
     };
     let mut opened = None;
     let defaults = view.mcp_defaults;
@@ -438,6 +445,9 @@ fn settings_page(
     }
     if let Some(defaults) = draft.mcp_to_save {
         actions.push(SettingsAction::SaveMcpDefaults(defaults));
+    }
+    if let Some(request) = draft.folder_request {
+        actions.push(SettingsAction::SettingsFolder(request));
     }
     opened
 }

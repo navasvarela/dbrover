@@ -4,12 +4,28 @@
 use egui::ThemePreference;
 use egui_kittest::kittest::NodeT;
 
+use crate::updates::UpdateStatus;
+
 use super::*;
 
 fn start_without_data_sources(dir: &Path) -> Harness<'static, DbRoverApp> {
     let (_layer, feed) = log_console::pipeline();
     let mut harness = start_app(dir, feed);
     step_until_visible(&mut harness, "Engine running");
+    // The update check is the last thing the engine reports at startup. Until it has, each
+    // event that lands asks for repaints, and a `Harness::run` in the test can step past
+    // kittest's 4 frames on a busy CI runner (`Repaint causes: EguiRepaint`).
+    // TODO: drop this once `start_app` waits for the startup itself (#365).
+    step_until(
+        &mut harness,
+        "the engine finishing its startup",
+        |harness| {
+            !matches!(
+                harness.state().updates.status(),
+                UpdateStatus::NotChecked | UpdateStatus::Checking
+            )
+        },
+    );
     harness
 }
 

@@ -11,6 +11,7 @@ use dbrover_store::{
 };
 
 use crate::folder_notice::FolderNotice;
+use crate::folder_switch::FolderInUse;
 use crate::previous_install::{self, Adopted};
 
 /// The folder the start-up settled on, before anything is copied into it.
@@ -101,6 +102,7 @@ impl Decision {
             adopted,
             folder,
             default_settings: default.folders().settings.clone(),
+            chosen_file: default.chosen_folder_file(),
             unavailable,
         }
     }
@@ -143,6 +145,9 @@ pub struct Session {
     pub adopted: Adopted,
     pub folder: SettingsFolder,
     default_settings: PathBuf,
+    /// In the default data folder, even when a failed copy leaves this session on a previous
+    /// install's folders.
+    chosen_file: ChosenFolderFile,
     unavailable: Option<Unavailable>,
 }
 
@@ -182,6 +187,16 @@ impl Session {
                 default: self.default_settings.clone(),
             }),
             None => self.adopted.notice(),
+        }
+    }
+
+    /// The folder in use, for Settings › Files to show and change.
+    pub fn folder_in_use(&self) -> FolderInUse {
+        FolderInUse {
+            folders: self.paths().folders().clone(),
+            source: self.folder.clone(),
+            default_settings: self.default_settings.clone(),
+            chosen_file: self.chosen_file.clone(),
         }
     }
 
