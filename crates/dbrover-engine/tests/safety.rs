@@ -8,7 +8,7 @@ mod common;
 use std::sync::Arc;
 
 use common::{
-    TestEngine, clickhouse_test_server, mongo_test_server, postgres_test_server,
+    TestEngine, clickhouse_test_server, cql_test_servers, mongo_test_server, postgres_test_server,
     redis_test_servers, search_test_servers, sqlite_data_source, sqlite_database,
 };
 use dbrover_core::{
@@ -596,6 +596,55 @@ fn a_read_only_search_data_source_refuses_delete_by_query() {
                 request,
             );
             assert_eq!(failure, expected, "{name}: {request}");
+        }
+    }
+}
+
+/// N4's exit: a read-only Cassandra or ScyllaDB data source refuses an `INSERT` before sending
+/// it, and still reads. Needs `DBROVER_TEST_SCYLLA_URL` or `DBROVER_TEST_CASSANDRA_URL`;
+/// skipped without.
+#[test]
+fn a_read_only_cql_data_source_refuses_insert() {
+    for (name, config, password) in cql_test_servers() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+        engine.expect_started(vec![]);
+        let cql = DataSource {
+            id: DataSourceId::generate(),
+            name: "cql".to_owned(),
+            color: None,
+            safety: SafetyLevel::Normal,
+            project: None,
+            mcp_login: None,
+            config: ConnectionConfig::Cassandra(config),
+        };
+        let production = read_only(&cql);
+        save(&mut engine, &production, password);
+        let cases = [
+            (
+                "INSERT INTO dbrover_engine_safety.t (id) VALUES (1)",
+                Some(refused("changes data")),
+            ),
+            (
+                "BEGIN BATCH DELETE FROM a.t WHERE id = 1; APPLY BATCH",
+                Some(refused("changes data")),
+            ),
+            (
+                "DROP KEYSPACE dbrover_engine_safety",
+                Some(refused("changes the schema")),
+            ),
+            ("LIST ROLES", Some(refused("administers the database"))),
+            ("SELECT release_version FROM system.local", None),
+        ];
+        for (number, (statement, expected)) in cases.into_iter().enumerate() {
+            let failure = run(
+                &mut engine,
+                READ_ONLY_CONSOLE,
+                production.id,
+                number as u64 + 1,
+                statement,
+            );
+            assert_eq!(failure, expected, "{name}: {statement}");
         }
     }
 }

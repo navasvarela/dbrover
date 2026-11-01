@@ -58,7 +58,8 @@ Planned separately:
   user with the `read` role. Elasticsearch and OpenSearch (N3) are
   built: Dev Tools requests in the console, hits as documents paged through a point in time,
   `_sql` as rows, indices and their fields in the explorer, hits edited in the grid, and MCP
-  through a user with read-only privileges.
+  through a user with read-only privileges. Cassandra and ScyllaDB (N4) are being built: their
+  data source and CQL console come first.
 
 Left out on purpose:
 

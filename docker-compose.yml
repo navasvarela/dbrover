@@ -305,6 +305,67 @@ services:
       timeout: 5s
       retries: 90
 
+  # ScyllaDB as one node on one core, with password authentication and permissions, plain CQL
+  # on 59042 and CQL over TLS on 59142, with the certificate the test authority in
+  # docker/postgres-tls signed. `--developer-mode` skips the checks of the host's disks and
+  # memory that a production node makes. ScyllaDB 2026 makes no default superuser, so the
+  # health check creates `dbrover` through the node's maintenance socket, which takes CQL
+  # without a login from inside the container only.
+  scylla:
+    image: scylladb/scylla:2026.3.4
+    ports:
+      - "59042:9042"
+      - "59142:9142"
+    volumes:
+      - ./docker/postgres-tls:/tls:ro
+    command: >-
+      --smp 1 --memory 1G --overprovisioned 1 --developer-mode 1
+      --authenticator PasswordAuthenticator --authorizer CassandraAuthorizer
+      --native-transport-port-ssl 9142
+      --client-encryption-options enabled=true
+      --client-encryption-options certificate=/tls/server.crt
+      --client-encryption-options keyfile=/tls/server.key
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          cqlsh /var/lib/scylla/cql.m -e "CREATE ROLE IF NOT EXISTS dbrover WITH
+          PASSWORD = 'dbrover' AND LOGIN = true AND SUPERUSER = true"
+          && cqlsh -u dbrover -p dbrover -e 'SELECT release_version FROM system.local'
+      interval: 2s
+      timeout: 10s
+      retries: 90
+
+  # Apache Cassandra 5 as one node with a 512 MB heap, password authentication and
+  # permissions. It takes about a minute to start, so it isn't started with the others: the
+  # nightly job starts it (`docker compose --profile nightly up -d --wait cassandra`) to run
+  # the Cassandra tests (docs/nosql.md, N4). The health check makes `dbrover` as the default
+  # `cassandra` superuser.
+  cassandra:
+    image: cassandra:5.0.9
+    profiles: [nightly]
+    ports:
+      - "59043:9042"
+    environment:
+      MAX_HEAP_SIZE: 512M
+      HEAP_NEWSIZE: 128M
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        sed -i -e 's/^authenticator: .*/authenticator: PasswordAuthenticator/'
+        -e 's/^authorizer: .*/authorizer: CassandraAuthorizer/' /etc/cassandra/cassandra.yaml
+        && exec docker-entrypoint.sh cassandra -f
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          cqlsh -u cassandra -p cassandra -e "CREATE ROLE IF NOT EXISTS dbrover WITH
+          PASSWORD = 'dbrover' AND LOGIN = true AND SUPERUSER = true"
+      interval: 3s
+      timeout: 10s
+      retries: 60
+
   # OpenSSH on Alpine (docker/ssh), for the SSH tunnel tests: signs in `dbrover` with the test
   # keys there or its password, and forwards only to the postgres service. Built from a few
   # lines rather than pulled, so it stays a 10 MB image with fixed host and client keys.

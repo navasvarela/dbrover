@@ -13,9 +13,10 @@ use std::time::Duration;
 use std::str::FromStr;
 
 use dbrover_core::{
-    ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind, ElasticsearchAuth,
-    ElasticsearchConfig, MongoConfig, MysqlConfig, Password, PostgresConfig, RedisConfig,
-    SafetyLevel, ServerConfig, SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode,
+    CassandraConfig, ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind,
+    ElasticsearchAuth, ElasticsearchConfig, MongoConfig, MysqlConfig, Password, PostgresConfig,
+    RedisConfig, SafetyLevel, ServerConfig, SqlServerConfig, SqliteConfig, SshConfig, SshLogin,
+    TlsMode,
 };
 use dbrover_engine::{
     Command, EngineConfig, EngineHandle, Event, InstallError, InstallSupport, InstalledUpdate,
@@ -511,6 +512,37 @@ pub fn search_test_servers() -> Vec<(&'static str, ElasticsearchConfig, Password
         };
         // A node without security takes an empty password, saved as a user would save one
         // in the dialog, so the engine doesn't ask for it.
+        servers.push((name, config, PasswordUpdate::Set(Password::new(password))));
+    }
+    servers
+}
+
+/// The CQL test servers, from `DBROVER_TEST_SCYLLA_URL` and `DBROVER_TEST_CASSANDRA_URL`
+/// (`cql://user:password@host:port`), each with its name.
+pub fn cql_test_servers() -> Vec<(&'static str, CassandraConfig, PasswordUpdate)> {
+    let mut servers = Vec::new();
+    for name in ["DBROVER_TEST_SCYLLA_URL", "DBROVER_TEST_CASSANDRA_URL"] {
+        let Some(url) = std::env::var(name).ok().filter(|url| !url.is_empty()) else {
+            eprintln!("skipping: {name} is not set");
+            continue;
+        };
+        let rest = url.strip_prefix("cql://").expect("a cql:// URL");
+        let (credentials, address) = rest.rsplit_once('@').expect("user:password@host:port");
+        let (user, password) = credentials.split_once(':').expect("user:password");
+        let (host, port) = address.rsplit_once(':').expect("host:port");
+        let config = CassandraConfig {
+            server: ServerConfig {
+                host: host.to_owned(),
+                port: u16::from_str(port).expect("numeric port").into(),
+                database: String::new(),
+                user: user.to_owned(),
+                tls: TlsMode::Disable,
+                ssh: None,
+                password_command: None,
+            },
+            local_datacenter: String::new(),
+            statement_timeout: None,
+        };
         servers.push((name, config, PasswordUpdate::Set(Password::new(password))));
     }
     servers

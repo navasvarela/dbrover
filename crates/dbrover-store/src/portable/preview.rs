@@ -451,6 +451,15 @@ fn data_source_settings(data_source: &DataSource, names: &ProjectNames) -> Setti
                 settings.push(("Signs in with", "an API key".to_owned()));
             }
         }
+        ConnectionConfig::Cassandra(config) => {
+            server_settings(&config.server, &mut settings);
+            if !config.local_datacenter.is_empty() {
+                settings.push(("Local datacenter", config.local_datacenter.clone()));
+            }
+            if let Some(seconds) = config.statement_timeout {
+                settings.push(("Statement timeout", format!("{seconds} s")));
+            }
+        }
         ConnectionConfig::Mongo(config) => {
             server_settings(&config.server, &mut settings);
             if !config.auth_database.is_empty() {
@@ -534,6 +543,7 @@ fn paths(config: &ConnectionConfig) -> Vec<(&'static str, &Path)> {
         ConnectionConfig::Redis(config) => &config.server,
         ConnectionConfig::Mongo(config) => &config.server,
         ConnectionConfig::Elasticsearch(config) => &config.server,
+        ConnectionConfig::Cassandra(config) => &config.server,
     };
     let ca_file = match &server.tls {
         TlsMode::VerifyFull {

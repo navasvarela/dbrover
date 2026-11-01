@@ -46,6 +46,7 @@ pub enum Setting {
     SshKeyFile,
     AuthDatabase,
     ConnectionString,
+    LocalDatacenter,
 }
 
 impl fmt::Display for Setting {
@@ -63,6 +64,7 @@ impl fmt::Display for Setting {
             Self::SshKeyFile => "the SSH key file",
             Self::AuthDatabase => "the authentication database",
             Self::ConnectionString => "the connection string",
+            Self::LocalDatacenter => "the local datacenter",
         })
     }
 }

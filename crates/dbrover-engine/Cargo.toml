@@ -13,6 +13,7 @@ async-trait.workspace = true
 cargo-packager-updater.workspace = true
 dbrover-core.workspace = true
 dbrover-picture.workspace = true
+dbrover-driver-cassandra.workspace = true
 dbrover-driver-clickhouse.workspace = true
 dbrover-driver-elasticsearch.workspace = true
 dbrover-driver-mongodb.workspace = true

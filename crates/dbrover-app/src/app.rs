@@ -2950,6 +2950,62 @@ mod tests {
         );
     }
 
+    /// A Cassandra data source names its keyspace in the database's place, which may be left
+    /// empty, and saves its local datacenter and statement timeout.
+    #[test]
+    fn adds_a_cassandra_data_source_with_its_datacenter_and_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "No data sources yet.");
+
+        harness
+            .get_all_by_label("New data source")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("Cassandra / ScyllaDB").click();
+        harness.run();
+        harness.get_by_label_contains("New Cassandra / ScyllaDB data source");
+        assert!(harness.query_by_label("Database").is_none());
+        for (label, text) in [
+            ("Keyspace", "shop"),
+            ("Local datacenter", "dc1"),
+            ("Statement timeout", "30"),
+        ] {
+            harness
+                .get_by_role_and_label(Role::TextInput, label)
+                .focus();
+            harness.run();
+            harness
+                .get_by_role_and_label(Role::TextInput, label)
+                .type_text(text);
+            harness.run();
+        }
+        harness.get_by_label("Save").click();
+
+        step_until_visible(&mut harness, "Expand shop@localhost");
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        let [saved] = saved.as_slice() else {
+            panic!("expected one data source, got {saved:?}");
+        };
+        let dbrover_core::ConnectionConfig::Cassandra(config) = &saved.config else {
+            panic!("expected a Cassandra data source, got {saved:?}");
+        };
+        assert_eq!(
+            (
+                config.server.database.as_str(),
+                config.server.port.to_string(),
+                config.local_datacenter.as_str(),
+                config.statement_timeout.map(std::num::NonZeroU32::get),
+            ),
+            ("shop", "9042".to_owned(), "dc1", Some(30))
+        );
+    }
+
     #[test]
     fn adds_a_clickhouse_data_source_whose_port_follows_its_tls_mode() {
         let dir = tempfile::tempdir().unwrap();

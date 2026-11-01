@@ -7,13 +7,14 @@
 //! asks for (`docs/well-rounded.md`, Risks): copying the whole data source and removing
 //! secrets would let a new secret through silently.
 
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
 use dbrover_core::{
-    ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase,
-    ElasticsearchAuth, ElasticsearchConfig, McpLogin, MongoConfig, MysqlConfig, PasswordCommand,
-    Port, PostgresConfig, ProjectId, RedisConfig, SafetyLevel, ServerConfig, SourceColor,
-    SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode,
+    CassandraConfig, ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DuckDbConfig,
+    DuckDbDatabase, ElasticsearchAuth, ElasticsearchConfig, McpLogin, MongoConfig, MysqlConfig,
+    PasswordCommand, Port, PostgresConfig, ProjectId, RedisConfig, SafetyLevel, ServerConfig,
+    SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode,
 };
 use serde::{Deserialize, Serialize};
 
@@ -165,6 +166,7 @@ enum PortableConfig {
     #[serde(rename = "mongodb")]
     Mongo(PortableMongo),
     Elasticsearch(PortableElasticsearch),
+    Cassandra(PortableCassandra),
 }
 
 impl PortableConfig {
@@ -205,6 +207,15 @@ impl PortableConfig {
                     auth: *auth,
                 })
             }
+            ConnectionConfig::Cassandra(CassandraConfig {
+                server,
+                local_datacenter,
+                statement_timeout,
+            }) => Self::Cassandra(PortableCassandra {
+                server: PortableServer::export(server, path),
+                local_datacenter: local_datacenter.clone(),
+                statement_timeout: *statement_timeout,
+            }),
             ConnectionConfig::Sqlite(SqliteConfig {
                 path: file,
                 read_only,
@@ -263,6 +274,15 @@ impl PortableConfig {
                     auth,
                 })
             }
+            Self::Cassandra(PortableCassandra {
+                server,
+                local_datacenter,
+                statement_timeout,
+            }) => ConnectionConfig::Cassandra(CassandraConfig {
+                server: server.import(path),
+                local_datacenter,
+                statement_timeout,
+            }),
             Self::Sqlite(PortableSqlite {
                 path: file,
                 read_only,
@@ -319,6 +339,18 @@ struct PortableElasticsearch {
     server: PortableServer,
     #[serde(default, skip_serializing_if = "ElasticsearchAuth::is_password")]
     auth: ElasticsearchAuth,
+}
+
+/// A Cassandra or ScyllaDB node, with its local datacenter and statement timeout written only
+/// when set, as in `data_sources.toml`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PortableCassandra {
+    #[serde(flatten)]
+    server: PortableServer,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    local_datacenter: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    statement_timeout: Option<NonZeroU32>,
 }
 
 fn default_separator() -> String {

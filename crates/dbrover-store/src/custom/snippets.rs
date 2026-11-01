@@ -316,7 +316,8 @@ mod tests {
             (
                 "[[snippet]]\ntrigger = \"sel\"\nbody = \"x\"\ndrivers = [\"pg\"]\n",
                 "snippet \"sel\": \"pg\" is not a driver; the drivers are postgres, sqlite, \
-                 mysql, sqlserver, duckdb, clickhouse, redis, mongodb, elasticsearch",
+                 mysql, sqlserver, duckdb, clickhouse, redis, mongodb, elasticsearch, \
+                 cassandra",
             ),
             (
                 "[[snippet]]\ntrigger = \"sel\"\nbody = \"x\"\nprefix = \"s\"\n",
