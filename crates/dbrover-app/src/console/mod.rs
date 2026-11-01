@@ -37,7 +37,7 @@ use dbrover_engine::{
     RunOutcome, RunPurpose, ScanApproval, SessionState, StatementFailure, StatementSummary,
     TransactionEnd, TransactionMode, WatchedFile,
 };
-use dbrover_export::{ExportColumn, ExportOptions, ExportSpec, RowSource};
+use dbrover_export::{ExportColumn, ExportContext, ExportOptions, ExportSpec, RowSource, SqlTable};
 
 use crate::export_dialog::{ExportPreview, PREVIEW_ROWS};
 use dbrover_language::redis::{KeyView, ViewShape};
@@ -421,7 +421,11 @@ impl StatementView {
 
     /// The selected columns of the selected rows, as the grid shows them, for copying, and
     /// those rows' documents when they are documents.
-    fn selection(&self, dialect: Option<Dialect>) -> Option<clipboard::Selection> {
+    fn selection(
+        &self,
+        dialect: Option<Dialect>,
+        context: ExportContext,
+    ) -> Option<clipboard::Selection> {
         let cells = self.selected_cells()?;
         let columns = cells
             .selected
@@ -450,6 +454,7 @@ impl StatementView {
             rows,
             documents: self.document_rows(&selected_rows),
             source: self.row_source(dialect).select_columns(&cells.selected),
+            context,
         })
     }
 
@@ -927,7 +932,8 @@ impl QueryConsole {
     pub fn copy(&mut self, copy: ClipboardCopy, options: &ExportOptions) -> Option<String> {
         let run = self.run.as_ref()?;
         let statement = run.statements.get(run.selected)?;
-        let selection = statement.selection(self.dialect())?;
+        let context = self.export_context(statement);
+        let selection = statement.selection(self.dialect(), context)?;
         match copy.text(&selection, options) {
             Ok(text) => Some(text),
             Err(reason) => {
@@ -1007,7 +1013,35 @@ impl QueryConsole {
                 .collect(),
             document_sample: statement.document_rows(&sample),
             source: statement.row_source(dialect),
+            context: self.export_context(statement),
         })
+    }
+
+    /// What a template is told about exporting `statement`'s rows: this data source, the
+    /// table the grid edits, and the values of the statement's own parameters.
+    fn export_context(&self, statement: &StatementView) -> ExportContext {
+        let table = statement
+            .row_source(self.dialect())
+            .table
+            .map(|table| table.name);
+        self.context_for(&statement.sql, table.as_ref())
+    }
+
+    /// What a template is told about exporting the rows of `sql`, from `table` if they come
+    /// from one.
+    pub fn context_for(&self, sql: &str, table: Option<&SqlTable>) -> ExportContext {
+        let names = self
+            .dialect()
+            .map(|dialect| dbrover_sql::parameter_names(sql, dialect))
+            .unwrap_or_default();
+        let parameters = names
+            .into_iter()
+            .map(|name| {
+                let value = self.parameters.get(&name).cloned().flatten();
+                (name, value)
+            })
+            .collect();
+        crate::export_dialog::export_context(&self.data_source_name, table, parameters)
     }
 
     /// The export of the rows the grid shows for the selected statement, in the order and

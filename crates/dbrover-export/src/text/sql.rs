@@ -89,6 +89,16 @@ pub struct SqlTable {
     pub name: String,
 }
 
+impl std::fmt::Display for SqlTable {
+    /// The name as people read it: `schema.name`, or the name alone.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.schema {
+            Some(schema) => write!(f, "{schema}.{}", self.name),
+            None => f.write_str(&self.name),
+        }
+    }
+}
+
 impl SqlTable {
     /// The name as `RowSql` takes it.
     pub fn as_table(&self) -> Table<'_> {

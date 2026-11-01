@@ -18,6 +18,13 @@ pub const TEMPLATE: &str = r#"# Your own export formats. Uncomment and change on
 #   sql-insert: rows_per_statement   parquet: compression ("zstd" or "snappy")
 #   html: document ("page" or "fragment"), null_text
 #
+# A template writes a header, then its row once a row, then a footer, in Jinja's syntax
+# (MiniJinja), and needs an extension. Every part sees columns (each with name, type and kind),
+# data_source, table, parameters and exported_at; the row also row (its values in order),
+# record (by column name) and index (from 1); the footer count. NULL is none, written as
+# nothing. Filters for exports: sql_literal, sql_name, csv and json. escape = "html" escapes
+# every value. A template reads no files, and a loop that never ends is stopped.
+#
 # Bind copying as a format to a key in keymap.toml as "export.<id>" = "cmd+alt+c".
 
 # [[export]]
@@ -34,6 +41,13 @@ pub const TEMPLATE: &str = r#"# Your own export formats. Uncomment and change on
 # format = "xlsx"
 # sheet_name = "Orders"
 # autofilter = false
+
+# [[export]]
+# id = "confluence"
+# name = "Confluence table"
+# extension = "txt"
+# header = "||{% for column in columns %} {{ column.name }} ||{% endfor %}\n"
+# row = "|{% for value in row %} {{ value }} |{% endfor %}\n"
 "#;
 
 #[cfg(test)]
@@ -52,6 +66,6 @@ mod tests {
             .collect();
         let checked = dbrover_store::parse_exports(&uncommented);
         assert!(checked.problems.is_empty(), "{:?}", checked.problems);
-        assert_eq!(checked.value.len(), 2);
+        assert_eq!(checked.value.len(), 3);
     }
 }

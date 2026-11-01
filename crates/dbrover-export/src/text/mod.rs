@@ -66,6 +66,22 @@ pub fn render(spec: &ExportSpec, columns: &[ExportColumn], rows: &[Vec<Cell>]) -
     Some(String::from_utf8_lossy(&out).into_owned())
 }
 
+/// `rows` under a header of `columns`, as text, or why they couldn't be written: what the
+/// export dialog previews and the clipboard takes, where a template's mistake must show rather
+/// than leave the text cut short. `None` for a format that only writes files.
+pub fn try_render(
+    spec: &ExportSpec,
+    columns: &[ExportColumn],
+    rows: &[Vec<Cell>],
+) -> Option<io::Result<String>> {
+    let mut format = spec.text_format()?;
+    let mut out = Vec::new();
+    Some(
+        write_all(format.as_mut(), &mut out, columns, rows)
+            .map(|()| String::from_utf8_lossy(&out).into_owned()),
+    )
+}
+
 fn write_all(
     format: &mut dyn TextFormat,
     out: &mut dyn Write,

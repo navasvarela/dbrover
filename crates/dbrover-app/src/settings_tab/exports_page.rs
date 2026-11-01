@@ -2,7 +2,7 @@
 //! wrong, and links to create and reload it. Formats are written in the file. See
 //! `docs/exports.md`.
 
-use dbrover_export::{CustomFormat, CustomFormatKind};
+use dbrover_export::{CustomFormat, CustomFormatKind, Escape};
 use dbrover_store::CustomFileKind;
 use egui::{RichText, Ui};
 
@@ -108,6 +108,19 @@ fn card(rows: &mut Rows<'_>, format: &CustomFormat, keymap: &Keymap) {
                 }
             });
         }
+        CustomFormatKind::Template(template) => {
+            let parts = [
+                ("Header", &template.header),
+                ("Row", &template.row),
+                ("Footer", &template.footer),
+            ];
+            for (part, text) in parts.into_iter().filter(|(_, text)| !text.is_empty()) {
+                rows.full(|ui| {
+                    ui.label(part);
+                    ui.label(RichText::new(text.trim_end()).monospace());
+                });
+            }
+        }
     }
 }
 
@@ -115,5 +128,9 @@ fn card(rows: &mut Rows<'_>, format: &CustomFormat, keymap: &Keymap) {
 fn kind(format: &CustomFormat) -> String {
     match &format.kind {
         CustomFormatKind::Preset(preset) => format!("Preset of {}", preset.format.name()),
+        CustomFormatKind::Template(template) => match template.escape {
+            Escape::None => "Template".to_owned(),
+            Escape::Html => "Template, values HTML-escaped".to_owned(),
+        },
     }
 }
