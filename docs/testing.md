@@ -423,11 +423,26 @@ cookie-less beacon to every page; local builds and pull requests leave it out. P
 `python3 -m http.server -d target/site`. The Pages workflow checks the landing page's links
 with `lychee --offline`, which fails on a link to a file the build didn't produce.
 
+## Coverage
+
+`just coverage` runs every test under [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov)
+(`cargo install cargo-llvm-cov`) and writes an HTML report to `target/llvm-cov/html`;
+`just coverage --open` opens it. Start the test servers first, as above, or their tests skip and
+their code counts as uncovered. The instrumented build has a target directory of its own, so the
+first run builds the whole workspace again, DuckDB included; DuckDB's prebuilt library with
+`RUSTFLAGS="--cfg dbrover_prebuilt_duckdb"` avoids compiling it (see [duckdb-prebuilt.md](duckdb-prebuilt.md)).
+
+The Coverage workflow (`.github/workflows/coverage.yml`) does the same on Linux with every test
+server, after each push to `main` and on demand (**Run workflow** on its Actions page). Its run
+summary shows the line coverage, and the run's `coverage` artifact holds `lcov.info` and the HTML
+report. Pull requests don't run it unless they change the workflow, and no check requires it.
+
 ## CI
 
 GitHub Actions: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`
 on macOS and Linux, and the mdBook build with its link check. A separate Pages workflow builds
-the website and manual on pull requests that touch them, and publishes them from `main`. On Linux the workflow starts every compose service and exports
+the website and manual on pull requests that touch them, and publishes them from `main`, and the Coverage workflow
+measures the tests' coverage on `main` (see [Coverage](#coverage)). On Linux the workflow starts every compose service and exports
 the URLs in `test-servers.env`; adding an engine's container changes those two files and not
 the workflow. GitHub can't run containers on macOS or Windows runners, so the server tests skip
 there.
