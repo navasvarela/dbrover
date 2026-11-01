@@ -534,7 +534,8 @@ names and Wayland's app id are case-sensitive, and people type them in terminals
 configuration.
 
 **The data folders stay lower case** (`~/Library/Application Support/dbrover` on macOS,
-`%APPDATA%\dbrover` on Windows), even though macOS and Windows would allow `DbRover`. The same
+`%APPDATA%\dbrover` on Windows, and since H4 `~/.config/dbrover` everywhere), even though macOS
+and Windows would allow `DbRover`. The same
 constant, `APP_NAME`, is eframe's app id, which on Wayland must match the `.desktop` file's
 name, and keeping one lower-case name for both is how dbdesk already did it.
 
@@ -622,6 +623,15 @@ under the new name, under the old one (moved, then found under the new one), und
 a failed write (returned, and the old entry kept), and deletion. The paths come from the two
 names, so the migration code exists and is tested before the rename, and does nothing while
 both names are `dbdesk`.
+
+**Generalised in H4.** When `~/.config/dbrover` became the settings folder on every platform
+(see [Settings folders](settings-folders.md)), the same code learnt to take a list of previous
+installs, newest first: DbRover's platform folders, then dbdesk's. The first whose settings
+folder exists is copied. A previous install that kept everything in one folder (macOS) is
+split while it is copied: `app.ron` and `trusted_commands.toml` go to the new data folder,
+everything else to the new settings folder, so trust never lands in a folder the user may sync.
+A switch to another settings folder in Settings › Files is copied by the same code at the next
+start.
 
 ### Updates across the rename
 

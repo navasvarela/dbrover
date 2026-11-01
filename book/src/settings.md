@@ -15,6 +15,8 @@ The sidebar lists its pages:
 - **Query history**: how long [the history](history.md) keeps statements.
 - **MCP**: what [AI assistants](mcp.md) may do in a project that doesn't say otherwise.
 - **Updates**: whether DbRover checks for a new release when it starts.
+- **Files**: the folder DbRover keeps your settings in, and **Choose…** to keep them elsewhere
+  (see [Choosing the settings folder](files.md#choosing-the-settings-folder)).
 - **Keymap**: every action's keys, from `keymap.toml` (see [Keyboard shortcuts](shortcuts.md)).
 - **Custom actions**: the actions in `actions.toml` (see
   [Actions, snippets and themes](customising.md)).
@@ -39,6 +41,8 @@ in the sidebar to leave the search.
   project settings**, and write `projects.toml`; **Discard** drops the changes. A project's
   changes are kept while you look at other pages, and its name in the sidebar has a dot until
   they are saved or discarded.
+- **Files** changes nothing until you confirm a new folder with **Restart DbRover**; DbRover
+  writes the choice as it quits, in the data folder.
 - **Keymap** and **Custom actions** show what their files hold; you change them by editing
   `keymap.toml` and `actions.toml`. At the top of each page are the file's name (hover over it
   for its full path), **Reload**, to read it again after editing it, and **Create keymap.toml**

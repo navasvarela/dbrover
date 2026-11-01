@@ -42,7 +42,7 @@ projects or plugins change the numbers, and the measurement doesn't touch them:
 
 | App | How it gets a fresh configuration |
 | --- | --- |
-| DbRover | `HOME` points at an empty folder, which holds `Library/Application Support/dbrover` |
+| DbRover | `HOME` points at an empty folder, which holds `.config/dbrover` and `.local/share/dbrover` |
 | DBeaver | `-data` names an empty Eclipse workspace |
 | DataGrip | `DATAGRIP_PROPERTIES` names a file that moves its config, system, plugins and log folders |
 | DBX | Runs on the user's own home, because it opens the login keychain as it starts and macOS finds that keychain through `HOME`; on a Mac where DBX was just installed, its folder is empty |

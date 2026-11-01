@@ -1,12 +1,16 @@
 # Where DbRover keeps its files
 
-DbRover keeps everything in one folder per platform:
+DbRover keeps your settings in one folder and this machine's own files in another, the same
+two on every platform:
 
-| Platform | Settings | Window state and logs |
+| Platform | Settings folder | Data folder |
 | --- | --- | --- |
-| macOS | `~/Library/Application Support/dbrover/` | same folder |
+| macOS | `~/.config/dbrover/` | `~/.local/share/dbrover/` |
 | Linux | `~/.config/dbrover/` | `~/.local/share/dbrover/` |
-| Windows | `%APPDATA%\dbrover\config\` | `%APPDATA%\dbrover\data\` |
+| Windows | `%USERPROFILE%\.config\dbrover\` | `%USERPROFILE%\.local\share\dbrover\` |
+
+On Linux, `$XDG_CONFIG_HOME` and `$XDG_DATA_HOME` move them, as for other programs. The
+settings folder can also be one you choose; see [Choosing the settings folder](#choosing-the-settings-folder).
 
 | File | What it holds |
 | --- | --- |
@@ -18,16 +22,24 @@ DbRover keeps everything in one folder per platform:
 | `keymap.toml` (settings folder) | Your shortcuts, if you changed any. See [Keyboard shortcuts](shortcuts.md#changing-them). |
 | `settings.toml` (settings folder) | Your choices in **View → Settings…**, such as how SQL is formatted and whether to check for updates. |
 | `actions.toml`, `snippets.toml`, `theme.toml` (settings folder) | Your own actions, snippets and colours, if you wrote any. See [Actions, snippets and themes](customising.md). |
-| `trusted_commands.toml` (window state folder) | The command actions and password commands you chose **Run** for, each as it was then. See [Commands](customising.md#the-first-run) and [Password from a command](data-sources.md#password-from-a-command). |
-| `app.ron` (window state folder) | The window's size and position, the panel layout, the theme you picked, the recent `.sql` files and which file each console tab shows. |
-| `logs/dbrover.YYYY-MM-DD.log` (window state folder) | One log file per day. The last seven are kept. |
-| `logs/dbrover-mcp.YYYY-MM-DD.log` (window state folder) | The same for `dbrover mcp`, the server AI assistants use. |
+| `trusted_commands.toml` (data folder) | The command actions and password commands you chose **Run** for, each as it was then. See [Commands](customising.md#the-first-run) and [Password from a command](data-sources.md#password-from-a-command). |
+| `settings_folder.toml` (data folder) | The settings folder you chose in **Settings › Files**, if you chose one. |
+| `app.ron` (data folder) | The window's size and position, the panel layout, the theme you picked, the recent `.sql` files and which file each console tab shows. |
+| `logs/dbrover.YYYY-MM-DD.log` (data folder) | One log file per day. The last seven are kept. |
+| `logs/dbrover-mcp.YYYY-MM-DD.log` (data folder) | The same for `dbrover mcp`, the server AI assistants use. |
 
 Passwords are not in any of these files: they are in your system's keychain, under the service
 name `dbrover`. See [Data sources](data-sources.md#passwords-and-the-keychain).
 
-Before version 0.13 the folders and the keychain entries were named `dbdesk`. DbRover copies
-the folders on its first start, and moves each password the first time it is used; see
+The settings folder holds what you would want on another machine, and nothing that trusts
+anything: a command in `actions.toml` or a password command in `data_sources.toml` still asks
+before its first run on each machine, because what you trusted is in the data folder.
+
+Up to version 0.21, DbRover kept its files in the platform's own folders:
+`~/Library/Application Support/dbrover/` on macOS, and `%APPDATA%\dbrover\` on Windows. The
+first start of a newer version copies them; see
+[Settings moved to ~/.config/dbrover](install.md#settings-moved-to-configdbrover). Before
+version 0.13 the folders and the keychain entries were named `dbdesk`; see
 [Coming from dbdesk](install.md#coming-from-dbdesk).
 
 SSH tunnels share `~/.ssh/known_hosts` with `ssh`: DbRover reads it to check SSH servers' host
@@ -141,6 +153,51 @@ Unknown keys are refused rather than ignored, so a setting that is misspelt, or 
 newer DbRover, never goes unnoticed. If the file can't be read, the explorer lists every data
 source ungrouped and DbRover refuses to change projects until the file is fixed, so it never
 overwrites it.
+
+## Choosing the settings folder
+
+To keep your settings somewhere else, such as a folder that a service syncs between your
+machines or a repository of your dotfiles, open **View → Settings…**, then **Files**, and click
+**Choose…**:
+
+- **A folder with DbRover's settings in it**, from another machine or an earlier choice, is
+  used as it is. Nothing is copied into it, and the folder you used before stays as it was.
+- **An empty folder** gets a copy of your settings, or none if you pick **Start with no
+  settings**.
+- **Any other folder**, one with other files in it, isn't used: choose an empty folder inside it.
+
+Click **Restart DbRover**. DbRover quits as usual, asking about unsaved consoles and open
+transactions first, and starts again on the new folder, copying your settings into it first
+if you asked for that. **Use the default folder** goes back the same way.
+
+The choice is kept in the data folder, so it belongs to this machine: on another machine,
+choose the same synced folder there too. Passwords stay in that machine's keychain, so each
+data source asks for its password once on a new machine. Two folders that share data sources
+(one copied from the other) share their passwords too: deleting a data source in one forgets
+its password for both.
+
+If the folder isn't there when DbRover starts (a drive that isn't connected, a synced folder
+that was moved), DbRover uses the default folder for that session and says so. Your choice is
+kept, so the folder is used again once it is back.
+
+**Using one folder on two machines:** quit DbRover on one before using the other. Each file is
+written whole, but a sync service can't merge two machines' changes to the same file, and it
+may copy `history.sqlite` while DbRover is writing to it.
+
+### For one start only
+
+`--config-dir <folder>` on the command line, or the `DBROVER_CONFIG_DIR` environment variable,
+sets the settings folder for that start, over the choice in Settings, for example to keep a
+second set of data sources apart:
+
+```bash
+dbrover --config-dir ~/work/dbrover
+```
+
+The folder must be an absolute path or start with `~`. It is created if it isn't there.
+**Settings › Files** shows the folder, and can't change it while the flag or variable is set.
+`dbrover mcp` takes the same flag and variable; see
+[Connecting an AI assistant](mcp.md#another-settings-folder).
 
 ## Starting over
 

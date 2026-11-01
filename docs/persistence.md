@@ -1,36 +1,52 @@
 # Persistence
 
-All state lives in the platform config directory from the `directories` crate
-(`~/Library/Application Support/dbrover` on macOS).
+State lives in two folders, the same on every platform (H4, see
+[Settings folders](settings-folders.md)): the **settings folder**, `~/.config/dbrover`, and the
+**data folder**, `~/.local/share/dbrover` (under `%USERPROFILE%` on Windows; on Linux
+`$XDG_CONFIG_HOME` and `$XDG_DATA_HOME` move them). `--config-dir`, `DBROVER_CONFIG_DIR` or the
+folder chosen in Settings › Files replaces the settings folder; the data folder never moves.
+`dbrover_store::AppPaths` names every path.
 
 ```
-dbrover/
+~/.config/dbrover/            # the settings folder
 ├── data_sources.toml     # data source configs, no secrets
+├── projects.toml         # projects and their MCP permissions
 ├── settings.toml         # app settings: SQL formatting (more later: page size, fonts)
 ├── keymap.toml           # M5, key bindings (see features/keymap.md)
 ├── actions.toml          # H1/H2, custom SQL and command actions (see hackability.md)
 ├── snippets.toml         # H1, console snippets
 ├── theme.toml            # H1, colours
-├── app.ron               # eframe storage: window size, egui_dock layout, open tabs
 ├── consoles/             # M4
 │   └── <data-source-id>/<console-name>.sql
 ├── diagrams/             # ER1, ER diagrams
 │   └── <project-slug or _none>/<diagram-name>.toml
-├── history.sqlite        # M4, query history
-├── trusted_commands.toml # H2 and W9, commands trusted to run (data folder, see below)
+└── history.sqlite        # M4, query history
+
+~/.local/share/dbrover/       # the data folder: this machine's own
+├── app.ron               # eframe storage: window size, egui_dock layout, open tabs
+├── trusted_commands.toml # H2 and W9, commands trusted to run (see below)
+├── settings_folder.toml  # H4, the settings folder chosen in Settings, if any
 └── logs/dbrover.<date>.log # daily rolling file log, last 7 kept
 ```
 
-`logs/` and `trusted_commands.toml` are in the data directory: the same folder as the rest on
-macOS, `~/.local/share/dbrover` on Linux (the config is in `~/.config/dbrover`), and
-`%APPDATA%\dbrover\data` on Windows (the config is in `%APPDATA%\dbrover\config`).
+Up to 0.21, macOS kept both in `~/Library/Application Support/dbrover` and Windows in
+`%APPDATA%\dbrover\config` and `\data`; the first start of a later version copies them (see
+"Migrating existing installs" in [Releasing](releasing.md)).
+
 `trusted_commands.toml` lists each command action the user chose **Run** for, by its id,
 command as written and stdin, and each data source's password command (W9) the user chose
 **Run and connect** for, by the data source's id and the command as written. The engine writes
-it atomically. It is kept apart from `actions.toml` and `data_sources.toml` so a config folder
+it atomically. It is kept apart from `actions.toml` and `data_sources.toml` so a settings folder
 copied from elsewhere, or an imported data source, brings its commands but no trust: each
 command asks before its first run on every machine. A file that can't be read trusts nothing.
 `dbrover mcp` reads it at start-up and runs only the password commands it lists.
+
+`settings_folder.toml` holds the folder chosen in Settings › Files (`folder`), and, until the
+next start has copied the current settings there, the folder to copy them from (`copy_from`).
+DbRover writes it as it quits after a switch, and removes it when the user goes back to the
+default folder. It is in the data folder so the choice belongs to the machine and never travels
+with the settings it points at. A file that can't be read, or a folder that isn't there, means
+the default folder for that session (the app says so; `dbrover mcp` stops instead).
 
 ## Data sources
 

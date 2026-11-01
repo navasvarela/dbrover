@@ -79,10 +79,11 @@ docker compose up -d --wait
 set -a; . ./test-servers.env; set +a; just test
 ```
 
-Files live in `~/Library/Application Support/dbrover` on macOS: data sources in
-`data_sources.toml`, consoles in `consoles/`, the query history in `history.sqlite`, window and
-layout state in `app.ron`, your shortcuts in `keymap.toml`, daily log files in `logs/`.
-Passwords are in the macOS Keychain under the service `dbrover`.
+Settings live in `~/.config/dbrover` on every platform: data sources in `data_sources.toml`,
+consoles in `consoles/`, the query history in `history.sqlite`, your shortcuts in
+`keymap.toml`. Window and layout state (`app.ron`) and daily log files (`logs/`) are in
+`~/.local/share/dbrover`. Passwords are in the system keychain under the service `dbrover`.
+`--config-dir`, `DBROVER_CONFIG_DIR` or **Settings › Files** keeps the settings elsewhere.
 
 ## Core features (v1)
 
