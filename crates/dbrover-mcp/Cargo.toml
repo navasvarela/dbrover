@@ -65,3 +65,7 @@ harness = false
 [[test]]
 name = "duckdb"
 harness = false
+
+[[test]]
+name = "cassandra"
+harness = false

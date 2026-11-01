@@ -122,14 +122,16 @@ goes through up to three layers, and the strongest layer the engine offers decid
      held only while a call runs. Both are served for reading only.
    - **SQL Server and later engines:** each engine's plan states its equivalent before its MCP
      support is switched on. For an engine without a read-only mode, the equivalent is the MCP
-     login itself (N0a, [nosql.md](nosql.md)): SQL Server, Redis, MongoDB and
-     Elasticsearch data sources are
+     login itself (N0a, [nosql.md](nosql.md)): SQL Server, Redis, MongoDB, Elasticsearch and
+     Cassandra data sources are
      served for reading only, and only through an MCP login whose grants allow nothing but
      reading; on Redis, an ACL user with `+@read` (N1); on MongoDB, a user with the `read`
      role (N2), and `list_objects` lists its databases and collections; on Elasticsearch and
      OpenSearch, a user or API key with the `monitor` cluster privilege and `read`,
      `view_index_metadata` and `monitor` on its indices (N3), and `list_objects` lists the
-     explorer's folders, indices and fields. `list_objects` pages a level too large
+     explorer's folders, indices and fields; on Cassandra and ScyllaDB, a role with the
+     `SELECT` permission alone (N4), and `list_objects` lists keyspaces, their folders, tables
+     and columns, while `explain` is refused, CQL having none. `list_objects` pages a level too large
      to list at once, 1,000 objects at a time, with a filter the database applies.
 3. **The database's own grants: the recommended setup for anything beyond reading.**
    - A data source can carry a **separate MCP login**: another user name and password, used only

@@ -41,4 +41,6 @@ jobs:
       - name: Run the CQL tests on Cassandra
         env:
           DBROVER_TEST_CASSANDRA_URL: cql://dbrover:dbrover@localhost:59043
-        run: cargo test -p dbrover-driver-cassandra -p dbrover-engine
+        run: |
+          cargo test -p dbrover-driver-cassandra -p dbrover-engine
+          cargo test -p dbrover-mcp --test cassandra
