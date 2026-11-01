@@ -18,6 +18,7 @@ mod words;
 
 use std::ops::Range;
 
+use dbrover_core::{CatalogPath, NodeKind};
 use dbrover_sql::{StatementKind, TokenKind, Unclassified};
 
 pub use parser::{Access, Condition, ParseError, Statement, Term, Verb, parse};
@@ -52,6 +53,18 @@ pub fn select_all(table: &str, index: Option<&str>) -> String {
     match index {
         Some(index) => format!("SELECT * FROM {}.{}", quote(table), quote(index)),
         None => format!("SELECT * FROM {}", quote(table)),
+    }
+}
+
+/// The `SELECT *` **Open data** runs on the DynamoDB table or index at `path`: a table at the
+/// tree's top, or an index in its table's indexes folder. `None` for any other node.
+pub(crate) fn read_all(path: &CatalogPath) -> Option<String> {
+    match path.segments() {
+        [table] if table.kind == NodeKind::Table => Some(select_all(&table.name, None)),
+        [table, _, index] if table.kind == NodeKind::Table && index.kind == NodeKind::Index => {
+            Some(select_all(&table.name, Some(&index.name)))
+        }
+        _ => None,
     }
 }
 

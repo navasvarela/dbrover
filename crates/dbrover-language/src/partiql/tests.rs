@@ -268,6 +268,26 @@ fn completes_keywords_and_functions_with_their_arguments() {
 }
 
 #[test]
+fn open_data_reads_a_table_or_one_of_its_indexes() {
+    let table = CatalogPath::root().child(NodeKind::Table, "orders");
+    let index = table
+        .child(
+            NodeKind::Folder(dbrover_core::FolderKind::Indexes),
+            "indexes",
+        )
+        .child(NodeKind::Index, "by-status");
+    assert_eq!(
+        read_all(&table).as_deref(),
+        Some("SELECT * FROM \"orders\"")
+    );
+    assert_eq!(
+        read_all(&index).as_deref(),
+        Some("SELECT * FROM \"orders\".\"by-status\"")
+    );
+    assert_eq!(read_all(&table.child(NodeKind::Column, "pk")), None);
+}
+
+#[test]
 fn open_data_reads_every_item_of_a_table_or_index() {
     assert_eq!(select_all("Orders", None), "SELECT * FROM \"Orders\"");
     assert_eq!(

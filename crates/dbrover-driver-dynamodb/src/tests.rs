@@ -40,17 +40,26 @@ async fn connected(config: &DynamoDbConfig) -> DynamoConnection {
         .unwrap_or_else(|error| panic!("connect: {}", describe_error(&error)))
 }
 
-/// A table of the tests' own, named for the test and unique to the run, dropped when the test
-/// ends so the server keeps nothing between runs.
+/// Held to drop a table (shared) or to walk every table of the server (alone): the tests run
+/// at once, and a walk describes each table it lists, which one dropped in between fails.
+static CATALOG: tokio::sync::RwLock<()> = tokio::sync::RwLock::const_new(());
+
+/// A name for a test's table, unique to the run, so tests running at once and runs one after
+/// another never meet.
+fn unique(test: &str) -> String {
+    format!("{test}-{}", uuid::Uuid::new_v4().simple())
+}
+
+/// A table of the tests' own, dropped when the test ends so the server keeps nothing between
+/// runs.
 struct TestTable {
     client: Client,
     name: String,
 }
 
 impl TestTable {
-    /// A table keyed by `pk` (a string) and, when `sort` is set, `sk` (a number).
-    async fn create(connection: &DynamoConnection, test: &str, sort: bool) -> Self {
-        let name = format!("{test}-{}", uuid::Uuid::new_v4().simple());
+    /// A table named `name`, keyed by `pk` (a string) and, when `sort` is set, `sk` (a number).
+    async fn create(connection: &DynamoConnection, name: String, sort: bool) -> Self {
         let mut request = connection
             .client
             .create_table()
@@ -96,6 +105,7 @@ impl TestTable {
     }
 
     async fn drop(self) {
+        let _dropping = CATALOG.read().await;
         self.client
             .delete_table()
             .table_name(&self.name)
@@ -175,8 +185,11 @@ async fn refuses_an_endpoint_that_does_not_answer_and_an_emulator_without_one() 
 async fn lists_its_tables_and_refuses_paths_it_never_gives() {
     let Some(config) = test_config() else { return };
     let mut connection = connected(&config).await;
-    let table = TestTable::create(&connection, "listed", false).await;
-    let nodes = conformance::walk_catalog(&mut connection, 2).await;
+    let table = TestTable::create(&connection, unique("listed"), false).await;
+    let nodes = {
+        let _walking = CATALOG.write().await;
+        conformance::walk_catalog(&mut connection, 2).await
+    };
     assert!(
         nodes
             .iter()
@@ -187,11 +200,197 @@ async fn lists_its_tables_and_refuses_paths_it_never_gives() {
     table.drop().await;
 }
 
+/// A table keyed by `customer` and `placed`, with a global index by `status` and a local one
+/// by `total`: every shape of key the explorer shows.
+async fn create_indexed_table(connection: &DynamoConnection, name: &str) {
+    use aws_sdk_dynamodb::types::{
+        GlobalSecondaryIndex, LocalSecondaryIndex, Projection, ProjectionType,
+    };
+    let projection = |kind: ProjectionType, attributes: &[&str]| {
+        let mut projection = Projection::builder().projection_type(kind);
+        for attribute in attributes {
+            projection = projection.non_key_attributes(*attribute);
+        }
+        projection.build()
+    };
+    connection
+        .client
+        .create_table()
+        .table_name(name)
+        .billing_mode(BillingMode::PayPerRequest)
+        .key_schema(key("customer", KeyType::Hash))
+        .key_schema(key("placed", KeyType::Range))
+        .attribute_definitions(attribute("customer", ScalarAttributeType::S))
+        .attribute_definitions(attribute("placed", ScalarAttributeType::S))
+        .attribute_definitions(attribute("status", ScalarAttributeType::S))
+        .attribute_definitions(attribute("total", ScalarAttributeType::N))
+        .global_secondary_indexes(
+            GlobalSecondaryIndex::builder()
+                .index_name("by-status")
+                .key_schema(key("status", KeyType::Hash))
+                .key_schema(key("placed", KeyType::Range))
+                .projection(projection(ProjectionType::Include, &["total"]))
+                .build()
+                .expect("an index"),
+        )
+        .local_secondary_indexes(
+            LocalSecondaryIndex::builder()
+                .index_name("by-total")
+                .key_schema(key("customer", KeyType::Hash))
+                .key_schema(key("total", KeyType::Range))
+                .projection(projection(ProjectionType::KeysOnly, &[]))
+                .build()
+                .expect("an index"),
+        )
+        .send()
+        .await
+        .expect("create the table");
+}
+
+#[tokio::test]
+async fn browses_a_tables_keys_and_indexes_and_shows_its_definition() {
+    let Some(config) = test_config() else { return };
+    let mut connection = connected(&config).await;
+    let name = unique("indexed");
+    create_indexed_table(&connection, &name).await;
+    let table = TestTable {
+        client: connection.client.clone(),
+        name,
+    };
+    let root = CatalogPath::root();
+    let tables = {
+        let _walking = CATALOG.write().await;
+        connection.children(&root).await.expect("the tables")
+    };
+    let node = tables
+        .iter()
+        .find(|node| node.label == table.name)
+        .expect("the table is listed");
+    assert_eq!(
+        node.detail.as_deref(),
+        Some("\u{2248} 0 items \u{b7} 0.0 kB")
+    );
+    let shown = |nodes: Vec<CatalogNode>| -> Vec<(String, Option<String>)> {
+        nodes
+            .into_iter()
+            .map(|node| (node.label, node.detail))
+            .collect()
+    };
+    let children = connection.children(&node.path).await.expect("its keys");
+    let folder = children.last().expect("an indexes folder").path.clone();
+    assert_eq!(
+        shown(children),
+        [
+            (
+                "customer".to_owned(),
+                Some("partition key \u{b7} S".to_owned())
+            ),
+            ("placed".to_owned(), Some("sort key \u{b7} S".to_owned())),
+            ("indexes".to_owned(), None),
+        ]
+    );
+    let indexes = connection.children(&folder).await.expect("its indexes");
+    assert_eq!(
+        shown(indexes),
+        [
+            (
+                "by-status".to_owned(),
+                Some("global \u{b7} status, placed".to_owned())
+            ),
+            (
+                "by-total".to_owned(),
+                Some("local \u{b7} customer, total".to_owned())
+            ),
+        ]
+    );
+    let definition = connection
+        .definition(&node.path)
+        .await
+        .expect("a definition");
+    let expected = format!(
+        r#"{{
+  "TableName": "{}",
+  "KeySchema": [
+    {{
+      "AttributeName": "customer",
+      "KeyType": "HASH"
+    }},
+    {{
+      "AttributeName": "placed",
+      "KeyType": "RANGE"
+    }}
+  ],"#,
+        table.name
+    );
+    assert!(definition.starts_with(&expected), "{definition}");
+    for part in [
+        r#""BillingMode": "PAY_PER_REQUEST""#,
+        r#""IndexName": "by-status""#,
+        r#""ProjectionType": "INCLUDE""#,
+        r#""NonKeyAttributes""#,
+        r#""IndexName": "by-total""#,
+        r#""ProjectionType": "KEYS_ONLY""#,
+    ] {
+        assert!(definition.contains(part), "{part} in {definition}");
+    }
+    assert!(Value::parse(&definition).is_ok());
+    let nodes = {
+        let _walking = CATALOG.write().await;
+        conformance::walk_catalog(&mut connection, 3).await
+    };
+    assert!(nodes.iter().any(|node| node.label == "by-total"));
+    table.drop().await;
+}
+
+#[tokio::test]
+async fn pages_tables_by_name_a_hundred_at_a_time_with_the_filter() {
+    let Some(config) = test_config() else { return };
+    let mut connection = connected(&config).await;
+    let prefix = unique("paged-tables");
+    let mut tables = Vec::new();
+    for number in 0..105 {
+        let name = format!("{prefix}-{number:03}");
+        tables.push(TestTable::create(&connection, name, false).await);
+    }
+    // Other tests' tables are in the same server, so every page is filtered by the prefix,
+    // in capitals: the filter ignores case.
+    let mut query = ChildrenQuery {
+        filter: Some(prefix.to_uppercase()),
+        after: None,
+        limit: Some(1_000),
+    };
+    let mut pages = Vec::new();
+    loop {
+        let page = connection
+            .children_page(&CatalogPath::root(), &query)
+            .await
+            .expect("a page");
+        pages.push(
+            page.nodes
+                .iter()
+                .map(|node| node.label.clone())
+                .collect::<Vec<_>>(),
+        );
+        match page.next {
+            Some(next) => query = query.after(next),
+            None => break,
+        }
+    }
+    assert_eq!(pages.iter().map(Vec::len).collect::<Vec<_>>(), [100, 5]);
+    let listed: Vec<String> = pages.concat();
+    let mut names: Vec<String> = tables.iter().map(|table| table.name.clone()).collect();
+    names.sort();
+    assert_eq!(listed, names);
+    for table in tables {
+        table.drop().await;
+    }
+}
+
 #[tokio::test]
 async fn reads_each_attribute_type_as_extended_json_with_the_keys_first() {
     let Some(config) = test_config() else { return };
     let mut connection = connected(&config).await;
-    let table = TestTable::create(&connection, "types", true).await;
+    let table = TestTable::create(&connection, unique("types"), true).await;
     let mut item = keyed("a", 1);
     item.extend([
         ("text".to_owned(), AttributeValue::S("it's".into())),
@@ -243,7 +442,7 @@ async fn reads_each_attribute_type_as_extended_json_with_the_keys_first() {
 async fn pages_a_partition_past_500_items() {
     let Some(config) = test_config() else { return };
     let mut connection = connected(&config).await;
-    let table = TestTable::create(&connection, "paged", true).await;
+    let table = TestTable::create(&connection, unique("paged"), true).await;
     table
         .put((0..1_200).map(|sk| keyed("p", sk)).collect())
         .await;
@@ -266,7 +465,7 @@ async fn a_filter_that_keeps_little_shows_short_pages_rather_than_reading_on() {
         items_per_request: 10,
         requests_per_page: 3,
     };
-    let table = TestTable::create(&connection, "bounded", true).await;
+    let table = TestTable::create(&connection, unique("bounded"), true).await;
     table.put((0..100).map(|sk| keyed("p", sk)).collect()).await;
     let statement = format!("SELECT * FROM \"{}\" WHERE sk = 95", table.name);
     let mut cursor = connection.execute(&statement).await.expect("execute");
@@ -285,7 +484,7 @@ async fn a_filter_that_keeps_little_shows_short_pages_rather_than_reading_on() {
 async fn writes_answer_nothing_unless_they_return_items() {
     let Some(config) = test_config() else { return };
     let mut connection = connected(&config).await;
-    let table = TestTable::create(&connection, "writes", false).await;
+    let table = TestTable::create(&connection, unique("writes"), false).await;
     let name = &table.name;
     let insert = format!("INSERT INTO \"{name}\" VALUE {{'pk': 'a', 'n': 1, 'tags': <<'x'>>}}");
     let cursor = connection.execute(&insert).await.expect("insert");
