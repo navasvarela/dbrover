@@ -235,7 +235,7 @@ fn membership_picker(ui: &mut Ui, chosen: &mut BTreeSet<String>, roles: &[String
     } else {
         chosen.iter().cloned().collect::<Vec<_>>().join(", ")
     };
-    let menu = ui.menu_button(text, |ui| {
+    let menu = widgets::menu_button(ui, text, |ui| {
         if roles.is_empty() {
             ui.weak("No other roles yet");
         }

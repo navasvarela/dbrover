@@ -110,7 +110,7 @@ fn toolbar(ui: &mut Ui, tab: &mut DiagramTab) -> Option<TabAction> {
             tab.fit = true;
         }
         let export = widgets::icon_text(ui, icons::EXPORT, palette.text, "Export");
-        let menu = ui.menu_button(export, |ui| {
+        let menu = widgets::menu_button(ui, export, |ui| {
             for format in PictureFormat::ALL {
                 if ui.button(format.label()).clicked() {
                     action = Some(TabAction::Export(format));
@@ -298,7 +298,7 @@ fn draw(ui: &mut Ui, diagram: &mut Diagram, palette: &Palette) {
 }
 
 fn table_menu(response: &Response, index: usize, edits: &mut Vec<TableEdit>) {
-    response.context_menu(|ui| {
+    widgets::context_menu(response, |ui| {
         if widgets::menu_item(ui, icons::GRAPH, "Add related tables").clicked() {
             edits.push(TableEdit::AddRelated(index));
         }

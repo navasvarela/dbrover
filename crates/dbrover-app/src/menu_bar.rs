@@ -18,13 +18,16 @@ pub fn show(
         // `MenuBar` lays out the row it draws in in the style it is given, and applies its own
         // style only inside, so the bar's height has to be the row's too.
         theme::menu_bar_style(ui.style_mut());
-        egui::MenuBar::new().ui(ui, |ui| {
-            for menu in menus {
-                ui.menu_button(menu.title, |ui| {
-                    entries(ui, &menu.entries, state, keymap, &mut picked);
-                });
-            }
-        });
+        egui::MenuBar::new()
+            .style(theme::menu_bar_style)
+            .config(widgets::menu_config())
+            .ui(ui, |ui| {
+                for menu in menus {
+                    widgets::menu_button(ui, menu.title, |ui| {
+                        entries(ui, &menu.entries, state, keymap, &mut picked);
+                    });
+                }
+            });
     });
     picked
 }
@@ -47,7 +50,7 @@ fn entries(
                 ui.separator();
             }
             Entry::Submenu(menu) => {
-                ui.menu_button(menu.title, |ui| {
+                widgets::menu_button(ui, menu.title, |ui| {
                     self::entries(ui, &menu.entries, state, keymap, picked);
                 });
             }

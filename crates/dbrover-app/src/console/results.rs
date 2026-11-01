@@ -1259,7 +1259,7 @@ fn cell_menu(
         referenced,
     } = cell;
     let mut choice = MenuChoice::default();
-    response.context_menu(|ui| {
+    widgets::context_menu(response, |ui| {
         if let Some(tsv) = context.grid.selection_as_tsv(context.rows)
             && ui.button("Copy selection").clicked()
         {
@@ -1268,7 +1268,7 @@ fn cell_menu(
         if ui.button("Copy with headers").clicked() {
             choice.copy = Some(ClipboardCopy::WithHeaders);
         }
-        ui.menu_button("Copy as", |ui| copy_as_menu(ui, context, &mut choice));
+        widgets::menu_button(ui, "Copy as", |ui| copy_as_menu(ui, context, &mut choice));
         if ui.button("Copy value").clicked() {
             ui.ctx()
                 .copy_text(value.cloned().flatten().unwrap_or_default());
@@ -1353,7 +1353,7 @@ fn follow_keys_menu(
     if referencing.is_empty() {
         return;
     }
-    ui.menu_button("Referencing rows", |ui| {
+    widgets::menu_button(ui, "Referencing rows", |ui| {
         for table in referencing {
             match table.rows {
                 Ok(rows) => {

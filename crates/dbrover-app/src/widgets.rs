@@ -1,15 +1,21 @@
-//! Small building blocks the panels share: icon buttons, menu items with icons, toolbars and
-//! count badges.
+//! Small building blocks the panels share: icon buttons, menus and menu items with icons,
+//! toolbars and count badges.
 
+use egui::containers::menu::{self, MenuButton, MenuConfig};
 use egui::text::{LayoutJob, TextFormat};
-use egui::{Button, Color32, Response, RichText, TextStyle, Ui, Vec2, WidgetInfo, WidgetType};
+use egui::{
+    Button, Color32, InnerResponse, IntoAtoms, Popup, Response, RichText, TextStyle, Ui, Vec2,
+    WidgetInfo, WidgetType,
+};
 
-use crate::fonts;
+use crate::{fonts, theme};
 
 /// Icon size in toolbars, a little larger than text so thin glyphs stay legible.
 const TOOLBAR_ICON_SIZE: f32 = 15.0;
 /// Between a toolbar's buttons: their hover highlights nearly touch, but don't merge.
 const TOOLBAR_SPACING: f32 = 3.0;
+/// The narrowest a menu gets, so a menu of two short entries doesn't look like a tooltip.
+const MENU_MIN_WIDTH: f32 = 160.0;
 
 /// A frameless button that shows only an icon. Its label is the tooltip and the accessible
 /// name, so screen readers (and UI tests) find it by what it does rather than by its glyph.
@@ -69,6 +75,43 @@ impl<'a> IconButton<'a> {
 /// An icon on its own, in the icon font.
 pub fn glyph(glyph: &str) -> RichText {
     RichText::new(glyph).family(fonts::icon_family())
+}
+
+/// A menu opened by right-clicking `response`, in DbRover's menu style. Returns what
+/// `add_contents` returned, on the frames the menu is open.
+pub fn context_menu<R>(response: &Response, add_contents: impl FnOnce(&mut Ui) -> R) -> Option<R> {
+    Popup::context_menu(response)
+        .style(theme::menu_style)
+        .show(|ui| {
+            ui.set_min_width(MENU_MIN_WIDTH);
+            add_contents(ui)
+        })
+        .map(|shown| shown.inner)
+}
+
+/// A button that opens a menu, in DbRover's menu style; in a menu, an entry that opens a
+/// submenu, in the style of the menu it is in.
+pub fn menu_button<'a, R>(
+    ui: &mut Ui,
+    atoms: impl IntoAtoms<'a>,
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) -> InnerResponse<Option<R>> {
+    let add_contents = |ui: &mut Ui| {
+        ui.set_min_width(MENU_MIN_WIDTH);
+        add_contents(ui)
+    };
+    if menu::is_in_menu(ui) {
+        return ui.menu_button(atoms, add_contents);
+    }
+    let (response, inner) = MenuButton::new(atoms)
+        .config(menu_config())
+        .ui(ui, add_contents);
+    InnerResponse::new(inner.map(|shown| shown.inner), response)
+}
+
+/// What egui's menus need to draw in DbRover's menu style, submenus included.
+pub fn menu_config() -> MenuConfig {
+    MenuConfig::new().style(theme::menu_style)
 }
 
 /// A menu entry with an icon in front of its text, named by the text alone.

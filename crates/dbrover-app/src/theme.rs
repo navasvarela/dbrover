@@ -454,7 +454,7 @@ fn visuals(palette: &Palette, theme: Theme, focus: Focus) -> Visuals {
     visuals.window_fill = palette.panel;
     visuals.window_stroke = Stroke::new(1.0, palette.border);
     visuals.window_corner_radius = CornerRadius::same(ISLAND_RADIUS);
-    visuals.menu_corner_radius = CornerRadius::same(8);
+    visuals.menu_corner_radius = CornerRadius::same(MENU_RADIUS);
     visuals.window_shadow = soft_shadow(theme, 24);
     visuals.popup_shadow = soft_shadow(theme, 12);
     visuals.selection = Selection {
@@ -522,6 +522,17 @@ const ITEM_SPACING: Vec2 = Vec2::new(8.0, 6.0);
 /// Inside dialogs and windows, between their edge and what they show.
 const WINDOW_MARGIN: i8 = 16;
 const MENU_MARGIN: i8 = 5;
+const MENU_RADIUS: u8 = 8;
+/// A menu entry's hover highlight, inside the menu's own rounded corners.
+const MENU_ITEM_RADIUS: u8 = 5;
+const MENU_ITEM_HEIGHT: f32 = 26.0;
+/// Around a menu entry's text, so its hover highlight doesn't hug the text.
+const MENU_ITEM_PADDING: Vec2 = Vec2::new(8.0, 4.0);
+/// Between menu entries: a hairline, so the highlight moves from entry to entry without the
+/// gaps the app's item spacing would leave.
+const MENU_ITEM_GAP: f32 = 1.0;
+/// Around the menu bar's titles, so an open menu's title is highlighted like a button.
+const MENU_BAR_PADDING: Vec2 = Vec2::new(8.0, 3.0);
 /// Load-bearing: egui opens a window it has no position for 16 points from the top of the
 /// screen, over the menu bar, and the window's resize edge reaches a few points above that.
 /// At 22 points the titles' middle stays clear of it; at 24, clicking **Help** while the
@@ -540,8 +551,32 @@ fn tune_spacing(style: &mut Style) {
     spacing.indent = 16.0;
 }
 
-/// The menu bar: no taller than before the other controls grew.
+/// Menus and context menus: entries as tall as a control and padded like a button, frameless
+/// until hovered, with no gap between them. Replaces egui's [`egui::containers::menu::menu_style`],
+/// which squeezes entries to two points of padding.
+pub fn menu_style(style: &mut Style) {
+    let spacing = &mut style.spacing;
+    spacing.button_padding = MENU_ITEM_PADDING;
+    spacing.interact_size.y = MENU_ITEM_HEIGHT;
+    spacing.item_spacing.y = MENU_ITEM_GAP;
+    let widgets = &mut style.visuals.widgets;
+    widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
+    for state in [
+        &mut widgets.inactive,
+        &mut widgets.hovered,
+        &mut widgets.active,
+        &mut widgets.open,
+    ] {
+        state.bg_stroke = Stroke::NONE;
+        state.corner_radius = CornerRadius::same(MENU_ITEM_RADIUS);
+    }
+}
+
+/// The menu bar's titles: frameless until hovered or open, like a menu's entries, but no
+/// taller than before the other controls grew.
 pub fn menu_bar_style(style: &mut Style) {
+    menu_style(style);
+    style.spacing.button_padding = MENU_BAR_PADDING;
     style.spacing.interact_size.y = MENU_BAR_HEIGHT;
 }
 

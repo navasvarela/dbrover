@@ -9,6 +9,8 @@ use dbrover_document::{Path, Step, Syntax, Value, ValueType};
 use egui::collapsing_header::CollapsingState;
 use egui::{Id, Label, Response, RichText, Sense, Ui};
 
+use crate::widgets;
+
 /// How many fields or items of one object or array are drawn. The tree is laid out whole each
 /// frame, so an array of a hundred thousand items unfolded would make every frame slow; past
 /// this, a line says how many more there are, and **Copy value** on the array still copies
@@ -91,7 +93,7 @@ impl JsonTree<'_> {
         );
         ui.weak(shown.value_type.name());
         for response in [&key_response, &value_response] {
-            response.context_menu(|ui| self.copy_menu(ui, path, value));
+            widgets::context_menu(response, |ui| self.copy_menu(ui, path, value));
         }
         key_response.union(value_response)
     }

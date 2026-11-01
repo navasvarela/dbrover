@@ -26,7 +26,7 @@ pub(super) fn column_picker(
     } else {
         chosen.join(", ")
     };
-    let menu = ui.menu_button(text, |ui| {
+    let menu = widgets::menu_button(ui, text, |ui| {
         if columns.is_empty() {
             ui.weak("No columns yet");
         }
