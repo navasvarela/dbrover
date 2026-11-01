@@ -2488,6 +2488,7 @@ impl Repaint for EguiRepaint {
 #[cfg(test)]
 mod tests {
     mod actions;
+    mod charts;
     mod commands;
     mod customisation;
     mod diagrams;

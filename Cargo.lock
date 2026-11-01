@@ -1692,6 +1692,7 @@ version = "0.20.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "dbrover-chart",
  "dbrover-core",
  "dbrover-diagram",
  "dbrover-document",
