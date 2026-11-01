@@ -133,10 +133,11 @@ DbRover checks each statement in up to three ways:
    project allows **Admin**, since what it would do is unknown.
 2. **When only reading is allowed, the database refuses writes on its own.** Every read runs
    in a read-only transaction that is then rolled back: `BEGIN READ ONLY` on PostgreSQL,
-   `START TRANSACTION READ ONLY` on MySQL and MariaDB. SQLite files are opened read-only. This
-   stops a `SELECT` that calls a function which writes, because DbRover can't see inside the
-   function. SQL Server and ClickHouse have no such mode DbRover uses; there, the MCP login's
-   grants do this (see below).
+   `START TRANSACTION READ ONLY` on MySQL and MariaDB. SQLite and DuckDB files are opened
+   read-only, and ClickHouse is sent `readonly = 2` with every statement. This stops a `SELECT`
+   that calls a function which writes, because DbRover can't see inside the function. SQL
+   Server, Redis, MongoDB, Elasticsearch and OpenSearch have no such mode; there, the MCP
+   login's grants do this (see below).
 3. **The database's own grants,** through an [MCP login](#the-mcp-login). This is the only
    layer that is airtight beyond reading.
 
@@ -145,13 +146,19 @@ or a procedure can do anything, whatever the statement that calls it looks like.
 Project settings warns when a project allows changes and one of its data sources has no MCP
 login.
 
-SQL Server has no read-only transaction, DbRover doesn't use ClickHouse's read-only setting
-yet, and Redis, MongoDB, Elasticsearch and OpenSearch have no read-only session at all, so their data sources are served to MCP clients
-only through an [MCP login](#the-mcp-login) whose grants allow nothing but reading. Without one, a data source
-isn't served, and the server's log says why when it starts; Project settings lists it too. They
-are served for reading only: `execute` is refused on them, whatever the project allows, since
-DbRover has no transaction to run changes in there. DuckDB files have no logins, so they aren't
-served yet.
+SQL Server has no read-only transaction, and Redis, MongoDB, Elasticsearch and OpenSearch
+have no read-only session at all, so their data sources are served to MCP clients only through
+an [MCP login](#the-mcp-login) whose grants allow nothing but reading. Without one, a data
+source isn't served, and the server's log says why when it starts; Project settings lists it
+too.
+
+ClickHouse and DuckDB files are served in their own read-only modes, with or without an MCP
+login. A DuckDB file is held only while a call runs: between calls, the app or the `duckdb`
+command can open it for writing, and a call made while one of them has it open fails with
+DuckDB's lock error. A DuckDB database in memory can't be opened read-only, so it isn't served.
+
+All of these are served for reading only: `execute` is refused on them, whatever the project
+allows, since DbRover has no transaction to run changes in there.
 
 ## The MCP login
 
@@ -183,9 +190,13 @@ ALTER ROLE db_datareader ADD MEMBER assistant;
 On ClickHouse, a user with the `readonly` setting can read and nothing else:
 
 ```sql
-CREATE USER assistant IDENTIFIED BY '…' SETTINGS readonly = 1;
+CREATE USER assistant IDENTIFIED BY '…' SETTINGS readonly = 2;
 GRANT SELECT ON shop.* TO assistant;
 ```
+
+Use `readonly = 2`, not `1`: DbRover sends a few settings with every request (how errors and
+decimals are written), which `readonly = 1` refuses, so such a user couldn't connect. Both
+refuse every change.
 
 On Redis, Valkey and Dragonfly, an ACL user that may only read:
 

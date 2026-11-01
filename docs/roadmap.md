@@ -1277,7 +1277,7 @@ three to five, **L** a track of its own).
 
   **Exit:** on the PostgreSQL test server, ⌥⌘E on a join of `orders` and `customers` shows a
   tree whose costliest step is highlighted, and **Explain analyse** adds the actual rows.
-- **W11 — Read-only on every engine (S–M):** designed on 2026-10-31 in
+- **W11 — Read-only on every engine (S–M):** built; designed on 2026-10-31 in
   [A well-rounded app](well-rounded.md#w11--read-only-on-every-engine), with each engine's
   guard. The read-only level (W2) and the MCP server use each engine's own read-only mode, so
   the database refuses a write wherever the engine has one, not only on PostgreSQL, MySQL,
@@ -1302,6 +1302,25 @@ three to five, **L** a track of its own).
     server holding a file only during a call.
   - **W11d — Manual:** each engine's guard, the ClickHouse login's `readonly = 2`, and this
     demo note.
+
+  **W11 demo note:** built in #310, #311, #313 and #314. Make a ClickHouse data source on the
+  test server read-only: its dialog no longer warns, and a console refuses an `INSERT` with
+  DbRover's check, while `SELECT number FROM numbers(1) SETTINGS readonly = 0`, which the check
+  reads as a `SELECT`, fails with ClickHouse's own "Cannot modify 'readonly' setting in
+  readonly mode"; a query's own `SETTINGS max_threads = 1` still runs. Make a DuckDB file
+  data source read-only: `SELECT nextval('orders_id')` fails with DuckDB's "attached in
+  read-only mode", and a second data source on the same file can't connect for writing until
+  the first disconnects, with an error that says so. An AI assistant's project now lists both
+  without an MCP login, even one that allows changes, and `execute` is refused on them; a
+  DuckDB file is free for the app to write between the assistant's calls. A DuckDB database in
+  memory stays unserved, and its read-only level is the check alone, as the dialog says. SQL
+  Server, Redis, MongoDB, Elasticsearch and OpenSearch are unchanged: their login is the
+  guard. Departures from the design: none of substance; testing a read-only data source's
+  connection now connects as its sessions will (read-only), and Project settings' note about
+  data sources without logins names only those the server runs changes on. Covered by driver
+  tests on ClickHouse and on DuckDB files, the engine's read-only tests on both, and two new
+  MCP test binaries, `clickhouse` on the compose server and `duckdb` on files on every OS.
+  Still to try by eye: a ClickHouse Cloud service, and an MCP login with `readonly = 2` there.
 
   **Exit:** a read-only ClickHouse and a read-only DuckDB data source refuse a write the
   statement check can't see, with the database's own error (on DuckDB a `SELECT` of a function
