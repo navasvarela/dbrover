@@ -467,7 +467,7 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
 
 Redis, MongoDB and the other most used non-SQL stores, in the same explorer, console and grid,
 each in its own query language. Planned on 2026-10-29; N0a was built on 2026-10-30, after W7
-landed, N0b and N1 the same day, and N2 and N3 on 2026-10-31.
+landed, N0b and N1 the same day, and N2 and N3 on 2026-10-31; N4 is being built, in six layers.
 The full plan, with the order, the groundwork, each milestone's layers and the decisions, is in
 [NoSQL databases](nosql.md).
 
@@ -489,8 +489,9 @@ The full plan, with the order, the groundwork, each milestone's layers and the d
   syntax, documents in the grid and tree, edits that keep each value's type.
 - **N3 — Elasticsearch and OpenSearch** (built, in seven layers): indices and mappings, Dev Tools-style requests, hits as
   documents, the SQL endpoints as rows.
-- **N4 — Cassandra and ScyllaDB:** CQL as a dialect of `dbrover-sql`, keyspaces and tables,
-  paged rows, collections in the tree.
+- **N4 — Cassandra and ScyllaDB** (being built, in six layers): CQL as a dialect of
+  `dbrover-sql`, keyspaces and tables, paged rows, collections in the tree, edits by primary
+  key; ScyllaDB in every pull request's CI, Cassandra nightly.
 - **Later:** DynamoDB in the cloud track after C0, and Neo4j after ER1.
 
 ## Object helpers track

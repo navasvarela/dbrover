@@ -3,8 +3,8 @@
 Status: **N0a, N0b and N1 built** (2026-10-30) and **N2 and N3 built** (2026-10-31), in the
 layers listed under [N0a](#n0a--groundwork-languages-safety-and-the-explorer),
 [N0b](#n0b--groundwork-documents), [N1](#n1--redis-valkey-and-dragonfly),
-[N2](#n2--mongodb) and [N3](#n3--elasticsearch-and-opensearch); N4 is next. W7 (exports) has
-landed.
+[N2](#n2--mongodb) and [N3](#n3--elasticsearch-and-opensearch). **N4 is being built**, in the
+layers listed under [N4](#n4--cassandra-and-scylladb). W7 (exports) has landed.
 
 DbRover speaks seven SQL engines. Many of the teams that use them keep a Redis beside their
 PostgreSQL, documents in MongoDB, or logs in Elasticsearch, and today they open another tool for
@@ -1062,6 +1062,132 @@ console), N3·4 (the explorer), N3·5 (explain and results to a file), N3·6 (ed
 large table; see a map column as a tree; edit a cell; a misspelt column is caught before
 running; and a read-only data source refuses an `INSERT`.
 
+#### Layers
+
+Each layer is one pull request in a stack, useful and tested on its own, as N3's were. From
+N4·3 on, each runs against ScyllaDB with the pull request suite, and against Cassandra in a
+nightly job (see the CI measurement below).
+
+- **N4·1 — Plan:** this list, the decisions N4 takes (in [Decisions](#decisions)), the CI
+  measurement, and the roadmap's status.
+- **N4·2 — CQL as a dialect:** `Dialect::Cassandra` in `dbrover-sql`, and
+  `QueryLanguage::Sql(Dialect::Cassandra)`, with no driver yet:
+  - its lexical rules: `--`, `//` and `/* */` comments (not nested), `'…'` strings with `''`
+    for a quote and no backslash escapes, `$$…$$` strings, and `"…"` names;
+  - splitting at semicolons, with `BEGIN [UNLOGGED | COUNTER] BATCH … APPLY BATCH` kept as one
+    statement, so a batch is sent, classified and recorded whole;
+  - a classifier of its own, reading a statement's first words, since `sqlparser` has no CQL
+    dialect: `SELECT` and `DESCRIBE` read; `INSERT`, `UPDATE`, `DELETE`, a batch and `TRUNCATE`
+    write; `CREATE`, `ALTER` and `DROP` of keyspaces, tables, types, indexes, materialized
+    views, functions, aggregates and triggers change the schema; roles, users, `GRANT`,
+    `REVOKE`, `LIST` and service levels are administration, and so is `USE` of a system
+    keyspace, while `USE` of another reads. A statement that starts with anything else is
+    unparseable, so the safety checks refuse it. The keyspaces a data statement's table is
+    qualified with go to the MCP server's allow-list, as SQL's schemas do;
+  - a warning before `TRUNCATE`, which empties a table, as before SQL's `DELETE` without
+    `WHERE` (CQL refuses a `DELETE` or an `UPDATE` without one);
+  - completion of CQL's keywords and of the functions Cassandra 5 and ScyllaDB share (`now()`,
+    `uuid()`, `toTimestamp`, `writetime`, `ttl`, `token`, `toJson`, …), and highlighting of
+    CQL's words, without changing any other dialect's;
+  - the SQL features that don't apply stay hidden: the syntax check with `sqlparser` (the
+    server checks instead, N4·3), explain (CQL has none), sorting and filtering in the database
+    (CQL can't select from a query), importing a file (an import runs in a transaction),
+    manual commit mode, the grid's edits until N4·5, and the object helpers' DDL dialogs.
+
+  Tests: a classification corpus from Cassandra 5's and ScyllaDB's CQL references, as the
+  other dialects have; batches split as one statement; each comment and string form lexed; a
+  kittest of a CQL console's completion and batches.
+- **N4·3 — The driver and the console:** a new crate, `dbrover-driver-cassandra`, on `scylla`
+  1.9:
+  - the **Cassandra / ScyllaDB** data source: the shared server form (port 9042, 9142 with
+    TLS) with an optional user, for a cluster that doesn't ask; a **Keyspace** in the
+    database's place, optional, which a console starts in; a **Local datacenter**, optional,
+    which requests go to first; and a **Statement timeout**, optional (below). TLS from the
+    data source's mode with `dbrover-tls`'s configuration: CQL over TLS is a port of its own on
+    most servers, so there is no `prefer`, and `verify-full` checks the certificate against
+    the host typed, since the client names each node to rustls by its IP address. SSH tunnels.
+    Test connection reports ScyllaDB or Apache Cassandra and the version, from
+    `system.versions` (ScyllaDB's alone) or `system.local`;
+  - the cluster gives the client its nodes' addresses as they know them, which a client outside
+    their network may not reach (a node in Docker, or behind NAT); a node that doesn't answer
+    at its own address within a second is reached through the node the data source names,
+    which coordinates the request. Through an SSH tunnel every node is reached through it;
+  - each statement runs as typed, unprepared, so nothing is cached on the server. Its rows
+    page with the protocol's own paging, 500 rows a page as the grid asks; their columns are
+    typed from the result's metadata (`map<text, int>`), and values are written as CQL reads
+    them: timestamps in UTC to the millisecond, blobs as `0x…`, decimals and varints with every
+    digit, durations as `1h30m`. Lists, sets, maps, tuples and user-defined types are JSON, so
+    the cell viewer's tree (N0b) browses them; a map's keys are JSON strings;
+  - ⌘. stops waiting at once and frees the console; Cassandra finishes the statement or stops
+    at its own timeout. On ScyllaDB, a `SELECT` without its own `USING TIMEOUT` gets the data
+    source's statement timeout, when one is set, so the server stops too;
+  - an error shows the server's message, and its position for a syntax error, which both
+    servers give as a line and column;
+  - **validate** prepares the statement, which checks it and its names without running it,
+    so a misspelt column is caught before running, and pointed at;
+  - `transaction_status` is always idle, and manual commit mode isn't offered;
+  - the explorer lists the keyspaces and their tables; the rest comes with N4·4;
+  - CI: ScyllaDB joins the compose file and the pull request suite; Cassandra joins it under
+    a `nightly` profile, which a new nightly workflow starts to run the driver's and the
+    engine's tests on it.
+
+  Tests: the parts of the shared conformance suite that apply (lifecycle, connect failure,
+  catalog walk, invalid paths), on each server; 1,200 rows paged in clustering order; every
+  CQL type written as CQL reads it, with its type's name; a map column as JSON; TLS with the
+  test authority; a misspelt column rejected by validate, with its position; a cancelled
+  statement; an engine test of a console, and of a read-only data source refusing an `INSERT`;
+  a kittest of the data source dialog.
+- **N4·4 — The explorer:** keyspaces (the system ones only with **System** ticked), then
+  folders of tables, materialized views, user-defined types, functions and aggregates; under a
+  table, its columns (partition and clustering keys marked, in key order, then the rest) and
+  secondary indexes. **Show definition** is the server's own `DESCRIBE` where it has one
+  (ScyllaDB, and Cassandra 4.0 and later), and is rebuilt from `system_schema` otherwise.
+  **Open data** opens a console with `SELECT * FROM ks.t` and runs it. Completion offers the
+  keyspaces, tables and columns the explorer has loaded, as for SQL. Tests: the catalog walk
+  with each kind, the definitions run again in an empty keyspace, and a column completed.
+- **N4·5 — Editing:** a cell changed in the grid becomes
+  `UPDATE ks.t SET c = … WHERE` every partition and clustering key column `= …`, when the
+  result is a `SELECT` of one table that holds its whole primary key; **Add row** becomes an
+  `INSERT`, and **Delete rows** a `DELETE` by the same key. Values are written as literals of
+  the column's CQL type; a collection, tuple or user-defined type typed as JSON is written
+  with `fromJson()`. CQL has no transactions, so the grid's edits run one at a time, as
+  Redis's and MongoDB's do: each is checked, logged and recorded in the history, and one that
+  fails leaves the ones before it done, which the grid says. Tests: a cell of each type edited
+  and read back, a row added and deleted, a key column refused, and kittests of the console's
+  edits.
+- **N4·6 — Safety, MCP and the manual:** the read-only level's dialog suggests a role with
+  only the `SELECT` permission; the MCP server serves the data source only through its MCP
+  login, its `query` tool takes one statement, and `list_objects` lists the explorer's levels.
+  The engine count in `README.md`, `book/src/introduction.md` and `site/index.html` takes the
+  new engines in, counted as #316 counts them: one more data source kind, a pair. Tests: on
+  ScyllaDB, a role with `SELECT` alone serves as the MCP login, reads a table, and is refused
+  an `INSERT` by the server as well as by the check.
+
+The manual changes in the layer that changes what a user sees: N4·3 (the data source, the
+console and keyspaces in the explorer), N4·4 (the explorer), N4·5 (editing) and N4·6
+(read-only data sources and MCP logins).
+
+**CI**, measured when N4 started (2026-11-01), on a GitHub Linux runner (4 CPUs, 16 GB): the time
+from `docker compose up -d --wait` to every service healthy, with the images already pulled.
+
+| Services | Run 1 | Run 2 | Run 3 |
+| --- | --- | --- | --- |
+| Today's (PostgreSQL to OpenSearch) | 47 s | 48 s | 48 s |
+| Today's and `scylladb/scylla:2026.3.4` | 51 s | 56 s | 56 s |
+| Today's and `cassandra:5.0.9` | 88 s | 86 s | |
+| `scylladb/scylla` alone | 7 s | 6 s | 6 s |
+| `cassandra` alone | 70 s | 70 s | |
+
+Pulling the images took 8 s for ScyllaDB and 5 s for Cassandra; ScyllaDB used about 100 MB and
+Cassandra, with a 512 MB heap, about 1.2 GB. On a laptop (Docker Desktop), Cassandra answered
+`cqlsh` 60 to 62 seconds after `docker run` and ScyllaDB after 3 to 4. So **ScyllaDB runs with
+the pull request suite**, adding about 5 seconds to the Linux job, and **Cassandra runs nightly**,
+in a workflow of its own that starts it and runs the CQL tests: on every pull request it would
+add about 40 seconds. ScyllaDB runs as one node on one core (`--smp 1 --memory 1G
+--overprovisioned 1 --developer-mode 1`), with password authentication; ScyllaDB 2026 makes no
+default superuser, so the health check creates the test role through the node's maintenance
+socket, which takes CQL without a login from inside the container only.
+
 ### Later: DynamoDB and Neo4j
 
 - **DynamoDB**, in the [cloud track](cloud-data.md) after C0: `aws-sdk-dynamodb`, with its
@@ -1099,7 +1225,11 @@ milestone starts.
 | The console's syntax (N3) | **Kibana's Dev Tools requests,** a method and path, then a body, **sent as typed.** DbRover reads the body only to classify it and to find a search's paging; it never writes it again, except to add a point in time, `search_after` and `size` to a search it pages. | Requests copied from either vendor's documentation run as they are, numbers keep every digit, and the body the server reads is the one on screen. Kibana's triple-quoted strings and variables aren't read, and the error says so. |
 | How a search pages (N3) | **A search without `size` reads every hit,** as a `SELECT` without `LIMIT` does, through a point in time, `search_after` and `_shard_doc` as the tiebreaker, as the grid asks for pages. With `size`, at most that many; with `from`, `scroll` or aggregations, as typed, the answer whole. | The grid pages any search, and Run to file writes every hit. A search for its aggregations shows them as a tree rather than its first ten hits as rows. Kibana's habit, ten hits unless told otherwise, isn't DbRover's; the manual says so. |
 | An API key (N3) | **In the password's place:** the data source says which it holds, and the key, Elasticsearch's encoded form, is kept in the keychain as a password is, and sent as `Authorization: ApiKey …`. | No second secret per data source: the keychain, password commands and `${NAME}` placeholders work for a key as they do for a password. |
-| Cassandra's language | **A `Dialect` of `dbrover-sql`**, since CQL lexes and splits like SQL, with its own small classifier, as `sqlparser` has no CQL dialect. | The SQL tooling (splitting, highlighting, completion) works for CQL with a new set of rules, not a new language. |
+| Cassandra's language | **A `Dialect` of `dbrover-sql`**, since CQL lexes and splits like SQL, with its own small classifier, as `sqlparser` has no CQL dialect. Confirmed when N4 started. | The SQL tooling (splitting, highlighting, completion) works for CQL with a new set of rules, not a new language. What only SQL has (the `sqlparser` syntax check, explain, sorting in the database, imports, the object helpers) asks the dialect and stays hidden for CQL. |
+| Which `scylla` release (N4) | **1.9.0**, the latest, with its `rustls-023` feature, handed `dbrover-tls`'s ring configuration; ring is installed as rustls's process-wide provider, as for SQL Server. | That feature takes rustls with its default features, aws-lc-rs among them, which tiberius already builds, so no new crypto is compiled. A ring-only feature is still worth asking upstream for. |
+| Where the client reaches nodes (N4) | **At the address the cluster gives each node when it answers within a second, and through the node the data source names otherwise;** through an SSH tunnel, every node through the tunnel. | A cluster in Docker or behind NAT works with no setting, and a reachable cluster keeps routing each request to a node that holds its rows. A node out of reach costs a second's probe once per session. |
+| How ⌘. stops a CQL statement (N4) | **The client stops waiting; on ScyllaDB, a `SELECT` also runs with `USING TIMEOUT` from the data source's new Statement timeout,** when one is set. The protocol has no cancel. | The console is free at once. Cassandra keeps working until its own timeout (5 s for most reads), and so does ScyllaDB without a statement timeout; writes keep the servers' write timeouts. |
+| CI for CQL (N4) | **ScyllaDB with every pull request, Cassandra nightly**, measured as above. | The Linux job grows by about 5 seconds. A change that breaks only Cassandra shows the next morning, not on its pull request. |
 | Where languages live (N0a) | **A crate of their own, `dbrover-language`,** on top of `dbrover-sql`. It owns `QueryLanguage`; Redis's and MongoDB's languages become modules of it. `StatementKind` and `Unclassified` stay in `dbrover-sql` and are re-exported, and highlighting keeps `dbrover-sql`'s token kinds. | `dbrover-sql` stays about SQL. Code outside the crate asks a language through its methods and never matches on its variants, so a variant added for a new engine, or the test language, changes no other crate. |
 | The test language (N0a) | **A variant behind a `test-language` feature,** turned on only in dev-dependencies. | It is compiled into tests only, yet it runs through the same console, check and warnings as a real language. |
 | How a document travels (N0b) | **As canonical Extended JSON text, one row of one cell per document,** with the result's shape (rows or documents) from the cursor. See [ADR 0006](adr/0006-documents-as-extended-json-text.md). | Paging, cancelling, the history and the engine's events stay as they are. The console flattens documents, so no driver repeats it. |
