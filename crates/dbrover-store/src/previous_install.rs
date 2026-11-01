@@ -102,6 +102,12 @@ pub struct AdoptionError {
     source: io::Error,
 }
 
+impl AdoptionError {
+    pub(crate) fn new(from: PathBuf, to: PathBuf, source: io::Error) -> Self {
+        Self { from, to, source }
+    }
+}
+
 /// Copies the `previous` name's folders to the `current` name's, unless the current settings
 /// folder exists already. Nothing in `previous` is changed or deleted, apart from the note
 /// that says where it was copied.
