@@ -205,7 +205,7 @@ fn keeps_a_moved_table_where_it_was_left_and_a_dropped_one_as_missing() {
     let mut harness = start_app(dir.path(), feed);
     step_until_visible(&mut harness, "Expand shop");
     harness.get_by_label("shop").click_secondary();
-    harness.run_steps(2);
+    step_until_visible(&mut harness, "Diagrams");
     harness.get_by_label("Diagrams").hover();
     harness.run_steps(2);
     harness.get_by_role_and_label(Role::Button, "main").click();
@@ -413,7 +413,7 @@ fn draws_moves_reopens_and_exports_a_diagram_on_postgres() {
     let mut harness = start();
     step_until_visible(&mut harness, "Expand pg");
     harness.get_by_label("pg").click_secondary();
-    harness.run_steps(2);
+    step_until_visible(&mut harness, "Diagrams");
     harness.get_by_label("Diagrams").hover();
     harness.run_steps(2);
     harness
