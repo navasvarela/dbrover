@@ -50,6 +50,7 @@ encode_clip() {
 }
 
 for frames in "${src}"/*/; do
+    [ -d "${frames}" ] || continue
     name="$(basename "${frames}")"
     encode_clip "${frames%/}" "${name}"
     echo "encoded ${name}"

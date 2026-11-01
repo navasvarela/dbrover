@@ -31,9 +31,15 @@ use crate::test_support::step_until_visible;
 /// shows a picture.
 const SITE_WINDOW_SIZE: Vec2 = Vec2::new(1024.0, 720.0);
 
-/// A scene of the manual's that the feature tour shows, and the part of the window to show.
+/// Wider than `SITE_WINDOW_SIZE`, because a query plan's columns, **Time** last, don't fit
+/// beside the explorer in a window 1024 points wide.
+const PLAN_WINDOW_SIZE: Vec2 = Vec2::new(1280.0, 720.0);
+
+/// A scene of the manual's that the feature tour shows, the window it plays in, and the part of
+/// the window to show.
 struct TourStill {
     scene: &'static str,
+    window: Vec2,
     region: Region,
 }
 
@@ -42,26 +48,37 @@ struct TourStill {
 const TOUR_STILLS: &[TourStill] = &[
     TourStill {
         scene: "problems",
+        window: SITE_WINDOW_SIZE,
         region: console_editor,
     },
     TourStill {
         scene: "grid-changes",
+        window: SITE_WINDOW_SIZE,
         region: console,
     },
     TourStill {
         scene: "modify-table",
+        window: SITE_WINDOW_SIZE,
         region: dialog,
     },
     TourStill {
+        scene: "explain-plan",
+        window: PLAN_WINDOW_SIZE,
+        region: plan,
+    },
+    TourStill {
         scene: "careful-confirmation",
+        window: SITE_WINDOW_SIZE,
         region: console_and_dialog,
     },
     TourStill {
         scene: "project-settings",
+        window: SITE_WINDOW_SIZE,
         region: dialog,
     },
     TourStill {
         scene: "ssh-data-source-dialog",
+        window: SITE_WINDOW_SIZE,
         region: dialog,
     },
 ];
@@ -102,7 +119,10 @@ fn console(harness: &Harness<'static, DbRoverApp>) -> Option<Rect> {
         .rect();
     Some(Rect::from_min_max(
         Pos2::new(editor.min.x - CROP_MARGIN, toolbar.min.y - CROP_MARGIN),
-        Pos2::new(SITE_WINDOW_SIZE.x, log_search.min.y - LOG_CONSOLE_HEADER),
+        Pos2::new(
+            harness.ctx.content_rect().max.x,
+            log_search.min.y - LOG_CONSOLE_HEADER,
+        ),
     ))
 }
 
@@ -114,6 +134,17 @@ fn console_editor(harness: &Harness<'static, DbRoverApp>) -> Option<Rect> {
     Some(Rect::from_min_max(
         area.min,
         Pos2::new(area.max.x, (editor.max.y + TOOLTIP_ROOM).min(area.max.y)),
+    ))
+}
+
+/// The console's query plan, from its **Tree** and **Text** toggles down, without the editor
+/// above it.
+fn plan(harness: &Harness<'static, DbRoverApp>) -> Option<Rect> {
+    let area = console(harness)?;
+    let toggles = harness.query_by_label("Tree")?.rect();
+    Some(Rect::from_min_max(
+        Pos2::new(area.min.x, toggles.min.y - CROP_MARGIN),
+        area.max,
     ))
 }
 
@@ -158,7 +189,7 @@ fn record_site_media() {
         }
         for theme in BOTH_THEMES {
             let path = out_dir.join(format!("{}-{}.png", scene.name, theme_name(theme)));
-            render_scene(scene, theme, SITE_WINDOW_SIZE, still.region)
+            render_scene(scene, theme, still.window, still.region)
                 .save(&path)
                 .unwrap();
             println!("wrote {}", path.display());

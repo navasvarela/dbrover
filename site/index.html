@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DbRover — eight databases, one native app</title>
-  <meta name="description" content="DbRover is a free, open-source desktop database tool written in Rust, for PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, DuckDB, ClickHouse, Redis, MongoDB, Elasticsearch and OpenSearch. It opens in a moment, needs no account, keeps production safe with safety levels, and lets AI assistants in over MCP only as far as you allow.">
+  <title>DbRover — nine databases, one native app</title>
+  <meta name="description" content="DbRover is a free, open-source desktop database tool written in Rust for nine databases: PostgreSQL, MySQL and MariaDB, SQLite, SQL Server, DuckDB, ClickHouse, Redis and Valkey, MongoDB, and Elasticsearch and OpenSearch. It is native and fast, needs no account, keeps production safe with safety levels, and lets AI assistants in over MCP only as far as you allow.">
   <meta name="color-scheme" content="dark light">
   <meta property="og:title" content="DbRover">
-  <meta property="og:description" content="A free, open-source, native database tool for PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, DuckDB, ClickHouse, Redis, MongoDB, Elasticsearch and OpenSearch, with safe access for AI assistants.">
+  <meta property="og:description" content="A free, open-source, native database tool for nine databases, from PostgreSQL to MongoDB, with safety levels and safe access for AI assistants over MCP.">
   <meta property="og:image" content="https://dbrover.org/assets/brand/social-preview.png">
   <meta property="og:url" content="https://dbrover.org/">
   <meta name="twitter:card" content="summary_large_image">
@@ -32,12 +32,13 @@
 
   <main id="main">
     <section class="hero" aria-labelledby="hero-title">
-      <p class="eyebrow">PostgreSQL · MySQL · MariaDB · SQLite · SQL Server · DuckDB · ClickHouse · Redis · MongoDB · Elasticsearch · OpenSearch</p>
-      <h1 id="hero-title">Eleven databases, one native app</h1>
+      <p class="eyebrow">PostgreSQL · MySQL and MariaDB · SQLite · SQL Server · DuckDB · ClickHouse · Redis and Valkey · MongoDB · Elasticsearch and OpenSearch</p>
+      <h1 id="hero-title">Nine databases, one native app</h1>
       <p class="lede">
-        DbRover is a free, open-source desktop database tool written in Rust. Write SQL with
-        completion from your catalog, edit rows in the grid, change tables without writing the
-        DDL, keep production safe, and let an AI assistant in only as far as you allow.
+        DbRover is a native desktop database tool written in Rust: it opens in a moment and stays
+        quick with millions of rows. Safety levels guard production, and AI assistants reach
+        your databases over MCP only as far as you allow. Free, open source, and no account to
+        make.
       </p>
       <div class="hero-actions">
         <a class="button primary" id="download-button" href="#download"
@@ -80,15 +81,16 @@
 
     <section class="strip" aria-label="Why DbRover">
       <article>
-        <h2>Native and quick</h2>
+        <h2>Native and fast</h2>
         <p>Rust and egui, with no browser engine or JVM inside. It opens in about a third of a
-          second on a recent Mac, and the universal Mac download is 78 MB.</p>
+          second on a recent Mac, and results stream in as you scroll, so even a huge table
+          shows at once.</p>
       </article>
       <article>
-        <h2>AI assistants, kept in bounds</h2>
-        <p>A built-in MCP server, off until you allow a project. Where the engine allows, the
-          database itself keeps an assistant's reads read-only, and safety levels guard
-          production.</p>
+        <h2>Safe AI access over MCP</h2>
+        <p>A built-in MCP server, off until you allow a project, that only reads unless you
+          allow more. Safety levels guard production, and read-only works on every
+          database.</p>
       </article>
       <article>
         <h2>Free, open, no account</h2>
@@ -99,6 +101,62 @@
 
     <section class="tour" id="tour" aria-labelledby="tour-title">
       <h2 id="tour-title" class="visually-hidden">Features</h2>
+
+      <article class="row">
+        <div class="copy">
+          <p class="eyebrow">AI assistants through MCP</p>
+          <h3>Let an assistant in, as far as you allow</h3>
+          <p>DbRover includes an MCP server. Allow a project, copy its configuration into Claude
+            Desktop, Claude Code, Cursor or another client, and the assistant can list, describe,
+            explain and query that project's data sources, with the DbRover window closed.</p>
+          <ul>
+            <li>Off until you allow a project, and read-only until you allow more.</li>
+            <li>Read, write, schema and admin permissions per project, a row limit, a statement
+              timeout, and the schemas it may see.</li>
+            <li>Checked in layers: DbRover reads each statement first, reads run in the
+              database's own read-only mode, and the database's grants apply through an MCP login
+              of its own.</li>
+            <li>Every statement in the history, marked with the assistant's name.</li>
+          </ul>
+          <a class="more" href="manual/mcp.html">Connecting an AI assistant in the manual</a>
+        </div>
+        <figure class="window">
+          <picture>
+            <source srcset="media/project-settings-light.webp" media="(prefers-color-scheme: light)">
+            <img src="media/project-settings-dark.webp" width="1186" height="755" loading="lazy"
+                 alt="A project's settings allowing MCP clients, with read and write ticked, a row limit and a statement timeout">
+          </picture>
+        </figure>
+      </article>
+
+      <article class="row">
+        <div class="copy">
+          <p class="eyebrow">Staying safe</p>
+          <h3>Careful where it matters</h3>
+          <p>Each data source has a safety level. <strong>Normal</strong> asks before an
+            <code>UPDATE</code> or <code>DELETE</code> without <code>WHERE</code>.
+            <strong>Careful</strong> asks before every change, naming the data source, and opens
+            consoles in manual commit. <strong>Read-only</strong> refuses changes on every
+            database, and PostgreSQL, MySQL, MariaDB, SQLite, DuckDB and ClickHouse refuse them in
+            their own read-only modes too.</p>
+          <ul>
+            <li>A colour per data source, on its tree row, its console tabs and a band across
+              the console.</li>
+            <li>Manual-commit transactions, and a question before closing one that's open.</li>
+            <li>A history of every statement, from consoles, the grid, dialogs, imports and
+              assistants, with the grid's values before and after.</li>
+            <li>Passwords stay in the system keychain, and out of the history.</li>
+          </ul>
+          <a class="more" href="manual/data-sources.html#safety-levels">Safety levels in the manual</a>
+        </div>
+        <figure class="window">
+          <picture>
+            <source srcset="media/careful-confirmation-light.webp" media="(prefers-color-scheme: light)">
+            <img src="media/careful-confirmation-dark.webp" width="1400" height="615" loading="lazy"
+                 alt="A careful data source asking whether to run an UPDATE on shop before it runs">
+          </picture>
+        </figure>
+      </article>
 
       <article class="row">
         <div class="copy">
@@ -126,6 +184,65 @@
         </figure>
       </article>
 
+      <article class="row wide">
+        <div class="copy">
+          <div>
+            <p class="eyebrow">Query plans</p>
+            <h3>See why a query is slow</h3>
+            <p><strong>Explain</strong> draws the plan as a tree of steps and tints the costliest.
+              <strong>Explain analyse</strong> runs the statement and shows, beside each estimate,
+              the rows each step really returned, how many times it ran and how long it took.</p>
+          </div>
+          <div>
+            <ul>
+              <li>On PostgreSQL, MySQL, MariaDB and SQL Server.</li>
+              <li>Estimates that were ten times off are flagged: the usual reason the database
+                picked a slow plan.</li>
+              <li>Hover over a step for its join condition, filter, sort key or index.</li>
+              <li>Copy the plan as text, or as the JSON or XML the database returned.</li>
+            </ul>
+            <a class="more" href="manual/explain-plans.html">Reading query plans in the manual</a>
+          </div>
+        </div>
+        <figure class="window">
+          <picture>
+            <source srcset="media/explain-plan-light.webp" media="(prefers-color-scheme: light)">
+            <img src="media/explain-plan-dark.webp" width="1400" height="392" loading="lazy"
+                 alt="A join of orders and customers explained by running it, as a tree with the costliest step tinted">
+          </picture>
+        </figure>
+      </article>
+
+      <article class="row">
+        <div class="copy">
+          <p class="eyebrow">Beyond SQL</p>
+          <h3>Keys, documents and indices too</h3>
+          <p>Redis, Valkey and Dragonfly, MongoDB, and Elasticsearch and OpenSearch each get a
+            console in their own language, with completion, and an explorer that knows their
+            shape.</p>
+          <ul>
+            <li>Redis keys grouped by their separator, read with <code>SCAN</code> so even
+              millions never stall the server.</li>
+            <li>MongoDB's shell commands, read by DbRover before they're sent, with documents as
+              columns, a tree or JSON.</li>
+            <li>Elasticsearch and OpenSearch requests as Kibana's Dev Tools write them, with
+              every hit paged in as you scroll.</li>
+          </ul>
+          <a class="more" href="manual/consoles.html#redis-commands">Redis, MongoDB and Elasticsearch consoles in the manual</a>
+        </div>
+        <figure class="code-card" aria-label="A Redis command, a MongoDB command and an Elasticsearch request">
+<pre><code><span class="c"># Redis, Valkey or Dragonfly</span>
+<span class="k">HGETALL</span> user:42
+
+<span class="c">// MongoDB</span>
+db.orders.<span class="k">find</span>({status: <span class="s">"open"</span>}).<span class="k">sort</span>({_id: -1})
+
+<span class="c"># Elasticsearch or OpenSearch</span>
+<span class="k">GET</span> /orders/_search
+{ <span class="s">"query"</span>: { <span class="s">"match"</span>: { <span class="s">"status"</span>: <span class="s">"open"</span> } } }</code></pre>
+        </figure>
+      </article>
+
       <article class="row">
         <div class="copy">
           <p class="eyebrow">The results grid</p>
@@ -136,10 +253,11 @@
             <li>Edit cells, add and delete rows, then submit them together or revert.</li>
             <li>Follow a foreign key to the row it points at, or list the rows pointing
               back.</li>
-            <li>Export the loaded rows, or stream every row, to CSV or JSON.</li>
+            <li>Export to CSV, Excel, Parquet, JSON, Markdown, SQL and more, from the grid, a
+              table, or a query run straight to a file.</li>
             <li>Import a CSV file into a table, with a preview and warnings first.</li>
           </ul>
-          <a class="more" href="manual/table-data.html">Working with table data in the manual</a>
+          <a class="more" href="manual/exporting.html">Exporting and copying rows in the manual</a>
         </div>
         <figure class="window">
           <picture>
@@ -172,61 +290,6 @@
             <source srcset="media/modify-table-light.webp" media="(prefers-color-scheme: light)">
             <img src="media/modify-table-dark.webp" width="1303" height="1023" loading="lazy"
                  alt="Modify table on orders, with a column renamed and one added, and the ALTER TABLE statements it will run">
-          </picture>
-        </figure>
-      </article>
-
-      <article class="row">
-        <div class="copy">
-          <p class="eyebrow">Staying safe</p>
-          <h3>Careful where it matters</h3>
-          <p>Each data source has a safety level. <strong>Normal</strong> asks before an
-            <code>UPDATE</code> or <code>DELETE</code> without <code>WHERE</code>.
-            <strong>Careful</strong> asks before every change, naming the data source, and opens
-            consoles in manual commit. <strong>Read-only</strong> refuses changes, and on
-            PostgreSQL, MySQL, MariaDB and SQLite the database enforces it too.</p>
-          <ul>
-            <li>A colour per data source, on its tree row, its console tabs and a band across
-              the console.</li>
-            <li>Manual-commit transactions, and a question before closing one that's open.</li>
-            <li>A history of every statement, from consoles, the grid, dialogs, imports and
-              assistants, with the grid's values before and after.</li>
-            <li>Passwords stay in the system keychain, and out of the history.</li>
-          </ul>
-          <a class="more" href="manual/data-sources.html#safety-levels">Safety levels in the manual</a>
-        </div>
-        <figure class="window">
-          <picture>
-            <source srcset="media/careful-confirmation-light.webp" media="(prefers-color-scheme: light)">
-            <img src="media/careful-confirmation-dark.webp" width="1400" height="615" loading="lazy"
-                 alt="A careful data source asking whether to run an UPDATE on shop before it runs">
-          </picture>
-        </figure>
-      </article>
-
-      <article class="row">
-        <div class="copy">
-          <p class="eyebrow">AI assistants through MCP</p>
-          <h3>Let an assistant in, as far as you allow</h3>
-          <p>DbRover includes an MCP server. Allow a project, copy its configuration into Claude
-            Desktop, Claude Code, Cursor or another client, and the assistant can list, describe,
-            explain and query that project's data sources, with the DbRover window closed.</p>
-          <ul>
-            <li>Off until you allow a project.</li>
-            <li>Read, write, schema and admin permissions per project, a row limit and a
-              statement timeout.</li>
-            <li>Checked three times: DbRover parses each statement, runs reads in a read-only
-              transaction, and the database's own grants apply.</li>
-            <li>An optional login of its own, and every statement in the history, marked with the
-              assistant's name.</li>
-          </ul>
-          <a class="more" href="manual/mcp.html">Connecting an AI assistant in the manual</a>
-        </div>
-        <figure class="window">
-          <picture>
-            <source srcset="media/project-settings-light.webp" media="(prefers-color-scheme: light)">
-            <img src="media/project-settings-dark.webp" width="1186" height="755" loading="lazy"
-                 alt="A project's settings allowing MCP clients, with read and write ticked, a row limit and a statement timeout">
           </picture>
         </figure>
       </article>
@@ -297,7 +360,7 @@
     </section>
 
     <section class="databases" aria-labelledby="databases-title">
-      <h2 id="databases-title">Databases</h2>
+      <h2 id="databases-title">Nine databases</h2>
       <ul class="engine-list">
         <li><span class="engine-logo postgresql" aria-hidden="true"></span>PostgreSQL</li>
         <li><span class="engine-logo mysql" aria-hidden="true"></span>MySQL and MariaDB</li>
