@@ -255,9 +255,11 @@ fn hero(recorder: &mut Recorder) {
     recorder.press(Key::Enter);
     recorder.wait_until_visible("Sorted and filtered by the database");
     recorder.pause(Duration::from_millis(900));
-    // Twice, for newest first: the last open order is the 60th, placed on 30 June.
-    recorder.click("placed_at");
-    recorder.click("placed_at");
+    // Twice, for newest first: the last open order is the 60th, placed on 30 June. Both at the
+    // header's first place: once the pointer rests on it, its tooltip names the column too.
+    let header = recorder.target("placed_at");
+    recorder.click_at(header, PointerButton::Primary);
+    recorder.click_at(header, PointerButton::Primary);
     recorder.wait_until_visible("2026-06-30");
     recorder.pause(Duration::from_millis(2000));
 }
