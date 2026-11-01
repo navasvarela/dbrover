@@ -1,24 +1,29 @@
 //! The Settings tab, opened by View › Settings… in the dock beside the consoles: a sidebar of
 //! pages under a search field, and the chosen page, or everything the search finds. The
 //! settings' pages save `settings.toml` at once; the MCP defaults go to `projects.toml` with
-//! their own button, and the theme is egui's, kept with the window layout. The Keymap page
-//! lists `keymap.toml`, which is edited by hand.
+//! their own button, and the theme is egui's, kept with the window layout. The Keymap and
+//! Custom actions pages list `keymap.toml` and `actions.toml`, which are edited by hand, and
+//! each project has a page of its own, saved to `projects.toml` with its own button.
 
 mod actions_page;
 mod controls;
 mod keymap_page;
+mod project_page;
 mod search;
 mod setting;
 
 use std::path::Path;
 
-use dbrover_store::{McpPermissions, Settings};
+use dbrover_core::{DataSource, ProjectId};
+use dbrover_engine::Event;
+use dbrover_store::{McpOverrides, McpPermissions, Project, Settings};
 use egui::{
     Button, CentralPanel, Color32, Frame, Margin, Panel, RichText, ScrollArea, TextEdit,
     ThemePreference, Ui, WidgetInfo, WidgetType, vec2,
 };
 
 use self::controls::Draft;
+use self::project_page::{ProjectDrafts, ProjectView};
 use self::search::Found;
 use self::setting::{Category, Setting};
 use crate::command_runs::CommandRuns;
@@ -28,6 +33,7 @@ use crate::icons;
 use crate::keymap::Keymap;
 use crate::mcp_settings::McpDefaultsEditor;
 use crate::settings::AppSettings;
+use crate::state::DataSources;
 use crate::theme::Palette;
 use crate::{fonts, widgets};
 
@@ -38,6 +44,8 @@ const PAGE_MARGIN: Margin = Margin::symmetric(24, 18);
 const SIDEBAR_MARGIN: Margin = Margin::symmetric(10, 12);
 const NAV_ITEM_HEIGHT: f32 = 26.0;
 const PAGE_TITLE_SIZE: f32 = 18.0;
+/// After a project's name in the sidebar while it has changes to save.
+const UNSAVED_MARK: &str = "●";
 
 /// What the user asked of the tab this frame, for the app to do.
 pub enum SettingsAction {
@@ -56,6 +64,12 @@ pub enum SettingsAction {
     ReloadCustomFiles,
     /// Write a starting `actions.toml`, unless there is one.
     CreateActions,
+    /// Write a project's MCP settings to `projects.toml`.
+    SaveProject {
+        id: ProjectId,
+        mcp_enabled: bool,
+        overrides: McpOverrides,
+    },
 }
 
 /// What the tab needs of the app to draw itself.
@@ -69,6 +83,11 @@ pub struct SettingsView<'a> {
     pub custom_files: &'a CustomFiles,
     /// Which command actions run without asking.
     pub command_runs: &'a CommandRuns,
+    /// Sorted by name, as the explorer lists them.
+    pub projects: &'a [Project],
+    pub data_sources: &'a DataSources,
+    /// The MCP defaults as saved, which each project's settings start from.
+    pub mcp_defaults: &'a McpPermissions,
 }
 
 /// A page of the tab, listed in the sidebar.
@@ -77,6 +96,8 @@ pub enum Page {
     Settings(Category),
     Keymap,
     Actions,
+    /// A project's MCP settings, under the sidebar's Projects caption.
+    Project(ProjectId),
 }
 
 impl Default for Page {
@@ -86,7 +107,7 @@ impl Default for Page {
 }
 
 impl Page {
-    /// The pages in the sidebar's order.
+    /// The pages above the projects, in the sidebar's order.
     fn listed() -> impl Iterator<Item = Self> {
         Category::ALL
             .into_iter()
@@ -99,6 +120,8 @@ impl Page {
             Self::Settings(category) => category.title(),
             Self::Keymap => "Keymap",
             Self::Actions => "Custom actions",
+            // A project's page is titled with its name, which the page doesn't hold.
+            Self::Project(_) => "Project",
         }
     }
 
@@ -107,6 +130,7 @@ impl Page {
             Self::Settings(category) => category.glyph(),
             Self::Keymap => icons::KEYBOARD,
             Self::Actions => icons::LIGHTNING,
+            Self::Project(_) => icons::FOLDER_SIMPLE,
         }
     }
 
@@ -121,16 +145,18 @@ impl Page {
                 "Your own actions from actions.toml, in the Actions menu, on right-click, and on \
                  the keys the keymap gives them."
             }
+            Self::Project(_) => project_page::SUMMARY,
         }
     }
 }
 
-/// The tab's own state: the page shown and what is typed in the search field. Not saved: the
-/// tab opens on Appearance.
+/// The tab's own state: the page shown, what is typed in the search field, and the projects'
+/// unsaved changes. Not saved: the tab opens on Appearance.
 #[derive(Debug, Default)]
 pub struct SettingsTab {
     page: Page,
     query: String,
+    projects: ProjectDrafts,
 }
 
 impl SettingsTab {
@@ -140,13 +166,18 @@ impl SettingsTab {
         self.query.clear();
     }
 
+    /// Takes in an engine event: a project's save, or why it failed.
+    pub fn apply(&mut self, event: &Event) {
+        self.projects.apply(event);
+    }
+
     pub fn show(&mut self, ui: &mut Ui, view: SettingsView<'_>, actions: &mut Vec<SettingsAction>) {
         let found = self.found(ui.ctx(), &view);
         Panel::left("settings_sidebar")
             .resizable(false)
             .exact_size(SIDEBAR_WIDTH)
             .frame(Frame::new().inner_margin(SIDEBAR_MARGIN))
-            .show(ui, |ui| self.sidebar(ui, &found));
+            .show(ui, |ui| self.sidebar(ui, &found, view.projects));
         CentralPanel::default().frame(Frame::new()).show(ui, |ui| {
             ScrollArea::vertical()
                 .id_salt("settings_page")
@@ -179,16 +210,18 @@ impl SettingsTab {
             view.custom_files.actions(),
         );
         let actions = view.custom_files.actions().iter().map(Found::Action);
+        let projects = view.projects.iter().map(Found::Project);
         Setting::all()
             .into_iter()
             .map(Found::Setting)
             .chain(shortcuts.into_iter().map(Found::Shortcut))
             .chain(actions)
+            .chain(projects)
             .filter(|found| found.matches(&self.query))
             .collect()
     }
 
-    fn sidebar(&mut self, ui: &mut Ui, found: &[Found<'_>]) {
+    fn sidebar(&mut self, ui: &mut Ui, found: &[Found<'_>], projects: &[Project]) {
         // The field shares the panel's fill in the light theme; an outline shows where it is.
         let border = Palette::for_visuals(ui.visuals()).border;
         ui.visuals_mut().widgets.inactive.bg_stroke = egui::Stroke::new(1.0, border);
@@ -204,21 +237,61 @@ impl SettingsTab {
         );
         widgets::name(field, WidgetType::TextEdit, "Search settings", true);
         ui.add_space(8.0);
-        for page in Page::listed() {
-            let count = found.iter().filter(|found| found.page() == page).count();
-            let item = NavItem {
-                selected: !self.searching() && self.page == page,
-                dimmed: self.searching() && count == 0,
-                count: self.searching().then_some(count),
-                ..NavItem::new(page.glyph(), page.title())
-            };
-            if item.show(ui).clicked() {
-                self.show_page(page);
-            }
+        // Many projects make the list taller than the window.
+        ScrollArea::vertical()
+            .id_salt("settings_sidebar")
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                for page in Page::listed() {
+                    self.nav_item(ui, page, page.title(), found);
+                }
+                ui.add_space(4.0);
+                ui.separator();
+                form::section(ui, "Projects", |ui| {
+                    if projects.is_empty() {
+                        form::description_label(ui, "No projects yet");
+                    }
+                    for project in projects {
+                        self.nav_item(ui, Page::Project(project.id), &project.name, found);
+                    }
+                });
+            });
+    }
+
+    /// `page`'s entry in the sidebar, named `text`: chosen, with what the search finds on it, or
+    /// with a dot while it has changes to save.
+    fn nav_item(&mut self, ui: &mut Ui, page: Page, text: &str, found: &[Found<'_>]) {
+        let count = found.iter().filter(|found| found.page() == page).count();
+        let unsaved = match page {
+            Page::Project(id) => self.projects.changed(id),
+            Page::Settings(_) | Page::Keymap | Page::Actions => false,
+        };
+        let badge = if self.searching() {
+            Some(count.to_string())
+        } else {
+            unsaved.then(|| UNSAVED_MARK.to_owned())
+        };
+        let item = NavItem {
+            selected: !self.searching() && self.page == page,
+            dimmed: self.searching() && count == 0,
+            badge,
+            ..NavItem::new(page.glyph(), text)
+        };
+        if item.show(ui).clicked() {
+            self.show_page(page);
         }
     }
 
-    fn draw_page(&self, ui: &mut Ui, view: SettingsView<'_>, actions: &mut Vec<SettingsAction>) {
+    fn draw_page(
+        &mut self,
+        ui: &mut Ui,
+        view: SettingsView<'_>,
+        actions: &mut Vec<SettingsAction>,
+    ) {
+        if let Page::Project(id) = self.page {
+            self.project_page(ui, id, &view, actions);
+            return;
+        }
         page_title(ui, self.page.title(), self.page.summary());
         match self.page {
             Page::Settings(category) => {
@@ -247,7 +320,37 @@ impl SettingsTab {
                 view.command_runs,
                 actions,
             ),
+            Page::Project(_) => {}
         }
+    }
+
+    /// The project's page, or Appearance once the project is deleted.
+    fn project_page(
+        &mut self,
+        ui: &mut Ui,
+        id: ProjectId,
+        view: &SettingsView<'_>,
+        actions: &mut Vec<SettingsAction>,
+    ) {
+        let Some(project) = view.projects.iter().find(|project| project.id == id) else {
+            self.page = Page::default();
+            ui.ctx().request_repaint();
+            return;
+        };
+        page_title(ui, &project.name, project_page::SUMMARY);
+        let members: Vec<&DataSource> = view
+            .data_sources
+            .entries()
+            .iter()
+            .map(|entry| &entry.data_source)
+            .filter(|data_source| data_source.project == Some(id))
+            .collect();
+        let project_view = ProjectView {
+            project,
+            defaults: view.mcp_defaults,
+            members,
+        };
+        self.projects.show(ui, &project_view, actions);
     }
 
     /// What the search found, under its page's title and section.
@@ -264,9 +367,7 @@ impl SettingsTab {
             n => format!("{n} matches"),
         };
         page_title(ui, &heading, &format!("Matching “{}”", self.query.trim()));
-        let opened = settings_page(ui, found, view, actions, |found| {
-            format!("{} › {}", found.page().title(), found.section())
-        });
+        let opened = settings_page(ui, found, view, actions, |found| found.caption());
         if let Some(page) = opened {
             self.show_page(page);
         }
@@ -293,7 +394,8 @@ fn settings_page(
         mcp_to_save: None,
     };
     let mut opened = None;
-    let groups = found.chunk_by(|a, b| a.page() == b.page() && a.section() == b.section());
+    let defaults = view.mcp_defaults;
+    let groups = found.chunk_by(|a, b| caption(a) == caption(b));
     for group in groups {
         form::section(ui, &caption(&group[0]), |ui| {
             form::card(ui, |rows| {
@@ -303,6 +405,11 @@ fn settings_page(
                         Found::Shortcut(shortcut) => keymap_page::row(rows, shortcut),
                         Found::Action(action) => {
                             if actions_page::found_row(rows, action) {
+                                opened = Some(found.page());
+                            }
+                        }
+                        Found::Project(project) => {
+                            if project_page::found_row(rows, project, defaults) {
                                 opened = Some(found.page());
                             }
                         }
@@ -377,15 +484,15 @@ fn file_line(ui: &mut Ui, about: Option<&str>, add_links: impl FnOnce(&mut Ui)) 
     });
 }
 
-/// A sidebar entry: an icon and a name, highlighted when chosen, with a count at the right
-/// while searching.
+/// A sidebar entry: an icon and a name, highlighted when chosen, with a badge at the right: a
+/// count while searching, or a mark of unsaved changes.
 struct NavItem<'a> {
     glyph: &'a str,
     text: &'a str,
     selected: bool,
     /// Greys out a page the search finds nothing in.
     dimmed: bool,
-    count: Option<usize>,
+    badge: Option<String>,
 }
 
 impl<'a> NavItem<'a> {
@@ -395,7 +502,7 @@ impl<'a> NavItem<'a> {
             text,
             selected: false,
             dimmed: false,
-            count: None,
+            badge: None,
         }
     }
 
@@ -408,12 +515,12 @@ impl<'a> NavItem<'a> {
             (false, false) => palette.text_weak,
         };
         let job = widgets::icon_text(ui, self.glyph, icon_color, self.text);
-        let count = self
-            .count
-            .map(|count| count.to_string())
-            .unwrap_or_default();
         let item = Button::selectable(self.selected, job)
-            .right_text(RichText::new(count).small().color(palette.text_weak))
+            .right_text(
+                RichText::new(self.badge.unwrap_or_default())
+                    .small()
+                    .color(palette.text_weak),
+            )
             .min_size(vec2(ui.available_width(), NAV_ITEM_HEIGHT));
         let response = ui.add(item);
         response.widget_info(|| {

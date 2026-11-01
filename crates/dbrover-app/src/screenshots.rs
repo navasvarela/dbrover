@@ -1356,7 +1356,7 @@ fn project_settings(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixtur
     harness.get_by_label("Project settings…").click();
     harness.run_ok();
     harness
-        .get_by_label("Allow MCP clients to use this project")
+        .get_by_role_and_label(Role::CheckBox, "Allow MCP clients to use this project")
         .click();
     harness.run_ok();
     harness.get_by_label("Write").click();
