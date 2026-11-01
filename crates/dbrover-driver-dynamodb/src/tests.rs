@@ -632,3 +632,101 @@ async fn cancel_drops_the_request_in_flight() {
     canceller.await.expect("cancel task").expect("cancel");
     silent.abort();
 }
+
+/// N5·7: what the grid's edits write runs on DynamoDB, and each attribute reads back with
+/// the type it had; an item deleted comes back whole with its undo, and one added is there.
+#[tokio::test]
+async fn edits_written_by_the_table_view_keep_each_attributes_type() {
+    use dbrover_document::{Path, Step};
+
+    let Some(config) = test_config() else { return };
+    let mut connection = connected(&config).await;
+    let table = TestTable::create(&connection, unique("edits"), true).await;
+    let select = format!("SELECT * FROM \"{}\" WHERE pk = 'a'", table.name);
+    let insert = format!(
+        "INSERT INTO \"{}\" VALUE {{'pk': 'a', 'sk': 1, 'n': 1, 's': 'x', 'b': true, \
+         'm': {{'city': 'Leeds'}}, 'l': [1, 'two'], 'ss': <<'p'>>, 'ns': <<1>>}}",
+        table.name
+    );
+    run(&mut connection, &insert).await;
+    let read = |rows: Vec<Row>| {
+        documents(&rows)
+            .into_iter()
+            .next()
+            .map(|text| Value::parse(&text).unwrap())
+    };
+    let view = dbrover_language::QueryLanguage::PartiQl
+        .described_view(&select, &["pk".to_owned(), "sk".to_owned()])
+        .expect("the items of one table are editable");
+    let path = |names: &[&str]| {
+        names.iter().fold(Path::default(), |path, name| {
+            path.child(Step::Field((*name).to_owned()))
+        })
+    };
+    let field = |document: &Value, name: &str| match document {
+        Value::Object(fields) => fields
+            .iter()
+            .find(|(field, _)| field == name)
+            .map(|(_, value)| value.clone()),
+        _ => None,
+    };
+    let cases: [(&[&str], &str); 7] = [
+        (&["n"], "2.5"),
+        (&["s"], "it's"),
+        (&["b"], "false"),
+        (&["m", "city"], "York"),
+        (&["l"], r#"[3, "four"]"#),
+        (&["ss"], r#"["q", "r"]"#),
+        (&["ns"], "[7, 8]"),
+    ];
+    for (names, typed) in cases {
+        let (_, rows) = run(&mut connection, &select).await;
+        let item = read(rows).expect("the item");
+        let top = field(&item, names[0]).expect("the attribute");
+        let old = match names {
+            [_, inner] => field(&top, inner),
+            _ => Some(top),
+        };
+        let (edit, _) = view
+            .update(&item, &path(names), old.as_ref(), Some(typed))
+            .expect("an edit");
+        run(&mut connection, &edit.command).await;
+        let (_, rows) = run(&mut connection, &select).await;
+        let changed = read(rows).expect("the item");
+        let value = field(&changed, names[0]).expect("the attribute");
+        let value = match names {
+            [_, inner] => field(&value, inner).expect("the inner attribute"),
+            _ => value,
+        };
+        let expected = dbrover_language::partiql::typed_value(old.as_ref(), Some(typed)).unwrap();
+        assert_eq!(value, expected, "{names:?}: {}", edit.command);
+    }
+    let (_, rows) = run(&mut connection, &select).await;
+    let item = read(rows).expect("the item");
+    let delete = view.delete(&item).expect("a delete");
+    run(&mut connection, &delete.command).await;
+    let (_, rows) = run(&mut connection, &select).await;
+    assert!(rows.is_empty());
+    run(&mut connection, &delete.revert.expect("an undo")).await;
+    let (_, rows) = run(&mut connection, &select).await;
+    assert_eq!(read(rows), Some(item));
+    let added = view
+        .insert(&[("pk", Some("a")), ("sk", Some("2")), ("note", Some("new"))])
+        .expect("an insert");
+    run(&mut connection, &added).await;
+    let (_, rows) = run(&mut connection, &select).await;
+    assert_eq!(rows.len(), 2);
+    let description = connection
+        .describe_table(&dbrover_core::RelationName {
+            schema: None,
+            name: dbrover_core::Identifier {
+                name: table.name.clone(),
+                quoted: true,
+            },
+        })
+        .await
+        .expect("a description")
+        .expect("the table");
+    assert_eq!(description.primary_key, ["pk", "sk"]);
+    table.drop().await;
+}

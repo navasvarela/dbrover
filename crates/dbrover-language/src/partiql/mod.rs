@@ -10,6 +10,7 @@
 //! reads the whole table: [`Statement::access`] tells, given the table's partition key, which
 //! only the database knows.
 
+mod edit;
 mod lexer;
 mod parser;
 #[cfg(test)]
@@ -21,6 +22,7 @@ use std::ops::Range;
 use dbrover_core::{CatalogPath, NodeKind};
 use dbrover_sql::{StatementKind, TokenKind, Unclassified};
 
+pub use edit::{TableView, literal, typed_value};
 pub use parser::{Access, Condition, ParseError, Statement, Term, Verb, parse};
 
 pub(crate) use lexer::tokenize;
