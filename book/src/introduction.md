@@ -2,10 +2,11 @@
 
 <img src="images/logo.svg" alt="" width="72">
 
-DbRover is a desktop tool to browse and query databases. It connects to **PostgreSQL**,
-**MySQL**, **MariaDB**, **SQLite**, **SQL Server**, **DuckDB** and **ClickHouse** (Oracle is
-planned), shows what is inside them as a tree, and gives you query consoles to write and run
-SQL, page through, sort and export the results, and edit rows.
+DbRover is a desktop tool to browse and query databases. It connects to nine databases:
+**PostgreSQL**, **MySQL and MariaDB**, **SQLite**, **SQL Server**, **DuckDB**, **ClickHouse**,
+**Redis and Valkey**, **MongoDB**, and **Elasticsearch and OpenSearch** (Oracle is planned),
+shows what is inside them as a tree, and gives you query consoles to write and run SQL, page
+through, sort and export the results, and edit rows.
 
 ![DbRover with the explorer, a query console and the log console](images/workspace.png)
 

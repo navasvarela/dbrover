@@ -302,6 +302,11 @@ h3 { margin: 0 0 8px; font-size: 1.05rem; font-weight: 600; }
 }
 .row:nth-child(even of .row) { grid-template-columns: 7fr 5fr; }
 .row:nth-child(even of .row) .copy { order: 2; }
+/* A wide, short picture, such as a query plan, is unreadable in half the page: it takes the
+   row's full width under the copy, whose intro and list sit side by side. */
+.row.wide, .row.wide:nth-child(even of .row) { grid-template-columns: 1fr; gap: 28px; }
+.row.wide:nth-child(even of .row) .copy { order: 0; }
+.row.wide .copy { display: grid; grid-template-columns: 5fr 7fr; gap: 48px; align-items: start; }
 .row h3 { font-size: clamp(1.5rem, 3vw, 1.9rem); line-height: 1.2; letter-spacing: -0.01em; margin-bottom: 14px; }
 .row p { margin: 0 0 14px; color: var(--text-weak); }
 .row strong { color: var(--text); font-weight: 600; }
@@ -489,6 +494,7 @@ footer {
   .tour { gap: 64px; }
   .row, .row:nth-child(even of .row) { grid-template-columns: 1fr; gap: 24px; }
   .row:nth-child(even of .row) .copy { order: 0; }
+  .row.wide .copy { grid-template-columns: 1fr; gap: 0; }
   .hero { margin-bottom: -24px; }
 }
 

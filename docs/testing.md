@@ -350,8 +350,9 @@ so regenerating changes every image a little; commit only the images whose scene
 
 The front page's pictures and its hero clip come from the same machinery. A sibling ignored
 test, `screenshots::site::record_site_media`, renders the feature tour's scenes in both themes
-at a smaller window (1024 × 720 points, so the interface reads at the size the page shows it),
-cropped to what each row of the tour is about (a dialog, or the console), and records each
+at a smaller window (1024 × 720 points, so the interface reads at the size the page shows it;
+1280 wide for the query plan, whose columns don't fit in less), cropped to what each row of the
+tour is about (a dialog, the console, or its plan), and records each
 clip: the scene scripts the pointer, clicks and typing, and a frame is rendered after every
 step, with a pointer and a ring around each click drawn in. Then `site/clips.sh` encodes them
 into `site/media/`, which is committed:
