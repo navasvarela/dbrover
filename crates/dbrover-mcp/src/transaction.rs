@@ -80,8 +80,8 @@ pub(crate) enum CallMode {
 }
 
 /// How a call with `access` runs on `driver`, or `None` when the engine has no such mode.
-/// `writable` says whether the connection was opened to run changes too, which a SQLite
-/// file is only when the project allows them (see `ServedProject`).
+/// `writable` says whether the connection was opened to run changes too
+/// (`Changes::open_writable`).
 pub(crate) fn mode(driver: DriverKind, access: Access, writable: bool) -> Option<CallMode> {
     match access {
         Access::Read => match read_only::guard(driver) {

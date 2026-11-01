@@ -179,9 +179,11 @@ impl PortableConfig {
             ConnectionConfig::SqlServer(SqlServerConfig { server }) => {
                 Self::SqlServer(PortableServer::export(server, path))
             }
-            ConnectionConfig::ClickHouse(ClickHouseConfig { server }) => {
-                Self::ClickHouse(PortableServer::export(server, path))
-            }
+            // `read_only` is never saved, so it never travels either.
+            ConnectionConfig::ClickHouse(ClickHouseConfig {
+                server,
+                read_only: _,
+            }) => Self::ClickHouse(PortableServer::export(server, path)),
             ConnectionConfig::Redis(RedisConfig { server, separator }) => {
                 Self::Redis(PortableRedis {
                     server: PortableServer::export(server, path),
@@ -238,6 +240,7 @@ impl PortableConfig {
             }),
             Self::ClickHouse(server) => ConnectionConfig::ClickHouse(ClickHouseConfig {
                 server: server.import(path),
+                read_only: false,
             }),
             Self::Redis(PortableRedis { server, separator }) => {
                 ConnectionConfig::Redis(RedisConfig {

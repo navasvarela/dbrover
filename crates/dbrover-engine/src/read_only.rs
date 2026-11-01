@@ -6,8 +6,8 @@
 //!    and refuses anything that doesn't only read, or can't be classified;
 //! 2. the database refuses what the check can't see, such as `SELECT writes_something()`:
 //!    the statement runs in the engine's own read-only mode ([`mode`]), a read-only transaction
-//!    or a read-only SQLite connection; or, on an engine without one, the login's grants do
-//!    ([`Guard::Login`]).
+//!    or a connection opened read-only; or, on an engine without one, the login's grants do
+//!    ([`Guard::Login`]). Each engine's guard, and why, is in `docs/well-rounded.md` (W11).
 
 use std::time::Duration;
 
@@ -24,7 +24,9 @@ pub enum ReadOnlyMode {
         /// a runaway statement even if a cancel can't get through.
         sets_timeout: bool,
     },
-    /// The connection itself is opened read-only; see [`connection_config`].
+    /// The connection itself is opened read-only, for its whole life: a SQLite file, or a
+    /// ClickHouse session whose every request carries the `readonly` setting. See
+    /// [`connection_config`].
     Connection,
     /// A writable SQLite connection told to refuse writes with `PRAGMA query_only`, for one
     /// that also runs changes ([`crate::read_write`]), as the MCP server's does when a project
@@ -44,16 +46,13 @@ pub fn mode(driver: DriverKind) -> Option<ReadOnlyMode> {
             begin: "START TRANSACTION READ ONLY",
             sets_timeout: false,
         }),
-        DriverKind::Sqlite => Some(ReadOnlyMode::Connection),
-        // SQL Server has no read-only transaction, DuckDB's read-only mode is a choice of the
-        // data source, not of the connection MCP would open, and ClickHouse's (the `readonly`
-        // setting) isn't wired into its driver yet. The plan (docs/mcp-server.md) has each
-        // such engine name its equivalent, such as a read-only login, before MCP serves it.
-        // Redis, MongoDB and Elasticsearch have no read-only session at all; a user who may
-        // only read is their guard (docs/nosql.md, N1, N2 and N3).
+        DriverKind::Sqlite | DriverKind::ClickHouse => Some(ReadOnlyMode::Connection),
+        // SQL Server has no read-only transaction, and DuckDB's read-only mode is a choice of
+        // the data source, not of the connection MCP would open. Redis, MongoDB and
+        // Elasticsearch have no read-only session at all. A user who may only read is their
+        // guard (docs/nosql.md, N0a to N3).
         DriverKind::SqlServer
         | DriverKind::DuckDb
-        | DriverKind::ClickHouse
         | DriverKind::Redis
         | DriverKind::Mongo
         | DriverKind::Elasticsearch => None,
@@ -137,20 +136,27 @@ impl McpServing {
     }
 }
 
-/// The read-only mode on a connection that also runs changes: as [`mode`], except that a
-/// SQLite file can't be opened read-only, so [`ReadOnlyMode::QueryOnly`] stands in.
+/// The read-only mode on a connection that also runs changes, or `None` where a connection
+/// must be opened read-only to refuse them. A read-only transaction works on any connection;
+/// a SQLite file opened to run changes is told [`ReadOnlyMode::QueryOnly`] instead. ClickHouse
+/// has no such switch, and no transaction to run changes in, so a connection that runs them is
+/// never opened there.
 pub fn mode_on_writable_connection(driver: DriverKind) -> Option<ReadOnlyMode> {
-    match mode(driver)? {
-        ReadOnlyMode::Connection => Some(ReadOnlyMode::QueryOnly),
-        other => Some(other),
+    match (mode(driver)?, driver) {
+        (ReadOnlyMode::Connection, DriverKind::Sqlite) => Some(ReadOnlyMode::QueryOnly),
+        (ReadOnlyMode::Connection, _) => None,
+        (other, _) => Some(other),
     }
 }
 
-/// The settings to connect with: a SQLite file is opened read-only, the engine's own
-/// equivalent of a read-only transaction. Other engines connect as usual.
+/// The settings to connect with: a SQLite file is opened read-only, and a ClickHouse session
+/// sends the `readonly` setting with every request, each the engine's own equivalent of a
+/// read-only transaction. Other engines connect as usual.
 pub fn connection_config(mut data_source: DataSource) -> DataSource {
-    if let ConnectionConfig::Sqlite(config) = &mut data_source.config {
-        config.read_only = true;
+    match &mut data_source.config {
+        ConnectionConfig::Sqlite(config) => config.read_only = true,
+        ConnectionConfig::ClickHouse(config) => config.read_only = true,
+        _ => {}
     }
     data_source
 }
@@ -304,11 +310,11 @@ mod tests {
         let guards = DriverKind::ALL.map(|driver| (driver, guard(driver)));
         for (driver, guard) in guards {
             let expected = match driver {
-                DriverKind::Postgres | DriverKind::Mysql | DriverKind::Sqlite => {
-                    matches!(guard, Guard::Session(_))
-                }
+                DriverKind::Postgres
+                | DriverKind::Mysql
+                | DriverKind::Sqlite
+                | DriverKind::ClickHouse => matches!(guard, Guard::Session(_)),
                 DriverKind::SqlServer
-                | DriverKind::ClickHouse
                 | DriverKind::Redis
                 | DriverKind::Mongo
                 | DriverKind::Elasticsearch => guard == Guard::Login,
@@ -320,5 +326,20 @@ mod tests {
             read_only_login(DriverKind::Redis),
             "an ACL user with only +@read"
         );
+    }
+
+    /// Only SQLite can be told to refuse writes on a connection opened to run them; on
+    /// ClickHouse, refusing them means opening the connection read-only.
+    #[test]
+    fn refuses_writes_on_a_writable_connection_only_where_the_engine_can_be_told_to() {
+        let cases = [
+            (DriverKind::Sqlite, Some(ReadOnlyMode::QueryOnly)),
+            (DriverKind::ClickHouse, None),
+            (DriverKind::Postgres, mode(DriverKind::Postgres)),
+            (DriverKind::SqlServer, None),
+        ];
+        for (driver, expected) in cases {
+            assert_eq!(mode_on_writable_connection(driver), expected, "{driver:?}");
+        }
     }
 }

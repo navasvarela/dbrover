@@ -320,6 +320,7 @@ impl DriverFields {
             Self::DuckDb(fields) => ConnectionConfig::DuckDb(fields.to_config()?),
             Self::ClickHouse(fields) => ConnectionConfig::ClickHouse(ClickHouseConfig {
                 server: fields.server.to_config()?,
+                read_only: false,
             }),
             Self::Redis(fields) => ConnectionConfig::Redis(RedisConfig {
                 server: fields.server.to_config()?,

@@ -56,3 +56,7 @@ harness = false
 [[test]]
 name = "elasticsearch"
 harness = false
+
+[[test]]
+name = "clickhouse"
+harness = false

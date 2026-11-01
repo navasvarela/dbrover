@@ -57,6 +57,7 @@ fn parse_url(url: &str) -> TestServer {
                 ssh: None,
                 password_command: None,
             },
+            read_only: false,
         },
         password: Some(Password::new(password)),
     }
@@ -134,6 +135,7 @@ async fn unreachable_server_is_a_connect_error() {
             ssh: None,
             password_command: None,
         },
+        read_only: false,
     };
 
     conformance::check_connect_failure(connect(&config, None, Route::Direct).await);
@@ -310,6 +312,55 @@ async fn keeps_the_session_between_statements() {
     let names: Vec<&str> = described.column_names().collect();
     assert_eq!(names, ["n"]);
     assert!(described.primary_key.is_empty());
+}
+
+/// What running `sql` fails with, whether the request or reading its answer fails.
+async fn failure(connection: &mut ClickHouseConnection, sql: &str) -> String {
+    let error = match connection.execute(sql).await {
+        Ok(cursor) => cursor.finish().await.err(),
+        Err(error) => Some(error),
+    };
+    let error = error.unwrap_or_else(|| panic!("{sql} succeeded"));
+    dbrover_core::describe_error(&error)
+}
+
+/// A read-only connection, as a read-only data source's sessions open: ClickHouse itself
+/// refuses a change and lifting the setting, whatever DbRover's check would have said, while
+/// reading, `USE`, a query's own settings and cancelling work as usual.
+#[tokio::test]
+async fn a_read_only_connection_refuses_changes_with_clickhouses_own_error() {
+    let Some(server) = test_server() else { return };
+    let mut writer = server.connect().await;
+    // In `default`, where the catalog test, listing `dbrover`'s tables, doesn't see it.
+    let table = format!("default.dbrover_read_only_{}", Uuid::new_v4().simple());
+    run(
+        &mut writer,
+        &format!("CREATE TABLE {table} (n UInt8) ENGINE = Memory"),
+    )
+    .await;
+    let mut config = server.config.clone();
+    config.read_only = true;
+    let mut reader = connect(&config, server.password.as_ref(), Route::Direct)
+        .await
+        .expect("connect read-only");
+
+    let count = run(&mut reader, &format!("SELECT count() FROM {table}")).await;
+    assert_eq!(count, vec![vec![Some("0".to_owned())]]);
+    run(&mut reader, "SELECT 1 SETTINGS max_threads = 1").await;
+    run(&mut reader, "USE system").await;
+    let refused = [
+        format!("INSERT INTO {table} VALUES (1)"),
+        format!("DROP TABLE {table}"),
+        "SELECT 1 SETTINGS readonly = 0".to_owned(),
+        "SET readonly = 0".to_owned(),
+    ];
+    for sql in refused {
+        let error = failure(&mut reader, &sql).await;
+        assert!(error.contains("in readonly mode"), "{sql}: {error}");
+    }
+    conformance::check_cancel(&mut reader, LONG_RUNNING).await;
+
+    run(&mut writer, &format!("DROP TABLE {table}")).await;
 }
 
 /// One object of every kind the explorer shows.
