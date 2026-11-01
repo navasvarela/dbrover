@@ -8,8 +8,9 @@ use dbrover_store::{
     DataSourceImport, Difference, EntryStatus, ImportChoice, ImportChoices, ImportPlan,
     ImportPreview, MissingPath, ProjectImport,
 };
-use egui::{Align, Button, Id, Layout, Modal, RichText, ScrollArea, Ui};
+use egui::{Align, Id, Layout, Modal, RichText, ScrollArea, Ui};
 
+use crate::form;
 use crate::icons;
 use crate::theme::Palette;
 use crate::widgets;
@@ -139,9 +140,7 @@ impl ImportDialog {
         let (import_clicked, close) = ui
             .with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let import_clicked = import.as_ref().is_some_and(|plan| {
-                    let button = Button::new(RichText::new("Import").color(palette.on_primary))
-                        .fill(palette.primary);
-                    ui.add_enabled(!plan.is_empty(), button)
+                    form::primary_button(ui, "Import", !plan.is_empty())
                         .on_disabled_hover_text("Nothing would change")
                         .clicked()
                 });

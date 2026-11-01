@@ -19,6 +19,7 @@ use crate::data_source_form::{
     SshFields, SshLoginChoice, TlsChoice,
 };
 use crate::file_picker::{self, FileEngine};
+use crate::form;
 use crate::icons;
 use crate::theme::Palette;
 use crate::widgets;
@@ -278,10 +279,7 @@ impl DataSourceDialog {
                     .add_enabled(!testing && !saving, Button::new("Test connection"))
                     .clicked();
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let palette = &Palette::for_visuals(ui.visuals());
-                    let save_button = Button::new(RichText::new("Save").color(palette.on_primary))
-                        .fill(palette.primary);
-                    let save = ui.add_enabled(!saving, save_button).clicked();
+                    let save = form::primary_button(ui, "Save", !saving).clicked();
                     let cancel = ui.button("Cancel").clicked();
                     (test, save, cancel)
                 })

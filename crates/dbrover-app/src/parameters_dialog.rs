@@ -7,6 +7,7 @@ use dbrover_store::ConsoleKey;
 use egui::{Align, Id, Key, Layout, Modal, TextEdit, vec2};
 
 use crate::console::SubmittedRun;
+use crate::form;
 
 /// Room for a date and time, or a short sentence, in each value field.
 const VALUE_WIDTH: f32 = 260.0;
@@ -111,7 +112,7 @@ impl ParametersDialog {
             ui.separator();
             let enter = ui.input(|input| input.key_pressed(Key::Enter));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Run").clicked() || enter {
+                if form::primary_button(ui, "Run", true).clicked() || enter {
                     Some(ParametersChoice::Run)
                 } else if ui.button("Cancel").clicked() {
                     Some(ParametersChoice::Cancel)

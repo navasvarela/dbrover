@@ -5,8 +5,9 @@ use dbrover_engine::Event;
 use dbrover_engine::read_only::McpServing;
 use dbrover_engine::read_write;
 use dbrover_store::{McpOverrides, McpPermissions, Project, ProjectSlug};
-use egui::{Align, Button, Id, Label, Layout, Modal, RichText, Ui};
+use egui::{Align, Id, Label, Layout, Modal, RichText, Ui};
 
+use crate::form;
 use crate::icons;
 use crate::mcp_settings::{self, SchemasField};
 use crate::theme::Palette;
@@ -121,11 +122,7 @@ impl ProjectSettingsDialog {
     fn buttons(&mut self, ui: &mut Ui) -> Option<ProjectSettingsAction> {
         let schemas_valid = self.schemas.scope().is_some();
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let palette = &Palette::for_visuals(ui.visuals());
-            let save =
-                Button::new(RichText::new("Save").color(palette.on_primary)).fill(palette.primary);
-            let saved = ui
-                .add_enabled(!self.saving && schemas_valid, save)
+            let saved = form::primary_button(ui, "Save", !self.saving && schemas_valid)
                 .on_disabled_hover_text("Name at least one schema, or allow them all")
                 .clicked();
             if ui.button("Cancel").clicked() {

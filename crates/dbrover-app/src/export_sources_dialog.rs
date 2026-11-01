@@ -7,8 +7,9 @@ use std::path::PathBuf;
 use dbrover_core::{DataSource, DataSourceId, ProjectId};
 use dbrover_engine::{Command, Event};
 use dbrover_store::Project;
-use egui::{Align, Button, Id, Layout, Modal, RichText, ScrollArea, Ui};
+use egui::{Align, Id, Layout, Modal, RichText, ScrollArea, Ui};
 
+use crate::form;
 use crate::icons;
 use crate::theme::Palette;
 use crate::widgets;
@@ -111,9 +112,7 @@ impl ExportSourcesDialog {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let exporting = matches!(self.status, Status::Exporting(_));
             let chosen = !self.data_sources.is_empty() || !self.projects.is_empty();
-            let export = Button::new(RichText::new("Export…").color(palette.on_primary))
-                .fill(palette.primary);
-            if ui.add_enabled(chosen && !exporting, export).clicked() {
+            if form::primary_button(ui, "Export…", chosen && !exporting).clicked() {
                 return Some(ExportAction::ChooseFile);
             }
             ui.button("Close").clicked().then_some(ExportAction::Close)

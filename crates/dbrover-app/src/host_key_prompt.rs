@@ -4,8 +4,9 @@
 
 use dbrover_core::{DataSource, DataSourceId};
 use dbrover_engine::{Event, HostKey};
-use egui::{Align, Button, Id, Layout, Modal, RichText, TextEdit};
+use egui::{Align, Id, Layout, Modal, RichText, TextEdit};
 
+use crate::form;
 use crate::theme::Palette;
 
 const DIALOG_WIDTH: f32 = 460.0;
@@ -104,10 +105,7 @@ impl HostKeyPrompt {
         let trusting = matches!(self.state, State::Trusting);
         let (trust, cancel) = ui
             .with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let trust =
-                    Button::new(RichText::new("Trust and connect").color(palette.on_primary))
-                        .fill(palette.primary);
-                let trust = ui.add_enabled(!trusting, trust).clicked();
+                let trust = form::primary_button(ui, "Trust and connect", !trusting).clicked();
                 (trust, ui.button("Cancel").clicked())
             })
             .inner;

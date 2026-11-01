@@ -8,6 +8,7 @@ use super::{
     CommandRuns, OutputWindow, Question, command_text, output_text, stdin_text, timeout_text,
 };
 use crate::console::cell_viewer;
+use crate::form;
 use crate::theme::Palette;
 
 /// Says so when a program wrote more than the engine keeps of it.
@@ -77,7 +78,7 @@ impl Question {
             ui.weak("DbRover won't ask again until the command changes.");
             ui.separator();
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Run").clicked() {
+                if form::primary_button(ui, "Run", true).clicked() {
                     Some(true)
                 } else if ui.button("Cancel").clicked() {
                     Some(false)

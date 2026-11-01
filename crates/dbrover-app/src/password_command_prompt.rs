@@ -5,8 +5,9 @@
 use dbrover_core::{DataSource, DataSourceId, PasswordCommand};
 use dbrover_engine::Event;
 use dbrover_store::TrustedCommand;
-use egui::{Align, Button, Id, Layout, Modal, RichText, ScrollArea, TextEdit};
+use egui::{Align, Id, Layout, Modal, RichText, ScrollArea, TextEdit};
 
+use crate::form;
 use crate::theme::Palette;
 
 const DIALOG_WIDTH: f32 = 460.0;
@@ -94,9 +95,7 @@ impl PasswordCommandPrompt {
         ui.separator();
         let (run, cancel) = ui
             .with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let run = Button::new(RichText::new("Run and connect").color(palette.on_primary))
-                    .fill(palette.primary);
-                let run = ui.add_enabled(!self.trusting, run).clicked();
+                let run = form::primary_button(ui, "Run and connect", !self.trusting).clicked();
                 (run, ui.button("Cancel").clicked())
             })
             .inner;

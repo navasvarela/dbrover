@@ -16,6 +16,7 @@ use dbrover_sql::Dialect;
 use dbrover_store::Separator;
 use egui::{Align, Button, ComboBox, Grid, Id, Layout, Modal, RichText, ScrollArea, Ui};
 
+use crate::form;
 use crate::icons;
 use crate::theme::Palette;
 use crate::widgets;
@@ -206,7 +207,7 @@ impl CsvImportDialog {
         }
         ui.separator();
         self.status(ui, palette);
-        let clicked = self.buttons(ui, palette);
+        let clicked = self.buttons(ui);
         action.or(clicked)
     }
 
@@ -331,18 +332,13 @@ impl CsvImportDialog {
         })
     }
 
-    fn buttons(&mut self, ui: &mut Ui, palette: &Palette) -> Option<CsvImportAction> {
+    fn buttons(&mut self, ui: &mut Ui) -> Option<CsvImportAction> {
         let import = self.import();
         let (import_clicked, close_clicked) = ui
             .with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let can_import = matches!(self.state, State::Choosing | State::Confirming);
                 let import_clicked = can_import
-                    && ui
-                        .add_enabled(
-                            import.is_ok(),
-                            Button::new(RichText::new("Import").color(palette.on_primary))
-                                .fill(palette.primary),
-                        )
+                    && form::primary_button(ui, "Import", import.is_ok())
                         .on_disabled_hover_text(import.as_ref().err().cloned().unwrap_or_default())
                         .clicked();
                 let close_label = match self.state {

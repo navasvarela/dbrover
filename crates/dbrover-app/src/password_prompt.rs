@@ -5,8 +5,9 @@
 use dbrover_core::{DataSource, DataSourceId, Password, SshLogin};
 use dbrover_engine::{Event, PasswordKept, PasswordNeeded};
 use dbrover_store::Secret;
-use egui::{Align, Button, Id, Layout, Modal, RichText, TextEdit};
+use egui::{Align, Id, Layout, Modal, RichText, TextEdit};
 
+use crate::form;
 use crate::theme::Palette;
 
 const FIELD_WIDTH: f32 = 260.0;
@@ -125,9 +126,7 @@ impl PasswordPrompt {
         ui.separator();
         let (connect, cancel) = ui
             .with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let connect = Button::new(RichText::new("Connect").color(palette.on_primary))
-                    .fill(palette.primary);
-                let connect = ui.add_enabled(!self.submitted, connect).clicked();
+                let connect = form::primary_button(ui, "Connect", !self.submitted).clicked();
                 (connect, ui.button("Cancel").clicked())
             })
             .inner;
