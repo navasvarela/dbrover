@@ -1378,6 +1378,32 @@ three to five, **L** a track of its own).
 
   **Exit:** comparing two PostgreSQL schemas that differ by a column and an index lists both
   differences, and running the script on one makes the comparison come back empty.
+- **W14 — Settings in one place (M):** planned; designed on 2026-11-01 in
+  [A well-rounded app](well-rounded.md#w14--settings-in-one-place). The keymap, the custom
+  actions and each project's settings become pages of the Settings tab, in place of the keymap
+  and actions windows and the Project settings modal, and its search finds them all.
+  - **Sidebar:** the five categories, then **Keymap** and **Custom actions**, then a
+    **Projects** caption with one entry per project. Right-click a project → **Project
+    settings…** opens its page.
+  - **Keymap and Custom actions** list what `keymap.toml` and `actions.toml` hold in cards,
+    with each file's problems at the top and **Create** and **Reload** at the bottom; editing
+    stays in the files.
+  - **A project's page** has the MCP toggle and rows Project settings has today, saved with
+    **Save project settings**; unsaved changes are kept across pages and marked in the sidebar.
+  - **Search** finds shortcuts, custom actions and projects as well as settings.
+  - **View → Keymap…** and **View → Custom actions…** (renamed from Actions…) stay and open
+    their pages, keeping the ids `view.keymap` and `view.actions`.
+  - **W14a — The plan:** the design and this entry.
+  - **W14b — Pages, and the keymap's:** `Page`, search items, the Keymap page.
+  - **W14c — Custom actions:** the page; the actions window goes.
+  - **W14d — Projects:** the project pages; the modal goes.
+  - **W14e — Manual:** settings, shortcuts, customising, MCP and explorer chapters, the
+    pictures, and the demo note.
+
+  **Exit:** **View → Settings…** lists Keymap, Custom actions and each project in its sidebar;
+  right-click a project → **Project settings…** opens its page, where allowing writes and
+  saving writes `projects.toml`; searching *format* finds the Format shortcuts beside the
+  Format SQL settings; no keymap, actions or project settings window is left.
 
 ## Diagrams track
 
