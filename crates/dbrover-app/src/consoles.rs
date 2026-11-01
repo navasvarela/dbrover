@@ -371,6 +371,16 @@ impl Consoles {
         self.open.get_mut(key)?.copy(copy, options)
     }
 
+    /// What a template is told about exporting the rows of `sql` from the console, if it is
+    /// open.
+    pub fn context_for(
+        &self,
+        key: &ConsoleKey,
+        sql: &str,
+    ) -> Option<dbrover_export::ExportContext> {
+        Some(self.open.get(key)?.context_for(sql, None))
+    }
+
     /// What the export dialog shows of the console's rows, if it is open and has some.
     pub fn export_preview(&self, key: &ConsoleKey) -> Option<crate::export_dialog::ExportPreview> {
         self.open.get(key)?.export_preview()

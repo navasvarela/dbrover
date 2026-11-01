@@ -3,8 +3,8 @@
 
 use dbrover_core::Row;
 use dbrover_export::{
-    CustomFormat, ExportColumn, ExportFormat, ExportOptions, ExportSpec, HtmlDocument, RowSource,
-    TsvOptions, render,
+    CustomFormat, ExportColumn, ExportContext, ExportFormat, ExportOptions, ExportSpec,
+    HtmlDocument, RowSource, TsvOptions, try_render,
 };
 
 /// The formats the clipboard takes: those that write text. Its own type, so a key can't be
@@ -95,15 +95,14 @@ pub struct Selection {
     pub documents: Vec<Row>,
     /// Where the rows come from, narrowed to the selected columns.
     pub source: RowSource,
+    /// What a template is told about the rows.
+    pub context: ExportContext,
 }
 
 impl ClipboardCopy {
-    /// The text to copy, or why this selection can't be copied this way.
-    pub fn text(
-        &self,
-        selection: &Selection,
-        options: &ExportOptions,
-    ) -> Result<String, &'static str> {
+    /// The text to copy, or why this selection can't be copied this way: the format can't
+    /// write these rows, or a template stopped.
+    pub fn text(&self, selection: &Selection, options: &ExportOptions) -> Result<String, String> {
         let spec = match self {
             Self::WithHeaders => ExportSpec::Tsv(TsvOptions::default()),
             Self::As(format) => {
@@ -111,14 +110,17 @@ impl ClipboardCopy {
                 options.html.document = HtmlDocument::Fragment;
                 options.spec(format.format(), &selection.source)?
             }
-            Self::Custom(format) => format.spec(&selection.source)?,
+            Self::Custom(format) => format.spec(&selection.source, &selection.context)?,
         };
         let rows = if spec.writes_documents() {
             &selection.documents
         } else {
             &selection.rows
         };
-        render(&spec, &selection.columns, rows).ok_or("This format writes only files")
+        match try_render(&spec, &selection.columns, rows) {
+            Some(text) => text.map_err(|error| error.to_string()),
+            None => Err("This format writes only files".to_owned()),
+        }
     }
 }
 

@@ -1768,7 +1768,8 @@ impl DbRoverApp {
                 self.consoles.insert_statement(&console, &sql);
             }
             HistoryAction::Export(spec) => {
-                if let Some(path) = (self.pick_export_path)(&FileType::of(spec.format()), "history")
+                let file = spec.format().map(FileType::of);
+                if let Some(path) = file.and_then(|file| (self.pick_export_path)(&file, "history"))
                     && let Some(window) = &mut self.history_window
                 {
                     let command = window.export(path, spec);
@@ -1937,11 +1938,14 @@ impl DbRoverApp {
         let Some(language) = self.consoles.language(&console) else {
             return;
         };
-        let Some(shape) = run
+        let Some(sql) = run
             .statements
             .first()
-            .and_then(|statement| language.result_shape(&statement.sql))
+            .map(|statement| statement.sql.clone())
         else {
+            return;
+        };
+        let Some(shape) = language.result_shape(&sql) else {
             return;
         };
         let preview = ExportPreview {
@@ -1954,6 +1958,10 @@ impl DbRoverApp {
                 table: None,
                 shape,
             },
+            context: self
+                .consoles
+                .context_for(&console, &sql)
+                .unwrap_or_default(),
         };
         let subject = ExportSubject::Statement { console, run };
         self.export_dialog = Some(ExportDialog::new(

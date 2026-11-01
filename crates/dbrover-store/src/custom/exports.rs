@@ -1,7 +1,12 @@
 //! `exports.toml`: formats of the user's own, in the export dialog and **Copy as ›** (W8). See
 //! `docs/exports.md`.
 
-use dbrover_export::{CustomFormat, CustomFormatId, CustomFormatKind, ExportFormat, Preset};
+use std::sync::Arc;
+
+use dbrover_export::{
+    CustomFormat, CustomFormatId, CustomFormatKind, Escape, ExportFormat, Preset, TemplateSource,
+    check_template,
+};
 
 use super::{Checked, entries, entry_label, serde_problem};
 
@@ -50,7 +55,15 @@ impl Fields {
         self.string(key)?
             .ok_or_else(|| format!("missing field `{key}`"))
     }
+
+    fn has(&self, key: &str) -> bool {
+        self.0.contains_key(key)
+    }
 }
+
+/// The key that only each kind of export has, which says what an entry is.
+const PRESET_KEY: &str = "format";
+const TEMPLATE_KEY: &str = "row";
 
 fn check(table: toml::Table) -> Result<CustomFormat, String> {
     let mut fields = Fields(table);
@@ -71,21 +84,66 @@ fn check(table: toml::Table) -> Result<CustomFormat, String> {
         .string("extension")?
         .map(checked_extension)
         .transpose()?;
-    let Some(format) = fields.string("format")? else {
-        return Err(
-            "the export has no format: name the built-in format it is a preset of, \
-                    as format = \"csv\""
-                .to_owned(),
-        );
+    let (kind, extension) = match (fields.has(PRESET_KEY), fields.has(TEMPLATE_KEY)) {
+        (true, true) => {
+            return Err("an export is a preset (format) or a template (row), not both".to_owned());
+        }
+        (true, false) => {
+            let format = fields.required_string(PRESET_KEY)?;
+            let preset = preset(&format, fields)?;
+            let extension = extension.unwrap_or_else(|| preset.format.extension().to_owned());
+            (CustomFormatKind::Preset(preset), extension)
+        }
+        (false, true) => {
+            let extension = extension.ok_or_else(|| {
+                "a template needs an extension for its files, such as extension = \"txt\""
+                    .to_owned()
+            })?;
+            (CustomFormatKind::Template(template(fields)?), extension)
+        }
+        (false, false) => {
+            return Err(
+                "the export has neither a format nor a row: write format = \"csv\" \
+                        for a preset of a built-in format, or row = \"…\" for a template"
+                    .to_owned(),
+            );
+        }
     };
-    let preset = preset(&format, fields)?;
     Ok(CustomFormat {
         id,
         name,
         description,
-        extension: extension.unwrap_or_else(|| preset.format.extension().to_owned()),
-        kind: CustomFormatKind::Preset(preset),
+        extension,
+        kind,
     })
+}
+
+/// A template of the entry's `header`, `row` and `footer`, checked by compiling each part.
+fn template(mut fields: Fields) -> Result<Arc<TemplateSource>, String> {
+    let row = fields.required_string(TEMPLATE_KEY)?;
+    let header = fields.string("header")?.unwrap_or_default();
+    let footer = fields.string("footer")?.unwrap_or_default();
+    let escape = match fields.string("escape")?.as_deref() {
+        None | Some("none") => Escape::None,
+        Some("html") => Escape::Html,
+        Some(other) => {
+            return Err(format!("escape is \"none\" or \"html\", not {other:?}"));
+        }
+    };
+    if let Some(unknown) = fields.0.keys().next() {
+        return Err(format!(
+            "{unknown:?} is not part of a template; a template has header, row, footer and \
+             escape"
+        ));
+    }
+    let source = TemplateSource {
+        header,
+        row,
+        footer,
+        escape,
+    };
+    check_template(&source).map_err(|error| error.to_string())?;
+    Ok(Arc::new(source))
 }
 
 /// A preset of the format whose id is `format`, with the entry's remaining keys as its options.
@@ -168,7 +226,9 @@ mod tests {
         assert_eq!(format.name, "CSV for Excel (semicolon)");
         assert_eq!(format.description, None);
         assert_eq!(format.extension, "csv");
-        let CustomFormatKind::Preset(preset) = &format.kind;
+        let CustomFormatKind::Preset(preset) = &format.kind else {
+            panic!("{format:?}");
+        };
         assert_eq!(preset.format, ExportFormat::Csv);
         assert_eq!(
             preset.options.csv,
@@ -218,8 +278,31 @@ mod tests {
             ),
             (
                 "id = \"a\"\nname = \"N\"",
-                "export \"a\": the export has no format: name the built-in format it is a \
-                 preset of, as format = \"csv\"",
+                "export \"a\": the export has neither a format nor a row: write format = \
+                 \"csv\" for a preset of a built-in format, or row = \"…\" for a template",
+            ),
+            (
+                "id = \"a\"\nname = \"N\"\nformat = \"csv\"\nrow = \"x\"",
+                "export \"a\": an export is a preset (format) or a template (row), not both",
+            ),
+            (
+                "id = \"a\"\nname = \"N\"\nrow = \"x\"",
+                "export \"a\": a template needs an extension for its files, such as \
+                 extension = \"txt\"",
+            ),
+            (
+                "id = \"a\"\nname = \"N\"\nextension = \"txt\"\nrow = \"x\"\nescape = \"xml\"",
+                "export \"a\": escape is \"none\" or \"html\", not \"xml\"",
+            ),
+            (
+                "id = \"a\"\nname = \"N\"\nextension = \"txt\"\nrow = \"x\"\nheadr = \"h\"",
+                "export \"a\": \"headr\" is not part of a template; a template has header, \
+                 row, footer and escape",
+            ),
+            (
+                "id = \"a\"\nname = \"N\"\nextension = \"txt\"\nrow = \"{% for x in row %}\"",
+                "export \"a\": the row template, line 1: syntax error: unexpected end of \
+                 input, expected end of block",
             ),
             (
                 "id = \"a\"\nname = \"N\"\nformat = \"excel\"",
@@ -253,6 +336,45 @@ mod tests {
             assert_eq!(checked.problems, [problem], "{entry}");
             assert!(checked.value.is_empty(), "{entry}");
         }
+    }
+
+    #[test]
+    fn reads_the_plans_template() {
+        let checked = parse_exports(
+            r#"
+            [[export]]
+            id = "confluence"
+            name = "Confluence table"
+            extension = "txt"
+            header = "||{% for column in columns %} {{ column.name }} ||{% endfor %}\n"
+            row = "|{% for value in row %} {{ value }} |{% endfor %}\n"
+            footer = ""
+
+            [[export]]
+            id = "page"
+            name = "Page"
+            extension = "html"
+            escape = "html"
+            row = '''
+            <p>{{ record.title }}</p>
+            '''
+            "#,
+        );
+        assert!(checked.problems.is_empty(), "{:?}", checked.problems);
+        let [confluence, page] = checked.value.as_slice() else {
+            panic!("{:?}", checked.value);
+        };
+        let CustomFormatKind::Template(template) = &confluence.kind else {
+            panic!("{confluence:?}");
+        };
+        assert_eq!(template.footer, "");
+        assert_eq!(template.escape, Escape::None);
+        assert!(confluence.writes_text());
+        let CustomFormatKind::Template(template) = &page.kind else {
+            panic!("{page:?}");
+        };
+        assert_eq!(template.escape, Escape::Html);
+        assert_eq!(template.header, "");
     }
 
     #[test]

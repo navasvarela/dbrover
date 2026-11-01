@@ -123,6 +123,11 @@ sha2 = "0.11.1"
 base64 = "0.22.1"
 jiff = "0.2.38"
 keyring = "4.2.0"
+# Templates in exports.toml (W8c, docs/exports.md): Jinja's syntax, with no dependencies of its
+# own. Only `builtins` (Jinja's filters and tests) and `fuel` (a step limit on every render):
+# without `multi_template` there is no include, extends or import, and DbRover sets no loader,
+# so a template reads no files.
+minijinja = { version = "3.0.5", default-features = false, features = ["builtins", "fuel"] }
 # MySQL and MariaDB. No default features, which compress with the zlib C library:
 # `minimal-rust` compresses in pure Rust, and TLS is rustls with ring. Its rustls connector
 # takes rustls's process-wide provider, so ring must stay the only provider compiled in
