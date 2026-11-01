@@ -177,13 +177,28 @@ of it and runs it, its hits read a page at a time as you scroll.
 ```text
 data source
 └─ keyspace                 every keyspace you may see
-   └─ tables
-      └─ table
+   ├─ tables
+   │  └─ table
+   │     ├─ columns         the partition key's, then the clustering key's, in key order,
+   │     │                  then the rest, each with its type and its part in the key
+   │     └─ indexes         its secondary indexes, with the column each is on
+   ├─ materialized views    with the table each is a view of
+   │  └─ view
+   │     └─ columns
+   ├─ types                 user-defined types, with how many fields each has
+   ├─ functions             with their argument types, so overloads are told apart
+   └─ aggregates
 ```
 
 The keyspaces the servers keep for themselves (`system`, `system_schema`, `system_auth`, …) are
-system ones, shown only with **System** ticked. **Open data** on a table opens a console with
-`SELECT * FROM keyspace.table` and runs it, its rows read a page at a time as you scroll.
+system ones, shown only with **System** ticked. ScyllaDB keeps a materialized view behind each
+secondary index; it is the index's, so it isn't listed among the views. **Open data** on a
+table or a view opens a console with `SELECT * FROM keyspace.table` and runs it, its rows read a
+page at a time as you scroll. **Show definition** is the server's own `DESCRIBE`: a keyspace's
+`CREATE KEYSPACE` alone, a table's `CREATE TABLE` with its indexes and views, and every overload
+of a function or an aggregate. Completion offers the keyspaces, tables, views and columns the
+explorer has loaded, as for SQL. The **New** and **Drop** helpers write SQL, so they aren't
+offered.
 
 **Redis / Valkey**, where the server's numbered databases hold keys, grouped by the data
 source's **Key separator** (`:` unless you set another):

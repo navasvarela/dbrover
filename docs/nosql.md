@@ -1164,14 +1164,30 @@ nightly job (see the CI measurement below).
     authority's certificate, so TLS is tested on every pull request;
   - the grid shows CQL rows read-only until N4·5, and the statement timeout is a field of the
     Cassandra form alone.
-- **N4·4 — The explorer:** keyspaces (the system ones only with **System** ticked), then
+- **N4·4 — The explorer** (built): keyspaces (the system ones only with **System** ticked), then
   folders of tables, materialized views, user-defined types, functions and aggregates; under a
   table, its columns (partition and clustering keys marked, in key order, then the rest) and
   secondary indexes. **Show definition** is the server's own `DESCRIBE` where it has one
   (ScyllaDB, and Cassandra 4.0 and later), and is rebuilt from `system_schema` otherwise.
   **Open data** opens a console with `SELECT * FROM ks.t` and runs it. Completion offers the
   keyspaces, tables and columns the explorer has loaded, as for SQL. Tests: the catalog walk
-  with each kind, the definitions run again in an empty keyspace, and a column completed.
+  with each kind, the definitions run again in an empty keyspace, and a column completed. How it
+  came out:
+  - the tree has the shape of MySQL's and ClickHouse's (a keyspace is a schema, with folders of
+    tables and views, each with a folder of columns), so completion reads it as it does theirs,
+    with no change; a user-defined type is `NodeKind::UserType` and an aggregate
+    `NodeKind::Aggregate`, in folders of their own (`FolderKind::Types`, `Aggregates`);
+  - both servers answer `DESCRIBE` as rows, `DESCRIBE ONLY KEYSPACE` included, so no definition
+    is rebuilt from `system_schema`: Cassandra before 4.0, which hasn't it, is past its end of
+    life, and gets an error rather than a guess;
+  - ScyllaDB lists the view behind each secondary index in `system_schema.views`, named after
+    the index with `_index`; the explorer leaves those out;
+  - the test node of each server runs user-defined functions (Lua on ScyllaDB, Java on
+    Cassandra) and, on Cassandra, materialized views, which both leave off by default, so the
+    walk meets every kind; the driver's tests that make keyspaces or walk the catalog take a
+    lock, since a walk that meets another test's keyspace while it is dropped fails;
+  - the explorer's menu offered the SQL object helpers for a CQL table: it now asks
+    `Dialect::writes_ddl` for them, and keeps **Open data** and **Export data…**.
 - **N4·5 — Editing:** a cell changed in the grid becomes
   `UPDATE ks.t SET c = … WHERE` every partition and clustering key column `= …`, when the
   result is a `SELECT` of one table that holds its whole primary key; **Add row** becomes an

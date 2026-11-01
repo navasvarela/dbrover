@@ -173,6 +173,8 @@ fn singular(folder: FolderKind) -> &'static str {
         FolderKind::Aliases => "alias",
         FolderKind::DataStreams => "data stream",
         FolderKind::IndexTemplates => "index template",
+        FolderKind::Types => "type",
+        FolderKind::Aggregates => "aggregate",
     }
 }
 

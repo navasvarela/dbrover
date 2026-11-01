@@ -123,6 +123,8 @@ pub fn node(kind: NodeKind) -> Icon {
         NodeKind::Collection => Icon::new(glyph::FILES, Role::Primary),
         NodeKind::SearchIndex => Icon::new(glyph::MAGNIFYING_GLASS, Role::Primary),
         NodeKind::IndexTemplate => Icon::new(glyph::FILE_SQL, Role::Secondary),
+        NodeKind::UserType => Icon::new(glyph::BRACKETS_CURLY, Role::Secondary),
+        NodeKind::Aggregate => Icon::new(glyph::FUNCTION, Role::Success),
     }
 }
 
