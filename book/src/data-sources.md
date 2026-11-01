@@ -179,6 +179,8 @@ sign-in is planned.
 **Cassandra / ScyllaDB** connects to a node of an Apache Cassandra or ScyllaDB cluster over
 CQL's native protocol:
 
+![The New Cassandra / ScyllaDB data source dialog](images/cassandra-data-source-dialog.png)
+
 | Field | Default | Notes |
 | --- | --- | --- |
 | Host | `localhost` | The name or IP address of one node. DbRover reaches the cluster's other nodes at the addresses it gives them, and through this node when one of those doesn't answer within a second, as a node in Docker or behind NAT gives one only its own network reaches. |

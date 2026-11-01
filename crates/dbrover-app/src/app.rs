@@ -160,7 +160,7 @@ pub struct DbRoverApp {
     /// `DBROVER_CONFIG_DIR`, which an MCP client doesn't get.
     mcp_config_dir: Option<PathBuf>,
     /// The settings folder, for Settings › Files. Unknown in tests that don't give one.
-    folder_in_use: Option<FolderInUse>,
+    pub(crate) folder_in_use: Option<FolderInUse>,
     /// Confirming a switch of the settings folder.
     folder_switch: Option<FolderSwitch>,
     /// A switch confirmed, saved once DbRover has quit and written everything.

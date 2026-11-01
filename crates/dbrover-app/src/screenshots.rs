@@ -20,8 +20,9 @@ use dbrover_core::{
     SourceColor, SqliteConfig, TlsMode,
 };
 use dbrover_store::{
-    DataSourceFile, HistoryEntry, HistoryFile, HistoryOutcome, HistorySource, NamedCell, Project,
-    ProjectFile, ProjectSlug, Projects, ReplacedCell, RowChange, RowChangeKind,
+    ChosenFolder, ChosenFolderFile, DataSourceFile, HistoryEntry, HistoryFile, HistoryOutcome,
+    HistorySource, InstallFolders, NamedCell, Project, ProjectFile, ProjectSlug, Projects,
+    ReplacedCell, RowChange, RowChangeKind, SettingsFolder,
 };
 use egui::accesskit::Role;
 use egui::{Theme, Vec2};
@@ -31,6 +32,7 @@ use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::{Layer as _, reload};
 
 use crate::app::DbRoverApp;
+use crate::folder_switch::FolderInUse;
 use crate::log_console::{self, LogConsoleLayer};
 use crate::telemetry;
 use crate::test_support::{MemorySecrets, start_app, step_until_visible};
@@ -140,6 +142,8 @@ struct Scene {
     /// Leaves the pointer where the scene put it, for a tooltip; otherwise it is taken away,
     /// so no cursor or hover highlight ends up in the image.
     keeps_pointer: bool,
+    /// The part of the window the picture shows.
+    region: Region,
     /// The test server variables the scene needs; without them it is skipped and its image
     /// left as it is.
     needs: &'static [&'static str],
@@ -167,6 +171,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::None,
         play: settle,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -174,6 +179,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: settle,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -181,6 +187,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: data_source_dialog,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -188,6 +195,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: sqlite_data_source_dialog,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -195,6 +203,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: mysql_data_source_dialog,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -202,6 +211,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: sqlserver_data_source_dialog,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -209,6 +219,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: duckdb_data_source_dialog,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -216,6 +227,23 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: clickhouse_data_source_dialog,
         keeps_pointer: false,
+        region: whole_window,
+        needs: &[],
+    },
+    Scene {
+        name: "cassandra-data-source-dialog",
+        data_sources: FixtureSources::Shop,
+        play: cassandra_data_source_dialog,
+        keeps_pointer: false,
+        region: whole_window,
+        needs: &[],
+    },
+    Scene {
+        name: "dynamodb-data-source-dialog",
+        data_sources: FixtureSources::Shop,
+        play: dynamodb_data_source_dialog,
+        keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -223,6 +251,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: data_source_placeholders,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -230,6 +259,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: ssh_data_source_dialog,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -237,6 +267,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: host_key_prompt,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[SSH_URL, SSH_POSTGRES_URL],
     },
     Scene {
@@ -244,6 +275,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: password_prompt,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -251,6 +283,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: password_command_prompt,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -258,6 +291,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Projects,
         play: export_data_sources,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -265,6 +299,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: import_preview,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -272,6 +307,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: safety_level,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -279,6 +315,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: careful_confirmation,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -286,6 +323,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: read_only_refusal,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -293,6 +331,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: explorer_menu,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -300,6 +339,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: new_table,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -307,6 +347,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: modify_table,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -314,6 +355,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: drop_table,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -321,6 +363,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: new_view,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -328,6 +371,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: new_user,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[POSTGRES_URL],
     },
     Scene {
@@ -336,6 +380,7 @@ const SCENES: &[Scene] = &[
         play: explorer_projects,
         // The Move to project submenu stays open only while the pointer is over it.
         keeps_pointer: true,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -343,6 +388,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Projects,
         play: project_menu,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -350,6 +396,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Projects,
         play: project_settings,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -357,6 +404,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: settings_editor,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -364,6 +412,15 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: settings_mcp,
         keeps_pointer: false,
+        region: above_settings_file_line,
+        needs: &[],
+    },
+    Scene {
+        name: "settings-files",
+        data_sources: FixtureSources::Shop,
+        play: settings_files,
+        keeps_pointer: false,
+        region: above_settings_file_line,
         needs: &[],
     },
     Scene {
@@ -371,6 +428,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: settings_keymap,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -378,6 +436,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: settings_actions,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -385,6 +444,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: history_mcp,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -392,6 +452,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: history_audit,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -399,6 +460,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: explorer_filter,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -406,6 +468,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: definition,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -413,6 +476,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: workspace,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -420,6 +484,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: results_paging,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -427,6 +492,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: multiple_statements,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -434,6 +500,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: chart,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -441,6 +508,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: console_error,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -448,6 +516,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: run_anyway,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -455,6 +524,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: completion,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -462,6 +532,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: problems,
         keeps_pointer: true,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -469,6 +540,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: grid_changes,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -476,6 +548,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: follow_key,
         keeps_pointer: true,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -483,6 +556,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: parameters,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -490,6 +564,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: find_replace,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -497,6 +572,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: export_dialog,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -504,6 +580,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: csv_import,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -511,6 +588,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: console_reconnect,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[POSTGRES_URL],
     },
     Scene {
@@ -518,6 +596,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: explain_plan,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[POSTGRES_URL],
     },
     Scene {
@@ -525,6 +604,7 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: er_diagram,
         keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
 ];
@@ -557,7 +637,7 @@ fn regenerate_screenshots() {
                 _ => format!("{}-{}.png", scene.name, theme_name(theme)),
             };
             let path = out_dir.join(file_name);
-            render_scene(scene, theme, WINDOW_SIZE, whole_window)
+            render_scene(scene, theme, WINDOW_SIZE, scene.region)
                 .save(&path)
                 .unwrap();
             println!("wrote {}", path.display());
@@ -586,6 +666,18 @@ fn render_scene(scene: &Scene, theme: Theme, size: Vec2, region: Region) -> imag
 
 fn whole_window(_: &Harness<'static, DbRoverApp>) -> Option<egui::Rect> {
     None
+}
+
+/// The window down to just above the Settings tab's "Saved in" line, which names the
+/// fixture's temporary folder rather than a folder a reader would recognise.
+fn above_settings_file_line(harness: &Harness<'static, DbRoverApp>) -> Option<egui::Rect> {
+    const GAP: f32 = 12.0;
+    let line = harness.query_by_label_contains("Saved in")?.rect();
+    let window = harness.ctx.content_rect();
+    Some(egui::Rect::from_min_max(
+        window.min,
+        egui::pos2(window.max.x, line.min.y - GAP),
+    ))
 }
 
 /// The pixels under `rect`, in points, kept inside the image.
@@ -856,6 +948,20 @@ fn duckdb_data_source_dialog(harness: &mut Harness<'static, DbRoverApp>, _: &Fix
 
 fn clickhouse_data_source_dialog(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
     open_new_data_source_dialog(harness, "ClickHouse");
+}
+
+fn cassandra_data_source_dialog(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    open_new_data_source_dialog(harness, "Cassandra / ScyllaDB");
+    retype(harness, "Name", "events");
+    retype(harness, "Keyspace", "shop");
+    retype(harness, "Local datacenter", "datacenter1");
+}
+
+fn dynamodb_data_source_dialog(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    open_new_data_source_dialog(harness, "DynamoDB");
+    retype(harness, "Name", "orders (AWS)");
+    retype(harness, "Profile", "analytics");
+    retype(harness, "Region", "eu-west-1");
 }
 
 fn open_new_data_source_dialog(harness: &mut Harness<'static, DbRoverApp>, driver: &str) {
@@ -1393,6 +1499,26 @@ fn settings_mcp(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
 
 fn settings_keymap(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
     open_settings_page(harness, "Keymap");
+}
+
+/// Settings kept in a synced folder chosen on this page. The folders are only shown, so they
+/// needn't exist.
+fn settings_files(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    let synced = PathBuf::from("/Users/ada/Dropbox/DbRover");
+    let data = PathBuf::from("/Users/ada/Library/Application Support/dbrover");
+    harness.state_mut().folder_in_use = Some(FolderInUse {
+        folders: InstallFolders {
+            settings: synced.clone(),
+            data: data.clone(),
+        },
+        source: SettingsFolder::Chosen(ChosenFolder {
+            folder: synced,
+            copy_from: None,
+        }),
+        default_settings: PathBuf::from("/Users/ada/.config/dbrover"),
+        chosen_file: ChosenFolderFile::new(data.join("settings_folder.toml")),
+    });
+    open_settings_page(harness, "Files");
 }
 
 /// Two actions of the manual's examples, one of them a program.

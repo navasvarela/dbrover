@@ -170,6 +170,8 @@ Click **Restart DbRover**. DbRover quits as usual, asking about unsaved consoles
 transactions first, and starts again on the new folder, copying your settings into it first
 if you asked for that. **Use the default folder** goes back the same way.
 
+![Settings › Files, with the settings kept in a folder chosen there](images/settings-files.png)
+
 The choice is kept in the data folder, so it belongs to this machine: on another machine,
 choose the same synced folder there too. Passwords stay in that machine's keychain, so each
 data source asks for its password once on a new machine. Two folders that share data sources

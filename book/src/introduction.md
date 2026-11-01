@@ -20,7 +20,8 @@ The window has three areas, which you can drag around and resize:
   queries running and how long they took, errors.
 
 The thin bar at the very bottom shows whether DbRover's background engine is running and how
-many data sources the explorer is connected to.
+many data sources the explorer is connected to, and, at its right end, the version you're
+running.
 
 This manual describes DbRover as it is today. It is young software: things that are planned but
 not built yet are not described here, apart from a few warnings in

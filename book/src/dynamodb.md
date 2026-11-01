@@ -12,6 +12,8 @@ does, through AWS's own SDK, with what is already on your machine: the shared `c
 `credentials` files in `~/.aws`, IAM Identity Center (`aws sso login`), `aws login`,
 `credential_process`, the environment, or a role. DbRover saves only the names you type.
 
+![The New DynamoDB data source dialog, signing in with an AWS profile](images/dynamodb-data-source-dialog.png)
+
 | Field | Default | Notes |
 | --- | --- | --- |
 | Sign in with | AWS profile | **AWS profile**, or **Local emulator** for DynamoDB Local and LocalStack. |
