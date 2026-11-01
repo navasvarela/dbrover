@@ -1277,20 +1277,37 @@ three to five, **L** a track of its own).
 
   **Exit:** on the PostgreSQL test server, ⌥⌘E on a join of `orders` and `customers` shows a
   tree whose costliest step is highlighted, and **Explain analyse** adds the actual rows.
-- **W11 — Read-only on every engine (S–M):** the read-only level (W2) and the MCP server use
-  each engine's own read-only mode, so the database refuses a write on all seven engines, not only
-  on PostgreSQL, MySQL, MariaDB and SQLite.
-  - ClickHouse: every statement is sent with the `readonly = 1` setting.
-  - DuckDB: the file is opened with `access_mode = 'READ_ONLY'`. DuckDB refuses a second
-    configuration of a file already open in the same process, so a read-only DuckDB session
-    needs its own process or the file not open elsewhere; settle this first.
+- **W11 — Read-only on every engine (S–M):** designed on 2026-10-31 in
+  [A well-rounded app](well-rounded.md#w11--read-only-on-every-engine), with each engine's
+  guard. The read-only level (W2) and the MCP server use each engine's own read-only mode, so
+  the database refuses a write wherever the engine has one, not only on PostgreSQL, MySQL,
+  MariaDB and SQLite.
+  - ClickHouse: a read-only connection sends `readonly = 2` with every request (2 rather than 1,
+    so a `SELECT`'s own `SETTINGS` still run). An MCP login becomes optional there.
+  - DuckDB: a file is opened with `access_mode = 'READ_ONLY'`. DuckDB's rule between programs,
+    one writer or any number of readers, applies within DbRover too: a file is never open both
+    ways in one process, which DuckDB would allow but where the reader would see stale and
+    reused blocks. The MCP server, a process of its own, holds a file only during a call. An
+    in-memory database can't be opened read-only and keeps the check alone.
   - SQL Server has no read-only transaction. Its data sources are served to MCP clients only
     through an MCP login, whose grants are what keeps them read-only, and the dialog says so.
-    *Done in N0a* (2026-10-30), for SQL Server and ClickHouse, for reading only.
+    *Done in N0a* (2026-10-30).
+  - Redis, Valkey, Dragonfly, MongoDB, Elasticsearch and OpenSearch have no read-only session
+    (`READONLY`, read preferences and index blocks don't refuse one connection's writes), so
+    their login stays the guard, as N1 to N3 built it.
+  - **W11a — The plan:** the design and this entry.
+  - **W11b — ClickHouse:** the setting on read-only connections, for read-only data sources and
+    MCP.
+  - **W11c — DuckDB:** read-only files, one configuration of a file at a time, and the MCP
+    server holding a file only during a call.
+  - **W11d — Manual:** each engine's guard, the ClickHouse login's `readonly = 2`, and this
+    demo note.
 
-  **Exit:** a read-only ClickHouse and a read-only DuckDB data source refuse an `INSERT` hidden
-  in a function the statement check can't see, with the database's own error; an MCP client
-  can query a SQL Server data source that has an MCP login.
+  **Exit:** a read-only ClickHouse and a read-only DuckDB data source refuse a write the
+  statement check can't see, with the database's own error (on DuckDB a `SELECT` of a function
+  that writes; ClickHouse's functions don't write, so a `SELECT` that lifts `readonly`, and an
+  `INSERT` sent past the check); an MCP client can query a SQL Server data source that has an
+  MCP login.
 - **W12 — Charts from results (M):** a bar, line or scatter chart of a result's columns, in a
   tab beside the grid, from the rows already fetched, exported as PNG or SVG like ER1's
   diagrams.
