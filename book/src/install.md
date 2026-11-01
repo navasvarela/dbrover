@@ -174,10 +174,10 @@ copy of your data, until you remove it.
 
 ## Settings moved to ~/.config/dbrover
 
-From version 0.21, DbRover keeps your settings in `~/.config/dbrover` and this machine's own
+From version 0.22, DbRover keeps your settings in `~/.config/dbrover` and this machine's own
 files in `~/.local/share/dbrover` on every platform (see
 [Where DbRover keeps its files](files.md)). On Linux nothing moves. On macOS and Windows, the
-first start of 0.21 copies what DbRover kept in `~/Library/Application Support/dbrover/` or
+first start of 0.22 copies what DbRover kept in `~/Library/Application Support/dbrover/` or
 `%APPDATA%\dbrover\`: your data sources, projects, consoles, diagrams, history, settings,
 shortcuts, actions, snippets and theme, the window's layout, and the commands you trusted. A
 window then says where they were copied from and to.
