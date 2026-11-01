@@ -53,6 +53,7 @@ fn opens_settings_as_a_tab_beside_the_consoles() {
     open_settings(&mut harness);
     assert_eq!(settings_tabs(&harness), 1);
     harness.get_by_role_and_label(Role::Button, "Appearance");
+    harness.get_by_label("No projects yet");
     // egui_dock's tab buttons have no accessible names to click them by.
     let dock = &mut harness.state_mut().dock;
     let welcome = dock.find_tab(&Tab::Welcome).expect("the Welcome tab");
@@ -235,4 +236,63 @@ fn finds_a_custom_action_and_opens_its_page() {
     harness.get_by_label("all");
     harness.get_by_label("SELECT count(*) FROM {qualified_name}");
     harness.get_by_label("Opens in a console to edit before running");
+}
+
+fn is_on(harness: &Harness<'_, DbRoverApp>, toggle: &str) -> bool {
+    harness
+        .get_by_role_and_label(Role::CheckBox, toggle)
+        .accesskit_node()
+        .toggled()
+        .is_some_and(|toggled| toggled == egui::accesskit::Toggled::True)
+}
+
+/// Each project has a page in the sidebar, which a search finds by the project's name. Its
+/// unsaved changes stay while another page is shown, until they are discarded.
+#[test]
+fn lists_each_project_and_keeps_its_unsaved_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dbrover_store::Project::new(
+        dbrover_core::ProjectId::generate(),
+        "Reporting".to_owned(),
+        dbrover_store::ProjectSlug::from_name("Reporting"),
+    );
+    ProjectFile::new(dir.path().join("projects.toml"))
+        .save(&dbrover_store::Projects {
+            projects: vec![project],
+            ..dbrover_store::Projects::default()
+        })
+        .unwrap();
+    let mut harness = start_without_data_sources(dir.path());
+    open_settings(&mut harness);
+    let allow = "Allow MCP clients to use this project";
+
+    search(&mut harness, "reporting");
+    harness.get_by_label("MCP off");
+    harness.get_by_label("Open").click();
+    harness.run();
+    harness.get_by_label_contains("dbrover mcp --project reporting");
+    harness.get_by_role_and_label(Role::CheckBox, allow).click();
+    harness.run();
+
+    harness
+        .get_by_role_and_label(Role::Button, "Keymap")
+        .click();
+    harness.run();
+    harness
+        .get_by_role_and_label(Role::Button, "Reporting")
+        .click();
+    harness.run();
+    assert!(is_on(&harness, allow), "the change is kept");
+
+    harness.get_by_label("Discard").click();
+    harness.run();
+    assert!(!is_on(&harness, allow));
+    assert!(
+        !ProjectFile::new(dir.path().join("projects.toml"))
+            .load()
+            .unwrap()
+            .projects[0]
+            .mcp_enabled,
+        "nothing was saved"
+    );
 }

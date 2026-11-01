@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use dbrover_core::SourceColor;
-use dbrover_store::{ConsoleKey, CustomAction, DiagramKey, Project, Snippet};
+use dbrover_store::{ConsoleKey, CustomAction, DiagramKey, McpPermissions, Project, Snippet};
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, FontId, Id, Ui, WidgetText};
 use egui_dock::tab_viewer::OnCloseResponse;
@@ -205,6 +205,8 @@ pub struct Panels<'a> {
     pub keymap_path: Option<&'a Path>,
     pub custom_files: &'a CustomFiles,
     pub command_runs: &'a CommandRuns,
+    /// The MCP defaults as saved, which projects' settings start from.
+    pub mcp_defaults_saved: &'a McpPermissions,
     pub lint: &'a LintOptions,
     pub recent_completions: &'a RecentCompletions,
     /// What the user asked of each console this frame.
@@ -325,6 +327,9 @@ impl TabViewer for Panels<'_> {
                     keymap_path: self.keymap_path,
                     custom_files: self.custom_files,
                     command_runs: self.command_runs,
+                    projects: self.projects,
+                    data_sources: self.data_sources,
+                    mcp_defaults: self.mcp_defaults_saved,
                 },
                 self.settings_actions,
             ),

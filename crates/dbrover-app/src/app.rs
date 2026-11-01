@@ -52,7 +52,6 @@ use crate::previous_install::AdoptionNotice;
 use crate::project_dialog::{
     DeleteProjectChoice, DeleteProjectConfirmation, ProjectDialogAction, ProjectNameDialog,
 };
-use crate::project_settings::{ProjectSettingsAction, ProjectSettingsDialog};
 use crate::rollback_dialog::{Closing, RollbackChoice, RollbackConfirmation};
 use crate::settings::AppSettings;
 use crate::settings_tab::{Page, SettingsAction, SettingsTab};
@@ -107,7 +106,6 @@ pub struct DbRoverApp {
     data_source_dialog: Option<DataSourceDialog>,
     delete_confirmation: Option<DeleteConfirmation>,
     project_dialog: Option<ProjectNameDialog>,
-    project_settings: Option<ProjectSettingsDialog>,
     /// View › Settings › MCP's draft, kept while the window is closed.
     mcp_defaults: McpDefaultsEditor,
     settings_tab: SettingsTab,
@@ -226,7 +224,6 @@ impl DbRoverApp {
             data_source_dialog: None,
             delete_confirmation: None,
             project_dialog: None,
-            project_settings: None,
             mcp_defaults: McpDefaultsEditor::new(&McpPermissions::default()),
             settings_tab: SettingsTab::default(),
             delete_project_confirmation: None,
@@ -388,13 +385,7 @@ impl DbRoverApp {
         {
             self.project_dialog = None;
         }
-        if self
-            .project_settings
-            .as_mut()
-            .is_some_and(|dialog| dialog.apply(event))
-        {
-            self.project_settings = None;
-        }
+        self.settings_tab.apply(event);
         if let Some(changed) = self
             .object_dialog
             .as_mut()
@@ -1156,14 +1147,7 @@ impl DbRoverApp {
                     self.project_dialog = Some(ProjectNameDialog::rename(project));
                 }
             }
-            ExplorerAction::ProjectSettings(id) => {
-                if let Some(project) = self.state.projects.get(id) {
-                    self.project_settings = Some(ProjectSettingsDialog::new(
-                        project,
-                        &self.state.mcp_defaults,
-                    ));
-                }
-            }
+            ExplorerAction::ProjectSettings(id) => self.open_settings_page(Page::Project(id)),
             ExplorerAction::DeleteProject(id) => {
                 if let Some(project) = self.state.projects.get(id) {
                     let members = self
@@ -1412,35 +1396,6 @@ impl DbRoverApp {
                 self.send(Command::RenameProject { id, name });
             }
             ProjectDialogAction::Close => self.project_dialog = None,
-        }
-    }
-
-    fn show_project_settings(&mut self, ctx: &egui::Context) {
-        let Some(dialog) = &mut self.project_settings else {
-            return;
-        };
-        let members: Vec<&DataSource> = self
-            .state
-            .data_sources
-            .entries()
-            .iter()
-            .map(|entry| &entry.data_source)
-            .filter(|data_source| data_source.project == Some(dialog.project()))
-            .collect();
-        let Some(action) = dialog.show(ctx, &self.state.mcp_defaults, &members) else {
-            return;
-        };
-        match action {
-            ProjectSettingsAction::Save {
-                id,
-                mcp_enabled,
-                overrides,
-            } => self.send(Command::SaveProjectMcp {
-                id,
-                mcp_enabled,
-                overrides,
-            }),
-            ProjectSettingsAction::Close => self.project_settings = None,
         }
     }
 
@@ -2192,6 +2147,15 @@ impl DbRoverApp {
                 kind: CustomFileKind::Actions,
                 text: custom_actions::TEMPLATE.to_owned(),
             }),
+            SettingsAction::SaveProject {
+                id,
+                mcp_enabled,
+                overrides,
+            } => self.send(Command::SaveProjectMcp {
+                id,
+                mcp_enabled,
+                overrides,
+            }),
         }
     }
 
@@ -2345,6 +2309,7 @@ impl eframe::App for DbRoverApp {
                     keymap_path: self.keymap_path.as_deref(),
                     custom_files: &self.custom_files,
                     command_runs: &self.command_runs,
+                    mcp_defaults_saved: &self.state.mcp_defaults,
                     lint: &lint,
                     recent_completions,
                     console_actions: &mut console_actions,
@@ -2415,7 +2380,6 @@ impl eframe::App for DbRoverApp {
         self.show_data_source_dialog(&ctx);
         self.show_delete_confirmation(&ctx);
         self.show_project_dialog(&ctx);
-        self.show_project_settings(&ctx);
         self.show_delete_project_confirmation(&ctx);
         self.show_object_dialog(&ctx);
         self.show_password_prompt(&ctx);
@@ -3267,7 +3231,7 @@ mod tests {
         harness.run();
         harness.get_by_label_contains("dbrover mcp --project analytics");
         harness
-            .get_by_label("Allow MCP clients to use this project")
+            .get_by_role_and_label(Role::CheckBox, "Allow MCP clients to use this project")
             .click();
         harness.run();
         assert!(
@@ -3277,27 +3241,20 @@ mod tests {
         harness.get_by_label("Write").click();
         harness.run();
         harness.get_by_label_contains("No MCP login on warehouse.");
-        harness.get_by_label("Save").click();
-        step_until(&mut harness, "the project being saved", |harness| {
-            harness
-                .query_by_label("Allow MCP clients to use this project")
-                .is_none()
+        harness.get_by_label("Save project settings").click();
+        step_until(&mut harness, "the project being saved", |_| {
+            saved_project(dir.path()).mcp_enabled
         });
         let saved = saved_project(dir.path());
-        assert!(saved.mcp_enabled);
         assert_eq!(saved.mcp.write, Some(true));
         assert_eq!(
             saved.mcp.schema, None,
             "untouched settings stay at the default"
         );
 
-        harness.get_by_label("Analytics").click_secondary();
-        harness.run();
-        harness.get_by_label("Project settings…").click();
-        harness.run();
         harness.get_by_label("Reset Write").click();
         harness.run();
-        harness.get_by_label("Save").click();
+        harness.get_by_label("Save project settings").click();
         step_until(&mut harness, "the reset being saved", |_| {
             saved_project(dir.path()).mcp.write.is_none()
         });

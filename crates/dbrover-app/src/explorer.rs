@@ -57,7 +57,7 @@ pub enum ExplorerAction {
         then_move: Option<DataSourceId>,
     },
     RenameProject(ProjectId),
-    /// Opens Project settings…, where MCP access is set.
+    /// Opens the project's page in Settings, where MCP access is set.
     ProjectSettings(ProjectId),
     DeleteProject(ProjectId),
     /// Puts the data source in the project, or in no project.
@@ -384,7 +384,7 @@ fn group_menu(ui: &mut Ui, header: GroupHeader<'_>, actions: &mut Vec<ExplorerAc
     new_project_item(ui, None, actions);
 }
 
-fn copy_mcp_configuration(ui: &Ui, project: &Project) {
+pub fn copy_mcp_configuration(ui: &Ui, project: &Project) {
     match mcp_client_config::executable() {
         Ok(executable) => {
             let text = mcp_client_config::client_configuration(&project.slug, &executable);
