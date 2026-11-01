@@ -20,6 +20,8 @@ The sidebar lists its pages:
 - **Keymap**: every action's keys, from `keymap.toml` (see [Keyboard shortcuts](shortcuts.md)).
 - **Custom actions**: the actions in `actions.toml` (see
   [Actions, snippets and themes](customising.md)).
+- **Exports**: your own export formats in `exports.toml` (see
+  [Your own export formats](export-formats.md)).
 
 Under **Projects**, each of your [projects](explorer.md) has a page of its own, with whether, and
 how, [AI assistants](mcp.md) may use it. Right-click a project in the explorer and choose
@@ -43,11 +45,11 @@ in the sidebar to leave the search.
   they are saved or discarded.
 - **Files** changes nothing until you confirm a new folder with **Restart DbRover**; DbRover
   writes the choice as it quits, in the data folder.
-- **Keymap** and **Custom actions** show what their files hold; you change them by editing
-  `keymap.toml` and `actions.toml`. At the top of each page are the file's name (hover over it
-  for its full path), **Reload**, to read it again after editing it, and **Create keymap.toml**
-  or **Create actions.toml**, which writes a commented starting file (an existing one is kept).
-  What a file got wrong is listed under them.
+- **Keymap**, **Custom actions** and **Exports** show what their files hold; you change them by
+  editing `keymap.toml`, `actions.toml` and `exports.toml`. At the top of each page are the
+  file's name (hover over it for its full path), **Reload**, to read it again after editing it,
+  and **Create keymap.toml**, **Create actions.toml** or **Create exports.toml**, which writes a
+  commented starting file (an existing one is kept). What a file got wrong is listed under them.
 
-**View → Keymap…** and **View → Custom actions…** open those two pages directly, and so does
-the status bar's link when `keymap.toml` or `actions.toml` has problems.
+**View → Keymap…**, **View → Custom actions…** and **View → Exports…** open those pages
+directly, and so does the status bar's link when one of their files has problems.
