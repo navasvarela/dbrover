@@ -231,21 +231,23 @@ impl Consoles {
     }
 
     /// Opens a console that selects everything from the table or view at `path`, reads the
-    /// Redis key there whole, finds every document of the MongoDB collection there, or
-    /// searches every document of the Elasticsearch index, alias or data stream there, and
-    /// runs it.
+    /// Redis key there whole, finds every document of the MongoDB collection there, searches
+    /// every document of the Elasticsearch index, alias or data stream there, or selects every
+    /// item of the DynamoDB table or index there, and runs it.
     pub fn open_data(
         &mut self,
         data_source: &DataSource,
         path: &CatalogPath,
     ) -> Option<(ConsoleKey, Command)> {
+        let language = QueryLanguage::from(data_source.config.driver());
         if let Some(text) = key_viewer(data_source, path)
             .or_else(|| collection_viewer(data_source, path))
             .or_else(|| search_index_viewer(path))
+            .or_else(|| language.read_all(path).map(|text| format!("{text}\n")))
         {
             return self.open_query(data_source, text);
         }
-        let dialect = QueryLanguage::from(data_source.config.driver()).dialect()?;
+        let dialect = language.dialect()?;
         let name = path.qualified_name(dialect.quoting())?;
         self.open_query(data_source, format!("SELECT * FROM {name};\n"))
     }
@@ -894,6 +896,32 @@ mod tests {
             statements,
             ["GET /orders-live/_search\n{\n  \"query\": { \"match_all\": {} }\n}"]
         );
+    }
+
+    #[test]
+    fn opens_a_dynamodb_table_or_index_with_a_select_of_every_item() {
+        let mut consoles = Consoles::default();
+        let dynamodb = DataSource {
+            config: ConnectionConfig::DynamoDb(dbrover_core::DynamoDbConfig::default()),
+            ..data_source("orders")
+        };
+        let table = CatalogPath::root().child(NodeKind::Table, "orders");
+        let index = table
+            .child(
+                NodeKind::Folder(dbrover_core::FolderKind::Indexes),
+                "indexes",
+            )
+            .child(NodeKind::Index, "by-status");
+        for (path, expected) in [
+            (table, "SELECT * FROM \"orders\""),
+            (index, "SELECT * FROM \"orders\".\"by-status\""),
+        ] {
+            let (_, command) = consoles.open_data(&dynamodb, &path).unwrap();
+            let Command::Execute { statements, .. } = command else {
+                panic!("expected a run, got {command:?}");
+            };
+            assert_eq!(statements, [expected], "{path}");
+        }
     }
 
     #[test]

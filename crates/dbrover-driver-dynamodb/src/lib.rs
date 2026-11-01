@@ -21,9 +21,9 @@ use async_trait::async_trait;
 use aws_sdk_dynamodb::Client;
 use dbrover_cloud::aws::{AwsCredentials, AwsSignIn};
 use dbrover_core::{
-    CancelHandle, CatalogNode, CatalogPath, Connection, DriverError, DynamoDbConfig,
-    DynamoDbSignIn, Rejection, RejectionKind, RelationName, ResultCursor, ServerInfo,
-    TableConstraints, TableDescription, TableName, TransactionStatus,
+    CancelHandle, CatalogNode, CatalogPath, ChildrenPage, ChildrenQuery, Connection, DriverError,
+    DynamoDbConfig, DynamoDbSignIn, Rejection, RejectionKind, RelationName, ResultCursor,
+    ServerInfo, TableConstraints, TableDescription, TableName, TransactionStatus,
 };
 use dbrover_language::partiql::{self, Verb};
 
@@ -114,11 +114,19 @@ impl Connection for DynamoConnection {
     }
 
     async fn children(&mut self, path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError> {
-        catalog::children(&self.client, path).await
+        catalog::children(&self.client, &self.keys, path).await
+    }
+
+    async fn children_page(
+        &mut self,
+        path: &CatalogPath,
+        query: &ChildrenQuery,
+    ) -> Result<ChildrenPage, DriverError> {
+        catalog::children_page(&self.client, &self.keys, path, query).await
     }
 
     async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError> {
-        Err(DriverError::InvalidPath(path.clone()))
+        catalog::definition(&self.client, &self.keys, path).await
     }
 
     async fn execute(&mut self, text: &str) -> Result<Box<dyn ResultCursor>, DriverError> {

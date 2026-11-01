@@ -2311,6 +2311,7 @@ dependencies = [
  "dbrover-core",
  "dbrover-document",
  "dbrover-language",
+ "futures-util",
  "thiserror 2.0.21",
  "tokio",
  "uuid",

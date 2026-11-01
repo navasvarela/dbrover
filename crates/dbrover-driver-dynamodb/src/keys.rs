@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use aws_sdk_dynamodb::Client;
+use aws_sdk_dynamodb::operation::describe_table::DescribeTableError;
 use aws_sdk_dynamodb::types::{KeySchemaElement, KeyType, TableDescription};
 use dbrover_core::DriverError;
 
@@ -19,7 +20,7 @@ pub(crate) struct Keys {
 }
 
 impl Keys {
-    fn of(schema: &[KeySchemaElement]) -> Option<Self> {
+    pub(crate) fn of(schema: &[KeySchemaElement]) -> Option<Self> {
         let named = |key_type: KeyType| {
             schema
                 .iter()
@@ -111,22 +112,50 @@ impl KeyCache {
         {
             return Ok(keys);
         }
-        let answer = client
-            .describe_table()
-            .table_name(table)
-            .send()
-            .await
-            .map_err(|error| errors::connection(Refused::from(error)))?;
-        let keys = answer
-            .table()
-            .and_then(TableKeys::of)
-            .ok_or_else(|| errors::connection(Refused(format!("{table} has no key schema"))))?;
-        let keys = Arc::new(keys);
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(table.to_owned(), Arc::clone(&keys));
-        Ok(keys)
+        let no_such_table = || errors::connection(Refused(format!("there is no table {table}")));
+        let description = self
+            .describe(client, table)
+            .await?
+            .ok_or_else(no_such_table)?;
+        TableKeys::of(&description)
+            .map(Arc::new)
+            .ok_or_else(no_such_table)
+    }
+
+    /// `table` described afresh, its keys kept for [`Self::of`]: the explorer shows each
+    /// table's counts as `DescribeTable` has them now. `None` when there is no such table,
+    /// which a table dropped since it was listed isn't.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError::Connection`] with DynamoDB's message when the table can't be described.
+    pub(crate) async fn describe(
+        &self,
+        client: &Client,
+        table: &str,
+    ) -> Result<Option<TableDescription>, DriverError> {
+        let answer = client.describe_table().table_name(table).send().await;
+        let description = match answer {
+            Ok(answer) => answer.table,
+            Err(error)
+                if error
+                    .as_service_error()
+                    .is_some_and(DescribeTableError::is_resource_not_found_exception) =>
+            {
+                None
+            }
+            Err(error) => return Err(errors::connection(Refused::from(error))),
+        };
+        let Some(description) = description else {
+            return Ok(None);
+        };
+        if let Some(keys) = TableKeys::of(&description) {
+            self.0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(table.to_owned(), Arc::new(keys));
+        }
+        Ok(Some(description))
     }
 
     fn cached(&self, table: &str) -> Option<Arc<TableKeys>> {

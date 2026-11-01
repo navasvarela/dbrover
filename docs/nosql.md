@@ -1467,10 +1467,27 @@ From N5·4 on, each runs against DynamoDB Local in CI.
   - a read-only data source refuses `INSERT`, `UPDATE` and `DELETE` by the check alone. Until
     N5·8 gives it an MCP profile, the MCP server doesn't serve a DynamoDB data source: signed in
     by a profile, not a login with a password, it has no guard the server can count on.
-- **N5·5 — The explorer:** keys, indexes, counts and sizes, **Show definition**, **Open data**
-  on tables and indexes, tables paged 100 at a time, and table names in completion. Tests: the
-  catalog walk with a table of each shape (partition key only, with a sort key, with a GSI and
-  an LSI), the definitions, and paging past 100 tables.
+- **N5·5 — The explorer** (built): keys, indexes, counts and sizes, **Show definition**, **Open
+  data** on tables and indexes, tables paged 100 at a time, and table names in completion.
+  Tests: the catalog walk with a table of each shape (partition key only, with a sort key, with
+  a GSI and an LSI), the definitions, and paging past 100 tables. How it came out:
+  - a table shows `≈ 1,204 items · 2.3 MB`; under it, its key attributes (`partition key · S`,
+    `sort key · N`) and an **indexes** folder with its global and local indexes by name, each
+    with its keys (`global · status, placed`);
+  - a page lists every name (free, 100 a `ListTables` call), filters them, ignoring case, and
+    describes only the page's own tables, all at once; a table dropped between the listing and
+    its description is left out, and one dropped since the tree showed it is a node that
+    disappeared;
+  - **Show definition** can't run in a console, since PartiQL has no `CREATE TABLE`: it is the
+    input of `aws dynamodb create-table --cli-input-json`, with the billing mode, the
+    provisioned throughput when there is one, the indexes and their projections, the stream and
+    deletion protection, and nothing AWS sets itself;
+  - **Open data** on an index reads it through PartiQL's `"table"."index"`. Each language says
+    what **Open data** runs on a node it reads whole in its own words
+    (`QueryLanguage::read_all`), so the explorer offers it on DynamoDB's tables and indexes
+    without the SQL dialect its tables would otherwise need;
+  - the paging test makes 105 tables, filtered by a prefix unique to the run, since other
+    tests' tables share the server.
 - **N5·6 — The scan guard:** the guard on the data source (`CostGuard`, written only when it
   isn't the engine's default), `Connection::full_scan`, the engine's check before each
   statement and Run to file, the console's question, the MCP server's refusal, and the read

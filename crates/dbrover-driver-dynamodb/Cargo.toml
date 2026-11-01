@@ -16,6 +16,7 @@ dbrover-cloud.workspace = true
 dbrover-core.workspace = true
 dbrover-document.workspace = true
 dbrover-language.workspace = true
+futures-util.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 
