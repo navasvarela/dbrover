@@ -17,6 +17,7 @@ use jiff::Timestamp;
 use jiff::tz::TimeZone;
 
 use crate::theme::Palette;
+use crate::widgets;
 use filters::{Period, Scope, kind_filter, period_filter, scope_filter};
 
 mod detail;
@@ -321,7 +322,7 @@ impl HistoryWindow {
 /// **Export history** with its two formats. Returns the one chosen.
 fn export_menu(ui: &mut Ui) -> Option<ExportSpec> {
     let mut chosen = None;
-    ui.menu_button("Export history", |ui| {
+    widgets::menu_button(ui, "Export history", |ui| {
         for (spec, label) in [
             (ExportSpec::Csv(CsvOptions::default()), "As CSV\u{2026}"),
             (ExportSpec::Json, "As JSON\u{2026}"),

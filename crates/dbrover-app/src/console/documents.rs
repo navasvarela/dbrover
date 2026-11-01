@@ -8,6 +8,7 @@ use dbrover_document::{
 use egui::{Id, Label, Response, RichText, ScrollArea, Sense, TextEdit, Ui};
 
 use crate::json_tree::JsonTree;
+use crate::widgets;
 
 /// The documents of one result, and how they are shown.
 #[derive(Debug, Default)]
@@ -252,7 +253,7 @@ pub fn header_menu(
         return None;
     }
     let mut fold = None;
-    response.context_menu(|ui| {
+    widgets::context_menu(response, |ui| {
         if can_expand && ui.button("Expand column").clicked() {
             fold = Some(ColumnFold::Expand(column));
         }

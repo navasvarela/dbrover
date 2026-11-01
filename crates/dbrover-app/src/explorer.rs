@@ -313,9 +313,7 @@ fn group_tree(
             collapsed.remove(&group);
         }
     }
-    response
-        .name
-        .context_menu(|ui| group_menu(ui, header, actions));
+    widgets::context_menu(&response.name, |ui| group_menu(ui, header, actions));
     if expanded {
         ui.indent(Id::new(("explorer_group", group)), |ui| {
             if members.is_empty() {
@@ -418,7 +416,7 @@ fn data_sources<'a>(
 fn toolbar(ui: &mut Ui, options: &mut ExplorerOptions, actions: &mut Vec<ExplorerAction>) {
     let palette = &Palette::for_visuals(ui.visuals());
     widgets::toolbar(ui, |ui| {
-        let new = ui.menu_button(widgets::glyph(icons::PLUS).size(15.0), |ui| {
+        let new = widgets::menu_button(ui, widgets::glyph(icons::PLUS).size(15.0), |ui| {
             new_data_source_menu(ui, actions);
             ui.separator();
             new_project_item(ui, None, actions);
@@ -520,7 +518,7 @@ fn data_source_tree(
     if response.double_clicked() {
         actions.push(toggle_expansion(id, &root, expanded));
     }
-    response.context_menu(|ui| data_source_menu(ui, entry, tree, actions));
+    widgets::context_menu(&response, |ui| data_source_menu(ui, entry, tree, actions));
     if expanded {
         let language = QueryLanguage::from(entry.data_source.config.driver());
         let tree = TreeView {
@@ -593,7 +591,7 @@ fn data_source_menu(
     if !new.is_empty() {
         ui.separator();
         let label = widgets::icon_text(ui, icons::PLUS, Color32::PLACEHOLDER, "New");
-        let menu = ui.menu_button(label, |ui| helper_items(ui, id, new, actions));
+        let menu = widgets::menu_button(ui, label, |ui| helper_items(ui, id, new, actions));
         widgets::name(menu.response, WidgetType::Button, "New", true);
     }
     ui.separator();
@@ -667,7 +665,7 @@ fn move_to_project_menu(
         Color32::PLACEHOLDER,
         "Move to project",
     );
-    let menu = ui.menu_button(label, |ui| {
+    let menu = widgets::menu_button(ui, label, |ui| {
         for project in projects {
             let here = current == Some(project.id);
             if ui.radio(here, &project.name).clicked() && !here {
@@ -896,7 +894,7 @@ fn node_row(
     if node.has_children && response.double_clicked() {
         actions.push(toggle_expansion(tree.id, &node.path, expanded));
     }
-    response.context_menu(|ui| node_menu(ui, tree, node, actions));
+    widgets::context_menu(&response, |ui| node_menu(ui, tree, node, actions));
     if expanded {
         ui.indent(Id::new((tree.id, &node.path)), |ui| {
             children(ui, tree, &node.path, filter, actions);
@@ -1117,7 +1115,7 @@ fn helpers_menu(
     ui.separator();
     if !new.is_empty() {
         let label = widgets::icon_text(ui, icons::PLUS, Color32::PLACEHOLDER, "New");
-        let menu = ui.menu_button(label, |ui| helper_items(ui, tree.id, new, actions));
+        let menu = widgets::menu_button(ui, label, |ui| helper_items(ui, tree.id, new, actions));
         widgets::name(menu.response, WidgetType::Button, "New", true);
     }
     helper_items(ui, tree.id, object, actions);
@@ -1207,7 +1205,7 @@ fn saved_consoles_menu(
     if saved_consoles.names(id).next().is_none() {
         return;
     }
-    ui.menu_button("Open saved console", |ui| {
+    widgets::menu_button(ui, "Open saved console", |ui| {
         for name in saved_consoles.names(id) {
             if ui.button(format!("{name}.sql")).clicked() {
                 actions.push(ExplorerAction::OpenSavedConsole(ConsoleKey {
@@ -1230,7 +1228,7 @@ fn saved_diagrams_menu(
         return;
     }
     let label = widgets::icon_text(ui, icons::GRAPH, Color32::PLACEHOLDER, "Diagrams");
-    let menu = ui.menu_button(label, |ui| {
+    let menu = widgets::menu_button(ui, label, |ui| {
         for key in saved_diagrams.of(id) {
             if ui.button(key.name.as_str()).clicked() {
                 actions.push(ExplorerAction::OpenDiagram(key.clone()));

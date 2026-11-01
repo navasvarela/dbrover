@@ -14,7 +14,7 @@ use crate::explorer::{self, ExplorerAction};
 use crate::fonts;
 use crate::icons::{self, Icon, Role};
 use crate::state::DataSources;
-use crate::theme::Palette;
+use crate::theme::{self, Palette};
 use crate::widgets;
 
 /// Where "Open the manual" goes: the user manual on DbRover's website, published from `book/`
@@ -116,10 +116,12 @@ fn cards(
                 match card {
                     Card::NewDataSource => {
                         egui::Popup::menu(&response)
+                            .style(theme::menu_style)
                             .show(|ui| explorer::new_data_source_menu(ui, actions));
                     }
                     Card::NewConsole => {
                         egui::Popup::menu(&response)
+                            .style(theme::menu_style)
                             .show(|ui| console_menu(ui, data_sources, actions));
                     }
                     Card::Manual => {

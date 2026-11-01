@@ -17,6 +17,7 @@ use egui::{Align2, Color32, FontId, Galley, Painter, Pos2, Sense, Stroke, TextSt
 
 use crate::picture::PictureFormat;
 use crate::theme::Palette;
+use crate::widgets;
 
 /// The series' colours, in the order series take them, for the light theme and the dark one:
 /// eight hues whose neighbours stay apart for colour-blind readers, each stepped for its
@@ -308,7 +309,7 @@ pub fn controls(ui: &mut Ui, tab: &mut ChartTab, source: &Source<'_>) -> Option<
     let numbers: Vec<usize> = (0..view.columns.len())
         .filter(|&index| index != choice.x && view.roles.get(index) == Some(&Role::Number))
         .collect();
-    ui.menu_button(y_label(&view.columns, &choice.ys), |ui| {
+    widgets::menu_button(ui, y_label(&view.columns, &choice.ys), |ui| {
         if numbers.is_empty() {
             ui.weak("No other column holds numbers");
         }
@@ -328,7 +329,7 @@ pub fn controls(ui: &mut Ui, tab: &mut ChartTab, source: &Source<'_>) -> Option<
 fn export_menu(ui: &mut Ui, drawn: bool) -> Option<PictureFormat> {
     let mut picked = None;
     ui.add_enabled_ui(drawn, |ui| {
-        ui.menu_button("Export", |ui| {
+        widgets::menu_button(ui, "Export", |ui| {
             for format in PictureFormat::ALL {
                 if ui.button(format.label()).clicked() {
                     picked = Some(format);

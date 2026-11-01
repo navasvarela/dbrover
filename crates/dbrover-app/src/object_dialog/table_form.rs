@@ -857,7 +857,7 @@ fn type_cell(ui: &mut Ui, column: &mut ColumnRow, common: &[&str], row: usize) {
             TYPE_WIDTH,
             &format!("Column {row} type"),
         );
-        let menu = ui.menu_button(widgets::glyph(icons::CARET_DOWN), |ui| {
+        let menu = widgets::menu_button(ui, widgets::glyph(icons::CARET_DOWN), |ui| {
             for data_type in common {
                 if ui.button(*data_type).clicked() {
                     column.data_type = (*data_type).to_owned();
