@@ -5,7 +5,7 @@ design is in [Power in the grid](grid-power.md), W7's in
 [Exports and your own formats](exports.md)); W8 planned, designed there too. W10, the visual
 explain plan, designed on 2026-10-31 [below](#w10--a-visual-explain-plan) and built. W11,
 read-only on every engine, designed on 2026-10-31 [below](#w11--read-only-on-every-engine) and
-built.
+built. W12, charts from results, designed on 2026-11-01 [below](#w12--charts-from-results).
 Proposed on 2026-10-24.
 
 DbRover browses, queries and edits PostgreSQL, SQLite, MySQL and MariaDB, and ships as a
@@ -468,6 +468,163 @@ can't see, with the database's own error: on DuckDB a `SELECT` of a function tha
 ClickHouse a `SELECT` that lifts `readonly`, and an `INSERT` sent past the check. An MCP client
 can query a SQL Server data source that has an MCP login (N0a's `login` test).
 
+## W12 — Charts from results
+
+A result often answers a question better as a picture: totals by month, counts by status, one
+measure against another. Today the rows have to be copied into a spreadsheet to see that. W12
+draws a chart of a result's columns in the results panel, from the rows already fetched,
+without running anything again, and exports it as SVG or PNG, as ER1's diagrams are
+exported.
+
+- **A tab beside the grid:** **Grid** and **Chart** switch above any result with rows, the way
+  **Grid**, **Tree** and **JSON** switch for documents (a result of documents gets **Chart**
+  at the end of that same row). Switching never runs the statement again. The chart charts
+  the rows the grid holds, in the grid's order and through its filter, so sorting or
+  filtering the loaded rows changes the chart too, and **Load more rows** adds to it.
+- **Three kinds:** **Bars**, **Lines** and **Scatter**, picked above the chart.
+- **Columns:** **X** is one column, picked from a list of every column; **Y** is one or more
+  columns of numbers, ticked in a menu. Each Y column is a series in a colour of its own, with
+  a legend once there are two.
+- **What it shows:** axes with ticks and labels, the X column's name under the chart and the
+  Y column's name (or the legend) beside it, and a gap, never a zero, wherever a value
+  is missing. Hovering a bar or a point shows its X value and every series' value there.
+- **A line under the chart** says what was charted and what wasn't: "12 rows", "Charting the
+  first 250 of 1,200 loaded rows", "3 rows left out: no X value".
+- **Export ▾** writes **SVG…** or **PNG…** at 1×, 2× or 3×, at the size the chart has on the
+  screen, in the light theme's colours on white, through ER1's export (see
+  [Export](#export-shared-with-er1)).
+
+### Picking the columns
+
+Values arrive as text (ADR 0004), so each column is first given a role, from the type its
+driver declares when there is one (`Dialect::value_kind`, as exports do) and otherwise from its
+values (PostgreSQL's text protocol declares none):
+
+| Role | Declared kind | Undeclared: every value that isn't null… |
+| --- | --- | --- |
+| **Number** | integer, decimal, float | …reads as a finite decimal number, with an optional exponent |
+| **Time** | date, timestamp, timestamp with a zone | …reads as an ISO date or timestamp, with or without an offset |
+| **Text** | text, boolean, anything else | …anything else, and a column whose values are all null |
+
+A value with a leading zero (`007`, `00501`) makes an undeclared column **Text**, as the Excel
+export reads it: it is a code, not a quantity. A boolean is **Text**, two categories.
+
+**What the chart starts with,** when the tab opens on a result:
+
+- **X:** the first **Time** or **Text** column; if every column is a **Number**, the first
+  column.
+- **Y:** every other **Number** column, up to eight (the palette's colours); the rest can be
+  ticked by hand, beyond eight with colours reused.
+- **Kind:** **Lines** when X is **Time**, **Scatter** when X is a **Number**, otherwise
+  **Bars**. A `GROUP BY` of months and totals opens as bars when the month is text
+  (`to_char(…, 'YYYY-MM')`) and as lines when it is a date or timestamp (`date_trunc`); the
+  other kind is one click away.
+- **Nothing to chart:** a result with no **Number** column but X shows "A chart needs a column of
+  numbers" in place of the chart, and the switch stays, so the grid is one click away.
+
+The choice is kept for the console's next run while that result has the same column names,
+so running a query again after changing its `WHERE` keeps its chart.
+
+### X and Y on the axes
+
+- **Bars** always place X as categories: one slot per row, in the grid's order, labelled with
+  the value as the grid shows it. Several series are bars side by side within the slot. The Y
+  axis always includes zero, and a negative value draws a bar down from it.
+- **Lines** and **Scatter** place a **Number** or **Time** X by its value, on a continuous
+  axis: lines join points in X's order (the rows sorted by X for the line, whatever the grid's
+  order), so an unsorted result doesn't zigzag. A **Text** X is placed as categories, in the
+  grid's order, as for bars. The Y axis spans the values with a margin; zero is not forced.
+- **Ticks:** numbers at 1, 2 or 5 times a power of ten, enough for one every 80 points or so,
+  labelled with a thousands separator and only the decimals the step needs; times at a unit
+  picked from the span (years, months, days, hours, minutes, seconds) and labelled to that
+  unit (`2026`, `Mar 2026`, `14 Mar`, `14:30`); categories labelled every *k*-th slot, *k* the
+  smallest that keeps labels from overlapping, and every label cut to 20 characters with an
+  ellipsis.
+- **A Time X with an offset** (`timestamptz`) is placed by the instant it names and labelled in
+  the offset of its first value, so a result in UTC reads in UTC.
+
+### Nulls, values that aren't numbers, and many rows
+
+- **A null X, or one that doesn't read as the column's role** (an undeclared value when the
+  column was declared): the row is left out, and the line under the chart counts it.
+- **A null Y, or one that isn't a number** (`NaN`, `Infinity`, text in a declared numeric
+  column): no bar, no point, and a break in the line; counted in the same line, per series.
+- **Many rows:** bars chart the first **250** rows, since past that a bar is narrower than a
+  point on a wide screen and the labels say nothing; lines and scatter chart the first
+  **50,000** rows, which the grid reaches only after a hundred pages of **Load more rows**. The
+  line under the chart says how many were charted, and suggests grouping in the query. Both
+  numbers are a first guess, to be confirmed by measuring the frame time in W12c.
+- **Many series:** a result with dozens of numeric columns starts with eight ticked.
+- **An empty result** shows "No rows to chart".
+
+### Drawn with egui's shapes, not `egui_plot`
+
+`egui_plot` 0.37 is the release built on egui 0.36, a pure-Rust crate whose dependencies the
+build mostly has already. It would give pan, zoom and hover for free. W12 draws with egui's own
+shapes instead, because a chart is exported, and the export has to show the chart the tab
+shows:
+
+- `egui_plot` paints straight to egui's painter and has no way to give its geometry back.
+  Exporting would mean laying out the axes, ticks, labels, bars and legend a second time for
+  SVG, and the two would drift.
+- One pure layout gives both: it turns a chart, a size and a way to measure text into marks
+  (rectangles, polylines, circles, text, lines) in points. The tab paints the marks with
+  egui; the export turns the same marks into ER1's picture. What was missing from
+  `egui_plot` is small: categorical axes with text labels, and time ticks, which it leaves to
+  the caller's formatter anyway.
+- It adds no crate, and no crate whose version must move in lockstep with egui, as `egui_dock`
+  already must.
+- Pan and zoom are not needed for a chart of a result: filtering the grid, or the query, narrows
+  it. They can come later.
+
+The cost is the layout and its tests: about as much code as the plan view's tree. Hover is a
+nearest-mark lookup over the marks the layout returns.
+
+### How it's built
+
+- **A new crate, `dbrover-chart`,** on `dbrover-core`, with no UI and no database, as
+  `dbrover-plan` is: column roles, the starting choice, reading a series from rows (with what
+  was left out and why), scales and ticks, and the layout into marks. `jiff`, which the build
+  has already, reads dates and timestamps. Everything is tested without a window, which matters
+  since the app's tests are slower to build and run.
+- **The tab** keeps a `ChartView` on each statement's view: the kind, X and Y, and the marks
+  of the last layout, computed again only when the rows, the grid's order, the choice or the
+  size change, so a large scatter isn't laid out every frame.
+- **Painting** turns marks into egui shapes in the theme's colours; the series' colours are a
+  palette of eight that reads on both themes.
+
+### Export, shared with ER1
+
+ER1e builds the diagrams' export: SVG written from shapes, and PNG at 1×, 2× or 3× drawn from
+that SVG with resvg, whose `text` feature it turns on with the app's bundled Inter and
+JetBrains Mono, written by the engine off the UI thread. W12 uses that same code and copies none
+of it:
+
+- **The shared part** is the picture (shapes in points: rectangles, lines, paths, circles,
+  text), writing it as SVG, drawing it as PNG with the bundled fonts, the engine's command that
+  writes the file, and the **Export ▾** menu with its save dialog. It is proposed to ER1 as a
+  small leaf crate of its own, so the chart needn't depend on `dbrover-diagram`; it lives
+  where ER1e puts it.
+- **The chart's part** is turning its marks into that picture, which is a few lines per mark.
+- **Order:** W12's export layer is the last of its stack and waits for ER1e to be on `main`.
+  Every layer before it works without it, and W12 is useful without export until then.
+
+### Layers
+
+1. **W12a — The plan:** this design, and the roadmap's entry.
+2. **W12b — The chart, as a pure function:** `dbrover-chart`: column roles, the starting choice,
+   series with nulls and values left out, the row limits, scales and ticks for numbers, times
+   and categories, and the layout into marks, with unit tests of each.
+3. **W12c — The chart tab:** **Grid** and **Chart**, the kind, X and Y, painting the marks,
+   hover, the legend and the line under the chart; kittest tests on the SQLite fixture.
+4. **W12d — The manual:** a section on charts in the consoles chapter, and the roadmap's demo
+   note.
+5. **W12e — Export:** **Export ▾** on the chart, through ER1e's picture, SVG and PNG; the
+   manual's section and the demo note say so.
+
+**Exit:** a `GROUP BY` result of months and totals charts as bars and as lines, and exports as
+an SVG a browser shows.
+
 ## Decisions
 
 Proposed defaults; each is confirmed when its milestone starts.
@@ -489,6 +646,11 @@ Proposed defaults; each is confirmed when its milestone starts.
 | A DuckDB file open read-only and read-write at once | **Refused within DbRover,** as DuckDB's lock refuses it between programs | One writer or any number of readers, everywhere. A read-only data source and a writable one on the same file can't be connected together. |
 | How long the MCP server holds a DuckDB file | **Only during a call** | The app can open the file for writing as soon as a call ends; each call opens the file again, which takes milliseconds. |
 | Engines without a read-only session (SQL Server, Redis, MongoDB, Elasticsearch) | **The login stays the guard,** as N0a to N3 built it | Nothing on those engines changes in W11; each one's reason is recorded above. |
+| How a chart is drawn | **egui's own shapes**, from one pure layout into marks, not `egui_plot` | The export draws the same marks, so the SVG is the chart the tab shows; no crate tied to egui's version. Pan and zoom are given up, and can come later. |
+| Which rows a chart shows | **The grid's loaded rows, in its order and through its filter** | No query runs again; what the grid shows and the chart shows agree. A chart of every row needs **Load more rows**, or grouping in the query. |
+| A column's role with no declared type | **Read from its values**, as the Excel export does, leading zeros making it text | PostgreSQL declares no types over its text protocol, and a code like `00501` isn't a quantity. |
+| A missing or unreadable value | **A gap, counted under the chart**, never a zero | A zero would be a value the database didn't return. |
+| Where the export lives | **ER1e's**, shared, with W12 turning its marks into ER1's picture | One SVG writer, one PNG renderer with the bundled fonts, one export command. W12's export waits for ER1e. |
 
 ## Risks
 
@@ -513,3 +675,11 @@ Proposed defaults; each is confirmed when its milestone starts.
   guard the server's tables and the opened file; DuckDB can still write other files (`COPY`,
   `ATTACH`), and only the check stops that. The manual says so, as it does for SQL Server's
   procedures.
+- **A chart that misleads.** A column read as numbers when it holds codes, or a chart of the
+  first 250 rows taken for all of them. Leading zeros keep codes as text, X and Y can always be
+  changed, and the line under the chart says how many rows were charted and left out.
+- **A slow frame on a big scatter.** Fifty thousand points are laid out once, not every frame,
+  and painted as one mesh of small circles; W12c measures it, and the limit moves if needed.
+- **Waiting on ER1.** W12's export can't land before ER1e. Charts are useful on screen
+  meanwhile; if ER1 is delayed, the export layer waits rather than writing a second SVG and
+  PNG path.
