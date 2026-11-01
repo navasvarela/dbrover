@@ -29,7 +29,7 @@ folder chosen in Settings › Files replaces the settings folder; the data folde
 └── logs/dbrover.<date>.log # daily rolling file log, last 7 kept
 ```
 
-Up to 0.21, macOS kept both in `~/Library/Application Support/dbrover` and Windows in
+Up to 0.20, macOS kept both in `~/Library/Application Support/dbrover` and Windows in
 `%APPDATA%\dbrover\config` and `\data`; the first start of a later version copies them (see
 "Migrating existing installs" in [Releasing](releasing.md)).
 
