@@ -418,6 +418,7 @@ Right-click a data source in the explorer for:
 | **Refresh** | Reloads everything under the data source (while connected). |
 | **New query console** | Opens a console on this data source. See [Query consoles](consoles.md). |
 | **Open saved console** | Reopens a console you closed, by its file name. Shown when there are any. |
+| **Diagrams** | Reopens one of the data source's saved ER diagrams; see [ER diagrams](diagrams.md#diagrams-are-saved). Shown when there are any. |
 | **New › Schema…** | Creates a database, on MySQL, MariaDB and ClickHouse, whose schemas are databases. See [Views and schemas](views-schemas.md#new-schema). |
 | **Edit…** | Opens the dialog with the saved settings. |
 | **Move to project ›** | Puts the data source in a project, in **No project**, or in a new project. See [Projects](explorer.md#projects). |

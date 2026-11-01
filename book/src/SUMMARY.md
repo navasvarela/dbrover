@@ -11,6 +11,7 @@
 - [Users and roles](users-roles.md)
 - [Query consoles](consoles.md)
 - [Reading query plans](explain-plans.md)
+- [ER diagrams](diagrams.md)
 - [Files, parameters and find](files-parameters.md)
 - [Working with table data](table-data.md)
 - [Exporting and copying rows](exporting.md)

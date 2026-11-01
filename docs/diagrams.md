@@ -1,6 +1,7 @@
 # ER diagrams
 
-Status: **ER1 designed** on 2026-11-01; the [roadmap](roadmap.md#diagrams-track) tracks it.
+Status: **ER1 designed and built** on 2026-11-01; the [roadmap](roadmap.md#diagrams-track) tracks
+it, with its demo note.
 
 A diagram of the tables you pick, or of a whole schema, with their columns and the foreign keys
 between them. It shows the schema and changes nothing in it: editing from the diagram is out of
