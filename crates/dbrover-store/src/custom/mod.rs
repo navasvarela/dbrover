@@ -224,6 +224,7 @@ pub fn driver_id(driver: DriverKind) -> &'static str {
         DriverKind::Redis => "redis",
         DriverKind::Mongo => "mongodb",
         DriverKind::Elasticsearch => "elasticsearch",
+        DriverKind::Cassandra => "cassandra",
     }
 }
 
@@ -273,7 +274,7 @@ mod tests {
             drivers(names(&["postgresql"])),
             Err(
                 "\"postgresql\" is not a driver; the drivers are postgres, sqlite, mysql, \
-                 sqlserver, duckdb, clickhouse, redis, mongodb, elasticsearch"
+                 sqlserver, duckdb, clickhouse, redis, mongodb, elasticsearch, cassandra"
                     .to_owned()
             )
         );

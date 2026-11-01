@@ -1109,8 +1109,8 @@ nightly job (see the CI measurement below).
   - `$tag$ … $tag$` is read as a string too, as PostgreSQL's is: CQL has only `$$`, and no
     valid CQL reads differently;
   - until N4·5, the grid says CQL rows can't be edited yet.
-- **N4·3 — The driver and the console:** a new crate, `dbrover-driver-cassandra`, on `scylla`
-  1.9:
+- **N4·3 — The driver and the console** (built): a new crate, `dbrover-driver-cassandra`, on
+  `scylla` 1.9:
   - the **Cassandra / ScyllaDB** data source: the shared server form (port 9042, 9142 with
     TLS) with an optional user, for a cluster that doesn't ask; a **Keyspace** in the
     database's place, optional, which a console starts in; a **Local datacenter**, optional,
@@ -1148,7 +1148,22 @@ nightly job (see the CI measurement below).
   CQL type written as CQL reads it, with its type's name; a map column as JSON; TLS with the
   test authority; a misspelt column rejected by validate, with its position; a cancelled
   statement; an engine test of a console, and of a read-only data source refusing an `INSERT`;
-  a kittest of the data source dialog.
+  a kittest of the data source dialog. How it came out:
+  - each console's session keeps one connection per node and doesn't fetch the cluster's
+    schema, which the explorer reads from `system_schema` when asked; the shard-aware port is
+    left alone, since one connection per node gains nothing from it;
+  - `dbrover-tls` gained `client_config_for`, which checks a certificate against a name of the
+    caller's choosing, since the `scylla` client names each node to rustls by its IP address;
+  - ScyllaDB says "Unrecognized name" for a misspelt column when preparing, and Cassandra
+    "Undefined column name"; validate points at the name either way;
+  - `check_cancel` needs a statement that runs for seconds, which CQL has none of, so cancel is
+    tested through a forwarding port that holds the node's answers back: the statement is
+    stopped, and the connection answers again once they flow. That port is a tunnel's local
+    end, so it tests reaching every node through a tunnel too;
+  - ScyllaDB's test node also takes CQL over TLS on a port of its own, with the test
+    authority's certificate, so TLS is tested on every pull request;
+  - the grid shows CQL rows read-only until N4·5, and the statement timeout is a field of the
+    Cassandra form alone.
 - **N4·4 — The explorer:** keyspaces (the system ones only with **System** ticked), then
   folders of tables, materialized views, user-defined types, functions and aggregates; under a
   table, its columns (partition and clustering keys marked, in key order, then the rest) and

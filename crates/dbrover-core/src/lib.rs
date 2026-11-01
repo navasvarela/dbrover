@@ -27,10 +27,10 @@ pub use catalog_page::{CATALOG_PAGE_SIZE, ChildrenPage, ChildrenQuery, PageToken
 pub use command_template::{CommandTemplate, DataSourceFields};
 pub use connection::{Connection, Rejection, RejectionKind, ServerInfo};
 pub use data_source::{
-    ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind, DuckDbConfig,
-    DuckDbDatabase, ElasticsearchAuth, ElasticsearchConfig, McpLogin, MongoConfig, MysqlConfig,
-    Port, PostgresConfig, ProjectId, RedisConfig, Route, SafetyLevel, ServerConfig, SourceColor,
-    SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode,
+    CassandraConfig, ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind,
+    DuckDbConfig, DuckDbDatabase, ElasticsearchAuth, ElasticsearchConfig, McpLogin, MongoConfig,
+    MysqlConfig, Port, PostgresConfig, ProjectId, RedisConfig, Route, SafetyLevel, ServerConfig,
+    SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode,
 };
 pub use error::{BoxError, DriverError, describe_error};
 pub use execution::{

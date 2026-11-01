@@ -172,6 +172,19 @@ them; in a cluster with more, the filter box searches every index's name on the 
 **Open data** on an index, an alias or a data stream opens a console with a `match_all` search
 of it and runs it, its hits read a page at a time as you scroll.
 
+**Cassandra / ScyllaDB**, where a keyspace holds its tables, as a MySQL database does:
+
+```text
+data source
+└─ keyspace                 every keyspace you may see
+   └─ tables
+      └─ table
+```
+
+The keyspaces the servers keep for themselves (`system`, `system_schema`, `system_auth`, …) are
+system ones, shown only with **System** ticked. **Open data** on a table opens a console with
+`SELECT * FROM keyspace.table` and runs it, its rows read a page at a time as you scroll.
+
 **Redis / Valkey**, where the server's numbered databases hold keys, grouped by the data
 source's **Key separator** (`:` unless you set another):
 

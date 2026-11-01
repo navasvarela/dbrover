@@ -48,7 +48,8 @@ impl From<&ConnectionConfig> for DataSourceFields {
             | ConnectionConfig::ClickHouse(_)
             | ConnectionConfig::Redis(_)
             | ConnectionConfig::Mongo(_)
-            | ConnectionConfig::Elasticsearch(_) => None,
+            | ConnectionConfig::Elasticsearch(_)
+            | ConnectionConfig::Cassandra(_) => None,
         };
         let server = config.server();
         Self {

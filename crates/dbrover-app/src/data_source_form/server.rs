@@ -32,6 +32,8 @@ pub enum DatabaseField {
     /// None: an Elasticsearch cluster's indices belong to no database. The form has no
     /// Database row, and the setting is left empty.
     Absent,
+    /// The keyspace a Cassandra console starts in, which may be left empty.
+    Keyspace,
 }
 
 impl DatabaseField {
@@ -40,12 +42,15 @@ impl DatabaseField {
             Self::Name => "Database",
             Self::Number => "Database number",
             Self::Absent => "",
+            Self::Keyspace => "Keyspace",
         }
     }
 
     fn parse(self, text: &str) -> Result<String, FormError> {
-        if self == Self::Absent {
-            return Ok(String::new());
+        match self {
+            Self::Absent => return Ok(String::new()),
+            Self::Keyspace => return Ok(text.trim().to_owned()),
+            Self::Name | Self::Number => {}
         }
         let database = required(text, FormError::DatabaseMissing)?;
         match self {
@@ -54,7 +59,7 @@ impl DatabaseField {
                 Ok(database)
             }
             Self::Number => Err(FormError::InvalidDatabaseNumber),
-            Self::Absent => Ok(String::new()),
+            Self::Absent | Self::Keyspace => Ok(database),
         }
     }
 }

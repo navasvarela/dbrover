@@ -10,7 +10,7 @@ mod parameters;
 use std::sync::Arc;
 
 use common::{
-    TestEngine, clickhouse_test_server, mongo_test_server, mysql_test_servers,
+    TestEngine, clickhouse_test_server, cql_test_servers, mongo_test_server, mysql_test_servers,
     postgres_test_server, redis_test_servers, search_test_servers, sqlite_data_source,
     sqlite_database, sqlserver_test_server,
 };
@@ -1482,4 +1482,78 @@ fn never_validates_inside_a_postgres_transaction() {
     finish_run(&mut engine, 2);
     validate(&engine, &["SELECT nope FROM pg_class"]);
     assert_eq!(expect_checks(&mut engine), [StatementCheck::Skipped]);
+}
+
+/// A Cassandra or ScyllaDB console runs CQL, a batch as one statement, and shows a map column
+/// as JSON, with each column's CQL type. Needs `DBROVER_TEST_SCYLLA_URL` or
+/// `DBROVER_TEST_CASSANDRA_URL`; skipped without.
+#[test]
+fn runs_cql_and_shows_a_map_as_json() {
+    for (name, config, password) in cql_test_servers() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+        engine.expect_started(vec![]);
+        let data_source = DataSource {
+            id: DataSourceId::generate(),
+            name: "cql".to_owned(),
+            color: None,
+            safety: dbrover_core::SafetyLevel::Normal,
+            project: None,
+            mcp_login: None,
+            config: ConnectionConfig::Cassandra(config),
+        };
+        let id = data_source.id;
+        engine.send(Command::SaveDataSource {
+            data_source,
+            password,
+            ssh_secret: PasswordUpdate::Keep,
+        });
+        assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
+
+        execute(
+            &engine,
+            id,
+            1,
+            &[
+                "DROP KEYSPACE IF EXISTS dbrover_engine_console",
+                "CREATE KEYSPACE dbrover_engine_console WITH replication = \
+                 {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}",
+                "CREATE TABLE dbrover_engine_console.t (id int PRIMARY KEY, tags map<text, int>)",
+                "BEGIN BATCH\n\
+                 INSERT INTO dbrover_engine_console.t (id, tags) VALUES (1, {'a': 1});\n\
+                 UPDATE dbrover_engine_console.t SET tags['b'] = 2 WHERE id = 1;\n\
+                 APPLY BATCH",
+                "SELECT id, tags FROM dbrover_engine_console.t",
+            ],
+        );
+        let (columns, rows) = loop {
+            match next_run_event(&mut engine) {
+                Event::StatementStarted {
+                    statement: 4,
+                    columns,
+                    ..
+                } => {
+                    let Event::RowsFetched { rows, .. } = next_run_event(&mut engine) else {
+                        panic!("{name}: expected the rows");
+                    };
+                    break (columns, rows);
+                }
+                Event::StatementFinished {
+                    result: Err(error), ..
+                } => panic!("{name}: {}", error.message),
+                _ => {}
+            }
+        };
+        let types: Vec<Option<&str>> = columns
+            .iter()
+            .map(|column| column.type_name.as_deref())
+            .collect();
+        assert_eq!(types, [Some("int"), Some("map<text, int>")], "{name}");
+        assert_eq!(
+            rows,
+            [[Some("1".to_owned()), Some(r#"{"a": 1, "b": 2}"#.to_owned())]],
+            "{name}"
+        );
+        finish_run(&mut engine, 1);
+    }
 }

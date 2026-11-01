@@ -403,6 +403,7 @@ impl From<DriverKind> for QueryLanguage {
             DriverKind::Redis => Self::Redis,
             DriverKind::Mongo => Self::Mongo,
             DriverKind::Elasticsearch => Self::Search,
+            DriverKind::Cassandra => Self::Sql(Dialect::Cassandra),
         }
     }
 }
@@ -436,6 +437,7 @@ mod tests {
                 None,
                 None,
                 None,
+                Some(Dialect::Cassandra),
             ]
         );
         assert_eq!(QueryLanguage::from(DriverKind::Redis), QueryLanguage::Redis);

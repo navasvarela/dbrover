@@ -1,6 +1,7 @@
 //! The editable fields behind the data source dialog, and their validation. No egui here, so
 //! the rules are testable without a UI.
 
+mod cassandra;
 mod elasticsearch;
 mod mongo;
 mod server;
@@ -14,6 +15,7 @@ use dbrover_core::{
 use dbrover_engine::PasswordUpdate;
 use dbrover_engine::read_only::Storage;
 
+pub use cassandra::CassandraFields;
 pub use elasticsearch::ElasticsearchFields;
 pub use mongo::{MongoFields, MongoTarget};
 pub use server::{DatabaseField, ServerDefaults, ServerFields, TlsChoice, TlsOffer, UserField};
@@ -104,6 +106,8 @@ pub enum FormError {
     SshKeyFileMissing,
     #[error("Password command: {0}.")]
     PasswordCommand(TemplateError),
+    #[error("Statement timeout must be a whole number of seconds, or empty.")]
+    InvalidStatementTimeout,
 }
 
 /// Text as the user typed it. Converted to a [`DataSource`] only on Test or Save.
@@ -153,6 +157,7 @@ pub enum DriverFields {
     Redis(RedisFields),
     Mongo(MongoFields),
     Elasticsearch(ElasticsearchFields),
+    Cassandra(CassandraFields),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -234,6 +239,7 @@ impl DriverFields {
             }),
             DriverKind::Mongo => Self::Mongo(MongoFields::new()),
             DriverKind::Elasticsearch => Self::Elasticsearch(ElasticsearchFields::new()),
+            DriverKind::Cassandra => Self::Cassandra(CassandraFields::new()),
         }
     }
 
@@ -275,6 +281,9 @@ impl DriverFields {
             ConnectionConfig::Elasticsearch(config) => {
                 Self::Elasticsearch(ElasticsearchFields::from_config(config))
             }
+            ConnectionConfig::Cassandra(config) => {
+                Self::Cassandra(CassandraFields::from_config(config))
+            }
         }
     }
 
@@ -289,6 +298,7 @@ impl DriverFields {
             Self::Redis(_) => DriverKind::Redis,
             Self::Mongo(_) => DriverKind::Mongo,
             Self::Elasticsearch(_) => DriverKind::Elasticsearch,
+            Self::Cassandra(_) => DriverKind::Cassandra,
         }
     }
 
@@ -302,6 +312,7 @@ impl DriverFields {
             Self::Redis(fields) => Some(&fields.server),
             Self::Mongo(fields) => Some(&fields.server),
             Self::Elasticsearch(fields) => Some(&fields.server),
+            Self::Cassandra(fields) => Some(&fields.server),
             Self::Sqlite(_) | Self::DuckDb(_) => None,
         }
     }
@@ -329,6 +340,7 @@ impl DriverFields {
             }),
             Self::Mongo(fields) => ConnectionConfig::Mongo(fields.to_config()?),
             Self::Elasticsearch(fields) => ConnectionConfig::Elasticsearch(fields.to_config()?),
+            Self::Cassandra(fields) => ConnectionConfig::Cassandra(fields.to_config()?),
         })
     }
 }
