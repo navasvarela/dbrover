@@ -28,7 +28,7 @@ use crate::data_source_form::McpPasswordChange;
 use crate::definition_window::DefinitionWindow;
 use crate::delete_dialog::{DeleteChoice, DeleteConfirmation};
 use crate::diagram::{
-    Diagram, DiagramAction, DiagramDialog, DiagramDialogAction, Diagrams, Growth, PictureFormat,
+    Diagram, DiagramAction, DiagramDialog, DiagramDialogAction, Diagrams, Growth,
 };
 use crate::explorer::{ExplorerAction, ExplorerOptions};
 use crate::export_dialog::{
@@ -49,6 +49,7 @@ use crate::native_menu::{Chosen, NativeMenu};
 use crate::object_dialog::{self, ObjectDialog, ObjectDialogAction, Target};
 use crate::password_command_prompt::{PasswordCommandAction, PasswordCommandPrompt};
 use crate::password_prompt::{PasswordPrompt, PromptAction};
+use crate::picture::PictureFormat;
 use crate::previous_install::AdoptionNotice;
 use crate::project_dialog::{
     DeleteProjectChoice, DeleteProjectConfirmation, ProjectDialogAction, ProjectNameDialog,
@@ -178,7 +179,7 @@ pub struct DbRoverApp {
     pub(crate) pick_sql_save_path: PickSavePath,
     /// Asks where to export a diagram's picture, suggesting a name. The platform's save
     /// dialog, except in tests.
-    pub(crate) pick_diagram_picture: Box<PickPicturePath>,
+    pub(crate) pick_picture: Box<PickPicturePath>,
     /// Set on first launch until the window has been asked to maximize. After that, eframe
     /// restores whatever size the user left it at.
     maximize_window: bool,
@@ -275,7 +276,7 @@ impl DbRoverApp {
             closing_after_saves: None,
             pick_sql_file: Box::new(file_picker::pick_sql_file),
             pick_sql_save_path: Box::new(file_picker::pick_sql_save_path),
-            pick_diagram_picture: Box::new(file_picker::pick_diagram_picture),
+            pick_picture: Box::new(file_picker::pick_picture),
             maximize_window,
             native_menu: None,
             integrated_title_bar: false,
@@ -976,7 +977,7 @@ impl DbRoverApp {
                 self.send(Command::DeleteDiagram(key));
             }
             DiagramAction::Export(key, format) => {
-                let Some(path) = (self.pick_diagram_picture)(key.name.as_str(), format) else {
+                let Some(path) = (self.pick_picture)(key.name.as_str(), format) else {
                     return;
                 };
                 let export = self.diagrams.export(&key, format, &path);

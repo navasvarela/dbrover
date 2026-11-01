@@ -9,21 +9,16 @@ use egui::{Color32, Pos2, Rect, Vec2, vec2};
 
 use super::geometry::{self, Curve, HEADER_HEIGHT, MARK_WIDTH, PADDING, arrowhead};
 use super::model::{Diagram, DiagramTable, TableState};
+use crate::picture::{BASELINE_DROP, Escaped, MONO, SANS, hex};
 use crate::theme::Palette;
 
 /// Around the diagram, inside the picture.
 const MARGIN: f32 = 24.0;
-const SANS: &str = "Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif";
-const MONO: &str = "'JetBrains Mono', Menlo, Consolas, monospace";
 /// The tab's sizes, so the picture's text fits the boxes the tab measured.
 const HEADER_TEXT_SIZE: f32 = 13.0;
 const COLUMN_TEXT_SIZE: f32 = 12.5;
 const TYPE_TEXT_SIZE: f32 = 11.5;
 const MARK_TEXT_SIZE: f32 = 8.5;
-/// From a line of text's middle down to its baseline, as a share of its size: about where
-/// Inter's and JetBrains Mono's lower-case letters sit. Not `dominant-baseline`, which resvg and
-/// browsers read differently.
-const BASELINE_DROP: f32 = 0.35;
 const CORNER_RADIUS: f32 = 6.0;
 const ARROW_SIZE: f32 = 7.0;
 
@@ -239,29 +234,6 @@ impl Svg {
     }
 }
 
-fn hex(color: Color32) -> String {
-    format!("#{:02x}{:02x}{:02x}", color.r(), color.g(), color.b())
-}
-
-/// Text as XML character data: `&`, `<` and `>` escaped, and the control characters XML
-/// can't hold dropped.
-struct Escaped<'a>(&'a str);
-
-impl fmt::Display for Escaped<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for c in self.0.chars() {
-            match c {
-                '&' => f.write_str("&amp;")?,
-                '<' => f.write_str("&lt;")?,
-                '>' => f.write_str("&gt;")?,
-                c if c.is_control() && !matches!(c, '\t' | '\n') => {}
-                c => f.write_char(c)?,
-            }
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use dbrover_core::{ColumnDescription, DataSourceId, ForeignKey, TableName};
@@ -386,7 +358,7 @@ mod tests {
     fn draws_as_a_png_with_the_bundled_fonts() {
         let svg = svg(&diagram()).unwrap();
 
-        let png = dbrover_diagram::png(&svg, 2.0, &crate::fonts::bundled_files());
+        let png = dbrover_picture::png(&svg, 2.0, &crate::fonts::bundled_files());
 
         assert!(png.is_ok(), "{png:?}");
     }

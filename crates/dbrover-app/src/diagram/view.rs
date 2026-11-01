@@ -13,9 +13,10 @@ use dbrover_store::DiagramKey;
 
 use super::geometry::{self, HEADER_HEIGHT, MARK_WIDTH, PADDING, ROW_HEIGHT, TYPE_GAP, arrowhead};
 use super::model::{BoxShape, Diagram, KeyLine, TableState};
-use super::{DiagramTab, PictureFormat, TabAction};
+use super::{DiagramTab, TabAction};
 use crate::fonts;
 use crate::icons;
+use crate::picture::PictureFormat;
 use crate::theme::Palette;
 use crate::widgets;
 

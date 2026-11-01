@@ -13,9 +13,11 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use dbrover_core::DataSourceId;
-use dbrover_engine::{Command, DiagramPicture, Event, SessionState};
+use dbrover_engine::{Command, Event, Picture, SessionState};
 use dbrover_store::{DiagramFile, DiagramFolder, DiagramKey, DiagramName, SavedDiagram};
 use egui::{Rect, Ui};
+
+use crate::picture::PictureFormat;
 
 pub use dialog::{DiagramDialog, DiagramDialogAction};
 #[cfg(test)]
@@ -39,47 +41,6 @@ pub enum DiagramAction {
 enum TabAction {
     Delete,
     Export(PictureFormat),
-}
-
-/// What **Export ›** writes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PictureFormat {
-    Svg,
-    /// Drawn at this many pixels a point.
-    Png {
-        scale: u8,
-    },
-}
-
-impl PictureFormat {
-    /// The choices, in the order the menu lists them.
-    pub const ALL: [Self; 4] = [
-        Self::Svg,
-        Self::Png { scale: 1 },
-        Self::Png { scale: 2 },
-        Self::Png { scale: 3 },
-    ];
-
-    pub fn label(self) -> String {
-        match self {
-            Self::Svg => "SVG…".to_owned(),
-            Self::Png { scale } => format!("PNG at {scale}×…"),
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Svg => "SVG",
-            Self::Png { .. } => "PNG",
-        }
-    }
-
-    pub fn extension(self) -> &'static str {
-        match self {
-            Self::Svg => "svg",
-            Self::Png { .. } => "png",
-        }
-    }
 }
 
 /// A diagram's tab: the diagram, the part of it the tab shows, and how its file stands.
@@ -234,7 +195,7 @@ impl Diagrams {
                 self.saved.0.extend(files);
                 Vec::new()
             }
-            Event::DiagramExported { path, result } => {
+            Event::PictureExported { path, result } => {
                 let tab = self
                     .exporting
                     .remove(path)
@@ -346,8 +307,8 @@ impl Diagrams {
         let tab = self.open.get_mut(key)?;
         let svg = svg::svg(&tab.diagram)?;
         let picture = match format {
-            PictureFormat::Svg => DiagramPicture::Svg(svg),
-            PictureFormat::Png { scale } => DiagramPicture::Png {
+            PictureFormat::Svg => Picture::Svg(svg),
+            PictureFormat::Png { scale } => Picture::Png {
                 svg,
                 scale: f32::from(scale),
                 fonts: crate::fonts::bundled_files(),
@@ -355,7 +316,7 @@ impl Diagrams {
         };
         tab.exported = None;
         self.exporting.insert(path.to_owned(), key.clone());
-        Some(Command::ExportDiagram {
+        Some(Command::ExportPicture {
             path: path.to_owned(),
             picture,
         })

@@ -115,8 +115,8 @@ const JETBRAINS_MONO: &[u8] =
 
 /// The bundled faces, for drawing a diagram's PNG with the app's own text whatever the
 /// system has.
-pub fn bundled_files() -> dbrover_diagram::Fonts {
-    dbrover_diagram::Fonts {
+pub fn bundled_files() -> dbrover_picture::Fonts {
+    dbrover_picture::Fonts {
         files: vec![INTER_REGULAR, INTER_SEMIBOLD, JETBRAINS_MONO],
         fallback_family: "Inter",
     }

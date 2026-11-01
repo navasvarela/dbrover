@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use dbrover_engine::DatabaseFile;
 
-use crate::diagram::PictureFormat;
+use crate::picture::PictureFormat;
 
 const CA_TITLE: &str = "Choose a CA certificate (PEM)";
 const SSH_KEY_TITLE: &str = "Choose an SSH private key";
@@ -171,12 +171,12 @@ pub fn pick_sql_save_path(file_name: &str) -> Option<PathBuf> {
         .save_file()
 }
 
-/// Shows the save dialog for a picture of a diagram, suggesting `name` with the format's
+/// Shows the save dialog for a picture, such as a diagram's, suggesting `name` with the format's
 /// extension, and returns the chosen path, or `None` if it was cancelled.
-pub fn pick_diagram_picture(name: &str, format: PictureFormat) -> Option<PathBuf> {
+pub fn pick_picture(name: &str, format: PictureFormat) -> Option<PathBuf> {
     let extension = format.extension();
     rfd::FileDialog::new()
-        .set_title(format!("Export the diagram as {}", format.name()))
+        .set_title(format!("Export {name} as {}", format.name()))
         .add_filter(format.name(), &[extension])
         .set_file_name(format!("{name}.{extension}"))
         .save_file()

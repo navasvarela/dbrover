@@ -156,6 +156,8 @@ throwing away where the user moved things.
   loaded from the app's own bundled Inter and JetBrains Mono, never the system's, so a PNG looks
   the same on every machine. That adds eight small pure-Rust crates (`fontdb`, `ttf-parser`,
   `rustybuzz` and its Unicode tables), no C and no new CI job.
+  The PNG is drawn in a small crate of its own, `dbrover-picture`, and the engine's
+  `ExportPicture` writes either format, so other pictures (W12's charts) export the same way.
 - **Where:** the export runs in the engine, off the UI thread, since a big diagram at 3× takes a
   moment, and writes beside the final name before renaming, as other exports do. A PNG larger
   than 64 megapixels (256 MB in memory) is refused with a suggestion to pick a smaller scale or

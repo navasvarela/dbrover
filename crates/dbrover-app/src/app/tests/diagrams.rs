@@ -240,7 +240,7 @@ fn exports_the_diagram_as_svg_and_as_png() {
     let pictures = dir.path().join("pictures");
     std::fs::create_dir_all(&pictures).unwrap();
     let answer = pictures.clone();
-    harness.state_mut().pick_diagram_picture =
+    harness.state_mut().pick_picture =
         Box::new(move |name, format| Some(answer.join(format!("{name}.{}", format.extension()))));
     diagram_of_main(&mut harness);
     loaded_diagram(&mut harness);

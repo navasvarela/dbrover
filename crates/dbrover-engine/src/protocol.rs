@@ -207,11 +207,11 @@ pub enum Command {
     },
     /// Removes a diagram's file, if it exists.
     DeleteDiagram(DiagramKey),
-    /// Writes a picture of a diagram to a file, replacing it once whole. Answered by
-    /// [`Event::DiagramExported`].
-    ExportDiagram {
+    /// Writes a picture, such as a diagram's, to a file, replacing it once whole. Answered by
+    /// [`Event::PictureExported`].
+    ExportPicture {
         path: PathBuf,
-        picture: DiagramPicture,
+        picture: Picture,
     },
     /// Reads a `.sql` file from anywhere on disk, to show in a console. Answered by
     /// [`Event::SqlFileRead`]. Reads, saves and checks of `.sql` files happen, and are
@@ -394,16 +394,16 @@ pub struct DescribedTable {
     pub result: Result<Option<TableDescription>, String>,
 }
 
-/// A picture of a diagram, as [`Command::ExportDiagram`] writes it.
+/// A picture, such as a diagram's, as [`Command::ExportPicture`] writes it.
 #[derive(Debug, Clone)]
-pub enum DiagramPicture {
+pub enum Picture {
     /// The SVG, as it is.
     Svg(String),
     /// The SVG drawn at `scale` times its size in points, with these fonts.
     Png {
         svg: String,
         scale: f32,
-        fonts: dbrover_diagram::Fonts,
+        fonts: dbrover_picture::Fonts,
     },
 }
 
@@ -491,8 +491,8 @@ pub enum Event {
         key: DiagramKey,
         error: String,
     },
-    /// The answer to [`Command::ExportDiagram`].
-    DiagramExported {
+    /// The answer to [`Command::ExportPicture`].
+    PictureExported {
         path: PathBuf,
         result: Result<(), String>,
     },

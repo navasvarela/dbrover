@@ -1,11 +1,11 @@
-//! A diagram as a PNG, drawn from its SVG with resvg, at a scale.
+//! A picture as a PNG, drawn from its SVG with resvg, at a scale.
 
 use std::fmt;
 
 use resvg::tiny_skia::{Pixmap, Transform};
 use resvg::usvg::{Options, Tree};
 
-/// The most pixels a PNG may have: 64 megapixels, 256 MB while it is drawn. A schema of a few
+/// The most pixels a PNG may have: 64 megapixels, 256 MB while it is drawn. A diagram of a few
 /// hundred tables at 3× passes it; past it the export is refused rather than risk running out
 /// of memory, and SVG, or a smaller scale, is the way.
 pub const MAX_PIXELS: u64 = 64 * 1024 * 1024;
@@ -28,7 +28,7 @@ impl fmt::Debug for Fonts {
 
 #[derive(Debug, thiserror::Error)]
 pub enum PngError {
-    #[error("the diagram's SVG can't be read: {0}")]
+    #[error("the picture's SVG can't be read: {0}")]
     Svg(#[from] resvg::usvg::Error),
     #[error(
         "a PNG of {width} × {height} pixels is too large to draw; \

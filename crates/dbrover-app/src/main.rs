@@ -45,6 +45,7 @@ mod object_dialog;
 mod parameters_dialog;
 mod password_command_prompt;
 mod password_prompt;
+mod picture;
 mod previous_install;
 mod project_dialog;
 mod project_settings;

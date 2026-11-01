@@ -1,0 +1,16 @@
+[package]
+name = "dbrover-picture"
+description = "Pictures DbRover exports, such as ER diagrams and charts: a PNG drawn from their SVG with the app's own fonts, with no window in it."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+resvg.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

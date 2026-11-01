@@ -1699,6 +1699,7 @@ dependencies = [
  "dbrover-export",
  "dbrover-language",
  "dbrover-mcp",
+ "dbrover-picture",
  "dbrover-plan",
  "dbrover-sql",
  "dbrover-store",
@@ -1747,10 +1748,6 @@ dependencies = [
 [[package]]
 name = "dbrover-diagram"
 version = "0.20.0"
-dependencies = [
- "resvg",
- "thiserror 2.0.21",
-]
 
 [[package]]
 name = "dbrover-document"
@@ -1912,7 +1909,6 @@ dependencies = [
  "async-trait",
  "cargo-packager-updater",
  "dbrover-core",
- "dbrover-diagram",
  "dbrover-driver-clickhouse",
  "dbrover-driver-duckdb",
  "dbrover-driver-elasticsearch",
@@ -1924,6 +1920,7 @@ dependencies = [
  "dbrover-driver-sqlserver",
  "dbrover-export",
  "dbrover-language",
+ "dbrover-picture",
  "dbrover-plan",
  "dbrover-sql",
  "dbrover-ssh",
@@ -1988,6 +1985,14 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "dbrover-picture"
+version = "0.20.0"
+dependencies = [
+ "resvg",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

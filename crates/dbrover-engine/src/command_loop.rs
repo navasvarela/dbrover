@@ -22,6 +22,7 @@ use crate::keymap;
 use crate::open::{TestServices, TypedSecrets, create_database_file, test_connection};
 use crate::password_commands::PasswordCommands;
 use crate::passwords::SessionPasswords;
+use crate::pictures;
 use crate::programs::{self, ProgramFailure, ProgramId, ProgramRequest, ProgramRunner};
 use crate::projects::{ProjectError, ProjectRegistry};
 use crate::registry::{Registry, RegistryError};
@@ -308,11 +309,9 @@ impl Engine {
                 }
             }
             Command::DeleteDiagram(key) => diagram_files::delete(&self.diagram_files, key).await,
-            Command::ExportDiagram { path, picture } => {
+            Command::ExportPicture { path, picture } => {
                 let events = self.events.clone();
-                tokio::spawn(
-                    async move { events.send(diagram_files::export(path, picture).await) },
-                );
+                tokio::spawn(async move { events.send(pictures::export(path, picture).await) });
             }
             // Reads, saves and checks of `.sql` files are awaited rather than spawned, so they
             // happen, and are answered, in the order sent. A check spawned before a save could

@@ -16,6 +16,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 dbrover-core.workspace = true
 dbrover-diagram.workspace = true
+dbrover-picture.workspace = true
 dbrover-document.workspace = true
 dbrover-engine.workspace = true
 dbrover-export.workspace = true

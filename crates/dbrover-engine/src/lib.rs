@@ -19,6 +19,7 @@ mod keymap;
 mod open;
 mod password_commands;
 mod passwords;
+mod pictures;
 mod programs;
 mod projects;
 mod protocol;
@@ -48,10 +49,10 @@ pub use programs::{
     ProgramRunner,
 };
 pub use protocol::{
-    Command, ConsoleId, DatabaseFile, DdlFailure, DescribedTable, DiagramPicture, EditFailure,
-    Event, Exporter, ImportFailure, PasswordKept, PasswordUpdate, RowEdit, RowsImport, RunId,
-    RunOrigin, RunOutcome, RunPurpose, SessionState, StatementCheck, StatementFailure,
-    StatementSummary, TableExport, TransactionEnd, TransactionMode,
+    Command, ConsoleId, DatabaseFile, DdlFailure, DescribedTable, EditFailure, Event, Exporter,
+    ImportFailure, PasswordKept, PasswordUpdate, Picture, RowEdit, RowsImport, RunId, RunOrigin,
+    RunOutcome, RunPurpose, SessionState, StatementCheck, StatementFailure, StatementSummary,
+    TableExport, TransactionEnd, TransactionMode,
 };
 pub use releases::{GithubReleases, Release, ReleaseError, ReleaseFeed};
 pub use repaint::Repaint;

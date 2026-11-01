@@ -1,6 +1,6 @@
 [package]
 name = "dbrover-diagram"
-description = "ER diagrams of a database's tables: where each table's box goes, laid out in layers, and a PNG drawn from a diagram's SVG, with no window or database in it."
+description = "ER diagrams of a database's tables: where each table's box goes, laid out in layers, with no window or database in it."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,8 +9,6 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-resvg.workspace = true
-thiserror.workspace = true
 
 [lints]
 workspace = true
