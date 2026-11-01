@@ -1,10 +1,11 @@
 # NoSQL databases
 
-Status: **N0a, N0b and N1 built** (2026-10-30) and **N2 and N3 built** (2026-10-31), in the
-layers listed under [N0a](#n0a--groundwork-languages-safety-and-the-explorer),
-[N0b](#n0b--groundwork-documents), [N1](#n1--redis-valkey-and-dragonfly),
-[N2](#n2--mongodb) and [N3](#n3--elasticsearch-and-opensearch). **N4 is being built**, in the
-layers listed under [N4](#n4--cassandra-and-scylladb). W7 (exports) has landed.
+Status: **N0a, N0b and N1 built** (2026-10-30), **N2 and N3 built** (2026-10-31) and **N4
+built** (2026-11-01), in the layers listed under
+[N0a](#n0a--groundwork-languages-safety-and-the-explorer), [N0b](#n0b--groundwork-documents),
+[N1](#n1--redis-valkey-and-dragonfly), [N2](#n2--mongodb),
+[N3](#n3--elasticsearch-and-opensearch) and [N4](#n4--cassandra-and-scylladb). W7 (exports) has
+landed.
 
 DbRover speaks seven SQL engines. Many of the teams that use them keep a Redis beside their
 PostgreSQL, documents in MongoDB, or logs in Elasticsearch, and today they open another tool for
@@ -1210,13 +1211,31 @@ nightly job (see the CI measurement below).
     a table to describe, so its rows stay read-only;
   - the edits run as the SQL engines' do, the deletions, then the changes, then the new rows,
     each with the statement that would undo it in the history.
-- **N4·6 — Safety, MCP and the manual:** the read-only level's dialog suggests a role with
+- **N4·6 — Safety, MCP and the manual** (built): the read-only level's dialog suggests a role with
   only the `SELECT` permission; the MCP server serves the data source only through its MCP
   login, its `query` tool takes one statement, and `list_objects` lists the explorer's levels.
   The engine count in `README.md`, `book/src/introduction.md` and `site/index.html` takes the
   new engines in, counted as #316 counts them: one more data source kind, a pair. Tests: on
   ScyllaDB, a role with `SELECT` alone serves as the MCP login, reads a table, and is refused
-  an `INSERT` by the server as well as by the check.
+  an `INSERT` by the server as well as by the check. How it came out:
+  - the guard, the advice and `list_objects`' paging were already every engine's, so this layer
+    is the test binary `cassandra` of `dbrover-mcp`, the tools' descriptions, the manual's role
+    and the counts; the test runs on Cassandra too, in the nightly job;
+  - `explain` is refused on a CQL data source, which N4·2 made so; the test checks it;
+  - the website lists Cassandra and ScyllaDB with Cassandra's logo, and counts ten databases.
+
+N4 is built. Its exit was checked against the compose servers, ScyllaDB 2026.3.4 and Cassandra
+5.0.9, by the tests each layer added: connecting to both (`connects_and_says_which_server_it_reached`);
+browsing keyspaces and tables (`lists_every_kind_of_object_with_definitions_that_run_again`);
+paging 1,200 rows (`pages_a_large_table_in_order`); a map column as JSON, which the cell
+viewer's tree reads (`writes_every_type_as_cql_reads_it`, `runs_cql_and_shows_a_map_as_json`);
+editing a cell (`edits_rows_by_their_primary_key`, `applies_cql_edits_one_at_a_time`); a
+misspelt column caught by preparing (`validates_by_preparing`); and a read-only data source
+refusing an `INSERT` (`a_read_only_cql_data_source_refuses_insert`, and the MCP test). What it
+needs by hand, before release: a multi-node cluster across datacenters with **Local
+datacenter** set, a cluster reached through an SSH tunnel, ScyllaDB Cloud's CQL endpoint with TLS, and
+ScyllaDB's own node certificates with `verify-full`. DataStax Astra DB signs in with a client
+certificate from its secure connect bundle, which DbRover doesn't take yet.
 
 The manual changes in the layer that changes what a user sees: N4·3 (the data source, the
 console and keyspaces in the explorer), N4·4 (the explorer), N4·5 (editing) and N4·6

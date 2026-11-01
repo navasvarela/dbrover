@@ -86,7 +86,7 @@ Each statement it runs shows up in the data source's **History**, marked **MCP**
 | `list_objects` | One level of a data source's catalog, as the explorer shows it. Each object comes with the `path` that lists its children. A large level, such as a Redis database's keys or a schema of thousands of tables, comes 1,000 objects at a time, with a `next` to ask for the rest; a `filter` keeps the objects whose name contains it, searched by the database. |
 | `describe_table` | A table's columns with their types, its primary key, indexes and constraints. |
 | `get_definition` | The source of a view, function, trigger or index. |
-| `query` | Runs one statement that only reads (on Redis, one command, such as `HGETALL`; on MongoDB, one shell command, such as `db.orders.find({status: "open"})`, whose documents come as canonical Extended JSON; on Elasticsearch and OpenSearch, one request, such as a search, whose hits come as documents, or a `_sql` query), and returns its rows as text: as JSON, or with `format` set to `csv`, `markdown` or `jsonl`, as that text, ready to save or paste. |
+| `query` | Runs one statement that only reads (on Redis, one command, such as `HGETALL`; on MongoDB, one shell command, such as `db.orders.find({status: "open"})`, whose documents come as canonical Extended JSON; on Elasticsearch and OpenSearch, one request, such as a search, whose hits come as documents, or a `_sql` query; on Cassandra and ScyllaDB, one CQL `SELECT`, whose collections come as JSON), and returns its rows as text: as JSON, or with `format` set to `csv`, `markdown` or `jsonl`, as that text, ready to save or paste. |
 | `explain` | Shows how the database would run one read statement, without running it. |
 | `execute` | Runs statements that change something, in one transaction. Only offered when the project allows `write`, `schema` or `admin`. |
 
@@ -146,8 +146,8 @@ or a procedure can do anything, whatever the statement that calls it looks like.
 Project settings warns when a project allows changes and one of its data sources has no MCP
 login.
 
-SQL Server has no read-only transaction, and Redis, MongoDB, Elasticsearch and OpenSearch
-have no read-only session at all, so their data sources are served to MCP clients only through
+SQL Server has no read-only transaction, and Redis, MongoDB, Elasticsearch and OpenSearch,
+and Cassandra and ScyllaDB have no read-only session at all, so their data sources are served to MCP clients only through
 an [MCP login](#the-mcp-login) whose grants allow nothing but reading. Without one, a data
 source isn't served, and the server's log says why when it starts; Project settings lists it
 too.
@@ -243,6 +243,19 @@ name. OpenSearch's security plugin grants the same through its own action groups
 request by its method and path, so a `_delete_by_query` or a `PUT` of a document is refused
 before it is sent, and the server refuses it again; any path DbRover doesn't know, other than a
 `GET`, counts as administration, which an MCP project never allows.
+
+On Cassandra and ScyllaDB, a role that may log in, with the `SELECT` permission alone, on the
+keyspaces the assistant may read (or `ALL KEYSPACES`):
+
+```sql
+CREATE ROLE assistant WITH PASSWORD = '…' AND LOGIN = true;
+GRANT SELECT ON KEYSPACE shop TO assistant;
+```
+
+DbRover classifies each CQL statement by what it starts with, so an `INSERT`, a batch or a
+`TRUNCATE` is refused before it is sent, and the server refuses it again; a statement that
+doesn't start as a CQL statement is refused as unknown. CQL has no `EXPLAIN`, so `explain`
+is refused on these data sources.
 
 The MCP password is kept in the keychain under its own entry, separate from the data source's
 password. If it is missing, the server refuses to connect; it never falls back to the data
