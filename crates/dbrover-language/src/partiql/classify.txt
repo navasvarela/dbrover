@@ -1,0 +1,66 @@
+-- PartiQL statements as DynamoDB runs them, and what classify must call them, each after a
+-- comment naming its kind, as the other languages' corpora do. Most are from DynamoDB's
+-- documentation (the PartiQL reference's SELECT, INSERT, UPDATE and DELETE pages). See tests.rs.
+
+-- Reading.
+-- expect: read
+SELECT * FROM "Orders";
+-- expect: read
+SELECT OrderID, Total FROM "Orders" WHERE OrderID = 1;
+-- expect: read
+SELECT * FROM "Orders" WHERE OrderID IN [1, 2, 3] ORDER BY OrderID DESC;
+-- expect: read
+SELECT Address FROM "Orders" WHERE contains(Address, 'Kirkland');
+-- expect: read
+SELECT * FROM "Orders" WHERE OrderID = 100 AND Total BETWEEN 500 AND 600;
+-- expect: read
+SELECT * FROM "Orders"."CustomerIndex" WHERE CustomerID = 'c-42';
+-- expect: read
+SELECT * FROM Orders WHERE begins_with("Address", '7834 24th');
+-- expect: read
+SELECT "Orders".Address.City FROM "Orders" WHERE OrderID = ?;
+-- expect: read
+select * from "Music" where Artist = 'No One You Know' and SongTitle = 'Call Me Today';
+-- expect: read
+SELECT * FROM "Orders" WHERE Total > 500 AND attribute_type(Total, 'N');
+-- expect: read
+SELECT * FROM "Orders" WHERE "Address" IS MISSING;
+-- expect: read
+SELECT * FROM "Orders" WHERE OrderID = 1 OR OrderID = 2;
+-- expect: read
+SELECT * FROM "Orders" WHERE size(Items) > 3;
+-- expect: read
+SELECT * FROM "Orders" -- comment ; inside
+WHERE /* a ; in a comment */ Note = 'a ; in a string';
+
+-- Writing: each changes one item, named by its whole key.
+-- expect: write
+INSERT INTO "Music" VALUE {'Artist': 'Acme Band', 'SongTitle': 'PartiQL Rocks'};
+-- expect: write
+INSERT INTO "Music" VALUE {'Artist': 'Acme Band', 'Tags': <<'rock', 'new'>>, 'Plays': [1, 2]};
+-- expect: write
+UPDATE "Music" SET AwardsWon = 1 SET AwardDetail = {'Grammys': [2020, 2018]}
+WHERE Artist = 'Acme Band' AND SongTitle = 'PartiQL Rocks';
+-- expect: write
+UPDATE "Music" REMOVE AwardDetail.Grammys[2] WHERE Artist = 'Acme Band' AND SongTitle = 'PartiQL Rocks';
+-- expect: write
+UPDATE "Music" SET Tags = set_add(Tags, <<'jazz'>>) WHERE Artist = 'Acme Band' AND SongTitle = 'X'
+RETURNING ALL NEW *;
+-- expect: write
+DELETE FROM "Music" WHERE "Artist" = 'Acme Band' AND "SongTitle" = 'PartiQL Rocks';
+-- expect: write
+delete from Music where Artist = 'Acme Band' and SongTitle = 'X' returning all old *;
+
+-- What DynamoDB doesn't run outside a transaction, or at all.
+-- expect: unparseable
+EXISTS(SELECT * FROM "Music" WHERE Artist = 'Acme Band' AND SongTitle = 'X');
+-- expect: unparseable
+CREATE TABLE "Music";
+-- expect: unparseable
+DROP TABLE "Music";
+-- expect: unparseable
+SELECT * WHERE a = 1;
+-- expect: unparseable
+INSERT "Music" VALUE {'a': 1};
+-- expect: unparseable
+SELECT * FROM "Orders" WHERE Note = 'not closed;
