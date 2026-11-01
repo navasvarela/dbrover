@@ -92,7 +92,7 @@ throwing away where the user moved things.
 - **Each key is a line** from its first column's row, on the side facing the referenced table,
   to the referenced table's matching row, as a curve with a mark at the referenced end. Lines
   are drawn under the boxes. A self-reference loops back to the same table's side.
-- **Drag a table's header to move it**; lines follow. Hovering a table highlights its lines.
+- **Drag a table to move it**; lines follow. Hovering a table highlights its lines.
 - **Toolbar:** **Arrange**, **Fit**, **Export ▾**, and how loading is going ("Loading 24 of 80
   tables…") or what failed.
 - **A table that is gone** (described as `None` when the diagram reopens) is drawn as a dashed
@@ -159,7 +159,7 @@ throwing away where the user moved things.
 | Question | Decision | Why |
 | --- | --- | --- |
 | Where a data source outside any project keeps its diagrams (open question) | **`diagrams/_none/`** | Most data sources are in no project, which exists for MCP; holding diagrams back until one joins would hide the feature behind an unrelated setting. `_none` can't be a project's slug, which has no underscores, so it never clashes. |
-| How big a diagram may get before the dialog asks to narrow it (open question) | **150 tables**, then the dialog asks before opening, and offers to go on | Past that a diagram is unreadable at any zoom that shows it whole. Loading is what grows with it, not the layout: laying out 150 tables takes about 1 ms and 500 about 4 ms (release build, Apple M-series), but each table is about four catalog queries on PostgreSQL. 150 took 0.28 s on the local test server; at 20 ms a round trip that is about 12 s. ER1c measures the frame time of 150 boxes; the number changes here if it says so. |
+| How big a diagram may get before the dialog asks to narrow it (open question) | **150 tables**, then the dialog asks before opening, and offers to go on | Past that a diagram is unreadable at any zoom that shows it whole. Loading is what grows with it, not the layout: laying out 150 tables takes about 1 ms and 500 about 4 ms (release build, Apple M-series), but each table is about four catalog queries on PostgreSQL. 150 took 0.28 s on the local test server; at 20 ms a round trip that is about 12 s. Drawing isn't either: with 150 tables of six or seven columns on screen at once, a whole frame of the app takes about 1.2 ms (release; egui's work on the CPU, measured in the UI test harness). |
 | Layer direction | **Columns, left to right**, referenced tables first | A table is tall (a row per column), so side by side wastes less space than stacked layers; reads as `customers ← orders ← order_items`. |
 | Where layout lives | **`dbrover-diagram`**, a leaf crate on `dbrover-core` | Pure and tested without a window; the app crate has no library target, so its tests are slower to run. |
 | What a diagram file holds | **The data source and each table's place**, never columns or keys | Described again on opening, so it never shows an old schema; the file stays small and diffs well in Git. |
