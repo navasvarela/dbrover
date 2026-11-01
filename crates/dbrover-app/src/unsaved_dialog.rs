@@ -3,6 +3,7 @@
 use dbrover_store::ConsoleKey;
 use egui::{Align, Id, Layout, Modal};
 
+use crate::form;
 use crate::rollback_dialog::Closing;
 
 pub enum UnsavedChoice {
@@ -37,7 +38,7 @@ impl UnsavedConfirmation {
             ui.label("Your changes are lost if you don't save them.");
             ui.separator();
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Save").clicked() {
+                if form::primary_button(ui, "Save", true).clicked() {
                     Some(UnsavedChoice::Save)
                 } else if ui.button("Don't save").clicked() {
                     Some(UnsavedChoice::Discard)

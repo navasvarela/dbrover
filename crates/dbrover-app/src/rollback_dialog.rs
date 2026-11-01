@@ -5,6 +5,8 @@ use dbrover_core::DataSourceId;
 use dbrover_store::ConsoleKey;
 use egui::{Align, Id, Layout, Modal};
 
+use crate::form;
+
 /// An action that closes console connections.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Closing {
@@ -59,7 +61,7 @@ impl RollbackConfirmation {
             ));
             ui.separator();
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button(format!("Roll back and {verb}")).clicked() {
+                if form::danger_button(ui, &format!("Roll back and {verb}"), true).clicked() {
                     Some(RollbackChoice::Proceed)
                 } else if ui.button("Cancel").clicked() {
                     Some(RollbackChoice::Cancel)

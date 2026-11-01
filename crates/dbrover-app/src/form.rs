@@ -3,8 +3,8 @@
 //! toggle, a header naming what the form is for, and one primary action at the end.
 
 use egui::{
-    Align, Align2, Button, CornerRadius, Frame, Layout, Margin, Response, RichText, Sense, Stroke,
-    Ui, WidgetInfo, WidgetType, vec2,
+    Align, Align2, Button, Color32, CornerRadius, Frame, Layout, Margin, Response, RichText, Sense,
+    Stroke, Ui, WidgetInfo, WidgetType, vec2,
 };
 
 use crate::fonts;
@@ -93,9 +93,6 @@ pub fn card<R>(ui: &mut Ui, add_rows: impl FnOnce(&mut Rows<'_>) -> R) -> R {
         .inner_margin(CARD_MARGIN)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            // Fields share the card's fill in the light theme, so at rest they get the outline
-            // that hovering gives them anyway; buttons and menus look the better for it too.
-            ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::new(1.0, palette.border);
             let mut rows = Rows { ui, drawn: 0 };
             let inner = add_rows(&mut rows);
             // The same space under the last row as above the first.
@@ -288,20 +285,36 @@ pub fn toggle(ui: &mut Ui, on: &mut bool, label: &str) -> Response {
 /// The one main action of a form, filled with the primary colour.
 pub fn primary_button(ui: &mut Ui, text: &str, enabled: bool) -> Response {
     let palette = Palette::for_visuals(ui.visuals());
-    let text_color = if enabled {
-        palette.on_primary
-    } else {
-        palette.text_weak
-    };
-    let fill = if enabled {
-        palette.primary
-    } else {
-        palette.control
-    };
-    ui.add_enabled(
-        enabled,
-        Button::new(RichText::new(text).color(text_color)).fill(fill),
-    )
+    filled_button(ui, text, enabled, palette.primary)
+}
+
+/// An action that destroys something (deletes, drops, discards), filled with the error colour
+/// so it can't be mistaken for Cancel beside it.
+pub fn danger_button(ui: &mut Ui, text: &str, enabled: bool) -> Response {
+    let palette = Palette::for_visuals(ui.visuals());
+    filled_button(ui, text, enabled, palette.error)
+}
+
+/// A button filled with `fill`, a shade darker or lighter under the pointer; greyed out like
+/// any other button when disabled.
+fn filled_button(ui: &mut Ui, text: &str, enabled: bool, fill: Color32) -> Response {
+    let palette = Palette::for_visuals(ui.visuals());
+    ui.scope(|ui| {
+        if enabled {
+            let widgets = &mut ui.visuals_mut().widgets;
+            for (state, fill) in [
+                (&mut widgets.inactive, fill),
+                (&mut widgets.hovered, palette.hovered(fill)),
+                (&mut widgets.active, palette.pressed(fill)),
+            ] {
+                state.weak_bg_fill = fill;
+                state.bg_stroke = Stroke::NONE;
+                state.fg_stroke.color = palette.on_primary;
+            }
+        }
+        ui.add_enabled(enabled, Button::new(text))
+    })
+    .inner
 }
 
 /// The row of actions along the bottom of a dialog, laid out right to left so the primary

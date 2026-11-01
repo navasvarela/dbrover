@@ -15,6 +15,7 @@ use super::geometry::{self, HEADER_HEIGHT, MARK_WIDTH, PADDING, ROW_HEIGHT, TYPE
 use super::model::{BoxShape, Diagram, KeyLine, TableState};
 use super::{DiagramTab, TabAction};
 use crate::fonts;
+use crate::form;
 use crate::icons;
 use crate::picture::PictureFormat;
 use crate::theme::Palette;
@@ -79,7 +80,7 @@ fn confirm_delete(ui: &Ui, tab: &mut DiagramTab, key: &DiagramKey) -> bool {
         ui.label("Its file is removed. The database and its tables are untouched.");
         ui.separator();
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let deleted = ui.button("Delete").clicked();
+            let deleted = form::danger_button(ui, "Delete", true).clicked();
             let cancelled = ui.button("Cancel").clicked();
             (deleted, cancelled)
         })

@@ -29,6 +29,11 @@ pub const GRID_HEADER_TINT: f32 = 0.1;
 /// see the card, not so much that it competes with the fields in it.
 const DARK_CARD_LIFT: f32 = 0.04;
 
+/// How far a filled button's colour moves towards the text colour when hovered, and when
+/// pressed: enough to see under the pointer without the button changing colour.
+const FILLED_HOVER_SHADE: f32 = 0.12;
+const FILLED_PRESSED_SHADE: f32 = 0.22;
+
 /// The colours of one theme, by role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Palette {
@@ -144,6 +149,17 @@ impl Palette {
     /// `color` faded into the panel: a tint for backgrounds that must not compete with text.
     pub fn tint(&self, color: Color32, amount: f32) -> Color32 {
         mix(self.panel, color, amount)
+    }
+
+    /// `fill` under the pointer: a step towards the text colour, so darker in the light theme
+    /// and lighter in the dark one, and text on it keeps (or gains) contrast.
+    pub fn hovered(&self, fill: Color32) -> Color32 {
+        mix(fill, self.text, FILLED_HOVER_SHADE)
+    }
+
+    /// `fill` while pressed: a further step than [`Self::hovered`].
+    pub fn pressed(&self, fill: Color32) -> Color32 {
+        mix(fill, self.text, FILLED_PRESSED_SHADE)
     }
 
     /// Cards that group a form's rows. A step up from the panel: the field colour in the light
@@ -471,7 +487,9 @@ fn widgets(palette: &Palette, focus: Focus) -> Widgets {
             fg_stroke: Stroke::new(1.0, palette.text),
             ..state(palette.panel, Stroke::new(1.0, palette.border))
         },
-        inactive: state(palette.control, Stroke::NONE),
+        // An outline at rest, so a button reads as a button on a panel of nearly its own
+        // colour, and a field as a field.
+        inactive: state(palette.control, Stroke::new(1.0, palette.border)),
         hovered: state(
             palette.control_hover,
             Stroke::new(1.0, mix(palette.border, focus.accent, 0.5)),
@@ -665,8 +683,16 @@ fn text_pairs(palette: &Palette) -> Vec<(&'static str, Color32, &'static str, Co
             ("error", palette.error),
         ],
     );
+    // Filled buttons: the one main action, and a destructive one.
     on(
-        &[("primary fill", palette.primary)],
+        &[
+            ("primary fill", palette.primary),
+            ("hovered primary fill", palette.hovered(palette.primary)),
+            ("pressed primary fill", palette.pressed(palette.primary)),
+            ("error fill", palette.error),
+            ("hovered error fill", palette.hovered(palette.error)),
+            ("pressed error fill", palette.pressed(palette.error)),
+        ],
         &[("text on primary", palette.on_primary)],
     );
     on(

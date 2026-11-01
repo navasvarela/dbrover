@@ -7,6 +7,7 @@ use dbrover_core::FullScan;
 use dbrover_engine::{RunPurpose, ScanApproval};
 
 use crate::console::{ChangeCount, SubmittedRun, SubmittedStatement};
+use crate::form;
 
 pub enum HazardChoice {
     RunAnyway,
@@ -140,7 +141,7 @@ impl HazardConfirmation {
             }
             ui.separator();
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button(confirm).clicked() {
+                if form::danger_button(ui, confirm, true).clicked() {
                     Some(HazardChoice::RunAnyway)
                 } else if ui.button("Cancel").clicked() {
                     Some(HazardChoice::Cancel)

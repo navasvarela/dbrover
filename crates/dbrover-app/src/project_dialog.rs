@@ -5,6 +5,7 @@ use dbrover_engine::Event;
 use dbrover_store::Project;
 use egui::{Align, Id, Layout, Modal, TextEdit, Ui};
 
+use crate::form;
 use crate::theme::Palette;
 
 const FIELD_WIDTH: f32 = 280.0;
@@ -110,9 +111,7 @@ impl ProjectNameDialog {
         ui.separator();
         let name = self.name.trim();
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let confirmed = ui
-                .add_enabled(!name.is_empty(), egui::Button::new(confirm))
-                .clicked();
+            let confirmed = form::primary_button(ui, confirm, !name.is_empty()).clicked();
             if ui.button("Cancel").clicked() {
                 return Some(ProjectDialogAction::Close);
             }
@@ -160,7 +159,7 @@ impl DeleteProjectConfirmation {
             ui.label(self.message());
             ui.separator();
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Delete").clicked() {
+                if form::danger_button(ui, "Delete", true).clicked() {
                     Some(DeleteProjectChoice::Confirmed(self.id))
                 } else if ui.button("Cancel").clicked() {
                     Some(DeleteProjectChoice::Cancelled)

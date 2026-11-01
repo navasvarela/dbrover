@@ -1,6 +1,7 @@
 use dbrover_engine::{InstallSupport, Restart};
 use egui::{Align, Id, Layout, Modal, OpenUrl, ProgressBar, RichText};
 
+use crate::form;
 use crate::theme::Palette;
 use crate::updates::{InstallState, UpdateStatus, Updates};
 use crate::version;
@@ -57,7 +58,7 @@ pub fn show(ctx: &egui::Context, updates: &Updates) -> Option<UpdateAction> {
                 ui.ctx().open_url(OpenUrl::new_tab(url));
             }
             if let Some(button) = primary_button(updates)
-                && ui.button(button.label()).clicked()
+                && form::primary_button(ui, button.label(), true).clicked()
             {
                 action = Some(button.action());
             }

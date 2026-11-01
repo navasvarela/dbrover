@@ -1,5 +1,7 @@
 use dbrover_core::{DataSource, DataSourceId};
-use egui::{Align, Id, Layout, Modal};
+use egui::{Id, Modal};
+
+use crate::form;
 
 pub enum DeleteChoice {
     Confirmed(DataSourceId),
@@ -27,9 +29,8 @@ impl DeleteConfirmation {
                 "Delete \"{}\"? Its saved password is removed from the keychain too.",
                 self.name
             ));
-            ui.separator();
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Delete").clicked() {
+            form::footer(ui, |ui| {
+                if form::danger_button(ui, "Delete", true).clicked() {
                     Some(DeleteChoice::Confirmed(self.id))
                 } else if ui.button("Cancel").clicked() {
                     Some(DeleteChoice::Cancelled)
@@ -37,7 +38,6 @@ impl DeleteConfirmation {
                     None
                 }
             })
-            .inner
         });
         if modal.should_close() {
             return Some(DeleteChoice::Cancelled);

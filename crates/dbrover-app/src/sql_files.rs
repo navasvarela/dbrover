@@ -9,6 +9,8 @@ use dbrover_store::ConsoleKey;
 use egui::{Align, Id, Layout, Modal};
 use serde::{Deserialize, Serialize};
 
+use crate::form;
+
 /// How many files File › Open recent lists.
 pub const RECENT_FILES: usize = 10;
 /// How often open files are looked at for changes, besides whenever the window regains focus.
@@ -226,7 +228,7 @@ fn choose_data_source(
     }
     ui.separator();
     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-        let open = ui.add_enabled(chosen.is_some(), egui::Button::new("Open"));
+        let open = form::primary_button(ui, "Open", chosen.is_some());
         if open.clicked()
             && let Some(id) = *chosen
         {

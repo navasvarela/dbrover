@@ -2,7 +2,7 @@
 //! count badges.
 
 use egui::text::{LayoutJob, TextFormat};
-use egui::{Button, Color32, Response, RichText, TextStyle, Ui, WidgetInfo, WidgetType};
+use egui::{Button, Color32, Response, RichText, TextStyle, Ui, Vec2, WidgetInfo, WidgetType};
 
 use crate::fonts;
 
@@ -55,8 +55,11 @@ impl<'a> IconButton<'a> {
             text = text.color(color);
         }
         let tooltip = self.tooltip.as_deref().unwrap_or(self.label);
+        // Square, as tall as a control, so its hover highlight is a tile around the icon.
+        let size = Vec2::splat(ui.spacing().interact_size.y);
+        let button = Button::new(text).frame_when_inactive(false).min_size(size);
         let response = ui
-            .add_enabled(self.enabled, Button::new(text).frame_when_inactive(false))
+            .add_enabled(self.enabled, button)
             .on_hover_text(tooltip)
             .on_disabled_hover_text(tooltip);
         name(response, WidgetType::Button, self.label, self.enabled)

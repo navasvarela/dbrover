@@ -8,6 +8,7 @@ use egui::{Align, Id, Layout, Modal, ScrollArea, TextEdit, Ui};
 
 use super::Growth;
 use crate::catalog_tree::{CatalogTree, Children, LevelEnd};
+use crate::form;
 use crate::theme::Palette;
 
 /// Past this many tables the dialog asks to narrow the choice before opening: a diagram that
@@ -115,7 +116,7 @@ impl DiagramDialog {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let open = if large { "Open anyway" } else { "Open" };
             let can_open = !chosen.is_empty() && !name.is_empty();
-            if ui.add_enabled(can_open, egui::Button::new(open)).clicked() {
+            if form::primary_button(ui, open, can_open).clicked() {
                 return Some(DiagramDialogAction::Open {
                     tables: chosen,
                     growth: self.add_referenced.then_some(Growth::Referenced),

@@ -222,9 +222,6 @@ impl SettingsTab {
     }
 
     fn sidebar(&mut self, ui: &mut Ui, found: &[Found<'_>], projects: &[Project]) {
-        // The field shares the panel's fill in the light theme; an outline shows where it is.
-        let border = Palette::for_visuals(ui.visuals()).border;
-        ui.visuals_mut().widgets.inactive.bg_stroke = egui::Stroke::new(1.0, border);
         let field = ui.add(
             TextEdit::singleline(&mut self.query)
                 .hint_text(widgets::icon_text(
