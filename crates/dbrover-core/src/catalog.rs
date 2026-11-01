@@ -57,6 +57,11 @@ pub enum NodeKind {
     /// An Elasticsearch or OpenSearch index template, which new indices whose names match its
     /// patterns are made from.
     IndexTemplate,
+    /// A user-defined type (Cassandra's `CREATE TYPE`), a set of named fields a column can hold.
+    UserType,
+    /// A user-defined aggregate (Cassandra's `CREATE AGGREGATE`), named with its argument types
+    /// as a function is.
+    Aggregate,
 }
 
 /// The type of a Redis key's value, as `TYPE` answers.
@@ -126,6 +131,9 @@ pub enum FolderKind {
     Aliases,
     DataStreams,
     IndexTemplates,
+    /// Cassandra's user-defined types.
+    Types,
+    Aggregates,
 }
 
 impl FolderKind {
@@ -149,6 +157,8 @@ impl FolderKind {
             Self::Aliases => "aliases",
             Self::DataStreams => "data streams",
             Self::IndexTemplates => "index templates",
+            Self::Types => "types",
+            Self::Aggregates => "aggregates",
         }
     }
 }
@@ -257,9 +267,12 @@ impl CatalogPath {
             | NodeKind::Event
             | NodeKind::Synonym
             | NodeKind::Dictionary
-            | NodeKind::Index => Some(self.schema_qualified(&quote(&object.name), quote)),
+            | NodeKind::Index
+            | NodeKind::UserType => Some(self.schema_qualified(&quote(&object.name), quote)),
             // Function names already carry their argument list, e.g. `add(integer, integer)`.
-            NodeKind::Function => Some(self.schema_qualified(&object.name, quote)),
+            NodeKind::Function | NodeKind::Aggregate => {
+                Some(self.schema_qualified(&object.name, quote))
+            }
             NodeKind::Column | NodeKind::Constraint | NodeKind::Trigger | NodeKind::Role => {
                 Some(quote(&object.name))
             }

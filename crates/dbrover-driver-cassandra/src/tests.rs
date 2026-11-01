@@ -20,6 +20,10 @@ use super::*;
 /// when none is, so `cargo test` works offline.
 const TEST_URL_VARS: [&str; 2] = ["DBROVER_TEST_SCYLLA_URL", "DBROVER_TEST_CASSANDRA_URL"];
 
+/// Held by every test that makes or drops a keyspace, or walks the whole catalog: a walk that
+/// meets another test's keyspace while it is dropped fails to describe it.
+static SCHEMA: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// ScyllaDB over TLS, `cqls://…`, its certificate signed by the test authority.
 const TLS_URL_VAR: &str = "DBROVER_TEST_SCYLLA_TLS_URL";
 
@@ -182,6 +186,7 @@ async fn reports_what_stops_it_connecting() {
 
 #[tokio::test]
 async fn lists_keyspaces_and_their_tables() {
+    let _schema = SCHEMA.lock().await;
     for server in test_servers() {
         let mut connection = server.connect().await;
         let keyspace = server.keyspace(&mut connection, "catalog").await;
@@ -214,6 +219,7 @@ async fn lists_keyspaces_and_their_tables() {
 /// 1,200 rows of one partition come back in clustering order, a page at a time.
 #[tokio::test]
 async fn pages_a_large_table_in_order() {
+    let _schema = SCHEMA.lock().await;
     for server in test_servers() {
         let mut connection = server.connect().await;
         let keyspace = server.keyspace(&mut connection, "paging").await;
@@ -262,6 +268,7 @@ async fn pages_a_large_table_in_order() {
 /// collections, tuples and user-defined types as JSON.
 #[tokio::test]
 async fn writes_every_type_as_cql_reads_it() {
+    let _schema = SCHEMA.lock().await;
     for server in test_servers() {
         let mut connection = server.connect().await;
         let keyspace = server.keyspace(&mut connection, "types").await;
@@ -402,6 +409,7 @@ async fn points_at_a_syntax_error_and_stays_usable() {
 /// anything; a good statement is accepted.
 #[tokio::test]
 async fn validates_by_preparing() {
+    let _schema = SCHEMA.lock().await;
     for server in test_servers() {
         let mut connection = server.connect().await;
         let keyspace = server.keyspace(&mut connection, "validate").await;
@@ -435,6 +443,7 @@ async fn validates_by_preparing() {
 /// A keyspace in the data source is where unqualified names resolve, and `USE` changes it.
 #[tokio::test]
 async fn starts_in_the_data_sources_keyspace() {
+    let _schema = SCHEMA.lock().await;
     for server in test_servers() {
         let mut connection = server.connect().await;
         let keyspace = server.keyspace(&mut connection, "keyspace").await;
@@ -586,4 +595,147 @@ async fn holding_forwarder(server: &str) -> (std::net::SocketAddr, Arc<AtomicBoo
         }
     });
     (local, held)
+}
+
+/// Every kind of object a keyspace holds is listed in its folder, a table's columns in key
+/// order with their roles, and each definition runs again in an emptied keyspace.
+#[tokio::test]
+async fn lists_every_kind_of_object_with_definitions_that_run_again() {
+    let _schema = SCHEMA.lock().await;
+    for server in test_servers() {
+        let mut connection = server.connect().await;
+        let keyspace = server.keyspace(&mut connection, "explorer").await;
+        let language = if connection.server_info().product == execution::SCYLLADB {
+            ("lua", "return input * 2")
+        } else {
+            ("java", "return input * 2;")
+        };
+        for statement in [
+            format!("CREATE TYPE {keyspace}.address (city text, zip int)"),
+            format!(
+                "CREATE TABLE {keyspace}.orders (customer text, placed timestamp, id int, \
+                 total int, note text static, tags map<text, int>, home frozen<address>, \
+                 PRIMARY KEY ((customer), placed, id)) \
+                 WITH CLUSTERING ORDER BY (placed DESC, id ASC)"
+            ),
+            format!("CREATE INDEX by_total ON {keyspace}.orders (total)"),
+            format!(
+                "CREATE MATERIALIZED VIEW {keyspace}.orders_by_id AS SELECT id, customer, placed, total FROM {keyspace}.orders \
+                 WHERE id IS NOT NULL AND customer IS NOT NULL AND placed IS NOT NULL \
+                 PRIMARY KEY (id, customer, placed)"
+            ),
+            format!(
+                "CREATE FUNCTION {keyspace}.twice (input int) RETURNS NULL ON NULL INPUT \
+                 RETURNS int LANGUAGE {} AS '{}'",
+                language.0, language.1
+            ),
+            format!(
+                "CREATE FUNCTION {keyspace}.plus (sum int, input int) CALLED ON NULL INPUT \
+                 RETURNS int LANGUAGE {} AS '{}'",
+                language.0,
+                if language.0 == "lua" {
+                    "return (sum or 0) + (input or 0)"
+                } else {
+                    "return (sum == null ? 0 : sum) + (input == null ? 0 : input);"
+                }
+            ),
+            format!("CREATE AGGREGATE {keyspace}.total (int) SFUNC plus STYPE int INITCOND 0"),
+        ] {
+            run(&mut connection, &statement).await;
+        }
+
+        let nodes = conformance::walk_catalog(&mut connection, 5).await;
+        let root = CatalogPath::root().child(NodeKind::Schema, &keyspace);
+        let labels_in = |parent: &CatalogPath| -> Vec<(String, Option<String>)> {
+            nodes
+                .iter()
+                .filter(|node| node.path.parent().as_ref() == Some(parent))
+                .map(|node| (node.label.clone(), node.detail.clone()))
+                .collect()
+        };
+        let folder = |kind: FolderKind| root.child(NodeKind::Folder(kind), kind.label());
+        let named = |labels: Vec<(String, Option<String>)>| -> Vec<String> {
+            labels.into_iter().map(|(label, _)| label).collect()
+        };
+        assert_eq!(named(labels_in(&folder(FolderKind::Tables))), ["orders"]);
+        assert_eq!(
+            named(labels_in(&folder(FolderKind::MaterializedViews))),
+            ["orders_by_id"],
+            "{}: the index's own view is left out",
+            server.name
+        );
+        assert_eq!(named(labels_in(&folder(FolderKind::Types))), ["address"]);
+        assert_eq!(
+            named(labels_in(&folder(FolderKind::Functions))),
+            ["plus(int, int)", "twice(int)"]
+        );
+        assert_eq!(
+            named(labels_in(&folder(FolderKind::Aggregates))),
+            ["total(int)"]
+        );
+        let orders = folder(FolderKind::Tables).child(NodeKind::Table, "orders");
+        let columns = labels_in(&orders.child(NodeKind::Folder(FolderKind::Columns), "columns"));
+        let expected = [
+            ("customer", "text · partition key"),
+            ("placed", "timestamp · clustering key, descending"),
+            ("id", "int · clustering key"),
+            ("note", "text · static"),
+            ("home", "frozen<address>"),
+            ("tags", "map<text, int>"),
+            ("total", "int"),
+        ];
+        let columns: Vec<(&str, &str)> = columns
+            .iter()
+            .map(|(label, detail)| (label.as_str(), detail.as_deref().unwrap_or_default()))
+            .collect();
+        assert_eq!(columns, expected, "{}", server.name);
+        let indexes = labels_in(&orders.child(NodeKind::Folder(FolderKind::Indexes), "indexes"));
+        assert_eq!(
+            indexes,
+            [("by_total".to_owned(), Some("on total".to_owned()))],
+            "{}",
+            server.name
+        );
+
+        let mut definitions = Vec::new();
+        for path in [
+            folder(FolderKind::Types).child(NodeKind::UserType, "address"),
+            folder(FolderKind::Functions).child(NodeKind::Function, "plus(int, int)"),
+            folder(FolderKind::Functions).child(NodeKind::Function, "twice(int)"),
+            folder(FolderKind::Aggregates).child(NodeKind::Aggregate, "total(int)"),
+            orders.clone(),
+        ] {
+            let definition = connection.definition(&path).await.expect("a definition");
+            definitions.push(definition);
+        }
+        let keyspace_definition = connection.definition(&root).await.expect("the keyspace");
+        assert!(
+            keyspace_definition.starts_with("CREATE KEYSPACE"),
+            "{}: {keyspace_definition}",
+            server.name
+        );
+        assert!(
+            !keyspace_definition.contains("CREATE TABLE"),
+            "{keyspace_definition}"
+        );
+
+        run(&mut connection, &format!("DROP KEYSPACE {keyspace}")).await;
+        run(&mut connection, keyspace_definition.trim_end_matches(';')).await;
+        for definition in &definitions {
+            for statement in definition.split(";\n").map(str::trim) {
+                let statement = statement.trim_end_matches(';');
+                if !statement.is_empty() {
+                    run(&mut connection, statement).await;
+                }
+            }
+        }
+        let again = conformance::walk_catalog(&mut connection, 5).await;
+        assert_eq!(
+            again.len(),
+            nodes.len(),
+            "{}: the definitions made the keyspace again",
+            server.name
+        );
+        run(&mut connection, &format!("DROP KEYSPACE {keyspace}")).await;
+    }
 }
