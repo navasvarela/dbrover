@@ -47,6 +47,13 @@ pub struct Arranged {
 
 /// Whether the statement's rows can be sorted and filtered in the database; `Err` says why not.
 pub fn can_arrange(sql: &str, dialect: Dialect, columns: &[String]) -> Result<(), String> {
+    if dialect == Dialect::Cassandra {
+        return Err(
+            "CQL can't select from a query, so rows can't be sorted and filtered in the \
+                    database"
+                .to_owned(),
+        );
+    }
     let first = first_word(sql, dialect).unwrap_or_default();
     if !WRAPPABLE.contains(&first.as_str()) {
         return Err(
@@ -242,6 +249,7 @@ mod tests {
                 Dialect::Postgres,
                 columns(&["id", "id"]),
             ),
+            ("SELECT * FROM t", Dialect::Cassandra, unique.clone()),
         ] {
             assert!(can_arrange(sql, dialect, &columns).is_err(), "{sql}");
         }

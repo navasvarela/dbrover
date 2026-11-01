@@ -686,6 +686,32 @@ pub(super) const CLICKHOUSE: &[&str] = &[
     "yesterday",
 ];
 
+/// CQL's functions that both Cassandra 5 and ScyllaDB 2026 have. Lowercase: CQL folds an
+/// unquoted function's name to lowercase, so `toTimestamp` and `totimestamp` are one function.
+pub(super) const CQL: &[&str] = &[
+    "avg",
+    "count",
+    "currentdate",
+    "currenttime",
+    "currenttimestamp",
+    "currenttimeuuid",
+    "fromjson",
+    "max",
+    "maxtimeuuid",
+    "min",
+    "mintimeuuid",
+    "now",
+    "sum",
+    "todate",
+    "tojson",
+    "token",
+    "totimestamp",
+    "tounixtimestamp",
+    "ttl",
+    "uuid",
+    "writetime",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -693,7 +719,7 @@ mod tests {
     #[test]
     fn lists_are_sorted_unique_and_lowercase() {
         assert!(CLICKHOUSE.windows(2).all(|pair| pair[0] < pair[1]));
-        for list in [POSTGRES, SQLITE, MYSQL, SQL_SERVER, DUCKDB] {
+        for list in [POSTGRES, SQLITE, MYSQL, SQL_SERVER, DUCKDB, CQL] {
             assert!(list.windows(2).all(|pair| pair[0] < pair[1]), "{list:?}");
             assert!(list.iter().all(|name| {
                 name.chars()

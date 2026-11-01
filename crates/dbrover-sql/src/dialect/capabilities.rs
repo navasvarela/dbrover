@@ -472,6 +472,52 @@ const CLICKHOUSE: Capabilities = Capabilities {
     users: UserModel::Unsupported,
 };
 
+/// CQL's tables: a primary key that can't change, no other keys or constraints, and secondary
+/// indexes. The object helpers don't write CQL (see [`Dialect::writes_ddl`]), so these facts
+/// are only CQL's own.
+const CQL: Capabilities = Capabilities {
+    transactional_ddl: false,
+    drop_cascade: false,
+    unique_keys: false,
+    foreign_keys: false,
+    referential_actions: &[],
+    indexes: true,
+    index_methods: &[],
+    table_changes: &[
+        TableChange::RenameColumn,
+        TableChange::AddColumn,
+        TableChange::DropColumn,
+    ],
+    rebuilds_tables: false,
+    foreign_key_switch: None,
+    converts_with_using: false,
+    restricted_add_column: false,
+    rebuilds_table_ddl: false,
+    common_types: &[
+        "int",
+        "bigint",
+        "text",
+        "boolean",
+        "double",
+        "decimal",
+        "timestamp",
+        "date",
+        "uuid",
+        "timeuuid",
+        "blob",
+        "list<text>",
+        "set<text>",
+        "map<text, text>",
+    ],
+    materialized_views: true,
+    view_replacement: ViewReplacement::DropAndCreate,
+    renames_views: false,
+    schema_creation: SchemaCreation::Unsupported,
+    schema_owner: false,
+    drop_schema_cascade: false,
+    users: UserModel::Unsupported,
+};
+
 impl Dialect {
     /// What the dialect's DDL can do.
     pub fn capabilities(self) -> &'static Capabilities {
@@ -482,7 +528,15 @@ impl Dialect {
             Self::SqlServer => &SQL_SERVER,
             Self::DuckDb => &DUCKDB,
             Self::ClickHouse => &CLICKHOUSE,
+            Self::Cassandra => &CQL,
         }
+    }
+
+    /// Whether the object helpers write this dialect's DDL. Not CQL's: a table there is
+    /// designed around the queries that read it, its primary key can't change afterwards, and
+    /// a keyspace's replication is chosen per cluster, none of which the helpers' forms ask.
+    pub fn writes_ddl(self) -> bool {
+        self != Self::Cassandra
     }
 }
 

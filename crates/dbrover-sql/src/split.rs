@@ -24,6 +24,9 @@ use crate::lexer::{Token, TokenKind, tokenize};
 /// a statement itself. `BEGIN … END` blocks can appear anywhere there, as control flow, and
 /// the body of a procedure, function or trigger runs to the next `GO`, semicolons and all,
 /// because the server reads the rest of the batch as the body.
+///
+/// In CQL, `BEGIN [UNLOGGED | COUNTER] BATCH … APPLY BATCH` is one statement, whose own
+/// statements' semicolons don't split.
 pub fn split_statements(sql: &str, dialect: Dialect) -> Vec<Range<usize>> {
     let tokens: Vec<Token> = tokenize(sql, dialect)
         .into_iter()
@@ -193,7 +196,14 @@ impl Splitter<'_> {
         };
         let next = self.word(index + 1);
         let next_is = |words: &[&str]| next.as_deref().is_some_and(|next| words.contains(&next));
-        let (starts_block, ends_block) = if self.rules.blocks_anywhere {
+        let (starts_block, ends_block) = if self.rules.batches {
+            (
+                word == "begin"
+                    && self.words_seen == 0
+                    && next_is(&["batch", "unlogged", "counter"]),
+                word == "apply" && next_is(&["batch"]),
+            )
+        } else if self.rules.blocks_anywhere {
             (
                 word == "case" || (word == "begin" && !next_is(BEGIN_STATEMENTS)),
                 word == "end" && !next_is(END_STATEMENTS),
@@ -398,6 +408,23 @@ mod tests {
         for (sql, dialect, expected) in cases {
             assert_eq!(statements(sql, dialect), expected, "{sql}");
         }
+    }
+
+    /// A CQL batch is one statement, whatever its statements' semicolons; `BEGIN` alone opens
+    /// nothing, and `end` is an ordinary name.
+    #[test]
+    fn keeps_a_cql_batch_whole() {
+        let batch = "BEGIN UNLOGGED BATCH\n  INSERT INTO a (id) VALUES (1);\n  \
+                     UPDATE b SET end = 2 WHERE id = 1;\nAPPLY BATCH";
+        let script = format!("select * from a; {batch}; select end from b");
+        assert_eq!(
+            statements(&script, Dialect::Cassandra),
+            ["select * from a", batch, "select end from b"]
+        );
+        assert_eq!(
+            statements("begin transaction; select 1", Dialect::Cassandra),
+            ["begin transaction", "select 1"]
+        );
     }
 
     #[test]

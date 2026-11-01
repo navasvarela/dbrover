@@ -174,7 +174,8 @@ impl QueryLanguage {
 
     fn explain_style(self) -> Option<ExplainStyle> {
         match self {
-            Self::Sql(dialect) => Some(ExplainStyle::Prefix(dialect)),
+            Self::Sql(dialect) if dialect.explains() => Some(ExplainStyle::Prefix(dialect)),
+            Self::Sql(_) => None,
             Self::Mongo => Some(ExplainStyle::MongoShell),
             Self::Search => Some(ExplainStyle::SearchProfile),
             Self::Redis => None,
@@ -265,7 +266,7 @@ impl QueryLanguage {
     /// endpoints.
     pub fn is_keyword(self, word: &str) -> bool {
         match self {
-            Self::Sql(_) => dbrover_sql::is_keyword(word),
+            Self::Sql(dialect) => dialect.is_keyword(word),
             Self::Redis => redis::is_command(word),
             Self::Mongo => mongo::is_keyword(word),
             Self::Search => search::is_keyword(word),
@@ -278,7 +279,7 @@ impl QueryLanguage {
     /// [`Self::completion_keeps_case`] says they are written as listed.
     pub fn completion_words(self) -> &'static [&'static str] {
         match self {
-            Self::Sql(_) => dbrover_sql::keywords(),
+            Self::Sql(dialect) => dialect.keywords(),
             Self::Redis => redis::completion_words(),
             Self::Mongo => mongo::completion_words(),
             Self::Search => search::completion_words(),
@@ -470,6 +471,30 @@ mod tests {
             Some(dbrover_sql::Hazard::DeleteWithoutWhere.description())
         );
         assert_eq!(language.hazard("DELETE FROM orders WHERE id = 1"), None);
+    }
+
+    #[test]
+    fn cql_is_sql_without_explain_with_words_of_its_own() {
+        let cql = QueryLanguage::Sql(Dialect::Cassandra);
+        assert!(!cql.can_explain(ExplainDepth::Estimated, None));
+        assert_eq!(
+            cql.explain("SELECT * FROM t", None, ExplainDepth::Estimated),
+            None
+        );
+        assert!(cql.is_keyword("KEYSPACE"));
+        assert!(!QueryLanguage::Sql(Dialect::Postgres).is_keyword("keyspace"));
+        assert!(cql.completion_words().contains(&"filtering"));
+        assert_eq!(
+            cql.hazard("TRUNCATE orders"),
+            Some(dbrover_sql::Hazard::Truncate.description())
+        );
+        let script = "BEGIN BATCH INSERT INTO a (id) VALUES (1); APPLY BATCH; SELECT * FROM a";
+        let kinds: Vec<_> = cql
+            .split(script)
+            .into_iter()
+            .map(|range| cql.classify(&script[range]))
+            .collect();
+        assert_eq!(kinds, [Ok(StatementKind::Write), Ok(StatementKind::Read)]);
     }
 
     #[test]

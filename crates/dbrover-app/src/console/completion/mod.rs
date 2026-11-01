@@ -11,7 +11,7 @@ use std::ops::Range;
 
 use dbrover_core::Quoting;
 use dbrover_language::QueryLanguage;
-use dbrover_sql::{Dialect, Token, TokenKind, is_keyword, keywords, tokenize};
+use dbrover_sql::{Dialect, Token, TokenKind, is_keyword, tokenize};
 
 use context::Context;
 use derived::{DerivedKind, DerivedTable};
@@ -378,18 +378,18 @@ impl Names<'_> {
                         .unwrap_or_default(),
                 );
             }
-            Context::AfterTable => found.extend(keyword_candidates(prefix)),
+            Context::AfterTable => found.extend(keyword_candidates(prefix, input.dialect)),
             Context::Tables => {
                 found.extend(self.cte_candidates());
                 found.extend(self.table_candidates());
                 found.extend(self.schema_candidates());
-                found.extend(keyword_candidates(prefix));
+                found.extend(keyword_candidates(prefix, input.dialect));
             }
             Context::Columns => {
                 found.extend(self.statement_columns());
                 found.extend(self.alias_candidates());
                 found.extend(function_candidates(input));
-                found.extend(keyword_candidates(prefix));
+                found.extend(keyword_candidates(prefix, input.dialect));
             }
             Context::Any => {
                 found.extend(self.statement_columns());
@@ -397,7 +397,7 @@ impl Names<'_> {
                 found.extend(self.table_candidates());
                 found.extend(self.schema_candidates());
                 found.extend(function_candidates(input));
-                found.extend(keyword_candidates(prefix));
+                found.extend(keyword_candidates(prefix, input.dialect));
             }
         }
         found
@@ -531,10 +531,10 @@ pub fn word_candidates(
     ranking::rank(candidates, prefix, recent)
 }
 
-/// Keywords, in the case being typed. None for an empty prefix: every keyword matches it,
-/// which would bury the names.
-fn keyword_candidates(prefix: &str) -> Vec<Candidate> {
-    language_words(prefix, keywords())
+/// The dialect's keywords, in the case being typed. None for an empty prefix: every keyword
+/// matches it, which would bury the names.
+fn keyword_candidates(prefix: &str, dialect: Dialect) -> Vec<Candidate> {
+    language_words(prefix, dialect.keywords())
 }
 
 /// `words`, in the case being typed. None for an empty prefix, as for keywords.

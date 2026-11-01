@@ -6,6 +6,9 @@ use crate::lexer::{TokenKind, tokenize};
 pub enum Hazard {
     UpdateWithoutWhere,
     DeleteWithoutWhere,
+    /// CQL's `TRUNCATE`, its only way to change every row: it refuses an `UPDATE` or a
+    /// `DELETE` without `WHERE`.
+    Truncate,
 }
 
 impl Hazard {
@@ -13,11 +16,13 @@ impl Hazard {
         match self {
             Self::UpdateWithoutWhere => "UPDATE without WHERE changes every row of the table.",
             Self::DeleteWithoutWhere => "DELETE without WHERE removes every row of the table.",
+            Self::Truncate => "TRUNCATE removes every row of the table.",
         }
     }
 }
 
-/// Checks one statement for an `UPDATE` or `DELETE` without a top-level `WHERE`.
+/// Checks one statement for an `UPDATE` or `DELETE` without a top-level `WHERE`, and in CQL
+/// for a `TRUNCATE`.
 ///
 /// Only looks at the statement's first word, so `WITH … DELETE …` isn't caught; a `WHERE`
 /// inside a subquery doesn't count as the statement's own.
@@ -40,6 +45,7 @@ pub fn hazard(statement: &str, dialect: Dialect) -> Option<Hazard> {
     let hazard = match words.first().map(|(word, _)| word.as_str()) {
         Some("update") => Hazard::UpdateWithoutWhere,
         Some("delete") => Hazard::DeleteWithoutWhere,
+        Some("truncate") if dialect == Dialect::Cassandra => return Some(Hazard::Truncate),
         _ => return None,
     };
     let has_where = words
@@ -73,5 +79,18 @@ mod tests {
         for (sql, expected) in cases {
             assert_eq!(hazard(sql, Dialect::Postgres), expected, "{sql}");
         }
+    }
+
+    #[test]
+    fn flags_truncate_in_cql_only() {
+        assert_eq!(
+            hazard("TRUNCATE TABLE shop.orders", Dialect::Cassandra),
+            Some(Hazard::Truncate)
+        );
+        assert_eq!(hazard("truncate t", Dialect::Postgres), None);
+        assert_eq!(
+            hazard("DELETE FROM t WHERE id = 1", Dialect::Cassandra),
+            None
+        );
     }
 }

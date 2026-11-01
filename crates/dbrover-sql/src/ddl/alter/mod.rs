@@ -645,7 +645,10 @@ impl<'d, 'a> Writer<'d, 'a> {
 
     fn change_column(&self, change: &ColumnChange<'_>) -> Vec<String> {
         match self.dialect {
-            Dialect::Postgres | Dialect::DuckDb | Dialect::Sqlite => self.alter_column(change),
+            // `ddl_statements` refuses CQL's DDL before this.
+            Dialect::Postgres | Dialect::DuckDb | Dialect::Sqlite | Dialect::Cassandra => {
+                self.alter_column(change)
+            }
             Dialect::Mysql => self.modify_mysql_column(change),
             Dialect::SqlServer => self.alter_sql_server_column(change),
             Dialect::ClickHouse => self.modify_clickhouse_column(change),

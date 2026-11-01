@@ -1070,7 +1070,7 @@ nightly job (see the CI measurement below).
 
 - **N4·1 — Plan:** this list, the decisions N4 takes (in [Decisions](#decisions)), the CI
   measurement, and the roadmap's status.
-- **N4·2 — CQL as a dialect:** `Dialect::Cassandra` in `dbrover-sql`, and
+- **N4·2 — CQL as a dialect** (built): `Dialect::Cassandra` in `dbrover-sql`, and
   `QueryLanguage::Sql(Dialect::Cassandra)`, with no driver yet:
   - its lexical rules: `--`, `//` and `/* */` comments (not nested), `'…'` strings with `''`
     for a quote and no backslash escapes, `$$…$$` strings, and `"…"` names;
@@ -1096,7 +1096,19 @@ nightly job (see the CI measurement below).
 
   Tests: a classification corpus from Cassandra 5's and ScyllaDB's CQL references, as the
   other dialects have; batches split as one statement; each comment and string form lexed; a
-  kittest of a CQL console's completion and batches.
+  kittest of a CQL console's completion and batches. How it came out:
+  - a dialect says what it lacks rather than being matched on: `Dialect::sqlparser_dialect` is
+    `None` for CQL (no syntax check, and a query's columns are read from its tokens),
+    `explains` and `writes_ddl` are false, and `can_arrange` refuses it;
+  - CQL's own words (`keyspace`, `frozen`, `filtering`, `writetime`, …) are highlighted and
+    completed by `Dialect::is_keyword` and `Dialect::keywords` in CQL only: in the shared list
+    the formatter would upper-case columns named `map` or `token` in every other dialect;
+  - a batch's `BEGIN` opens a block only before `BATCH`, `UNLOGGED` or `COUNTER`, and only
+    `APPLY BATCH` closes it, so a column named `end` doesn't;
+  - the MCP server's `explain` tool refuses a CQL statement rather than run it with no prefix;
+  - `$tag$ … $tag$` is read as a string too, as PostgreSQL's is: CQL has only `$$`, and no
+    valid CQL reads differently;
+  - until N4·5, the grid says CQL rows can't be edited yet.
 - **N4·3 — The driver and the console:** a new crate, `dbrover-driver-cassandra`, on `scylla`
   1.9:
   - the **Cassandra / ScyllaDB** data source: the shared server form (port 9042, 9142 with
