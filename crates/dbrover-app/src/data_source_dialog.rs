@@ -9,8 +9,8 @@ use dbrover_core::{
 use dbrover_engine::read_only::{self, Guard};
 use dbrover_engine::{DatabaseFile, Event, PasswordUpdate, ProcessEnvironment};
 use egui::{
-    Align, Button, Color32, Grid, Id, Layout, Modal, RichText, Sense, Stroke, TextEdit, Ui,
-    WidgetInfo, WidgetType, vec2,
+    Align, Button, Color32, Grid, Id, Layout, RichText, Sense, Stroke, TextEdit, Ui, WidgetInfo,
+    WidgetType, vec2,
 };
 
 use crate::data_source_form::{
@@ -121,7 +121,8 @@ impl DataSourceDialog {
     }
 
     pub fn show(&mut self, ctx: &egui::Context) -> Option<DialogAction> {
-        let modal = Modal::new(Id::new("data_source_dialog")).show(ctx, |ui| self.contents(ui));
+        let modal =
+            widgets::dialog(ctx, Id::new("data_source_dialog")).show(ctx, |ui| self.contents(ui));
         if modal.should_close() {
             return Some(DialogAction::Close);
         }

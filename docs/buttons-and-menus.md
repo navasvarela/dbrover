@@ -1,6 +1,6 @@
 # Buttons and menus
 
-Status: **planned** (2026-11-01). This is the design of D7 in the
+Status: **built** (2026-11-01). This is the design of D7 in the
 [roadmap](roadmap.md#d7--roomier-buttons-and-menus).
 
 D2 gave DbRover its colours and D5 its macOS chrome, but the controls inside the window kept

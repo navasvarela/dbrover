@@ -3,10 +3,11 @@
 use dbrover_core::{DataSourceId, ProjectId};
 use dbrover_engine::Event;
 use dbrover_store::Project;
-use egui::{Align, Id, Layout, Modal, TextEdit, Ui};
+use egui::{Align, Id, Layout, TextEdit, Ui};
 
 use crate::form;
 use crate::theme::Palette;
+use crate::widgets;
 
 const FIELD_WIDTH: f32 = 280.0;
 
@@ -77,7 +78,8 @@ impl ProjectNameDialog {
     }
 
     pub fn show(&mut self, ctx: &egui::Context) -> Option<ProjectDialogAction> {
-        let modal = Modal::new(Id::new("project_name_dialog")).show(ctx, |ui| self.contents(ui));
+        let modal =
+            widgets::dialog(ctx, Id::new("project_name_dialog")).show(ctx, |ui| self.contents(ui));
         if modal.should_close() {
             return Some(ProjectDialogAction::Close);
         }
@@ -154,7 +156,7 @@ impl DeleteProjectConfirmation {
     }
 
     pub fn show(&self, ctx: &egui::Context) -> Option<DeleteProjectChoice> {
-        let modal = Modal::new(Id::new("delete_project")).show(ctx, |ui| {
+        let modal = widgets::dialog(ctx, Id::new("delete_project")).show(ctx, |ui| {
             ui.heading("Delete project");
             ui.label(self.message());
             ui.separator();

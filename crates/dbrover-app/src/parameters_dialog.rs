@@ -4,10 +4,11 @@
 use dbrover_core::Cell;
 use dbrover_sql::ParameterValues;
 use dbrover_store::ConsoleKey;
-use egui::{Align, Id, Key, Layout, Modal, TextEdit, vec2};
+use egui::{Align, Id, Key, Layout, TextEdit, vec2};
 
 use crate::console::SubmittedRun;
 use crate::form;
+use crate::widgets;
 
 /// Room for a date and time, or a short sentence, in each value field.
 const VALUE_WIDTH: f32 = 260.0;
@@ -79,7 +80,7 @@ impl ParametersDialog {
     }
 
     pub fn show(&mut self, ctx: &egui::Context) -> Option<ParametersChoice> {
-        let modal = Modal::new(Id::new("parameters_dialog")).show(ctx, |ui| {
+        let modal = widgets::dialog(ctx, Id::new("parameters_dialog")).show(ctx, |ui| {
             ui.heading("Parameter values");
             ui.label("Each value is sent as text, which the database converts as it needs.");
             ui.add_space(4.0);

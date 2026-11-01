@@ -5,10 +5,11 @@
 use dbrover_core::{DataSource, DataSourceId, PasswordCommand};
 use dbrover_engine::Event;
 use dbrover_store::TrustedCommand;
-use egui::{Align, Id, Layout, Modal, RichText, ScrollArea, TextEdit};
+use egui::{Align, Id, Layout, RichText, ScrollArea, TextEdit};
 
 use crate::form;
 use crate::theme::Palette;
+use crate::widgets;
 
 const DIALOG_WIDTH: f32 = 460.0;
 /// Rows of the command shown before it scrolls: a cloud CLI's token command, one item per
@@ -51,8 +52,8 @@ impl PasswordCommandPrompt {
     }
 
     pub fn show(&mut self, ctx: &egui::Context) -> Option<PasswordCommandAction> {
-        let modal =
-            Modal::new(Id::new("password_command_prompt")).show(ctx, |ui| self.contents(ui));
+        let modal = widgets::dialog(ctx, Id::new("password_command_prompt"))
+            .show(ctx, |ui| self.contents(ui));
         if modal.should_close() {
             return Some(PasswordCommandAction::Cancel);
         }

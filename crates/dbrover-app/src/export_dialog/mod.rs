@@ -15,8 +15,8 @@ use dbrover_export::{
     RowSource, SourceTable, SqlTable, export_choices, render,
 };
 use egui::{
-    Button, Id, Modal, Response, RichText, ScrollArea, TextEdit, TextStyle, Ui, WidgetInfo,
-    WidgetType, vec2,
+    Button, Id, Response, RichText, ScrollArea, TextEdit, TextStyle, Ui, WidgetInfo, WidgetType,
+    vec2,
 };
 use serde::{Deserialize, Serialize};
 
@@ -182,7 +182,7 @@ impl ExportDialog {
     }
 
     pub fn show(&mut self, ctx: &egui::Context) -> Option<ExportDialogAction> {
-        let modal = Modal::new(Id::new("export_rows")).show(ctx, |ui| self.contents(ui));
+        let modal = widgets::dialog(ctx, Id::new("export_rows")).show(ctx, |ui| self.contents(ui));
         if modal.should_close() {
             return Some(ExportDialogAction::Close);
         }

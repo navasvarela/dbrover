@@ -6,7 +6,7 @@ use dbrover_engine::DdlFailure;
 use dbrover_language::QueryLanguage;
 use dbrover_sql::DdlError;
 use dbrover_store::redact_secrets;
-use egui::{Align, Id, Layout, Modal, ScrollArea, TextEdit, Ui};
+use egui::{Align, Id, Layout, ScrollArea, TextEdit, Ui};
 
 use super::Target;
 use crate::console::highlight::{self, Marks};
@@ -208,7 +208,7 @@ impl Review {
         if !self.confirming {
             return None;
         }
-        let modal = Modal::new(Id::new("object_dialog_careful")).show(ctx, |ui| {
+        let modal = widgets::dialog(ctx, Id::new("object_dialog_careful")).show(ctx, |ui| {
             ui.heading(format!("Run on \u{201c}{}\u{201d}?", target.name));
             ui.label(format!(
                 "\u{201c}{}\u{201d} is careful, and this changes the schema.",

@@ -14,7 +14,7 @@ use dbrover_engine::{Command, Event, ImportFailure, RowsImport};
 use dbrover_language::QueryLanguage;
 use dbrover_sql::Dialect;
 use dbrover_store::Separator;
-use egui::{Align, Button, ComboBox, Grid, Id, Layout, Modal, RichText, ScrollArea, Ui};
+use egui::{Align, Button, ComboBox, Grid, Id, Layout, RichText, ScrollArea, Ui};
 
 use crate::form;
 use crate::icons;
@@ -174,7 +174,7 @@ impl CsvImportDialog {
     }
 
     pub fn show(&mut self, ctx: &egui::Context) -> Option<CsvImportAction> {
-        let modal = Modal::new(Id::new("csv_import")).show(ctx, |ui| self.contents(ui));
+        let modal = widgets::dialog(ctx, Id::new("csv_import")).show(ctx, |ui| self.contents(ui));
         if modal.should_close() && !matches!(self.state, State::Importing { .. }) {
             return Some(CsvImportAction::Close);
         }

@@ -8,7 +8,7 @@ use dbrover_store::{
     DataSourceImport, Difference, EntryStatus, ImportChoice, ImportChoices, ImportPlan,
     ImportPreview, MissingPath, ProjectImport,
 };
-use egui::{Align, Id, Layout, Modal, RichText, ScrollArea, Ui};
+use egui::{Align, Id, Layout, RichText, ScrollArea, Ui};
 
 use crate::form;
 use crate::icons;
@@ -81,7 +81,8 @@ impl ImportDialog {
     }
 
     pub fn show(&mut self, ctx: &egui::Context) -> Option<ImportAction> {
-        let modal = Modal::new(Id::new("import_data_sources")).show(ctx, |ui| self.contents(ui));
+        let modal =
+            widgets::dialog(ctx, Id::new("import_data_sources")).show(ctx, |ui| self.contents(ui));
         if modal.should_close() {
             return Some(ImportAction::Close);
         }

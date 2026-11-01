@@ -1830,3 +1830,12 @@ one PR each:
 **Exit:** menus, buttons and dialogs have room around their text in both themes, a destructive
 action can't be mistaken for Cancel, the explorer and grid stay dense, and the macOS menu bar is
 untouched.
+
+**Demo note:** built. What to try: right-click a table in the explorer or a cell in the grid,
+and the menu's entries are padded and as tall as a button, with a highlight that follows the
+pointer without gaps; on Linux and Windows the menu bar's titles highlight like buttons. Buttons
+and fields have an outline at rest. **Delete…** on a data source asks in a dialog with room
+around its text, and **Delete** is red beside an outlined **Cancel**; the data source dialog's
+**Save** is filled with the primary colour and darkens under the pointer. Running `DELETE FROM`
+a table without `WHERE` asks with a red **Run anyway**. The results grid keeps its row height.
+The manual's pictures and the website's stills and hero clip show the new look.

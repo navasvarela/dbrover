@@ -4,8 +4,8 @@
 use egui::containers::menu::{self, MenuButton, MenuConfig};
 use egui::text::{LayoutJob, TextFormat};
 use egui::{
-    Button, Color32, InnerResponse, IntoAtoms, Popup, Response, RichText, TextStyle, Ui, Vec2,
-    WidgetInfo, WidgetType,
+    Button, Color32, Frame, Id, InnerResponse, IntoAtoms, Modal, Popup, Response, RichText,
+    TextStyle, Ui, Vec2, WidgetInfo, WidgetType,
 };
 
 use crate::{fonts, theme};
@@ -75,6 +75,13 @@ impl<'a> IconButton<'a> {
 /// An icon on its own, in the icon font.
 pub fn glyph(glyph: &str) -> RichText {
     RichText::new(glyph).family(fonts::icon_family())
+}
+
+/// A modal dialog with a window's margin rather than egui's default, a popup's, which is sized
+/// for menus and leaves a dialog's text and buttons against its edge.
+pub fn dialog(ctx: &egui::Context, id: Id) -> Modal {
+    let style = ctx.global_style();
+    Modal::new(id).frame(Frame::popup(&style).inner_margin(style.spacing.window_margin))
 }
 
 /// A menu opened by right-clicking `response`, in DbRover's menu style. Returns what

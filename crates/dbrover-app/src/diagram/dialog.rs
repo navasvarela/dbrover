@@ -4,12 +4,13 @@
 use std::collections::BTreeSet;
 
 use dbrover_core::{CatalogNode, CatalogPath, DataSourceId, FolderKind, NodeKind};
-use egui::{Align, Id, Layout, Modal, ScrollArea, TextEdit, Ui};
+use egui::{Align, Id, Layout, ScrollArea, TextEdit, Ui};
 
 use super::Growth;
 use crate::catalog_tree::{CatalogTree, Children, LevelEnd};
 use crate::form;
 use crate::theme::Palette;
+use crate::widgets;
 
 /// Past this many tables the dialog asks to narrow the choice before opening: a diagram that
 /// big is hard to read at any zoom that shows it whole, and slow to load from a distant
@@ -71,7 +72,7 @@ impl DiagramDialog {
         ctx: &egui::Context,
         catalog: Option<&CatalogTree>,
     ) -> Option<DiagramDialogAction> {
-        let modal = Modal::new(Id::new("diagram_dialog")).show(ctx, |ui| {
+        let modal = widgets::dialog(ctx, Id::new("diagram_dialog")).show(ctx, |ui| {
             ui.set_width(FIELD_WIDTH + 80.0);
             self.contents(ui, catalog)
         });

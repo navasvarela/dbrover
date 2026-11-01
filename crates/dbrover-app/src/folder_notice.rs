@@ -3,9 +3,10 @@
 
 use std::path::PathBuf;
 
-use egui::{Align, Id, Layout, Modal, RichText};
+use egui::{Align, Id, Layout, RichText};
 
 use crate::theme::Palette;
+use crate::widgets;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FolderNotice {
@@ -20,7 +21,7 @@ pub enum FolderNotice {
 impl FolderNotice {
     /// Shows the notice. Returns `true` once the user closes it.
     pub fn show(&self, ctx: &egui::Context) -> bool {
-        let modal = Modal::new(Id::new("folder_notice")).show(ctx, |ui| {
+        let modal = widgets::dialog(ctx, Id::new("folder_notice")).show(ctx, |ui| {
             let palette = &Palette::for_visuals(ui.visuals());
             ui.set_max_width(420.0);
             match self {
