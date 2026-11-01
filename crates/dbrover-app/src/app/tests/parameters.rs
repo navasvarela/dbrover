@@ -40,6 +40,7 @@ fn asks_for_parameter_values_and_remembers_them_in_the_console() {
     harness.key_press(egui::Key::Enter);
     step_until_visible(&mut harness, "1 row");
     assert!(harness.query_by_label("Parameter values").is_none());
+    step_until_runs_finish(&mut harness);
 
     run_and_wait_for_dialog(&mut harness);
     assert_eq!(

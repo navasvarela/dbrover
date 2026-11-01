@@ -13,7 +13,7 @@ fn start_with_title_bar(dir: &Path) -> Harness<'static, DbRoverApp> {
             .unwrap()
             .with_integrated_title_bar()
     });
-    step_until_visible(&mut harness, "Engine running");
+    crate::test_support::wait_for_startup(&mut harness);
     harness
 }
 

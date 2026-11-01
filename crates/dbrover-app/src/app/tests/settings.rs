@@ -210,14 +210,10 @@ fn opens_the_keymap_page_from_the_menu_and_the_status_bar() {
     assert_eq!(settings_tabs(&harness), 1);
     harness.get_by_label("Create keymap.toml").click();
     let keymap = dir.path().join("keymap.toml");
+    // The file exists before its text is in, so wait for the text.
     step_until(&mut harness, "keymap.toml to be written", |_| {
-        keymap.exists()
+        std::fs::read_to_string(&keymap).is_ok_and(|text| text.contains("# \"console.format\""))
     });
-    assert!(
-        std::fs::read_to_string(&keymap)
-            .unwrap()
-            .contains("# \"console.format\"")
-    );
 
     std::fs::write(&keymap, "[bindings]\n\"console.walk\" = \"f6\"\n").unwrap();
     harness.get_by_label("Reload").click();

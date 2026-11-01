@@ -175,8 +175,9 @@ fn view_actions_creates_the_file_once_and_lists_every_action_after_a_reload() {
 
     harness.get_by_label("Create actions.toml").click();
     let file = dir.path().join("actions.toml");
+    // The file exists before its text is in, and writing over it then would mix the two.
     step_until(&mut harness, "actions.toml being written", |_| {
-        file.exists()
+        std::fs::read_to_string(&file).is_ok_and(|text| text == crate::custom_actions::TEMPLATE)
     });
     assert!(harness.query_by_label_contains("actions.toml: ").is_none());
 

@@ -383,6 +383,23 @@ impl DbRoverApp {
         self.consoles.open_consoles()
     }
 
+    /// Whether everything the engine reports at startup has arrived, for tests that must not
+    /// act on a half-loaded app.
+    ///
+    /// The engine sends its files (keymap, settings, custom files, projects, data sources,
+    /// consoles, diagrams) in that order before it handles any command. The update check is a
+    /// command the app sends once the settings arrive, so its answer comes after all of them.
+    /// That holds only while the settings check for updates at startup, as the defaults do;
+    /// with the check off this stays false.
+    #[cfg(test)]
+    pub fn has_finished_starting(&self) -> bool {
+        use crate::updates::UpdateStatus;
+        !matches!(
+            self.updates.status(),
+            UpdateStatus::NotChecked | UpdateStatus::Checking
+        )
+    }
+
     fn drain_engine_events(&mut self) {
         loop {
             let Some(engine) = &mut self.engine else {
@@ -2630,12 +2647,17 @@ mod tests {
     /// The app's own default window size, so tests see the layout a new user sees. At
     /// egui_kittest's 800x600 the console is too narrow for the results summary row.
     fn harness_at_default_size() -> egui_kittest::HarnessBuilder<DbRoverApp> {
-        Harness::builder().with_size(crate::DEFAULT_WINDOW_SIZE)
+        Harness::builder()
+            .with_size(crate::DEFAULT_WINDOW_SIZE)
+            .with_max_steps(crate::test_support::MAX_STEPS)
     }
 
     fn start_app(dir: &Path, log_feed: LogFeed) -> Harness<'static, DbRoverApp> {
         let config = engine_config(dir);
-        harness_at_default_size().build_eframe(|cc| DbRoverApp::new(cc, log_feed, config).unwrap())
+        let mut harness = harness_at_default_size()
+            .build_eframe(|cc| DbRoverApp::new(cc, log_feed, config).unwrap());
+        crate::test_support::wait_for_startup(&mut harness);
+        harness
     }
 
     /// Saves one SQLite data source named `shop`, over a database with `schema`.
@@ -3407,8 +3429,16 @@ mod tests {
         harness.get_by_label("Save project settings").scroll_to_me();
         harness.run();
         harness.get_by_label("Save project settings").click();
-        step_until(&mut harness, "the project being saved", |_| {
-            saved_project(dir.path()).mcp_enabled
+        // Waits for the app to hear of the save, not just for the file: the page drops its
+        // draft when it does, which would undo a reset made in between.
+        step_until(&mut harness, "the project being saved", |harness| {
+            harness
+                .state()
+                .state
+                .projects
+                .projects()
+                .iter()
+                .any(|project| project.mcp_enabled)
         });
         let saved = saved_project(dir.path());
         assert_eq!(saved.mcp.write, Some(true));
@@ -4651,6 +4681,18 @@ mod tests {
         harness.run();
         harness.get_by_label("Open data").click();
         step_until_visible(harness, rows_shown);
+        step_until_runs_finish(harness);
+    }
+
+    /// Waits for every console's run to end. A statement's rows show before its run does, and
+    /// until then the toolbar's Run and Explain are disabled, so a click on them does nothing.
+    fn step_until_runs_finish(harness: &mut Harness<'_, DbRoverApp>) {
+        step_until(harness, "the console's run finishing", |harness| {
+            harness
+                .state()
+                .open_consoles()
+                .all(|console| !console.is_running())
+        });
     }
 
     #[test]

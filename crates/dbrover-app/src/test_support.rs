@@ -25,6 +25,21 @@ use crate::log_console::LogFeed;
 /// to a database can be slow on a busy CI machine.
 const WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How many frames `Harness::run` may take to settle, in place of egui_kittest's 4.
+///
+/// `run` steps until a frame asks for no immediate repaint. Besides the UI's own repaints,
+/// every engine event asks for one (`EguiRepaint`), and keeps the next frame asking too, so
+/// `run` lasts up to two frames for each event that lands while it steps. A frame takes about
+/// a millisecond, so whether an engine reply lands inside `run` is down to scheduling: on a
+/// busy CI runner the replies to a click, or the tail of the startup loads, took `run` past 4
+/// frames, and the test failed with "Harness::run exceeded max_steps (4)".
+///
+/// Counted in events, an action's replies are a handful, and the startup loads a dozen, so 64
+/// frames outlast them however they are spread out. It costs a passing test nothing: `run`
+/// returns at the first settled frame. A UI that never settles, such as one showing a spinner,
+/// still fails within a fraction of a second.
+pub const MAX_STEPS: u64 = 64;
+
 /// Passwords in memory, so tests never touch the real keychain.
 #[derive(Default)]
 pub struct MemorySecrets(Mutex<HashMap<(DataSourceId, Secret), Password>>);
@@ -144,7 +159,8 @@ impl ProgramRunner for ScriptedPrograms {
     }
 }
 
-/// Starts the app with its data source file in `dir`.
+/// Starts the app with its data source file in `dir`, and waits for it to finish loading (see
+/// [`wait_for_startup`]).
 pub fn start_app(
     builder: HarnessBuilder<DbRoverApp>,
     dir: &Path,
@@ -168,7 +184,23 @@ pub fn start_app(
         known_hosts: dir.join("known_hosts"),
         idle_ping_after: dbrover_engine::IDLE_PING_AFTER,
     };
-    builder.build_eframe(|cc| DbRoverApp::new(cc, log_feed, config).unwrap())
+    let mut harness = builder
+        .with_max_steps(MAX_STEPS)
+        .build_eframe(|cc| DbRoverApp::new(cc, log_feed, config).unwrap());
+    wait_for_startup(&mut harness);
+    harness
+}
+
+/// Steps the app until the engine has reported everything it loads at startup.
+///
+/// Without this, a test starts clicking as soon as the first thing it waits for shows, such as
+/// "Engine running" or a data source, while the rest is still on its way. Some of it changes
+/// what the test looks for: a data source's menu has no **Diagrams** item until the saved
+/// diagrams arrive. And each late event keeps `Harness::run` stepping (see [`MAX_STEPS`]).
+pub fn wait_for_startup(harness: &mut Harness<'_, DbRoverApp>) {
+    step_until(harness, "the engine finishing its startup", |harness| {
+        harness.state().has_finished_starting()
+    });
 }
 
 /// Steps the app until `done` holds; engine events arrive asynchronously, so a fixed number of
