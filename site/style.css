@@ -419,62 +419,6 @@ h3 { margin: 0 0 8px; font-size: 1.05rem; font-weight: 600; }
 .platforms pre { align-self: stretch; min-width: 0; margin: 0; white-space: pre-wrap; }
 .source { margin: 40px 0 0; color: var(--text-weak); text-align: center; }
 
-/* The page about other tools: an intro, the feature table, then the gaps and alternatives. */
-.topbar nav a[aria-current="page"] { color: var(--text); }
-.page-intro { padding-top: 32px; margin-bottom: -40px; }
-.page-intro h1 {
-  margin: 0 0 16px;
-  font-size: clamp(2rem, 5vw, 3rem);
-  line-height: 1.1;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  text-wrap: balance;
-}
-.page-intro .lede { margin: 0; }
-.strip h3 { margin: 0 0 8px; font-size: 1.15rem; }
-.section-lede { max-width: 75ch; margin: -8px 0 20px; color: var(--text-weak); }
-.section-lede strong { color: var(--text); font-weight: 600; }
-
-/* Wide tables scroll inside their frame, never the page. */
-.matrix {
-  overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--panel);
-}
-.matrix:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
-.matrix table { width: 100%; min-width: 860px; border-collapse: collapse; font-size: 0.92rem; }
-.matrix th, .matrix td {
-  padding: 10px 14px;
-  border-top: 1px solid var(--border);
-  text-align: left;
-  vertical-align: top;
-}
-.matrix thead th { border-top: 0; font-weight: 600; white-space: nowrap; }
-.matrix tbody th[scope="row"] { width: 18%; font-weight: 600; }
-.matrix td { color: var(--text-weak); }
-.matrix .ours { background: color-mix(in srgb, var(--primary) 7%, transparent); color: var(--text); }
-.matrix thead .ours { color: var(--primary); }
-.matrix .group th {
-  padding-top: 18px;
-  color: var(--primary);
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.two-up {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
-  gap: 48px;
-}
-.two-up h2 { font-size: 1.4rem; }
-.plain-list { margin: 0; padding-left: 1.2em; color: var(--text-weak); }
-.plain-list li { margin: 8px 0; }
-.plain-list li::marker { color: var(--primary); }
-.plain-list strong { color: var(--text); font-weight: 600; }
-
 footer {
   max-width: var(--width);
   margin: 0 auto;

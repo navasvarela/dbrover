@@ -34,7 +34,7 @@ case "${version}" in
     0.[0-9].* | 0.1[0-2].*) files=dbdesk ;;
     *) files=dbrover ;;
 esac
-for page in index.html compare.html; do
+for page in index.html; do
     sed -e "s/{{version}}/${version}/g" -e "s/{{files}}/${files}/g" \
         "${root}/site/${page}" > "${out}/${page}"
 done
