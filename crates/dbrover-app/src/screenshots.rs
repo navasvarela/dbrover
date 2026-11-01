@@ -123,6 +123,15 @@ UPDATE orders SET status = 'shipped' WHERE id = 4;
 
 const DELETE_EVERYTHING: &str = "DELETE FROM order_items;\n";
 
+const REVENUE_BY_MONTH: &str = "-- Revenue by month
+SELECT strftime('%Y-%m', o.placed_at) AS month, ROUND(SUM(t.total), 2) AS revenue
+FROM orders o
+JOIN order_totals t ON t.id = o.id
+WHERE o.status <> 'cancelled'
+GROUP BY month
+ORDER BY month;
+";
+
 struct Scene {
     name: &'static str,
     data_sources: FixtureSources,
@@ -403,6 +412,13 @@ const SCENES: &[Scene] = &[
         name: "multiple-statements",
         data_sources: FixtureSources::Shop,
         play: multiple_statements,
+        keeps_pointer: false,
+        needs: &[],
+    },
+    Scene {
+        name: "chart",
+        data_sources: FixtureSources::Shop,
+        play: chart,
         keeps_pointer: false,
         needs: &[],
     },
@@ -1697,6 +1713,13 @@ fn results_paging(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
 fn multiple_statements(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
     open_console(harness, "shop", SCRIPT);
     run_all(harness, "Done in");
+}
+
+fn chart(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    open_console(harness, "shop", REVENUE_BY_MONTH);
+    run_all(harness, "6 rows");
+    harness.get_by_label("Chart").click();
+    step_until_visible(harness, "Charting 6 rows");
 }
 
 fn console_error(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {

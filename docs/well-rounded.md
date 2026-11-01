@@ -5,7 +5,8 @@ design is in [Power in the grid](grid-power.md), W7's in
 [Exports and your own formats](exports.md)); W8 planned, designed there too. W10, the visual
 explain plan, designed on 2026-10-31 [below](#w10--a-visual-explain-plan) and built. W11,
 read-only on every engine, designed on 2026-10-31 [below](#w11--read-only-on-every-engine) and
-built. W12, charts from results, designed on 2026-11-01 [below](#w12--charts-from-results).
+built. W12, charts from results, designed on 2026-11-01 [below](#w12--charts-from-results) and
+built but for its export, which waits for ER1's.
 Proposed on 2026-10-24.
 
 DbRover browses, queries and edits PostgreSQL, SQLite, MySQL and MariaDB, and ships as a
@@ -488,8 +489,8 @@ exported.
 - **What it shows:** axes with ticks and labels, the X column's name under the chart and the
   Y column's name (or the legend) beside it, and a gap, never a zero, wherever a value
   is missing. Hovering a bar or a point shows its X value and every series' value there.
-- **A line under the chart** says what was charted and what wasn't: "12 rows", "Charting the
-  first 250 of 1,200 loaded rows", "3 rows left out: no X value".
+- **A line under the chart** says what was charted and what wasn't: "Charting 12 rows",
+  "Charting the first 250 of 1,200 rows", "3 rows left out: no month value".
 - **Export ▾** writes **SVG…** or **PNG…** at 1×, 2× or 3×, at the size the chart has on the
   screen, in the light theme's colours on white, through ER1's export (see
   [Export](#export-shared-with-er1)).

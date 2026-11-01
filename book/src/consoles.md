@@ -478,6 +478,41 @@ failed; failed statements' tabs are red. Hover over a tab to see its statement.
 
 ![A script of three statements](images/multiple-statements.png)
 
+### Charts
+
+**Chart**, beside **Grid** above the rows, draws the result as a chart: totals by month as bars,
+a measure over time as a line, one measure against another as a scatter. It charts the rows
+already loaded, in the grid's order and through its filter, and runs nothing again; sort or
+filter the grid, or click **Load more rows**, and the chart follows. **Grid** switches back.
+For documents, **Chart** comes after **Tree** and **JSON**.
+
+![Revenue by month, charted as bars](images/chart.png)
+
+- **Bars**, **Lines** and **Scatter** pick the kind. Bars place each row in a slot of its own,
+  in the grid's order, and grow from zero. Lines and scatters place numbers and dates along
+  the bottom by value, and lines join the points in that order. Text along the bottom is
+  placed in slots in the grid's order, as bars are.
+- **X** picks the column along the bottom, from any column. **Y** ticks the columns of
+  numbers measured up the side. Each is a series in a colour of its own, with a legend once
+  there are two.
+- **What it starts with:** X is the first column of dates or text, and Y every other column of
+  numbers, up to eight. A month written as text (`to_char(day, 'YYYY-MM')`) starts as bars, a
+  date or timestamp (`date_trunc('month', day)`) as a line, and two columns of numbers as a
+  scatter.
+- **Which columns are numbers and dates** comes from the types the database reports. Where it
+  reports none, as PostgreSQL doesn't, it comes from the values: a column is numbers if every
+  value reads as one, and dates if every value is an ISO date or timestamp. A value with a
+  leading zero, such as `00501`, makes its column text, since it is a code rather than a
+  quantity. A result with no column of numbers says "A chart needs a column of numbers".
+- **Missing values:** a row with no X value is left out, and a null or a value that isn't a
+  number leaves a gap: no bar, and a break in the line. It is never drawn as zero. The line
+  under the chart counts both: `Charting 12 rows · 1 gap in refunds: null or not a number`.
+- **Many rows:** bars chart the first 250 rows, lines and scatters the first 50,000, and the
+  line under the chart says so. To chart more, group the rows in the query.
+- **Hover** over a bar or a point to see its row's X and Y values, as the grid shows them.
+- Running the console again keeps the chart open, and keeps its X, Y and kind while the result
+  has the same columns.
+
 ## Editing data
 
 You can change values in the grid when the result is a `SELECT` from a single table (no joins,

@@ -1327,7 +1327,8 @@ three to five, **L** a track of its own).
   that writes; ClickHouse's functions don't write, so a `SELECT` that lifts `readonly`, and an
   `INSERT` sent past the check); an MCP client can query a SQL Server data source that has an
   MCP login.
-- **W12 — Charts from results (M):** designed on 2026-11-01 in
+- **W12 — Charts from results (M):** built but for export (W12e, which waits for ER1e);
+  designed on 2026-11-01 in
   [A well-rounded app](well-rounded.md#w12--charts-from-results). A bar, line or scatter chart
   of a result's columns, in a tab beside the grid, from the rows already fetched, exported as
   PNG or SVG like ER1's diagrams.
@@ -1348,6 +1349,21 @@ three to five, **L** a track of its own).
   - **W12c — The chart tab:** **Grid** and **Chart**, the kind, X and Y, hover and the legend.
   - **W12d — Manual:** a section on charts, and this demo note.
   - **W12e — Export:** SVG and PNG through ER1e's export.
+
+  **W12 demo note:** built in #319, #324, #325 and this manual layer, with a section on charts
+  in [Query consoles](../book/src/consoles.md#charts). Run
+  `SELECT to_char(day, 'YYYY-MM') AS month, sum(total) AS total FROM orders GROUP BY 1 ORDER
+  BY 1` on PostgreSQL and click **Chart** beside **Grid**: the months open as bars from zero,
+  `X: month` and `Y: total` above them, "Charting 3 rows" under them, and hovering a bar
+  shows its month and total. **Lines** joins them; **Grid** goes back to the rows, and nothing
+  runs again. With `date_trunc('month', day)` in place of `to_char`, the next run keeps the
+  chart open and starts as a line over time, its ticks dated. A null total is a gap, counted
+  under the chart; a result with no numbers says so. Departures from the design: none of
+  substance; the line under the chart reads "Charting 12 rows" rather than "12 rows", which
+  the summary above the grid already says. Covered by `dbrover-chart`'s unit tests, kittest
+  tests of the tab, and a whole-app test of the exit's bars and lines on the PostgreSQL test
+  server. Still to come: export (W12e). Still to try by eye: a 50,000-point scatter's frame
+  time, against the limit.
 
   **Exit:** a `GROUP BY` result of months and totals charts as bars and lines, and exports as an
   SVG a browser shows.
