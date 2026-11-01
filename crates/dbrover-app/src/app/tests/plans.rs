@@ -73,7 +73,7 @@ impl Drop for Shop<'_> {
 }
 
 /// Opens a console on the data source named `name` and types `sql` into it.
-fn console_with(harness: &mut Harness<'_, DbRoverApp>, name: &str, sql: &str) {
+pub(super) fn console_with(harness: &mut Harness<'_, DbRoverApp>, name: &str, sql: &str) {
     step_until_visible(harness, &format!("Expand {name}"));
     harness.get_by_label(name).click_secondary();
     harness.run_steps(2);
@@ -104,7 +104,7 @@ fn shown_plan(harness: &Harness<'_, DbRoverApp>) -> Option<dbrover_plan::Plan> {
 }
 
 /// The app, with one data source named "pg" on the test server at `safety`.
-fn start_on(
+pub(super) fn start_on(
     server: &PostgresTestServer,
     dir: &Path,
     safety: dbrover_core::SafetyLevel,

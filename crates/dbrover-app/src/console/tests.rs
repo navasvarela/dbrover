@@ -1507,3 +1507,196 @@ fn the_empty_results_panel_names_the_run_keys_the_keymap_has() {
         "Run the statement at the cursor with {current}, or the whole console with {all}."
     ));
 }
+
+/// Charts from results (W12): the chart tab beside the grid.
+mod charts {
+    use dbrover_chart::{ChartKind, Mark};
+    use egui_kittest::kittest::Queryable;
+
+    use crate::test_support::ui_harness;
+
+    use super::*;
+
+    const MONTHS: &str = "SELECT to_char(day, 'YYYY-MM') AS month, sum(total) AS total \
+                          FROM orders GROUP BY 1 ORDER BY 1";
+
+    /// A console that ran `sql`, whose result was `columns` and `rows`, with no declared types,
+    /// as PostgreSQL's text protocol answers.
+    fn ran(console: &mut QueryConsole, run: RunId, columns: &[&str], rows: &[&[Option<&str>]]) {
+        let statements = console.statements_to_run(RunScope::All);
+        console.begin_run(run, &statements);
+        console.apply(&Event::StatementStarted {
+            run,
+            statement: 0,
+            columns: columns
+                .iter()
+                .map(|name| ColumnInfo {
+                    name: (*name).to_owned(),
+                    type_name: None,
+                })
+                .collect(),
+            shape: ResultShape::Rows,
+        });
+        console.apply(&Event::RowsFetched {
+            run,
+            statement: 0,
+            rows: rows
+                .iter()
+                .map(|row| row.iter().map(|value| value.map(str::to_owned)).collect())
+                .collect(),
+            more: false,
+        });
+    }
+
+    fn months_and_totals() -> QueryConsole {
+        let mut console = console(MONTHS);
+        ran(
+            &mut console,
+            RunId(1),
+            &["month", "total"],
+            &[
+                &[Some("2026-01"), Some("120.50")],
+                &[Some("2026-02"), Some("80")],
+                &[Some("2026-03"), Some("200")],
+            ],
+        );
+        console
+    }
+
+    fn tab(console: &QueryConsole) -> &chart::ChartTab {
+        let run = console.run.as_ref().unwrap();
+        &run.statements[run.selected].chart
+    }
+
+    fn series_marks(console: &QueryConsole) -> (usize, usize) {
+        let drawing = tab(console).drawing().expect("the chart is drawn");
+        let bars = drawing
+            .marks
+            .iter()
+            .filter(
+                |mark| matches!(mark, Mark::Rect { rect, .. } if rect.min.y >= drawing.plot.min.y),
+            )
+            .count();
+        let lines = drawing
+            .marks
+            .iter()
+            .filter(|mark| matches!(mark, Mark::Polyline { .. }))
+            .count();
+        (bars, lines)
+    }
+
+    #[test]
+    fn charts_months_and_totals_as_bars_then_as_lines() {
+        let mut console = months_and_totals();
+        let keymap = crate::keymap::Keymap::default();
+        let mut harness = ui_harness(|ui| {
+            let mut actions = Vec::new();
+            results::show(ui, &mut console, &keymap, &[], &mut actions);
+        });
+        harness.get_by_label("2026-02");
+        harness.get_by_label("Chart").click();
+        harness.run();
+        harness.get_by_value("X: month");
+        harness.get_by_label("Y: total");
+        harness.get_by_label("Charting 3 rows");
+        assert!(
+            harness.query_by_label("2026-02").is_none(),
+            "the grid is hidden"
+        );
+        harness.get_by_label("Lines").click();
+        harness.run();
+        harness.get_by_label("Grid").click();
+        harness.run();
+        harness.get_by_label("2026-02");
+        harness.get_by_label("Chart").click();
+        harness.run();
+        drop(harness);
+
+        let choice = tab(&console).choice().unwrap();
+        assert_eq!(choice.kind, ChartKind::Lines);
+        assert_eq!((choice.x, choice.ys.clone()), (0, vec![1]));
+        assert_eq!(series_marks(&console), (0, 1), "one line, no bars");
+    }
+
+    #[test]
+    fn opens_as_bars_over_months_written_as_text() {
+        let mut console = months_and_totals();
+        let keymap = crate::keymap::Keymap::default();
+        let mut harness = ui_harness(|ui| {
+            let mut actions = Vec::new();
+            results::show(ui, &mut console, &keymap, &[], &mut actions);
+        });
+        harness.get_by_label("Chart").click();
+        harness.run();
+        drop(harness);
+        assert_eq!(series_marks(&console), (3, 0));
+    }
+
+    #[test]
+    fn a_result_without_numbers_has_nothing_to_chart() {
+        let mut console = console("SELECT name, city FROM customers");
+        ran(
+            &mut console,
+            RunId(1),
+            &["name", "city"],
+            &[&[Some("Ada"), Some("Leeds")]],
+        );
+        let keymap = crate::keymap::Keymap::default();
+        let mut harness = ui_harness(|ui| {
+            let mut actions = Vec::new();
+            results::show(ui, &mut console, &keymap, &[], &mut actions);
+        });
+        harness.get_by_label("Chart").click();
+        harness.run();
+        harness.get_by_label("A chart needs a column of numbers");
+    }
+
+    #[test]
+    fn running_again_keeps_the_chart_while_the_columns_are_the_same() {
+        let mut console = months_and_totals();
+        let keymap = crate::keymap::Keymap::default();
+        {
+            let mut harness = ui_harness(|ui| {
+                let mut actions = Vec::new();
+                results::show(ui, &mut console, &keymap, &[], &mut actions);
+            });
+            harness.get_by_label("Chart").click();
+            harness.run();
+            harness.get_by_label("Lines").click();
+            harness.run();
+        }
+        ran(
+            &mut console,
+            RunId(2),
+            &["month", "total"],
+            &[&[Some("2026-04"), Some("1")]],
+        );
+        let harness = ui_harness(|ui| {
+            let mut actions = Vec::new();
+            results::show(ui, &mut console, &keymap, &[], &mut actions);
+        });
+        harness.get_by_label("Charting 1 row");
+        drop(harness);
+        assert!(tab(&console).is_shown());
+        assert_eq!(tab(&console).choice().unwrap().kind, ChartKind::Lines);
+
+        ran(
+            &mut console,
+            RunId(3),
+            &["customer", "total"],
+            &[&[Some("Ada"), Some("1")]],
+        );
+        let mut harness = ui_harness(|ui| {
+            let mut actions = Vec::new();
+            results::show(ui, &mut console, &keymap, &[], &mut actions);
+        });
+        harness.run();
+        drop(harness);
+        assert!(tab(&console).is_shown());
+        assert_eq!(
+            tab(&console).choice().unwrap().kind,
+            ChartKind::Bars,
+            "other columns start afresh"
+        );
+    }
+}

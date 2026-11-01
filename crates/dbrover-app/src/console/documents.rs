@@ -121,10 +121,21 @@ fn column_infos(flattened: &Flattened) -> Vec<ColumnInfo> {
 }
 
 /// **Grid**, **Tree** and **JSON**, and how many fields only the tree shows.
-pub fn view_switch(ui: &mut Ui, documents: &mut DocumentResult) {
-    ui.selectable_value(&mut documents.shown_as, ShownAs::Grid, "Grid");
-    ui.selectable_value(&mut documents.shown_as, ShownAs::Tree, "Tree");
-    ui.selectable_value(&mut documents.shown_as, ShownAs::Json, "JSON");
+/// `active` is false while something else, the chart, is shown in place of the documents.
+/// Returns whether one of the documents' views was picked.
+pub fn view_switch(ui: &mut Ui, documents: &mut DocumentResult, active: bool) -> bool {
+    let mut picked = false;
+    for (shown_as, label) in [
+        (ShownAs::Grid, "Grid"),
+        (ShownAs::Tree, "Tree"),
+        (ShownAs::Json, "JSON"),
+    ] {
+        let selected = active && documents.shown_as == shown_as;
+        if ui.selectable_label(selected, label).clicked() {
+            documents.shown_as = shown_as;
+            picked = true;
+        }
+    }
     let hidden = documents.flattened.hidden_columns();
     if hidden > 0 {
         ui.weak(format!("{hidden} more fields only in the tree"))
@@ -133,6 +144,7 @@ pub fn view_switch(ui: &mut Ui, documents: &mut DocumentResult) {
                 dbrover_document::MAX_COLUMNS
             ));
     }
+    picked
 }
 
 /// One document whole, as a tree or as JSON: the one at `index` among those loaded.

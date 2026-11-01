@@ -6,6 +6,7 @@
 mod catalog_lint;
 mod catalog_source;
 pub(crate) mod cell_viewer;
+mod chart;
 mod clipboard;
 mod completion;
 mod completion_popup;
@@ -272,6 +273,8 @@ pub struct StatementView {
     key_bar: results::KeyBar,
     /// The statement explains another, and its one value is a plan to draw.
     plan: Option<plan::PlanView>,
+    /// The chart of the rows, shown in place of the grid when picked.
+    chart: chart::ChartTab,
 }
 
 /// The selected cells of loaded rows, for a custom action: added rows have no values yet.
@@ -1637,6 +1640,14 @@ impl QueryConsole {
         &self.session
     }
 
+    /// The shown result's chart as last laid out, if the chart is shown.
+    #[cfg(test)]
+    pub fn shown_chart(&self) -> Option<&dbrover_chart::Drawing> {
+        let run = self.run.as_ref()?;
+        let chart = &run.statements.get(run.selected)?.chart;
+        chart.is_shown().then(|| chart.drawing()).flatten()
+    }
+
     /// The plan the shown result was read as, if it was an explain's.
     #[cfg(test)]
     pub fn shown_plan(&self) -> Option<&dbrover_plan::Plan> {
@@ -1734,6 +1745,12 @@ impl QueryConsole {
         self.to_file = None;
         self.error_marker = None;
         self.transaction_ended = None;
+        let chart = self
+            .run
+            .as_ref()
+            .and_then(|run| run.statements.get(run.selected))
+            .map(|statement| statement.chart.carried_over())
+            .unwrap_or_default();
         self.run = Some(RunView {
             id: run,
             statements: statements
@@ -1763,6 +1780,7 @@ impl QueryConsole {
                         wrapped: statement.in_database.is_some(),
                         documents: None,
                         plan: statement.plan.map(plan::PlanView::new),
+                        chart: chart.carried_over(),
                     }
                 })
                 .collect(),

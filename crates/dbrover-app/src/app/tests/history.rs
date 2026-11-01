@@ -69,8 +69,12 @@ fn marks_each_statement_with_where_it_came_from_and_filters_by_it() {
 
     // The four recorded, and the console's own SELECT.
     open_history(&mut harness, 5);
+    // The console's results show a Grid switch too, beside the history's Grid badge.
     for badge in ["Console", "Object", "Grid", "Import", "DbRover"] {
-        harness.get_by_label(badge);
+        assert!(
+            harness.query_all_by_label(badge).next().is_some(),
+            "{badge} badge"
+        );
     }
     choose(&mut harness, "All sources", "Grid edits");
     step_until(&mut harness, "the grid edits alone", |harness| {

@@ -11,6 +11,7 @@ use dbrover_store::{ActionId, CustomAction};
 use egui::{Align, Label, Layout, RichText, Sense, TextEdit, Ui};
 use egui_extras::{Column, TableBuilder};
 
+use super::chart;
 use super::documents::{self, CellLook, ColumnFold, DocumentResult, ShownAs};
 use super::edit::{CellEditor, EditSession, Editability, PendingEdits, RowRef};
 use super::grid::{CellPos, GridView, SortKey, tsv_field};
@@ -107,6 +108,10 @@ pub fn show(
         };
         let rearrange = grid_toolbar(ui, statement, &toolbar, actions);
         match &statement.documents {
+            _ if statement.chart.is_shown() => {
+                let (tab, source) = chart_parts(statement, dialect);
+                chart::show(ui, tab, &source);
+            }
             Some(results) if results.shown_as != ShownAs::Grid => {
                 let shown = shown_document(statement);
                 documents::document_view(ui, results, shown, egui::Id::new(("document", run_id.0)));
@@ -285,9 +290,13 @@ fn grid_toolbar(
 ) -> bool {
     // Wrapped: with editing's buttons and counts, it outgrows a narrow console.
     ui.horizontal_wrapped(|ui| {
-        if let Some(results) = &mut statement.documents {
-            documents::view_switch(ui, results);
-            ui.separator();
+        view_switch(ui, statement);
+        ui.separator();
+        if statement.chart.is_shown() {
+            statement.grid.refresh(&statement.rows);
+            let (tab, source) = chart_parts(statement, toolbar.dialect);
+            chart::controls(ui, tab, &source);
+            return false;
         }
         let in_database = statement.grid.is_in_database();
         let hint = if in_database {
@@ -312,6 +321,38 @@ fn grid_toolbar(
         rearrange
     })
     .inner
+}
+
+/// Grid and Chart, with Tree and JSON between them for documents.
+fn view_switch(ui: &mut Ui, statement: &mut StatementView) {
+    let charted = statement.chart.is_shown();
+    let rows_picked = match &mut statement.documents {
+        Some(results) => documents::view_switch(ui, results, !charted),
+        None => ui.selectable_label(!charted, "Grid").clicked(),
+    };
+    if rows_picked {
+        statement.chart.set_shown(false);
+    }
+    let chart = ui
+        .selectable_label(charted, "Chart")
+        .on_hover_text("Chart the loaded rows, in the grid's order and through its filter");
+    if chart.clicked() {
+        statement.chart.set_shown(true);
+    }
+}
+
+/// The statement's chart, and the rows it is drawn from: the grid's, as it shows them.
+fn chart_parts(
+    statement: &mut StatementView,
+    dialect: Option<dbrover_sql::Dialect>,
+) -> (&mut chart::ChartTab, chart::Source<'_>) {
+    let source = chart::Source {
+        columns: &statement.columns,
+        rows: &statement.rows,
+        order: statement.grid.order(),
+        dialect,
+    };
+    (&mut statement.chart, source)
 }
 
 /// The switch between sorting and filtering the loaded rows here and every row in the
