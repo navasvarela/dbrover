@@ -26,3 +26,11 @@ run *args:
 # Run every test, or pass cargo test arguments, e.g. `just test -p dbrover-sql`.
 test *args:
     cargo test {{ if args == "" { "--workspace" } else { args } }}
+
+# Needs cargo-llvm-cov (`cargo install cargo-llvm-cov`). The test servers work as for `just test`.
+# The instrumented build has a target directory of its own (target/llvm-cov-target), so the first
+# run rebuilds everything, DuckDB included.
+
+# Measure the tests' coverage into target/llvm-cov/html; `just coverage --open` opens it.
+coverage *args:
+    cargo llvm-cov --workspace --html {{ args }}

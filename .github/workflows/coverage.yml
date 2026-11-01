@@ -1,0 +1,88 @@
+name: Coverage
+
+# The tests' line coverage, on Linux with every test server, as an `lcov.info` and an HTML report
+# in the run's `coverage` artifact. It runs after each push to main and on demand, not on every
+# pull request: an instrumented build of the workspace is a build of its own, and pull requests
+# already wait for `check`. A pull request that changes this file runs it too, so a change to it
+# is tried before it lands. Nothing requires it, and it shares no job with ci.yml.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - .github/workflows/coverage.yml
+  workflow_dispatch:
+
+# Only the newest commit's coverage is worth having, so a newer push cancels the run before it.
+concurrency:
+  group: coverage-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings --cfg dbrover_prebuilt_duckdb
+  # Coverage comes from the instrumentation's own mapping, not from debug info, and without debug
+  # info the build links faster and its cache is smaller.
+  CARGO_PROFILE_DEV_DEBUG: 0
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    # Like ci.yml's `check`, plus the instrumented tests' slower run. A cold Rust cache builds the
+    # workspace's tests in about 15 minutes.
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      # A cache of its own, saved from main only. ci.yml's caches hold uninstrumented builds,
+      # which cargo-llvm-cov can't reuse: it builds into target/llvm-cov-target with
+      # `-C instrument-coverage` on every crate.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov@0.9.1
+      # From here to the database servers, as in ci.yml's `check` on Linux.
+      - name: Fetch DuckDB's prebuilt library
+        run: |
+          packaging/duckdb/fetch.sh "$(rustc -vV | sed -n 's/^host: //p')" "$RUNNER_TEMP/duckdb" \
+            | tee -a "$GITHUB_ENV"
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
+      - name: Start the database servers
+        env:
+          DBROVER_MONGO_TAG: "7.0"
+        run: |
+          docker compose up -d --wait || { docker compose logs --tail 40; exit 1; }
+          grep -E '^[A-Z_]+=' test-servers.env >> "$GITHUB_ENV"
+      - name: Run the tests
+        run: cargo llvm-cov --workspace --no-report
+      - name: Write the reports
+        run: |
+          cargo llvm-cov report --lcov --output-path coverage/lcov.info
+          cargo llvm-cov report --html --output-dir coverage
+          cargo llvm-cov report | tee coverage/summary.txt
+          lines=$(cargo llvm-cov report --json --summary-only \
+            | jq -r '.data[0].totals.lines | "\(.percent * 100 | round / 100)% (\(.covered) of \(.count) lines)"')
+          {
+            echo "## Coverage: $lines"
+            echo
+            echo "<details><summary>Every file</summary>"
+            echo
+            echo '```'
+            cat coverage/summary.txt
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: coverage/
+          if-no-files-found: error
