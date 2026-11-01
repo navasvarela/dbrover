@@ -8,10 +8,11 @@ use dbrover_store::{
     CONFIG_DIR_FLAG, CONFIG_DIR_VARIABLE, ChosenFolder, ChosenFolderError, ChosenFolderFile,
     FolderCheck, InstallFolders, SettingsFolder, check_folder,
 };
-use egui::{Id, Modal, RichText};
+use egui::{Id, RichText};
 
 use crate::form::{self, Segment};
 use crate::theme::Palette;
+use crate::widgets;
 
 /// The settings folder this session uses, and what Settings › Files needs to change it.
 #[derive(Debug, Clone)]
@@ -110,7 +111,7 @@ pub struct FolderSwitch {
 
 impl FolderSwitch {
     pub fn show(&mut self, ctx: &egui::Context, current: &Path) -> Option<SwitchAction> {
-        let modal = Modal::new(Id::new("folder_switch")).show(ctx, |ui| {
+        let modal = widgets::dialog(ctx, Id::new("folder_switch")).show(ctx, |ui| {
             ui.set_max_width(460.0);
             let palette = Palette::for_visuals(ui.visuals());
             ui.heading("Use another settings folder");
