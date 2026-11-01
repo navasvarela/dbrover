@@ -3,7 +3,8 @@ use dbrover_sql::commits_implicitly;
 use dbrover_store::ConsoleKey;
 use egui::{Align, Id, Layout, Modal};
 
-use dbrover_engine::RunPurpose;
+use dbrover_core::FullScan;
+use dbrover_engine::{RunPurpose, ScanApproval};
 
 use crate::console::{ChangeCount, SubmittedRun, SubmittedStatement};
 
@@ -32,6 +33,9 @@ pub enum Pending {
     Run(SubmittedRun),
     /// The grid's pending edits.
     Edits,
+    /// The rest of a run, from a statement its data source's cost guard held back because it
+    /// would read a whole table; it runs allowed to.
+    Scan(SubmittedRun),
 }
 
 /// The outcome of checking statements before running them.
@@ -102,11 +106,32 @@ pub fn confirm_edits(
     }
 }
 
+/// Asks before running a statement the data source's cost guard held back, and the
+/// statements after it, which `rest` holds.
+pub fn confirm_scan(
+    console: ConsoleKey,
+    data_source: &str,
+    scan: &FullScan,
+    mut rest: SubmittedRun,
+) -> HazardConfirmation {
+    rest.scans = ScanApproval::AllowFirst;
+    HazardConfirmation {
+        console,
+        pending: Pending::Scan(rest),
+        heading: format!("Read all of {}?", scan.table),
+        warnings: vec![
+            scan.describe(),
+            format!("\u{201c}{data_source}\u{201d} asks before reading a whole table."),
+        ],
+    }
+}
+
 impl HazardConfirmation {
     pub fn show(&self, ctx: &egui::Context) -> Option<HazardChoice> {
         let confirm = match self.pending {
             Pending::Run(_) => "Run anyway",
             Pending::Edits => "Apply",
+            Pending::Scan(_) => "Scan anyway",
         };
         let modal = Modal::new(Id::new("hazard_confirmation")).show(ctx, |ui| {
             ui.heading(&self.heading);
@@ -277,6 +302,7 @@ mod tests {
                 parameters: dbrover_sql::ParameterValues::default(),
                 origin: dbrover_engine::RunOrigin::Console,
                 destination: RunDestination::Grid,
+                scans: ScanApproval::Ask,
             }
         };
         let context = |careful| ReviewContext {

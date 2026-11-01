@@ -209,15 +209,40 @@ pub enum ConnectionConfig {
     Elasticsearch(ElasticsearchConfig),
     /// Apache Cassandra and ScyllaDB: one driver serves both.
     Cassandra(CassandraConfig),
+    /// Amazon DynamoDB, on AWS or an emulator of it.
+    #[serde(rename = "dynamodb")]
+    DynamoDb(DynamoDbConfig),
 }
 
 impl ConnectionConfig {
-    /// The same configuration signing in as `user`; `None` for engines without a login.
+    /// The same configuration signing in as `user`; `None` for engines without a login. A
+    /// DynamoDB data source's login is an AWS profile, and an emulator's is unused.
     pub fn with_user(&self, user: &str) -> Option<Self> {
         let mut config = self.clone();
+        if let Self::DynamoDb(dynamodb) = &mut config {
+            user.clone_into(&mut dynamodb.profile);
+            return Some(config);
+        }
         let server = config.server_mut()?;
         user.clone_into(&mut server.user);
         Some(config)
+    }
+
+    /// The data source's cost guard, on an engine that bills each read; `None` elsewhere.
+    pub fn cost_guard(&self) -> Option<CostGuard> {
+        match self {
+            Self::DynamoDb(config) => Some(config.cost_guard),
+            Self::Postgres(_)
+            | Self::Sqlite(_)
+            | Self::Mysql(_)
+            | Self::SqlServer(_)
+            | Self::DuckDb(_)
+            | Self::ClickHouse(_)
+            | Self::Redis(_)
+            | Self::Mongo(_)
+            | Self::Elasticsearch(_)
+            | Self::Cassandra(_) => None,
+        }
     }
 
     /// Where the server is, for engines that connect over the network.
@@ -231,7 +256,7 @@ impl ConnectionConfig {
             Self::Mongo(config) => Some(&config.server),
             Self::Elasticsearch(config) => Some(&config.server),
             Self::Cassandra(config) => Some(&config.server),
-            Self::Sqlite(_) | Self::DuckDb(_) => None,
+            Self::Sqlite(_) | Self::DuckDb(_) | Self::DynamoDb(_) => None,
         }
     }
 
@@ -245,7 +270,7 @@ impl ConnectionConfig {
             Self::Mongo(config) => Some(&mut config.server),
             Self::Elasticsearch(config) => Some(&mut config.server),
             Self::Cassandra(config) => Some(&mut config.server),
-            Self::Sqlite(_) | Self::DuckDb(_) => None,
+            Self::Sqlite(_) | Self::DuckDb(_) | Self::DynamoDb(_) => None,
         }
     }
 
@@ -261,14 +286,15 @@ impl ConnectionConfig {
             Self::Mongo(_) => DriverKind::Mongo,
             Self::Elasticsearch(_) => DriverKind::Elasticsearch,
             Self::Cassandra(_) => DriverKind::Cassandra,
+            Self::DynamoDb(_) => DriverKind::DynamoDb,
         }
     }
 
     /// The database a connection opens, on engines whose catalog has databases above its
     /// schemas; the explorer lists that database's schemas. MySQL's and ClickHouse's databases
     /// are their schemas, so they have no such level, Redis's numbered databases hold keys,
-    /// MongoDB's hold collections, and Elasticsearch has none. Cassandra's keyspaces are its
-    /// schemas.
+    /// MongoDB's hold collections, and Elasticsearch and DynamoDB have none. Cassandra's
+    /// keyspaces are its schemas.
     pub fn database(&self) -> Option<&str> {
         match self {
             Self::Postgres(config) => Some(&config.server.database),
@@ -281,6 +307,7 @@ impl ConnectionConfig {
             | Self::Mongo(_)
             | Self::Elasticsearch(_)
             | Self::Cassandra(_) => None,
+            Self::DynamoDb(_) => None,
         }
     }
 
@@ -306,6 +333,8 @@ impl ConnectionConfig {
             // The keyspace a console starts in, which may be empty: then only qualified names
             // resolve until `USE` picks one.
             Self::Cassandra(config) => &config.server.database,
+            // Tables belong to an account's region, not to a database or schema.
+            Self::DynamoDb(_) => "",
         }
     }
 
@@ -358,6 +387,7 @@ impl ConnectionConfig {
                     .map_err(PlaceholderError::in_setting(Setting::LocalDatacenter))?,
                 statement_timeout: config.statement_timeout,
             }),
+            Self::DynamoDb(config) => Self::DynamoDb(config.resolve(variables)?),
             Self::Sqlite(config) => Self::Sqlite(SqliteConfig {
                 path: expand_path(&config.path, variables)
                     .map_err(PlaceholderError::in_setting(Setting::File))?,
@@ -394,6 +424,7 @@ impl ConnectionConfig {
                 config.server.host.clone()
             }
             Self::Cassandra(config) => config.server.default_name(),
+            Self::DynamoDb(config) => config.default_name(),
             Self::Sqlite(config) => file_name(&config.path),
             Self::DuckDb(config) => match &config.database {
                 DuckDbDatabase::File { path, .. } => file_name(path),
@@ -404,6 +435,13 @@ impl ConnectionConfig {
 }
 
 impl DriverKind {
+    /// Whether a data source signs in as someone whose grants the database enforces: a user
+    /// with a password, or, on DynamoDB, an AWS profile whose IAM policy AWS enforces. Such an
+    /// engine without a read-only mode is served to MCP clients through an MCP login.
+    pub fn has_logins(self) -> bool {
+        self.uses_password() || self == Self::DynamoDb
+    }
+
     /// Whether connections authenticate with a password, so the keychain is worth asking.
     /// Skipping the lookup for other drivers avoids pointless keychain prompts.
     pub fn uses_password(self) -> bool {
@@ -416,7 +454,8 @@ impl DriverKind {
             | Self::Mongo
             | Self::Elasticsearch
             | Self::Cassandra => true,
-            Self::Sqlite | Self::DuckDb => false,
+            // AWS's SDK signs DynamoDB's requests with what the profile names.
+            Self::Sqlite | Self::DuckDb | Self::DynamoDb => false,
         }
     }
 }
@@ -436,6 +475,7 @@ impl fmt::Display for ConnectionConfig {
             },
             Self::Elasticsearch(config) => config.server.fmt(f),
             Self::Cassandra(config) => config.server.fmt(f),
+            Self::DynamoDb(config) => config.fmt(f),
             Self::Sqlite(config) if config.read_only => {
                 write!(f, "{} (read-only)", config.path.display())
             }
@@ -892,6 +932,112 @@ impl CassandraConfig {
     pub const DEFAULT_TLS_PORT: u16 = 9142;
 }
 
+/// Amazon DynamoDB, on AWS or on an emulator of it (DynamoDB Local, LocalStack). Nothing in it
+/// is secret: the profile names an entry of the shared AWS files, which AWS's SDK reads, and an
+/// empty setting leaves the choice to AWS's default chain (`docs/nosql.md`, N5).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DynamoDbConfig {
+    /// Written only for an emulator.
+    #[serde(default, skip_serializing_if = "DynamoDbSignIn::is_profile")]
+    pub sign_in: DynamoDbSignIn,
+    /// The profile of the shared AWS files to sign in with; empty for the default chain's.
+    /// Unused by an emulator.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub profile: String,
+    /// Empty for the profile's or the environment's region.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub region: String,
+    /// An address instead of AWS's own: DynamoDB Local, LocalStack or a VPC endpoint. An
+    /// emulator needs one.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub endpoint: String,
+    /// Written only when turned off.
+    #[serde(default, skip_serializing_if = "CostGuard::is_default")]
+    pub cost_guard: CostGuard,
+}
+
+impl DynamoDbConfig {
+    fn resolve(&self, variables: &dyn Variables) -> Result<Self, PlaceholderError> {
+        let expand_setting = |text: &str, setting| {
+            expand(text, variables).map_err(PlaceholderError::in_setting(setting))
+        };
+        Ok(Self {
+            sign_in: self.sign_in,
+            profile: expand_setting(&self.profile, Setting::Profile)?,
+            region: expand_setting(&self.region, Setting::Region)?,
+            endpoint: expand_setting(&self.endpoint, Setting::Endpoint)?,
+            cost_guard: self.cost_guard,
+        })
+    }
+
+    /// The endpoint's address when there is one, else the region, else the profile.
+    fn default_name(&self) -> String {
+        [&self.endpoint, &self.region, &self.profile]
+            .into_iter()
+            .find(|setting| !setting.is_empty())
+            .map_or_else(|| "DynamoDB".to_owned(), |setting| setting.clone())
+    }
+}
+
+impl fmt::Display for DynamoDbConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let region = match self.region.as_str() {
+            "" => "the profile's region",
+            region => region,
+        };
+        match (self.sign_in, self.endpoint.as_str(), self.profile.as_str()) {
+            (DynamoDbSignIn::LocalEmulator, endpoint, _) => {
+                write!(f, "{endpoint} (local emulator, {region})")
+            }
+            (DynamoDbSignIn::Profile, "", "") => write!(f, "DynamoDB in {region}"),
+            (DynamoDbSignIn::Profile, "", profile) => {
+                write!(f, "DynamoDB in {region} as profile {profile}")
+            }
+            (DynamoDbSignIn::Profile, endpoint, "") => write!(f, "{endpoint} ({region})"),
+            (DynamoDbSignIn::Profile, endpoint, profile) => {
+                write!(f, "{endpoint} ({region}) as profile {profile}")
+            }
+        }
+    }
+}
+
+/// What a data source on an engine that bills each read does before a statement that would
+/// read a whole table: C0's cost guard (`docs/cloud-data.md`), DynamoDB's first
+/// (`docs/nosql.md`, N5). Kept in the engine's own settings while DynamoDB is the only engine
+/// that has one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CostGuard {
+    /// A console asks first; Run to file and the MCP server refuse.
+    #[default]
+    AskBeforeScans,
+    /// Nothing asks. Each page a result shows still reads only so much.
+    Off,
+}
+
+impl CostGuard {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Whom a DynamoDB data source signs in as.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DynamoDbSignIn {
+    /// The data source's profile, or AWS's default chain when it names none.
+    #[default]
+    Profile,
+    /// Made-up credentials, which DynamoDB Local and LocalStack take and AWS never would.
+    LocalEmulator,
+}
+
+impl DynamoDbSignIn {
+    pub fn is_profile(&self) -> bool {
+        *self == Self::Profile
+    }
+}
+
 /// A DuckDB database: a file, or one in memory that starts empty each time, for querying CSV,
 /// Parquet and JSON files with DuckDB's table functions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -944,10 +1090,11 @@ pub enum DriverKind {
     Mongo,
     Elasticsearch,
     Cassandra,
+    DynamoDb,
 }
 
 impl DriverKind {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Postgres,
         Self::Sqlite,
         Self::Mysql,
@@ -958,6 +1105,7 @@ impl DriverKind {
         Self::Mongo,
         Self::Elasticsearch,
         Self::Cassandra,
+        Self::DynamoDb,
     ];
 
     pub fn display_name(self) -> &'static str {
@@ -972,6 +1120,7 @@ impl DriverKind {
             Self::Mongo => "MongoDB",
             Self::Elasticsearch => "Elasticsearch / OpenSearch",
             Self::Cassandra => "Cassandra / ScyllaDB",
+            Self::DynamoDb => "DynamoDB",
         }
     }
 }
@@ -1116,6 +1265,76 @@ mod tests {
             file.data_source[0].config.to_string(),
             "cluster0.example.mongodb.net (connection string)"
         );
+    }
+
+    #[test]
+    fn a_dynamodb_data_source_writes_only_what_it_sets() {
+        let data_source = |config| DataSource {
+            id: DataSourceId::generate(),
+            name: "orders".to_owned(),
+            color: None,
+            safety: SafetyLevel::Normal,
+            project: None,
+            mcp_login: None,
+            config: ConnectionConfig::DynamoDb(config),
+        };
+        let default_chain = DynamoDbConfig::default();
+        let profile = DynamoDbConfig {
+            profile: "analytics".to_owned(),
+            region: "eu-west-1".to_owned(),
+            ..DynamoDbConfig::default()
+        };
+        let emulator = DynamoDbConfig {
+            sign_in: DynamoDbSignIn::LocalEmulator,
+            endpoint: "http://localhost:8000".to_owned(),
+            cost_guard: CostGuard::Off,
+            ..DynamoDbConfig::default()
+        };
+        for (config, written, name, shown) in [
+            (
+                default_chain,
+                "",
+                "DynamoDB",
+                "DynamoDB in the profile's region",
+            ),
+            (
+                profile,
+                "profile = \"analytics\"\nregion = \"eu-west-1\"",
+                "eu-west-1",
+                "DynamoDB in eu-west-1 as profile analytics",
+            ),
+            (
+                emulator,
+                "sign_in = \"local-emulator\"\nendpoint = \"http://localhost:8000\"\ncost_guard = \"off\"",
+                "http://localhost:8000",
+                "http://localhost:8000 (local emulator, the profile's region)",
+            ),
+        ] {
+            let file = File {
+                data_source: vec![data_source(config)],
+            };
+            let text = toml::to_string(&file).unwrap();
+            assert!(text.contains("driver = \"dynamodb\""), "{text}");
+            assert!(text.contains(written), "{text}");
+            for key in ["sign_in", "profile", "region", "endpoint", "cost_guard"] {
+                assert_eq!(
+                    text.contains(&format!("{key} =")),
+                    written.contains(&format!("{key} =")),
+                    "{key}: {text}"
+                );
+            }
+            assert_eq!(toml::from_str::<File>(&text).unwrap(), file);
+            let config = &file.data_source[0].config;
+            assert_eq!(config.default_name(), name);
+            assert_eq!(config.to_string(), shown);
+            assert!(!config.driver().uses_password());
+            assert_eq!(
+                config
+                    .cost_guard()
+                    .is_some_and(|guard| guard == CostGuard::Off),
+                written.contains("cost_guard")
+            );
+        }
     }
 
     #[test]

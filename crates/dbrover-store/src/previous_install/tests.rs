@@ -33,7 +33,7 @@ fn write(path: &Path, contents: &str) {
 fn separate_folders(root: &Path, name: &str) -> InstallFolders {
     InstallFolders {
         settings: root.join("config").join(name),
-        window_state: root.join("data").join(name),
+        data: root.join("data").join(name),
     }
 }
 
@@ -42,7 +42,15 @@ fn one_folder(root: &Path, name: &str) -> InstallFolders {
     let folder = root.join("Application Support").join(name);
     InstallFolders {
         settings: folder.clone(),
-        window_state: folder,
+        data: folder,
+    }
+}
+
+/// Today's layout, as in `~/.config/dbrover` and `~/.local/share/dbrover`.
+fn dot_folders(root: &Path) -> InstallFolders {
+    InstallFolders {
+        settings: root.join(".config/dbrover"),
+        data: root.join(".local/share/dbrover"),
     }
 }
 
@@ -60,9 +68,10 @@ fn previous_settings(folders: &InstallFolders) {
         &settings.join("consoles/6f1c0d9e/scratch.sql"),
         "SELECT 1;\n",
     );
-    write(&folders.window_state.join("app.ron"), "(layout)\n");
+    write(&folders.data.join("app.ron"), "(layout)\n");
+    write(&folders.data.join("trusted_commands.toml"), "[[command]]\n");
     write(
-        &folders.window_state.join("logs/dbrover.2026-10-28"),
+        &folders.data.join("logs/dbrover.2026-10-28"),
         "a log line\n",
     );
 }
@@ -91,12 +100,12 @@ fn copies_every_file_but_the_logs_in_either_layout() {
         expected.retain(|path, _| !path.starts_with("logs") && !path.ends_with(note_file_name()));
         assert_eq!(files_under(&current.settings), expected);
         assert_eq!(
-            fs::read_to_string(current.window_state.join("app.ron")).unwrap(),
+            fs::read_to_string(current.data.join("app.ron")).unwrap(),
             "(layout)\n"
         );
-        assert!(!current.window_state.join("logs").exists());
+        assert!(!current.data.join("logs").exists());
         assert!(!staging_folder(&current.settings).exists());
-        assert!(!staging_folder(&current.window_state).exists());
+        assert!(!staging_folder(&current.data).exists());
     }
 }
 
@@ -107,7 +116,7 @@ fn leaves_the_previous_folders_as_they_were_apart_from_the_note() {
     let current = separate_folders(dir.path(), "new-name");
     previous_settings(&previous);
     let settings_before = files_under(&previous.settings);
-    let window_state_before = files_under(&previous.window_state);
+    let data_before = files_under(&previous.data);
 
     adopt(&previous, &current);
 
@@ -116,7 +125,7 @@ fn leaves_the_previous_folders_as_they_were_apart_from_the_note() {
         .remove(Path::new(&note_file_name()))
         .expect("a note in the previous settings folder");
     assert_eq!(settings_after, settings_before);
-    assert_eq!(files_under(&previous.window_state), window_state_before);
+    assert_eq!(files_under(&previous.data), data_before);
     let note = String::from_utf8(note).unwrap();
     assert!(
         note.contains(&current.settings.display().to_string()),
@@ -274,4 +283,98 @@ fn waits_for_another_process_copying_and_then_finds_the_copy_done() {
     let adoption = adopting.join().unwrap().unwrap();
     assert!(matches!(adoption, Adoption::NotNeeded));
     assert!(!previous.settings.join(note_file_name()).exists());
+}
+
+#[test]
+fn splits_a_one_folder_install_so_no_trust_lands_in_the_settings_folder() {
+    let dir = TempDir::new().unwrap();
+    let previous = one_folder(dir.path(), "dbrover");
+    let current = dot_folders(dir.path());
+    previous_settings(&previous);
+    write(&previous.settings.join(HISTORY_FILE_NAME), "not a database");
+
+    adopt(&previous, &current);
+
+    let settings = files_under(&current.settings);
+    let data = files_under(&current.data);
+    for machine_file in MACHINE_FILES {
+        assert!(
+            !settings.contains_key(Path::new(machine_file)),
+            "{machine_file}"
+        );
+        assert!(data.contains_key(Path::new(machine_file)), "{machine_file}");
+    }
+    let mut expected_settings = files_under(&previous.settings);
+    expected_settings.retain(|path, _| {
+        !path.starts_with("logs")
+            && !path.ends_with(note_file_name())
+            && !MACHINE_FILES.iter().any(|file| path == Path::new(file))
+    });
+    assert_eq!(settings, expected_settings);
+    assert_eq!(data.len(), MACHINE_FILES.len(), "{:?}", data.keys());
+    assert!(!staging_folder(&current.data).exists());
+}
+
+#[test]
+fn copies_a_two_folder_install_to_the_dot_folders() {
+    let dir = TempDir::new().unwrap();
+    let previous = separate_folders(dir.path(), "dbrover");
+    let current = dot_folders(dir.path());
+    previous_settings(&previous);
+
+    adopt(&previous, &current);
+
+    assert_eq!(
+        files_under(&current.settings),
+        files_under(&previous.settings)
+            .into_iter()
+            .filter(|(path, _)| !path.ends_with(note_file_name()))
+            .collect()
+    );
+    let mut expected_data = files_under(&previous.data);
+    expected_data.retain(|path, _| !path.starts_with("logs"));
+    assert_eq!(files_under(&current.data), expected_data);
+}
+
+#[test]
+fn keeps_a_data_folder_that_exists_and_still_copies_the_settings() {
+    let dir = TempDir::new().unwrap();
+    let previous = one_folder(dir.path(), "dbrover");
+    let current = dot_folders(dir.path());
+    previous_settings(&previous);
+    write(&current.data.join("app.ron"), "(newer layout)\n");
+
+    adopt(&previous, &current);
+
+    assert_eq!(
+        fs::read_to_string(current.data.join("app.ron")).unwrap(),
+        "(newer layout)\n"
+    );
+    assert!(!current.data.join("trusted_commands.toml").exists());
+    assert!(!current.settings.join("trusted_commands.toml").exists());
+    assert!(current.settings.join("data_sources.toml").exists());
+}
+
+#[test]
+fn finds_the_newest_previous_install_that_exists() {
+    let dir = TempDir::new().unwrap();
+    let current = dot_folders(dir.path());
+    let platform = one_folder(dir.path(), "dbrover");
+    let renamed = one_folder(dir.path(), "dbdesk");
+    let candidates = || [current.clone(), platform.clone(), renamed.clone()];
+
+    assert_eq!(find_previous_install(candidates(), &current), None);
+
+    previous_settings(&renamed);
+    assert_eq!(
+        find_previous_install(candidates(), &current),
+        Some(renamed.clone())
+    );
+
+    previous_settings(&platform);
+    previous_settings(&current);
+    assert_eq!(
+        find_previous_install(candidates(), &current),
+        Some(platform.clone())
+    );
 }

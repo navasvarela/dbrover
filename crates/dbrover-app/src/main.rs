@@ -187,10 +187,9 @@ fn open_window(adopted: Adopted, log_feed: LogFeed, files: Vec<PathBuf>) -> anyh
         .with_titlebar_shown(false);
     let options = eframe::NativeOptions {
         viewport,
-        // Named so that a session on the previous install's folders (a failed copy, see
-        // `previous_install::adopt`) keeps its window state there too. Left to eframe, it would
-        // create the current folder, and on macOS that is the settings folder, whose existence
-        // means the copy is done.
+        // Named, because eframe's own choice is the platform's folder, which DbRover no longer
+        // uses (see `docs/settings-folders.md`), and so that a session on a previous install's
+        // folders (a failed copy, see `previous_install::adopt`) keeps its window state there.
         persistence_path: Some(paths.window_state_file()),
         ..Default::default()
     };

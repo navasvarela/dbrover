@@ -211,6 +211,7 @@ impl AppState {
             | Event::StatementStarted { .. }
             | Event::RowsFetched { .. }
             | Event::StatementFinished { .. }
+            | Event::ScanHeld { .. }
             | Event::RunFinished { .. } => {}
         }
     }

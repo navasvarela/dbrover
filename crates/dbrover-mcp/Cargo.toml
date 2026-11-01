@@ -24,6 +24,9 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+# Makes the DynamoDB test's table, which PartiQL can't.
+aws-sdk-dynamodb.workspace = true
+dbrover-cloud.workspace = true
 dbrover-driver-duckdb.workspace = true
 dbrover-language = { workspace = true, features = ["test-language"] }
 rmcp = { workspace = true, features = ["client", "transport-child-process"] }
@@ -56,6 +59,10 @@ harness = false
 
 [[test]]
 name = "elasticsearch"
+harness = false
+
+[[test]]
+name = "dynamodb"
 harness = false
 
 [[test]]

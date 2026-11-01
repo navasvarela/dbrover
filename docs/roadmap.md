@@ -449,8 +449,10 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
 
 - **C0 — Groundwork:**
   - signing in with AWS, Google Cloud and Microsoft Entra ID accounts, reusing the sign-in
-    already on the machine and never storing a cloud secret;
-  - cost guards per data source, so that nothing scans a whole table unasked;
+    already on the machine and never storing a cloud secret; AWS's comes first, with DynamoDB
+    (the NoSQL track's N5);
+  - cost guards per data source, so that nothing scans a whole table unasked; DynamoDB's
+    comes first, with N5;
   - queries run as jobs (submit, poll, page, cancel by id);
   - lazy, searchable catalogs for very large ones.
 - **C1 — Managed databases:** RDS, Aurora and Redshift; Cloud SQL; Azure SQL, Azure Database,
@@ -492,7 +494,19 @@ The full plan, with the order, the groundwork, each milestone's layers and the d
 - **N4 — Cassandra and ScyllaDB** (built, in six layers): CQL as a dialect of
   `dbrover-sql`, keyspaces and tables, paged rows, collections in the tree, edits by primary
   key; ScyllaDB in every pull request's CI, Cassandra nightly.
-- **Later:** DynamoDB in the cloud track after C0, and Neo4j after ER1.
+- **N5 — DynamoDB** (built, in eight layers, 2026-11-01, ahead of C0): signing in through
+  AWS's own credential chain with a profile and a region, PartiQL in the console, items as
+  documents, tables and their indexes in the explorer, and a guard that asks before a statement
+  reads a whole table. It brings C0's AWS sign-in and its first cost guard with it.
+
+  **N5 demo note:** run `docker compose up -d --wait dynamodb`, then add a **DynamoDB** data
+  source, **Sign in with** **Local emulator**, **Endpoint** `http://localhost:58000`. Create a
+  table with the AWS CLI (`aws dynamodb create-table … --endpoint-url http://localhost:58000`),
+  and it shows in the explorer with its keys and indexes; **Open data** reads it a page at a
+  time. `SELECT * FROM "orders" WHERE status = 'open'` asks **Read all of orders?** before
+  scanning; with `WHERE customer = 'c-1'` it runs at once. Change an attribute in the grid and
+  it becomes an `UPDATE` by the item's key, keeping its type.
+- **Later:** Neo4j after ER1.
 
 ## Object helpers track
 
@@ -902,6 +916,36 @@ Customisation without rebuilding DbRover, from files to commands to plugins. The
   terminals) were not run by hand in the app for it.
 - **H3 — WebAssembly plugins (later):** sandboxed and capability-based, over the same extension
   points, started once at least three real needs outgrow H1 and H2.
+- **H4 — Settings folders (M):** designed on 2026-11-01 in [Settings folders](settings-folders.md).
+  `~/.config/dbrover` is the settings folder on every platform, and the settings folder can be
+  one the user chooses.
+  - **Defaults:** settings in `~/.config/dbrover` and the machine's own files (`app.ron`,
+    logs, trust) in `~/.local/share/dbrover`, on macOS, Linux (where nothing moves, and the XDG
+    variables still count) and Windows (under `%USERPROFILE%`).
+  - **Moving installs:** the rename's copy, generalised to a list of previous installs:
+    DbRover's platform folders, then dbdesk's. A one-folder install (macOS) is split while it is
+    copied, so `trusted_commands.toml` never lands in the settings folder.
+  - **Choosing:** `--config-dir`, then `DBROVER_CONFIG_DIR`, then **Settings › Files**, whose
+    choice is kept in the data folder, per machine. A folder with DbRover's files is used as it
+    is; an empty one gets a copy or nothing; any other is refused. The copy runs at the next
+    start through the migration's code, and a missing chosen folder falls back to the default
+    for that session.
+  - **MCP:** `dbrover mcp` resolves the folder the same way, so a choice in Settings needs no
+    change to clients; Copy MCP configuration adds `--config-dir` only for a folder from the
+    flag or the variable.
+  - **H4a — The plan:** the design and this entry.
+  - **H4b — `~/.config/dbrover` everywhere:** the defaults and the migration, with tests.
+  - **H4c — Where the folder comes from:** `settings_folder.toml`, the order, the pending copy
+    and the folder checks, in the store.
+  - **H4d — The flag and the variable:** in the app and `dbrover mcp`, the missing-folder
+    window, and Copy MCP configuration.
+  - **H4e — Settings › Files:** the row, **Choose…**, **Use the default folder** and the
+    restart.
+  - **H4f — Manual and docs,** the release-notes paragraph, and the demo note.
+
+  **Exit:** on macOS, an install from 0.20 starts with everything it had, read from
+  `~/.config/dbrover`; choosing an empty synced folder and restarting copies the settings
+  there, and an MCP client configured before the switch serves the project from it.
 
 ## Well-rounded track
 
@@ -1518,6 +1562,7 @@ flowchart LR
     D3 --> D4
     D2 --> D5[D5 Native look on macOS]
     D4 --> D6[D6 Front page refresh]
+    D2 --> D7[D7 Roomier buttons and menus]
 ```
 
 ### D1 — Logo and brand palette
@@ -1742,3 +1787,27 @@ the clip about 0.3 MB as MP4 and 0.4 MB as WebM per theme, each still under 60 K
 sizes on the page were read from the v0.11.0 release's assets (`gh release view v0.11.0 --json
 assets`): the AppImage is 38,885,880 bytes, the `.dmg` 78,262,644. No startup time or memory
 figure is claimed, because none was measured.
+
+### D7 — Roomier buttons and menus
+
+D2 gave the controls DbRover's colours but kept egui's proportions, and the result reads as
+"too crowded and unloved" (2026-11-01): menu entries with two points of padding, buttons with
+no outline on a panel of nearly their colour, dialogs with a menu's margin, and one kind of
+button for every action. The design is in [Buttons and menus](buttons-and-menus.md). In layers,
+one PR each:
+
+- **D7a — Plan:** this section and the design page, with before and after pictures of a few
+  screens in both themes.
+- **D7b — Spacing and sizing tokens:** control height, button padding, item spacing and the
+  window margin as named values in `theme.rs`.
+- **D7c — Buttons:** secondary buttons and fields outlined at rest, a primary and a danger
+  button that answer the pointer, square icon buttons, and each dialog's main and destructive
+  actions using them.
+- **D7d — Menus:** DbRover's menu style for every menu, context menu and the menu bar, through
+  `widgets` helpers rather than egui's own.
+- **D7e — Dialogs:** dialogs framed with the window margin, and the manual's and website's
+  pictures rendered again.
+
+**Exit:** menus, buttons and dialogs have room around their text in both themes, a destructive
+action can't be mistaken for Cancel, the explorer and grid stay dense, and the macOS menu bar is
+untouched.

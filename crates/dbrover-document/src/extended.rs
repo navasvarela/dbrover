@@ -4,6 +4,10 @@
 //! The forms are those of the specification, canonical and relaxed:
 //! <https://github.com/mongodb/specifications/blob/master/source/extended-json/extended-json.md>.
 //! A special object has exactly the fields its form names; anything else is an ordinary object.
+//!
+//! DynamoDB's sets, which BSON has no type for, are DbRover's own: `{"$stringSet": […]}`,
+//! `{"$numberSet": […]}` and `{"$binarySet": […]}`, shown as PartiQL writes them, so an edited
+//! set goes back a set (`docs/nosql.md`, N5).
 
 use data_encoding::BASE64;
 
@@ -35,6 +39,9 @@ pub enum ValueType {
     Symbol,
     Undefined,
     DbPointer,
+    StringSet,
+    NumberSet,
+    BinarySet,
 }
 
 impl ValueType {
@@ -63,6 +70,9 @@ impl ValueType {
             Self::Symbol => "Symbol",
             Self::Undefined => "undefined",
             Self::DbPointer => "DBPointer",
+            Self::StringSet => "StringSet",
+            Self::NumberSet => "NumberSet",
+            Self::BinarySet => "BinarySet",
         }
     }
 }
@@ -135,6 +145,15 @@ enum Special<'a> {
         collection: &'a str,
         id: &'a str,
     },
+    /// A DynamoDB set of strings, of numbers, or of binary values written in base64.
+    Set(SetKind, &'a [Value]),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SetKind {
+    String,
+    Number,
+    Binary,
 }
 
 fn special(value: &Value) -> Option<Special<'_>> {
@@ -170,6 +189,15 @@ fn special(value: &Value) -> Option<Special<'_>> {
         ("$code", Value::String(code)) => Special::Code(code),
         ("$symbol", Value::String(text)) => Special::Symbol(text),
         ("$undefined", Value::Bool(true)) => Special::Undefined,
+        ("$stringSet", Value::Array(items)) if items.iter().all(is_string) => {
+            Special::Set(SetKind::String, items)
+        }
+        ("$numberSet", Value::Array(items)) if items.iter().all(is_number) => {
+            Special::Set(SetKind::Number, items)
+        }
+        ("$binarySet", Value::Array(items)) if items.iter().all(is_string) => {
+            Special::Set(SetKind::Binary, items)
+        }
         ("$dbPointer", Value::Object(parts)) => Special::DbPointer {
             collection: string_part(parts, "$ref")?,
             id: match parts.iter().find(|(name, _)| name == "$id") {
@@ -179,6 +207,14 @@ fn special(value: &Value) -> Option<Special<'_>> {
         },
         _ => return None,
     })
+}
+
+fn is_string(value: &Value) -> bool {
+    matches!(value, Value::String(_))
+}
+
+fn is_number(value: &Value) -> bool {
+    matches!(value, Value::Number(_))
 }
 
 /// The text of `value` if it is an object with the one field `name`, holding a string.
@@ -236,6 +272,9 @@ impl Special<'_> {
             Self::Symbol(_) => ValueType::Symbol,
             Self::Undefined => ValueType::Undefined,
             Self::DbPointer { .. } => ValueType::DbPointer,
+            Self::Set(SetKind::String, _) => ValueType::StringSet,
+            Self::Set(SetKind::Number, _) => ValueType::NumberSet,
+            Self::Set(SetKind::Binary, _) => ValueType::BinarySet,
         }
     }
 
@@ -273,6 +312,7 @@ impl Special<'_> {
                 write_string(&mut quoted, collection);
                 format!("DBPointer({quoted}, {})", call("ObjectId", id))
             }
+            Self::Set(_, items) => partiql_set(items),
         }
     }
 
@@ -299,6 +339,19 @@ impl Special<'_> {
             &hex[20..]
         ))
     }
+}
+
+/// A set as PartiQL writes it, `<<'a', 'b'>>` or `<<1, 2>>`: strings, and binary values'
+/// base64, between single quotes, a quote in one written twice.
+fn partiql_set(items: &[Value]) -> String {
+    let items: Vec<String> = items
+        .iter()
+        .map(|item| match item {
+            Value::String(text) => format!("'{}'", text.replace('\'', "''")),
+            other => other.to_json(),
+        })
+        .collect();
+    format!("<<{}>>", items.join(", "))
 }
 
 /// `name("text")`, the text quoted and escaped as a JSON string.
@@ -456,6 +509,34 @@ mod tests {
     }
 
     #[test]
+    fn shows_dynamodbs_sets_as_partiql_writes_them() {
+        let cases = [
+            (
+                r#"{"$stringSet": ["red", "it's"]}"#,
+                ValueType::StringSet,
+                "<<'red', 'it''s'>>",
+            ),
+            (
+                r#"{"$numberSet": [1, 2.50, -3e2]}"#,
+                ValueType::NumberSet,
+                "<<1, 2.50, -3e2>>",
+            ),
+            (
+                r#"{"$binarySet": ["AQID"]}"#,
+                ValueType::BinarySet,
+                "<<'AQID'>>",
+            ),
+        ];
+        for (text, value_type, shown) in cases {
+            assert_eq!(
+                shown_as(text, Syntax::ExtendedJson),
+                (value_type, shown.to_owned()),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
     fn an_object_with_other_fields_is_only_an_object() {
         for text in [
             r#"{"$oid": "a", "name": "b"}"#,
@@ -466,6 +547,9 @@ mod tests {
             r#"{"$date": {"$numberLong": "soon"}}"#,
             r#"{"$minKey": 2}"#,
             r#"{"$dbPointer": {"$ref": "orders", "x": 1}}"#,
+            r#"{"$stringSet": ["a", 1]}"#,
+            r#"{"$numberSet": ["1"]}"#,
+            r#"{"$binarySet": "AQID"}"#,
         ] {
             assert_eq!(
                 shown_as(text, Syntax::ExtendedJson).0,

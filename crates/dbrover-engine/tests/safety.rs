@@ -8,8 +8,9 @@ mod common;
 use std::sync::Arc;
 
 use common::{
-    TestEngine, clickhouse_test_server, cql_test_servers, mongo_test_server, postgres_test_server,
-    redis_test_servers, search_test_servers, sqlite_data_source, sqlite_database,
+    TestEngine, clickhouse_test_server, cql_test_servers, create_dynamodb_table,
+    dynamodb_test_config, mongo_test_server, postgres_test_server, redis_test_servers,
+    search_test_servers, sqlite_data_source, sqlite_database,
 };
 use dbrover_core::{
     Connection as _, ConnectionConfig, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase,
@@ -17,7 +18,7 @@ use dbrover_core::{
 };
 use dbrover_engine::{
     Command, ConsoleId, EditFailure, Event, PasswordUpdate, RunId, RunOrigin, RunOutcome,
-    RunPurpose, TransactionMode,
+    RunPurpose, ScanApproval, TransactionMode,
 };
 
 const SETUP_CONSOLE: ConsoleId = ConsoleId(1);
@@ -84,6 +85,7 @@ fn run_for(
         transactions: TransactionMode::Auto,
         purpose,
         origin: RunOrigin::Console,
+        scans: ScanApproval::Ask,
     });
     let mut failure = None;
     loop {
@@ -482,6 +484,7 @@ fn page_through(engine: &mut TestEngine, data_source: DataSourceId, run: u64) ->
         transactions: TransactionMode::Auto,
         purpose: RunPurpose::Run,
         origin: RunOrigin::Console,
+        scans: ScanApproval::Ask,
     });
     let mut pages = Vec::new();
     loop {
@@ -546,6 +549,52 @@ fn a_read_only_mongodb_data_source_refuses_delete_many() {
             command,
         );
         assert_eq!(failure, expected, "{command}");
+    }
+}
+
+/// A read-only DynamoDB data source refuses PartiQL's writes before sending them, and still
+/// reads. DynamoDB has no read-only session: an IAM policy that allows only reads is its guard
+/// against what the check can't see. Needs `DBROVER_TEST_DYNAMODB_URL`; skipped without.
+#[test]
+fn a_read_only_dynamodb_data_source_refuses_writes() {
+    let Some(config) = dynamodb_test_config() else {
+        return;
+    };
+    let table = create_dynamodb_table(&config, "engine-safety");
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let dynamodb = DataSource {
+        id: DataSourceId::generate(),
+        name: "dynamodb".to_owned(),
+        color: None,
+        safety: SafetyLevel::Normal,
+        project: None,
+        mcp_login: None,
+        config: ConnectionConfig::DynamoDb(config),
+    };
+    let production = read_only(&dynamodb);
+    save(&mut engine, &production, PasswordUpdate::Keep);
+    let cases = [
+        (
+            format!("UPDATE \"{table}\" SET n = 1 WHERE pk = 'a'"),
+            Some(refused("changes data")),
+        ),
+        (
+            format!("INSERT INTO \"{table}\" VALUE {{'pk': 'a'}}"),
+            Some(refused("changes data")),
+        ),
+        (format!("SELECT * FROM \"{table}\" WHERE pk = 'a'"), None),
+    ];
+    for (number, (statement, expected)) in cases.into_iter().enumerate() {
+        let failure = run(
+            &mut engine,
+            READ_ONLY_CONSOLE,
+            production.id,
+            number as u64 + 1,
+            &statement,
+        );
+        assert_eq!(failure, expected, "{statement}");
     }
 }
 

@@ -25,12 +25,13 @@ pub mod conformance;
 pub use catalog::{CatalogNode, CatalogPath, FolderKind, KeyType, NodeKind, PathSegment};
 pub use catalog_page::{CATALOG_PAGE_SIZE, ChildrenPage, ChildrenQuery, PageToken, like_contains};
 pub use command_template::{CommandTemplate, DataSourceFields};
-pub use connection::{Connection, Rejection, RejectionKind, ServerInfo};
+pub use connection::{Connection, FullScan, Rejection, RejectionKind, ServerInfo};
 pub use data_source::{
-    CassandraConfig, ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind,
-    DuckDbConfig, DuckDbDatabase, ElasticsearchAuth, ElasticsearchConfig, McpLogin, MongoConfig,
-    MysqlConfig, Port, PostgresConfig, ProjectId, RedisConfig, Route, SafetyLevel, ServerConfig,
-    SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode,
+    CassandraConfig, ClickHouseConfig, ConnectionConfig, CostGuard, DataSource, DataSourceId,
+    DriverKind, DuckDbConfig, DuckDbDatabase, DynamoDbConfig, DynamoDbSignIn, ElasticsearchAuth,
+    ElasticsearchConfig, McpLogin, MongoConfig, MysqlConfig, Port, PostgresConfig, ProjectId,
+    RedisConfig, Route, SafetyLevel, ServerConfig, SourceColor, SqlServerConfig, SqliteConfig,
+    SshConfig, SshLogin, TlsMode,
 };
 pub use error::{BoxError, DriverError, describe_error};
 pub use execution::{

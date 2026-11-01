@@ -20,7 +20,9 @@ use crate::theme::Palette;
 use crate::widgets::{self, IconButton};
 use dbrover_core::{CatalogPath, RelationName};
 use dbrover_core::{SafetyLevel, TransactionStatus};
-use dbrover_engine::{RunId, RunOrigin, RunOutcome, SessionState, TransactionEnd, TransactionMode};
+use dbrover_engine::{
+    RunId, RunOrigin, RunOutcome, ScanApproval, SessionState, TransactionEnd, TransactionMode,
+};
 use dbrover_language::ExplainDepth;
 use dbrover_language::redis::KeyView;
 use dbrover_sql::{Dialect, ProblemSource, Severity};
@@ -296,6 +298,7 @@ fn perform(console: &QueryConsole, action: Action, actions: &mut Vec<ConsoleActi
             parameters: dbrover_sql::ParameterValues::default(),
             origin: RunOrigin::Console,
             destination: RunDestination::Grid,
+            scans: ScanApproval::Ask,
         }));
     }
 }

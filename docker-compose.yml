@@ -372,6 +372,19 @@ services:
       timeout: 10s
       retries: 60
 
+  # DynamoDB Local, AWS's own emulator, in memory: the DynamoDB tests sign in to it as a local
+  # emulator, with made-up credentials, so they need no AWS account. It answers any request
+  # once it listens, with an error to one that isn't signed, which is all the check needs.
+  dynamodb:
+    image: amazon/dynamodb-local:3.3.2
+    ports:
+      - "58000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -o /dev/null http://localhost:8000"]
+      interval: 1s
+      timeout: 5s
+      retries: 30
+
   # OpenSSH on Alpine (docker/ssh), for the SSH tunnel tests: signs in `dbrover` with the test
   # keys there or its password, and forwards only to the postgres service. Built from a few
   # lines rather than pulled, so it stays a 10 MB image with fixed host and client keys.

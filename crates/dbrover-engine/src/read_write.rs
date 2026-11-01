@@ -47,6 +47,7 @@ pub fn mode(driver: DriverKind) -> Option<WriteMode> {
         | DriverKind::Mongo
         | DriverKind::Elasticsearch
         | DriverKind::Cassandra => None,
+        DriverKind::DynamoDb => None,
     }
 }
 

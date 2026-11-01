@@ -47,6 +47,9 @@ pub enum Setting {
     AuthDatabase,
     ConnectionString,
     LocalDatacenter,
+    Profile,
+    Region,
+    Endpoint,
 }
 
 impl fmt::Display for Setting {
@@ -65,6 +68,9 @@ impl fmt::Display for Setting {
             Self::AuthDatabase => "the authentication database",
             Self::ConnectionString => "the connection string",
             Self::LocalDatacenter => "the local datacenter",
+            Self::Profile => "the AWS profile",
+            Self::Region => "the region",
+            Self::Endpoint => "the endpoint",
         })
     }
 }
