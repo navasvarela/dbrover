@@ -484,6 +484,25 @@ fn file_line(ui: &mut Ui, about: Option<&str>, add_links: impl FnOnce(&mut Ui)) 
     });
 }
 
+/// The file a page lists, by name with its full path on hover, and `add_links` to act on it.
+/// The name alone keeps the line short; where the folder is, is in the manual's files chapter.
+fn source_line(ui: &mut Ui, path: Option<&Path>, add_links: impl FnOnce(&mut Ui)) {
+    ui.horizontal_wrapped(|ui| {
+        if let Some(path) = path {
+            let palette = Palette::for_visuals(ui.visuals());
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy())
+                .unwrap_or_default();
+            let text = RichText::new(format!("Read from {name}"))
+                .small()
+                .color(palette.text_weak);
+            ui.label(text).on_hover_text(path.display().to_string());
+        }
+        add_links(ui);
+    });
+}
+
 /// A sidebar entry: an icon and a name, highlighted when chosen, with a badge at the right: a
 /// count while searching, or a mark of unsaved changes.
 struct NavItem<'a> {

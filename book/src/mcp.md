@@ -19,17 +19,20 @@ sent. Each project can allow more; see [Permissions](#permissions).
 
 ### 1. Allow the project
 
-Right-click the project's header in the explorer and choose **Project settings…**. Tick **Allow
-MCP clients to use this project** and click **Save**. New projects start with this off, so
-nothing is ever exposed by accident.
+Right-click the project's header in the explorer and choose **Project settings…**: the
+[Settings](settings.md) tab opens on the project's page, which is also under **Projects** in its
+sidebar. Switch on **Allow MCP clients to use this project** and click **Save project
+settings**. New projects start with this off, so nothing is ever exposed by accident.
 
-![Project settings, with writing allowed and a warning about a missing MCP login](images/project-settings.png)
+![A project's page in Settings, with writing allowed and a warning about a missing MCP login](images/project-settings.png)
 
-The dialog also shows the project's **slug**, which is what the client names it by.
+The page also shows the project's **slug**, which is what the client names it by, and has
+**Copy MCP configuration**, the next step.
 
 ### 2. Copy the configuration
 
-Right-click the project's header again and choose **Copy MCP configuration**.
+Click **Copy** beside **Copy MCP configuration** on the project's page, or right-click the
+project's header and choose **Copy MCP configuration**.
 
 ![A project's menu](images/project-menu.png)
 
@@ -96,8 +99,8 @@ ask before running tools can therefore let the others run freely and ask before 
 ## Permissions
 
 Each project allows MCP clients some of these. Each one starts at the global default and can be
-overridden in **Project settings…**, and **Reset** goes back to the default. Change the defaults
-in **View › Settings… › MCP**; they apply to every project that doesn't override them.
+overridden on the project's page in Settings, and **Reset** goes back to the default. Change the
+defaults in **View › Settings… › MCP**; they apply to every project that doesn't override them.
 
 ![The MCP defaults in Settings](images/settings-mcp.png)
 
@@ -143,13 +146,13 @@ DbRover checks each statement in up to three ways:
 
 Beyond reading, the first layer is all DbRover has of its own, and it can be fooled: a function
 or a procedure can do anything, whatever the statement that calls it looks like. That is why
-Project settings warns when a project allows changes and one of its data sources has no MCP
+a project's page warns when it allows changes and one of its data sources has no MCP
 login.
 
 SQL Server has no read-only transaction, and Redis, MongoDB, Elasticsearch and OpenSearch
 have no read-only session at all, so their data sources are served to MCP clients only through
 an [MCP login](#the-mcp-login) whose grants allow nothing but reading. Without one, a data
-source isn't served, and the server's log says why when it starts; Project settings lists it
+source isn't served, and the server's log says why when it starts; the project's page lists it
 too.
 
 ClickHouse and DuckDB files are served in their own read-only modes, with or without an MCP
@@ -267,8 +270,8 @@ The client's log for the server shows what DbRover said when it stopped:
 
 - **"there is no project with the slug …"**: the `--project` doesn't match any project's
   slug. The message lists the slugs there are. Copy the configuration again.
-- **"… is not allowed for MCP clients"**: tick **Allow MCP clients to use this project** in
-  Project settings, as in step 1.
+- **"… is not allowed for MCP clients"**: switch on **Allow MCP clients to use this project** on
+  the project's page in Settings, as in step 1.
 - **"the MCP login … has no saved password"**: set the **MCP password** in the data source's
   dialog.
 - **"the password command isn't trusted to run yet"**: the data source gets its password

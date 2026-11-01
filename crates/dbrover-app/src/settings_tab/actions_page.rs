@@ -5,7 +5,7 @@
 use dbrover_store::{ActionBody, CommandAction, CustomAction, CustomFileKind};
 use egui::{RichText, Ui};
 
-use super::{SettingsAction, file_line, problems, search};
+use super::{SettingsAction, problems, search, source_line};
 use crate::command_runs::{CommandRuns, command_text, timeout_text};
 use crate::custom_files::CustomFiles;
 use crate::form::{self, Rows};
@@ -37,10 +37,7 @@ pub fn show(
     actions: &mut Vec<SettingsAction>,
 ) {
     let kind = CustomFileKind::Actions;
-    let about = files
-        .path(kind)
-        .map(|path| format!("Read from {}", path.display()));
-    file_line(ui, about.as_deref(), |ui| {
+    source_line(ui, files.path(kind), |ui| {
         if ui
             .link("Reload")
             .on_hover_text("Read actions.toml, snippets.toml and theme.toml again")

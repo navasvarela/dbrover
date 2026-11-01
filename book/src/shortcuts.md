@@ -40,12 +40,18 @@ the other apps, ⌘M minimizes the window and ⌃⌘F enters full screen. They a
 ## Changing them
 
 Shortcuts live in `keymap.toml`, next to `data_sources.toml` (see
-[Where DbRover keeps its files](files.md)). **View → Keymap…** lists every action with its id,
-its shortcuts and what it does, and has two buttons:
+[Where DbRover keeps its files](files.md)). **Settings › Keymap** (**View → Keymap…** opens it)
+lists every action with its id, its shortcuts and what it does, in a card for each part of
+DbRover, with your [custom actions](customising.md) last. At the top of the page:
 
 - **Create keymap.toml** writes a file listing every action with its default, commented out. It
   never replaces a file that exists.
 - **Reload** applies your edits without restarting DbRover.
+
+![The Keymap page in Settings](images/settings-keymap.png)
+
+Searching the settings finds shortcuts too: *format* lists the Format and Format all keys
+beside the formatting settings.
 
 In the file, list only the actions you want to change:
 
@@ -65,8 +71,8 @@ Your own actions from `actions.toml` are bound the same way, as `custom.<id>`; s
 [Actions, snippets and themes](customising.md#keys-and-the-actions-menu).
 
 A mistake doesn't cost you the rest of the file: an unknown action, a shortcut that can't be
-read, or one that two actions share, is skipped and listed as a problem in the Keymap window,
-and the status bar shows **keymap.toml: N problems**. A file that isn't valid TOML keeps every
+read, or one that two actions share, is skipped and listed as a problem at the top of the
+Keymap page, and the status bar shows **keymap.toml: N problems**, which opens the page. A file that isn't valid TOML keeps every
 default and shows why.
 
 ## Editing text

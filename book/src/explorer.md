@@ -22,8 +22,8 @@ sources on their own, as before.
 - **Rename…** on a project changes only its name.
 - **Delete…** on a project moves its data sources to **No project** first. No data source is
   deleted.
-- **Project settings…** on a project sets whether, and how, AI assistants may use its data
-  sources; **Copy MCP configuration** copies what an assistant's client needs to connect. See
+- **Project settings…** on a project opens its page in [Settings](settings.md), which sets
+  whether, and how, AI assistants may use its data sources; **Copy MCP configuration** copies what an assistant's client needs to connect. See
   [Connecting an AI assistant](mcp.md).
 
 Each project also has a short **slug**, made from its first name: lower case, with hyphens for
