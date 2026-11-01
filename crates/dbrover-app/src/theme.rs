@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use dbrover_core::{DriverKind, SourceColor};
 use dbrover_store::{Rgb, ThemeOverrides, ThemeToken};
 use egui::style::{Selection, WidgetVisuals, Widgets};
-use egui::{Color32, CornerRadius, Margin, Shadow, Stroke, Style, Theme, Visuals};
+use egui::{Color32, CornerRadius, Margin, Shadow, Stroke, Style, Theme, Vec2, Visuals};
 
 use crate::database_brand;
 
@@ -494,15 +494,37 @@ fn soft_shadow(theme: Theme, blur: u8) -> Shadow {
     }
 }
 
-/// Denser than egui's defaults, like an IDE: more rows of a tree or grid fit on screen.
+/// The height of buttons, fields and other one-line controls, and so of a tree's rows: room
+/// for the text and a few points either side, still dense enough for an IDE.
+const CONTROL_HEIGHT: f32 = 24.0;
+/// Inside a button, around its text: wide enough that a button reads as a shape rather than
+/// as text with a tint behind it.
+const BUTTON_PADDING: Vec2 = Vec2::new(10.0, 4.0);
+const ITEM_SPACING: Vec2 = Vec2::new(8.0, 6.0);
+/// Inside dialogs and windows, between their edge and what they show.
+const WINDOW_MARGIN: i8 = 16;
+const MENU_MARGIN: i8 = 5;
+/// Load-bearing: egui opens a window it has no position for 16 points from the top of the
+/// screen, over the menu bar, and the window's resize edge reaches a few points above that.
+/// At 22 points the titles' middle stays clear of it; at 24, clicking **Help** while the
+/// Keymap window is open grabbed the window's edge instead (`menus::items_run_their_commands`).
+const MENU_BAR_HEIGHT: f32 = 22.0;
+
+/// A little roomier than egui's defaults, but still dense like an IDE: more rows of a tree or
+/// grid fit on screen than in an office app.
 fn tune_spacing(style: &mut Style) {
     let spacing = &mut style.spacing;
-    spacing.item_spacing = egui::vec2(8.0, 5.0);
-    spacing.button_padding = egui::vec2(8.0, 3.0);
-    spacing.interact_size.y = 22.0;
-    spacing.menu_margin = Margin::same(6);
-    spacing.window_margin = Margin::same(14);
+    spacing.item_spacing = ITEM_SPACING;
+    spacing.button_padding = BUTTON_PADDING;
+    spacing.interact_size.y = CONTROL_HEIGHT;
+    spacing.menu_margin = Margin::same(MENU_MARGIN);
+    spacing.window_margin = Margin::same(WINDOW_MARGIN);
     spacing.indent = 16.0;
+}
+
+/// The menu bar: no taller than before the other controls grew.
+pub fn menu_bar_style(style: &mut Style) {
+    style.spacing.interact_size.y = MENU_BAR_HEIGHT;
 }
 
 /// egui_dock's look: each node of the dock is a rounded island on the darker base, and the

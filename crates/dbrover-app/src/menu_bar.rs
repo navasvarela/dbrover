@@ -4,7 +4,7 @@ use egui::{Button, Color32, Ui, WidgetText, WidgetType};
 
 use crate::commands::{AppCommand, CommandState, Entry, Menu};
 use crate::keymap::Keymap;
-use crate::widgets;
+use crate::{theme, widgets};
 
 /// Draws `menus` and returns the command picked this frame, if any.
 pub fn show(
@@ -14,12 +14,17 @@ pub fn show(
     keymap: &Keymap,
 ) -> Option<AppCommand> {
     let mut picked = None;
-    egui::MenuBar::new().ui(ui, |ui| {
-        for menu in menus {
-            ui.menu_button(menu.title, |ui| {
-                entries(ui, &menu.entries, state, keymap, &mut picked);
-            });
-        }
+    ui.scope(|ui| {
+        // `MenuBar` lays out the row it draws in in the style it is given, and applies its own
+        // style only inside, so the bar's height has to be the row's too.
+        theme::menu_bar_style(ui.style_mut());
+        egui::MenuBar::new().ui(ui, |ui| {
+            for menu in menus {
+                ui.menu_button(menu.title, |ui| {
+                    entries(ui, &menu.entries, state, keymap, &mut picked);
+                });
+            }
+        });
     });
     picked
 }
