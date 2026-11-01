@@ -57,7 +57,7 @@ pub enum ExplorerAction {
         then_move: Option<DataSourceId>,
     },
     RenameProject(ProjectId),
-    /// Opens Project settings…, where MCP access is set.
+    /// Opens the project's page in Settings, where MCP access is set.
     ProjectSettings(ProjectId),
     DeleteProject(ProjectId),
     /// Puts the data source in the project, or in no project.
@@ -384,7 +384,7 @@ fn group_menu(ui: &mut Ui, header: GroupHeader<'_>, actions: &mut Vec<ExplorerAc
     new_project_item(ui, None, actions);
 }
 
-fn copy_mcp_configuration(ui: &Ui, project: &Project) {
+pub fn copy_mcp_configuration(ui: &Ui, project: &Project) {
     match mcp_client_config::executable() {
         Ok(executable) => {
             let text = mcp_client_config::client_configuration(&project.slug, &executable);
@@ -540,7 +540,12 @@ fn data_source_tree(
             id,
             catalog: &entry.catalog,
             quoting: language.quoting(),
-            capabilities: language.dialect().map(Dialect::capabilities),
+            reads_rows: language.dialect().is_some(),
+            // The object helpers write SQL, and not CQL's DDL (`Dialect::writes_ddl`).
+            capabilities: language
+                .dialect()
+                .filter(|dialect| dialect.writes_ddl())
+                .map(Dialect::capabilities),
             own_database: entry.data_source.config.database(),
             driver: entry.data_source.config.driver(),
             actions: tree.actions,
@@ -585,6 +590,7 @@ fn data_source_menu(
     let mut new = Vec::new();
     if let Some(capabilities) = QueryLanguage::from(entry.data_source.config.driver())
         .dialect()
+        .filter(|dialect| dialect.writes_ddl())
         .map(Dialect::capabilities)
     {
         if capabilities.schema_creation == SchemaCreation::CreateDatabase {
@@ -695,8 +701,11 @@ struct TreeView<'a> {
     catalog: &'a CatalogTree,
     /// For the names the context menu copies.
     quoting: Quoting,
-    /// Which object helpers the context menu offers; `None` when the data source doesn't
-    /// speak SQL, which is all the helpers and **Open data** write.
+    /// Whether the data source speaks SQL or CQL, which **Open data** and **Export data…**
+    /// write.
+    reads_rows: bool,
+    /// Which object helpers the context menu offers; `None` when the data source doesn't speak
+    /// SQL whose DDL they write.
     capabilities: Option<&'static Capabilities>,
     /// The database the data source connects to, where its tree lists several. The helpers'
     /// statements run on that connection, so they are offered only inside it.
@@ -912,7 +921,7 @@ fn node_menu(
     actions: &mut Vec<ExplorerAction>,
 ) {
     let id = tree.id;
-    let holds_rows = tree.capabilities.is_some()
+    let holds_rows = tree.reads_rows
         && matches!(
             node.kind(),
             Some(NodeKind::Table | NodeKind::View | NodeKind::MaterializedView)

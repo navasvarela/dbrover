@@ -1,20 +1,23 @@
 //! The dockable panel layout: which tabs exist, where they start, and what each one draws.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use dbrover_core::SourceColor;
-use dbrover_store::{ConsoleKey, CustomAction, DiagramKey, Project, Snippet};
+use dbrover_store::{ConsoleKey, CustomAction, DiagramKey, McpPermissions, Project, Snippet};
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, FontId, Id, Ui, WidgetText};
 use egui_dock::tab_viewer::OnCloseResponse;
 use egui_dock::{DockState, NodeIndex, TabStyle, TabViewer};
 use serde::{Deserialize, Serialize};
 
+use crate::command_runs::CommandRuns;
 use crate::console::{
     self, ConsoleAction, ConsoleContext, LintOptions, QueryConsole, RecentCompletions, TreeCatalog,
 };
 use crate::consoles::SavedConsoles;
 use crate::custom_actions::{SubjectKind, SubjectOn};
+use crate::custom_files::CustomFiles;
 use crate::diagram::{DiagramAction, Diagrams};
 use crate::explorer::{self, ExplorerAction, ExplorerOptions};
 use crate::fonts;
@@ -199,6 +202,11 @@ pub struct Panels<'a> {
     pub explorer_actions: &'a mut Vec<ExplorerAction>,
     pub consoles: &'a mut BTreeMap<ConsoleKey, QueryConsole>,
     pub keymap: &'a Keymap,
+    pub keymap_path: Option<&'a Path>,
+    pub custom_files: &'a CustomFiles,
+    pub command_runs: &'a CommandRuns,
+    /// The MCP defaults as saved, which projects' settings start from.
+    pub mcp_defaults_saved: &'a McpPermissions,
     pub lint: &'a LintOptions,
     pub recent_completions: &'a RecentCompletions,
     /// What the user asked of each console this frame.
@@ -315,6 +323,13 @@ impl TabViewer for Panels<'_> {
                 SettingsView {
                     settings: self.settings,
                     mcp: self.mcp_defaults,
+                    keymap: self.keymap,
+                    keymap_path: self.keymap_path,
+                    custom_files: self.custom_files,
+                    command_runs: self.command_runs,
+                    projects: self.projects,
+                    data_sources: self.data_sources,
+                    mcp_defaults: self.mcp_defaults_saved,
                 },
                 self.settings_actions,
             ),

@@ -8,7 +8,7 @@ keychain, never in that file.
 
 Click **+** at the top of the explorer (or **New data source** on the Welcome tab) and choose
 **PostgreSQL**, **SQLite**, **MySQL / MariaDB**, **SQL Server**, **DuckDB**, **ClickHouse**,
-**Redis / Valkey**, **MongoDB** or **Elasticsearch / OpenSearch**.
+**Redis / Valkey**, **MongoDB**, **Elasticsearch / OpenSearch** or **Cassandra / ScyllaDB**.
 
 ![The New PostgreSQL data source dialog](images/data-source-dialog.png)
 
@@ -174,6 +174,26 @@ what it signs in with under **Sign in with**:
 Elasticsearch 9.5.5", or "Connected to OpenSearch 3.9.0"). Amazon OpenSearch Service's AWS
 sign-in is planned.
 
+**Cassandra / ScyllaDB** connects to a node of an Apache Cassandra or ScyllaDB cluster over
+CQL's native protocol:
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| Host | `localhost` | The name or IP address of one node. DbRover reaches the cluster's other nodes at the addresses it gives them, and through this node when one of those doesn't answer within a second, as a node in Docker or behind NAT gives one only its own network reaches. |
+| Port | `9042` | `9142` once TLS is chosen, the port most servers take CQL over TLS on. |
+| Keyspace | none | The keyspace a console starts in, as `USE` would choose; unqualified names resolve in it. Left empty, only qualified names (`shop.orders`) resolve until a `USE`. The explorer lists every keyspace either way. |
+| User | `cassandra` | A role that may log in. Leave it empty for a cluster that doesn't ask for a password. |
+| Password | none | Stored in the keychain when you save. |
+| TLS | `disable` | `disable`, `require` or `verify-full`. CQL over TLS is a port of its own on most servers, so there is no `prefer`. `verify-full` checks the certificate against the host you typed. |
+| Local datacenter | none | The datacenter requests go to first, as the cluster names it (`datacenter1`, `us-east`). A cluster in one datacenter doesn't need it. |
+| Statement timeout | the server's | In seconds: how long DbRover waits for a statement. On ScyllaDB, each `SELECT` also runs `USING TIMEOUT` it, so the server stops a query that runs longer, too. Left empty, the server's own timeouts apply (5 seconds for most reads). |
+| MCP login | none | Required for AI assistants, since neither server has a read-only mode: a role with only the `SELECT` permission. |
+| MCP password | none | Shown once there is an MCP login. Stored in the keychain apart from the password. |
+
+**Test connection** says which server it reached and its version ("Connected to ScyllaDB
+2026.3.4", or "Connected to Apache Cassandra 5.0.9"). Passwords work today; certificates as
+the login are planned.
+
 **SQLite** adds:
 
 ![The New SQLite data source dialog](images/sqlite-data-source-dialog.png)
@@ -217,8 +237,9 @@ Many databases only accept connections from inside their own network, through a 
 (or *bastion*) you reach with SSH. Tick **Connect through an SSH server** and DbRover opens an
 SSH tunnel for you before connecting: no `ssh -L` to run first, and nothing to install. Every
 server engine has it: PostgreSQL, MySQL and MariaDB, SQL Server, ClickHouse, Redis,
-Elasticsearch and OpenSearch, and MongoDB with the **Server** form (a connection string may name
-several servers, or none).
+Elasticsearch and OpenSearch, Cassandra and ScyllaDB, and MongoDB with the **Server** form (a
+connection string may name several servers, or none). Through a tunnel, a Cassandra or ScyllaDB
+data source reaches every node of the cluster through the node it names.
 
 ![A PostgreSQL data source behind a bastion, signing in with a key file](images/ssh-data-source-dialog.png)
 

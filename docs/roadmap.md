@@ -467,7 +467,7 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
 
 Redis, MongoDB and the other most used non-SQL stores, in the same explorer, console and grid,
 each in its own query language. Planned on 2026-10-29; N0a was built on 2026-10-30, after W7
-landed, N0b and N1 the same day, and N2 and N3 on 2026-10-31; N4 is being built, in six layers.
+landed, N0b and N1 the same day, N2 and N3 on 2026-10-31, and N4 on 2026-11-01.
 The full plan, with the order, the groundwork, each milestone's layers and the decisions, is in
 [NoSQL databases](nosql.md).
 
@@ -489,7 +489,7 @@ The full plan, with the order, the groundwork, each milestone's layers and the d
   syntax, documents in the grid and tree, edits that keep each value's type.
 - **N3 — Elasticsearch and OpenSearch** (built, in seven layers): indices and mappings, Dev Tools-style requests, hits as
   documents, the SQL endpoints as rows.
-- **N4 — Cassandra and ScyllaDB** (being built, in six layers): CQL as a dialect of
+- **N4 — Cassandra and ScyllaDB** (built, in six layers): CQL as a dialect of
   `dbrover-sql`, keyspaces and tables, paged rows, collections in the tree, edits by primary
   key; ScyllaDB in every pull request's CI, Cassandra nightly.
 - **Later:** DynamoDB in the cloud track after C0, and Neo4j after ER1.
@@ -1379,6 +1379,54 @@ three to five, **L** a track of its own).
 
   **Exit:** comparing two PostgreSQL schemas that differ by a column and an index lists both
   differences, and running the script on one makes the comparison come back empty.
+- **W14 — Settings in one place (M):** built; designed on 2026-11-01 in
+  [A well-rounded app](well-rounded.md#w14--settings-in-one-place). The keymap, the custom
+  actions and each project's settings become pages of the Settings tab, in place of the keymap
+  and actions windows and the Project settings modal, and its search finds them all.
+  - **Sidebar:** the five categories, then **Keymap** and **Custom actions**, then a
+    **Projects** caption with one entry per project. Right-click a project → **Project
+    settings…** opens its page.
+  - **Keymap and Custom actions** list what `keymap.toml` and `actions.toml` hold in cards,
+    with each file's problems at the top and **Create** and **Reload** at the bottom; editing
+    stays in the files.
+  - **A project's page** has the MCP toggle and rows Project settings has today, saved with
+    **Save project settings**; unsaved changes are kept across pages and marked in the sidebar.
+  - **Search** finds shortcuts, custom actions and projects as well as settings.
+  - **View → Keymap…** and **View → Custom actions…** (renamed from Actions…) stay and open
+    their pages, keeping the ids `view.keymap` and `view.actions`.
+  - **W14a — The plan:** the design and this entry.
+  - **W14b — Pages, and the keymap's:** `Page`, search items, the Keymap page.
+  - **W14c — Custom actions:** the page; the actions window goes.
+  - **W14d — Projects:** the project pages; the modal goes.
+  - **W14e — Manual:** settings, shortcuts, customising, MCP and explorer chapters, the
+    pictures, and the demo note.
+
+  **W14 demo note:** built in #346, #348, #350, #355 and the manual's layer, described in
+  [Settings](../book/src/settings.md). Open **View → Settings…**: below Updates are **Keymap**
+  and **Custom actions**, then **Projects** with each project. **Keymap** lists every action in
+  cards (Console, Grid, Editor, File, App, then your custom actions), with its id and keys;
+  write `"console.walk" = "f6"` in `keymap.toml` and click **Reload** at the top of the page,
+  and the problem is listed there, while the status bar's **keymap.toml: 1 problem** opens the
+  same page. **Custom actions** shows each action of `actions.toml` in a card, a command with
+  its stdin, output, timeout and whether it is trusted. Type *format* in **Search settings**:
+  the Format and Format all shortcuts show under **Keymap › Console** beside the Editor's
+  formatting settings, and the sidebar counts them. Right-click a project → **Project
+  settings…**: the tab opens on its page; switch on MCP and tick **Write**, go to another page
+  and back, and the change is still there, with a dot by the project's name; **Save project
+  settings** writes `projects.toml` and the dot goes. **View → Keymap…** and **View → Custom
+  actions…** (renamed from Actions…) open their pages, and no keymap, actions or project
+  settings window is left. Departures from the design: the Keymap and Custom actions pages have
+  their file's path and links at the top rather than the bottom, since they are long; a
+  search's heading counts matches ("3 matches"), as not everything found is a setting. Covered
+  by kittest tests of each page, of the menus and status bar links that open them, of search
+  across settings, shortcuts, actions and projects, and of a project's draft kept across pages,
+  saved and discarded, with unit tests of the keymap's sections and search. Still to try by
+  eye: a sidebar with many projects, on a small window.
+
+  **Exit:** **View → Settings…** lists Keymap, Custom actions and each project in its sidebar;
+  right-click a project → **Project settings…** opens its page, where allowing writes and
+  saving writes `projects.toml`; searching *format* finds the Format shortcuts beside the
+  Format SQL settings; no keymap, actions or project settings window is left.
 
 ## Diagrams track
 

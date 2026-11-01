@@ -1,0 +1,27 @@
+[package]
+name = "dbrover-driver-cassandra"
+description = "Cassandra and ScyllaDB driver for DbRover, over CQL's native protocol."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+dbrover-core.workspace = true
+dbrover-sql.workspace = true
+dbrover-tls.workspace = true
+rustls.workspace = true
+scylla.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net"] }
+tracing.workspace = true
+
+[dev-dependencies]
+dbrover-core = { workspace = true, features = ["conformance"] }
+tokio = { workspace = true, features = ["io-util", "net"] }
+
+[lints]
+workspace = true

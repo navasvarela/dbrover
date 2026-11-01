@@ -1,0 +1,46 @@
+name: Nightly
+
+# Tests against servers too slow to start with every pull request. Each pull request runs the CQL
+# tests on ScyllaDB, which is healthy within seconds; Apache Cassandra takes about 40 seconds more
+# on a runner (docs/nosql.md, N4), so its run of the same tests is here, once a day and on demand.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings --cfg dbrover_prebuilt_duckdb
+
+permissions:
+  contents: read
+
+jobs:
+  cassandra:
+    runs-on: ubuntu-latest
+    # A cold Rust cache builds the engine's tests in about 15 minutes.
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      # Restores main's cache, and saves none of its own: GitHub keeps 10 GB of cache per
+      # repository, and a nightly cache would push the pull requests' out.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
+      # The engine links DuckDB; its prebuilt library, as in ci.yml.
+      - name: Fetch DuckDB's prebuilt library
+        shell: bash
+        run: |
+          packaging/duckdb/fetch.sh "$(rustc -vV | sed -n 's/^host: //p')" "$RUNNER_TEMP/duckdb" \
+            | tee -a "$GITHUB_ENV"
+      - name: Start Cassandra
+        run: |
+          docker compose --profile nightly up -d --wait cassandra \
+            || { docker compose --profile nightly logs --tail 40 cassandra; exit 1; }
+      - name: Run the CQL tests on Cassandra
+        env:
+          DBROVER_TEST_CASSANDRA_URL: cql://dbrover:dbrover@localhost:59043
+        run: |
+          cargo test -p dbrover-driver-cassandra -p dbrover-engine
+          cargo test -p dbrover-mcp --test cassandra

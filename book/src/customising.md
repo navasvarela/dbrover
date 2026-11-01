@@ -5,8 +5,9 @@ your own programs, to the explorer's and the grid's menus, `snippets.toml` adds 
 changes the colours. They sit next to `keymap.toml` (see
 [Where DbRover keeps its files](files.md)), and none of them exists until you write it.
 
-They are read when DbRover starts. After editing one, click **Reload** in **View → Actions…**,
-or in the window the status bar opens for the file: that reads all three again.
+They are read when DbRover starts. After editing one, click **Reload** on
+**Settings › Custom actions** (**View → Custom actions…** opens it), or in the window the status
+bar opens for `snippets.toml` or `theme.toml`: that reads all three again.
 
 A mistake costs only the entry it is in: an action, snippet or colour that can't be used is
 skipped, and the status bar shows **actions.toml: N problems** (or **snippets.toml**,
@@ -89,12 +90,16 @@ Every action is in the **Actions** menu, and can have a shortcut in `keymap.toml
 From the menu or a key, an action acts on the focused console's selected cells, or else on the
 explorer's selected node: click a node to select it. The item is greyed out when what is
 selected isn't something the action applies to. A shortcut that one of DbRover's own actions
-already has stays DbRover's, and is listed as a problem in **View → Keymap…**, which also lists
-your actions' ids.
+already has stays DbRover's, and is listed as a problem on **Settings › Keymap**, which also
+lists your actions' ids.
 
-**View → Actions…** lists every action with its id, what it applies to, its drivers, its keys
-and its SQL or command, and the file's problems. **Create actions.toml** writes the examples
-above, commented out, to start from; it never replaces a file you have.
+**Settings › Custom actions** shows every action in a card of its own, with its id, what it
+applies to, its drivers, its keys and its SQL or command, and the file's problems above them.
+**Create actions.toml**, at the top of the page, writes the examples above, commented out, to
+start from; it never replaces a file you have. Searching the settings finds an action by its
+name, id or what it runs.
+
+![The Custom actions page in Settings](images/settings-actions.png)
 
 ## Commands
 
@@ -185,7 +190,8 @@ with what it gets on stdin, where its output goes and its timeout. **Run** runs 
 then on it runs without asking. Change anything in its `command` or `stdin`, even one argument,
 and it asks again. **Cancel**, or Esc, runs nothing.
 
-**View → Actions…** says of each command whether it is trusted or asks before it next runs.
+**Settings › Custom actions** says of each command whether it is trusted or asks before it next
+runs.
 DbRover keeps what you trusted in `trusted_commands.toml`, in its window state folder rather
 than beside `actions.toml` (see [Where DbRover keeps its files](files.md)). So an `actions.toml`
 you copy from someone, or sync from another machine, still asks before each of its commands

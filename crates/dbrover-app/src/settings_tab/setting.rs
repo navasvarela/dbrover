@@ -8,7 +8,7 @@ use dbrover_sql::LintRule;
 
 use crate::icons;
 
-/// A page of the tab, listed in the sidebar.
+/// A page of the tab made of settings' rows, listed in the sidebar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Category {
     #[default]
@@ -174,10 +174,7 @@ impl Setting {
     /// Whether every word of `query` is in what the setting shows or is found by, ignoring
     /// case.
     pub fn matches(self, query: &str) -> bool {
-        let haystack = self.search_text();
-        query
-            .split_whitespace()
-            .all(|word| haystack.contains(&word.to_lowercase()))
+        super::search::has_every_word(&self.search_text(), query)
     }
 
     fn search_text(self) -> String {

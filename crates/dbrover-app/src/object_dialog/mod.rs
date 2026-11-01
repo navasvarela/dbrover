@@ -54,12 +54,14 @@ pub struct Target {
 
 impl Target {
     /// The data source the helpers change, or `None` when it doesn't speak SQL, which is the
-    /// only language they write.
+    /// only language they write, or speaks a dialect whose DDL they don't write (CQL).
     pub fn new(data_source: &DataSource) -> Option<Self> {
         Some(Self {
             data_source: data_source.id,
             name: data_source.name.clone(),
-            dialect: QueryLanguage::from(data_source.config.driver()).dialect()?,
+            dialect: QueryLanguage::from(data_source.config.driver())
+                .dialect()
+                .filter(|dialect| dialect.writes_ddl())?,
             safety: data_source.safety,
             red: data_source.color == Some(SourceColor::Red),
         })

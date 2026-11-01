@@ -176,6 +176,9 @@ fn missing_where(statement: &str, dialect: Dialect, tokens: &[Token]) -> Option<
     let rule = match found {
         Hazard::UpdateWithoutWhere => LintRule::UpdateWithoutWhere,
         Hazard::DeleteWithoutWhere => LintRule::DeleteWithoutWhere,
+        // Emptying the table is what a `TRUNCATE` is for: it is warned of before it runs, not
+        // as it is typed.
+        Hazard::Truncate => return None,
     };
     let verb = tokens.first()?;
     Some(warning(rule, verb.range.clone(), found.description()))

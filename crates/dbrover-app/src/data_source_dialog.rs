@@ -14,9 +14,9 @@ use egui::{
 };
 
 use crate::data_source_form::{
-    DataSourceForm, DatabaseField, DriverFields, DuckDbFields, DuckDbLocation, ElasticsearchFields,
-    FormError, McpLoginFields, McpPasswordChange, MongoFields, MongoTarget, ServerFields,
-    SshFields, SshLoginChoice, TlsChoice,
+    CassandraFields, DataSourceForm, DatabaseField, DriverFields, DuckDbFields, DuckDbLocation,
+    ElasticsearchFields, FormError, McpLoginFields, McpPasswordChange, MongoFields, MongoTarget,
+    ServerFields, SshFields, SshLoginChoice, TlsChoice,
 };
 use crate::file_picker::{self, FileEngine};
 use crate::form;
@@ -181,6 +181,7 @@ impl DataSourceDialog {
                     DriverFields::SqlServer(fields) => Some(&mut fields.server),
                     DriverFields::ClickHouse(fields) => Some(&mut fields.server),
                     DriverFields::Redis(fields) => Some(&mut fields.server),
+                    DriverFields::Cassandra(fields) => Some(&mut fields.server),
                     DriverFields::Mongo(fields) => {
                         mongo_rows(ui, fields, password_hint);
                         None
@@ -204,6 +205,9 @@ impl DataSourceDialog {
                 }
                 if let DriverFields::Redis(fields) = &mut self.form.fields {
                     text_row(ui, "Key separator", &mut fields.separator, "none");
+                }
+                if let DriverFields::Cassandra(fields) = &mut self.form.fields {
+                    cassandra_rows(ui, fields);
                 }
                 // Only where `dbrover mcp` can serve the engine; elsewhere it would never be used.
                 match read_only::guard(self.form.driver(), self.form.storage()) {
@@ -378,6 +382,23 @@ fn elasticsearch_rows(ui: &mut Ui, fields: &mut ElasticsearchFields, password_hi
             ssh_rows(ui, &mut server.ssh, password_hint);
         }
     }
+}
+
+/// Cassandra's own rows, after the shared server rows.
+fn cassandra_rows(ui: &mut Ui, fields: &mut CassandraFields) {
+    text_row(ui, "Local datacenter", &mut fields.local_datacenter, "none");
+    ui.label("");
+    ui.weak("The datacenter requests go to first, as the cluster names it.");
+    ui.end_row();
+    text_row(
+        ui,
+        "Statement timeout",
+        &mut fields.statement_timeout,
+        "the server's",
+    );
+    ui.label("");
+    ui.weak("In seconds. On ScyllaDB, the server stops a query that runs longer, too.");
+    ui.end_row();
 }
 
 /// The password to save in the keychain, or the command that prints one on every connection.

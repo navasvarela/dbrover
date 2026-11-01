@@ -375,6 +375,39 @@ transactions, so each request takes effect on its own and there is no transactio
 **Cancel** cancels the request's tasks on the server, found by an `X-Opaque-Id` DbRover tags
 each run's requests with, and drops the request.
 
+### CQL: Cassandra and ScyllaDB
+
+A Cassandra or ScyllaDB console runs CQL, which reads like SQL: the editor highlights it,
+completes its keywords and functions, and formats it as it does SQL. Statements end at `;`,
+and comments start with `--` or `//`, or sit between `/*` and `*/`. A batch is one statement,
+from `BEGIN BATCH` to `APPLY BATCH`, whatever the semicolons inside it:
+
+```sql
+SELECT id, total, items FROM shop.orders WHERE id = 42;
+
+BEGIN BATCH
+  INSERT INTO shop.orders (id, total) VALUES (43, 12.50);
+  UPDATE shop.totals SET sum = sum + 1 WHERE day = '2026-11-01';
+APPLY BATCH;
+```
+
+Rows come back a page at a time as you scroll, with the protocol's own paging, and each column
+says its CQL type (`map<text, int>`). Values are written as CQL reads them: timestamps in UTC
+to the millisecond (`2026-11-01 09:30:00.123+0000`), blobs as `0x…`, decimals with every digit,
+durations as `1h30m`. Lists, sets, maps, tuples and user-defined types are JSON: open a cell to
+browse one as a tree.
+
+The database checks each `SELECT`, `INSERT`, `UPDATE` and `DELETE` as you type, by preparing it,
+which runs nothing: a misspelt column or table is underlined before you run the statement. CQL
+has no `EXPLAIN`, so Explain is off, and its rows can't be sorted and filtered in the database:
+clicking a column's header sorts the rows loaded. A `TRUNCATE` asks first, as a `DELETE` without
+`WHERE` does elsewhere.
+
+CQL has no transactions: each statement takes effect as it runs, a batch's together, and there
+is no transaction mode. **Cancel** stops waiting for the statement at once; Cassandra finishes
+it, or stops at its own timeout. On ScyllaDB, a data source with a **Statement timeout** sends
+each `SELECT` with `USING TIMEOUT`, so the server stops too.
+
 The toolbar shows how the last run went: **Done in 12 ms**, **Failed** or **Cancelled**. While a
 statement runs, Run, Run all and Explain are disabled.
 
@@ -389,7 +422,8 @@ Below the toolbar, each console has a transaction mode:
 
 ClickHouse consoles have no transaction mode: ClickHouse's transactions are experimental and
 off unless the server is set up for them, so every statement takes effect as it runs. Nor do
-Redis consoles: see [Redis commands](#redis-commands).
+Redis consoles: see [Redis commands](#redis-commands). Nor do Cassandra and ScyllaDB's: see
+[CQL](#cql-cassandra-and-scylladb).
 
 While a transaction is open, the console says **● Transaction open**, in either mode, and you
 can't switch modes. On PostgreSQL, a statement that fails inside a transaction leaves it

@@ -1,10 +1,11 @@
 # NoSQL databases
 
-Status: **N0a, N0b and N1 built** (2026-10-30) and **N2 and N3 built** (2026-10-31), in the
-layers listed under [N0a](#n0a--groundwork-languages-safety-and-the-explorer),
-[N0b](#n0b--groundwork-documents), [N1](#n1--redis-valkey-and-dragonfly),
-[N2](#n2--mongodb) and [N3](#n3--elasticsearch-and-opensearch). **N4 is being built**, in the
-layers listed under [N4](#n4--cassandra-and-scylladb). W7 (exports) has landed.
+Status: **N0a, N0b and N1 built** (2026-10-30), **N2 and N3 built** (2026-10-31) and **N4
+built** (2026-11-01), in the layers listed under
+[N0a](#n0a--groundwork-languages-safety-and-the-explorer), [N0b](#n0b--groundwork-documents),
+[N1](#n1--redis-valkey-and-dragonfly), [N2](#n2--mongodb),
+[N3](#n3--elasticsearch-and-opensearch) and [N4](#n4--cassandra-and-scylladb). W7 (exports) has
+landed.
 
 DbRover speaks seven SQL engines. Many of the teams that use them keep a Redis beside their
 PostgreSQL, documents in MongoDB, or logs in Elasticsearch, and today they open another tool for
@@ -1070,7 +1071,7 @@ nightly job (see the CI measurement below).
 
 - **N4·1 — Plan:** this list, the decisions N4 takes (in [Decisions](#decisions)), the CI
   measurement, and the roadmap's status.
-- **N4·2 — CQL as a dialect:** `Dialect::Cassandra` in `dbrover-sql`, and
+- **N4·2 — CQL as a dialect** (built): `Dialect::Cassandra` in `dbrover-sql`, and
   `QueryLanguage::Sql(Dialect::Cassandra)`, with no driver yet:
   - its lexical rules: `--`, `//` and `/* */` comments (not nested), `'…'` strings with `''`
     for a quote and no backslash escapes, `$$…$$` strings, and `"…"` names;
@@ -1096,9 +1097,21 @@ nightly job (see the CI measurement below).
 
   Tests: a classification corpus from Cassandra 5's and ScyllaDB's CQL references, as the
   other dialects have; batches split as one statement; each comment and string form lexed; a
-  kittest of a CQL console's completion and batches.
-- **N4·3 — The driver and the console:** a new crate, `dbrover-driver-cassandra`, on `scylla`
-  1.9:
+  kittest of a CQL console's completion and batches. How it came out:
+  - a dialect says what it lacks rather than being matched on: `Dialect::sqlparser_dialect` is
+    `None` for CQL (no syntax check, and a query's columns are read from its tokens),
+    `explains` and `writes_ddl` are false, and `can_arrange` refuses it;
+  - CQL's own words (`keyspace`, `frozen`, `filtering`, `writetime`, …) are highlighted and
+    completed by `Dialect::is_keyword` and `Dialect::keywords` in CQL only: in the shared list
+    the formatter would upper-case columns named `map` or `token` in every other dialect;
+  - a batch's `BEGIN` opens a block only before `BATCH`, `UNLOGGED` or `COUNTER`, and only
+    `APPLY BATCH` closes it, so a column named `end` doesn't;
+  - the MCP server's `explain` tool refuses a CQL statement rather than run it with no prefix;
+  - `$tag$ … $tag$` is read as a string too, as PostgreSQL's is: CQL has only `$$`, and no
+    valid CQL reads differently;
+  - until N4·5, the grid says CQL rows can't be edited yet.
+- **N4·3 — The driver and the console** (built): a new crate, `dbrover-driver-cassandra`, on
+  `scylla` 1.9:
   - the **Cassandra / ScyllaDB** data source: the shared server form (port 9042, 9142 with
     TLS) with an optional user, for a cluster that doesn't ask; a **Keyspace** in the
     database's place, optional, which a console starts in; a **Local datacenter**, optional,
@@ -1136,16 +1149,47 @@ nightly job (see the CI measurement below).
   CQL type written as CQL reads it, with its type's name; a map column as JSON; TLS with the
   test authority; a misspelt column rejected by validate, with its position; a cancelled
   statement; an engine test of a console, and of a read-only data source refusing an `INSERT`;
-  a kittest of the data source dialog.
-- **N4·4 — The explorer:** keyspaces (the system ones only with **System** ticked), then
+  a kittest of the data source dialog. How it came out:
+  - each console's session keeps one connection per node and doesn't fetch the cluster's
+    schema, which the explorer reads from `system_schema` when asked; the shard-aware port is
+    left alone, since one connection per node gains nothing from it;
+  - `dbrover-tls` gained `client_config_for`, which checks a certificate against a name of the
+    caller's choosing, since the `scylla` client names each node to rustls by its IP address;
+  - ScyllaDB says "Unrecognized name" for a misspelt column when preparing, and Cassandra
+    "Undefined column name"; validate points at the name either way;
+  - `check_cancel` needs a statement that runs for seconds, which CQL has none of, so cancel is
+    tested through a forwarding port that holds the node's answers back: the statement is
+    stopped, and the connection answers again once they flow. That port is a tunnel's local
+    end, so it tests reaching every node through a tunnel too;
+  - ScyllaDB's test node also takes CQL over TLS on a port of its own, with the test
+    authority's certificate, so TLS is tested on every pull request;
+  - the grid shows CQL rows read-only until N4·5, and the statement timeout is a field of the
+    Cassandra form alone.
+- **N4·4 — The explorer** (built): keyspaces (the system ones only with **System** ticked), then
   folders of tables, materialized views, user-defined types, functions and aggregates; under a
   table, its columns (partition and clustering keys marked, in key order, then the rest) and
   secondary indexes. **Show definition** is the server's own `DESCRIBE` where it has one
   (ScyllaDB, and Cassandra 4.0 and later), and is rebuilt from `system_schema` otherwise.
   **Open data** opens a console with `SELECT * FROM ks.t` and runs it. Completion offers the
   keyspaces, tables and columns the explorer has loaded, as for SQL. Tests: the catalog walk
-  with each kind, the definitions run again in an empty keyspace, and a column completed.
-- **N4·5 — Editing:** a cell changed in the grid becomes
+  with each kind, the definitions run again in an empty keyspace, and a column completed. How it
+  came out:
+  - the tree has the shape of MySQL's and ClickHouse's (a keyspace is a schema, with folders of
+    tables and views, each with a folder of columns), so completion reads it as it does theirs,
+    with no change; a user-defined type is `NodeKind::UserType` and an aggregate
+    `NodeKind::Aggregate`, in folders of their own (`FolderKind::Types`, `Aggregates`);
+  - both servers answer `DESCRIBE` as rows, `DESCRIBE ONLY KEYSPACE` included, so no definition
+    is rebuilt from `system_schema`: Cassandra before 4.0, which hasn't it, is past its end of
+    life, and gets an error rather than a guess;
+  - ScyllaDB lists the view behind each secondary index in `system_schema.views`, named after
+    the index with `_index`; the explorer leaves those out;
+  - the test node of each server runs user-defined functions (Lua on ScyllaDB, Java on
+    Cassandra) and, on Cassandra, materialized views, which both leave off by default, so the
+    walk meets every kind; the driver's tests that make keyspaces or walk the catalog take a
+    lock, since a walk that meets another test's keyspace while it is dropped fails;
+  - the explorer's menu offered the SQL object helpers for a CQL table: it now asks
+    `Dialect::writes_ddl` for them, and keeps **Open data** and **Export data…**.
+- **N4·5 — Editing** (built): a cell changed in the grid becomes
   `UPDATE ks.t SET c = … WHERE` every partition and clustering key column `= …`, when the
   result is a `SELECT` of one table that holds its whole primary key; **Add row** becomes an
   `INSERT`, and **Delete rows** a `DELETE` by the same key. Values are written as literals of
@@ -1154,14 +1198,44 @@ nightly job (see the CI measurement below).
   Redis's and MongoDB's do: each is checked, logged and recorded in the history, and one that
   fails leaves the ones before it done, which the grid says. Tests: a cell of each type edited
   and read back, a row added and deleted, a key column refused, and kittests of the console's
-  edits.
-- **N4·6 — Safety, MCP and the manual:** the read-only level's dialog suggests a role with
+  edits. How it came out:
+  - the grid's SQL edits took CQL with three changes: `RowSql::for_table` writes each value as
+    a literal of its column's type from the table's description (`dbrover-sql`'s `cql_value`),
+    `QueryLanguage::edits_run` runs a dialect without transactions one statement at a time, and
+    `Dialect::updates_keys` keeps a loaded row's key cells as they are;
+  - a value written bare (a number, a UUID, a blob, a duration) is first checked to be one, and
+    is sent as a string otherwise, so the server refuses the wrong type rather than read text
+    from the grid as CQL;
+  - the driver describes a table from `system_schema`, resolving an unqualified name in the
+    session's keyspace and an unquoted one in lowercase, as CQL does; a materialized view isn't
+    a table to describe, so its rows stay read-only;
+  - the edits run as the SQL engines' do, the deletions, then the changes, then the new rows,
+    each with the statement that would undo it in the history.
+- **N4·6 — Safety, MCP and the manual** (built): the read-only level's dialog suggests a role with
   only the `SELECT` permission; the MCP server serves the data source only through its MCP
   login, its `query` tool takes one statement, and `list_objects` lists the explorer's levels.
   The engine count in `README.md`, `book/src/introduction.md` and `site/index.html` takes the
   new engines in, counted as #316 counts them: one more data source kind, a pair. Tests: on
   ScyllaDB, a role with `SELECT` alone serves as the MCP login, reads a table, and is refused
-  an `INSERT` by the server as well as by the check.
+  an `INSERT` by the server as well as by the check. How it came out:
+  - the guard, the advice and `list_objects`' paging were already every engine's, so this layer
+    is the test binary `cassandra` of `dbrover-mcp`, the tools' descriptions, the manual's role
+    and the counts; the test runs on Cassandra too, in the nightly job;
+  - `explain` is refused on a CQL data source, which N4·2 made so; the test checks it;
+  - the website lists Cassandra and ScyllaDB with Cassandra's logo, and counts ten databases.
+
+N4 is built. Its exit was checked against the compose servers, ScyllaDB 2026.3.4 and Cassandra
+5.0.9, by the tests each layer added: connecting to both (`connects_and_says_which_server_it_reached`);
+browsing keyspaces and tables (`lists_every_kind_of_object_with_definitions_that_run_again`);
+paging 1,200 rows (`pages_a_large_table_in_order`); a map column as JSON, which the cell
+viewer's tree reads (`writes_every_type_as_cql_reads_it`, `runs_cql_and_shows_a_map_as_json`);
+editing a cell (`edits_rows_by_their_primary_key`, `applies_cql_edits_one_at_a_time`); a
+misspelt column caught by preparing (`validates_by_preparing`); and a read-only data source
+refusing an `INSERT` (`a_read_only_cql_data_source_refuses_insert`, and the MCP test). What it
+needs by hand, before release: a multi-node cluster across datacenters with **Local
+datacenter** set, a cluster reached through an SSH tunnel, ScyllaDB Cloud's CQL endpoint with TLS, and
+ScyllaDB's own node certificates with `verify-full`. DataStax Astra DB signs in with a client
+certificate from its secure connect bundle, which DbRover doesn't take yet.
 
 The manual changes in the layer that changes what a user sees: N4·3 (the data source, the
 console and keyspaces in the explorer), N4·4 (the explorer), N4·5 (editing) and N4·6

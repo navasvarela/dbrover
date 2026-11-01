@@ -735,6 +735,10 @@ impl QueryConsole {
         table: &RelationName,
         result: &Result<Option<TableDescription>, String>,
     ) {
+        // Only a SQL or CQL statement's table is described.
+        let Some(dialect) = self.language.dialect() else {
+            return;
+        };
         let Some(run) = self.run.as_mut() else {
             return;
         };
@@ -750,7 +754,9 @@ impl QueryConsole {
                 continue;
             }
             statement.edits.editability = match result {
-                Ok(Some(description)) => edit::edit_target(description.clone(), &statement.columns),
+                Ok(Some(description)) => {
+                    edit::edit_target(description.clone(), &statement.columns, dialect)
+                }
                 Ok(None) => Editability::ReadOnly(format!(
                     "{} isn't a table",
                     table.to_sql(self.language.quoting())

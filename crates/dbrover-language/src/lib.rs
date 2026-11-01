@@ -33,8 +33,8 @@ pub use documents::{DocumentEdit, DocumentView};
 pub enum EditsRun {
     /// In a transaction of the dialect's, all or none.
     Transaction(Dialect),
-    /// One command at a time, each taking effect as it runs: Redis, MongoDB and Elasticsearch
-    /// have no transaction to undo the ones before a command that fails.
+    /// One command at a time, each taking effect as it runs: Redis, MongoDB, Elasticsearch and
+    /// CQL have no transaction to undo the ones before a command that fails.
     OneByOne,
 }
 
@@ -96,7 +96,10 @@ impl QueryLanguage {
     /// `None` for one whose results it can't.
     pub fn edits_run(self) -> Option<EditsRun> {
         match self {
-            Self::Sql(dialect) => Some(EditsRun::Transaction(dialect)),
+            Self::Sql(dialect) if dialect.has_transactions() => {
+                Some(EditsRun::Transaction(dialect))
+            }
+            Self::Sql(_) => Some(EditsRun::OneByOne),
             Self::Redis | Self::Mongo | Self::Search => Some(EditsRun::OneByOne),
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
@@ -174,7 +177,8 @@ impl QueryLanguage {
 
     fn explain_style(self) -> Option<ExplainStyle> {
         match self {
-            Self::Sql(dialect) => Some(ExplainStyle::Prefix(dialect)),
+            Self::Sql(dialect) if dialect.explains() => Some(ExplainStyle::Prefix(dialect)),
+            Self::Sql(_) => None,
             Self::Mongo => Some(ExplainStyle::MongoShell),
             Self::Search => Some(ExplainStyle::SearchProfile),
             Self::Redis => None,
@@ -265,7 +269,7 @@ impl QueryLanguage {
     /// endpoints.
     pub fn is_keyword(self, word: &str) -> bool {
         match self {
-            Self::Sql(_) => dbrover_sql::is_keyword(word),
+            Self::Sql(dialect) => dialect.is_keyword(word),
             Self::Redis => redis::is_command(word),
             Self::Mongo => mongo::is_keyword(word),
             Self::Search => search::is_keyword(word),
@@ -278,7 +282,7 @@ impl QueryLanguage {
     /// [`Self::completion_keeps_case`] says they are written as listed.
     pub fn completion_words(self) -> &'static [&'static str] {
         match self {
-            Self::Sql(_) => dbrover_sql::keywords(),
+            Self::Sql(dialect) => dialect.keywords(),
             Self::Redis => redis::completion_words(),
             Self::Mongo => mongo::completion_words(),
             Self::Search => search::completion_words(),
@@ -402,6 +406,7 @@ impl From<DriverKind> for QueryLanguage {
             DriverKind::Redis => Self::Redis,
             DriverKind::Mongo => Self::Mongo,
             DriverKind::Elasticsearch => Self::Search,
+            DriverKind::Cassandra => Self::Sql(Dialect::Cassandra),
         }
     }
 }
@@ -435,6 +440,7 @@ mod tests {
                 None,
                 None,
                 None,
+                Some(Dialect::Cassandra),
             ]
         );
         assert_eq!(QueryLanguage::from(DriverKind::Redis), QueryLanguage::Redis);
@@ -470,6 +476,30 @@ mod tests {
             Some(dbrover_sql::Hazard::DeleteWithoutWhere.description())
         );
         assert_eq!(language.hazard("DELETE FROM orders WHERE id = 1"), None);
+    }
+
+    #[test]
+    fn cql_is_sql_without_explain_with_words_of_its_own() {
+        let cql = QueryLanguage::Sql(Dialect::Cassandra);
+        assert!(!cql.can_explain(ExplainDepth::Estimated, None));
+        assert_eq!(
+            cql.explain("SELECT * FROM t", None, ExplainDepth::Estimated),
+            None
+        );
+        assert!(cql.is_keyword("KEYSPACE"));
+        assert!(!QueryLanguage::Sql(Dialect::Postgres).is_keyword("keyspace"));
+        assert!(cql.completion_words().contains(&"filtering"));
+        assert_eq!(
+            cql.hazard("TRUNCATE orders"),
+            Some(dbrover_sql::Hazard::Truncate.description())
+        );
+        let script = "BEGIN BATCH INSERT INTO a (id) VALUES (1); APPLY BATCH; SELECT * FROM a";
+        let kinds: Vec<_> = cql
+            .split(script)
+            .into_iter()
+            .map(|range| cql.classify(&script[range]))
+            .collect();
+        assert_eq!(kinds, [Ok(StatementKind::Write), Ok(StatementKind::Read)]);
     }
 
     #[test]

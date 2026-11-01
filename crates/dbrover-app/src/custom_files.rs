@@ -160,8 +160,7 @@ fn contents(
 }
 
 /// The file's path, what it adds, and a Reload button, which this returns whether was clicked.
-/// The actions window starts the same way.
-pub fn header(ui: &mut egui::Ui, path: Option<&Path>, summary: &str) -> bool {
+fn header(ui: &mut egui::Ui, path: Option<&Path>, summary: &str) -> bool {
     let mut reload = false;
     ui.horizontal(|ui| {
         if let Some(path) = path {
@@ -177,7 +176,7 @@ pub fn header(ui: &mut egui::Ui, path: Option<&Path>, summary: &str) -> bool {
 }
 
 /// What couldn't be used, or that there is nothing wrong.
-pub fn problems(ui: &mut egui::Ui, problems: &[String]) {
+fn problems(ui: &mut egui::Ui, problems: &[String]) {
     if problems.is_empty() {
         ui.weak("No problems.");
     }

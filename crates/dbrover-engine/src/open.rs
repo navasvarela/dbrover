@@ -328,6 +328,9 @@ async fn connect(
         ConnectionConfig::Elasticsearch(config) => {
             Box::new(dbrover_driver_elasticsearch::connect(config, password, route).await?)
         }
+        ConnectionConfig::Cassandra(config) => {
+            Box::new(dbrover_driver_cassandra::connect(config, password, route).await?)
+        }
     })
 }
 

@@ -99,6 +99,24 @@ Each driver crate runs the suite against its own backend:
   search paged past 1,000 hits in its sort's order, a search's `size`, an aggregation as one
   document, `_sql` and `_plugins/_sql` as rows past their first page, `_cat` as documents,
   errors pointing into the body, TLS and an API key on Elasticsearch.
+- **Cassandra and ScyllaDB**: the `scylla` container (2026.3, plain CQL on port 59042 and CQL
+  over TLS on 59142 with the `postgres-tls` certificate, password authentication and Lua
+  user-defined functions on), with every
+  pull request, and the `cassandra` container (5.0, port 59043, 512 MB heap, materialized views
+  and Java user-defined functions on), only under the
+  compose file's `nightly` profile, which `.github/workflows/nightly.yml` starts once a day:
+  Cassandra takes about 40 seconds longer to start on a runner. Skipped when
+  `DBROVER_TEST_SCYLLA_URL`, `DBROVER_TEST_SCYLLA_TLS_URL` and `DBROVER_TEST_CASSANDRA_URL` are
+  unset; each test runs on every server that is set, in keyspaces of its own made again first.
+  They run `check_lifecycle`, `check_connect_failure`, `walk_catalog` and `check_invalid_path`.
+  `check_execution` and `check_transactions` are SQL's (temporary tables, `CROSS JOIN`,
+  `BEGIN`), and `check_cancel` needs a statement that runs for seconds, which CQL has none of:
+  cancel is tested through a forwarding port that holds the node's answers back, which also
+  covers a tunnel. Besides: 1,200 rows paged in clustering order, every CQL type written as CQL
+  reads it with its type's name, collections as JSON, a syntax error's position, a misspelt
+  column caught by preparing, the keyspace a console starts in, `USING TIMEOUT` on ScyllaDB,
+  TLS checked against the test authority, and every kind of object in the explorer with
+  definitions that run again.
 - **SQL Server**: the `sqlserver` container (2022, port 51433), skipped when
   `DBROVER_TEST_SQLSERVER_URL` is unset. Its image is x86-64 only: native on CI's Linux runner,
   emulated (slowly, and it can crash) by Docker on an Apple-silicon Mac. The image can't

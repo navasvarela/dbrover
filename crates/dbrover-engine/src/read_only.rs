@@ -75,14 +75,15 @@ pub fn mode(driver: DriverKind, storage: Storage) -> Option<ReadOnlyMode> {
             Some(ReadOnlyMode::Connection)
         }
         // DuckDB refuses to open a database in memory read-only. SQL Server has no read-only
-        // transaction, and Redis, MongoDB and Elasticsearch no read-only session at all: a
-        // user who may only read is their guard (docs/nosql.md, N0a to N3).
+        // transaction, and Redis, MongoDB, Elasticsearch and Cassandra no read-only session at
+        // all: a user who may only read is their guard (docs/nosql.md, N0a to N4).
         (DriverKind::DuckDb, Storage::InMemory)
         | (
             DriverKind::SqlServer
             | DriverKind::Redis
             | DriverKind::Mongo
-            | DriverKind::Elasticsearch,
+            | DriverKind::Elasticsearch
+            | DriverKind::Cassandra,
             _,
         ) => None,
     }
@@ -121,6 +122,7 @@ pub fn read_only_login(driver: DriverKind) -> &'static str {
             "a user or API key with only the monitor cluster privilege and read, \
              view_index_metadata and monitor on its indices"
         }
+        DriverKind::Cassandra => "a role with only the SELECT permission",
         DriverKind::Postgres
         | DriverKind::Sqlite
         | DriverKind::Mysql
@@ -363,7 +365,8 @@ mod tests {
                 DriverKind::SqlServer
                 | DriverKind::Redis
                 | DriverKind::Mongo
-                | DriverKind::Elasticsearch => guard == Guard::Login,
+                | DriverKind::Elasticsearch
+                | DriverKind::Cassandra => guard == Guard::Login,
             };
             assert!(expected, "{driver:?}: {guard:?}");
         }

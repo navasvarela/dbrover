@@ -15,7 +15,6 @@ use egui::{Frame, Margin, RichText};
 use egui_dock::{DockArea, DockState};
 
 use crate::about_dialog;
-use crate::actions_window::{self, ActionsWindowAction};
 use crate::command_runs::{CommandRuns, Finished};
 use crate::commands::{self, AppCommand, CommandState};
 use crate::console::{ConsoleAction, ExportedRows, FormatScope, RowsToOpen, RunDestination};
@@ -41,7 +40,6 @@ use crate::history_window::{HistoryAction, HistoryWindow};
 use crate::host_key_prompt::{HostKeyAction, HostKeyPrompt};
 use crate::import_dialog::{ImportAction, ImportDialog};
 use crate::keymap::{self, Keymap};
-use crate::keymap_window::{self, KeymapWindowAction};
 use crate::log_console::{LogConsole, LogFeed};
 use crate::mcp_settings::McpDefaultsEditor;
 use crate::menu_bar;
@@ -54,10 +52,9 @@ use crate::previous_install::AdoptionNotice;
 use crate::project_dialog::{
     DeleteProjectChoice, DeleteProjectConfirmation, ProjectDialogAction, ProjectNameDialog,
 };
-use crate::project_settings::{ProjectSettingsAction, ProjectSettingsDialog};
 use crate::rollback_dialog::{Closing, RollbackChoice, RollbackConfirmation};
 use crate::settings::AppSettings;
-use crate::settings_tab::{SettingsAction, SettingsTab};
+use crate::settings_tab::{Page, SettingsAction, SettingsTab};
 use crate::sql_files::{self, Destination, OpenFileAction, OpenFileDialog, SqlFiles};
 use crate::state::{AppState, DataSources, EngineStatus};
 use crate::system_look::SystemLook;
@@ -109,7 +106,6 @@ pub struct DbRoverApp {
     data_source_dialog: Option<DataSourceDialog>,
     delete_confirmation: Option<DeleteConfirmation>,
     project_dialog: Option<ProjectNameDialog>,
-    project_settings: Option<ProjectSettingsDialog>,
     /// View › Settings › MCP's draft, kept while the window is closed.
     mcp_defaults: McpDefaultsEditor,
     settings_tab: SettingsTab,
@@ -143,9 +139,7 @@ pub struct DbRoverApp {
     keymap_file: Result<KeymapBindings, String>,
     /// Where `keymap.toml` is, once the engine has reported it.
     keymap_path: Option<PathBuf>,
-    keymap_window_open: bool,
     custom_files: CustomFiles,
-    actions_window_open: bool,
     /// `theme.toml` was read, and its colours are yet to be installed.
     theme_changed: bool,
     /// Why the last custom action couldn't run, shown in the status bar until the next one.
@@ -230,7 +224,6 @@ impl DbRoverApp {
             data_source_dialog: None,
             delete_confirmation: None,
             project_dialog: None,
-            project_settings: None,
             mcp_defaults: McpDefaultsEditor::new(&McpPermissions::default()),
             settings_tab: SettingsTab::default(),
             delete_project_confirmation: None,
@@ -256,9 +249,7 @@ impl DbRoverApp {
             keymap: Keymap::default(),
             keymap_file: Ok(KeymapBindings::new()),
             keymap_path: None,
-            keymap_window_open: false,
             custom_files: CustomFiles::default(),
-            actions_window_open: false,
             theme_changed: false,
             action_problem: None,
             command_runs: CommandRuns::default(),
@@ -394,13 +385,7 @@ impl DbRoverApp {
         {
             self.project_dialog = None;
         }
-        if self
-            .project_settings
-            .as_mut()
-            .is_some_and(|dialog| dialog.apply(event))
-        {
-            self.project_settings = None;
-        }
+        self.settings_tab.apply(event);
         if let Some(changed) = self
             .object_dialog
             .as_mut()
@@ -1162,14 +1147,7 @@ impl DbRoverApp {
                     self.project_dialog = Some(ProjectNameDialog::rename(project));
                 }
             }
-            ExplorerAction::ProjectSettings(id) => {
-                if let Some(project) = self.state.projects.get(id) {
-                    self.project_settings = Some(ProjectSettingsDialog::new(
-                        project,
-                        &self.state.mcp_defaults,
-                    ));
-                }
-            }
+            ExplorerAction::ProjectSettings(id) => self.open_settings_page(Page::Project(id)),
             ExplorerAction::DeleteProject(id) => {
                 if let Some(project) = self.state.projects.get(id) {
                     let members = self
@@ -1418,35 +1396,6 @@ impl DbRoverApp {
                 self.send(Command::RenameProject { id, name });
             }
             ProjectDialogAction::Close => self.project_dialog = None,
-        }
-    }
-
-    fn show_project_settings(&mut self, ctx: &egui::Context) {
-        let Some(dialog) = &mut self.project_settings else {
-            return;
-        };
-        let members: Vec<&DataSource> = self
-            .state
-            .data_sources
-            .entries()
-            .iter()
-            .map(|entry| &entry.data_source)
-            .filter(|data_source| data_source.project == Some(dialog.project()))
-            .collect();
-        let Some(action) = dialog.show(ctx, &self.state.mcp_defaults, &members) else {
-            return;
-        };
-        match action {
-            ProjectSettingsAction::Save {
-                id,
-                mcp_enabled,
-                overrides,
-            } => self.send(Command::SaveProjectMcp {
-                id,
-                mcp_enabled,
-                overrides,
-            }),
-            ProjectSettingsAction::Close => self.project_settings = None,
         }
     }
 
@@ -1822,8 +1771,8 @@ impl DbRoverApp {
             }
             AppCommand::ImportDataSources => self.import_data_sources(),
             AppCommand::Theme(preference) => ctx.set_theme(preference),
-            AppCommand::ShowKeymap => self.keymap_window_open = true,
-            AppCommand::ShowActions => self.actions_window_open = true,
+            AppCommand::ShowKeymap => self.open_settings_page(Page::Keymap),
+            AppCommand::ShowActions => self.open_settings_page(Page::Actions),
             AppCommand::ShowSettings => workspace::open_settings_tab(&mut self.dock),
             AppCommand::ResetLayout => {
                 self.dock = workspace::default_layout();
@@ -2189,8 +2138,31 @@ impl DbRoverApp {
             SettingsAction::Theme(preference) => {
                 self.run_command(AppCommand::Theme(preference), ctx)
             }
-            SettingsAction::Run(command) => self.run_command(command, ctx),
+            SettingsAction::ReloadKeymap => self.send(Command::ReloadKeymap),
+            SettingsAction::CreateKeymap => self.send(Command::CreateKeymap {
+                text: keymap::template(),
+            }),
+            SettingsAction::ReloadCustomFiles => self.send(Command::ReloadCustomFiles),
+            SettingsAction::CreateActions => self.send(Command::CreateCustomFile {
+                kind: CustomFileKind::Actions,
+                text: custom_actions::TEMPLATE.to_owned(),
+            }),
+            SettingsAction::SaveProject {
+                id,
+                mcp_enabled,
+                overrides,
+            } => self.send(Command::SaveProjectMcp {
+                id,
+                mcp_enabled,
+                overrides,
+            }),
         }
+    }
+
+    /// Opens the Settings tab, or brings it to the front, on `page`.
+    fn open_settings_page(&mut self, page: Page) {
+        self.settings_tab.show_page(page);
+        workspace::open_settings_tab(&mut self.dock);
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
@@ -2236,13 +2208,13 @@ impl DbRoverApp {
     fn problem_links(&mut self, ui: &mut egui::Ui, color: egui::Color32) {
         let keymap = self.keymap.problems().len();
         if keymap > 0 && widgets::problems_link(ui, "keymap.toml", keymap, color).clicked() {
-            self.keymap_window_open = true;
+            self.open_settings_page(Page::Keymap);
         }
         for kind in CustomFileKind::ALL {
             let count = self.custom_files.problems(kind).len();
             if count > 0 && widgets::problems_link(ui, kind.file_name(), count, color).clicked() {
                 match kind {
-                    CustomFileKind::Actions => self.actions_window_open = true,
+                    CustomFileKind::Actions => self.open_settings_page(Page::Actions),
                     CustomFileKind::Snippets | CustomFileKind::Theme => {
                         self.custom_files.window = Some(kind);
                     }
@@ -2251,40 +2223,10 @@ impl DbRoverApp {
         }
     }
 
-    fn show_actions_window(&mut self, ctx: &egui::Context) {
-        if !self.actions_window_open {
-            return;
-        }
-        match actions_window::show(ctx, &self.custom_files, &self.keymap, &self.command_runs) {
-            Some(ActionsWindowAction::Reload) => self.send(Command::ReloadCustomFiles),
-            Some(ActionsWindowAction::Create) => self.send(Command::CreateCustomFile {
-                kind: CustomFileKind::Actions,
-                text: actions_window::TEMPLATE.to_owned(),
-            }),
-            Some(ActionsWindowAction::Close) => self.actions_window_open = false,
-            None => {}
-        }
-    }
-
     fn show_custom_file_window(&mut self, ctx: &egui::Context) {
         match custom_files::show(ctx, &self.custom_files) {
             Some(FileWindowAction::Reload) => self.send(Command::ReloadCustomFiles),
             Some(FileWindowAction::Close) => self.custom_files.window = None,
-            None => {}
-        }
-    }
-
-    fn show_keymap_window(&mut self, ctx: &egui::Context) {
-        if !self.keymap_window_open {
-            return;
-        }
-        let custom = self.custom_files.actions();
-        match keymap_window::show(ctx, &self.keymap, self.keymap_path.as_deref(), custom) {
-            Some(KeymapWindowAction::Reload) => self.send(Command::ReloadKeymap),
-            Some(KeymapWindowAction::Create) => self.send(Command::CreateKeymap {
-                text: keymap::template(),
-            }),
-            Some(KeymapWindowAction::Close) => self.keymap_window_open = false,
             None => {}
         }
     }
@@ -2364,6 +2306,10 @@ impl eframe::App for DbRoverApp {
                     explorer_actions: &mut explorer_actions,
                     consoles: open_consoles,
                     keymap: &self.keymap,
+                    keymap_path: self.keymap_path.as_deref(),
+                    custom_files: &self.custom_files,
+                    command_runs: &self.command_runs,
+                    mcp_defaults_saved: &self.state.mcp_defaults,
                     lint: &lint,
                     recent_completions,
                     console_actions: &mut console_actions,
@@ -2434,7 +2380,6 @@ impl eframe::App for DbRoverApp {
         self.show_data_source_dialog(&ctx);
         self.show_delete_confirmation(&ctx);
         self.show_project_dialog(&ctx);
-        self.show_project_settings(&ctx);
         self.show_delete_project_confirmation(&ctx);
         self.show_object_dialog(&ctx);
         self.show_password_prompt(&ctx);
@@ -2453,9 +2398,7 @@ impl eframe::App for DbRoverApp {
             self.definition_window = None;
         }
         self.show_history_window(&ctx);
-        self.show_keymap_window(&ctx);
         self.show_custom_file_window(&ctx);
-        self.show_actions_window(&ctx);
         let commands = self.command_runs.show(&ctx);
         self.send_all(commands);
         self.show_about(&ctx);
@@ -2950,6 +2893,62 @@ mod tests {
         );
     }
 
+    /// A Cassandra data source names its keyspace in the database's place, which may be left
+    /// empty, and saves its local datacenter and statement timeout.
+    #[test]
+    fn adds_a_cassandra_data_source_with_its_datacenter_and_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "No data sources yet.");
+
+        harness
+            .get_all_by_label("New data source")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("Cassandra / ScyllaDB").click();
+        harness.run();
+        harness.get_by_label_contains("New Cassandra / ScyllaDB data source");
+        assert!(harness.query_by_label("Database").is_none());
+        for (label, text) in [
+            ("Keyspace", "shop"),
+            ("Local datacenter", "dc1"),
+            ("Statement timeout", "30"),
+        ] {
+            harness
+                .get_by_role_and_label(Role::TextInput, label)
+                .focus();
+            harness.run();
+            harness
+                .get_by_role_and_label(Role::TextInput, label)
+                .type_text(text);
+            harness.run();
+        }
+        harness.get_by_label("Save").click();
+
+        step_until_visible(&mut harness, "Expand shop@localhost");
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        let [saved] = saved.as_slice() else {
+            panic!("expected one data source, got {saved:?}");
+        };
+        let dbrover_core::ConnectionConfig::Cassandra(config) = &saved.config else {
+            panic!("expected a Cassandra data source, got {saved:?}");
+        };
+        assert_eq!(
+            (
+                config.server.database.as_str(),
+                config.server.port.to_string(),
+                config.local_datacenter.as_str(),
+                config.statement_timeout.map(std::num::NonZeroU32::get),
+            ),
+            ("shop", "9042".to_owned(), "dc1", Some(30))
+        );
+    }
+
     #[test]
     fn adds_a_clickhouse_data_source_whose_port_follows_its_tls_mode() {
         let dir = tempfile::tempdir().unwrap();
@@ -3187,6 +3186,14 @@ mod tests {
         project.clone()
     }
 
+    /// Clicks Save project settings, which sits below the page's fold at the default window
+    /// size once the warnings show.
+    fn save_project_settings(harness: &mut Harness<'_, DbRoverApp>) {
+        harness.get_by_label("Save project settings").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Save project settings").click();
+    }
+
     #[test]
     fn sets_a_projects_mcp_permissions_warning_about_shared_logins() {
         let dir = tempfile::tempdir().unwrap();
@@ -3232,7 +3239,7 @@ mod tests {
         harness.run();
         harness.get_by_label_contains("dbrover mcp --project analytics");
         harness
-            .get_by_label("Allow MCP clients to use this project")
+            .get_by_role_and_label(Role::CheckBox, "Allow MCP clients to use this project")
             .click();
         harness.run();
         assert!(
@@ -3242,27 +3249,20 @@ mod tests {
         harness.get_by_label("Write").click();
         harness.run();
         harness.get_by_label_contains("No MCP login on warehouse.");
-        harness.get_by_label("Save").click();
-        step_until(&mut harness, "the project being saved", |harness| {
-            harness
-                .query_by_label("Allow MCP clients to use this project")
-                .is_none()
+        save_project_settings(&mut harness);
+        step_until(&mut harness, "the project being saved", |_| {
+            saved_project(dir.path()).mcp_enabled
         });
         let saved = saved_project(dir.path());
-        assert!(saved.mcp_enabled);
         assert_eq!(saved.mcp.write, Some(true));
         assert_eq!(
             saved.mcp.schema, None,
             "untouched settings stay at the default"
         );
 
-        harness.get_by_label("Analytics").click_secondary();
-        harness.run();
-        harness.get_by_label("Project settings…").click();
-        harness.run();
         harness.get_by_label("Reset Write").click();
         harness.run();
-        harness.get_by_label("Save").click();
+        save_project_settings(&mut harness);
         step_until(&mut harness, "the reset being saved", |_| {
             saved_project(dir.path()).mcp.write.is_none()
         });

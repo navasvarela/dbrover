@@ -17,12 +17,13 @@ const AFTER_IS: &[&str] = &[
 ];
 
 /// The statement's syntax error, if it is a checked kind of statement and the parser rejects
-/// it.
+/// it. None in CQL, which `sqlparser` can't read: its server checks it (`Connection::validate`).
 pub(super) fn problem(statement: &str, dialect: Dialect) -> Option<Problem> {
+    let parser = dialect.sqlparser_dialect()?;
     if !is_checkable(statement, dialect) || has_known_gap(statement, dialect) {
         return None;
     }
-    let parsed = Parser::parse_sql(dialect.sqlparser_dialect(), statement);
+    let parsed = Parser::parse_sql(parser, statement);
     let error = parsed.err()?.to_string();
     let error = error.strip_prefix("sql parser error: ").unwrap_or(&error);
     let (message, location) = match error.rsplit_once(" at Line: ") {

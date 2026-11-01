@@ -6,7 +6,8 @@ design is in [Power in the grid](grid-power.md), W7's in
 explain plan, designed on 2026-10-31 [below](#w10--a-visual-explain-plan) and built. W11,
 read-only on every engine, designed on 2026-10-31 [below](#w11--read-only-on-every-engine) and
 built. W12, charts from results, designed on 2026-11-01 [below](#w12--charts-from-results) and
-built.
+built. W14, every setting in the Settings tab, designed on 2026-11-01
+[below](#w14--settings-in-one-place) and built.
 Proposed on 2026-10-24.
 
 DbRover browses, queries and edits PostgreSQL, SQLite, MySQL and MariaDB, and ships as a
@@ -626,6 +627,194 @@ of it:
 **Exit:** a `GROUP BY` result of months and totals charts as bars and as lines, and exports as
 an SVG a browser shows.
 
+## W14 — Settings in one place
+
+**View → Settings…** opens a tab with a sidebar of categories (Appearance, Editor, Query
+history, MCP, Updates) and a search that finds a setting in any of them. Three kinds of
+settings still live elsewhere: the keymap and the custom actions have windows of their own,
+reached from buttons under the categories, and a project's MCP settings are a modal opened by
+right-clicking the project. W14 makes them pages of the Settings tab, so one tab holds every
+setting DbRover has, and its search finds them all.
+
+```text
++-------------------------+----------------------------------------------+
+| [ Search settings     ] | Keymap                                       |
+|                         | The keys for each action. Change them in     |
+|   Appearance            | keymap.toml, then click Reload.              |
+|   Editor                | Read from ~/…/keymap.toml  Reload  Create …  |
+|   Query history         | ! keymap.toml: "ctrl+shfit+f" isn't a key    |
+|   MCP                   |                                              |
+|   Updates               | CONSOLE                                      |
+| > Keymap                | +------------------------------------------+ |
+|   Custom actions        | | Run the selection or the…     Cmd+Enter  | |
+| ----------------------- | | console.run                              | |
+| PROJECTS                | | Format the selection, or…     Alt+Cmd+L  | |
+|   Reporting           * | | console.format                           | |
+|   Web shop              | +------------------------------------------+ |
+|                         | GRID                                         |
+|                         | …                                            |
++-------------------------+----------------------------------------------+
+```
+
+- **The sidebar** lists the five categories, then **Keymap** and **Custom actions** as pages
+  like them, then a **Projects** caption with one entry per project, in the explorer's
+  order. A project with unsaved changes shows a dot. Without projects, the caption reads "No
+  projects yet" under it, and nothing else.
+- **Every page reads alike:** a title and a line under it, the file's problems at the top as
+  the Settings page shows `settings.toml`'s, and cards of rows (the `form` kit's). The Keymap
+  and Custom actions pages, which are long, have the file's path and its links at the top,
+  under the title; the settings' pages keep theirs at the bottom.
+- **Search** finds settings, shortcuts, custom actions and projects, and the sidebar counts
+  what each page has that matches, as it counts categories today.
+
+### Keymap
+
+- **Rows, in a card per part of the app.** An action's id says where it belongs (`console.run`,
+  `grid.view-cell`, `file.save`, `editor.find`, `app.settings`); the cards are **Console**,
+  **Grid**, **Editor**, **File** and **App**, in that order, then **Custom actions** for the
+  `custom.<id>` of each action in `actions.toml`. Each row shows what the action does, its id
+  under it in monospace (the name `keymap.toml` takes), and its keys at the right, or "unbound".
+- **Editing stays in `keymap.toml`**, as now: **Create keymap.toml** writes a file listing
+  every action with its default, commented out (an existing file is kept), and **Reload**
+  reads it again. Recording a key on the page needs DbRover to rewrite the user's file while
+  keeping its comments, which is a new dependency and a design of its own; it is left for later.
+- **Problems** in `keymap.toml` (a key that can't be read, an action that doesn't exist, two
+  actions sharing a key) are listed at the top of the page as warnings, and an unreadable file
+  as an error, as the Settings pages show `settings.toml`'s.
+
+### Custom actions
+
+- **A card per action:** its name as the card's caption, and rows for its id
+  (`custom.<id>`), what it applies to, its drivers ("all" when it names none), its keys, and
+  what it runs: the SQL in monospace, with "Opens in a console first" when `run = false`, or
+  the command in full, what goes in and out of it, its timeout, and whether it is trusted to
+  run without asking. A card per action, rather than today's six-column table, fits the page's
+  width and keeps a long SQL statement or command readable.
+- **No actions yet** says how to add one, beside **Create actions.toml**, which writes the
+  commented examples it writes today.
+- **Reload** reads `actions.toml`, `snippets.toml` and `theme.toml` again, as the window's
+  Reload does, and says so on hover. Snippets and colours have no page of their own: their
+  problems keep the small window the status bar opens (see the decisions).
+- **Problems** in `actions.toml` are listed at the top of the page, as the keymap's are.
+
+### Projects
+
+Each project has its own page, titled with its name. Right-click a project → **Project
+settings…** opens the Settings tab on that page, clearing any search, and so does a click on
+its entry in the sidebar.
+
+- **MCP clients:** a toggle, **Allow MCP clients to use this project**, with the command an MCP
+  client runs (`dbrover mcp --project <slug>`) under it, and **Copy MCP configuration**, as the
+  project's right-click menu has it.
+- **What MCP clients may do:** the rows Project settings has today, each starting at the default
+  and with **Reset** once changed, and the warnings it shows below them (no MCP login on a data
+  source that allows changes, data sources that aren't served, and why).
+- **Saved with a button,** as the MCP defaults are: **Save project settings** and **Discard**,
+  since a row limit typed digit by digit shouldn't rewrite `projects.toml` at every keystroke. A
+  project's unsaved changes are kept while other pages are shown, and while the tab is closed,
+  until they are saved or discarded; its entry in the sidebar shows a dot meanwhile. A failed
+  save says why on the page.
+- **When `projects.toml` changes** (a save, the MCP defaults, a rename), a page without unsaved
+  changes follows it; one with changes keeps them, as the MCP defaults' editor does. A project
+  deleted while its page shows leaves the tab on Appearance.
+- **Picker or sidebar:** the sidebar. One entry per project puts the page that right-click
+  opens where the user sees it, and lets a search count matches per project; projects are few,
+  and the sidebar scrolls when they aren't. A single **Projects** page with a project picker at
+  the top was the alternative: a shorter sidebar, but the page right-click opens wouldn't show
+  in it, and switching projects would be a combo box away.
+
+### Search
+
+Today a search lists the settings it finds, grouped by category and section. W14 adds:
+
+- **Shortcuts,** found by what the action does, its id and its keys as shown ("⌘S"), and listed
+  as the Keymap page shows them, under **Keymap › Console** and so on. Searching *format* finds
+  the Format and Format all shortcuts beside Format SQL's settings.
+- **Custom actions,** found by name, id, what they apply to and what they run, each listed as
+  one row (its name, and its id under it) with **Open** to the Custom actions page.
+- **Projects,** found by name and slug, and by the words of their page ("MCP", "write",
+  "timeout"…), each listed as one row with what it allows ("MCP off", or "MCP: read, write")
+  and **Open** to its page. A project's rows aren't edited in the results: its unsaved draft
+  belongs to its page, and one project's rows repeated per project would bury the defaults.
+
+### Menus, the status bar and ids
+
+- **View → Keymap…** and **View → Actions…** stay, in egui's menu bar and in the macOS View
+  menu, and open the Settings tab on the Keymap and Custom actions pages. They're the short way
+  there, and on a Mac the View menu has no Settings… of its own (it is in the DbRover menu).
+  **Actions…** is renamed **Custom actions…**, as the page is, which also tells it apart from
+  the **Actions** menu beside it.
+- **Their ids stay** `view.keymap` and `view.actions`: the native menu's item ids and the tests
+  use them. Neither is a keymap action (`keymap.toml` can bind `app.settings` but not these), so
+  no file the user wrote names them and nothing needs migrating.
+- **The status bar's problem links** for `keymap.toml` and `actions.toml` open their pages;
+  those for `snippets.toml` and `theme.toml` keep opening their window.
+- **Gone:** the keymap window, the actions window and the Project settings modal, with their
+  modules (`keymap_window.rs`, `actions_window.rs`, `project_settings.rs`) and the app's flags
+  for them; the buttons under the categories, and `SettingsAction::Run`.
+
+### How it's built
+
+- **A page, not a category.** `settings_tab` gets `Page`: `Settings(Category)`, `Keymap`,
+  `Actions` and `Project(ProjectId)`, and the tab keeps the page shown in place of the
+  category. `Category` stays the five pages made of `Setting` rows, so `Setting`'s list and its
+  tests don't change.
+- **A module per page:** `settings_tab/keymap_page.rs`, `actions_page.rs` and
+  `project_page.rs`, each drawing its page from what the app lends the tab (`SettingsView`
+  gains the keymap and its path, the custom files and command runs, the projects, their data
+  sources and the MCP defaults) and pushing `SettingsAction`s: `ReloadKeymap`, `CreateKeymap`,
+  `ReloadCustomFiles`, `CreateActions` and `SaveProject { id, mcp_enabled, overrides }`.
+  Today's window and modal code moves there; the actions template moves to `custom_actions.rs`.
+- **Project drafts** live in the tab (`ProjectDrafts`, by project id), each one today's dialog
+  state without the modal, and follow engine events through `SettingsTab::apply`, as the
+  dialog's `apply` does now.
+- **Search items.** `settings_tab/search.rs` lists what a search can find, one `Found` per
+  setting, shortcut, custom action and project, each with its page, its section and the text
+  it matches by, reusing `Setting::matches`' rule (every word of the query, ignoring case). The
+  sidebar's counts and the results page both come from that one list.
+- **Opening a page** goes through one `DbRoverApp::open_settings(page)`: the menu commands, the
+  status bar links and the explorer's **Project settings…** all call it, and it opens or
+  focuses the tab as `workspace::open_settings_tab` does today.
+- **Shared widgets** don't change. If one has to (a key shown as key caps, say), the change is
+  small and its PR says so, since the UI polish work restyles the shared style layer at the
+  same time.
+
+### Manual and pictures
+
+- **`book/src/settings.md`:** the sidebar's pages, Keymap and Custom actions, the Projects
+  section, and what search finds now.
+- **`book/src/shortcuts.md`:** "Changing them" opens **Settings › Keymap** (**View → Keymap…**),
+  where the problems are listed.
+- **`book/src/customising.md`:** **Reload** and the list of actions and their trust are on
+  **Settings › Custom actions**.
+- **`book/src/mcp.md`:** step 1 and the permissions section open the project's page in
+  Settings; **`book/src/explorer.md`**'s project menu says where **Project settings…** goes.
+- **`book/src/files.md`** stays as it is: its **View → Keymap…** still opens the keymap, and
+  the settings-folders work is changing that chapter at the same time.
+- **Pictures:** `settings.png` and `settings-mcp.png` re-rendered (their sidebar grows),
+  `project-settings.png` re-rendered as the project's page, and two new ones,
+  `settings-keymap.png` and `settings-actions.png`. `project-menu.png` doesn't change.
+
+### Layers
+
+1. **W14a — The plan:** this design, and the roadmap's entry.
+2. **W14b — Pages, and the keymap's:** `Page`, the search items, the Keymap page and its
+   search; **View → Keymap…** and the status bar's link open it; the keymap window goes.
+3. **W14c — Custom actions:** the page and its search; **View → Custom actions…** and the
+   status bar's link open it; the actions window goes.
+4. **W14d — Projects:** the sidebar's Projects section, the project pages with their drafts,
+   save and discard, and their search; right-click → **Project settings…** opens the page; the
+   modal goes.
+5. **W14e — The manual:** the chapters above, the pictures, and the roadmap's demo note.
+
+Each layer has kittest tests of what it adds, on the existing settings tests' set-up, and
+removes the window tests it replaces.
+
+**Exit:** **View → Settings…** lists Keymap, Custom actions and each project in its sidebar;
+right-click a project → **Project settings…** opens its page, where allowing writes and **Save
+project settings** writes `projects.toml`; searching *format* finds the Format shortcuts beside
+the Format SQL settings; and no keymap, actions or project settings window is left.
+
 ## Decisions
 
 Proposed defaults; each is confirmed when its milestone starts.
@@ -652,6 +841,11 @@ Proposed defaults; each is confirmed when its milestone starts.
 | A column's role with no declared type | **Read from its values**, as the Excel export does, leading zeros making it text | PostgreSQL declares no types over its text protocol, and a code like `00501` isn't a quantity. |
 | A missing or unreadable value | **A gap, counted under the chart**, never a zero | A zero would be a value the database didn't return. |
 | Where the export lives | **ER1e's**, shared, with W12 writing only its own marks as SVG | One PNG renderer with the bundled fonts, one export command, one set of SVG helpers. W12's export came after ER1e. |
+| Where the keymap, custom actions and project settings are | **Pages of the Settings tab**, not windows | One place for every setting, found by one search. A project's settings are a tab away from the explorer rather than a modal over it. |
+| Projects in Settings | **One sidebar entry per project**, under a Projects caption | Right-click → Project settings… opens a page the sidebar shows; a long list of projects scrolls the sidebar. |
+| Editing shortcuts | **Still in `keymap.toml`**, with Create and Reload on the page | No rewriting of the user's file yet; recording keys on the page comes later. |
+| View → Keymap… and View → Actions… | **Kept, opening their pages**, with their ids; Actions… renamed Custom actions… | The short way there stays, the native menu's ids and tests don't change, and no keymap file names them. |
+| Snippets' and colours' problems | **Their small window stays** | They have no listing to make a page of; a page for them can come later. |
 
 ## Risks
 
@@ -684,3 +878,12 @@ Proposed defaults; each is confirmed when its milestone starts.
 - **Waiting on ER1.** W12's export can't land before ER1e. Charts are useful on screen
   meanwhile; if ER1 is delayed, the export layer waits rather than writing a second SVG and
   PNG path.
+- **Unsaved project changes lost or forgotten.** A project's draft outlives switching pages
+  and closing the tab, and its sidebar entry shows a dot, so changes aren't dropped by a click
+  elsewhere and aren't left unsaved without a sign. Quitting with a draft drops it, as quitting
+  with unsaved MCP defaults does today.
+- **A long Settings sidebar.** Many projects push the sidebar past the window's height. It
+  scrolls, and search finds a project by name.
+- **Clashing with the UI polish work.** It restyles buttons and menus through `theme.rs`,
+  `widgets` and `menu_bar.rs` while W14 builds pages. W14 uses the `form` kit as it is and
+  keeps any shared widget change small and named in its PR.

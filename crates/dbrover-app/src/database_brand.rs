@@ -85,5 +85,13 @@ pub fn of(driver: DriverKind) -> DatabaseBrand {
             light: Color32::from_rgb(0x00, 0x55, 0x71),
             dark: Color32::from_rgb(0x4F, 0xB8, 0xD4),
         },
+        // Cassandra's blue on the light theme, as it is; a lighter blue on the dark one. Also
+        // shown for ScyllaDB, which the same driver serves.
+        DriverKind::Cassandra => DatabaseBrand {
+            logo_uri: "bytes://logos/apachecassandra.svg",
+            logo_svg: include_bytes!("../../../assets/icons/databases/apachecassandra.svg"),
+            light: Color32::from_rgb(0x12, 0x87, 0xB1),
+            dark: Color32::from_rgb(0x6C, 0xC4, 0xE6),
+        },
     }
 }

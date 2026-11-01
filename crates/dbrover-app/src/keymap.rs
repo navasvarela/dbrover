@@ -213,7 +213,7 @@ pub struct Keymap {
     /// Custom actions from `actions.toml`, which have no keys until `keymap.toml` gives them
     /// some as `custom.<id>`.
     custom: BTreeMap<ActionId, Vec<KeyboardShortcut>>,
-    /// What in the file couldn't be used, for the keymap window. Each was skipped.
+    /// What in the file couldn't be used, for Settings › Keymap. Each was skipped.
     problems: Vec<String>,
 }
 
@@ -248,7 +248,7 @@ impl Keymap {
                     .push(format!("{id:?} is not an action in actions.toml"));
             } else {
                 keymap.problems.push(format!(
-                    "{id:?} is not an action; see View → Keymap for the ids"
+                    "{id:?} is not an action; see Settings › Keymap for the ids"
                 ));
             }
         }

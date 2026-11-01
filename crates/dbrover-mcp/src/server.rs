@@ -99,10 +99,10 @@ struct DefinitionArgs {
 struct StatementArgs {
     /// The data source's name, as list_data_sources gives it (or its id).
     data_source: String,
-    /// One statement that only reads, in the data source's language: a SELECT in SQL, a
-    /// Redis command such as GET or HGETALL, a MongoDB shell command such as
-    /// db.orders.find({status: "open"}), or an Elasticsearch or OpenSearch request: a method
-    /// and path, then a JSON body on the next lines, such as
+    /// One statement that only reads, in the data source's language: a SELECT in SQL or in
+    /// Cassandra's and ScyllaDB's CQL, a Redis command such as GET or HGETALL, a MongoDB shell
+    /// command such as db.orders.find({status: "open"}), or an Elasticsearch or OpenSearch
+    /// request: a method and path, then a JSON body on the next lines, such as
     /// GET /orders/_search followed by {"query": {"match": {"status": "open"}}}.
     sql: String,
 }
@@ -112,10 +112,10 @@ struct StatementArgs {
 struct QueryArgs {
     /// The data source's name, as list_data_sources gives it (or its id).
     data_source: String,
-    /// One statement that only reads, in the data source's language: a SELECT in SQL, a
-    /// Redis command such as GET or HGETALL, a MongoDB shell command such as
-    /// db.orders.find({status: "open"}), or an Elasticsearch or OpenSearch request: a method
-    /// and path, then a JSON body on the next lines, such as
+    /// One statement that only reads, in the data source's language: a SELECT in SQL or in
+    /// Cassandra's and ScyllaDB's CQL, a Redis command such as GET or HGETALL, a MongoDB shell
+    /// command such as db.orders.find({status: "open"}), or an Elasticsearch or OpenSearch
+    /// request: a method and path, then a JSON body on the next lines, such as
     /// GET /orders/_search followed by {"query": {"match": {"status": "open"}}}.
     sql: String,
     /// How the rows come back: json (the default), as columns and rows of text; or csv,
@@ -293,7 +293,9 @@ impl DbRoverMcp {
     /// schemas, folders of tables and views, then tables, then their columns, indexes and
     /// constraints; on Redis, databases, then keys grouped by their prefixes; on MongoDB,
     /// databases, then collections, then their indexes; on Elasticsearch and OpenSearch,
-    /// folders of indices, aliases, data streams and index templates, then an index's fields.
+    /// folders of indices, aliases, data streams and index templates, then an index's fields;
+    /// on Cassandra and ScyllaDB, keyspaces, then folders of tables, materialized views, types,
+    /// functions and aggregates, then a table's columns and indexes.
     /// Pass a node's
     /// `path` to list its children. A large level comes 1,000 objects at a time: when the
     /// answer has `next`, pass it as `after` for the rest.
@@ -317,7 +319,7 @@ impl DbRoverMcp {
     }
 
     /// Runs one statement that only reads, such as a SELECT, in a read-only transaction that
-    /// is then rolled back; or one Redis command that only reads, such as HGETALL; or one MongoDB shell command that only reads, such as db.orders.find({status: "open"}); or one Elasticsearch or OpenSearch request that only reads, such as a search, whose hits come as documents, or a _sql query, whose answer comes as rows. Returns at most the project's row limit, with `truncated` set
+    /// is then rolled back; or one Redis command that only reads, such as HGETALL; or one MongoDB shell command that only reads, such as db.orders.find({status: "open"}); or one Elasticsearch or OpenSearch request that only reads, such as a search, whose hits come as documents, or a _sql query, whose answer comes as rows; or one CQL SELECT on Cassandra or ScyllaDB, whose collections come as JSON. Returns at most the project's row limit, with `truncated` set
     /// when there were more rows; cells are text, or null. With `format` csv, markdown or
     /// jsonl, the rows come back as that text instead, ready to save or paste.
     #[tool(annotations(read_only_hint = true, open_world_hint = false))]
@@ -538,9 +540,16 @@ impl DbRoverMcp {
         let dialect = language.dialect();
         let prefix = match (explain, dialect) {
             (false, _) => "",
-            (true, Some(dialect)) => {
+            (true, Some(dialect)) if dialect.explains() => {
                 let server = self.inner.connections.server_info(data_source.id);
                 dialect.explain_prefix(server.as_ref())
+            }
+            (true, Some(dialect)) => {
+                let reason = format!(
+                    "{tool} explains statements, and {} has no EXPLAIN",
+                    dialect.display_name()
+                );
+                return Err(self.refuse(tool, data_source, reason));
             }
             (true, None) => {
                 let reason = format!(

@@ -1,7 +1,6 @@
 //! The DbRover desktop application.
 
 mod about_dialog;
-mod actions_window;
 mod app;
 mod brand;
 mod catalog_tree;
@@ -32,7 +31,6 @@ mod icons;
 mod import_dialog;
 mod json_tree;
 mod keymap;
-mod keymap_window;
 mod log_console;
 #[cfg(target_os = "macos")]
 mod macos;
@@ -48,7 +46,6 @@ mod password_prompt;
 mod picture;
 mod previous_install;
 mod project_dialog;
-mod project_settings;
 mod relaunch;
 mod renderer;
 mod repaint;

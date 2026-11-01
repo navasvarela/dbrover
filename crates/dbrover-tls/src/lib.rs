@@ -1,5 +1,5 @@
 //! The rustls client configuration a data source's TLS mode asks for, shared by the drivers
-//! that make their own TLS connections (PostgreSQL's, ClickHouse's): ring as the crypto
+//! that make their own TLS connections (PostgreSQL's, ClickHouse's, Cassandra's): ring as the crypto
 //! provider, Mozilla's public authorities or a CA file for `verify-full`, and encryption
 //! without authenticating the server for `prefer` and `require`, as libpq's modes of the same
 //! names do.
@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use dbrover_core::TlsMode;
+use rustls::client::WebPkiServerVerifier;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{WebPkiSupportedAlgorithms, ring};
 use rustls::pki_types::pem::{self, PemObject};
@@ -51,6 +52,38 @@ pub fn client_config(tls: &TlsMode) -> Result<ClientConfig, TlsSetupError> {
             .with_root_certificates(trusted_roots(ca_file.as_deref())?)
             .with_no_client_auth(),
     })
+}
+
+/// [`client_config`], except that `verify-full` checks the certificate against `server_name`
+/// whatever name the client gives rustls: for clients that name each node by its IP address,
+/// as the `scylla` crate does, which a certificate for the server's host name doesn't hold,
+/// and which is the local end of an SSH tunnel.
+///
+/// # Errors
+///
+/// As [`client_config`].
+pub fn client_config_for(
+    tls: &TlsMode,
+    server_name: ServerName<'static>,
+) -> Result<ClientConfig, TlsSetupError> {
+    let TlsMode::VerifyFull { ca_file } = tls else {
+        return client_config(tls);
+    };
+    let provider = Arc::new(ring::default_provider());
+    let verifier = WebPkiServerVerifier::builder_with_provider(
+        Arc::new(trusted_roots(ca_file.as_deref())?),
+        provider.clone(),
+    )
+    .build()
+    .map_err(|error| TlsSetupError::Rustls(rustls::Error::General(error.to_string())))?;
+    Ok(ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NamedServer {
+            verifier,
+            server_name,
+        }))
+        .with_no_client_auth())
 }
 
 /// The authorities in `ca_file`, or the public web ones (Mozilla's list) without one.
@@ -122,6 +155,57 @@ impl ServerCertVerifier for EncryptOnly {
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
         self.algorithms.supported_schemes()
+    }
+}
+
+/// Verifies a certificate as `verifier` does, against `server_name` rather than the name the
+/// client connected with.
+#[derive(Debug)]
+struct NamedServer {
+    verifier: Arc<WebPkiServerVerifier>,
+    server_name: ServerName<'static>,
+}
+
+impl ServerCertVerifier for NamedServer {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        ocsp_response: &[u8],
+        now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        self.verifier.verify_server_cert(
+            end_entity,
+            intermediates,
+            &self.server_name,
+            ocsp_response,
+            now,
+        )
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        certificate: &CertificateDer<'_>,
+        signature: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.verifier
+            .verify_tls12_signature(message, certificate, signature)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        certificate: &CertificateDer<'_>,
+        signature: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.verifier
+            .verify_tls13_signature(message, certificate, signature)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.verifier.supported_verify_schemes()
     }
 }
 

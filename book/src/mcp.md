@@ -19,17 +19,20 @@ sent. Each project can allow more; see [Permissions](#permissions).
 
 ### 1. Allow the project
 
-Right-click the project's header in the explorer and choose **Project settings…**. Tick **Allow
-MCP clients to use this project** and click **Save**. New projects start with this off, so
-nothing is ever exposed by accident.
+Right-click the project's header in the explorer and choose **Project settings…**: the
+[Settings](settings.md) tab opens on the project's page, which is also under **Projects** in its
+sidebar. Switch on **Allow MCP clients to use this project** and click **Save project
+settings**. New projects start with this off, so nothing is ever exposed by accident.
 
-![Project settings, with writing allowed and a warning about a missing MCP login](images/project-settings.png)
+![A project's page in Settings, with writing allowed and a warning about a missing MCP login](images/project-settings.png)
 
-The dialog also shows the project's **slug**, which is what the client names it by.
+The page also shows the project's **slug**, which is what the client names it by, and has
+**Copy MCP configuration**, the next step.
 
 ### 2. Copy the configuration
 
-Right-click the project's header again and choose **Copy MCP configuration**.
+Click **Copy** beside **Copy MCP configuration** on the project's page, or right-click the
+project's header and choose **Copy MCP configuration**.
 
 ![A project's menu](images/project-menu.png)
 
@@ -86,7 +89,7 @@ Each statement it runs shows up in the data source's **History**, marked **MCP**
 | `list_objects` | One level of a data source's catalog, as the explorer shows it. Each object comes with the `path` that lists its children. A large level, such as a Redis database's keys or a schema of thousands of tables, comes 1,000 objects at a time, with a `next` to ask for the rest; a `filter` keeps the objects whose name contains it, searched by the database. |
 | `describe_table` | A table's columns with their types, its primary key, indexes and constraints. |
 | `get_definition` | The source of a view, function, trigger or index. |
-| `query` | Runs one statement that only reads (on Redis, one command, such as `HGETALL`; on MongoDB, one shell command, such as `db.orders.find({status: "open"})`, whose documents come as canonical Extended JSON; on Elasticsearch and OpenSearch, one request, such as a search, whose hits come as documents, or a `_sql` query), and returns its rows as text: as JSON, or with `format` set to `csv`, `markdown` or `jsonl`, as that text, ready to save or paste. |
+| `query` | Runs one statement that only reads (on Redis, one command, such as `HGETALL`; on MongoDB, one shell command, such as `db.orders.find({status: "open"})`, whose documents come as canonical Extended JSON; on Elasticsearch and OpenSearch, one request, such as a search, whose hits come as documents, or a `_sql` query; on Cassandra and ScyllaDB, one CQL `SELECT`, whose collections come as JSON), and returns its rows as text: as JSON, or with `format` set to `csv`, `markdown` or `jsonl`, as that text, ready to save or paste. |
 | `explain` | Shows how the database would run one read statement, without running it. |
 | `execute` | Runs statements that change something, in one transaction. Only offered when the project allows `write`, `schema` or `admin`. |
 
@@ -96,8 +99,8 @@ ask before running tools can therefore let the others run freely and ask before 
 ## Permissions
 
 Each project allows MCP clients some of these. Each one starts at the global default and can be
-overridden in **Project settings…**, and **Reset** goes back to the default. Change the defaults
-in **View › Settings… › MCP**; they apply to every project that doesn't override them.
+overridden on the project's page in Settings, and **Reset** goes back to the default. Change the
+defaults in **View › Settings… › MCP**; they apply to every project that doesn't override them.
 
 ![The MCP defaults in Settings](images/settings-mcp.png)
 
@@ -143,13 +146,13 @@ DbRover checks each statement in up to three ways:
 
 Beyond reading, the first layer is all DbRover has of its own, and it can be fooled: a function
 or a procedure can do anything, whatever the statement that calls it looks like. That is why
-Project settings warns when a project allows changes and one of its data sources has no MCP
+a project's page warns when it allows changes and one of its data sources has no MCP
 login.
 
-SQL Server has no read-only transaction, and Redis, MongoDB, Elasticsearch and OpenSearch
-have no read-only session at all, so their data sources are served to MCP clients only through
+SQL Server has no read-only transaction, and Redis, MongoDB, Elasticsearch and OpenSearch,
+and Cassandra and ScyllaDB have no read-only session at all, so their data sources are served to MCP clients only through
 an [MCP login](#the-mcp-login) whose grants allow nothing but reading. Without one, a data
-source isn't served, and the server's log says why when it starts; Project settings lists it
+source isn't served, and the server's log says why when it starts; the project's page lists it
 too.
 
 ClickHouse and DuckDB files are served in their own read-only modes, with or without an MCP
@@ -244,6 +247,19 @@ request by its method and path, so a `_delete_by_query` or a `PUT` of a document
 before it is sent, and the server refuses it again; any path DbRover doesn't know, other than a
 `GET`, counts as administration, which an MCP project never allows.
 
+On Cassandra and ScyllaDB, a role that may log in, with the `SELECT` permission alone, on the
+keyspaces the assistant may read (or `ALL KEYSPACES`):
+
+```sql
+CREATE ROLE assistant WITH PASSWORD = '…' AND LOGIN = true;
+GRANT SELECT ON KEYSPACE shop TO assistant;
+```
+
+DbRover classifies each CQL statement by what it starts with, so an `INSERT`, a batch or a
+`TRUNCATE` is refused before it is sent, and the server refuses it again; a statement that
+doesn't start as a CQL statement is refused as unknown. CQL has no `EXPLAIN`, so `explain`
+is refused on these data sources.
+
 The MCP password is kept in the keychain under its own entry, separate from the data source's
 password. If it is missing, the server refuses to connect; it never falls back to the data
 source's own login. Clear the **MCP login** field to remove it, together with its password.
@@ -267,8 +283,8 @@ The client's log for the server shows what DbRover said when it stopped:
 
 - **"there is no project with the slug …"**: the `--project` doesn't match any project's
   slug. The message lists the slugs there are. Copy the configuration again.
-- **"… is not allowed for MCP clients"**: tick **Allow MCP clients to use this project** in
-  Project settings, as in step 1.
+- **"… is not allowed for MCP clients"**: switch on **Allow MCP clients to use this project** on
+  the project's page in Settings, as in step 1.
 - **"the MCP login … has no saved password"**: set the **MCP password** in the data source's
   dialog.
 - **"the password command isn't trusted to run yet"**: the data source gets its password

@@ -1,5 +1,6 @@
 use std::fmt;
 use std::net::SocketAddr;
+use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -206,6 +207,8 @@ pub enum ConnectionConfig {
     Mongo(MongoConfig),
     /// Elasticsearch and OpenSearch: one driver serves both.
     Elasticsearch(ElasticsearchConfig),
+    /// Apache Cassandra and ScyllaDB: one driver serves both.
+    Cassandra(CassandraConfig),
 }
 
 impl ConnectionConfig {
@@ -227,6 +230,7 @@ impl ConnectionConfig {
             Self::Redis(config) => Some(&config.server),
             Self::Mongo(config) => Some(&config.server),
             Self::Elasticsearch(config) => Some(&config.server),
+            Self::Cassandra(config) => Some(&config.server),
             Self::Sqlite(_) | Self::DuckDb(_) => None,
         }
     }
@@ -240,6 +244,7 @@ impl ConnectionConfig {
             Self::Redis(config) => Some(&mut config.server),
             Self::Mongo(config) => Some(&mut config.server),
             Self::Elasticsearch(config) => Some(&mut config.server),
+            Self::Cassandra(config) => Some(&mut config.server),
             Self::Sqlite(_) | Self::DuckDb(_) => None,
         }
     }
@@ -255,13 +260,15 @@ impl ConnectionConfig {
             Self::Redis(_) => DriverKind::Redis,
             Self::Mongo(_) => DriverKind::Mongo,
             Self::Elasticsearch(_) => DriverKind::Elasticsearch,
+            Self::Cassandra(_) => DriverKind::Cassandra,
         }
     }
 
     /// The database a connection opens, on engines whose catalog has databases above its
     /// schemas; the explorer lists that database's schemas. MySQL's and ClickHouse's databases
     /// are their schemas, so they have no such level, Redis's numbered databases hold keys,
-    /// MongoDB's hold collections, and Elasticsearch has none.
+    /// MongoDB's hold collections, and Elasticsearch has none. Cassandra's keyspaces are its
+    /// schemas.
     pub fn database(&self) -> Option<&str> {
         match self {
             Self::Postgres(config) => Some(&config.server.database),
@@ -272,7 +279,8 @@ impl ConnectionConfig {
             | Self::ClickHouse(_)
             | Self::Redis(_)
             | Self::Mongo(_)
-            | Self::Elasticsearch(_) => None,
+            | Self::Elasticsearch(_)
+            | Self::Cassandra(_) => None,
         }
     }
 
@@ -295,6 +303,9 @@ impl ConnectionConfig {
             Self::Mongo(config) => &config.server.database,
             // Empty: indices belong to no database.
             Self::Elasticsearch(config) => &config.server.database,
+            // The keyspace a console starts in, which may be empty: then only qualified names
+            // resolve until `USE` picks one.
+            Self::Cassandra(config) => &config.server.database,
         }
     }
 
@@ -341,6 +352,12 @@ impl ConnectionConfig {
                 server: config.server.resolve(variables)?,
                 auth: config.auth,
             }),
+            Self::Cassandra(config) => Self::Cassandra(CassandraConfig {
+                server: config.server.resolve(variables)?,
+                local_datacenter: expand(&config.local_datacenter, variables)
+                    .map_err(PlaceholderError::in_setting(Setting::LocalDatacenter))?,
+                statement_timeout: config.statement_timeout,
+            }),
             Self::Sqlite(config) => Self::Sqlite(SqliteConfig {
                 path: expand_path(&config.path, variables)
                     .map_err(PlaceholderError::in_setting(Setting::File))?,
@@ -372,6 +389,11 @@ impl ConnectionConfig {
             Self::Mongo(config) => config.server.default_name(),
             // The host alone: a cluster has no database to name.
             Self::Elasticsearch(config) => config.server.host.clone(),
+            // `keyspace@host`, or the host alone when no keyspace is chosen.
+            Self::Cassandra(config) if config.server.database.is_empty() => {
+                config.server.host.clone()
+            }
+            Self::Cassandra(config) => config.server.default_name(),
             Self::Sqlite(config) => file_name(&config.path),
             Self::DuckDb(config) => match &config.database {
                 DuckDbDatabase::File { path, .. } => file_name(path),
@@ -392,7 +414,8 @@ impl DriverKind {
             | Self::ClickHouse
             | Self::Redis
             | Self::Mongo
-            | Self::Elasticsearch => true,
+            | Self::Elasticsearch
+            | Self::Cassandra => true,
             Self::Sqlite | Self::DuckDb => false,
         }
     }
@@ -412,6 +435,7 @@ impl fmt::Display for ConnectionConfig {
                 None => config.server.fmt(f),
             },
             Self::Elasticsearch(config) => config.server.fmt(f),
+            Self::Cassandra(config) => config.server.fmt(f),
             Self::Sqlite(config) if config.read_only => {
                 write!(f, "{} (read-only)", config.path.display())
             }
@@ -843,6 +867,31 @@ impl ElasticsearchAuth {
     }
 }
 
+/// An Apache Cassandra or ScyllaDB cluster, reached through one of its nodes. Its `database` is
+/// the keyspace a console starts in, which may be empty; its user may be empty too, for a
+/// cluster that doesn't ask for a password.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CassandraConfig {
+    #[serde(flatten)]
+    pub server: ServerConfig,
+    /// The datacenter requests go to first, as the cluster names it (`datacenter1`). Empty
+    /// prefers none, which a cluster in one datacenter doesn't need. Written only when set.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub local_datacenter: String,
+    /// How long a statement may run, in seconds, before the client stops waiting and, on
+    /// ScyllaDB, the server stops it too (`USING TIMEOUT`). `None` leaves the server's own
+    /// timeouts. Written only when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub statement_timeout: Option<NonZeroU32>,
+}
+
+impl CassandraConfig {
+    /// CQL's native protocol port.
+    pub const DEFAULT_PORT: u16 = 9042;
+    /// The port most servers take CQL over TLS on, beside the plain one.
+    pub const DEFAULT_TLS_PORT: u16 = 9142;
+}
+
 /// A DuckDB database: a file, or one in memory that starts empty each time, for querying CSV,
 /// Parquet and JSON files with DuckDB's table functions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -894,10 +943,11 @@ pub enum DriverKind {
     Redis,
     Mongo,
     Elasticsearch,
+    Cassandra,
 }
 
 impl DriverKind {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Postgres,
         Self::Sqlite,
         Self::Mysql,
@@ -907,6 +957,7 @@ impl DriverKind {
         Self::Redis,
         Self::Mongo,
         Self::Elasticsearch,
+        Self::Cassandra,
     ];
 
     pub fn display_name(self) -> &'static str {
@@ -920,6 +971,7 @@ impl DriverKind {
             Self::Redis => "Redis / Valkey",
             Self::Mongo => "MongoDB",
             Self::Elasticsearch => "Elasticsearch / OpenSearch",
+            Self::Cassandra => "Cassandra / ScyllaDB",
         }
     }
 }

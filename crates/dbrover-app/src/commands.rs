@@ -123,7 +123,7 @@ impl AppCommand {
             Self::Theme(ThemePreference::Light) => "Light",
             Self::Theme(ThemePreference::Dark) => "Dark",
             Self::ShowKeymap => "Keymap…",
-            Self::ShowActions => "Actions…",
+            Self::ShowActions => "Custom actions…",
             Self::ShowSettings => "Settings…",
             Self::ResetLayout => "Reset layout",
             Self::Format => "Format",

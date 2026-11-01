@@ -17,6 +17,7 @@
 mod arrange;
 mod check;
 mod classify;
+mod cql_value;
 mod ddl;
 mod dialect;
 mod dml;

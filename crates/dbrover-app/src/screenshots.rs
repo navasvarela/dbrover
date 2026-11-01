@@ -367,6 +367,20 @@ const SCENES: &[Scene] = &[
         needs: &[],
     },
     Scene {
+        name: "settings-keymap",
+        data_sources: FixtureSources::Shop,
+        play: settings_keymap,
+        keeps_pointer: false,
+        needs: &[],
+    },
+    Scene {
+        name: "settings-actions",
+        data_sources: FixtureSources::Shop,
+        play: settings_actions,
+        keeps_pointer: false,
+        needs: &[],
+    },
+    Scene {
         name: "history-mcp",
         data_sources: FixtureSources::Shop,
         play: history_mcp,
@@ -1356,11 +1370,16 @@ fn project_settings(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixtur
     harness.get_by_label("Project settings…").click();
     harness.run_ok();
     harness
-        .get_by_label("Allow MCP clients to use this project")
+        .get_by_role_and_label(Role::CheckBox, "Allow MCP clients to use this project")
         .click();
     harness.run_ok();
     harness.get_by_label("Write").click();
     harness.run_ok();
+    // The warning is below the page's fold.
+    if let Some(warning) = harness.query_by_label_contains("No MCP login") {
+        warning.scroll_to_me();
+        harness.run_ok();
+    }
 }
 
 /// View › Settings…, on the Editor page.
@@ -1370,6 +1389,32 @@ fn settings_editor(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
 
 fn settings_mcp(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
     open_settings_page(harness, "MCP");
+}
+
+fn settings_keymap(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    open_settings_page(harness, "Keymap");
+}
+
+/// Two actions of the manual's examples, one of them a program.
+const SETTINGS_ACTIONS: &str = r#"[[action]]
+id = "row-count"
+name = "Row count"
+applies_to = ["table", "view"]
+sql = "SELECT count(*) FROM {qualified_name}"
+
+[[action]]
+id = "rows-to-jq"
+name = "Send rows to jq"
+applies_to = ["grid.selection"]
+command = ["jq", "-r", ".[] | .email"]
+stdin = "json"
+"#;
+
+fn settings_actions(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
+    std::fs::write(fixture.dir.path().join("actions.toml"), SETTINGS_ACTIONS).unwrap();
+    open_settings_page(harness, "Custom actions");
+    harness.get_by_label("Reload").click();
+    step_until_visible(harness, "2 actions");
 }
 
 /// Opens the Settings tab on its page `category`.

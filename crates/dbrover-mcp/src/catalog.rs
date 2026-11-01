@@ -41,7 +41,7 @@ impl From<&CatalogNode> for NodeJson {
     }
 }
 
-const FOLDERS: [FolderKind; 16] = [
+const FOLDERS: [FolderKind; 18] = [
     FolderKind::Tables,
     FolderKind::Views,
     FolderKind::MaterializedViews,
@@ -58,9 +58,11 @@ const FOLDERS: [FolderKind; 16] = [
     FolderKind::Aliases,
     FolderKind::DataStreams,
     FolderKind::IndexTemplates,
+    FolderKind::Types,
+    FolderKind::Aggregates,
 ];
 
-const KINDS: [(NodeKind, &str); 18] = [
+const KINDS: [(NodeKind, &str); 20] = [
     (NodeKind::Database, "database"),
     (NodeKind::Schema, "schema"),
     (NodeKind::Table, "table"),
@@ -79,6 +81,8 @@ const KINDS: [(NodeKind, &str); 18] = [
     (NodeKind::Collection, "collection"),
     (NodeKind::SearchIndex, "search_index"),
     (NodeKind::IndexTemplate, "index_template"),
+    (NodeKind::UserType, "type"),
+    (NodeKind::Aggregate, "aggregate"),
 ];
 
 /// A Redis key's kind in a path. Its value's type is in the node's `detail`, and isn't needed

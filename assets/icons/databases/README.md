@@ -14,6 +14,7 @@ the New data source menu and in the data source dialog.
 | `redis.svg` | Redis (also shown for Valkey and Dragonfly, which the same driver serves; its red is darkened on the light theme) | `#FF4438` |
 | `mongodb.svg` | MongoDB (its green is darkened a little on the light theme) | `#47A248` |
 | `elasticsearch.svg` | Elasticsearch (also shown for OpenSearch, which the same driver serves; its teal is lightened on the dark theme) | `#005571` |
+| `apachecassandra.svg` | Apache Cassandra (also shown for ScyllaDB, which the same driver serves; its blue is lightened on the dark theme) | `#1287B1` |
 
 ## Source and licence
 

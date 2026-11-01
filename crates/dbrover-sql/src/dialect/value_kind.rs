@@ -16,6 +16,7 @@ impl Dialect {
         match self {
             Self::Sqlite => sqlite_kind(&name),
             Self::ClickHouse => named_kind(unwrap_clickhouse(&name), self),
+            Self::Cassandra => cql_kind(&name),
             Self::Postgres | Self::Mysql | Self::SqlServer | Self::DuckDb => {
                 named_kind(&name, self)
             }
@@ -49,6 +50,21 @@ fn named_kind(name: &str, dialect: Dialect) -> ValueKind {
         "timestamptz" | "timestamp with time zone" | "datetimeoffset" => {
             ValueKind::TimestampWithZone
         }
+        _ => ValueKind::Text,
+    }
+}
+
+/// CQL's types. A `timestamp` is an instant, which the driver writes in UTC with its offset;
+/// `varint` and `counter` are integers, and collections, tuples and user-defined types are
+/// JSON text.
+fn cql_kind(name: &str) -> ValueKind {
+    match name {
+        "tinyint" | "smallint" | "int" | "bigint" | "varint" | "counter" => ValueKind::Integer,
+        "decimal" => ValueKind::Decimal,
+        "float" | "double" => ValueKind::Float,
+        "boolean" => ValueKind::Boolean,
+        "date" => ValueKind::Date,
+        "timestamp" => ValueKind::TimestampWithZone,
         _ => ValueKind::Text,
     }
 }
