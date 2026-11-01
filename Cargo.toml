@@ -12,6 +12,7 @@ publish = false
 
 [workspace.dependencies]
 dbrover-chart = { path = "crates/dbrover-chart" }
+dbrover-cloud = { path = "crates/dbrover-cloud" }
 dbrover-core = { path = "crates/dbrover-core" }
 dbrover-diagram = { path = "crates/dbrover-diagram" }
 dbrover-driver-cassandra = { path = "crates/dbrover-driver-cassandra" }
@@ -38,6 +39,18 @@ dbrover-tls = { path = "crates/dbrover-tls" }
 
 anyhow = "1.0.104"
 async-trait = "0.1.92"
+# Amazon DynamoDB (docs/nosql.md, N5) and the AWS sign-in it brings from C0 (docs/cloud-data.md):
+# AWS's own SDK. Every AWS crate is built without its default features, which pick aws-lc-rs and
+# AWS's own HTTPS client on it: `aws-smithy-http-client`'s `rustls-ring` builds the client on
+# rustls with ring, and dbrover-cloud names ring when it builds one. `aws-config` keeps what its
+# default credential chain reads: profiles, IAM Identity Center (`sso`), `aws login`
+# (`credentials-login`) and `credential_process`. Pinned to minor versions: each release of the
+# generated crates is large, so moving them is a change of its own.
+aws-config = { version = "~1.13.0", default-features = false, features = ["behavior-version-latest", "credentials-login", "credentials-process", "rt-tokio", "sso"] }
+aws-credential-types = "~1.3.1"
+aws-runtime = { version = "~1.10.2", default-features = false }
+aws-types = "~1.7.0"
+aws-smithy-http-client = { version = "~1.5.2", default-features = false, features = ["rustls-ring"] }
 # Decodes the salts and hashes of hashed known_hosts entries, as russh does.
 data-encoding = "2.11.1"
 directories = "6.0.0"
