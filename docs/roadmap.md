@@ -494,10 +494,18 @@ The full plan, with the order, the groundwork, each milestone's layers and the d
 - **N4 — Cassandra and ScyllaDB** (built, in six layers): CQL as a dialect of
   `dbrover-sql`, keyspaces and tables, paged rows, collections in the tree, edits by primary
   key; ScyllaDB in every pull request's CI, Cassandra nightly.
-- **N5 — DynamoDB** (planned 2026-11-01, ahead of C0): signing in through AWS's own
-  credential chain with a profile and a region, PartiQL in the console, items as documents,
-  tables and their indexes in the explorer, and a guard that asks before a statement reads a
-  whole table. It brings C0's AWS sign-in and its first cost guard with it.
+- **N5 — DynamoDB** (built, in eight layers, 2026-11-01, ahead of C0): signing in through
+  AWS's own credential chain with a profile and a region, PartiQL in the console, items as
+  documents, tables and their indexes in the explorer, and a guard that asks before a statement
+  reads a whole table. It brings C0's AWS sign-in and its first cost guard with it.
+
+  **N5 demo note:** run `docker compose up -d --wait dynamodb`, then add a **DynamoDB** data
+  source, **Sign in with** **Local emulator**, **Endpoint** `http://localhost:58000`. Create a
+  table with the AWS CLI (`aws dynamodb create-table … --endpoint-url http://localhost:58000`),
+  and it shows in the explorer with its keys and indexes; **Open data** reads it a page at a
+  time. `SELECT * FROM "orders" WHERE status = 'open'` asks **Read all of orders?** before
+  scanning; with `WHERE customer = 'c-1'` it runs at once. Change an attribute in the grid and
+  it becomes an `UPDATE` by the item's key, keeping its type.
 - **Later:** Neo4j after ER1.
 
 ## Object helpers track

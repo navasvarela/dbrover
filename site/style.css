@@ -41,6 +41,7 @@
   --mongodb: #6cc66d;
   --elasticsearch: #4fb8d4;
   --cassandra: #6cc4e6;
+  --dynamodb: #8c9bff;
   --glow-strength: 0.22;
   --shadow: 0 24px 60px rgb(0 0 0 / 0.4);
   --radius: 12px;
@@ -72,6 +73,7 @@
     --mongodb: #3b8a3c;
     --elasticsearch: #005571;
     --cassandra: #1287b1;
+    --dynamodb: #4053d6;
     --glow-strength: 0.16;
     --shadow: 0 24px 60px rgb(29 31 38 / 0.18);
     color-scheme: light;
@@ -377,6 +379,7 @@ h3 { margin: 0 0 8px; font-size: 1.05rem; font-weight: 600; }
 .engine-logo.mongodb { --logo: url("assets/databases/mongodb.svg"); background: var(--mongodb); }
 .engine-logo.elasticsearch { --logo: url("assets/databases/elasticsearch.svg"); background: var(--elasticsearch); }
 .engine-logo.cassandra { --logo: url("assets/databases/apachecassandra.svg"); background: var(--cassandra); }
+.engine-logo.dynamodb { --logo: url("assets/databases/dynamodb.svg"); background: var(--dynamodb); }
 .planned { color: var(--text-weak); margin: 16px 0 0; }
 
 /* Downloads for every platform, then how updates and checksums work. */

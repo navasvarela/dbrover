@@ -61,6 +61,10 @@ Planned separately:
   through a user with read-only privileges. Cassandra and ScyllaDB (N4) are built: CQL in the
   console, checked by the server as you type, keyspaces and their objects in the explorer, rows
   edited by their primary key, and MCP through a role with `SELECT` alone.
+  through a user with read-only privileges. Amazon DynamoDB (N5) is built, ahead of the cloud
+  track: AWS sign-in through a profile, PartiQL in the console with a guard that asks before
+  a statement reads a whole table, tables and their indexes in the explorer, items edited in
+  the grid, and MCP through a second AWS profile whose IAM policy allows only reading.
 
 Left out on purpose:
 

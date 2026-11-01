@@ -2502,6 +2502,8 @@ dependencies = [
 name = "dbrover-mcp"
 version = "0.20.0"
 dependencies = [
+ "aws-sdk-dynamodb",
+ "dbrover-cloud",
  "dbrover-core",
  "dbrover-driver-duckdb",
  "dbrover-engine",

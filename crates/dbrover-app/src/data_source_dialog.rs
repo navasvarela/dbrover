@@ -215,6 +215,9 @@ impl DataSourceDialog {
                 // Only where `dbrover mcp` can serve the engine; elsewhere it would never be used.
                 match read_only::guard(self.form.driver(), self.form.storage()) {
                     Guard::Session(_) => mcp_login_rows(ui, &mut self.form.mcp_login, false),
+                    Guard::Login if !self.form.driver().uses_password() => {
+                        mcp_profile_row(ui, &mut self.form.mcp_login);
+                    }
                     Guard::Login => mcp_login_rows(ui, &mut self.form.mcp_login, true),
                     Guard::CheckOnly => {}
                 }
@@ -607,6 +610,24 @@ fn ssh_rows(ui: &mut Ui, fields: &mut SshFields, secret_hint: &str) {
 /// do; the project settings warn when a project allows changes without one.
 /// The MCP login's user and password. `required` where the engine has no read-only mode, so
 /// MCP clients are served only through such a login.
+/// A DynamoDB data source's MCP login: another AWS profile, whose IAM policy is the guard, and
+/// no password of DbRover's.
+fn mcp_profile_row(ui: &mut Ui, fields: &mut McpLoginFields) {
+    let label = ui.label("MCP profile").on_hover_text(
+        "Another AWS profile for MCP clients to sign in as, used only by dbrover mcp. DynamoDB \
+         has no read-only mode, so MCP clients are served only through such a profile: give \
+         its IAM policy nothing but dynamodb:PartiQLSelect, dynamodb:DescribeTable and \
+         dynamodb:ListTables.",
+    );
+    ui.add(
+        TextEdit::singleline(&mut fields.user)
+            .hint_text("none: not served to MCP clients")
+            .desired_width(FIELD_WIDTH),
+    )
+    .labelled_by(label.id);
+    ui.end_row();
+}
+
 fn mcp_login_rows(ui: &mut Ui, fields: &mut McpLoginFields, required: bool) {
     let label = ui.label("MCP login").on_hover_text(if required {
         "Another user for MCP clients to sign in as, used only by dbrover mcp. This engine has \

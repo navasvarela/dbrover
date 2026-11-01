@@ -422,7 +422,7 @@ impl DataSourceForm {
     /// Only engines that sign in have a login to swap.
     fn mcp_login(&self) -> Option<McpLogin> {
         let user = self.mcp_login.user.trim();
-        (self.driver().uses_password() && !user.is_empty()).then(|| McpLogin {
+        (self.driver().has_logins() && !user.is_empty()).then(|| McpLogin {
             user: user.to_owned(),
         })
     }
