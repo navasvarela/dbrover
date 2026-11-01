@@ -40,7 +40,11 @@ fn counts_each_files_problems_and_lists_them_until_a_reload_finds_none() {
     .unwrap();
     harness.get_by_label("Reload").click();
     step_until_visible(&mut harness, "1 action");
-    harness.get_by_label("No problems.");
+    assert!(
+        harness
+            .query_by_label_contains("is not something actions apply to")
+            .is_none()
+    );
     assert!(harness.query_by_label("actions.toml: 1 problem").is_none());
     harness.get_by_label("theme.toml: 2 problems");
 }

@@ -252,7 +252,7 @@ fn view_actions_says_which_commands_are_trusted() {
 
     harness.get_by_label("View").click();
     harness.run();
-    harness.get_by_label("Actions…").click();
+    harness.get_by_label("Custom actions…").click();
     harness.run();
 
     harness.get_by_label(r#"["fail"]"#);

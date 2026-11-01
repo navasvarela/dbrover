@@ -168,16 +168,17 @@ fn view_actions_creates_the_file_once_and_lists_every_action_after_a_reload() {
     step_until_visible(&mut harness, "Expand shop");
     harness.get_by_label("View").click();
     harness.run();
-    harness.get_by_label("Actions…").click();
+    harness.get_by_label("Custom actions…").click();
     harness.run();
-    harness.get_by_label("No actions yet. Add [[action]] tables to actions.toml, then Reload.");
+    harness.get_by_label_contains("No actions yet.");
+    harness.get_by_label("0 actions");
 
     harness.get_by_label("Create actions.toml").click();
     let file = dir.path().join("actions.toml");
     step_until(&mut harness, "actions.toml being written", |_| {
         file.exists()
     });
-    harness.get_by_label("No problems.");
+    assert!(harness.query_by_label_contains("actions.toml: ").is_none());
 
     std::fs::write(&file, ACTIONS).unwrap();
     harness.get_by_label("Reload").click();
@@ -206,7 +207,7 @@ fn view_actions_shows_a_command_in_full() {
     std::fs::write(dir.path().join("actions.toml"), format!("{ACTIONS}{jq}")).unwrap();
     harness.get_by_label("View").click();
     harness.run();
-    harness.get_by_label("Actions…").click();
+    harness.get_by_label("Custom actions…").click();
     harness.run();
     harness.get_by_label("Reload").click();
 

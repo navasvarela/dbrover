@@ -4,6 +4,7 @@
 //! their own button, and the theme is egui's, kept with the window layout. The Keymap page
 //! lists `keymap.toml`, which is edited by hand.
 
+mod actions_page;
 mod controls;
 mod keymap_page;
 mod search;
@@ -11,7 +12,7 @@ mod setting;
 
 use std::path::Path;
 
-use dbrover_store::{CustomAction, McpPermissions, Settings};
+use dbrover_store::{McpPermissions, Settings};
 use egui::{
     Button, CentralPanel, Color32, Frame, Margin, Panel, RichText, ScrollArea, TextEdit,
     ThemePreference, Ui, WidgetInfo, WidgetType, vec2,
@@ -20,7 +21,8 @@ use egui::{
 use self::controls::Draft;
 use self::search::Found;
 use self::setting::{Category, Setting};
-use crate::commands::AppCommand;
+use crate::command_runs::CommandRuns;
+use crate::custom_files::CustomFiles;
 use crate::form;
 use crate::icons;
 use crate::keymap::Keymap;
@@ -50,8 +52,10 @@ pub enum SettingsAction {
     ReloadKeymap,
     /// Write a starting `keymap.toml`, unless there is one.
     CreateKeymap,
-    /// Open the custom actions, which have a window of their own.
-    Run(AppCommand),
+    /// Read `actions.toml`, `snippets.toml` and `theme.toml` again.
+    ReloadCustomFiles,
+    /// Write a starting `actions.toml`, unless there is one.
+    CreateActions,
 }
 
 /// What the tab needs of the app to draw itself.
@@ -61,8 +65,10 @@ pub struct SettingsView<'a> {
     pub keymap: &'a Keymap,
     /// Where `keymap.toml` is, once the engine has said.
     pub keymap_path: Option<&'a Path>,
-    /// `actions.toml`'s actions, which the keymap can bind too.
-    pub custom_actions: &'a [CustomAction],
+    /// `actions.toml` and the other customisation files, as last read.
+    pub custom_files: &'a CustomFiles,
+    /// Which command actions run without asking.
+    pub command_runs: &'a CommandRuns,
 }
 
 /// A page of the tab, listed in the sidebar.
@@ -70,6 +76,7 @@ pub struct SettingsView<'a> {
 pub enum Page {
     Settings(Category),
     Keymap,
+    Actions,
 }
 
 impl Default for Page {
@@ -84,13 +91,14 @@ impl Page {
         Category::ALL
             .into_iter()
             .map(Self::Settings)
-            .chain([Self::Keymap])
+            .chain([Self::Keymap, Self::Actions])
     }
 
     fn title(self) -> &'static str {
         match self {
             Self::Settings(category) => category.title(),
             Self::Keymap => "Keymap",
+            Self::Actions => "Custom actions",
         }
     }
 
@@ -98,6 +106,7 @@ impl Page {
         match self {
             Self::Settings(category) => category.glyph(),
             Self::Keymap => icons::KEYBOARD,
+            Self::Actions => icons::LIGHTNING,
         }
     }
 
@@ -107,6 +116,10 @@ impl Page {
             Self::Settings(category) => category.summary(),
             Self::Keymap => {
                 "The keys for each action. Change them in keymap.toml, then click Reload."
+            }
+            Self::Actions => {
+                "Your own actions from actions.toml, in the Actions menu, on right-click, and on \
+                 the keys the keymap gives them."
             }
         }
     }
@@ -133,7 +146,7 @@ impl SettingsTab {
             .resizable(false)
             .exact_size(SIDEBAR_WIDTH)
             .frame(Frame::new().inner_margin(SIDEBAR_MARGIN))
-            .show(ui, |ui| self.sidebar(ui, &found, actions));
+            .show(ui, |ui| self.sidebar(ui, &found));
         CentralPanel::default().frame(Frame::new()).show(ui, |ui| {
             ScrollArea::vertical()
                 .id_salt("settings_page")
@@ -163,17 +176,19 @@ impl SettingsTab {
         let shortcuts = keymap_page::shortcuts(
             |shortcut| ctx.format_shortcut(shortcut),
             view.keymap,
-            view.custom_actions,
+            view.custom_files.actions(),
         );
+        let actions = view.custom_files.actions().iter().map(Found::Action);
         Setting::all()
             .into_iter()
             .map(Found::Setting)
             .chain(shortcuts.into_iter().map(Found::Shortcut))
+            .chain(actions)
             .filter(|found| found.matches(&self.query))
             .collect()
     }
 
-    fn sidebar(&mut self, ui: &mut Ui, found: &[Found<'_>], actions: &mut Vec<SettingsAction>) {
+    fn sidebar(&mut self, ui: &mut Ui, found: &[Found<'_>]) {
         // The field shares the panel's fill in the light theme; an outline shows where it is.
         let border = Palette::for_visuals(ui.visuals()).border;
         ui.visuals_mut().widgets.inactive.bg_stroke = egui::Stroke::new(1.0, border);
@@ -201,15 +216,6 @@ impl SettingsTab {
                 self.show_page(page);
             }
         }
-        ui.add_space(4.0);
-        ui.separator();
-        ui.add_space(4.0);
-        if NavItem::new(icons::LIGHTNING, "Custom actions…")
-            .show(ui)
-            .clicked()
-        {
-            actions.push(SettingsAction::Run(AppCommand::ShowActions));
-        }
     }
 
     fn draw_page(&self, ui: &mut Ui, view: SettingsView<'_>, actions: &mut Vec<SettingsAction>) {
@@ -221,7 +227,8 @@ impl SettingsTab {
                     .filter(|setting| setting.category() == category)
                     .map(Found::Setting)
                     .collect();
-                settings_page(ui, &settings, view, actions, |found| {
+                // Settings' pages have no Open to click.
+                let _ = settings_page(ui, &settings, view, actions, |found| {
                     found.section().to_owned()
                 });
             }
@@ -229,16 +236,23 @@ impl SettingsTab {
                 let shortcuts = keymap_page::shortcuts(
                     |shortcut| ui.ctx().format_shortcut(shortcut),
                     view.keymap,
-                    view.custom_actions,
+                    view.custom_files.actions(),
                 );
                 keymap_page::show(ui, view.keymap, view.keymap_path, &shortcuts, actions);
             }
+            Page::Actions => actions_page::show(
+                ui,
+                view.custom_files,
+                view.keymap,
+                view.command_runs,
+                actions,
+            ),
         }
     }
 
     /// What the search found, under its page's title and section.
     fn results(
-        &self,
+        &mut self,
         ui: &mut Ui,
         found: &[Found<'_>],
         view: SettingsView<'_>,
@@ -250,21 +264,25 @@ impl SettingsTab {
             n => format!("{n} matches"),
         };
         page_title(ui, &heading, &format!("Matching “{}”", self.query.trim()));
-        settings_page(ui, found, view, actions, |found| {
+        let opened = settings_page(ui, found, view, actions, |found| {
             format!("{} › {}", found.page().title(), found.section())
         });
+        if let Some(page) = opened {
+            self.show_page(page);
+        }
     }
 }
 
 /// `found` in cards, a card per run that shares a page and section, between the problems and
-/// the path of `settings.toml`, which the settings among them are saved to.
+/// the path of `settings.toml`, which the settings among them are saved to. Returns the page
+/// whose Open was clicked, for what is edited on its own page.
 fn settings_page(
     ui: &mut Ui,
     found: &[Found<'_>],
     view: SettingsView<'_>,
     actions: &mut Vec<SettingsAction>,
     caption: impl Fn(&Found<'_>) -> String,
-) {
+) -> Option<Page> {
     let palette = Palette::for_visuals(ui.visuals());
     file_status(ui, view.settings, &palette);
     let theme = ui.ctx().options(|options| options.theme_preference);
@@ -274,6 +292,7 @@ fn settings_page(
         mcp: view.mcp,
         mcp_to_save: None,
     };
+    let mut opened = None;
     let groups = found.chunk_by(|a, b| a.page() == b.page() && a.section() == b.section());
     for group in groups {
         form::section(ui, &caption(&group[0]), |ui| {
@@ -282,6 +301,11 @@ fn settings_page(
                     match found {
                         Found::Setting(setting) => controls::row(rows, *setting, &mut draft),
                         Found::Shortcut(shortcut) => keymap_page::row(rows, shortcut),
+                        Found::Action(action) => {
+                            if actions_page::found_row(rows, action) {
+                                opened = Some(found.page());
+                            }
+                        }
                     }
                 }
             });
@@ -309,6 +333,7 @@ fn settings_page(
     if let Some(defaults) = draft.mcp_to_save {
         actions.push(SettingsAction::SaveMcpDefaults(defaults));
     }
+    opened
 }
 
 fn page_title(ui: &mut Ui, title: &str, summary: &str) {

@@ -15,7 +15,6 @@ use egui::{Frame, Margin, RichText};
 use egui_dock::{DockArea, DockState};
 
 use crate::about_dialog;
-use crate::actions_window::{self, ActionsWindowAction};
 use crate::command_runs::{CommandRuns, Finished};
 use crate::commands::{self, AppCommand, CommandState};
 use crate::console::{ConsoleAction, ExportedRows, FormatScope, RowsToOpen, RunDestination};
@@ -143,7 +142,6 @@ pub struct DbRoverApp {
     /// Where `keymap.toml` is, once the engine has reported it.
     keymap_path: Option<PathBuf>,
     custom_files: CustomFiles,
-    actions_window_open: bool,
     /// `theme.toml` was read, and its colours are yet to be installed.
     theme_changed: bool,
     /// Why the last custom action couldn't run, shown in the status bar until the next one.
@@ -255,7 +253,6 @@ impl DbRoverApp {
             keymap_file: Ok(KeymapBindings::new()),
             keymap_path: None,
             custom_files: CustomFiles::default(),
-            actions_window_open: false,
             theme_changed: false,
             action_problem: None,
             command_runs: CommandRuns::default(),
@@ -1820,7 +1817,7 @@ impl DbRoverApp {
             AppCommand::ImportDataSources => self.import_data_sources(),
             AppCommand::Theme(preference) => ctx.set_theme(preference),
             AppCommand::ShowKeymap => self.open_settings_page(Page::Keymap),
-            AppCommand::ShowActions => self.actions_window_open = true,
+            AppCommand::ShowActions => self.open_settings_page(Page::Actions),
             AppCommand::ShowSettings => workspace::open_settings_tab(&mut self.dock),
             AppCommand::ResetLayout => {
                 self.dock = workspace::default_layout();
@@ -2190,7 +2187,11 @@ impl DbRoverApp {
             SettingsAction::CreateKeymap => self.send(Command::CreateKeymap {
                 text: keymap::template(),
             }),
-            SettingsAction::Run(command) => self.run_command(command, ctx),
+            SettingsAction::ReloadCustomFiles => self.send(Command::ReloadCustomFiles),
+            SettingsAction::CreateActions => self.send(Command::CreateCustomFile {
+                kind: CustomFileKind::Actions,
+                text: custom_actions::TEMPLATE.to_owned(),
+            }),
         }
     }
 
@@ -2249,27 +2250,12 @@ impl DbRoverApp {
             let count = self.custom_files.problems(kind).len();
             if count > 0 && widgets::problems_link(ui, kind.file_name(), count, color).clicked() {
                 match kind {
-                    CustomFileKind::Actions => self.actions_window_open = true,
+                    CustomFileKind::Actions => self.open_settings_page(Page::Actions),
                     CustomFileKind::Snippets | CustomFileKind::Theme => {
                         self.custom_files.window = Some(kind);
                     }
                 }
             }
-        }
-    }
-
-    fn show_actions_window(&mut self, ctx: &egui::Context) {
-        if !self.actions_window_open {
-            return;
-        }
-        match actions_window::show(ctx, &self.custom_files, &self.keymap, &self.command_runs) {
-            Some(ActionsWindowAction::Reload) => self.send(Command::ReloadCustomFiles),
-            Some(ActionsWindowAction::Create) => self.send(Command::CreateCustomFile {
-                kind: CustomFileKind::Actions,
-                text: actions_window::TEMPLATE.to_owned(),
-            }),
-            Some(ActionsWindowAction::Close) => self.actions_window_open = false,
-            None => {}
         }
     }
 
@@ -2357,6 +2343,8 @@ impl eframe::App for DbRoverApp {
                     consoles: open_consoles,
                     keymap: &self.keymap,
                     keymap_path: self.keymap_path.as_deref(),
+                    custom_files: &self.custom_files,
+                    command_runs: &self.command_runs,
                     lint: &lint,
                     recent_completions,
                     console_actions: &mut console_actions,
@@ -2447,7 +2435,6 @@ impl eframe::App for DbRoverApp {
         }
         self.show_history_window(&ctx);
         self.show_custom_file_window(&ctx);
-        self.show_actions_window(&ctx);
         let commands = self.command_runs.show(&ctx);
         self.send_all(commands);
         self.show_about(&ctx);

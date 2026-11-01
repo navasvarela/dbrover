@@ -214,6 +214,54 @@ fn cell_values(cells: &GridCells, base: TemplateValues, quoting: Quoting) -> Tem
     }
 }
 
+/// A starting `actions.toml`: the plan's examples, commented out, so the file documents the
+/// format and adds nothing until a block is uncommented.
+pub const TEMPLATE: &str = r#"# DbRover custom actions. Uncomment and change an action, then View → Custom actions… → Reload.
+#
+# applies_to: node kinds (database, schema, table, view, materialized_view, function, procedure,
+#   sequence, column, index, constraint, trigger, role, …), data_source, grid.selection (once for
+#   the selected cells) or grid.row (once per selected row).
+# drivers: postgres, sqlite, mysql, sqlserver, duckdb, clickhouse, redis, mongodb, elasticsearch;
+#   every driver when left out.
+# run = false opens the SQL in a console to edit first.
+#
+# Placeholders, never pasted in as text: names are quoted, values become literals.
+#   {qualified_name} {database} {schema} {table} {column} {column:default}
+#   {data_source} (a string)  {value} {values} {row.<column>} (from the grid)
+# Write {{ for a { that would otherwise start a placeholder.
+#
+# An action can run a program instead of SQL, with command = [program, arguments…]. There is no
+# shell: each placeholder fills one argument, as raw text. Commands also take the data source's
+# {host} {port} {user} {file}, never a password. With a command:
+#   stdin = "json", "csv" or "tsv" sends the grid's selected cells (default "none");
+#   output = "viewer", "console", "log" or "none" says where stdout goes (default "viewer");
+#   timeout = "30s" stops it after that long (default 60s).
+# DbRover shows each command in full and asks before its first run.
+#
+# Bind an action to a key in keymap.toml as "custom.<id>" = "cmd+shift+y".
+
+# [[action]]
+# id = "row-count"
+# name = "Row count"
+# applies_to = ["table", "view"]
+# sql = "SELECT count(*) FROM {qualified_name}"
+
+# [[action]]
+# id = "latest"
+# name = "Last 100 rows"
+# applies_to = ["table"]
+# sql = "SELECT * FROM {qualified_name} ORDER BY {column:created_at} DESC LIMIT 100"
+# run = false
+
+# [[action]]
+# id = "rows-to-jq"
+# name = "Send rows to jq"
+# applies_to = ["grid.selection"]
+# command = ["jq", "-r", ".[] | .email"]
+# stdin = "json"
+# output = "viewer"
+"#;
+
 #[cfg(test)]
 mod tests {
     use dbrover_core::{ConnectionConfig, DataSourceId, FolderKind, SafetyLevel, SqliteConfig};
@@ -371,5 +419,20 @@ mod tests {
             Some(ActionTarget::DataSource)
         );
         assert_eq!(node_target(&table("x").parent().unwrap()), None);
+    }
+
+    #[test]
+    fn the_template_adds_nothing_until_uncommented_and_then_reads_cleanly() {
+        let as_written = dbrover_store::parse_actions(TEMPLATE);
+        assert!(as_written.value.is_empty() && as_written.problems.is_empty());
+
+        let uncommented: String = TEMPLATE
+            .lines()
+            .skip_while(|line| *line != "# [[action]]")
+            .map(|line| format!("{}\n", line.strip_prefix("# ").unwrap_or(line)))
+            .collect();
+        let checked = dbrover_store::parse_actions(&uncommented);
+        assert!(checked.problems.is_empty(), "{:?}", checked.problems);
+        assert_eq!(checked.value.len(), 3);
     }
 }
