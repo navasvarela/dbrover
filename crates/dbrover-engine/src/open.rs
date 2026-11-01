@@ -331,6 +331,11 @@ async fn connect(
         ConnectionConfig::Cassandra(config) => {
             Box::new(dbrover_driver_cassandra::connect(config, password, route).await?)
         }
+        // AWS's SDK reaches the region's endpoint or the one set, and signs every request:
+        // SSH tunnels aren't offered for DynamoDB, so the route is always direct.
+        ConnectionConfig::DynamoDb(config) => {
+            Box::new(dbrover_driver_dynamodb::connect(config).await?)
+        }
     })
 }
 

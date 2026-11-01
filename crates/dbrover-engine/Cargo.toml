@@ -15,6 +15,7 @@ dbrover-core.workspace = true
 dbrover-picture.workspace = true
 dbrover-driver-cassandra.workspace = true
 dbrover-driver-clickhouse.workspace = true
+dbrover-driver-dynamodb.workspace = true
 dbrover-driver-elasticsearch.workspace = true
 dbrover-driver-mongodb.workspace = true
 dbrover-driver-redis.workspace = true
@@ -37,11 +38,15 @@ tracing.workspace = true
 ureq.workspace = true
 
 [dev-dependencies]
+# Creates the DynamoDB tests' tables, which PartiQL can't.
+aws-sdk-dynamodb.workspace = true
+dbrover-cloud.workspace = true
 dbrover-language = { workspace = true, features = ["test-language"] }
 # Reads the plans the explain tests get back, as the app does.
 dbrover-plan.workspace = true
 rusqlite.workspace = true
 tempfile.workspace = true
+uuid.workspace = true
 
 [lints]
 workspace = true

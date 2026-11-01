@@ -14,9 +14,9 @@ use std::str::FromStr;
 
 use dbrover_core::{
     CassandraConfig, ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind,
-    ElasticsearchAuth, ElasticsearchConfig, MongoConfig, MysqlConfig, Password, PostgresConfig,
-    RedisConfig, SafetyLevel, ServerConfig, SqlServerConfig, SqliteConfig, SshConfig, SshLogin,
-    TlsMode,
+    DynamoDbConfig, DynamoDbSignIn, ElasticsearchAuth, ElasticsearchConfig, MongoConfig,
+    MysqlConfig, Password, PostgresConfig, RedisConfig, SafetyLevel, ServerConfig, SqlServerConfig,
+    SqliteConfig, SshConfig, SshLogin, TlsMode,
 };
 use dbrover_engine::{
     Command, EngineConfig, EngineHandle, Event, InstallError, InstallSupport, InstalledUpdate,
@@ -546,6 +546,61 @@ pub fn cql_test_servers() -> Vec<(&'static str, CassandraConfig, PasswordUpdate)
         servers.push((name, config, PasswordUpdate::Set(Password::new(password))));
     }
     servers
+}
+
+/// DynamoDB Local, from `DBROVER_TEST_DYNAMODB_URL` (its endpoint), signed in to as a local
+/// emulator: no AWS account or file is ever read.
+pub fn dynamodb_test_config() -> Option<DynamoDbConfig> {
+    let Ok(endpoint) = std::env::var("DBROVER_TEST_DYNAMODB_URL") else {
+        eprintln!("skipping: DBROVER_TEST_DYNAMODB_URL is not set");
+        return None;
+    };
+    Some(DynamoDbConfig {
+        sign_in: DynamoDbSignIn::LocalEmulator,
+        profile: String::new(),
+        region: String::new(),
+        endpoint,
+    })
+}
+
+/// Creates a table keyed by a string `pk` on the DynamoDB server `config` names, with a name
+/// unique to the run, which PartiQL can't do; returns its name.
+pub fn create_dynamodb_table(config: &DynamoDbConfig, prefix: &str) -> String {
+    use aws_sdk_dynamodb::types::{
+        AttributeDefinition, BillingMode, KeySchemaElement, KeyType, ScalarAttributeType,
+    };
+    let name = format!("{prefix}-{}", uuid::Uuid::new_v4().simple());
+    let sign_in = dbrover_cloud::aws::AwsSignIn {
+        credentials: dbrover_cloud::aws::AwsCredentials::LocalEmulator,
+        region: None,
+        endpoint: Some(config.endpoint.clone()),
+    };
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let client = aws_sdk_dynamodb::Client::new(&sign_in.sdk_config().await.unwrap());
+        client
+            .create_table()
+            .table_name(&name)
+            .billing_mode(BillingMode::PayPerRequest)
+            .key_schema(
+                KeySchemaElement::builder()
+                    .attribute_name("pk")
+                    .key_type(KeyType::Hash)
+                    .build()
+                    .unwrap(),
+            )
+            .attribute_definitions(
+                AttributeDefinition::builder()
+                    .attribute_name("pk")
+                    .attribute_type(ScalarAttributeType::S)
+                    .build()
+                    .unwrap(),
+            )
+            .send()
+            .await
+            .unwrap();
+    });
+    name
 }
 
 /// The `ssh` compose service and the PostgreSQL service as it reaches it, from

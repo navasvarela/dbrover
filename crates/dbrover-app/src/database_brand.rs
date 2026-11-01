@@ -93,5 +93,13 @@ pub fn of(driver: DriverKind) -> DatabaseBrand {
             light: Color32::from_rgb(0x12, 0x87, 0xB1),
             dark: Color32::from_rgb(0x6C, 0xC4, 0xE6),
         },
+        // AWS's database blue on the light theme; a lighter blue on the dark one. The glyph is
+        // DbRover's own (see assets/icons/databases/README.md).
+        DriverKind::DynamoDb => DatabaseBrand {
+            logo_uri: "bytes://logos/dynamodb.svg",
+            logo_svg: include_bytes!("../../../assets/icons/databases/dynamodb.svg"),
+            light: Color32::from_rgb(0x40, 0x53, 0xD6),
+            dark: Color32::from_rgb(0x8C, 0x9B, 0xFF),
+        },
     }
 }

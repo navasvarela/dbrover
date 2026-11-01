@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use dbrover_core::{
-    DataSource, DataSourceId, DriverKind, ElasticsearchAuth, MongoConfig, SafetyLevel, ServerInfo,
-    SourceColor, expand, expand_path, has_placeholder,
+    DataSource, DataSourceId, DriverKind, DynamoDbSignIn, ElasticsearchAuth, MongoConfig,
+    SafetyLevel, ServerInfo, SourceColor, expand, expand_path, has_placeholder,
 };
 use dbrover_engine::read_only::{self, Guard};
 use dbrover_engine::{DatabaseFile, Event, PasswordUpdate, ProcessEnvironment};
@@ -15,8 +15,8 @@ use egui::{
 
 use crate::data_source_form::{
     CassandraFields, DataSourceForm, DatabaseField, DriverFields, DuckDbFields, DuckDbLocation,
-    ElasticsearchFields, FormError, McpLoginFields, McpPasswordChange, MongoFields, MongoTarget,
-    ServerFields, SshFields, SshLoginChoice, TlsChoice,
+    DynamoDbFields, ElasticsearchFields, FormError, McpLoginFields, McpPasswordChange, MongoFields,
+    MongoTarget, ServerFields, SshFields, SshLoginChoice, TlsChoice,
 };
 use crate::file_picker::{self, FileEngine};
 use crate::icons;
@@ -187,6 +187,10 @@ impl DataSourceDialog {
                     }
                     DriverFields::Elasticsearch(fields) => {
                         elasticsearch_rows(ui, fields, password_hint);
+                        None
+                    }
+                    DriverFields::DynamoDb(fields) => {
+                        dynamodb_rows(ui, fields);
                         None
                     }
                     DriverFields::Sqlite(fields) => {
@@ -401,6 +405,55 @@ fn cassandra_rows(ui: &mut Ui, fields: &mut CassandraFields) {
     ui.label("");
     ui.weak("In seconds. On ScyllaDB, the server stops a query that runs longer, too.");
     ui.end_row();
+}
+
+/// A profile, region and endpoint, each left to AWS when empty, or an emulator's endpoint.
+fn dynamodb_rows(ui: &mut Ui, fields: &mut DynamoDbFields) {
+    ui.label("Sign in with");
+    ui.horizontal(|ui| {
+        ui.radio_value(&mut fields.sign_in, DynamoDbSignIn::Profile, "AWS profile");
+        ui.radio_value(
+            &mut fields.sign_in,
+            DynamoDbSignIn::LocalEmulator,
+            "Local emulator",
+        );
+    });
+    ui.end_row();
+    match fields.sign_in {
+        DynamoDbSignIn::Profile => {
+            setting_row(ui, "Profile", &mut fields.profile, "default", Resolve::Text);
+            ui.label("");
+            ui.weak("From your AWS config and credentials files; DbRover keeps only its name.");
+            ui.end_row();
+            setting_row(
+                ui,
+                "Region",
+                &mut fields.region,
+                "the profile's",
+                Resolve::Text,
+            );
+            setting_row(
+                ui,
+                "Endpoint",
+                &mut fields.endpoint,
+                "AWS's own",
+                Resolve::Text,
+            );
+        }
+        DynamoDbSignIn::LocalEmulator => {
+            setting_row(
+                ui,
+                "Endpoint",
+                &mut fields.endpoint,
+                "http://localhost:8000",
+                Resolve::Text,
+            );
+            ui.label("");
+            ui.weak("DynamoDB Local or LocalStack, which take made-up credentials.");
+            ui.end_row();
+            setting_row(ui, "Region", &mut fields.region, "us-east-1", Resolve::Text);
+        }
+    }
 }
 
 /// The password to save in the keychain, or the command that prints one on every connection.

@@ -55,6 +55,11 @@ inside DbRover.
   document lacks is told apart from one that is `null`. An object or array shows compactly
   (`{3 fields}`, `[12 items]`), and can be expanded into columns of its own
   (`address.city`). Past 200 columns, the rest stay in the tree.
+- **DynamoDB's sets are DbRover's own types** (added with N5, on 2026-11-01): BSON has no set,
+  so a string, number or binary set is `{"$stringSet": […]}`, `{"$numberSet": […]}` or
+  `{"$binarySet": […]}` (binary values in base64), shown as PartiQL writes them,
+  `<<'a', 'b'>>`. An edited set goes back a set rather than a list. DynamoDB's other types
+  are JSON's, and its binary values `$binary`.
 
 ## Consequences
 

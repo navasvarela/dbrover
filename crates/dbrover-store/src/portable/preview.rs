@@ -469,6 +469,21 @@ fn data_source_settings(data_source: &DataSource, names: &ProjectNames) -> Setti
                 settings.push(("Connection string", string.clone()));
             }
         }
+        ConnectionConfig::DynamoDb(config) => {
+            let or_default = |setting: &str, default: &str| match setting {
+                "" => default.to_owned(),
+                setting => setting.to_owned(),
+            };
+            let signs_in = match config.sign_in {
+                dbrover_core::DynamoDbSignIn::Profile => {
+                    or_default(&config.profile, "AWS's default chain")
+                }
+                dbrover_core::DynamoDbSignIn::LocalEmulator => "a local emulator".to_owned(),
+            };
+            settings.push(("Signs in as", signs_in));
+            settings.push(("Region", or_default(&config.region, "the profile's")));
+            settings.push(("Endpoint", or_default(&config.endpoint, "AWS's own")));
+        }
         ConnectionConfig::Sqlite(config) => {
             settings.push(("File", config.path.display().to_string()));
             settings.push(("Read-only", yes_no(config.read_only)));
@@ -530,6 +545,7 @@ fn yes_no(value: bool) -> String {
 fn paths(config: &ConnectionConfig) -> Vec<(&'static str, &Path)> {
     let server = match config {
         ConnectionConfig::Sqlite(config) => return vec![("File", &config.path)],
+        ConnectionConfig::DynamoDb(_) => return Vec::new(),
         ConnectionConfig::DuckDb(config) => {
             return match &config.database {
                 DuckDbDatabase::File { path, .. } => vec![("File", path)],
