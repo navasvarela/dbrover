@@ -436,7 +436,7 @@ mod tests {
                 entry("x", "drivers = [\"oracle\"]"),
                 "action \"x\": \"oracle\" is not a driver; the drivers are postgres, sqlite, \
                  mysql, sqlserver, duckdb, clickhouse, redis, mongodb, elasticsearch, \
-                 cassandra",
+                 cassandra, dynamodb",
             ),
             (
                 entry("x", "").replace("SELECT 1", " "),

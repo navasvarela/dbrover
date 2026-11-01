@@ -75,15 +75,16 @@ pub fn mode(driver: DriverKind, storage: Storage) -> Option<ReadOnlyMode> {
             Some(ReadOnlyMode::Connection)
         }
         // DuckDB refuses to open a database in memory read-only. SQL Server has no read-only
-        // transaction, and Redis, MongoDB, Elasticsearch and Cassandra no read-only session at
-        // all: a user who may only read is their guard (docs/nosql.md, N0a to N4).
+        // transaction, and Redis, MongoDB, Elasticsearch, Cassandra and DynamoDB no read-only
+        // session at all: a user who may only read is their guard (docs/nosql.md, N0a to N5).
         (DriverKind::DuckDb, Storage::InMemory)
         | (
             DriverKind::SqlServer
             | DriverKind::Redis
             | DriverKind::Mongo
             | DriverKind::Elasticsearch
-            | DriverKind::Cassandra,
+            | DriverKind::Cassandra
+            | DriverKind::DynamoDb,
             _,
         ) => None,
     }
@@ -107,7 +108,7 @@ pub enum Guard {
 pub fn guard(driver: DriverKind, storage: Storage) -> Guard {
     match mode(driver, storage) {
         Some(mode) => Guard::Session(mode),
-        None if driver.uses_password() => Guard::Login,
+        None if driver.has_logins() => Guard::Login,
         None => Guard::CheckOnly,
     }
 }
@@ -123,6 +124,10 @@ pub fn read_only_login(driver: DriverKind) -> &'static str {
              view_index_metadata and monitor on its indices"
         }
         DriverKind::Cassandra => "a role with only the SELECT permission",
+        DriverKind::DynamoDb => {
+            "a profile whose IAM policy allows only dynamodb:PartiQLSelect, \
+             dynamodb:DescribeTable and dynamodb:ListTables"
+        }
         DriverKind::Postgres
         | DriverKind::Sqlite
         | DriverKind::Mysql
@@ -366,7 +371,8 @@ mod tests {
                 | DriverKind::Redis
                 | DriverKind::Mongo
                 | DriverKind::Elasticsearch
-                | DriverKind::Cassandra => guard == Guard::Login,
+                | DriverKind::Cassandra
+                | DriverKind::DynamoDb => guard == Guard::Login,
             };
             assert!(expected, "{driver:?}: {guard:?}");
         }

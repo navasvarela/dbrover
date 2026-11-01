@@ -131,7 +131,10 @@ goes through up to three layers, and the strongest layer the engine offers decid
      `view_index_metadata` and `monitor` on its indices (N3), and `list_objects` lists the
      explorer's folders, indices and fields; on Cassandra and ScyllaDB, a role with the
      `SELECT` permission alone (N4), and `list_objects` lists keyspaces, their folders, tables
-     and columns, while `explain` is refused, CQL having none. `list_objects` pages a level too large
+     and columns, while `explain` is refused, CQL having none; on DynamoDB, an **MCP profile**, another AWS
+     profile whose IAM policy allows only `dynamodb:PartiQLSelect`, `dynamodb:DescribeTable`
+     and `dynamodb:ListTables` (N5), and `query` refuses a statement that would read a whole
+     table while the data source's cost guard is on, since an MCP client can't be asked. `list_objects` pages a level too large
      to list at once, 1,000 objects at a time, with a filter the database applies.
 3. **The database's own grants: the recommended setup for anything beyond reading.**
    - A data source can carry a **separate MCP login**: another user name and password, used only

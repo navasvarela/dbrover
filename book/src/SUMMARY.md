@@ -10,6 +10,7 @@
 - [Views and schemas](views-schemas.md)
 - [Users and roles](users-roles.md)
 - [Query consoles](consoles.md)
+- [DynamoDB](dynamodb.md)
 - [Reading query plans](explain-plans.md)
 - [ER diagrams](diagrams.md)
 - [Files, parameters and find](files-parameters.md)

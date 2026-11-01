@@ -18,6 +18,7 @@ mod previous_install;
 mod projects;
 mod secrets;
 mod settings;
+mod settings_folder;
 mod sql_files;
 
 pub use consoles::{
@@ -48,6 +49,7 @@ pub use portable::{
 };
 pub use previous_install::{
     Adoption, AdoptionError, CopiedInstall, InstallFolders, adopt_previous_install,
+    find_previous_install,
 };
 pub use projects::{
     InvalidSchemaScope, InvalidSlug, InvalidTimeout, McpOverrides, McpPermissions, Project,
@@ -57,5 +59,10 @@ pub use secrets::{Secret, SecretError, SecretStore, os_keychain};
 pub use settings::{
     FormatSettings, HistorySettings, KeywordCase, LintSettings, Settings, SettingsError,
     SettingsFile, UpdateSettings,
+};
+pub use settings_folder::{
+    CONFIG_DIR_FLAG, CONFIG_DIR_VARIABLE, ChosenFolder, ChosenFolderError, ChosenFolderFile,
+    FolderCheck, FolderOverrides, FolderRefusal, RelativeFolder, SettingsFolder, check_folder,
+    settings_folder,
 };
 pub use sql_files::{SqlFileContents, SqlFileError, modified, read_sql_file, write_sql_file};

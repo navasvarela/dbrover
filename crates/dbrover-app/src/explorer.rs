@@ -548,6 +548,7 @@ fn data_source_tree(
                 .map(Dialect::capabilities),
             own_database: entry.data_source.config.database(),
             driver: entry.data_source.config.driver(),
+            language,
             actions: tree.actions,
             selected: tree
                 .selected
@@ -711,6 +712,8 @@ struct TreeView<'a> {
     /// statements run on that connection, so they are offered only inside it.
     own_database: Option<&'a str>,
     driver: DriverKind,
+    /// What **Open data** asks for a language that reads a table in its own words.
+    language: QueryLanguage,
     actions: &'a [CustomAction],
     /// The selected node, if it is in this data source.
     selected: Option<&'a CatalogPath>,
@@ -932,7 +935,7 @@ fn node_menu(
     let is_read_whole = matches!(
         node.kind(),
         Some(NodeKind::Key(_) | NodeKind::Collection | NodeKind::SearchIndex)
-    );
+    ) || tree.language.read_all(&node.path).is_some();
     if is_read_whole && widgets::menu_item(ui, icons::TABLE, "Open data").clicked() {
         actions.push(ExplorerAction::OpenData(id, node.path.clone()));
     }

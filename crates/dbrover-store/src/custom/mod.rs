@@ -33,7 +33,7 @@ pub enum CustomFileKind {
 impl CustomFileKind {
     pub const ALL: [Self; 3] = [Self::Actions, Self::Snippets, Self::Theme];
 
-    pub fn file_name(self) -> &'static str {
+    pub const fn file_name(self) -> &'static str {
         match self {
             Self::Actions => "actions.toml",
             Self::Snippets => "snippets.toml",
@@ -225,6 +225,7 @@ pub fn driver_id(driver: DriverKind) -> &'static str {
         DriverKind::Mongo => "mongodb",
         DriverKind::Elasticsearch => "elasticsearch",
         DriverKind::Cassandra => "cassandra",
+        DriverKind::DynamoDb => "dynamodb",
     }
 }
 
@@ -274,7 +275,7 @@ mod tests {
             drivers(names(&["postgresql"])),
             Err(
                 "\"postgresql\" is not a driver; the drivers are postgres, sqlite, mysql, \
-                 sqlserver, duckdb, clickhouse, redis, mongodb, elasticsearch, cassandra"
+                 sqlserver, duckdb, clickhouse, redis, mongodb, elasticsearch, cassandra, dynamodb"
                     .to_owned()
             )
         );

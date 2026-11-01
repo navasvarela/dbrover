@@ -13,6 +13,7 @@
 
 mod documents;
 pub mod mongo;
+pub mod partiql;
 pub mod redis;
 pub mod search;
 #[cfg(any(test, feature = "test-language"))]
@@ -20,7 +21,7 @@ mod test_language;
 
 use std::ops::Range;
 
-use dbrover_core::{DriverKind, NodeKind, Quoting, ResultShape, ServerInfo};
+use dbrover_core::{CatalogPath, DriverKind, NodeKind, Quoting, ResultShape, ServerInfo};
 use dbrover_plan::PlanFormat;
 use dbrover_sql::Dialect;
 pub use dbrover_sql::{
@@ -63,6 +64,8 @@ pub enum QueryLanguage {
     Mongo,
     /// Requests to Elasticsearch's and OpenSearch's REST APIs, as Kibana's Dev Tools write them.
     Search,
+    /// PartiQL, as Amazon DynamoDB runs it.
+    PartiQl,
     /// A language of one command per line, built only for tests: it has no dialect, so it runs
     /// through the paths a non-SQL engine will take.
     #[cfg(any(test, feature = "test-language"))]
@@ -77,6 +80,7 @@ impl QueryLanguage {
             Self::Redis => "Redis",
             Self::Mongo => "MongoDB",
             Self::Search => "Elasticsearch",
+            Self::PartiQl => "PartiQL",
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => "the test language",
         }
@@ -86,7 +90,7 @@ impl QueryLanguage {
     pub fn dialect(self) -> Option<Dialect> {
         match self {
             Self::Sql(dialect) => Some(dialect),
-            Self::Redis | Self::Mongo | Self::Search => None,
+            Self::Redis | Self::Mongo | Self::Search | Self::PartiQl => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
         }
@@ -100,7 +104,7 @@ impl QueryLanguage {
                 Some(EditsRun::Transaction(dialect))
             }
             Self::Sql(_) => Some(EditsRun::OneByOne),
-            Self::Redis | Self::Mongo | Self::Search => Some(EditsRun::OneByOne),
+            Self::Redis | Self::Mongo | Self::Search | Self::PartiQl => Some(EditsRun::OneByOne),
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
         }
@@ -111,7 +115,7 @@ impl QueryLanguage {
     pub fn key_view(self, command: &str) -> Option<redis::KeyView> {
         match self {
             Self::Redis => redis::KeyView::of(command),
-            Self::Sql(_) | Self::Mongo | Self::Search => None,
+            Self::Sql(_) | Self::Mongo | Self::Search | Self::PartiQl => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
         }
@@ -181,7 +185,7 @@ impl QueryLanguage {
             Self::Sql(_) => None,
             Self::Mongo => Some(ExplainStyle::MongoShell),
             Self::Search => Some(ExplainStyle::SearchProfile),
-            Self::Redis => None,
+            Self::Redis | Self::PartiQl => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
         }
@@ -196,6 +200,7 @@ impl QueryLanguage {
             Self::Sql(_) => Some(ResultShape::Rows),
             Self::Mongo => mongo::returns_documents(command).then_some(ResultShape::Documents),
             Self::Search => search::returns_documents(command).then_some(ResultShape::Documents),
+            Self::PartiQl => partiql::returns_documents(command).then_some(ResultShape::Documents),
             Self::Redis => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
@@ -209,9 +214,37 @@ impl QueryLanguage {
         match self {
             Self::Mongo => mongo::CollectionView::of(command).map(DocumentView::Collection),
             Self::Search => search::IndexView::of(command).map(DocumentView::Index),
-            Self::Sql(_) | Self::Redis => None,
+            Self::Sql(_) | Self::Redis | Self::PartiQl => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
+        }
+    }
+
+    /// The table whose description a result of `command`'s documents waits for before it can
+    /// be edited: a DynamoDB `SELECT` of one table, whose items are found by a primary key only
+    /// the database knows. `None` for any other command, and in another language, whose view
+    /// [`Self::document_view`] gives at once.
+    pub fn documents_table(self, command: &str) -> Option<String> {
+        match self {
+            Self::PartiQl => partiql::TableView::source(command),
+            Self::Sql(_) | Self::Redis | Self::Mongo | Self::Search => None,
+            #[cfg(any(test, feature = "test-language"))]
+            Self::Test => None,
+        }
+    }
+
+    /// The view of `command`'s documents once [`Self::documents_table`]'s table is described,
+    /// with `primary_key` its key's attributes in order.
+    pub fn described_view(self, command: &str, primary_key: &[String]) -> Option<DocumentView> {
+        match self {
+            Self::PartiQl if !primary_key.is_empty() => {
+                let table = partiql::TableView::source(command)?;
+                Some(DocumentView::Table(partiql::TableView::new(
+                    table,
+                    primary_key.to_vec(),
+                )))
+            }
+            _ => None,
         }
     }
 
@@ -224,6 +257,7 @@ impl QueryLanguage {
             Self::Mongo | Self::Sql(_) | Self::Redis => {
                 "Only the documents a find returns from one collection can be edited"
             }
+            Self::PartiQl => "Only the items a SELECT reads from one table can be edited",
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => "This language's documents can't be edited",
         }
@@ -246,6 +280,7 @@ impl QueryLanguage {
             Self::Redis => redis::split(script),
             Self::Mongo => mongo::split(script),
             Self::Search => search::split(script),
+            Self::PartiQl => partiql::split(script),
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => test_language::split(script),
         }
@@ -259,6 +294,7 @@ impl QueryLanguage {
             Self::Redis => redis::tokenize(text),
             Self::Mongo => mongo::tokenize(text),
             Self::Search => search::tokenize(text),
+            Self::PartiQl => partiql::tokenize(text),
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => test_language::tokenize(text),
         }
@@ -273,6 +309,7 @@ impl QueryLanguage {
             Self::Redis => redis::is_command(word),
             Self::Mongo => mongo::is_keyword(word),
             Self::Search => search::is_keyword(word),
+            Self::PartiQl => partiql::is_keyword(word),
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => test_language::is_keyword(word),
         }
@@ -286,6 +323,7 @@ impl QueryLanguage {
             Self::Redis => redis::completion_words(),
             Self::Mongo => mongo::completion_words(),
             Self::Search => search::completion_words(),
+            Self::PartiQl => partiql::completion_words(),
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => test_language::KEYWORDS,
         }
@@ -300,15 +338,30 @@ impl QueryLanguage {
     }
 
     /// The kinds of catalog objects completion offers by name, from what the explorer has
-    /// loaded: an Elasticsearch cluster's indices, aliases and data streams. Empty for SQL,
-    /// whose names completion finds by the clause, and for a language whose commands name no
-    /// object of the explorer's.
+    /// loaded: an Elasticsearch cluster's indices, aliases and data streams, or DynamoDB's
+    /// tables. Empty for SQL, whose names completion finds by the clause, and for a language
+    /// whose commands name no object of the explorer's.
     pub fn named_objects(self) -> &'static [NodeKind] {
         match self {
             Self::Search => &[NodeKind::SearchIndex],
+            Self::PartiQl => &[NodeKind::Table],
             Self::Sql(_) | Self::Redis | Self::Mongo => &[],
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => &[],
+        }
+    }
+
+    /// What **Open data** runs on the catalog object at `path`, for a language that reads a
+    /// table or index whole in its own words: PartiQL's `SELECT *` of a DynamoDB table or of
+    /// one of its indexes. `None` for any other object, and for the languages whose objects
+    /// the app reads by their kind (SQL's tables, Redis's keys, MongoDB's collections and
+    /// search indices).
+    pub fn read_all(self, path: &CatalogPath) -> Option<String> {
+        match self {
+            Self::PartiQl => partiql::read_all(path),
+            Self::Sql(_) | Self::Redis | Self::Mongo | Self::Search => None,
+            #[cfg(any(test, feature = "test-language"))]
+            Self::Test => None,
         }
     }
 
@@ -320,6 +373,7 @@ impl QueryLanguage {
             Self::Redis => redis::syntax(word),
             Self::Mongo => mongo::syntax(word),
             Self::Search => search::syntax(word),
+            Self::PartiQl => partiql::syntax(word),
             Self::Sql(_) => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
@@ -337,6 +391,9 @@ impl QueryLanguage {
             Self::Redis => redis::hazard(command),
             Self::Mongo => mongo::hazard(command),
             Self::Search => search::hazard(command),
+            // Each UPDATE and DELETE changes one item; a SELECT that reads everything is the
+            // scan guard's to catch, since only the database knows a table's keys.
+            Self::PartiQl => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => test_language::hazard(command),
         }
@@ -374,6 +431,10 @@ impl QueryLanguage {
                 kind,
                 schemas: NamedSchemas::Unknown,
             }),
+            Self::PartiQl => partiql::classify(command).map(|kind| Analysis {
+                kind,
+                schemas: NamedSchemas::Unknown,
+            }),
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => test_language::classify(command).map(|kind| Analysis {
                 kind,
@@ -407,6 +468,7 @@ impl From<DriverKind> for QueryLanguage {
             DriverKind::Mongo => Self::Mongo,
             DriverKind::Elasticsearch => Self::Search,
             DriverKind::Cassandra => Self::Sql(Dialect::Cassandra),
+            DriverKind::DynamoDb => Self::PartiQl,
         }
     }
 }
@@ -441,6 +503,7 @@ mod tests {
                 None,
                 None,
                 Some(Dialect::Cassandra),
+                None,
             ]
         );
         assert_eq!(QueryLanguage::from(DriverKind::Redis), QueryLanguage::Redis);

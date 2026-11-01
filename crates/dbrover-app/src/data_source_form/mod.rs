@@ -2,6 +2,7 @@
 //! the rules are testable without a UI.
 
 mod cassandra;
+mod dynamodb;
 mod elasticsearch;
 mod mongo;
 mod server;
@@ -16,6 +17,7 @@ use dbrover_engine::PasswordUpdate;
 use dbrover_engine::read_only::Storage;
 
 pub use cassandra::CassandraFields;
+pub use dynamodb::DynamoDbFields;
 pub use elasticsearch::ElasticsearchFields;
 pub use mongo::{MongoFields, MongoTarget};
 pub use server::{DatabaseField, ServerDefaults, ServerFields, TlsChoice, TlsOffer, UserField};
@@ -96,6 +98,8 @@ pub enum FormError {
     UserMissing,
     #[error("File is required.")]
     PathMissing,
+    #[error("Endpoint is required to sign in as a local emulator.")]
+    EndpointMissing,
     #[error("SSH host is required.")]
     SshHostMissing,
     #[error("SSH port must be a number from 1 to 65535, or a ${{VARIABLE}}.")]
@@ -158,6 +162,7 @@ pub enum DriverFields {
     Mongo(MongoFields),
     Elasticsearch(ElasticsearchFields),
     Cassandra(CassandraFields),
+    DynamoDb(DynamoDbFields),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -240,6 +245,7 @@ impl DriverFields {
             DriverKind::Mongo => Self::Mongo(MongoFields::new()),
             DriverKind::Elasticsearch => Self::Elasticsearch(ElasticsearchFields::new()),
             DriverKind::Cassandra => Self::Cassandra(CassandraFields::new()),
+            DriverKind::DynamoDb => Self::DynamoDb(DynamoDbFields::default()),
         }
     }
 
@@ -284,6 +290,9 @@ impl DriverFields {
             ConnectionConfig::Cassandra(config) => {
                 Self::Cassandra(CassandraFields::from_config(config))
             }
+            ConnectionConfig::DynamoDb(config) => {
+                Self::DynamoDb(DynamoDbFields::from_config(config))
+            }
         }
     }
 
@@ -299,6 +308,7 @@ impl DriverFields {
             Self::Mongo(_) => DriverKind::Mongo,
             Self::Elasticsearch(_) => DriverKind::Elasticsearch,
             Self::Cassandra(_) => DriverKind::Cassandra,
+            Self::DynamoDb(_) => DriverKind::DynamoDb,
         }
     }
 
@@ -313,7 +323,7 @@ impl DriverFields {
             Self::Mongo(fields) => Some(&fields.server),
             Self::Elasticsearch(fields) => Some(&fields.server),
             Self::Cassandra(fields) => Some(&fields.server),
-            Self::Sqlite(_) | Self::DuckDb(_) => None,
+            Self::Sqlite(_) | Self::DuckDb(_) | Self::DynamoDb(_) => None,
         }
     }
 
@@ -341,6 +351,7 @@ impl DriverFields {
             Self::Mongo(fields) => ConnectionConfig::Mongo(fields.to_config()?),
             Self::Elasticsearch(fields) => ConnectionConfig::Elasticsearch(fields.to_config()?),
             Self::Cassandra(fields) => ConnectionConfig::Cassandra(fields.to_config()?),
+            Self::DynamoDb(fields) => ConnectionConfig::DynamoDb(fields.to_config()?),
         })
     }
 }
@@ -411,7 +422,7 @@ impl DataSourceForm {
     /// Only engines that sign in have a login to swap.
     fn mcp_login(&self) -> Option<McpLogin> {
         let user = self.mcp_login.user.trim();
-        (self.driver().uses_password() && !user.is_empty()).then(|| McpLogin {
+        (self.driver().has_logins() && !user.is_empty()).then(|| McpLogin {
             user: user.to_owned(),
         })
     }

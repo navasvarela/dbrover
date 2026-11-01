@@ -272,6 +272,20 @@ pub async fn open_data_source_for_mcp(
     let Some(config) = data_source.config.with_user(&login.user) else {
         return open_data_source(data_source, secrets, tunnels, commands).await;
     };
+    let connector = Connector {
+        secrets,
+        tunnels,
+        commands,
+        prompting: Prompting::Never,
+    };
+    // A DynamoDB MCP login is an AWS profile, which needs no password of DbRover's.
+    if !config.driver().uses_password() {
+        let as_mcp = DataSource {
+            config,
+            ..data_source.clone()
+        };
+        return open(&as_mcp, &TypedSecrets::default(), connector).await;
+    }
     let id = data_source.id;
     let store = Arc::clone(secrets);
     let password = tokio::task::spawn_blocking(move || store.get(id, Secret::McpLogin))
@@ -288,12 +302,6 @@ pub async fn open_data_source_for_mcp(
     let typed = TypedSecrets {
         password: PasswordUpdate::Set(password),
         ssh: PasswordUpdate::Keep,
-    };
-    let connector = Connector {
-        secrets,
-        tunnels,
-        commands,
-        prompting: Prompting::Never,
     };
     open(&as_mcp, &typed, connector).await
 }
@@ -330,6 +338,11 @@ async fn connect(
         }
         ConnectionConfig::Cassandra(config) => {
             Box::new(dbrover_driver_cassandra::connect(config, password, route).await?)
+        }
+        // AWS's SDK reaches the region's endpoint or the one set, and signs every request:
+        // SSH tunnels aren't offered for DynamoDB, so the route is always direct.
+        ConnectionConfig::DynamoDb(config) => {
+            Box::new(dbrover_driver_dynamodb::connect(config).await?)
         }
     })
 }

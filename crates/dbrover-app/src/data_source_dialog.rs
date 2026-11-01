@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use dbrover_core::{
-    DataSource, DataSourceId, DriverKind, ElasticsearchAuth, MongoConfig, SafetyLevel, ServerInfo,
-    SourceColor, expand, expand_path, has_placeholder,
+    CostGuard, DataSource, DataSourceId, DriverKind, DynamoDbSignIn, ElasticsearchAuth,
+    MongoConfig, SafetyLevel, ServerInfo, SourceColor, expand, expand_path, has_placeholder,
 };
 use dbrover_engine::read_only::{self, Guard};
 use dbrover_engine::{DatabaseFile, Event, PasswordUpdate, ProcessEnvironment};
@@ -15,8 +15,8 @@ use egui::{
 
 use crate::data_source_form::{
     CassandraFields, DataSourceForm, DatabaseField, DriverFields, DuckDbFields, DuckDbLocation,
-    ElasticsearchFields, FormError, McpLoginFields, McpPasswordChange, MongoFields, MongoTarget,
-    ServerFields, SshFields, SshLoginChoice, TlsChoice,
+    DynamoDbFields, ElasticsearchFields, FormError, McpLoginFields, McpPasswordChange, MongoFields,
+    MongoTarget, ServerFields, SshFields, SshLoginChoice, TlsChoice,
 };
 use crate::file_picker::{self, FileEngine};
 use crate::form;
@@ -190,6 +190,10 @@ impl DataSourceDialog {
                         elasticsearch_rows(ui, fields, password_hint);
                         None
                     }
+                    DriverFields::DynamoDb(fields) => {
+                        dynamodb_rows(ui, fields);
+                        None
+                    }
                     DriverFields::Sqlite(fields) => {
                         return file_rows(
                             ui,
@@ -212,6 +216,9 @@ impl DataSourceDialog {
                 // Only where `dbrover mcp` can serve the engine; elsewhere it would never be used.
                 match read_only::guard(self.form.driver(), self.form.storage()) {
                     Guard::Session(_) => mcp_login_rows(ui, &mut self.form.mcp_login, false),
+                    Guard::Login if !self.form.driver().uses_password() => {
+                        mcp_profile_row(ui, &mut self.form.mcp_login);
+                    }
                     Guard::Login => mcp_login_rows(ui, &mut self.form.mcp_login, true),
                     Guard::CheckOnly => {}
                 }
@@ -401,6 +408,70 @@ fn cassandra_rows(ui: &mut Ui, fields: &mut CassandraFields) {
     ui.end_row();
 }
 
+/// A profile, region and endpoint, each left to AWS when empty, or an emulator's endpoint.
+fn dynamodb_rows(ui: &mut Ui, fields: &mut DynamoDbFields) {
+    ui.label("Sign in with");
+    ui.horizontal(|ui| {
+        ui.radio_value(&mut fields.sign_in, DynamoDbSignIn::Profile, "AWS profile");
+        ui.radio_value(
+            &mut fields.sign_in,
+            DynamoDbSignIn::LocalEmulator,
+            "Local emulator",
+        );
+    });
+    ui.end_row();
+    match fields.sign_in {
+        DynamoDbSignIn::Profile => {
+            setting_row(ui, "Profile", &mut fields.profile, "default", Resolve::Text);
+            ui.label("");
+            ui.weak("From your AWS config and credentials files; DbRover keeps only its name.");
+            ui.end_row();
+            setting_row(
+                ui,
+                "Region",
+                &mut fields.region,
+                "the profile's",
+                Resolve::Text,
+            );
+            setting_row(
+                ui,
+                "Endpoint",
+                &mut fields.endpoint,
+                "AWS's own",
+                Resolve::Text,
+            );
+        }
+        DynamoDbSignIn::LocalEmulator => {
+            setting_row(
+                ui,
+                "Endpoint",
+                &mut fields.endpoint,
+                "http://localhost:8000",
+                Resolve::Text,
+            );
+            ui.label("");
+            ui.weak("DynamoDB Local or LocalStack, which take made-up credentials.");
+            ui.end_row();
+            setting_row(ui, "Region", &mut fields.region, "us-east-1", Resolve::Text);
+        }
+    }
+    ui.label("Cost guard");
+    let mut asks = fields.cost_guard == CostGuard::AskBeforeScans;
+    let checkbox = ui
+        .checkbox(&mut asks, "Ask before reading a whole table")
+        .on_hover_text(
+            "A SELECT without = or IN on the partition key reads every item, and DynamoDB \
+             bills each one. Run to file and MCP clients are refused one instead.",
+        );
+    if checkbox.changed() {
+        fields.cost_guard = match asks {
+            true => CostGuard::AskBeforeScans,
+            false => CostGuard::Off,
+        };
+    }
+    ui.end_row();
+}
+
 /// The password to save in the keychain, or the command that prints one on every connection.
 fn password_rows(ui: &mut Ui, fields: &mut ServerFields, password_hint: &str) {
     secret_rows(ui, fields, "Password", password_hint);
@@ -537,6 +608,24 @@ fn ssh_rows(ui: &mut Ui, fields: &mut SshFields, secret_hint: &str) {
 /// do; the project settings warn when a project allows changes without one.
 /// The MCP login's user and password. `required` where the engine has no read-only mode, so
 /// MCP clients are served only through such a login.
+/// A DynamoDB data source's MCP login: another AWS profile, whose IAM policy is the guard, and
+/// no password of DbRover's.
+fn mcp_profile_row(ui: &mut Ui, fields: &mut McpLoginFields) {
+    let label = ui.label("MCP profile").on_hover_text(
+        "Another AWS profile for MCP clients to sign in as, used only by dbrover mcp. DynamoDB \
+         has no read-only mode, so MCP clients are served only through such a profile: give \
+         its IAM policy nothing but dynamodb:PartiQLSelect, dynamodb:DescribeTable and \
+         dynamodb:ListTables.",
+    );
+    ui.add(
+        TextEdit::singleline(&mut fields.user)
+            .hint_text("none: not served to MCP clients")
+            .desired_width(FIELD_WIDTH),
+    )
+    .labelled_by(label.id);
+    ui.end_row();
+}
+
 fn mcp_login_rows(ui: &mut Ui, fields: &mut McpLoginFields, required: bool) {
     let label = ui.label("MCP login").on_hover_text(if required {
         "Another user for MCP clients to sign in as, used only by dbrover mcp. This engine has \

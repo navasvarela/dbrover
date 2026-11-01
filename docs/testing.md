@@ -117,6 +117,15 @@ Each driver crate runs the suite against its own backend:
   column caught by preparing, the keyspace a console starts in, `USING TIMEOUT` on ScyllaDB,
   TLS checked against the test authority, and every kind of object in the explorer with
   definitions that run again.
+- **DynamoDB**: the `dynamodb` container (DynamoDB Local 3.3, port 58000), skipped when
+  `DBROVER_TEST_DYNAMODB_URL` is unset. The tests sign in to it as a local emulator, with
+  made-up credentials, so no AWS account or file is read. Each test makes tables of its own,
+  named for it and the run, with AWS's SDK (PartiQL can't create one) and drops them after.
+  They run `check_lifecycle`, `check_connect_failure`, `walk_catalog` and
+  `check_invalid_path`; `check_cancel` doesn't fit, since DynamoDB Local answers each request
+  too quickly to be stopped part-way, so cancel is tested against a server that takes a
+  request and never answers. Besides: each attribute type as Extended JSON, a partition paged
+  past 500 items, a filtered Scan's short pages, and writes with and without `RETURNING`.
 - **SQL Server**: the `sqlserver` container (2022, port 51433), skipped when
   `DBROVER_TEST_SQLSERVER_URL` is unset. Its image is x86-64 only: native on CI's Linux runner,
   emulated (slowly, and it can crash) by Docker on an Apple-silicon Mac. The image can't

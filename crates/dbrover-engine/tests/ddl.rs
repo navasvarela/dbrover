@@ -24,7 +24,7 @@ use dbrover_core::{
 };
 use dbrover_engine::{
     Command, ConsoleId, DatabaseFile, DdlFailure, Event, PasswordUpdate, RunId, RunOrigin,
-    RunPurpose, SessionState, TransactionMode,
+    RunPurpose, ScanApproval, SessionState, TransactionMode,
 };
 use dbrover_sql::{
     Check, ColumnSpec, DdlOperation, Dialect, ExistingTable, ForeignKey, ObjectName, OwnedObjects,
@@ -1188,6 +1188,7 @@ fn query(
         transactions: TransactionMode::Auto,
         purpose: RunPurpose::Run,
         origin: RunOrigin::Console,
+        scans: ScanApproval::Ask,
     });
     let mut rows = Vec::new();
     loop {

@@ -2,7 +2,9 @@
 
 Status: **planned**, not scheduled. Proposed on 2026-10-27; the order and the decisions below are
 confirmed when the track starts. The providers' priority was set on 2026-10-28: AWS, then Google
-Cloud, then Azure.
+Cloud, then Azure. On 2026-11-01 DynamoDB was moved ahead of the track, as the NoSQL track's
+[N5](nosql.md#n5--dynamodb), with the two parts of C0 it needs: the AWS sign-in and a cost
+guard against reading a whole table.
 
 DbRover connects to databases you run or reach by host and port. Much of the data people query
 today lives elsewhere: managed databases signed into with a cloud account instead of a password,
@@ -78,11 +80,11 @@ Left out on purpose:
 
 - **Hadoop-era engines** (Hive through Thrift, Impala, Spark Thrift Server). Fewer new users,
   Thrift and SASL protocols, and the same data usually reachable through Trino or Databricks.
-- **NoSQL cloud stores** (DynamoDB, Cosmos DB, Bigtable, Firestore), for now. The
+- **NoSQL cloud stores** (Cosmos DB, Bigtable, Firestore), for now. The
   [NoSQL track](nosql.md) builds what they need first: query languages beside SQL and
-  document results. DynamoDB is the first to reconsider after it, with its PartiQL and C0's
-  sign-in and cost guards; Cosmos DB's MongoDB API may already connect through that track's
-  MongoDB driver.
+  document results. DynamoDB, the first of them, is that track's N5, built ahead of C0 with
+  C0's AWS sign-in and its own cost guard; Cosmos DB's MongoDB API may already connect through
+  that track's MongoDB driver.
 - **Running or managing cloud resources** (creating instances, scaling warehouses, IAM policy).
   DbRover queries data; the cloud consoles and infrastructure-as-code tools manage it.
 
@@ -94,8 +96,10 @@ The groundwork every later milestone needs.
 
 - **Credential providers** in a new `dbrover-cloud` crate, chosen per data source, built in the
   providers' order:
-  - AWS: an IAM authentication token for RDS and Aurora (PostgreSQL and MySQL), from the
-    user's AWS profile (including SSO);
+  - AWS: the default credential chain of AWS's own SDK, `aws-config`, with a profile and a
+    region per data source, for AWS's APIs, built first for DynamoDB in N5 as the crate's
+    `aws` module; then, from the same chain, an IAM authentication token for RDS and Aurora
+    (PostgreSQL and MySQL);
   - Google Cloud: an access token from Application Default Credentials, for Cloud SQL's IAM
     database authentication;
   - Microsoft Entra ID: an access token for Azure SQL, Synapse, Fabric and Azure Database for
@@ -105,7 +109,9 @@ The groundwork every later milestone needs.
   logged or written to the history.
 - **Cost guards**, as a per-data-source setting next to the safety level (W2): a limit (bytes
   scanned, or a time budget) above which a statement asks first, and quiet defaults for the
-  explorer and the grid, so that no automatic action scans a whole table.
+  explorer and the grid, so that no automatic action scans a whole table. DynamoDB's is the
+  first (N5): the data source's `CostGuard` asks before a statement reads a whole table, and
+  bounds what each page reads; C0 adds the limits beside it.
 - **Jobs in the engine:** a cursor that submits, polls and pages, with cancel by job id, and a
   status line showing what the job has done so far (bytes, rows, elapsed time). ClickHouse's
   `query_id` cancel is the first user.
@@ -173,7 +179,7 @@ Proposed defaults; each is confirmed when its milestone starts.
 | --- | --- | --- |
 | Which provider first | **AWS, then Google Cloud, then Azure.** Settled on 2026-10-28, not only proposed. | Each milestone builds and tries AWS's services first, and Athena moves ahead of the warehouses that run on any cloud. Azure's services come last in each milestone, but its SQL Server-protocol warehouses (Synapse, Fabric) join C1 instead of waiting for a driver of their own. |
 | How DbRover gets cloud credentials | **From the provider's own sign-in on the machine first:** AWS profiles and SSO cache, Google Application Default Credentials, Azure CLI's sign-in, read or invoked (`aws`, `gcloud`, `az`) without a shell. A browser OAuth flow later, for warehouses that need it. | Uses the login people already have, and no cloud secret ever lives in DbRover's files. Users without the CLIs need them installed, or a key file. |
-| Cloud SDKs | **No full SDKs.** Small HTTP clients on the hyper and rustls stack the ClickHouse driver already uses, plus request signing (AWS SigV4) where needed. | Keeps CI build times and download size close to today's; each new API call is a little more code to write and test. |
+| Cloud SDKs | **No full SDKs,** except AWS's: small HTTP clients on the hyper and rustls stack the ClickHouse driver already uses for Google Cloud and Azure. For AWS, `aws-config` and each service's SDK crate, without default features and on ring, agreed on 2026-11-01 for DynamoDB (N5), which measures what it costs. | AWS's credential chain (SSO, `aws login`, roles, refreshing) is AWS's own code, not DbRover's. The cost in build time and download is in [N5](nosql.md#n5--dynamodb); each later AWS service adds its own SDK crate. |
 | Warehouse protocols | **Their HTTPS APIs** (Snowflake SQL API, BigQuery REST, Databricks Statement Execution, Trino HTTP), not ODBC or JDBC. | Pure Rust, no drivers to install, works through proxies; some services' fastest result paths (BigQuery's Storage Read API, Arrow Flight) come later if needed. |
 | Testing services with no container | **Recorded HTTP exchanges replayed by a fake server in CI**, plus live tests run by hand (or nightly) with credentials kept in repository secrets. | Every pull request stays fast and needs no cloud account; the live tests catch API drift. |
 | DuckDB extensions | **Downloaded by DuckDB on first use**, signed by DuckDB, rather than compiled in. | Downloads stay the same size; the first use of S3 or Iceberg needs network access. |

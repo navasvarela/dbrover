@@ -346,6 +346,7 @@ engine, why the login stays the guard.
 | Redis, Valkey, Dragonfly | none per session: an ACL user with only `+@read` | the check alone, or such a user | served only through an MCP login | N1 |
 | MongoDB | none per session: a user with only the `read` role | the check alone, or such a user | served only through an MCP login | N2 |
 | Elasticsearch, OpenSearch | none per session: a user or API key with read privileges | the check alone, or such a user | served only through an MCP login | N3 |
+| DynamoDB | none per session: an AWS profile whose IAM policy allows only reading | the check alone, or such a profile | served only through an MCP profile | N5 |
 
 **What was weighed and left, per engine:**
 

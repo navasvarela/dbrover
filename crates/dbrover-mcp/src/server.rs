@@ -205,7 +205,9 @@ impl ToolError {
                 Self::invalid(describe_error(&error))
             }
             error @ RunError::TimedOut(_) => Self::plain("timeout", describe_error(&error)),
-            error @ RunError::NoTransaction(_) => Self::refused(error.to_string()),
+            error @ (RunError::NoTransaction(_) | RunError::Scan(_)) => {
+                Self::refused(error.to_string())
+            }
         }
     }
 
@@ -564,9 +566,11 @@ impl DbRoverMcp {
         let started = Timestamp::now();
         let clock = Instant::now();
         let to_run = statement.clone();
+        let cost_guard = data_source.config.cost_guard();
         let outcome = self
             .run_call(data_source, Access::Read, move |connection, watchdog| {
                 Box::pin(async move {
+                    transaction::check_scan(connection, cost_guard, &to_run).await?;
                     watchdog
                         .watch(transaction::fetch(connection, &to_run, max_rows))
                         .await

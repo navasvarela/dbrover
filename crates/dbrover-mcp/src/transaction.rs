@@ -17,7 +17,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dbrover_core::{
-    CancelHandle, ColumnInfo, Connection, ConnectionConfig, DriverError, Row, describe_error,
+    CancelHandle, ColumnInfo, Connection, ConnectionConfig, CostGuard, DriverError, FullScan, Row,
+    describe_error,
 };
 use dbrover_engine::read_only::{self, Guard, ReadOnlyMode, Storage};
 use dbrover_engine::read_write::{self, WriteMode};
@@ -35,6 +36,14 @@ pub(crate) enum RunError {
     /// read-write mode (see `read_write::mode`).
     #[error("DbRover has no transaction to run this in on {0} for MCP clients")]
     NoTransaction(&'static str),
+    /// The statement would read a whole table, which the data source's cost guard asks about
+    /// first, and an MCP client can't be asked (`docs/nosql.md`, N5).
+    #[error(
+        "{} The data source asks before reading a whole table, which an MCP client can't be \
+         asked: name the partition key, or turn the guard off in DbRover",
+        .0.describe()
+    )]
+    Scan(FullScan),
 }
 
 impl RunError {
@@ -45,6 +54,25 @@ impl RunError {
             self,
             Self::TimedOut(_) | Self::Driver(DriverError::Connection(_) | DriverError::Lost(_))
         )
+    }
+}
+
+/// Refuses `sql` when it would read a whole table and the data source's cost guard asks first.
+///
+/// # Errors
+///
+/// [`RunError::Scan`] for such a statement, and the driver's error if it can't tell.
+pub(crate) async fn check_scan(
+    connection: &mut dyn Connection,
+    guard: Option<CostGuard>,
+    sql: &str,
+) -> Result<(), RunError> {
+    if guard != Some(CostGuard::AskBeforeScans) {
+        return Ok(());
+    }
+    match connection.full_scan(sql).await? {
+        Some(scan) => Err(RunError::Scan(scan)),
+        None => Ok(()),
     }
 }
 

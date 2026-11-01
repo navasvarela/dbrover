@@ -4,8 +4,8 @@ use std::time::{Duration, SystemTime};
 
 use dbrover_core::{
     CatalogPath, ChildrenPage, ChildrenQuery, ColumnInfo, DataSource, DataSourceId, DriverKind,
-    Password, PasswordCommand, ProjectId, Rejection, RelationName, ResultShape, RoleDescription,
-    Row, ServerInfo, TableDescription, TableName, TransactionStatus,
+    FullScan, Password, PasswordCommand, ProjectId, Rejection, RelationName, ResultShape,
+    RoleDescription, Row, ServerInfo, TableDescription, TableName, TransactionStatus,
 };
 use dbrover_export::{ExportSpec, SqlTable};
 use dbrover_sql::{ExistingTable, ParameterValues};
@@ -159,6 +159,10 @@ pub enum Command {
     /// the driver binds them, written as literals where it doesn't. A statement whose
     /// parameter has no value fails without being sent. With none, statements go as typed.
     /// The history records each statement as typed, followed by a comment naming its values.
+    ///
+    /// On a data source whose cost guard asks before scans, a statement that would read a
+    /// whole table isn't run unless `scans` allows it: [`Event::ScanHeld`] says which, and the
+    /// run stops there.
     Execute {
         console: ConsoleId,
         data_source: DataSourceId,
@@ -168,6 +172,7 @@ pub enum Command {
         transactions: TransactionMode,
         purpose: RunPurpose,
         origin: RunOrigin,
+        scans: ScanApproval,
     },
     /// Commits or rolls back the console's open transaction. Answered by
     /// [`Event::TransactionEnded`].
@@ -744,6 +749,15 @@ pub enum Event {
         statement: usize,
         result: Result<StatementSummary, StatementFailure>,
     },
+    /// The run's statement wasn't run because it would read a whole table and the data
+    /// source's cost guard asks first. Sent just before that statement's
+    /// [`Event::StatementFinished`], a failure that says why; the run stops there. Running the
+    /// statements again from this one with [`ScanApproval::AllowFirst`] runs it.
+    ScanHeld {
+        run: RunId,
+        statement: usize,
+        scan: FullScan,
+    },
     /// Every statement has run, or one failed. Rows of the last statement may still be
     /// fetched afterwards.
     RunFinished {
@@ -888,6 +902,31 @@ pub enum RunPurpose {
     /// transaction mode and, on a read-only data source, checked and inside the read-only
     /// transaction. Like [`RunPurpose::Explain`], their parameters are written in as literals.
     ExplainAnalyse,
+}
+
+/// Whether a run may read whole tables on a data source whose cost guard asks first
+/// (`dbrover_core::CostGuard`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ScanApproval {
+    /// A statement that would scan is held back, and the user asked.
+    #[default]
+    Ask,
+    /// The run's first statement runs whatever it reads, since the user said yes to it; the
+    /// ones after it are asked about as ever.
+    AllowFirst,
+    /// Every statement runs: the run reads a page at a time by design, as **Open data** does.
+    Allow,
+}
+
+impl ScanApproval {
+    /// Whether the statement at `index` of its run is asked about.
+    pub fn asks(self, index: usize) -> bool {
+        match self {
+            Self::Ask => true,
+            Self::AllowFirst => index > 0,
+            Self::Allow => false,
+        }
+    }
 }
 
 /// What started a run, which the history records with its statements.

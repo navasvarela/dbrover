@@ -29,13 +29,13 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use dbrover_core::{
-    Cell, ColumnInfo, DataSource, DataSourceId, RelationName, ResultShape, Row, SafetyLevel,
-    TableDescription, TransactionStatus,
+    Cell, ColumnInfo, DataSource, DataSourceId, Identifier, RelationName, ResultShape, Row,
+    SafetyLevel, TableDescription, TransactionStatus,
 };
 use dbrover_engine::{
     Command, ConsoleId, EditFailure, Event, Export, ExportAll, Exporter, RowEdit, RunId, RunOrigin,
-    RunOutcome, RunPurpose, SessionState, StatementFailure, StatementSummary, TransactionEnd,
-    TransactionMode, WatchedFile,
+    RunOutcome, RunPurpose, ScanApproval, SessionState, StatementFailure, StatementSummary,
+    TransactionEnd, TransactionMode, WatchedFile,
 };
 use dbrover_export::{ExportColumn, ExportOptions, ExportSpec, RowSource};
 
@@ -100,6 +100,9 @@ pub struct SubmittedRun {
     /// What the history records the statements as coming from.
     pub origin: RunOrigin,
     pub destination: RunDestination,
+    /// Whether a statement that would read a whole table runs, on a data source whose cost
+    /// guard asks first.
+    pub scans: ScanApproval,
 }
 
 /// Where a run's rows go.
@@ -690,6 +693,26 @@ impl QueryConsole {
             if !statement.returns_rows() || statement.edits.editability != Editability::Unknown {
                 continue;
             }
+            if statement.documents.is_some()
+                && let Some(table) = language.documents_table(&statement.sql)
+            {
+                // A DynamoDB table's items are found by its primary key, which only the
+                // database knows: the view waits for the table's description.
+                let table = RelationName {
+                    schema: None,
+                    name: Identifier {
+                        name: table,
+                        quoted: true,
+                    },
+                };
+                tables.push(table.clone());
+                statement.describing = Some(table.clone());
+                statement.edits.editability = match &read_only {
+                    Some(reason) => Editability::ReadOnly(reason.clone()),
+                    None => Editability::Describing(table),
+                };
+                continue;
+            }
             if statement.documents.is_some() {
                 statement.edits.editability = documents_editability(
                     language,
@@ -735,10 +758,9 @@ impl QueryConsole {
         table: &RelationName,
         result: &Result<Option<TableDescription>, String>,
     ) {
-        // Only a SQL or CQL statement's table is described.
-        let Some(dialect) = self.language.dialect() else {
-            return;
-        };
+        // A SQL or CQL statement's table is described for its rows, and a DynamoDB `SELECT`'s
+        // for its items' key.
+        let dialect = self.language.dialect();
         let Some(run) = self.run.as_mut() else {
             return;
         };
@@ -753,10 +775,23 @@ impl QueryConsole {
             if statement.edits.editability != Editability::Describing(table.clone()) {
                 continue;
             }
+            let language = self.language;
             statement.edits.editability = match result {
-                Ok(Some(description)) => {
-                    edit::edit_target(description.clone(), &statement.columns, dialect)
+                Ok(Some(description)) if statement.documents.is_some() => {
+                    match language.described_view(&statement.sql, &description.primary_key) {
+                        Some(view) => Editability::Documents(edit::DocumentsTarget::new(
+                            view,
+                            &statement.columns,
+                        )),
+                        None => Editability::ReadOnly(language.uneditable_documents().to_owned()),
+                    }
                 }
+                Ok(Some(description)) => match dialect {
+                    Some(dialect) => {
+                        edit::edit_target(description.clone(), &statement.columns, dialect)
+                    }
+                    None => Editability::ReadOnly(language.uneditable_documents().to_owned()),
+                },
                 Ok(None) => Editability::ReadOnly(format!(
                     "{} isn't a table",
                     table.to_sql(self.language.quoting())
@@ -860,6 +895,9 @@ impl QueryConsole {
             parameters: self.parameters.clone(),
             origin: RunOrigin::Console,
             destination: RunDestination::Grid,
+            // The statement ran already, as the user allowed; reading it again after edits
+            // isn't asked about twice.
+            scans: ScanApproval::Allow,
         })
     }
 
@@ -878,6 +916,7 @@ impl QueryConsole {
             parameters: self.parameters.clone(),
             origin: RunOrigin::Console,
             destination: RunDestination::Grid,
+            scans: ScanApproval::Ask,
         })
     }
 
@@ -910,6 +949,7 @@ impl QueryConsole {
             parameters: dbrover_sql::ParameterValues::default(),
             origin: RunOrigin::Console,
             destination: RunDestination::Grid,
+            scans: ScanApproval::Ask,
         })
     }
 
@@ -1587,6 +1627,7 @@ impl QueryConsole {
             parameters: self.parameters.clone(),
             origin: RunOrigin::Console,
             destination: RunDestination::Grid,
+            scans: ScanApproval::Ask,
         })
     }
 
@@ -1842,6 +1883,7 @@ impl QueryConsole {
             parameters: ParameterValues::default(),
             origin: RunOrigin::Console,
             destination: RunDestination::Grid,
+            scans: ScanApproval::Ask,
         })
     }
 
@@ -1990,6 +2032,32 @@ impl QueryConsole {
             }
             _ => {}
         }
+    }
+
+    /// The statements of `run`, this console's latest, from the one at `from` on: what runs
+    /// again once the user allows the scan its data source's cost guard held back there.
+    pub fn rest_of_run(&self, run: RunId, from: usize) -> Option<SubmittedRun> {
+        let view = self.run.as_ref().filter(|view| view.id == run)?;
+        let statements = view
+            .statements
+            .get(from..)?
+            .iter()
+            .map(|statement| SubmittedStatement {
+                sql: statement.sql.clone(),
+                range: statement.range.clone(),
+                prefix_len: statement.prefix_len,
+                in_database: None,
+                plan: None,
+            })
+            .collect();
+        Some(SubmittedRun {
+            statements,
+            purpose: RunPurpose::Run,
+            parameters: ParameterValues::default(),
+            origin: RunOrigin::Console,
+            destination: RunDestination::Grid,
+            scans: ScanApproval::Ask,
+        })
     }
 
     /// The latest run, if it is `run`: events for older runs are stale and ignored.

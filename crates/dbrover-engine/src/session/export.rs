@@ -14,7 +14,7 @@ use jiff::Timestamp;
 use super::guard::{self, ReadOnly};
 use super::parameters::Sendable;
 use super::query::PAGE_SIZE;
-use super::{Disconnected, Worker, cancel_running_statement};
+use super::{Disconnected, Worker, cancel_running_statement, cost};
 use crate::{Event, ExportAll, RunPurpose, TableExport};
 
 /// Why an export stopped short. The partial file is removed either way.
@@ -78,7 +78,11 @@ pub(super) async fn write_all(
         .map_err(|missing| missing.to_string());
     let written = match &sendable {
         Ok(sendable) => match read_only_check(worker, &sendable.checked).await? {
-            Ok(()) => export_rows(worker, &export, sendable).await?,
+            Ok(()) => match cost::held_scan(worker, &sendable.checked).await? {
+                Ok(None) => export_rows(worker, &export, sendable).await?,
+                Ok(Some(scan)) => Err(Stopped::Failed(cost::refused(&scan, worker.context.name()))),
+                Err(error) => Err(Stopped::Failed(describe_error(&error))),
+            },
             Err(refused) => Err(Stopped::Failed(refused)),
         },
         Err(missing) => Err(Stopped::Failed(missing.clone())),

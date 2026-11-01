@@ -114,6 +114,7 @@ impl DbRoverMcp {
         let max_rows = self.inner.project.limits.max_rows;
         let done = Arc::new(AtomicUsize::new(0));
         let counter = Arc::clone(&done);
+        let cost_guard = data_source.config.cost_guard();
         let started = Timestamp::now();
         let clock = Instant::now();
         let outcome = self
@@ -121,6 +122,7 @@ impl DbRoverMcp {
                 Box::pin(async move {
                     let mut results = Vec::with_capacity(texts.len());
                     for text in &texts {
+                        transaction::check_scan(connection, cost_guard, text).await?;
                         let rows = watchdog
                             .watch(transaction::fetch(connection, text, max_rows))
                             .await?;
