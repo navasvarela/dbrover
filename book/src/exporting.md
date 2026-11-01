@@ -10,6 +10,9 @@ Rows leave DbRover in the same formats, with the same options, wherever they sta
   clipboard.
 - An AI assistant connected over MCP can ask for rows as CSV, Markdown or JSON Lines.
 
+Formats of your own, written in `exports.toml`, appear beside the built-in ones: see
+[Your own export formats](export-formats.md).
+
 ## The export dialog
 
 **Export…** in the grid's toolbar opens the export dialog:
@@ -143,7 +146,8 @@ Copying takes the selected columns of the selected rows, from the rows loaded; i
 query again. The SQL formats need rows the grid can edit, and `UPDATE` the table's whole primary
 key among the selected columns. Each format has a keymap id, `grid.copy-as.csv`,
 `grid.copy-as.markdown` and so on, with no key until you give it one in `keymap.toml` (see
-[Keyboard shortcuts](shortcuts.md)).
+[Keyboard shortcuts](shortcuts.md)). Your own formats that write text are listed after a line,
+each as you defined it in `exports.toml`.
 
 ## For an AI assistant
 

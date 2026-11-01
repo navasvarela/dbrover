@@ -1246,20 +1246,20 @@ The gaps that keep DbRover from being an everyday tool. The full plan is in
   format, `calamine` and DuckDB reading files back, engine tests on every server of the compose
   file and kittest tests on SQLite. Still to try by eye: opening the files in Excel itself, and
   watching DbRover's memory while it writes a ten-million-row table to Parquet.
-- **W8 — Your own export formats:** planned; details confirmed on 2026-11-01 in
-  [Exports and your own formats](exports.md#w8--your-own-formats). `exports.toml`, beside
+- **W8 — Your own export formats:** built (2026-11-01). `exports.toml`, beside
   `actions.toml` and read like it, defines formats of the user's own, which appear in the export
-  dialog and **Copy as ›**. In layers, one PR each:
+  dialog and **Copy as ›**. Designed in
+  [Exports and your own formats](exports.md#w8--your-own-formats). In layers, one PR each:
   - **W8a — Plan:** this entry and the design's W8 section.
-  - **W8b — Reading the file, and presets:** named presets of the built-in formats with their
-    options, checked entry by entry; an **Exports** page in Settings (**View › Exports…**) with
-    **Reload** and **Create exports.toml**; `export.<id>` in the keymap.
-  - **W8c — Templates:** a header, a row and a footer in MiniJinja, behind a small
-    `TemplateEngine` interface, rendered a row at a time, with no file access and fuel and output
-    limits on every render.
-  - **W8d — Programs:** the rows as JSON Lines on stdin, stdout straight into the file, trusted
-    as H2's commands are, stopped when they make no progress or on **Cancel**.
-  - **W8e — Manual:** a chapter on `exports.toml`, and the demo note.
+  - **W8b — Reading the file, and presets** (built): named presets of the built-in formats with
+    their options, checked entry by entry; an **Exports** page in Settings (**View →
+    Exports…**) with **Reload** and **Create exports.toml**; `export.<id>` in the keymap.
+  - **W8c — Templates** (built): a header, a row and a footer in MiniJinja, behind a small
+    `TemplateEngine` interface, rendered a row at a time, with no file access and fuel and
+    output limits on every render.
+  - **W8d — Programs** (built): the rows as JSON Lines on stdin, stdout straight into the file,
+    trusted as H2's commands are, stopped when they make no progress or on **Cancel**.
+  - **W8e — Manual** (built): a chapter on `exports.toml`, and this demo note.
 
   No grouping, totals or charts: those are SQL's job, or a program's. The design also notes what
   W8 keeps for a later look at reports: declared columns, a replaceable template engine,
@@ -1269,6 +1269,25 @@ The gaps that keep DbRover from being an everyday tool. The full plan is in
   the export dialog and where they apply in **Copy as ›**; an endless template loop stops with a
   problem naming the row; the program asks once before it first runs and writes every row of a
   table larger than a page.
+
+  **W8 demo note:** built. **View → Exports…**, **Create exports.toml**, uncomment the
+  semicolon preset and the Confluence template, and add a program, then **Reload**: the page
+  lists three formats, with what each changes or runs. Run a query and click **Export…**: the
+  three are tiles after **SQL UPDATE**. The preset shows its options as set. The template
+  previews `|| id || customer ||` with a line a row, and a typo such as `{{ recrod.id }}` shows
+  *row 1: the row template, line 1: undefined value* in the preview instead. **Export…** with the
+  program asks **Run a program?** with its command in full, then writes the file, and doesn't ask
+  next time; `trusted_commands.toml` has `export = "pdf-report"`. Right-click a cell: **Copy as ›**
+  lists the preset and the template, and the program once it has `text = true`; bind one as
+  `"export.confluence" = "cmd+alt+c"` in `keymap.toml`. A template with
+  `{% for i in range(100000) %}{% for j in range(100000) %}{% endfor %}{% endfor %}` stops
+  with *it took too many steps for one row*. Covered by store and `dbrover-export` tests, engine
+  tests that run `dbrover-test-program` on SQLite (1,200 rows through a program, a failure, a
+  program that stops reading), and kittest tests of the page, the dialog, the question and
+  **Copy as**. Departures from the plan, each in its PR: templates in files of their own were
+  left for later; Jinja's last line break is kept and its booleans print as `True`/`False`; the
+  list is a Settings page rather than a window. Still to try by eye: a real PDF program, and
+  MiniJinja's weight in the download.
 
 Also planned, from the gaps in [the comparison](comparison.md#gaps-worth-closing-soon), in
 this order. Not scheduled yet; each is sized there (**S** a pull request or two, **M** a stack of

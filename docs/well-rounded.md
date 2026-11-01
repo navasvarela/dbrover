@@ -1,9 +1,8 @@
 # A well-rounded app
 
-Status: **W1 to W7 built** (see the [roadmap](roadmap.md#well-rounded-track); W5's
-design is in [Power in the grid](grid-power.md), W7's in
-[Exports and your own formats](exports.md)); W8 planned, designed there too and confirmed on
-2026-11-01. W10, the visual
+Status: **W1 to W8 built** (see the [roadmap](roadmap.md#well-rounded-track); W5's
+design is in [Power in the grid](grid-power.md), W7's and W8's in
+[Exports and your own formats](exports.md)). W10, the visual
 explain plan, designed on 2026-10-31 [below](#w10--a-visual-explain-plan) and built. W11,
 read-only on every engine, designed on 2026-10-31 [below](#w11--read-only-on-every-engine) and
 built. W12, charts from results, designed on 2026-11-01 [below](#w12--charts-from-results) and

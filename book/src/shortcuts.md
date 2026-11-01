@@ -68,7 +68,9 @@ say. Keys are letters, digits, `enter`, `space`, `tab`, `escape`, `f1` to `f35`,
 `comma`, `pagedown` and so on, or the character itself (`cmd+.`).
 
 Your own actions from `actions.toml` are bound the same way, as `custom.<id>`; see
-[Actions, snippets and themes](customising.md#keys-and-the-actions-menu).
+[Actions, snippets and themes](customising.md#keys-and-the-actions-menu). So is copying as one
+of your own export formats, as `export.<id>`; see
+[Your own export formats](export-formats.md#where-they-appear).
 
 A mistake doesn't cost you the rest of the file: an unknown action, a shortcut that can't be
 read, or one that two actions share, is skipped and listed as a problem at the top of the
