@@ -902,6 +902,36 @@ Customisation without rebuilding DbRover, from files to commands to plugins. The
   terminals) were not run by hand in the app for it.
 - **H3 — WebAssembly plugins (later):** sandboxed and capability-based, over the same extension
   points, started once at least three real needs outgrow H1 and H2.
+- **H4 — Settings folders (M):** designed on 2026-11-01 in [Settings folders](settings-folders.md).
+  `~/.config/dbrover` is the settings folder on every platform, and the settings folder can be
+  one the user chooses.
+  - **Defaults:** settings in `~/.config/dbrover` and the machine's own files (`app.ron`,
+    logs, trust) in `~/.local/share/dbrover`, on macOS, Linux (where nothing moves, and the XDG
+    variables still count) and Windows (under `%USERPROFILE%`).
+  - **Moving installs:** the rename's copy, generalised to a list of previous installs:
+    DbRover's platform folders, then dbdesk's. A one-folder install (macOS) is split while it is
+    copied, so `trusted_commands.toml` never lands in the settings folder.
+  - **Choosing:** `--config-dir`, then `DBROVER_CONFIG_DIR`, then **Settings › Files**, whose
+    choice is kept in the data folder, per machine. A folder with DbRover's files is used as it
+    is; an empty one gets a copy or nothing; any other is refused. The copy runs at the next
+    start through the migration's code, and a missing chosen folder falls back to the default
+    for that session.
+  - **MCP:** `dbrover mcp` resolves the folder the same way, so a choice in Settings needs no
+    change to clients; Copy MCP configuration adds `--config-dir` only for a folder from the
+    flag or the variable.
+  - **H4a — The plan:** the design and this entry.
+  - **H4b — `~/.config/dbrover` everywhere:** the defaults and the migration, with tests.
+  - **H4c — Where the folder comes from:** `settings_folder.toml`, the order, the pending copy
+    and the folder checks, in the store.
+  - **H4d — The flag and the variable:** in the app and `dbrover mcp`, the missing-folder
+    window, and Copy MCP configuration.
+  - **H4e — Settings › Files:** the row, **Choose…**, **Use the default folder** and the
+    restart.
+  - **H4f — Manual and docs,** the release-notes paragraph, and the demo note.
+
+  **Exit:** on macOS, an install from 0.20 starts with everything it had, read from
+  `~/.config/dbrover`; choosing an empty synced folder and restarting copies the settings
+  there, and an MCP client configured before the switch serves the project from it.
 
 ## Well-rounded track
 
