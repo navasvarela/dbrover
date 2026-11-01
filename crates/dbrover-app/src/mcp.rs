@@ -4,25 +4,29 @@ use std::ffi::OsStr;
 use std::path::Path;
 
 use anyhow::Context as _;
+use dbrover_core::describe_error;
 use dbrover_mcp::{McpConfig, serve_stdio};
 use dbrover_store::{
     AppPaths, DataSourceFile, HistoryFile, PREVIOUS_APP_NAME, ProjectFile, os_keychain,
 };
 
-use crate::{previous_install, telemetry};
+use crate::{settings_folder, telemetry};
 
 /// Serves the project until the client closes standard input. Needs no display: nothing here
 /// touches the windowing stack, so it runs on a headless machine or over SSH.
-pub fn run(project: &str) -> anyhow::Result<()> {
-    // Whichever starts first under a new name, the app or an MCP client's server, brings over
-    // the previous install.
-    let adopted = previous_install::adopt(
-        AppPaths::discover()
-            .context("the OS reports no home directory, so DbRover can't find its files")?,
-    );
-    let paths = &adopted.paths;
+pub fn run(project: &str, config_dir: Option<&Path>) -> anyhow::Result<()> {
+    let default = AppPaths::discover()
+        .context("the OS reports no home directory, so DbRover can't find its files")?;
+    let decision = settings_folder::decide(default, config_dir)?;
+    if let Some(unavailable) = decision.unavailable() {
+        return Err(anyhow::anyhow!("{}", describe_error(unavailable)));
+    }
+    // Whichever starts first, the app or an MCP client's server, brings over a previous
+    // install, or the settings a switch in Settings asked to copy.
+    let session = decision.prepare(AppPaths::previous_installs());
+    let paths = session.paths();
     let _file_guard = telemetry::init_headless(&paths.logs_dir())?;
-    adopted.log();
+    session.log();
     if let Some(started_as) = std::env::args_os().next()
         && is_previous_name(Path::new(&started_as))
     {

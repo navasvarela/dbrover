@@ -70,6 +70,8 @@ pub enum SettingsAction {
         mcp_enabled: bool,
         overrides: McpOverrides,
     },
+    /// Put the entry an MCP client needs for the project on the clipboard.
+    CopyMcpConfiguration(ProjectId),
 }
 
 /// What the tab needs of the app to draw itself.

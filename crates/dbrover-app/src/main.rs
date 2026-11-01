@@ -22,6 +22,7 @@ mod export_dialog;
 mod export_sources_dialog;
 mod feedback;
 mod file_picker;
+mod folder_notice;
 mod fonts;
 mod form;
 mod hazard_dialog;
@@ -53,6 +54,7 @@ mod rollback_dialog;
 #[cfg(test)]
 mod screenshots;
 mod settings;
+mod settings_folder;
 mod settings_tab;
 mod sql_files;
 mod startup_failure;
@@ -72,7 +74,7 @@ mod widgets;
 mod workspace;
 
 use std::panic::AssertUnwindSafe;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow};
@@ -84,7 +86,7 @@ use dbrover_store::{
 
 use crate::app::DbRoverApp;
 use crate::log_console::LogFeed;
-use crate::previous_install::Adopted;
+use crate::settings_folder::Session;
 
 /// Also the size UI tests run at, so they see the layout a new user sees.
 const DEFAULT_WINDOW_SIZE: [f32; 2] = [1440.0, 900.0];
@@ -97,39 +99,45 @@ fn main() -> anyhow::Result<()> {
     if request.answer() {
         return Ok(());
     }
-    let files = match request {
-        version::CliRequest::Mcp { project } => return mcp::run(&project),
+    let (files, config_dir) = match request {
+        version::CliRequest::Mcp {
+            project,
+            config_dir,
+        } => return mcp::run(&project, config_dir.as_deref()),
         version::CliRequest::Invalid(problem) => {
             anyhow::bail!("{problem}\n\n{}", version::CliRequest::usage())
         }
-        version::CliRequest::Run { files } => files,
-        version::CliRequest::Version | version::CliRequest::Help => Vec::new(),
+        version::CliRequest::Run { files, config_dir } => (files, config_dir),
+        version::CliRequest::Version | version::CliRequest::Help => (Vec::new(), None),
     };
     // Relative to where DbRover was started, which the app no longer knows once it runs.
     let files: Vec<_> = files
         .into_iter()
         .map(|file| std::path::absolute(&file).unwrap_or(file))
         .collect();
-    run_window(files)
+    run_window(files, config_dir.as_deref())
 }
 
 /// Opens DbRover's window and runs it until it closes. Its failures are shown to the user, not
 /// only printed.
-fn run_window(files: Vec<PathBuf>) -> anyhow::Result<()> {
+fn run_window(files: Vec<PathBuf>, config_dir: Option<&Path>) -> anyhow::Result<()> {
     let paths = AppPaths::discover()
         .context("the OS reports no home directory, so DbRover has nowhere to keep its files")
         .inspect_err(|error| startup_failure::report(error, None))?;
-    let adopted = previous_install::adopt(paths);
-    let logs_dir = adopted.paths.logs_dir();
+    let session = settings_folder::decide(paths, config_dir)
+        .map_err(anyhow::Error::from)
+        .inspect_err(|error| startup_failure::report(error, None))?
+        .prepare(AppPaths::previous_installs());
+    let logs_dir = session.paths().logs_dir();
     let telemetry =
         telemetry::init(&logs_dir).inspect_err(|error| startup_failure::report(error, None))?;
     // Lives until DbRover exits, so the log file also gets the reason for a failed start.
     let _file_guard = telemetry.file_guard;
-    adopted.log();
+    session.log();
     // wgpu reports some failures by panicking, and a panic would otherwise end DbRover as
     // silently as an error.
     std::panic::catch_unwind(AssertUnwindSafe(|| {
-        open_window(adopted, telemetry.log_feed, files)
+        open_window(session, telemetry.log_feed, files)
     }))
     .unwrap_or_else(|panic| {
         Err(anyhow!(
@@ -142,9 +150,10 @@ fn run_window(files: Vec<PathBuf>) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn open_window(adopted: Adopted, log_feed: LogFeed, files: Vec<PathBuf>) -> anyhow::Result<()> {
-    let paths = &adopted.paths;
-    let adoption_notice = adopted.notice();
+fn open_window(session: Session, log_feed: LogFeed, files: Vec<PathBuf>) -> anyhow::Result<()> {
+    let paths = session.paths();
+    let folder_notice = session.notice();
+    let mcp_config_dir = session.folder_for_mcp_clients();
     let engine_config = EngineConfig {
         data_sources: DataSourceFile::new(paths.data_sources_file()),
         projects: ProjectFile::new(paths.projects_file()),
@@ -196,7 +205,8 @@ fn open_window(adopted: Adopted, log_feed: LogFeed, files: Vec<PathBuf>) -> anyh
     renderer::run_native(APP_NAME, options, renderer::RENDERERS, move |cc| {
         let app = DbRoverApp::new(cc, log_feed, engine_config)?
             .with_files_to_open(files)
-            .with_adoption_notice(adoption_notice);
+            .with_folder_notice(folder_notice)
+            .with_mcp_config_dir(mcp_config_dir);
         #[cfg(target_os = "macos")]
         let app = app
             .with_native_menu(native_menu::NativeMenu::install(&cc.egui_ctx))

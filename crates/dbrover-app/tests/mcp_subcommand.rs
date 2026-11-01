@@ -29,15 +29,21 @@ fn command(home: &Path) -> Command {
     command
         .env("HOME", home)
         .env_remove("XDG_CONFIG_HOME")
-        .env_remove("XDG_DATA_HOME");
+        .env_remove("XDG_DATA_HOME")
+        .env_remove("DBROVER_CONFIG_DIR");
     command
 }
 
 /// A home folder with a SQLite data source in an MCP-enabled project `shop`.
 fn home_with_a_project() -> tempfile::TempDir {
     let home = tempfile::tempdir().unwrap();
-    let config = config_dir(home.path());
-    let database = home.path().join("shop.db");
+    save_a_project(home.path(), &config_dir(home.path()));
+    home
+}
+
+/// The project `shop` in the settings folder `config`, its database in `home`.
+fn save_a_project(home: &Path, config: &Path) {
+    let database = home.join("shop.db");
     rusqlite::Connection::open(&database)
         .unwrap()
         .execute_batch(
@@ -70,7 +76,6 @@ fn home_with_a_project() -> tempfile::TempDir {
             ..Projects::default()
         })
         .unwrap();
-    home
 }
 
 fn run(home: &Path, args: &[&str]) -> Output {
@@ -88,6 +93,68 @@ fn refuses_bad_arguments_and_unknown_projects_without_touching_stdout() {
         (&["mcp"], "dbrover mcp needs --project <slug>"),
         (&["mcp", "--projcet", "shop"], "unknown argument"),
         (&["mcp", "--project", "nope"], "the projects are: shop"),
+    ];
+    for (args, expected) in cases {
+        let output = run(home.path(), args);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{args:?}");
+        assert!(stderr.contains(expected), "{args:?}: {stderr}");
+        assert!(output.stdout.is_empty(), "{args:?} wrote to stdout");
+    }
+}
+
+/// Asking for a project that doesn't exist lists the ones that do, which tells which settings
+/// folder the server read.
+#[test]
+fn finds_the_settings_folder_from_the_flag_the_variable_or_the_choice() {
+    let home = tempfile::tempdir().unwrap();
+    let profile = home.path().join("profile");
+    save_a_project(home.path(), &profile);
+    let chosen_file = home
+        .path()
+        .join(".local/share/dbrover/settings_folder.toml");
+    let profile_flag = format!("--config-dir={}", profile.display());
+
+    let found = |output: Output| {
+        assert!(output.stdout.is_empty());
+        String::from_utf8_lossy(&output.stderr).contains("the projects are: shop")
+    };
+    assert!(!found(run(home.path(), &["mcp", "--project", "nope"])));
+    assert!(found(run(
+        home.path(),
+        &["mcp", "--project", "nope", &profile_flag]
+    )));
+    assert!(found(
+        command(home.path())
+            .args(["mcp", "--project", "nope"])
+            .env("DBROVER_CONFIG_DIR", "~/profile")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    ));
+
+    std::fs::create_dir_all(chosen_file.parent().unwrap()).unwrap();
+    std::fs::write(&chosen_file, format!("folder = {:?}\n", profile)).unwrap();
+    assert!(found(run(home.path(), &["mcp", "--project", "nope"])));
+}
+
+#[test]
+fn stops_rather_than_serve_another_folder_than_the_one_chosen() {
+    let home = home_with_a_project();
+    let chosen_file = home
+        .path()
+        .join(".local/share/dbrover/settings_folder.toml");
+    std::fs::create_dir_all(chosen_file.parent().unwrap()).unwrap();
+    std::fs::write(&chosen_file, "folder = \"/Volumes/Backup/dbrover\"\n").unwrap();
+    let cases: [(&[&str], &str); 2] = [
+        (
+            &["mcp", "--project", "shop"],
+            "/Volumes/Backup/dbrover, isn't there",
+        ),
+        (
+            &["mcp", "--project", "shop", "--config-dir", "profile"],
+            "--config-dir must be an absolute path or start with ~",
+        ),
     ];
     for (args, expected) in cases {
         let output = run(home.path(), args);

@@ -65,6 +65,16 @@ impl AppPaths {
         })
     }
 
+    /// The default folders in `home`, as on macOS and Windows, or on Linux with the XDG
+    /// variables unset. For tests and tools that must not touch the real folders.
+    pub fn under_home(home: impl Into<PathBuf>) -> Self {
+        let home = home.into();
+        Self {
+            folders: InstallFolders::under_home(&home),
+            home,
+        }
+    }
+
     /// Where earlier versions kept their files, newest first, whether or not they exist: this
     /// name's platform folders (`~/Library/Application Support/dbrover` on macOS), then
     /// [`PREVIOUS_APP_NAME`]'s.
