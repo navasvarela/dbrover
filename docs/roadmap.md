@@ -1327,9 +1327,27 @@ three to five, **L** a track of its own).
   that writes; ClickHouse's functions don't write, so a `SELECT` that lifts `readonly`, and an
   `INSERT` sent past the check); an MCP client can query a SQL Server data source that has an
   MCP login.
-- **W12 — Charts from results (M):** a bar, line or scatter chart of a result's columns, in a
-  tab beside the grid, from the rows already fetched, exported as PNG or SVG like ER1's
-  diagrams.
+- **W12 — Charts from results (M):** designed on 2026-11-01 in
+  [A well-rounded app](well-rounded.md#w12--charts-from-results). A bar, line or scatter chart
+  of a result's columns, in a tab beside the grid, from the rows already fetched, exported as
+  PNG or SVG like ER1's diagrams.
+  - **Columns:** each column is a number, a time or text, from its declared type or, when the
+    driver declares none, from its values. X starts as the first time or text column and Y as
+    every other column of numbers; the kind starts as lines over time, scatter over numbers,
+    bars otherwise. Any of them can be changed.
+  - **Rows:** the grid's loaded rows, in its order and through its filter. A null or unreadable
+    value is a gap, never a zero, and the line under the chart counts what was left out. Bars
+    chart the first 250 rows, lines and scatter the first 50,000.
+  - **Drawn with egui's shapes,** not `egui_plot`, from one pure layout into marks, in a new
+    crate, `dbrover-chart`; the export draws the same marks, so the SVG is the chart on screen.
+  - **Export** goes through ER1e's code (SVG, and PNG through resvg with the bundled fonts,
+    written by the engine), shared rather than copied. W12's export layer waits for ER1e.
+  - **W12a — The plan:** the design and this entry.
+  - **W12b — The chart:** `dbrover-chart`: column roles, the starting choice, series, ticks and
+    the layout into marks, unit-tested.
+  - **W12c — The chart tab:** **Grid** and **Chart**, the kind, X and Y, hover and the legend.
+  - **W12d — Manual:** a section on charts, and this demo note.
+  - **W12e — Export:** SVG and PNG through ER1e's export.
 
   **Exit:** a `GROUP BY` result of months and totals charts as bars and lines, and exports as an
   SVG a browser shows.
