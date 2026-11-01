@@ -487,7 +487,8 @@ impl Consoles {
             | ConsoleAction::LoadCatalog(_)
             | ConsoleAction::Format(_)
             | ConsoleAction::OpenRows(_)
-            | ConsoleAction::RunAction(..) => None,
+            | ConsoleAction::RunAction(..)
+            | ConsoleAction::ExportChart(_) => None,
         }
     }
 

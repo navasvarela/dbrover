@@ -986,6 +986,21 @@ impl DbRoverApp {
         }
     }
 
+    /// Asks where to write the console's chart as `format`, then writes it.
+    fn export_chart(&mut self, key: &ConsoleKey, format: PictureFormat) {
+        let Some(name) = self.consoles.get_mut(key).and_then(|c| c.chart_file_name()) else {
+            return;
+        };
+        let Some(path) = (self.pick_picture)(&name, format) else {
+            return;
+        };
+        let export = self
+            .consoles
+            .get_mut(key)
+            .and_then(|console| console.export_chart(format, &path));
+        self.send_if(export);
+    }
+
     fn send_all(&self, commands: impl IntoIterator<Item = Command>) {
         for command in commands {
             self.send(command);
@@ -2385,6 +2400,7 @@ impl eframe::App for DbRoverApp {
                     }
                 }
                 ConsoleAction::OpenRows(rows) => self.open_rows(&console, &rows),
+                ConsoleAction::ExportChart(format) => self.export_chart(&console, format),
                 ConsoleAction::RunAction(action, cells) => {
                     self.run_action(&action, console.data_source, &Subject::Cells(cells));
                 }

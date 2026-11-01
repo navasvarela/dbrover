@@ -49,6 +49,7 @@ use dbrover_store::{ConsoleKey, Snippet, SnippetBody, SqlFileContents};
 use edit::{EditTarget, Editability};
 
 use crate::custom_actions::{GridCells, GridTable};
+use crate::picture::PictureFormat;
 use file::{ConfigFile, Reload, SqlFile, Storage};
 
 pub use clipboard::{ClipboardCopy, ClipboardFormat};
@@ -218,6 +219,8 @@ pub struct QueryConsole {
     exporting: Option<(RunId, usize)>,
     /// The format of the export last sent, for what its status says.
     last_export: Option<ExportSpec>,
+    /// Where the chart's picture is being written, until the engine says it was.
+    chart_export: Option<PathBuf>,
     /// The file the last run went to, run to file rather than into the grid; the results
     /// panel shows how that went in place of rows.
     to_file: Option<PathBuf>,
@@ -584,6 +587,7 @@ impl QueryConsole {
             export_status: None,
             exporting: None,
             last_export: None,
+            chart_export: None,
             to_file: None,
             storage: Storage::Config(ConfigFile::default()),
             parameters: ParameterValues::default(),
@@ -1640,12 +1644,33 @@ impl QueryConsole {
         &self.session
     }
 
+    /// A name for the shown chart's file, such as `total by month`.
+    pub fn chart_file_name(&self) -> Option<String> {
+        Some(self.shown_chart_tab()?.file_name())
+    }
+
+    /// The command that writes the shown chart to `path` as `format`, or `None` while no chart
+    /// is drawn. The toolbar says how it went once it is written.
+    pub fn export_chart(&mut self, format: PictureFormat, path: &Path) -> Option<Command> {
+        let picture = self.shown_chart_tab()?.picture(format)?;
+        self.export_status = None;
+        self.chart_export = Some(path.to_owned());
+        Some(Command::ExportPicture {
+            path: path.to_owned(),
+            picture,
+        })
+    }
+
+    fn shown_chart_tab(&self) -> Option<&chart::ChartTab> {
+        let run = self.run.as_ref()?;
+        let chart = &run.statements.get(run.selected)?.chart;
+        chart.is_shown().then_some(chart)
+    }
+
     /// The shown result's chart as last laid out, if the chart is shown.
     #[cfg(test)]
     pub fn shown_chart(&self) -> Option<&dbrover_chart::Drawing> {
-        let run = self.run.as_ref()?;
-        let chart = &run.statements.get(run.selected)?.chart;
-        chart.is_shown().then(|| chart.drawing()).flatten()
+        self.shown_chart_tab()?.drawing()
     }
 
     /// The plan the shown result was read as, if it was an explain's.
@@ -1875,6 +1900,14 @@ impl QueryConsole {
                     .map(|&rows| self.exported(rows, path))
                     .map_err(Clone::clone);
                 self.export_status = Some(status);
+            }
+            Event::PictureExported { path, result } if self.chart_export.as_ref() == Some(path) => {
+                self.chart_export = None;
+                self.export_status = Some(
+                    result
+                        .clone()
+                        .map(|()| format!("Exported to {}", path.display())),
+                );
             }
             Event::TableDescribed {
                 data_source,

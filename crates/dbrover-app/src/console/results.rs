@@ -295,7 +295,8 @@ fn grid_toolbar(
         if statement.chart.is_shown() {
             statement.grid.refresh(&statement.rows);
             let (tab, source) = chart_parts(statement, toolbar.dialect);
-            chart::controls(ui, tab, &source);
+            actions.extend(chart::controls(ui, tab, &source).map(ConsoleAction::ExportChart));
+            export_status(ui, toolbar.export_status);
             return false;
         }
         let in_database = statement.grid.is_in_database();
@@ -453,7 +454,12 @@ fn export_button(ui: &mut Ui, toolbar: &Toolbar<'_>, actions: &mut Vec<ConsoleAc
     {
         actions.push(ConsoleAction::OpenExportDialog);
     }
-    match toolbar.export_status {
+    export_status(ui, toolbar.export_status);
+}
+
+/// How the last export, of rows or of the chart, went.
+fn export_status(ui: &mut Ui, status: Option<&Result<String, String>>) {
+    match status {
         Some(Ok(done)) => {
             ui.weak(done);
         }

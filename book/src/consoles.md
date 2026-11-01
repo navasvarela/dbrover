@@ -512,6 +512,11 @@ For documents, **Chart** comes after **Tree** and **JSON**.
 - **Hover** over a bar or a point to see its row's X and Y values, as the grid shows them.
 - Running the console again keeps the chart open, and keeps its X, Y and kind while the result
   has the same columns.
+- **Export ›** saves the chart as it is drawn, at its size in the panel: **SVG…**, which a
+  browser, a document or a pull request shows, or **PNG at 1×…**, **2×…** or **3×…**. Both are
+  in the light theme's colours on white, whatever the app's theme. The save dialog suggests a
+  name from the chart's columns, such as `total by month.svg`, and the toolbar then says
+  where it went.
 
 ## Editing data
 

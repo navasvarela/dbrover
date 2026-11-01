@@ -6,7 +6,7 @@ design is in [Power in the grid](grid-power.md), W7's in
 explain plan, designed on 2026-10-31 [below](#w10--a-visual-explain-plan) and built. W11,
 read-only on every engine, designed on 2026-10-31 [below](#w11--read-only-on-every-engine) and
 built. W12, charts from results, designed on 2026-11-01 [below](#w12--charts-from-results) and
-built but for its export, which waits for ER1's.
+built.
 Proposed on 2026-10-24.
 
 DbRover browses, queries and edits PostgreSQL, SQLite, MySQL and MariaDB, and ships as a
@@ -491,7 +491,7 @@ exported.
   is missing. Hovering a bar or a point shows its X value and every series' value there.
 - **A line under the chart** says what was charted and what wasn't: "Charting 12 rows",
   "Charting the first 250 of 1,200 rows", "3 rows left out: no month value".
-- **Export ▾** writes **SVG…** or **PNG…** at 1×, 2× or 3×, at the size the chart has on the
+- **Export ›** writes **SVG…** or **PNG…** at 1×, 2× or 3×, at the size the chart has on the
   screen, in the light theme's colours on white, through ER1's export (see
   [Export](#export-shared-with-er1)).
 
@@ -601,12 +601,12 @@ that SVG with resvg, whose `text` feature it turns on with the app's bundled Int
 JetBrains Mono, written by the engine off the UI thread. W12 uses that same code and copies none
 of it:
 
-- **The shared part** is the picture (shapes in points: rectangles, lines, paths, circles,
-  text), writing it as SVG, drawing it as PNG with the bundled fonts, the engine's command that
-  writes the file, and the **Export ▾** menu with its save dialog. It is proposed to ER1 as a
-  small leaf crate of its own, so the chart needn't depend on `dbrover-diagram`; it lives
-  where ER1e puts it.
-- **The chart's part** is turning its marks into that picture, which is a few lines per mark.
+- **The shared part,** as ER1e built it: `dbrover-picture`, a leaf crate that draws an SVG as
+  a PNG with the bundled fonts; the engine's `Command::ExportPicture`, which writes either
+  beside the file and renames it; and in the app `crate::picture`, with the formats **Export ›**
+  offers and what every SVG writer shares (colours as hex, escaped text, the font stacks, where
+  a baseline sits), and the save dialog, `file_picker::pick_picture`.
+- **The chart's part** is writing its marks as SVG, a few lines per mark.
 - **Order:** W12's export layer is the last of its stack and waits for ER1e to be on `main`.
   Every layer before it works without it, and W12 is useful without export until then.
 
@@ -620,7 +620,7 @@ of it:
    hover, the legend and the line under the chart; kittest tests on the SQLite fixture.
 4. **W12d — The manual:** a section on charts in the consoles chapter, and the roadmap's demo
    note.
-5. **W12e — Export:** **Export ▾** on the chart, through ER1e's picture, SVG and PNG; the
+5. **W12e — Export:** **Export ›** on the chart, through ER1e's picture, SVG and PNG; the
    manual's section and the demo note say so.
 
 **Exit:** a `GROUP BY` result of months and totals charts as bars and as lines, and exports as
@@ -651,7 +651,7 @@ Proposed defaults; each is confirmed when its milestone starts.
 | Which rows a chart shows | **The grid's loaded rows, in its order and through its filter** | No query runs again; what the grid shows and the chart shows agree. A chart of every row needs **Load more rows**, or grouping in the query. |
 | A column's role with no declared type | **Read from its values**, as the Excel export does, leading zeros making it text | PostgreSQL declares no types over its text protocol, and a code like `00501` isn't a quantity. |
 | A missing or unreadable value | **A gap, counted under the chart**, never a zero | A zero would be a value the database didn't return. |
-| Where the export lives | **ER1e's**, shared, with W12 turning its marks into ER1's picture | One SVG writer, one PNG renderer with the bundled fonts, one export command. W12's export waits for ER1e. |
+| Where the export lives | **ER1e's**, shared, with W12 writing only its own marks as SVG | One PNG renderer with the bundled fonts, one export command, one set of SVG helpers. W12's export came after ER1e. |
 
 ## Risks
 

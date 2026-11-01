@@ -15,6 +15,7 @@ use super::{
 };
 use crate::icons::{self, Role};
 use crate::keymap::{Action, Keymap};
+use crate::picture::PictureFormat;
 use crate::theme::Palette;
 use crate::widgets::{self, IconButton};
 use dbrover_core::{CatalogPath, RelationName};
@@ -90,6 +91,8 @@ pub enum ConsoleAction {
     OpenRows(RowsToOpen),
     /// Runs a custom action from `actions.toml` on the grid's selected cells.
     RunAction(ActionId, GridCells),
+    /// Writes the shown chart as a picture; the app asks where.
+    ExportChart(PictureFormat),
     /// Changes the shown Redis key from its key bar with `command`, then reads it again with
     /// `then`'s command: the same key, or the key it was renamed to.
     KeyCommand {
