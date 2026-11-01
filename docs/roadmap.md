@@ -1568,6 +1568,32 @@ were a non-goal in [Vision](vision.md) until 2026-10-29.
   `products` is where it was left. **Export › SVG…** writes a file a browser shows with the
   same boxes and lines.
 
+## Reports track
+
+Reports that combine several data sources into files with a declared schema, run again with new
+parameters, with metrics per run and guardrails so a report can't take over the machine.
+Planned on 2026-11-01 in [Reports](reporting.md), after W8, whose output layer it builds on.
+Not scheduled yet. Dashboards, schedules and sharing stay out (see [Vision](vision.md)).
+
+- **RP0 — The plan:** [Reports](reporting.md), this entry and the line in Vision.
+- **RP1 — One source, one file:** a report file in `reports/` with parameters, run in a
+  separate `dbrover report-worker` process with its guardrails, written to CSV and Excel through
+  output schemas on W8's presets.
+- **RP2 — Several sources:** each source's rows loaded into DuckDB, a combine step in DuckDB
+  SQL, DuckDB data sources attached read-only, and exact decimals from source to file.
+- **RP3 — Lookups and documents:** a source read by the keys an earlier source found, in
+  batches, and declared columns for DynamoDB, MongoDB, Elasticsearch and Redis sources.
+
+  **Exit of the first iteration:** four reports in the shape of accounting software's run on
+  synthetic data and match their checked-in output: a trial balance with subtotals, a general
+  ledger past a million rows, a valuation across PostgreSQL, DynamoDB and DuckDB, and FIFO cost
+  basis with realised gains.
+- **RP4 — Metrics:** each run's steps in the history, runs compared side by side, and hints
+  about the step that dominates.
+- **RP5 — PRQL:** the combine step in PRQL, compiled to DuckDB SQL by `prqlc`.
+- **RP6 — The command line:** `dbrover report run`, for cron and CI.
+- **RP7 — Manual,** with the example reports.
+
 ## Design and documentation track
 
 Runs alongside the feature milestones rather than after them: each item is usable on its own.

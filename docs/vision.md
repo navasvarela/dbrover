@@ -37,6 +37,10 @@
   [ADR 0005](adr/0005-customisation-files-commands-then-wasm.md)). New database engines are
   still crates in the workspace.
 - Multi-user or server deployment. This is a single-user desktop app.
+- Business intelligence: dashboards, scheduled reports on a server, sharing. Reports that
+  combine data sources into files, run by one person from the app or the command line, are in
+  scope since 2026-11-01 (the RP track in the [roadmap](roadmap.md), designed in
+  [Reports](reporting.md)).
 - Windows as a first-class target. macOS first; Linux and Windows should work because
   `eframe` does, but nobody tests them until someone needs them.
 
