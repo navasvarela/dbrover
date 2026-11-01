@@ -449,8 +449,10 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
 
 - **C0 — Groundwork:**
   - signing in with AWS, Google Cloud and Microsoft Entra ID accounts, reusing the sign-in
-    already on the machine and never storing a cloud secret;
-  - cost guards per data source, so that nothing scans a whole table unasked;
+    already on the machine and never storing a cloud secret; AWS's comes first, with DynamoDB
+    (the NoSQL track's N5);
+  - cost guards per data source, so that nothing scans a whole table unasked; DynamoDB's
+    comes first, with N5;
   - queries run as jobs (submit, poll, page, cancel by id);
   - lazy, searchable catalogs for very large ones.
 - **C1 — Managed databases:** RDS, Aurora and Redshift; Cloud SQL; Azure SQL, Azure Database,
@@ -492,7 +494,11 @@ The full plan, with the order, the groundwork, each milestone's layers and the d
 - **N4 — Cassandra and ScyllaDB** (built, in six layers): CQL as a dialect of
   `dbrover-sql`, keyspaces and tables, paged rows, collections in the tree, edits by primary
   key; ScyllaDB in every pull request's CI, Cassandra nightly.
-- **Later:** DynamoDB in the cloud track after C0, and Neo4j after ER1.
+- **N5 — DynamoDB** (planned 2026-11-01, ahead of C0): signing in through AWS's own
+  credential chain with a profile and a region, PartiQL in the console, items as documents,
+  tables and their indexes in the explorer, and a guard that asks before a statement reads a
+  whole table. It brings C0's AWS sign-in and its first cost guard with it.
+- **Later:** Neo4j after ER1.
 
 ## Object helpers track
 

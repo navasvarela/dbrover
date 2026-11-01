@@ -6,6 +6,7 @@ built** (2026-11-01), in the layers listed under
 [N1](#n1--redis-valkey-and-dragonfly), [N2](#n2--mongodb),
 [N3](#n3--elasticsearch-and-opensearch) and [N4](#n4--cassandra-and-scylladb). W7 (exports) has
 landed.
+[N5](#n5--dynamodb), DynamoDB, was planned on 2026-11-01 and is built beside N4.
 
 DbRover speaks seven SQL engines. Many of the teams that use them keep a Redis beside their
 PostgreSQL, documents in MongoDB, or logs in Elasticsearch, and today they open another tool for
@@ -51,13 +52,15 @@ The order, with the reason for each place:
    they return JSON documents too, so they reuse what MongoDB builds. OpenSearch is the fork
    Amazon's managed service runs; one driver serves both.
 4. **Cassandra and ScyllaDB.** CQL looks like SQL and returns rows, so it fits the console and
-   grid with the fewest changes. It comes last because few developers use it.
+   grid with the fewest changes. It comes after Elasticsearch because few developers use it.
+
+5. **Amazon DynamoDB.** Planned for the [cloud track](cloud-data.md) after C0 until
+   2026-11-01, when it was moved ahead of it: it exists only on AWS, signs in with an AWS
+   account, and charges for what a query reads, so N5 brings C0's AWS sign-in and a cost guard
+   with it. It reuses this track's document results, and its PartiQL fits the console.
 
 Later:
 
-- **Amazon DynamoDB** belongs in the [cloud track](cloud-data.md): it exists only on AWS, signs
-  in with an AWS account (C0), and charges for what a query reads, so it needs C0's cost guards.
-  It reuses this track's document results, and its PartiQL fits the console.
 - **Neo4j** returns nodes and relationships, which only a graph view shows well. That view could
   share ER1's canvas (pan, zoom, boxes and lines), so Neo4j waits for ER1.
 
@@ -1262,12 +1265,216 @@ add about 40 seconds. ScyllaDB runs as one node on one core (`--smp 1 --memory 1
 default superuser, so the health check creates the test role through the node's maintenance
 socket, which takes CQL without a login from inside the container only.
 
-### Later: DynamoDB and Neo4j
+### N5 — DynamoDB
 
-- **DynamoDB**, in the [cloud track](cloud-data.md) after C0: `aws-sdk-dynamodb`, with its
-  ring option rather than its default aws-lc-rs; PartiQL in the console (a subset of SQL, where
-  a `SELECT` without an equality on the partition key scans the whole table, which C0's cost
-  guards must catch), items as documents (N0b), and tables and indexes in the explorer.
+Moved out of "Later" on 2026-11-01, ahead of the rest of the [cloud track](cloud-data.md). It
+brings the two parts of C0 it needs, cut down to DynamoDB's: the AWS sign-in, and a cost guard
+against statements that read a whole table. Both are built as C0's, so C0 later adds Google
+Cloud, Entra ID, byte limits and jobs beside them rather than doing them again. It takes the
+next free number of this track, N5, since what it reuses most is the track's: a language beside
+SQL (N0a), items as documents (N0b), and N2's and N3's layering. N4 and N5 touch different
+crates and can be built at the same time.
+
+- **Client: AWS's own SDK, `aws-sdk-dynamodb` (1.136) and `aws-config` (1.13),** Apache-2.0,
+  on tokio. `aws-config`'s default credential chain is what signs in: the environment, the
+  shared `config` and `credentials` files with a named profile, IAM Identity Center (SSO),
+  `aws login`, `credential_process`, web identity, and container and instance roles, each
+  refreshed by the SDK before it expires. Writing that chain again is most of the work and most
+  of the risk; DynamoDB's own API is the small part. This departs from C0's proposed "no full
+  SDKs" for AWS only, and the cost is measured below.
+- **TLS on ring.** Every AWS crate is built without its default features, which choose
+  aws-lc-rs. `aws-smithy-http-client`'s `rustls-ring` feature builds the SDK's HTTPS client on
+  rustls with ring, and the client is told so by name
+  (`tls_provider(Rustls(CryptoMode::Ring))`), so it never relies on rustls's process-wide
+  provider. Checked with the current SDK: built on their own, the AWS crates have ring alone, and
+  `cargo tree -i aws-lc-rs` finds nothing. aws-lc-rs is in the app's build already, turned on in
+  the shared rustls by the SQL Server driver's `tiberius` (see the workspace `Cargo.toml`); no
+  AWS crate turns it on, and N5·3 tests that.
+- **What it costs,** measured on 2026-11-01 on the Apple M4 Pro of
+  [Measurements](measurements.md): clean builds of `dbrover-app` with DuckDB's prebuilt library,
+  as CI and releases build it, without and with a spike linked into the app that signs in
+  through `aws-config` and calls the ten DynamoDB operations N5 uses:
+
+  | | Without | With the AWS SDK | Difference |
+  | --- | --- | --- | --- |
+  | Release build, wall clock | 6 min 6 s | 6 min 28 s | +22 s (+6%) |
+  | Release build, processor time | 18 min 34 s | 22 min 6 s | +3 min 32 s (+19%) |
+  | Debug build (what CI's tests build), wall clock | 67 s | 66 s | none measurable |
+  | Stripped release binary | 96.2 MB | 104.4 MB | +8.2 MB (+8.5%) |
+  | Binary with `gzip -9` | 37.9 MB | 41.1 MB | +3.1 MB |
+
+  The generated SDK crates compile beside the rest on twelve cores, so the build waits little
+  for them; a first pair of release builds, with other work on the machine, took 3 min 41 s and
+  3 min 23 s, so a few tens of seconds either way is noise. The downloads grow by about 3 MB
+  for each architecture, about 6 MB for the universal macOS disk image: well inside the 30 MB
+  budget [More databases](databases.md#decisions) set for DuckDB, which took 13 MB of it.
+  `Cargo.lock` gains 46 crates, nearly all AWS's (the SDK's generated crates for DynamoDB, STS,
+  SSO and sign-in, and its `aws-smithy-*` runtime); none links a C library.
+- **Data source:** a profile, a region and an optional endpoint, and nothing secret:
+  - **Profile**, from the shared AWS files, or empty for the default chain (the environment's
+    keys, `AWS_PROFILE` or `default`, then a container's or instance's role). A named profile is
+    used alone, as the AWS CLI's `--profile` is, so keys in the environment don't override the
+    choice. DbRover keeps the profile's name only; the SDK reads the files, the SSO cache and
+    the environment;
+  - **Region**, or empty for the profile's or the environment's;
+  - **Endpoint**, for DynamoDB Local, LocalStack or a VPC endpoint; empty for AWS's own;
+  - **Sign in with** an AWS profile, or as a **local emulator**: fixed, made-up credentials
+    that DynamoDB Local and LocalStack accept and AWS never would, offered only with an
+    endpoint. They are what the tests use, so no test reads anyone's AWS files or the
+    environment's credentials.
+
+  Test connection lists one table, and reports DynamoDB with its region, and the endpoint when
+  one is set.
+- **Console: PartiQL,** DynamoDB's SQL-like language, through `ExecuteStatement`:
+  `SELECT … FROM "table"` (or `"table"."index"`) `WHERE …`, `INSERT INTO … VALUE {…}`,
+  `UPDATE … SET … REMOVE … WHERE …` and `DELETE FROM … WHERE …`, with DynamoDB's literals:
+  `'strings'`, numbers, `{maps}`, `[lists]` and `<<sets>>`. A language of its own,
+  `QueryLanguage::PartiQl`, rather than a SQL dialect: its literals, `VALUE` and its single-item
+  writes don't parse as any SQL `sqlparser` reads, and SQL's formatter, linter, object helpers,
+  CSV import and generated `UPDATE`s would each be wrong for it. Statements split at `;`.
+- **Classification:** `SELECT` reads; `INSERT`, `UPDATE` and `DELETE` write; anything else,
+  `EXISTS` (only valid in a transaction) included, is unclassified and refused where the safety
+  checks apply. DynamoDB's `UPDATE` and `DELETE` act on one item, named by its whole primary
+  key, so no write can touch everything and there is no warning to list for them; what can
+  read everything is a `SELECT`, which the scan guard catches.
+- **The scan guard,** C0's cost guard in DynamoDB's form, set per data source next to its safety
+  level: **Ask before reading a whole table**, on by default for DynamoDB. A `SELECT` reads by
+  key when its `WHERE` holds, joined by `AND` at the top, an equality (`=`) or `IN` between the
+  partition key of the table or index it names and a value; anything else is a Scan, billed for
+  every item read, whatever the `WHERE` keeps. Only the database knows a table's keys, so the
+  check runs in the engine, through the driver, which describes the table (`DescribeTable`,
+  kept for the connection's life) and asks `dbrover-language`'s PartiQL module, a pure function
+  of the statement and the keys. Then:
+  - a console asks first, naming the table and its partition key: **Scan anyway** runs it,
+    **Cancel** doesn't. The statements before it have run; it and those after it run once
+    allowed;
+  - **Run to file** and **All documents** read every page, so they ask the same way;
+  - the MCP server has nobody to ask, so it refuses a Scan with a message saying to name the
+    partition key, unless the data source's guard is off;
+  - **Open data**, the explorer's Scan, runs without asking, because it never reads past what
+    is shown: each page reads at most 500 items, and the grid asks for the next only on
+    **Load more**;
+  - and whatever runs, a page is bounded: the driver sends `ExecuteStatement` with `Limit`
+    500, so each request evaluates at most 500 items, and stops after 10 requests per page
+    even when a filter kept fewer than 500. A filtered Scan shows a short page with **Load
+    more** rather than reading on unseen.
+
+  With the guard off, nothing asks, and the bound per page still holds. The explorer's other
+  reads (`ListTables`, `DescribeTable`) are free. Showing what a statement read, in read units
+  from `ConsumedCapacity`, waits for C0's status line for jobs.
+- **Results:** items are documents (N0b), each attribute as Extended JSON: strings, numbers (as
+  written, up to DynamoDB's 38 digits), booleans, `null`, maps and lists as JSON; binary as
+  `$binary`; and string, number and binary sets as DbRover's own `{"$stringSet": […]}`,
+  `{"$numberSet": […]}` and `{"$binarySet": […]}`, which ADR 0006 gains and the tree shows as
+  PartiQL writes them (`<<'a', 'b'>>`), so an edited set goes back a set. A write's answer is
+  its `RETURNING` items, or nothing. Paging is `ExecuteStatement`'s `NextToken`, as the grid
+  asks for pages; the explorer pages tables with `ListTables`' `LastEvaluatedTableName`. Every
+  read goes through PartiQL, Open data's included, so one path is classified, guarded and
+  recorded in the history as typed; DbRover never calls `Scan` or `Query` with a
+  `LastEvaluatedKey` of its own.
+- **Explorer:** tables, paged by name 100 at a time with the filter applied by DbRover (AWS
+  has no filter, and listing names is free), each with its approximate item count and size
+  from `DescribeTable` (updated by AWS about every six hours, never counted). Under a table,
+  its key attributes (partition and sort, with their types) and its global and local secondary
+  indexes, each with its keys and projection. **Show definition** gives the table's
+  `CreateTable` input as JSON, the form `aws dynamodb create-table --cli-input-json` takes.
+  **Open data** on a table or index opens a console with `SELECT * FROM "table"` (or
+  `"table"."index"`), run at once. Completion offers the loaded tables' names.
+- **Cancel (⌘.):** DynamoDB has no way to stop a request it has received; each one is short
+  (at most 1 MB read). ⌘. drops the request in flight and sends no more, so a Scan stops
+  between requests and the result keeps the pages already read. A write dropped in flight may
+  or may not have been applied; the log says so.
+- **Editing:** an attribute changed in the grid becomes
+  `UPDATE "table" SET "attr" = <value> WHERE <whole primary key>`, its value written in
+  PartiQL with the type it had (a number stays a number, a set a set); a removed attribute
+  `REMOVE`s it. **Add row** is an `INSERT … VALUE {…}`, **Delete rows** a `DELETE` by key. Each
+  runs one at a time (`EditsRun::OneByOne`), checked, logged and recorded as typed commands
+  are. Only a `SELECT` on one table (not an index, whose items may not be unique) is editable,
+  and only items with the whole key.
+- **No transactions** in the console (`ExecuteTransaction` takes a list of statements, which
+  the console doesn't send), so manual commit mode isn't offered. **No explain and no validate**:
+  DynamoDB plans nothing it can show, and can't check a statement without running it. Validate
+  is the local parse, as for the other languages without SQL.
+- **Safety and MCP:** no read-only session, so a read-only data source refuses writes with the
+  check alone, and the dialog suggests a profile whose IAM policy allows only reads
+  (`dynamodb:PartiQLSelect`, `dynamodb:DescribeTable`, `dynamodb:ListTables`). The MCP server
+  serves a DynamoDB data source only through an **MCP profile**, a second AWS profile in the MCP
+  login's place, as N0a's rule asks of every engine without a read-only session.
+- **CI:** `amazon/dynamodb-local` 3.3.2 (241 MB compressed), in memory: healthy 3 seconds after
+  `docker compose up`, using 120 MB of memory, measured locally. No
+  AWS account anywhere: the tests sign in as a local emulator. DynamoDB Local doesn't check IAM,
+  so the MCP profile's refusal by AWS is tried by hand, not in CI.
+
+**Exit:** I connect to DynamoDB Local through its endpoint, and to AWS through a profile that
+signs in with SSO; browse tables, their keys and indexes; run a `SELECT` by partition key and
+page past 500 items; a `SELECT` on another attribute asks before scanning, and Open data reads
+one page; an item opens as a tree, with a number set shown as a set; edit an attribute and see
+it keep its type; ⌘. stops a Scan between pages; a read-only data source refuses an `UPDATE`;
+and an MCP client reads a table through an MCP profile and is refused a Scan by the guard.
+Everything but AWS itself is checked against DynamoDB Local; AWS, SSO and the MCP profile's IAM
+refusal are tried by hand before release, with an account of the user's.
+
+#### Layers
+
+Each layer is one pull request in a stack, useful and tested on its own, as N2's and N3's were.
+From N5·4 on, each runs against DynamoDB Local in CI.
+
+- **N5·1 — Plan:** this section, the decisions N5 takes (in [Decisions](#decisions)), the cloud
+  plan's C0 and the roadmap's status.
+- **N5·2 — The PartiQL language:** a `partiql` module of `dbrover-language`, with no driver
+  yet:
+  - a lexer: `"names"` and unquoted names, `'strings'` with `''` for a quote, numbers, `?`,
+    punctuation with `<<` and `>>`, and `--` and `/* */` comments;
+  - a script splits at `;`;
+  - a parser into DbRover's own statement: the verb, the table and index it names, and a
+    `SELECT`'s `WHERE` as the conditions joined by `AND` at its top;
+  - classification as above, and the access a `SELECT` makes given the keys of what it reads
+    (`partiql::access`: by key, a query of one partition or more, or a scan), for the guard;
+  - completion of the keywords and DynamoDB's functions (`begins_with`, `contains`,
+    `attribute_type`, `size`, `exists`, `MISSING`).
+
+  Tests: a classification corpus, as the other languages have; the splitter and parser against
+  statements from DynamoDB's documentation; a table of `WHERE`s and the access each makes.
+- **N5·3 — AWS sign-in:** a new crate, `dbrover-cloud`, C0's, with its `aws` module:
+  `AwsSignIn` (a profile, or a local emulator), a region and an endpoint in, the SDK's
+  configuration out, through `aws-config`'s default chain and the ring HTTPS client; no secret
+  is read by DbRover or written anywhere. The data source types (`DynamoDbConfig`) are in
+  `dbrover-core`. Tests: a profile, its region and its credentials read from files the test
+  writes and passes in (never the user's), an emulator refused without an endpoint, and a
+  check that no AWS crate brings aws-lc-rs.
+- **N5·4 — The driver and the console:** a new crate, `dbrover-driver-dynamodb`, on
+  `aws-sdk-dynamodb`, and `DriverKind::DynamoDb` through the core, the engine, the language and
+  the app: the data source form (profile, region, endpoint, sign in with), its logo, each
+  statement run through `ExecuteStatement` with the per-page bound and `NextToken` paging,
+  items as documents with the set types in `dbrover-document`, ⌘. dropping the request, and the
+  explorer listing tables. `docker-compose.yml` and `test-servers.env` gain DynamoDB Local.
+  Tests: the parts of the shared conformance suite that apply (lifecycle, connect failure,
+  catalog walk, invalid paths, cancel), each attribute type through to Extended JSON, a
+  `SELECT` paged past 500 items, a filtered Scan's short pages, an engine test of a console,
+  and a kittest of the form.
+- **N5·5 — The explorer:** keys, indexes, counts and sizes, **Show definition**, **Open data**
+  on tables and indexes, tables paged 100 at a time, and table names in completion. Tests: the
+  catalog walk with a table of each shape (partition key only, with a sort key, with a GSI and
+  an LSI), the definitions, and paging past 100 tables.
+- **N5·6 — The scan guard:** the guard on the data source (`CostGuard`, written only when it
+  isn't the engine's default), `Connection::full_scan`, the engine's check before each
+  statement and Run to file, the console's question, the MCP server's refusal, and the read
+  units after each statement. Tests: the guard's answer for each kind of `SELECT` against
+  DynamoDB Local's tables, an engine test of a Scan held until allowed, a kittest of the
+  question, and the MCP refusal.
+- **N5·7 — Editing:** `DocumentView` gains DynamoDB's `TableView`: keys from the table's
+  description, values written in PartiQL with their types, and an undo for each change. Tests:
+  an attribute of each type edited and read back with its type, a set edited, an item added
+  and deleted, and kittests of the console's edits.
+- **N5·8 — Safety, MCP and the manual:** the read-only dialog's advice, the MCP profile, the
+  MCP test binary `dynamodb`, the manual's chapter on DynamoDB, and the engine count in the
+  README, the manual's introduction and the website.
+
+Unlike N2's and N3's, the manual changes in the last layer, in one chapter, since N5 is
+reviewed as a stack and the chapter reads better whole.
+
+### Later: Neo4j
+
 - **Neo4j**, after ER1: Cypher in the console, results as rows of nodes and relationships, and a
   graph view on ER1's canvas. Its Rust client, `neo4rs`, is a Neo4j Labs project, marked
   experimental and unsupported, which speaks Bolt 4.0 to 4.3 only and has been in release
@@ -1310,6 +1517,13 @@ milestone starts.
 | Where documents are read (N0b) | **A crate of their own, `dbrover-document`,** with DbRover's own JSON reader, which keeps fields in order and numbers as written, rather than `serde_json::Value`. | One tree for documents, SQL JSON columns and Redis's JSON. `serde_json` reads numbers into `f64` or 64-bit integers, which would change `1.10` to `1.1`, and its `arbitrary_precision` would change every crate's JSON numbers. |
 | Run to file and table exports of documents (N0b) | **Left to N2,** which built them as JSON and JSON Lines only: they write rows as the cursor gives them, before any column of a document is known. | N0b exports documents from the grid: what is loaded. N2 adds writing every document to JSON and JSON Lines straight from the cursor. |
 | Engines without a read-only session (N0a) | **The login is the guard:** SQL Server and ClickHouse data sources are served to MCP clients, for reading, only with an MCP login. Changes through `execute` wait for a transaction DbRover can open on them. | W11's plan for SQL Server, here for every such engine with logins. W11 still gives ClickHouse its `readonly` setting and DuckDB its read-only file, which are stronger. |
+| Where DynamoDB goes (N5) | **Ahead of C0, as this track's N5,** with C0's AWS sign-in and a cost guard cut down to what DynamoDB needs, each built as C0's. Agreed on 2026-11-01. | DynamoDB doesn't wait for Google Cloud, Entra ID, byte limits or jobs. C0 later adds them beside `dbrover-cloud`'s `aws` module and the data source's `CostGuard`, rather than replacing them. |
+| AWS's SDK or a small client (N5) | **`aws-sdk-dynamodb` and `aws-config`,** without default features, on ring. Agreed on 2026-11-01; what it costs is measured under N5. | The credential chain (SSO, `aws login`, profiles, roles, refreshing) is AWS's own rather than DbRover's. C0's "no full SDKs" stands for Google Cloud and Azure; for AWS, later milestones reuse `aws-config` (Athena's SDK, RDS tokens through `aws-sigv4`, already in the build). |
+| How DynamoDB signs in (N5) | **A profile and a region, or the default chain when empty; an endpoint to override AWS's.** For DynamoDB Local and LocalStack, a **local emulator** sign-in with fixed, made-up credentials, offered only with an endpoint. | DbRover stores only names: the profile, the region and the endpoint. The tests sign in as an emulator, so they never read anyone's AWS files or need an account. |
+| PartiQL: a language or a SQL dialect (N5) | **A language of its own, `QueryLanguage::PartiQl`,** like Redis's and MongoDB's, not a `Dialect`. | The SQL features that would be wrong for PartiQL (formatting, the linter, object helpers, CSV import, generated `UPDATE`s) stay hidden without each checking the engine. Highlighting reuses `dbrover-sql`'s token kinds. |
+| What a Scan is, and who decides (N5) | **A `SELECT` without `=` or `IN` on the partition key of what it reads, at the top of its `WHERE`,** decided in the engine before the statement runs, by the driver from the table's keys and `dbrover-language`'s pure check. An `OR` at the top counts as a Scan. | The guard needs no catalog in the app and works the same for consoles, Run to file and the MCP server. An `OR` of two keys asks needlessly, which is safer than a Scan that doesn't. |
+| What the guard does (N5) | **Asks first in a console, Run to file and All documents; refuses in the MCP server; lets Open data run, a page at a time.** Every page is bounded: `Limit` 500 per request, 10 requests per page. On by default for DynamoDB, a setting per data source. | Nothing DbRover runs on its own reads a whole table, and a filtered Scan never reads on unseen. The question is one more click for someone who meant to scan. |
+| Sets in documents (N5) | **DbRover's own Extended JSON types,** `$stringSet`, `$numberSet` and `$binarySet`, shown as PartiQL's `<<…>>`. | An edited set goes back as a set, not a list. Other tools reading an export see an object with one `$` field, as they do for MongoDB's types. |
 
 ## Risks
 
@@ -1331,6 +1545,10 @@ milestone starts.
   OpenSearch and Cassandra run on the JVM and take longer; each milestone measures its
   container, and anything that pushes the Linux job past about 15 minutes runs in a separate
   job or nightly instead (see each milestone's CI line).
+- **AWS's SDK.** It releases every week, and each release of `aws-sdk-dynamodb` is a large
+  generated crate. The workspace pins its minor versions, and moving them is a change of its
+  own, checked for aws-lc-rs as N5·3's test does. A bill is the other risk: N5's scan guard is
+  on by default, and the manual says what DynamoDB charges a Scan for.
 - **Scope creep toward the vendors' tools.** Each engine's own tool has monitoring, profiling
   and administration. This track stops at browsing, querying and editing, so that each engine
   stays a milestone, not a product.
