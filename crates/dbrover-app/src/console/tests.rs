@@ -1824,3 +1824,168 @@ mod charts {
         );
     }
 }
+
+/// A DynamoDB table's items are edited a statement per change, each found by its whole
+/// primary key, which the table's description gives (`docs/nosql.md`, N5·7).
+mod dynamodb_items {
+    use dbrover_core::{ColumnDescription, ColumnInfo, Identifier, RelationName, TableDescription};
+
+    use super::*;
+
+    /// A console that ran `statement` on the `orders` table, keyed by `pk` and `sk`, whose
+    /// items were `documents`, and was told the table's key.
+    fn shown(statement: &str, documents: &[&str]) -> QueryConsole {
+        let mut console = console_in(statement, QueryLanguage::PartiQl);
+        let statements = console.statements_to_run(RunScope::All);
+        let run = RunId(1);
+        console.begin_run(run, &statements);
+        console.apply(&Event::StatementStarted {
+            run,
+            statement: 0,
+            columns: vec![ColumnInfo {
+                name: "item".to_owned(),
+                type_name: None,
+            }],
+            shape: ResultShape::Documents,
+        });
+        console.apply(&Event::RowsFetched {
+            run,
+            statement: 0,
+            rows: documents
+                .iter()
+                .map(|document| vec![Some((*document).to_owned())])
+                .collect(),
+            more: false,
+        });
+        let table = RelationName {
+            schema: None,
+            name: Identifier {
+                name: "orders".to_owned(),
+                quoted: true,
+            },
+        };
+        assert_eq!(console.tables_to_describe(), std::slice::from_ref(&table));
+        let key = |name: &str, data_type: &str| ColumnDescription {
+            name: name.to_owned(),
+            data_type: data_type.to_owned(),
+            nullable: false,
+            default: None,
+            identity: None,
+        };
+        console.apply(&Event::TableDescribed {
+            data_source: console.data_source(),
+            table,
+            result: Ok(Some(TableDescription {
+                schema: String::new(),
+                name: "orders".to_owned(),
+                columns: vec![key("pk", "S"), key("sk", "N")],
+                primary_key: vec!["pk".to_owned(), "sk".to_owned()],
+                foreign_keys: Vec::new(),
+                referenced_by: Vec::new(),
+            })),
+        });
+        console
+    }
+
+    fn statement(console: &mut QueryConsole) -> &mut StatementView {
+        &mut console.run.as_mut().unwrap().statements[0]
+    }
+
+    fn column(console: &mut QueryConsole, name: &str) -> usize {
+        statement(console)
+            .columns
+            .iter()
+            .position(|column| column.name == name)
+            .unwrap()
+    }
+
+    #[test]
+    fn edits_items_by_their_whole_key_keeping_their_types() {
+        let mut console = shown(
+            r#"SELECT * FROM "orders" WHERE pk = 'c-1'"#,
+            &[
+                r#"{"pk":"c-1","sk":1,"total":12.5,"tags":{"$stringSet":["a"]}}"#,
+                r#"{"pk":"c-1","sk":2,"total":3}"#,
+            ],
+        );
+        let (pk, sk, total, tags) = (
+            column(&mut console, "pk"),
+            column(&mut console, "sk"),
+            column(&mut console, "total"),
+            column(&mut console, "tags"),
+        );
+        let shown = statement(&mut console);
+        assert!(matches!(shown.edits.editability, Editability::Documents(_)));
+        for key in [pk, sk] {
+            assert!(!shown.edits.is_editable(edit::RowRef::Loaded(0), key));
+        }
+        let rows = shown.rows.clone();
+        shown
+            .edits
+            .pending
+            .set(&rows, edit::RowRef::Loaded(0), total, Some("13".to_owned()));
+        shown.edits.pending.set(
+            &rows,
+            edit::RowRef::Loaded(0),
+            tags,
+            Some(r#"["a", "b"]"#.to_owned()),
+        );
+        shown.edits.add_row();
+        for (column, value) in [(pk, "c-2"), (sk, "1")] {
+            shown
+                .edits
+                .pending
+                .set(&rows, edit::RowRef::New(0), column, Some(value.to_owned()));
+        }
+        shown.edits.delete_rows(&[edit::RowRef::Loaded(1)]);
+
+        let Some(Command::ApplyEdits { statements, .. }) = console.submit_edits() else {
+            panic!(
+                "nothing submitted: {:?}",
+                statement(&mut console).edits.error
+            );
+        };
+        let written: Vec<&str> = statements.iter().map(|edit| edit.sql.as_str()).collect();
+        assert_eq!(
+            written,
+            [
+                r#"DELETE FROM "orders" WHERE "pk" = 'c-1' AND "sk" = 2"#,
+                r#"UPDATE "orders" SET "total" = 13 WHERE "pk" = 'c-1' AND "sk" = 1"#,
+                r#"UPDATE "orders" SET "tags" = <<'a', 'b'>> WHERE "pk" = 'c-1' AND "sk" = 1"#,
+                r#"INSERT INTO "orders" VALUE {'pk': 'c-2', 'sk': 1}"#,
+            ]
+        );
+        for edit in &statements {
+            assert_eq!(
+                QueryLanguage::PartiQl.classify(&edit.sql),
+                Ok(dbrover_language::StatementKind::Write),
+                "{}",
+                edit.sql
+            );
+        }
+    }
+
+    #[test]
+    fn an_indexs_items_are_read_only() {
+        let mut console = console_in(
+            r#"SELECT * FROM "orders"."by-status""#,
+            QueryLanguage::PartiQl,
+        );
+        let statements = console.statements_to_run(RunScope::All);
+        console.begin_run(RunId(1), &statements);
+        console.apply(&Event::StatementStarted {
+            run: RunId(1),
+            statement: 0,
+            columns: vec![ColumnInfo {
+                name: "item".to_owned(),
+                type_name: None,
+            }],
+            shape: ResultShape::Documents,
+        });
+        assert!(console.tables_to_describe().is_empty());
+        assert!(matches!(
+            statement(&mut console).edits.editability,
+            Editability::ReadOnly(_)
+        ));
+    }
+}

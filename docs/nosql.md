@@ -1515,10 +1515,29 @@ From N5·4 on, each runs against DynamoDB Local in CI.
     and the error says why;
   - the read units after each statement wait for C0's status line for jobs, as the milestone
     says.
-- **N5·7 — Editing:** `DocumentView` gains DynamoDB's `TableView`: keys from the table's
-  description, values written in PartiQL with their types, and an undo for each change. Tests:
-  an attribute of each type edited and read back with its type, a set edited, an item added
-  and deleted, and kittests of the console's edits.
+- **N5·7 — Editing** (built): `DocumentView` gains DynamoDB's `TableView`: keys from the
+  table's description, values written in PartiQL with their types, and an undo for each change.
+  Tests: an attribute of each type edited and read back with its type, a set edited, an item
+  added and deleted, and kittests of the console's edits. How it came out:
+  - a `SELECT` of one table is editable once the table is described, as a SQL table's rows are:
+    the console asks for the table (`QueryLanguage::documents_table`), the driver's
+    `describe_table` answers with its key, and the view is made from it
+    (`QueryLanguage::described_view`). An index's items aren't editable, since two may share a
+    key;
+  - the key's attributes can't be typed over, as DynamoDB can't change an item's key; a changed
+    attribute is `UPDATE … SET "attr" = …`, a map's inner attribute by its quoted path
+    (`"address"."city"`), and an undo sets the old value back or `REMOVE`s an attribute the item
+    didn't have;
+  - over a set, a JSON list of its items' type is typed (`["a", "b"]`), and written `<<'a',
+    'b'>>`; DynamoDB has no empty set, so an empty one is refused. PartiQL has no literal for a
+    binary value, so a binary attribute can't be set from the grid, and an item holding one is
+    deleted without an undo;
+  - an added row needs its key's attributes typed; the rest are written with the types they
+    read as;
+  - every statement the view writes was run on DynamoDB Local in the tests, and each attribute
+    read back with its type;
+  - the result is read again after the edits, and that run isn't asked about by the scan guard:
+    it is the statement the user already ran.
 - **N5·8 — Safety, MCP and the manual:** the read-only dialog's advice, the MCP profile, the
   MCP test binary `dynamodb`, the manual's chapter on DynamoDB, and the engine count in the
   README, the manual's introduction and the website.

@@ -153,11 +153,17 @@ impl Connection for DynamoConnection {
         Ok(Box::new(cursor))
     }
 
+    /// The table's key attributes, as columns, and its primary key, which the grid's edits of
+    /// its items name each item by. `None` for a table that isn't there.
     async fn describe_table(
         &mut self,
-        _table: &RelationName,
+        table: &RelationName,
     ) -> Result<Option<TableDescription>, DriverError> {
-        Ok(None)
+        let name = &table.name.name;
+        let Some(description) = self.keys.describe(&self.client, name).await? else {
+            return Ok(None);
+        };
+        Ok(Some(catalog::table_description(name, &description)))
     }
 
     async fn describe_constraints(

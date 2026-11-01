@@ -104,8 +104,7 @@ impl QueryLanguage {
                 Some(EditsRun::Transaction(dialect))
             }
             Self::Sql(_) => Some(EditsRun::OneByOne),
-            Self::Redis | Self::Mongo | Self::Search => Some(EditsRun::OneByOne),
-            Self::PartiQl => None,
+            Self::Redis | Self::Mongo | Self::Search | Self::PartiQl => Some(EditsRun::OneByOne),
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
         }
@@ -218,6 +217,34 @@ impl QueryLanguage {
             Self::Sql(_) | Self::Redis | Self::PartiQl => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
+        }
+    }
+
+    /// The table whose description a result of `command`'s documents waits for before it can
+    /// be edited: a DynamoDB `SELECT` of one table, whose items are found by a primary key only
+    /// the database knows. `None` for any other command, and in another language, whose view
+    /// [`Self::document_view`] gives at once.
+    pub fn documents_table(self, command: &str) -> Option<String> {
+        match self {
+            Self::PartiQl => partiql::TableView::source(command),
+            Self::Sql(_) | Self::Redis | Self::Mongo | Self::Search => None,
+            #[cfg(any(test, feature = "test-language"))]
+            Self::Test => None,
+        }
+    }
+
+    /// The view of `command`'s documents once [`Self::documents_table`]'s table is described,
+    /// with `primary_key` its key's attributes in order.
+    pub fn described_view(self, command: &str, primary_key: &[String]) -> Option<DocumentView> {
+        match self {
+            Self::PartiQl if !primary_key.is_empty() => {
+                let table = partiql::TableView::source(command)?;
+                Some(DocumentView::Table(partiql::TableView::new(
+                    table,
+                    primary_key.to_vec(),
+                )))
+            }
+            _ => None,
         }
     }
 

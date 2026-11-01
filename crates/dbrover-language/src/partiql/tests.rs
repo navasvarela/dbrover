@@ -298,3 +298,132 @@ fn open_data_reads_every_item_of_a_table_or_index() {
     assert_eq!(statement.table, "my\"table");
     assert_eq!(statement.index.as_deref(), Some("by-date"));
 }
+
+mod edits {
+    use dbrover_document::{Path, Step, Value};
+
+    use super::super::{TableView, literal, typed_value};
+
+    fn document(json: &str) -> Value {
+        Value::parse(json).unwrap()
+    }
+
+    fn view() -> TableView {
+        TableView::new("orders".to_owned(), vec!["pk".to_owned(), "sk".to_owned()])
+    }
+
+    fn path(names: &[&str]) -> Path {
+        names.iter().fold(Path::default(), |path, name| {
+            path.child(Step::Field((*name).to_owned()))
+        })
+    }
+
+    #[test]
+    fn writes_each_type_as_a_partiql_literal() {
+        let cases = [
+            (r#""it's""#, "'it''s'"),
+            ("12.50", "12.50"),
+            ("true", "true"),
+            ("null", "NULL"),
+            (r#"[1, "a"]"#, "[1, 'a']"),
+            (r#"{"city": "Leeds", "n": 2}"#, "{'city': 'Leeds', 'n': 2}"),
+            (r#"{"$stringSet": ["a", "b"]}"#, "<<'a', 'b'>>"),
+            (r#"{"$numberSet": [1, 2]}"#, "<<1, 2>>"),
+        ];
+        for (json, expected) in cases {
+            assert_eq!(literal(&document(json)).as_deref(), Ok(expected), "{json}");
+        }
+        assert!(
+            literal(&document(
+                r#"{"$binary": {"base64": "AQ==", "subType": "00"}}"#
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn typed_text_keeps_the_old_values_type() {
+        let set = document(r#"{"$numberSet": [1]}"#);
+        assert_eq!(
+            typed_value(Some(&set), Some("[2, 3]")),
+            Ok(document(r#"{"$numberSet": [2, 3]}"#))
+        );
+        assert!(typed_value(Some(&set), Some(r#"["a"]"#)).is_err());
+        assert!(typed_value(Some(&set), Some("[]")).is_err());
+        assert!(typed_value(Some(&document("1")), Some("abc")).is_err());
+        assert_eq!(
+            typed_value(Some(&document(r#""x""#)), Some("12")),
+            Ok(document(r#""12""#))
+        );
+        assert_eq!(typed_value(None, Some("12")), Ok(document("12")));
+        assert_eq!(typed_value(None, None), Ok(Value::Null));
+    }
+
+    #[test]
+    fn edits_become_statements_by_the_whole_key_with_their_undo() {
+        let item =
+            document(r#"{"pk": "c-1", "sk": 3, "total": 10, "tags": {"$stringSet": ["a"]}}"#);
+        let delete = view().delete(&item).unwrap();
+        assert_eq!(
+            delete.command,
+            r#"DELETE FROM "orders" WHERE "pk" = 'c-1' AND "sk" = 3"#
+        );
+        assert_eq!(
+            delete.revert.as_deref(),
+            Some(
+                r#"INSERT INTO "orders" VALUE {'pk': 'c-1', 'sk': 3, 'total': 10, 'tags': <<'a'>>}"#
+            )
+        );
+        let (update, name) = view()
+            .update(
+                &item,
+                &path(&["total"]),
+                Some(&document("10")),
+                Some("11.5"),
+            )
+            .unwrap();
+        assert_eq!(name, "total");
+        assert_eq!(
+            update.command,
+            r#"UPDATE "orders" SET "total" = 11.5 WHERE "pk" = 'c-1' AND "sk" = 3"#
+        );
+        assert_eq!(
+            update.revert.as_deref(),
+            Some(r#"UPDATE "orders" SET "total" = 10 WHERE "pk" = 'c-1' AND "sk" = 3"#)
+        );
+        let (added, _) = view()
+            .update(&item, &path(&["address", "city"]), None, Some("Leeds"))
+            .unwrap();
+        assert_eq!(
+            added.revert.as_deref(),
+            Some(r#"UPDATE "orders" REMOVE "address"."city" WHERE "pk" = 'c-1' AND "sk" = 3"#)
+        );
+        assert!(
+            view()
+                .update(&item, &path(&["pk"]), None, Some("x"))
+                .is_err()
+        );
+        assert!(view().delete(&document(r#"{"pk": "c-1"}"#)).is_err());
+        assert_eq!(
+            view().insert(&[("pk", Some("c-2")), ("sk", Some("1")), ("note", None)]),
+            Ok(r#"INSERT INTO "orders" VALUE {'pk': 'c-2', 'sk': 1}"#.to_owned())
+        );
+        assert!(view().insert(&[("pk", Some("c-2"))]).is_err());
+    }
+
+    #[test]
+    fn only_a_select_of_one_table_is_editable() {
+        assert_eq!(
+            TableView::source(r#"SELECT * FROM "orders" WHERE pk = 'a'"#).as_deref(),
+            Some("orders")
+        );
+        assert_eq!(
+            TableView::source(r#"SELECT * FROM "orders"."by-status""#),
+            None
+        );
+        assert_eq!(
+            TableView::source(r#"DELETE FROM "orders" WHERE pk = 'a'"#),
+            None
+        );
+    }
+}

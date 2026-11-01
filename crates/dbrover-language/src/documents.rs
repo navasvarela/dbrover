@@ -1,17 +1,19 @@
 //! What the grid needs to edit a result of documents a command at a time: how each document
 //! is found again, and the command each change becomes, in the language that read them
-//! (`docs/nosql.md`, N2·6 and N3·6).
+//! (`docs/nosql.md`, N2·6, N3·6 and N5·7).
 
 use dbrover_document::{Path, Value};
 
-use crate::{mongo, search};
+use crate::{mongo, partiql, search};
 
-/// Where the documents a command read can be changed: a MongoDB collection, by `_id`, or the
-/// indices a search's hits came from, each hit by its `_index` and `_id`.
+/// Where the documents a command read can be changed: a MongoDB collection, by `_id`; the
+/// indices a search's hits came from, each hit by its `_index` and `_id`; or a DynamoDB table,
+/// each item by its primary key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocumentView {
     Collection(mongo::CollectionView),
     Index(search::IndexView),
+    Table(partiql::TableView),
 }
 
 /// The command for one change, with what names the document it changes, for the history, and
@@ -30,6 +32,7 @@ impl DocumentView {
         match self {
             Self::Collection(view) => view.collection(),
             Self::Index(view) => view.name(),
+            Self::Table(view) => view.table(),
         }
     }
 
@@ -39,6 +42,7 @@ impl DocumentView {
         match self {
             Self::Collection(_) => name == "_id",
             Self::Index(_) => search::HIT_KEYS.contains(&name),
+            Self::Table(view) => view.is_key(name),
         }
     }
 
@@ -61,6 +65,7 @@ impl DocumentView {
                 })
             }
             Self::Index(view) => view.delete(document),
+            Self::Table(view) => view.delete(document),
         }
     }
 
@@ -98,6 +103,7 @@ impl DocumentView {
                 Ok((edit, path))
             }
             Self::Index(view) => view.update(document, field, old, typed),
+            Self::Table(view) => view.update(document, field, old, typed),
         }
     }
 
@@ -130,6 +136,7 @@ impl DocumentView {
                 Ok(view.insert(&format!("{{{}}}", written.join(", "))))
             }
             Self::Index(view) => view.insert(fields),
+            Self::Table(view) => view.insert(fields),
         }
     }
 }

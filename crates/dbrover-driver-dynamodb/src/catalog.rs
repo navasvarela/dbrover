@@ -17,8 +17,8 @@ use aws_sdk_dynamodb::types::{
     AttributeDefinition, BillingMode, KeySchemaElement, Projection, TableDescription,
 };
 use dbrover_core::{
-    CatalogNode, CatalogPath, ChildrenPage, ChildrenQuery, DriverError, FolderKind, NodeKind,
-    PageToken,
+    CatalogNode, CatalogPath, ChildrenPage, ChildrenQuery, ColumnDescription, DriverError,
+    FolderKind, NodeKind, PageToken, TableDescription as CoreTable,
 };
 use dbrover_document::Value;
 use futures_util::future::try_join_all;
@@ -236,6 +236,37 @@ fn index_nodes(folder: &CatalogPath, description: &TableDescription) -> Vec<Cata
         .collect();
     nodes.sort_by(|a, b| a.label.cmp(&b.label));
     nodes
+}
+
+/// What DbRover's grid knows of a table: its key attributes as columns, typed `S`, `N` or `B`,
+/// and its primary key, partition first.
+pub(crate) fn table_description(name: &str, description: &TableDescription) -> CoreTable {
+    let definitions = description.attribute_definitions();
+    let keys = Keys::of(description.key_schema());
+    let primary_key: Vec<String> = keys.iter().flat_map(|keys| keys.names().cloned()).collect();
+    let columns = primary_key
+        .iter()
+        .map(|key| ColumnDescription {
+            name: key.clone(),
+            data_type: definitions
+                .iter()
+                .find(|definition| definition.attribute_name() == key)
+                .map_or_else(String::new, |definition| {
+                    definition.attribute_type().as_str().to_owned()
+                }),
+            nullable: false,
+            default: None,
+            identity: None,
+        })
+        .collect();
+    CoreTable {
+        schema: String::new(),
+        name: name.to_owned(),
+        columns,
+        primary_key,
+        foreign_keys: Vec::new(),
+        referenced_by: Vec::new(),
+    }
 }
 
 /// The table's `CreateTable` input as JSON, the form `aws dynamodb create-table
