@@ -1,13 +1,17 @@
-//! Bringing over what the app saved under its previous name, once, on the first start under the
-//! new one. See "Migrating existing installs" in `docs/releasing.md`.
+//! Bringing over what an earlier version saved elsewhere, once, on the first start that uses the
+//! new folders: under the previous name, or in the platform's folders before
+//! `~/.config/dbrover`. See "Migrating existing installs" in `docs/releasing.md` and
+//! `docs/settings-folders.md`.
 //!
 //! 1. Nothing is done when the new settings folder exists (copied on an earlier start, or a new
 //!    install that has run before) or the previous one doesn't. Otherwise a lock is taken, so
 //!    the app and an MCP client's server starting at once copy one after the other, and step 1
 //!    is checked again under it.
 //! 2. Each previous folder is copied into a staging folder beside its new place, then renamed
-//!    into place. The settings folder goes last: its rename is the commit point step 1 looks
-//!    for, so a crash anywhere before it means the next start does everything again.
+//!    into place. A previous install that kept everything in one folder is split: the machine's
+//!    own files go to the new data folder, the rest to the new settings folder. The settings
+//!    folder goes last: its rename is the commit point step 1 looks for, so a crash anywhere
+//!    before it means the next start does everything again.
 //! 3. A note is left in the previous settings folder. Nothing else there is changed.
 
 use std::ffi::OsString;
@@ -19,7 +23,9 @@ use std::time::Duration;
 use directories::ProjectDirs;
 use rusqlite::{Connection, OpenFlags};
 
-use crate::paths::{APP_NAME, HISTORY_FILE_NAME};
+use crate::paths::{
+    APP_NAME, HISTORY_FILE_NAME, TRUSTED_COMMANDS_FILE_NAME, WINDOW_STATE_FILE_NAME,
+};
 
 /// Not copied: the logs would never be pruned under the new log file names.
 const LOGS_FOLDER: &str = "logs";
@@ -30,26 +36,42 @@ const WAL_SUFFIX: &str = "-wal";
 /// How long reading the history waits for an older copy of the app that is writing to it.
 const HISTORY_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// The two folders one name of the app keeps its files in. They are the same folder on macOS.
+/// Files that belong to one machine, in the data folder: never copied into a settings folder,
+/// which the user may share or sync, since the trusted commands must not travel.
+const MACHINE_FILES: [&str; 2] = [WINDOW_STATE_FILE_NAME, TRUSTED_COMMANDS_FILE_NAME];
+
+/// The two folders an install keeps its files in. Earlier versions on macOS used the same
+/// folder for both.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstallFolders {
     /// Data sources, projects, consoles, the history, settings and the user's own files.
     pub settings: PathBuf,
-    /// eframe's `app.ron` (the window, the layout, open tabs) and the logs.
-    pub window_state: PathBuf,
+    /// This machine's own files: eframe's `app.ron` (the window, the layout, open tabs), the
+    /// logs and the trusted commands.
+    pub data: PathBuf,
 }
 
 impl InstallFolders {
     pub(crate) fn of(dirs: &ProjectDirs) -> Self {
         Self {
             settings: dirs.config_dir().to_owned(),
-            window_state: dirs.data_dir().to_owned(),
+            data: dirs.data_dir().to_owned(),
         }
     }
 
     fn share_one_folder(&self) -> bool {
-        self.settings == self.window_state
+        self.settings == self.data
     }
+}
+
+/// The first of `candidates`, newest first, that has a settings folder and isn't `current`.
+pub fn find_previous_install(
+    candidates: impl IntoIterator<Item = InstallFolders>,
+    current: &InstallFolders,
+) -> Option<InstallFolders> {
+    candidates
+        .into_iter()
+        .find(|candidate| candidate != current && candidate.settings.is_dir())
 }
 
 /// What [`adopt_previous_install`] did.
@@ -121,19 +143,53 @@ fn copy_folders(
     previous: &InstallFolders,
     current: &InstallFolders,
 ) -> Result<Adoption, AdoptionError> {
-    if !previous.share_one_folder()
-        && previous.window_state.is_dir()
-        && !current.window_state.exists()
+    let split = previous.share_one_folder() && !current.share_one_folder();
+    let previous_data = (!previous.share_one_folder() || split).then_some(&previous.data);
+    if let Some(previous_data) = previous_data
+        && previous_data.is_dir()
+        && !current.data.exists()
     {
-        // The window state folder has no history, so there is nothing to report from it.
-        copy_into_place(&previous.window_state, &current.window_state)?;
+        let entries = if split {
+            Entries::Machine
+        } else {
+            Entries::All
+        };
+        // The data folder has no history, so there is nothing to report from it.
+        copy_into_place(previous_data, &current.data, entries)?;
     }
-    let history_read_as_files = copy_into_place(&previous.settings, &current.settings)?;
+    let entries = if split {
+        Entries::Settings
+    } else {
+        Entries::All
+    };
+    let history_read_as_files = copy_into_place(&previous.settings, &current.settings, entries)?;
     Ok(Adoption::Copied(CopiedInstall {
         from: previous.settings.clone(),
         history_read_as_files,
         note_not_written: leave_note(&previous.settings, &current.settings).err(),
     }))
+}
+
+/// Which of a folder's entries a copy takes. Whatever it takes, it leaves out the logs and a
+/// note left by an earlier copy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Entries {
+    All,
+    /// Only [`MACHINE_FILES`], from a one-folder install into the new data folder.
+    Machine,
+    /// All but [`MACHINE_FILES`], from a one-folder install into the new settings folder.
+    Settings,
+}
+
+impl Entries {
+    fn takes(self, name: &str) -> bool {
+        let machine = MACHINE_FILES.contains(&name);
+        match self {
+            Self::All => true,
+            Self::Machine => machine,
+            Self::Settings => !machine,
+        }
+    }
 }
 
 fn lock_file(settings: &Path) -> PathBuf {
@@ -154,9 +210,13 @@ fn take_lock(path: &Path) -> io::Result<File> {
     Ok(file)
 }
 
-/// Copies `from` to a staging folder beside `to`, then renames it to `to`. Returns why the
-/// history had to be copied as files, if it had.
-fn copy_into_place(from: &Path, to: &Path) -> Result<Option<rusqlite::Error>, AdoptionError> {
+/// Copies `entries` of `from` to a staging folder beside `to`, then renames it to `to`.
+/// Returns why the history had to be copied as files, if it had.
+fn copy_into_place(
+    from: &Path,
+    to: &Path,
+    entries: Entries,
+) -> Result<Option<rusqlite::Error>, AdoptionError> {
     let failed = |source| AdoptionError {
         from: from.to_owned(),
         to: to.to_owned(),
@@ -169,7 +229,7 @@ fn copy_into_place(from: &Path, to: &Path) -> Result<Option<rusqlite::Error>, Ad
     if let Some(parent) = staging.parent() {
         fs::create_dir_all(parent).map_err(failed)?;
     }
-    let history_read_as_files = copy_folder(from, &staging).map_err(failed)?;
+    let history_read_as_files = copy_folder(from, &staging, entries).map_err(failed)?;
     fs::rename(&staging, to).map_err(failed)?;
     Ok(history_read_as_files)
 }
@@ -178,29 +238,33 @@ fn staging_folder(to: &Path) -> PathBuf {
     with_suffix(to, ".migrating")
 }
 
-fn copy_folder(from: &Path, to: &Path) -> io::Result<Option<rusqlite::Error>> {
+fn copy_folder(from: &Path, to: &Path, entries: Entries) -> io::Result<Option<rusqlite::Error>> {
     fs::create_dir(to)?;
     for entry in fs::read_dir(from)? {
         let entry = entry?;
         let name = entry.file_name();
-        if is_copied_file_by_file(&name) {
+        if is_copied_file_by_file(&name, entries) {
             copy_entry(&entry.path(), &to.join(&name))?;
         }
     }
     let history = from.join(HISTORY_FILE_NAME);
-    if history.is_file() {
+    if entries.takes(HISTORY_FILE_NAME) && history.is_file() {
         return copy_history(&history, &to.join(HISTORY_FILE_NAME));
     }
     Ok(None)
 }
 
-/// Everything but the logs, the history, which [`copy_history`] copies through SQLite, and a
-/// note left by an earlier copy, which describes that one.
-fn is_copied_file_by_file(name: &OsString) -> bool {
+/// The `entries` asked for but the logs, the history, which [`copy_history`] copies through
+/// SQLite, and a note left by an earlier copy, which describes that one. A name that isn't
+/// Unicode is none of those, so it is the user's and goes to the settings.
+fn is_copied_file_by_file(name: &OsString, entries: Entries) -> bool {
     let Some(name) = name.to_str() else {
-        return true;
+        return entries != Entries::Machine;
     };
-    name != LOGS_FOLDER && name != note_file_name() && !name.starts_with(HISTORY_FILE_NAME)
+    entries.takes(name)
+        && name != LOGS_FOLDER
+        && name != note_file_name()
+        && !name.starts_with(HISTORY_FILE_NAME)
 }
 
 /// The note left in the previous settings folder.
@@ -263,9 +327,9 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
 
 fn leave_note(previous: &Path, current: &Path) -> io::Result<()> {
     let note = format!(
-        "{APP_NAME} copied this folder to\n\n    {}\n\nthe first time it started. It doesn't read \
-         this folder any more, so changes made here aren't seen by {APP_NAME}. Once {APP_NAME} \
-         shows everything you had, this folder can be deleted.\n",
+        "{APP_NAME} copied this folder to\n\n    {}\n\nIt doesn't read this folder any more, so \
+         changes made here aren't seen by {APP_NAME}. Once {APP_NAME} shows everything you had, \
+         this folder can be deleted.\n",
         current.display()
     );
     fs::write(previous.join(note_file_name()), note)
