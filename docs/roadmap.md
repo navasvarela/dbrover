@@ -1470,6 +1470,7 @@ flowchart LR
     D3 --> D4
     D2 --> D5[D5 Native look on macOS]
     D4 --> D6[D6 Front page refresh]
+    D2 --> D7[D7 Roomier buttons and menus]
 ```
 
 ### D1 — Logo and brand palette
@@ -1694,3 +1695,27 @@ the clip about 0.3 MB as MP4 and 0.4 MB as WebM per theme, each still under 60 K
 sizes on the page were read from the v0.11.0 release's assets (`gh release view v0.11.0 --json
 assets`): the AppImage is 38,885,880 bytes, the `.dmg` 78,262,644. No startup time or memory
 figure is claimed, because none was measured.
+
+### D7 — Roomier buttons and menus
+
+D2 gave the controls DbRover's colours but kept egui's proportions, and the result reads as
+"too crowded and unloved" (2026-11-01): menu entries with two points of padding, buttons with
+no outline on a panel of nearly their colour, dialogs with a menu's margin, and one kind of
+button for every action. The design is in [Buttons and menus](buttons-and-menus.md). In layers,
+one PR each:
+
+- **D7a — Plan:** this section and the design page, with before and after pictures of a few
+  screens in both themes.
+- **D7b — Spacing and sizing tokens:** control height, button padding, item spacing and the
+  window margin as named values in `theme.rs`.
+- **D7c — Buttons:** secondary buttons and fields outlined at rest, a primary and a danger
+  button that answer the pointer, square icon buttons, and each dialog's main and destructive
+  actions using them.
+- **D7d — Menus:** DbRover's menu style for every menu, context menu and the menu bar, through
+  `widgets` helpers rather than egui's own.
+- **D7e — Dialogs:** dialogs framed with the window margin, and the manual's and website's
+  pictures rendered again.
+
+**Exit:** menus, buttons and dialogs have room around their text in both themes, a destructive
+action can't be mistaken for Cancel, the explorer and grid stay dense, and the macOS menu bar is
+untouched.
