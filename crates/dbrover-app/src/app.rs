@@ -3300,6 +3300,9 @@ mod tests {
         harness.get_by_label("Write").click();
         harness.run();
         harness.get_by_label_contains("No MCP login on warehouse.");
+        // Below the page's fold with the roomier rows, as a user would find it.
+        harness.get_by_label("Save project settings").scroll_to_me();
+        harness.run();
         harness.get_by_label("Save project settings").click();
         step_until(&mut harness, "the project being saved", |_| {
             saved_project(dir.path()).mcp_enabled
