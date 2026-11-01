@@ -13,8 +13,8 @@ use dbrover_core::{
 
 use super::{SessionContext, SessionOwner, SessionRequest};
 use crate::{
-    DdlFailure, EditFailure, Event, ExportAll, ImportFailure, RunOutcome, StatementCheck,
-    StatementFailure, TableExport,
+    DdlFailure, DescribedTable, EditFailure, Event, ExportAll, ImportFailure, RunOutcome,
+    StatementCheck, StatementFailure, TableExport,
 };
 
 /// Why the connection was lost, once a call has reported [`DriverError::Lost`]. Shared with
@@ -233,6 +233,16 @@ pub(super) fn refuse(context: &SessionContext, request: SessionRequest, reason: 
             data_source: id,
             table,
             result: Err(message),
+        },
+        (SessionRequest::DescribeTables(tables), _) => Event::TablesDescribed {
+            data_source: id,
+            tables: tables
+                .into_iter()
+                .map(|table| DescribedTable {
+                    table,
+                    result: Err(message.clone()),
+                })
+                .collect(),
         },
         (SessionRequest::DescribeRole(path), _) => Event::RoleDescribed {
             data_source: id,

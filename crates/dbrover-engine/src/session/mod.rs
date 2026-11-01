@@ -53,6 +53,7 @@ pub(crate) enum SessionRequest {
     FetchMore(RunId),
     EndTransaction(TransactionEnd),
     DescribeTable(RelationName),
+    DescribeTables(Vec<RelationName>),
     ApplyEdits(Vec<RowEdit>),
     DescribeRole(CatalogPath),
     ApplyDdl(Vec<String>),
@@ -621,6 +622,10 @@ impl Worker<'_> {
             SessionRequest::EndTransaction(end) => transaction::end(self, end).await,
             SessionRequest::DescribeTable(table) => {
                 let work = catalog::describe_table(self.context, &mut *self.connection, table);
+                self.signals.guard(work, None, self.cancel_handle).await
+            }
+            SessionRequest::DescribeTables(tables) => {
+                let work = catalog::describe_tables(self.context, &mut *self.connection, tables);
                 self.signals.guard(work, None, self.cancel_handle).await
             }
             SessionRequest::DescribeRole(path) => {

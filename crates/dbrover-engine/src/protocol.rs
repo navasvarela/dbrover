@@ -219,6 +219,14 @@ pub enum Command {
         data_source: DataSourceId,
         table: RelationName,
     },
+    /// Describes each table, in order, on the explorer's connection, connecting first if
+    /// needed, for a diagram. Answered by one [`Event::TablesDescribed`] once all are. The
+    /// explorer's connection serves its requests in order, so a caller with many tables sends
+    /// a few at a time, letting the explorer's own requests through in between.
+    DescribeTables {
+        data_source: DataSourceId,
+        tables: Vec<RelationName>,
+    },
     /// Describes the role at `path` (a node of the roles folder) on the explorer's
     /// connection, for editing or dropping it. Answered by [`Event::RoleDescribed`].
     DescribeRole {
@@ -361,6 +369,14 @@ pub enum Command {
     /// launch. Reports [`Event::UpdateProgress`] while downloading, then
     /// [`Event::UpdateInstalled`].
     InstallUpdate,
+}
+
+/// One table [`Command::DescribeTables`] asked for, as it names it, and its description:
+/// `None` if there is no such plain table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DescribedTable {
+    pub table: RelationName,
+    pub result: Result<Option<TableDescription>, String>,
 }
 
 /// How a console's statements are committed.
@@ -506,6 +522,11 @@ pub enum Event {
         data_source: DataSourceId,
         table: RelationName,
         result: Result<Option<TableDescription>, String>,
+    },
+    /// The answer to [`Command::DescribeTables`]: each table asked for, in order.
+    TablesDescribed {
+        data_source: DataSourceId,
+        tables: Vec<DescribedTable>,
     },
     /// The answer to [`Command::DescribeRole`].
     RoleDescribed {
