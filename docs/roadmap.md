@@ -1394,7 +1394,7 @@ were a non-goal in [Vision](vision.md) until 2026-10-29.
   - **ER1e — Export:** SVG, and PNG through resvg.
   - **ER1f — Manual:** a chapter on diagrams and this demo note. The site's clip comes later.
 
-  **ER1 demo note:** built in #315, #317, #320, #321, #327 and #ER1F. On the shop, right-click
+  **ER1 demo note:** built in #315, #317, #320, #321, #327 and #328. On the shop, right-click
   `main` (or `public` on PostgreSQL) → **Diagram…**, keep every table and **Open**: customers
   and products sit in the first column, orders next, order items after, and a table no key
   joins in a column of its own; each key is a curve from its column to the one it refers to.
