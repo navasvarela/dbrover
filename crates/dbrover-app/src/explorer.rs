@@ -69,6 +69,10 @@ pub enum ExplorerAction {
     ImportCsv(DataSourceId, CatalogPath),
     /// Export data…: every row of a table or view, to a file.
     ExportData(DataSourceId, CatalogPath),
+    /// Diagram…: asks which of the schema's tables at the path to draw.
+    Diagram(DataSourceId, CatalogPath),
+    /// Diagram with related tables: the table at the path and every table its keys join.
+    DiagramRelated(DataSourceId, CatalogPath),
     /// Makes the node at the path, or the data source for the root, the one that keys and the
     /// Actions menu act on.
     Select(DataSourceId, CatalogPath),
@@ -918,6 +922,7 @@ fn node_menu(
     if holds_rows && widgets::menu_item(ui, icons::EXPORT, "Export data…").clicked() {
         actions.push(ExplorerAction::ExportData(id, node.path.clone()));
     }
+    diagram_items(ui, tree, node, actions);
     if node.kind() == Some(NodeKind::Table)
         && tree.capabilities.is_some()
         && tree.can_change(&node.path)
@@ -951,6 +956,34 @@ fn node_menu(
                 action,
             });
         });
+    }
+}
+
+/// **Diagram…** on a schema and **Diagram with related tables** on a table, where the
+/// dialect has foreign keys to draw.
+fn diagram_items(
+    ui: &mut Ui,
+    tree: &TreeView<'_>,
+    node: &CatalogNode,
+    actions: &mut Vec<ExplorerAction>,
+) {
+    if !tree
+        .capabilities
+        .is_some_and(|capabilities| capabilities.foreign_keys)
+    {
+        return;
+    }
+    let path = &node.path;
+    let (label, action) = match node.kind() {
+        Some(NodeKind::Schema) => ("Diagram…", ExplorerAction::Diagram(tree.id, path.clone())),
+        Some(NodeKind::Table) if path.name_of(NodeKind::Schema).is_some() => (
+            "Diagram with related tables",
+            ExplorerAction::DiagramRelated(tree.id, path.clone()),
+        ),
+        _ => return,
+    };
+    if widgets::menu_item(ui, icons::GRAPH, label).clicked() {
+        actions.push(action);
     }
 }
 

@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use dbrover_core::SourceColor;
-use dbrover_store::{ConsoleKey, CustomAction, Project, Snippet};
+use dbrover_store::{ConsoleKey, CustomAction, DiagramKey, Project, Snippet};
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, FontId, Id, Ui, WidgetText};
 use egui_dock::tab_viewer::OnCloseResponse;
@@ -15,6 +15,7 @@ use crate::console::{
 };
 use crate::consoles::SavedConsoles;
 use crate::custom_actions::{SubjectKind, SubjectOn};
+use crate::diagram::Diagrams;
 use crate::explorer::{self, ExplorerAction, ExplorerOptions};
 use crate::fonts;
 use crate::icons::{self, Icon, Role};
@@ -55,6 +56,8 @@ pub enum Tab {
     QueryConsole(ConsoleKey),
     /// View › Settings…, beside the consoles.
     Settings,
+    /// An ER diagram, by its file.
+    Diagram(DiagramKey),
 }
 
 /// The consoles whose tabs the layout holds, so they can be reopened at start-up.
@@ -95,6 +98,26 @@ pub fn focus_console_tab(layout: &mut DockState<Tab>, key: &ConsoleKey) {
     focus_tab(layout, &Tab::QueryConsole(key.clone()));
 }
 
+/// Adds a diagram's tab next to the consoles, and makes it the active tab.
+pub fn open_diagram_tab(layout: &mut DockState<Tab>, key: DiagramKey) {
+    open_in_main_area(layout, Tab::Diagram(key));
+}
+
+/// Drops every diagram tab. A diagram isn't kept anywhere yet, so a restored layout's diagram
+/// tabs would have nothing to show.
+pub fn close_diagram_tabs(layout: &mut DockState<Tab>) {
+    let keys: Vec<Tab> = layout
+        .iter_all_tabs()
+        .filter(|(_, tab)| matches!(tab, Tab::Diagram(_)))
+        .map(|(_, tab)| tab.clone())
+        .collect();
+    for tab in keys {
+        if let Some(path) = layout.find_tab(&tab) {
+            layout.remove_tab(path);
+        }
+    }
+}
+
 /// Brings the Settings tab to the front, opening it beside the consoles the first time, as an
 /// editor opens its settings.
 pub fn open_settings_tab(layout: &mut DockState<Tab>) {
@@ -107,8 +130,12 @@ pub fn open_settings_tab(layout: &mut DockState<Tab>) {
 /// tab and its area the focused one.
 fn open_in_main_area(layout: &mut DockState<Tab>, tab: Tab) {
     let tree = layout.main_surface_mut();
-    let in_main_area =
-        |tab: &Tab| matches!(tab, Tab::QueryConsole(_) | Tab::Welcome | Tab::Settings);
+    let in_main_area = |tab: &Tab| {
+        matches!(
+            tab,
+            Tab::QueryConsole(_) | Tab::Welcome | Tab::Settings | Tab::Diagram(_)
+        )
+    };
     match tree.find_tab_from(in_main_area) {
         Some((node, _)) => tree[node].append_tab(tab.clone()),
         // The consoles' area was closed; give them a new one beside everything else, taking
@@ -173,6 +200,7 @@ pub struct Panels<'a> {
     pub mcp_defaults: &'a mut McpDefaultsEditor,
     /// What the user asked of the Settings tab this frame.
     pub settings_actions: &'a mut Vec<SettingsAction>,
+    pub diagrams: &'a mut Diagrams,
 }
 
 impl TabViewer for Panels<'_> {
@@ -209,6 +237,15 @@ impl TabViewer for Panels<'_> {
                     role: Role::Primary,
                 },
                 "Settings",
+            ),
+            Tab::Diagram(key) => tab_title(
+                palette,
+                Icon {
+                    glyph: icons::GRAPH,
+                    role: Role::Primary,
+                },
+                key.name.as_str(),
+                FontId::proportional(TAB_TITLE_SIZE),
             ),
             Tab::QueryConsole(key) => {
                 let title = self
@@ -267,6 +304,7 @@ impl TabViewer for Panels<'_> {
                 },
                 self.settings_actions,
             ),
+            Tab::Diagram(key) => self.diagrams.show(ui, key),
             Tab::QueryConsole(key) => match self.consoles.get_mut(key) {
                 Some(query_console) => {
                     let data_source = query_console.data_source();
@@ -324,7 +362,10 @@ impl TabViewer for Panels<'_> {
 
     /// The explorer and log console can't be reopened from a menu yet, so they can't be closed.
     fn is_closeable(&self, tab: &Tab) -> bool {
-        matches!(tab, Tab::Welcome | Tab::QueryConsole(_) | Tab::Settings)
+        matches!(
+            tab,
+            Tab::Welcome | Tab::QueryConsole(_) | Tab::Settings | Tab::Diagram(_)
+        )
     }
 
     fn on_close(&mut self, tab: &mut Tab) -> OnCloseResponse {
@@ -332,6 +373,10 @@ impl TabViewer for Panels<'_> {
             Tab::QueryConsole(key) => {
                 self.close_requests.push(key.clone());
                 OnCloseResponse::Ignore
+            }
+            Tab::Diagram(key) => {
+                self.diagrams.close(key);
+                OnCloseResponse::Close
             }
             _ => OnCloseResponse::Close,
         }

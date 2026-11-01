@@ -12,6 +12,7 @@ publish = false
 
 [workspace.dependencies]
 dbrover-core = { path = "crates/dbrover-core" }
+dbrover-diagram = { path = "crates/dbrover-diagram" }
 dbrover-driver-mongodb = { path = "crates/dbrover-driver-mongodb" }
 dbrover-driver-mysql = { path = "crates/dbrover-driver-mysql" }
 dbrover-driver-clickhouse = { path = "crates/dbrover-driver-clickhouse" }

@@ -490,7 +490,29 @@ const SCENES: &[Scene] = &[
         keeps_pointer: false,
         needs: &[POSTGRES_URL],
     },
+    Scene {
+        name: "er-diagram",
+        data_sources: FixtureSources::Shop,
+        play: er_diagram,
+        keeps_pointer: false,
+        needs: &[],
+    },
 ];
+
+/// The shop's schema as an ER diagram (ER1): every table, laid out with referenced tables
+/// first, and the events table, which no key joins, beside them.
+fn er_diagram(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    expand(harness, &["shop"]);
+    step_until_visible(harness, "Expand main");
+    harness.get_by_label("main").click_secondary();
+    harness.run_ok();
+    harness.get_by_label("Diagram…").click();
+    step_until_visible(harness, "order_items");
+    harness.run_ok();
+    harness.get_by_label("Open").click();
+    step_until_visible(harness, "5 tables");
+    harness.run_ok();
+}
 
 #[test]
 #[ignore = "needs a GPU adapter and rewrites the screenshots; run with --ignored"]

@@ -1,15 +1,15 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use dbrover_core::{CatalogPath, ChildrenQuery, DataSource, DataSourceId};
+use dbrover_core::{CatalogPath, ChildrenQuery, DataSource, DataSourceId, NodeKind, TableName};
 use dbrover_engine::{
     Command, EngineConfig, EngineError, EngineHandle, Event, PasswordKept, Repaint, RunOrigin,
 };
 use dbrover_export::{ExportFormat, ExportSpec};
 use dbrover_language::QueryLanguage;
 use dbrover_store::{
-    ActionBody, ActionId, ConsoleKey, CustomFileKind, KeymapBindings, McpPermissions,
-    SqlFileContents,
+    ActionBody, ActionId, ConsoleKey, CustomFileKind, DiagramFolder, DiagramKey, DiagramName,
+    KeymapBindings, McpPermissions, SqlFileContents,
 };
 use egui::{Frame, Margin, RichText};
 use egui_dock::{DockArea, DockState};
@@ -27,6 +27,7 @@ use crate::data_source_dialog::{DataSourceDialog, DialogAction};
 use crate::data_source_form::McpPasswordChange;
 use crate::definition_window::DefinitionWindow;
 use crate::delete_dialog::{DeleteChoice, DeleteConfirmation};
+use crate::diagram::{Diagram, DiagramDialog, DiagramDialogAction, Diagrams, Growth};
 use crate::explorer::{ExplorerAction, ExplorerOptions};
 use crate::export_dialog::{
     self, ExportChoices, ExportDialog, ExportDialogAction, ExportPreview, ExportSubject,
@@ -155,6 +156,9 @@ pub struct DbRoverApp {
     /// Asks for a CSV file to import into a table. A field so tests can answer it.
     pub(crate) pick_csv_file: Box<dyn Fn() -> Option<PathBuf>>,
     consoles: Consoles,
+    diagrams: Diagrams,
+    /// **Diagram…**, choosing a schema's tables.
+    diagram_dialog: Option<DiagramDialog>,
     /// The `.sql` files consoles show, and the recent ones.
     sql_files: SqlFiles,
     open_file_dialog: Option<OpenFileDialog>,
@@ -190,7 +194,8 @@ impl DbRoverApp {
         // No saved layout means a first launch (or a layout version change): maximize the
         // window rather than keep the small default size.
         let maximize_window = saved_layout.is_none();
-        let dock = saved_layout.unwrap_or_else(workspace::default_layout);
+        let mut dock = saved_layout.unwrap_or_else(workspace::default_layout);
+        workspace::close_diagram_tabs(&mut dock);
         let export_choices = cc
             .storage
             .and_then(|storage| eframe::get_value(storage, export_dialog::STORAGE_KEY))
@@ -254,6 +259,8 @@ impl DbRoverApp {
             settings: AppSettings::default(),
             updates: Updates::new(install_support),
             consoles: Consoles::default(),
+            diagrams: Diagrams::default(),
+            diagram_dialog: None,
             sql_files: SqlFiles::new(remembered_files),
             open_file_dialog: None,
             files_to_open: Vec::new(),
@@ -319,6 +326,12 @@ impl DbRoverApp {
         let import = path.to_owned();
         self.pick_data_sources_export = Box::new(move || Some(export.clone()));
         self.pick_data_sources_import = Box::new(move || Some(import.clone()));
+    }
+
+    /// The open diagrams, for tests that look at what a diagram holds.
+    #[cfg(test)]
+    pub fn open_diagrams(&self) -> impl Iterator<Item = (&DiagramKey, &Diagram)> {
+        self.diagrams.iter()
     }
 
     /// The open consoles, for tests that look at what a console drew.
@@ -415,6 +428,8 @@ impl DbRoverApp {
         }
         let command = self.consoles.apply(event);
         self.send_if(command);
+        let batches = self.diagrams.apply(event);
+        self.send_all(batches);
         self.apply_to_sql_files(event);
         self.settings.apply(event);
         self.updates.apply(event);
@@ -1034,6 +1049,18 @@ impl DbRoverApp {
             }
             ExplorerAction::ImportCsv(id, path) => self.open_csv_import(id, &path),
             ExplorerAction::ExportData(id, path) => self.open_table_export(id, &path),
+            ExplorerAction::Diagram(id, path) => self.open_diagram_dialog(id, &path),
+            ExplorerAction::DiagramRelated(id, path) => {
+                let schema = path.name_of(NodeKind::Schema).map(str::to_owned);
+                if let (Some(schema), Some(table)) = (schema, path.last()) {
+                    let start = TableName {
+                        schema: schema.clone(),
+                        name: table.name.clone(),
+                    };
+                    let name = DiagramName::from_text(&table.name);
+                    self.open_diagram(id, schema, vec![start], Some(Growth::Related), &name);
+                }
+            }
             ExplorerAction::Select(id, path) => self.explorer_options.selected = Some((id, path)),
             ExplorerAction::RunAction {
                 data_source,
@@ -1814,6 +1841,78 @@ impl DbRoverApp {
         }
     }
 
+    /// Opens **Diagram…** on a schema, loading its tables folder if the explorer hasn't.
+    fn open_diagram_dialog(&mut self, id: DataSourceId, schema: &CatalogPath) {
+        let Some(dialog) = DiagramDialog::new(id, schema) else {
+            return;
+        };
+        let needs_loading = self
+            .state
+            .catalog_mut(id)
+            .is_some_and(|catalog| catalog.request(dialog.tables_path()));
+        self.load_children_if(needs_loading, id, dialog.tables_path().clone());
+        self.diagram_dialog = Some(dialog);
+    }
+
+    fn show_diagram_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.diagram_dialog else {
+            return;
+        };
+        let catalog = self
+            .state
+            .data_source(dialog.data_source)
+            .map(|entry| &entry.catalog);
+        let Some(action) = dialog.show(ctx, catalog) else {
+            return;
+        };
+        let Some(dialog) = self.diagram_dialog.take() else {
+            return;
+        };
+        if let DiagramDialogAction::Open {
+            tables,
+            growth,
+            name,
+        } = action
+        {
+            let schema = dialog.schema().to_owned();
+            let tables = tables
+                .into_iter()
+                .map(|name| TableName {
+                    schema: schema.clone(),
+                    name,
+                })
+                .collect();
+            let name = DiagramName::from_text(&name);
+            self.open_diagram(dialog.data_source, schema, tables, growth, &name);
+        }
+    }
+
+    /// Opens a diagram of `tables` in a tab of its own, named `name` unless another open
+    /// diagram of its folder is, and starts describing them.
+    fn open_diagram(
+        &mut self,
+        id: DataSourceId,
+        schema: String,
+        tables: Vec<TableName>,
+        growth: Option<Growth>,
+        name: &DiagramName,
+    ) {
+        let Some(entry) = self.state.data_source(id) else {
+            return;
+        };
+        let project = entry
+            .data_source
+            .project
+            .and_then(|id| self.state.projects.get(id));
+        let folder = DiagramFolder::of(project.map(|project| project.slug.clone()));
+        let name = self.diagrams.unused_name(&folder, name);
+        let key = DiagramKey { folder, name };
+        let diagram = Diagram::new(id, Some(schema), tables, growth);
+        let first = self.diagrams.open(key.clone(), diagram);
+        workspace::open_diagram_tab(&mut self.dock, key);
+        self.send_if(first);
+    }
+
     /// The export dialog; once it has a format, asks where to save and starts the export.
     fn show_export_dialog(&mut self, ctx: &egui::Context) {
         let Some(dialog) = &mut self.export_dialog else {
@@ -2185,6 +2284,7 @@ impl eframe::App for DbRoverApp {
                     settings: &self.settings,
                     mcp_defaults: &mut self.mcp_defaults,
                     settings_actions: &mut settings_actions,
+                    diagrams: &mut self.diagrams,
                 },
             );
         if let Some(text) = self.clipboard.take() {
@@ -2250,6 +2350,7 @@ impl eframe::App for DbRoverApp {
         self.show_export_dialog(&ctx);
         self.show_import_dialog(&ctx);
         self.show_csv_import(&ctx);
+        self.show_diagram_dialog(&ctx);
         if self
             .definition_window
             .as_ref()
@@ -2309,6 +2410,7 @@ mod tests {
     mod actions;
     mod commands;
     mod customisation;
+    mod diagrams;
     mod files;
     mod find;
     mod grid;

@@ -1684,6 +1684,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "dbrover-core",
+ "dbrover-diagram",
  "dbrover-document",
  "dbrover-engine",
  "dbrover-export",
