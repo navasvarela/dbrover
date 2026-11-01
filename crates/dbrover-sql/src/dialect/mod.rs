@@ -559,10 +559,19 @@ impl Dialect {
             Self::ClickHouse => Some(
                 "ClickHouse tables have no key that tells their rows apart, so rows can't be edited here",
             ),
-            // TODO(juan): N4·5 edits CQL rows by their primary key, one statement at a time.
-            Self::Cassandra => Some("Editing CQL rows in the grid isn't available yet"),
-            Self::Postgres | Self::Sqlite | Self::Mysql | Self::SqlServer | Self::DuckDb => None,
+            Self::Postgres
+            | Self::Sqlite
+            | Self::Mysql
+            | Self::SqlServer
+            | Self::DuckDb
+            | Self::Cassandra => None,
         }
+    }
+
+    /// Whether an `UPDATE` may change a row's primary key. CQL's can't: a row's key is where it
+    /// is stored, so the grid edits key columns only in a row being added.
+    pub fn updates_keys(self) -> bool {
+        self != Self::Cassandra
     }
 
     /// The savepoint grid edits use inside a transaction the console already has open, and an

@@ -319,19 +319,19 @@ async fn routines(
 /// One of a relation's columns, as `system_schema.columns` lists it.
 #[derive(DeserializeRow)]
 #[scylla(crate = scylla)]
-struct ColumnRow {
-    column_name: String,
-    kind: String,
+pub(crate) struct ColumnRow {
+    pub(crate) column_name: String,
+    pub(crate) kind: String,
     position: i32,
     #[scylla(rename = "type")]
-    column_type: String,
+    pub(crate) column_type: String,
     clustering_order: Option<String>,
 }
 
 impl ColumnRow {
     /// Where the column sits in the key: partition key columns first, then clustering ones,
     /// each in key order, then the static columns and the rest by name.
-    fn order(&self) -> (u8, i32, String) {
+    pub(crate) fn order(&self) -> (u8, i32, String) {
         let rank = match self.kind.as_str() {
             "partition_key" => 0,
             "clustering" => 1,
@@ -360,12 +360,12 @@ impl ColumnRow {
     }
 }
 
-async fn columns(
+/// A table's or a view's columns, in key order (see [`ColumnRow::order`]).
+pub(crate) async fn column_rows(
     session: &Session,
-    path: &CatalogPath,
     keyspace: &str,
     relation: &str,
-) -> Result<Vec<CatalogNode>, DriverError> {
+) -> Result<Vec<ColumnRow>, DriverError> {
     let mut rows: Vec<ColumnRow> = rows(
         session,
         "SELECT column_name, kind, position, type, clustering_order FROM system_schema.columns \
@@ -374,6 +374,16 @@ async fn columns(
     )
     .await?;
     rows.sort_by_key(ColumnRow::order);
+    Ok(rows)
+}
+
+async fn columns(
+    session: &Session,
+    path: &CatalogPath,
+    keyspace: &str,
+    relation: &str,
+) -> Result<Vec<CatalogNode>, DriverError> {
+    let rows = column_rows(session, keyspace, relation).await?;
     Ok(rows
         .into_iter()
         .map(|row| {
@@ -500,7 +510,7 @@ fn describe_statement(path: &CatalogPath) -> Option<String> {
 }
 
 /// Every row of `cql`, run with `values` bound.
-async fn rows<R>(
+pub(crate) async fn rows<R>(
     session: &Session,
     cql: &str,
     values: impl SerializeRow,

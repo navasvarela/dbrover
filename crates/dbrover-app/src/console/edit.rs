@@ -72,11 +72,20 @@ pub struct EditTarget {
     key: Vec<usize>,
     /// Per result column: whether it is a column of the table (and named once).
     editable: Vec<bool>,
+    /// Whether a loaded row's key stays as it is, where the database can't change it with an
+    /// `UPDATE` (CQL, `Dialect::updates_keys`).
+    keys_fixed: bool,
 }
 
 impl EditTarget {
     pub fn is_editable(&self, column: usize) -> bool {
         self.editable.get(column).copied().unwrap_or(false)
+    }
+
+    /// Whether `column` of a loaded row can be typed into: a table column, and not a key
+    /// column where keys are fixed.
+    fn edits_loaded(&self, column: usize) -> bool {
+        self.is_editable(column) && !(self.keys_fixed && self.key.contains(&column))
     }
 
     /// The table, its columns and its key among the result's, for the SQL export formats.
@@ -185,7 +194,11 @@ fn relation_name(sql: &str, tokens: &[Token], start: usize) -> Option<(RelationN
 
 /// Maps a result onto the described table. Read-only, with the reason, if the table has no
 /// primary key or the result lacks part of it.
-pub fn edit_target(table: TableDescription, columns: &[ColumnInfo]) -> Editability {
+pub fn edit_target(
+    table: TableDescription,
+    columns: &[ColumnInfo],
+    dialect: Dialect,
+) -> Editability {
     if table.primary_key.is_empty() {
         return Editability::ReadOnly(format!(
             "{} has no primary key, so its rows can't be told apart",
@@ -212,6 +225,7 @@ pub fn edit_target(table: TableDescription, columns: &[ColumnInfo]) -> Editabili
             table,
             key,
             editable,
+            keys_fixed: !dialect.updates_keys(),
         }),
         None => Editability::ReadOnly(format!(
             "Select the primary key ({}) to edit rows",
@@ -311,7 +325,8 @@ impl EditSession {
             return matches!(row, RowRef::New(_)) || !documents.key_columns.contains(&column);
         }
         match (self.target(), self.key_view(), row) {
-            (Some(target), _, _) => target.is_editable(column),
+            (Some(target), _, RowRef::Loaded(_)) => target.edits_loaded(column),
+            (Some(target), _, RowRef::New(_)) => target.is_editable(column),
             (None, Some(view), RowRef::Loaded(_)) => view.edits_loaded(column),
             (None, Some(view), RowRef::New(_)) => view.edits_new(column),
             (None, None, _) => false,
@@ -530,7 +545,7 @@ impl PendingEdits {
         dialect: Dialect,
     ) -> Vec<(RowRef, RowEdit)> {
         let changes = RowChanges {
-            sql: RowSql::new(dialect, &target.table),
+            sql: RowSql::for_table(dialect, &target.table),
             table: format!("{}.{}", target.table.schema, target.table.name),
             target,
             columns,
@@ -1084,7 +1099,9 @@ mod tests {
             column("part"),
             column("upper"),
         ];
-        let Editability::Editable(target) = edit_target(described.clone(), &result) else {
+        let Editability::Editable(target) =
+            edit_target(described.clone(), &result, Dialect::Postgres)
+        else {
             panic!("expected the result to be editable");
         };
         assert_eq!(target.key, [0, 2]);
@@ -1092,21 +1109,25 @@ mod tests {
         assert!(!target.is_editable(3), "not a table column");
 
         assert!(matches!(
-            edit_target(described.clone(), &[column("id"), column("name")]),
+            edit_target(described.clone(), &[column("id"), column("name")], Dialect::Postgres),
             Editability::ReadOnly(reason) if reason.contains("(id, part)")
         ));
         assert!(matches!(
-            edit_target(table(&["n"], &[]), &[column("n")]),
+            edit_target(table(&["n"], &[]), &[column("n")], Dialect::Postgres),
             Editability::ReadOnly(reason) if reason.contains("no primary key")
         ));
         assert!(matches!(
-            edit_target(described, &[column("id"), column("id"), column("part")]),
+            edit_target(
+                described,
+                &[column("id"), column("id"), column("part")],
+                Dialect::Postgres
+            ),
             Editability::ReadOnly(_)
         ));
     }
 
     fn editable(table: TableDescription, columns: &[ColumnInfo]) -> EditTarget {
-        let Editability::Editable(target) = edit_target(table, columns) else {
+        let Editability::Editable(target) = edit_target(table, columns, Dialect::Postgres) else {
             panic!("expected the result to be editable");
         };
         target

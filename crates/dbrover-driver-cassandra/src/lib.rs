@@ -11,6 +11,7 @@ mod catalog;
 mod errors;
 mod execution;
 mod routes;
+mod table;
 mod tls;
 mod values;
 
@@ -177,9 +178,9 @@ impl Connection for CassandraConnection {
 
     async fn describe_table(
         &mut self,
-        _table: &RelationName,
+        table: &RelationName,
     ) -> Result<Option<TableDescription>, DriverError> {
-        Ok(None)
+        table::describe_table(&self.session, table).await
     }
 
     async fn describe_constraints(

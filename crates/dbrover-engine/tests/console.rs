@@ -1557,3 +1557,70 @@ fn runs_cql_and_shows_a_map_as_json() {
         finish_run(&mut engine, 1);
     }
 }
+
+/// Grid edits on Cassandra and ScyllaDB run one statement at a time, with no transaction: a
+/// failing edit leaves the ones before it done, and says which failed. Needs
+/// `DBROVER_TEST_SCYLLA_URL` or `DBROVER_TEST_CASSANDRA_URL`; skipped without.
+#[test]
+fn applies_cql_edits_one_at_a_time() {
+    for (name, config, password) in cql_test_servers() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+        engine.expect_started(vec![]);
+        let data_source = DataSource {
+            id: DataSourceId::generate(),
+            name: "cql".to_owned(),
+            color: None,
+            safety: dbrover_core::SafetyLevel::Normal,
+            project: None,
+            mcp_login: None,
+            config: ConnectionConfig::Cassandra(config),
+        };
+        let id = data_source.id;
+        engine.send(Command::SaveDataSource {
+            data_source,
+            password,
+            ssh_secret: PasswordUpdate::Keep,
+        });
+        assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
+        execute(
+            &engine,
+            id,
+            1,
+            &[
+                "DROP KEYSPACE IF EXISTS dbrover_engine_edits",
+                "CREATE KEYSPACE dbrover_engine_edits WITH replication = \
+                 {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}",
+                "CREATE TABLE dbrover_engine_edits.people (id int PRIMARY KEY, name text)",
+                "INSERT INTO dbrover_engine_edits.people (id, name) VALUES (1, 'ada')",
+            ],
+        );
+        finish_run(&mut engine, 1);
+
+        edits(
+            &engine,
+            &[
+                "UPDATE \"dbrover_engine_edits\".\"people\" SET \"name\" = 'ada''s' WHERE \"id\" = 1",
+                "UPDATE \"dbrover_engine_edits\".\"people\" SET \"name\" = 2 WHERE \"id\" = 1",
+            ],
+        );
+        assert_eq!(
+            expect_edits(&mut engine).unwrap_err().statement,
+            Some(1),
+            "{name}"
+        );
+        execute(
+            &engine,
+            id,
+            2,
+            &["SELECT name FROM dbrover_engine_edits.people WHERE id = 1"],
+        );
+        loop {
+            if let Event::RowsFetched { rows, .. } = next_run_event(&mut engine) {
+                assert_eq!(rows, [[Some("ada's".to_owned())]], "{name}");
+                break;
+            }
+        }
+        finish_run(&mut engine, 2);
+    }
+}
