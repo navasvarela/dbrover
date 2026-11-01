@@ -11,7 +11,7 @@ use dbrover_store::{
     ActionBody, ActionId, ConsoleKey, CustomFileKind, DiagramFolder, DiagramKey, DiagramName,
     KeymapBindings, McpPermissions, SqlFileContents,
 };
-use egui::{Frame, Margin, RichText};
+use egui::{Align, Frame, Layout, Margin, RichText, Sense};
 use egui_dock::{DockArea, DockState};
 
 use crate::about_dialog;
@@ -64,7 +64,7 @@ use crate::unsaved_dialog::{UnsavedChoice, UnsavedConfirmation};
 use crate::update_dialog::{self, UpdateAction};
 use crate::updates::Updates;
 use crate::workspace::{self, Panels, Tab};
-use crate::{feedback, fonts, relaunch, repaint, welcome, widgets};
+use crate::{feedback, fonts, relaunch, repaint, version, welcome, widgets};
 
 /// Where the dock layout is saved. Versioned so a change to the default layout reaches people
 /// who already have one saved: layouts under an older key are ignored once, and the default
@@ -2167,41 +2167,55 @@ impl DbRoverApp {
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
         let palette = &Palette::for_visuals(ui.visuals());
+        ui.horizontal(|ui| {
+            // The version goes in first, from the right, and the other items get what is left
+            // and are clipped to it, so a narrow window cuts them off rather than the version.
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if version_label(ui, palette).clicked() {
+                    self.about_open = true;
+                }
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    ui.shrink_clip_rect(ui.max_rect());
+                    self.status_items(ui, palette);
+                });
+            });
+        });
+    }
+
+    fn status_items(&mut self, ui: &mut egui::Ui, palette: &Palette) {
         let dot = match self.state.engine_status {
             EngineStatus::Starting => palette.warning,
             EngineStatus::Running => palette.success,
             EngineStatus::Stopped => palette.error,
         };
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("●").small().color(dot));
-            ui.label(
-                RichText::new(format!(
-                    "Engine {} · {} connected",
-                    self.state.engine_status.label(),
-                    self.state.connected_count()
-                ))
-                .small()
-                .color(palette.text_weak),
-            );
-            self.problem_links(ui, palette.warning);
-            let stops = self.command_runs.status(ui, palette);
-            self.send_all(stops);
-            if let Some(problem) = &self.action_problem
-                && ui
-                    .link(RichText::new(problem).small().color(palette.error))
-                    .on_hover_text("Dismiss")
-                    .clicked()
-            {
-                self.action_problem = None;
-            }
-            if let Some(notice) = self.updates.notice()
-                && ui
-                    .link(RichText::new(notice).small().color(palette.primary))
-                    .clicked()
-            {
-                self.updates.dialog_open = true;
-            }
-        });
+        ui.label(RichText::new("●").small().color(dot));
+        ui.label(
+            RichText::new(format!(
+                "Engine {} · {} connected",
+                self.state.engine_status.label(),
+                self.state.connected_count()
+            ))
+            .small()
+            .color(palette.text_weak),
+        );
+        self.problem_links(ui, palette.warning);
+        let stops = self.command_runs.status(ui, palette);
+        self.send_all(stops);
+        if let Some(problem) = &self.action_problem
+            && ui
+                .link(RichText::new(problem).small().color(palette.error))
+                .on_hover_text("Dismiss")
+                .clicked()
+        {
+            self.action_problem = None;
+        }
+        if let Some(notice) = self.updates.notice()
+            && ui
+                .link(RichText::new(notice).small().color(palette.primary))
+                .clicked()
+        {
+            self.updates.dialog_open = true;
+        }
     }
 
     /// A link per config file with problems, opening the window that lists them.
@@ -2230,6 +2244,15 @@ impl DbRoverApp {
             None => {}
         }
     }
+}
+
+/// The running release, such as `v0.21.0`, in the status bar's corner; clicking it opens About.
+fn version_label(ui: &mut egui::Ui, palette: &Palette) -> egui::Response {
+    let text = RichText::new(format!("v{}", version::VERSION))
+        .small()
+        .color(palette.text_weak);
+    ui.add(egui::Label::new(text).sense(Sense::click()))
+        .on_hover_text("About DbRover")
 }
 
 impl eframe::App for DbRoverApp {
@@ -2576,6 +2599,32 @@ mod tests {
         // egui_dock doesn't expose tab titles to accessibility, so check each panel's content.
         harness.get_by_label_contains("Welcome to DbRover");
         harness.get_by_label_contains("logged before the window opened");
+    }
+
+    /// The version sits in the status bar's right corner, stays there when the window is too
+    /// narrow for every status item, and opens About when clicked.
+    #[test]
+    fn shows_the_version_in_the_status_bar_corner() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "Engine running");
+        let label = format!("v{}", version::VERSION);
+
+        // At 230 points "Engine running · 0 connected" no longer fits beside the version.
+        for width in [crate::DEFAULT_WINDOW_SIZE[0], 230.0] {
+            harness.set_size(egui::vec2(width, crate::DEFAULT_WINDOW_SIZE[1]));
+            harness.run_steps(2);
+            let corner = harness.get_by_label(&label).rect();
+            assert!(
+                corner.right() <= width && corner.right() > width - 40.0,
+                "at {width} wide, {corner:?} is not at the right edge"
+            );
+            assert!(corner.bottom() > crate::DEFAULT_WINDOW_SIZE[1] - 30.0);
+        }
+
+        harness.get_by_label(&label).click();
+        step_until_visible(&mut harness, &format!("Version {}", version::VERSION));
     }
 
     #[test]
