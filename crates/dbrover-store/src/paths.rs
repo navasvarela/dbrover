@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use directories::{BaseDirs, ProjectDirs};
 
-use crate::{CustomFiles, InstallFolders, TrustedCommandsFile};
+use crate::{ChosenFolderFile, CustomFileKind, CustomFiles, InstallFolders, TrustedCommandsFile};
 
 /// The application name used for DbRover's folders and the OS keychain. Also the eframe app
 /// id.
@@ -16,11 +16,36 @@ pub const PREVIOUS_APP_NAME: &str = "dbdesk";
 /// The query history database's file name, in the settings folder.
 pub(crate) const HISTORY_FILE_NAME: &str = "history.sqlite";
 
+const DATA_SOURCES_FILE_NAME: &str = "data_sources.toml";
+const PROJECTS_FILE_NAME: &str = "projects.toml";
+const DIAGRAMS_FOLDER_NAME: &str = "diagrams";
+const CONSOLES_FOLDER_NAME: &str = "consoles";
+const KEYMAP_FILE_NAME: &str = "keymap.toml";
+const SETTINGS_FILE_NAME: &str = "settings.toml";
+
+/// Everything DbRover may keep in a settings folder. A folder with any of them holds someone's
+/// settings, and choosing it uses them rather than copying over them.
+pub(crate) const SETTINGS_FOLDER_ENTRIES: [&str; 10] = [
+    DATA_SOURCES_FILE_NAME,
+    PROJECTS_FILE_NAME,
+    SETTINGS_FILE_NAME,
+    KEYMAP_FILE_NAME,
+    CustomFileKind::Actions.file_name(),
+    CustomFileKind::Snippets.file_name(),
+    CustomFileKind::Theme.file_name(),
+    CONSOLES_FOLDER_NAME,
+    DIAGRAMS_FOLDER_NAME,
+    HISTORY_FILE_NAME,
+];
+
 /// eframe's saved state, in the data folder.
 pub(crate) const WINDOW_STATE_FILE_NAME: &str = "app.ron";
 
 /// The commands the user trusted, in the data folder.
 pub(crate) const TRUSTED_COMMANDS_FILE_NAME: &str = "trusted_commands.toml";
+
+/// The folder chosen in Settings, in the data folder.
+const CHOSEN_FOLDER_FILE_NAME: &str = "settings_folder.toml";
 
 /// DbRover's folders on this machine: `~/.config/dbrover` for the settings and
 /// `~/.local/share/dbrover` for the machine's own files. See `docs/settings-folders.md`.
@@ -60,6 +85,26 @@ impl AppPaths {
     }
 
     /// The folders this name keeps its files in.
+    /// These paths, but with their settings in `folder`. The data folder stays: it is this
+    /// machine's, whichever settings are in use.
+    pub fn with_settings_folder(&self, folder: impl Into<PathBuf>) -> Self {
+        self.in_folders(InstallFolders {
+            settings: folder.into(),
+            data: self.folders.data.clone(),
+        })
+    }
+
+    /// The user's home folder, which `~` in a folder given to DbRover stands for.
+    pub fn home(&self) -> &Path {
+        &self.home
+    }
+
+    /// The folder chosen in Settings, if one was. In the data folder, so the choice belongs to
+    /// this machine and never travels with the settings it points at.
+    pub fn chosen_folder_file(&self) -> ChosenFolderFile {
+        ChosenFolderFile::new(self.folders.data.join(CHOSEN_FOLDER_FILE_NAME))
+    }
+
     pub fn folders(&self) -> &InstallFolders {
         &self.folders
     }
@@ -83,32 +128,32 @@ impl AppPaths {
 
     /// Saved data sources. Not guaranteed to exist yet.
     pub fn data_sources_file(&self) -> PathBuf {
-        self.folders.settings.join("data_sources.toml")
+        self.folders.settings.join(DATA_SOURCES_FILE_NAME)
     }
 
     /// Projects and their MCP permissions. Not guaranteed to exist yet.
     pub fn projects_file(&self) -> PathBuf {
-        self.folders.settings.join("projects.toml")
+        self.folders.settings.join(PROJECTS_FILE_NAME)
     }
 
     /// ER diagram files, one folder per project. Not guaranteed to exist yet.
     pub fn diagrams_dir(&self) -> PathBuf {
-        self.folders.settings.join("diagrams")
+        self.folders.settings.join(DIAGRAMS_FOLDER_NAME)
     }
 
     /// Query console files, one folder per data source. Not guaranteed to exist yet.
     pub fn consoles_dir(&self) -> PathBuf {
-        self.folders.settings.join("consoles")
+        self.folders.settings.join(CONSOLES_FOLDER_NAME)
     }
 
     /// Key bindings, if the user wrote any. Not guaranteed to exist.
     pub fn keymap_file(&self) -> PathBuf {
-        self.folders.settings.join("keymap.toml")
+        self.folders.settings.join(KEYMAP_FILE_NAME)
     }
 
     /// Preferences, such as how SQL is formatted. Not guaranteed to exist.
     pub fn settings_file(&self) -> PathBuf {
-        self.folders.settings.join("settings.toml")
+        self.folders.settings.join(SETTINGS_FILE_NAME)
     }
 
     /// `actions.toml`, `snippets.toml` and `theme.toml`, if the user wrote them, beside the

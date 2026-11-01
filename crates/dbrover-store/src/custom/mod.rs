@@ -33,7 +33,7 @@ pub enum CustomFileKind {
 impl CustomFileKind {
     pub const ALL: [Self; 3] = [Self::Actions, Self::Snippets, Self::Theme];
 
-    pub fn file_name(self) -> &'static str {
+    pub const fn file_name(self) -> &'static str {
         match self {
             Self::Actions => "actions.toml",
             Self::Snippets => "snippets.toml",
