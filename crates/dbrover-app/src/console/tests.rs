@@ -518,6 +518,33 @@ fn replaces_every_match_with_regular_expression_groups() {
 
 /// A console in the test language, which has no SQL dialect: what a Redis or MongoDB console
 /// will go through.
+/// A CQL console completes CQL's own words in the case being typed, keeps a batch as one
+/// statement, and has no explain.
+#[test]
+fn a_cql_console_completes_its_words_and_has_no_explain() {
+    let text = "CREATE KEYSP";
+    let mut console = console_with(text, Dialect::Cassandra);
+    console.selection = text.len()..text.len();
+    let recent = RecentCompletions::default();
+    console.open_completion(false);
+    let _ = console.refresh_completion(None, &recent, &[]);
+    console.accept_completion(Instant::now());
+    assert_eq!(console.text, "CREATE KEYSPACE");
+    assert!(
+        console
+            .statements_to_run(RunScope::Explain(ExplainDepth::Estimated))
+            .is_empty()
+    );
+
+    let batch =
+        "BEGIN BATCH\nINSERT INTO a (id) VALUES (1);\nDELETE FROM b WHERE id = 1;\nAPPLY BATCH";
+    let console = console_with(&format!("{batch};\nSELECT * FROM a"), Dialect::Cassandra);
+    assert_eq!(
+        sqls(&console.statements_to_run(RunScope::All)),
+        [batch, "SELECT * FROM a"]
+    );
+}
+
 mod test_language {
     use super::*;
 

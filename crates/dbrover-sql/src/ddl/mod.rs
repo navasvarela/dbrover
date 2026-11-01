@@ -611,6 +611,12 @@ pub fn ddl_statements(
     operations: &[DdlOperation],
     dialect: Dialect,
 ) -> Result<Vec<String>, DdlError> {
+    if !dialect.writes_ddl() {
+        return Err(DdlError::Unsupported {
+            what: "DDL DbRover writes",
+            dialect,
+        });
+    }
     let mut statements = Vec::new();
     for operation in operations {
         statements.extend(operation.statements(dialect)?);
@@ -636,7 +642,8 @@ pub fn quote_name(dialect: Dialect, name: &str) -> String {
 fn rename(object: &str, old: &ObjectName, new_name: &str, dialect: Dialect) -> String {
     let old_sql = old.to_sql(dialect);
     match dialect {
-        Dialect::Postgres | Dialect::Sqlite | Dialect::DuckDb => format!(
+        // CQL can't rename a table; `ddl_statements` refuses its DDL before this.
+        Dialect::Postgres | Dialect::Sqlite | Dialect::DuckDb | Dialect::Cassandra => format!(
             "ALTER {object} {old_sql} RENAME TO {}",
             quote_name(dialect, new_name)
         ),

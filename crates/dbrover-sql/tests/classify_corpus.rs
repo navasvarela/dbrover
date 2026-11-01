@@ -60,3 +60,8 @@ fn sqlite() {
 fn sql_server() {
     check_corpus(Dialect::SqlServer, include_str!("classify/sqlserver.sql"));
 }
+
+#[test]
+fn cql() {
+    check_corpus(Dialect::Cassandra, include_str!("classify/cql.sql"));
+}

@@ -538,9 +538,16 @@ impl DbRoverMcp {
         let dialect = language.dialect();
         let prefix = match (explain, dialect) {
             (false, _) => "",
-            (true, Some(dialect)) => {
+            (true, Some(dialect)) if dialect.explains() => {
                 let server = self.inner.connections.server_info(data_source.id);
                 dialect.explain_prefix(server.as_ref())
+            }
+            (true, Some(dialect)) => {
+                let reason = format!(
+                    "{tool} explains statements, and {} has no EXPLAIN",
+                    dialect.display_name()
+                );
+                return Err(self.refuse(tool, data_source, reason));
             }
             (true, None) => {
                 let reason = format!(

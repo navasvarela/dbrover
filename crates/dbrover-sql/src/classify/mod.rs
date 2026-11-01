@@ -5,6 +5,7 @@
 //! Unlike the rest of this crate, this is strict: a statement the parser can't read is not
 //! guessed at, it is [`Unclassified`], because what it does can't be known.
 
+mod cql;
 mod names;
 #[cfg(test)]
 mod tests;
@@ -89,8 +90,11 @@ pub fn classify(sql: &str, dialect: Dialect) -> Result<StatementKind, Unclassifi
 /// [`Unclassified`] when the text holds no statement, several, or one the dialect's parser
 /// can't read.
 pub fn analyze(sql: &str, dialect: Dialect) -> Result<Analysis, Unclassified> {
+    let Some(parser) = dialect.sqlparser_dialect() else {
+        return cql::analyze(sql);
+    };
     let parsed = as_parsed(sql, dialect);
-    let statements = Parser::parse_sql(dialect.sqlparser_dialect(), &parsed).map_err(|error| {
+    let statements = Parser::parse_sql(parser, &parsed).map_err(|error| {
         let message = error.to_string();
         let message = message
             .strip_prefix("sql parser error: ")

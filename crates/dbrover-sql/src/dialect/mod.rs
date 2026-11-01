@@ -37,6 +37,10 @@ pub enum Dialect {
     /// DuckDB, whose parser derives from PostgreSQL's.
     DuckDb,
     ClickHouse,
+    /// CQL, the Cassandra Query Language, for Apache Cassandra and ScyllaDB. It lexes and
+    /// splits like SQL, but `sqlparser` has no dialect for it, so its statements are classified
+    /// by a reader of their own (`classify::cql`) and checked by the server alone.
+    Cassandra,
 }
 
 /// The lexical rules that differ between dialects. Strings in `'…'`, `--` line comments and
@@ -59,6 +63,8 @@ pub(crate) struct LexicalRules {
     pub nested_block_comments: bool,
     /// `# …` line comments.
     pub hash_comments: bool,
+    /// `// …` line comments.
+    pub slash_comments: bool,
     /// Whether `--` starts a comment only before whitespace, as in MySQL, where `1--1` is
     /// arithmetic.
     pub dash_comments_need_space: bool,
@@ -87,6 +93,10 @@ pub(crate) struct ScriptRules {
     /// statement, as Transact-SQL's control flow, rather than only in a `CREATE` statement's
     /// body.
     pub blocks_anywhere: bool,
+    /// CQL's `BEGIN [UNLOGGED | COUNTER] BATCH … APPLY BATCH`, one statement whose semicolons
+    /// don't split. Its only block: CQL has no `BEGIN … END` or `CASE … END`, and `end` may name
+    /// a column.
+    pub batches: bool,
 }
 
 /// The statements that mark a point inside an open transaction, so that a group of changes can
@@ -153,13 +163,14 @@ pub(crate) enum ParserGap {
 }
 
 impl Dialect {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Postgres,
         Self::Sqlite,
         Self::Mysql,
         Self::SqlServer,
         Self::DuckDb,
         Self::ClickHouse,
+        Self::Cassandra,
     ];
 
     /// The dialect's name in messages.
@@ -171,6 +182,7 @@ impl Dialect {
             Self::SqlServer => "SQL Server",
             Self::DuckDb => "DuckDB",
             Self::ClickHouse => "ClickHouse",
+            Self::Cassandra => "CQL",
         }
     }
 
@@ -186,6 +198,7 @@ impl Dialect {
                 dollar_in_identifiers: true,
                 nested_block_comments: true,
                 hash_comments: false,
+                slash_comments: false,
                 dash_comments_need_space: false,
                 backtick_identifiers: false,
                 bracket_identifiers: false,
@@ -200,6 +213,7 @@ impl Dialect {
                 dollar_in_identifiers: false,
                 nested_block_comments: false,
                 hash_comments: false,
+                slash_comments: false,
                 dash_comments_need_space: false,
                 backtick_identifiers: true,
                 bracket_identifiers: true,
@@ -214,6 +228,7 @@ impl Dialect {
                 dollar_in_identifiers: true,
                 nested_block_comments: false,
                 hash_comments: true,
+                slash_comments: false,
                 dash_comments_need_space: true,
                 backtick_identifiers: true,
                 bracket_identifiers: false,
@@ -232,6 +247,7 @@ impl Dialect {
                 dollar_in_identifiers: true,
                 nested_block_comments: true,
                 hash_comments: true,
+                slash_comments: false,
                 dash_comments_need_space: false,
                 backtick_identifiers: true,
                 bracket_identifiers: false,
@@ -246,11 +262,30 @@ impl Dialect {
                 dollar_in_identifiers: true,
                 nested_block_comments: true,
                 hash_comments: false,
+                slash_comments: false,
                 dash_comments_need_space: false,
                 backtick_identifiers: false,
                 bracket_identifiers: true,
                 national_strings: true,
                 sigil_identifiers: true,
+            },
+            // Checked against ScyllaDB 2026.3 and Cassandra 5.0: `//` comments, `$$` strings
+            // without a tag, `''` for a quote and no backslash escapes, and block comments
+            // that end at the first `*/`.
+            Self::Cassandra => LexicalRules {
+                escape_strings: false,
+                backslash_escapes: false,
+                double_quoted_strings: false,
+                dollar_quoting: true,
+                dollar_in_identifiers: false,
+                nested_block_comments: false,
+                hash_comments: false,
+                slash_comments: true,
+                dash_comments_need_space: false,
+                backtick_identifiers: false,
+                bracket_identifiers: false,
+                national_strings: false,
+                sigil_identifiers: false,
             },
         }
     }
@@ -264,31 +299,41 @@ impl Dialect {
                 delimiter_command: false,
                 go_batches: false,
                 blocks_anywhere: false,
+                batches: false,
             },
             Self::Mysql => ScriptRules {
                 delimiter_command: true,
                 go_batches: false,
                 blocks_anywhere: false,
+                batches: false,
             },
             Self::SqlServer => ScriptRules {
                 delimiter_command: false,
                 go_batches: true,
                 blocks_anywhere: true,
+                batches: false,
+            },
+            Self::Cassandra => ScriptRules {
+                delimiter_command: false,
+                go_batches: false,
+                blocks_anywhere: false,
+                batches: true,
             },
         }
     }
 
     /// The dialect `sqlparser` parses this one with, for the syntax check and for reading the
-    /// columns of a query.
-    pub(crate) fn sqlparser_dialect(self) -> &'static dyn sqlparser::dialect::Dialect {
-        match self {
+    /// columns of a query; `None` for CQL, which it has no dialect for.
+    pub(crate) fn sqlparser_dialect(self) -> Option<&'static dyn sqlparser::dialect::Dialect> {
+        Some(match self {
             Self::Postgres => &PostgreSqlDialect {},
             Self::Sqlite => &SQLiteDialect {},
             Self::Mysql => &MySqlDialect {},
             Self::SqlServer => &MsSqlDialect {},
             Self::DuckDb => &DuckDbDialect {},
             Self::ClickHouse => &ClickHouseDialect {},
-        }
+            Self::Cassandra => return None,
+        })
     }
 
     /// What `sqlparser` 0.63 rejects in valid statements of this dialect. The list came from
@@ -344,6 +389,7 @@ impl Dialect {
                 ParserGap::Words(&["by", "name", "select"]),
                 ParserGap::Operator("**"),
             ],
+            Self::Cassandra => &[],
         }
     }
 
@@ -351,7 +397,11 @@ impl Dialect {
     /// `replace` (which deletes a row with the same key first).
     pub(crate) fn insert_verbs(self) -> &'static [&'static str] {
         match self {
-            Self::Postgres | Self::SqlServer | Self::DuckDb | Self::ClickHouse => &["insert"],
+            Self::Postgres
+            | Self::SqlServer
+            | Self::DuckDb
+            | Self::ClickHouse
+            | Self::Cassandra => &["insert"],
             Self::Sqlite | Self::Mysql => &["insert", "replace"],
         }
     }
@@ -361,9 +411,12 @@ impl Dialect {
     /// statements. PostgreSQL, SQLite and SQL Server run DDL inside the transaction.
     pub(crate) fn implicit_commit_verbs(self) -> &'static [&'static str] {
         match self {
-            Self::Postgres | Self::Sqlite | Self::SqlServer | Self::DuckDb | Self::ClickHouse => {
-                &[]
-            }
+            Self::Postgres
+            | Self::Sqlite
+            | Self::SqlServer
+            | Self::DuckDb
+            | Self::ClickHouse
+            | Self::Cassandra => &[],
             Self::Mysql => &[
                 "alter", "create", "drop", "grant", "rename", "revoke", "truncate",
             ],
@@ -383,8 +436,14 @@ impl Dialect {
             Self::Sqlite => "EXPLAIN QUERY PLAN ",
             Self::Mysql if server.is_some_and(has_tree_explain) => "EXPLAIN FORMAT=TREE ",
             Self::Mysql => "EXPLAIN ",
-            Self::SqlServer => "",
+            Self::SqlServer | Self::Cassandra => "",
         }
+    }
+
+    /// Whether the database can describe how it would run a statement. CQL has no `EXPLAIN`:
+    /// a query's partitions are its plan.
+    pub fn explains(self) -> bool {
+        self != Self::Cassandra
     }
 
     /// How to ask the database for a plan DbRover draws as a tree, for a console connected to
@@ -416,7 +475,7 @@ impl Dialect {
                 Some(MysqlFlavour::QueryBlocks) | None => return None,
             },
             (Self::SqlServer, _) => "",
-            (Self::Sqlite | Self::DuckDb | Self::ClickHouse, _) => return None,
+            (Self::Sqlite | Self::DuckDb | Self::ClickHouse | Self::Cassandra, _) => return None,
         };
         let format = match self {
             Self::Mysql => PlanFormat::MysqlJson,
@@ -428,16 +487,17 @@ impl Dialect {
 
     /// Whether the database has transactions a console can open and end. ClickHouse's are
     /// experimental and off unless the server is configured for them, so a ClickHouse console
-    /// has no manual commit mode.
+    /// has no manual commit mode. CQL has none: a batch applies its statements together, and a
+    /// lightweight transaction is one statement's condition.
     pub fn has_transactions(self) -> bool {
-        !matches!(self, Self::ClickHouse)
+        !matches!(self, Self::ClickHouse | Self::Cassandra)
     }
 
     /// Opens a transaction. SQL Server needs the keyword: a bare `BEGIN` opens a block there.
     pub fn begin_transaction(self) -> &'static str {
         match self {
             Self::Postgres | Self::Sqlite | Self::Mysql | Self::DuckDb => "BEGIN",
-            Self::SqlServer | Self::ClickHouse => "BEGIN TRANSACTION",
+            Self::SqlServer | Self::ClickHouse | Self::Cassandra => "BEGIN TRANSACTION",
         }
     }
 
@@ -457,16 +517,23 @@ impl Dialect {
             Self::ClickHouse => {
                 format!("positionUTF8(lowerUTF8(toString({value})), {needle}) > 0")
             }
+            // Never asked for: CQL can't select from a query, so its rows are never arranged
+            // in the database (`arrange::can_arrange`). `LIKE` is the nearest it has, and only
+            // on a column with a SASI or vector index.
+            Self::Cassandra => format!("{value} LIKE {needle}"),
         }
     }
 
     /// Why rows can't be imported from a file here, or `None` where they can. An import runs
-    /// in one transaction, so that a failure undoes it, and ClickHouse has none.
+    /// in one transaction, so that a failure undoes it, and ClickHouse and CQL have none.
     pub fn import_refusal(self) -> Option<&'static str> {
         match self {
             Self::ClickHouse => Some(
                 "ClickHouse has no transactions, so an import that failed halfway couldn't be undone",
             ),
+            Self::Cassandra => {
+                Some("CQL has no transactions, so an import that failed halfway couldn't be undone")
+            }
             Self::Postgres | Self::Sqlite | Self::Mysql | Self::SqlServer | Self::DuckDb => None,
         }
     }
@@ -478,7 +545,8 @@ impl Dialect {
     pub fn default_row(self) -> &'static str {
         match self {
             Self::Postgres | Self::Sqlite | Self::SqlServer | Self::DuckDb => "DEFAULT VALUES",
-            Self::Mysql | Self::ClickHouse => "() VALUES ()",
+            // CQL has neither, and its grid inserts name every key column (N4·5).
+            Self::Mysql | Self::ClickHouse | Self::Cassandra => "() VALUES ()",
         }
     }
 
@@ -491,6 +559,8 @@ impl Dialect {
             Self::ClickHouse => Some(
                 "ClickHouse tables have no key that tells their rows apart, so rows can't be edited here",
             ),
+            // TODO(juan): N4·5 edits CQL rows by their primary key, one statement at a time.
+            Self::Cassandra => Some("Editing CQL rows in the grid isn't available yet"),
             Self::Postgres | Self::Sqlite | Self::Mysql | Self::SqlServer | Self::DuckDb => None,
         }
     }
@@ -501,7 +571,7 @@ impl Dialect {
     /// transaction ends. DuckDB has no savepoints at all, so `None`.
     pub fn edits_savepoint(self) -> Option<Savepoint> {
         Some(match self {
-            Self::DuckDb | Self::ClickHouse => return None,
+            Self::DuckDb | Self::ClickHouse | Self::Cassandra => return None,
             Self::Postgres | Self::Sqlite | Self::Mysql => Savepoint {
                 open: "SAVEPOINT dbrover_edits",
                 keep: &["RELEASE SAVEPOINT dbrover_edits"],
@@ -553,9 +623,15 @@ impl Dialect {
                           @dbrover_explain_json_format_version",
                 })
             }
-            (Self::Postgres | Self::Sqlite | Self::Mysql | Self::DuckDb | Self::ClickHouse, _) => {
-                None
-            }
+            (
+                Self::Postgres
+                | Self::Sqlite
+                | Self::Mysql
+                | Self::DuckDb
+                | Self::ClickHouse
+                | Self::Cassandra,
+                _,
+            ) => None,
         }
     }
 
@@ -571,6 +647,7 @@ impl Dialect {
             Self::SqlServer => functions::SQL_SERVER,
             Self::DuckDb => functions::DUCKDB,
             Self::ClickHouse => functions::CLICKHOUSE,
+            Self::Cassandra => functions::CQL,
         }
     }
 
@@ -587,7 +664,7 @@ impl Dialect {
     /// the session's `QUOTED_IDENTIFIER`.
     pub fn quoting(self) -> Quoting {
         match self {
-            Self::Postgres | Self::Sqlite | Self::DuckDb => Quoting::STANDARD,
+            Self::Postgres | Self::Sqlite | Self::DuckDb | Self::Cassandra => Quoting::STANDARD,
             Self::Mysql | Self::ClickHouse => Quoting {
                 identifier_open: '`',
                 identifier_close: '`',
@@ -611,22 +688,24 @@ impl Dialect {
     /// decoding every type from binary. PostgreSQL types an untyped `'…'` literal from its
     /// context exactly as it would an untyped parameter. ClickHouse's own parameters need a
     /// type in the placeholder (`{name:String}`), and a `String` one doesn't compare with a
-    /// number, where a literal is converted.
+    /// number, where a literal is converted. CQL's bound values must be encoded in each
+    /// column's type, which an unprepared statement's driver doesn't know.
     pub fn parameter_binding(self) -> ParameterBinding {
         match self {
             Self::Sqlite => ParameterBinding::Numbered("?"),
             Self::DuckDb => ParameterBinding::Numbered("$"),
             Self::SqlServer => ParameterBinding::Numbered("@P"),
             Self::Mysql => ParameterBinding::Positional,
-            Self::Postgres | Self::ClickHouse => ParameterBinding::Literal,
+            Self::Postgres | Self::ClickHouse | Self::Cassandra => ParameterBinding::Literal,
         }
     }
 
     /// Whether a table name belongs to the system catalog, which the explorer doesn't list:
     /// PostgreSQL's `pg_*` tables (always on the search path) and its catalog schemas,
     /// SQLite's `sqlite_*` tables, `pragma_*` functions and `temp` schema, MySQL's own
-    /// databases, SQL Server's and DuckDB's catalog schemas, ClickHouse's `system` database.
-    /// Names are compared case-insensitively.
+    /// databases, SQL Server's and DuckDB's catalog schemas, ClickHouse's `system` database,
+    /// and the keyspaces Cassandra and ScyllaDB keep for themselves. Names are compared
+    /// case-insensitively.
     pub fn is_system_name(self, schema: Option<&str>, table: &str) -> bool {
         let (table_prefixes, schemas): (&[&str], &[&str]) = match self {
             Self::Postgres => (&["pg_"], &["pg_catalog", "information_schema", "pg_toast"]),
@@ -638,6 +717,7 @@ impl Dialect {
             Self::SqlServer => (&[], &["sys", "INFORMATION_SCHEMA"]),
             Self::DuckDb => (&[], &["information_schema", "pg_catalog"]),
             Self::ClickHouse => (&[], &["system", "information_schema"]),
+            Self::Cassandra => (&[], CQL_SYSTEM_KEYSPACES),
         };
         let table = table.to_ascii_lowercase();
         table_prefixes
@@ -650,6 +730,20 @@ impl Dialect {
             })
     }
 }
+
+/// The keyspaces Cassandra 5 and ScyllaDB 2026 create for themselves.
+pub(crate) const CQL_SYSTEM_KEYSPACES: &[&str] = &[
+    "system",
+    "system_auth",
+    "system_distributed",
+    "system_distributed_everywhere",
+    "system_replicated_keys",
+    "system_schema",
+    "system_traces",
+    "system_views",
+    "system_virtual_schema",
+    "audit",
+];
 
 /// `EXPLAIN FORMAT=TREE` arrived in MySQL 8.0.16; MariaDB has never had it.
 fn has_tree_explain(server: &ServerInfo) -> bool {

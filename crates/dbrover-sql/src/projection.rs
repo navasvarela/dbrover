@@ -24,8 +24,10 @@ pub enum ProjectionItem {
 /// `sqlparser` when it parses the query, which is the usual case for a finished CTE; otherwise
 /// (a query still being typed) from its tokens, between the first `SELECT` and its `FROM`.
 pub fn projection(query: &str, dialect: Dialect) -> Vec<ProjectionItem> {
-    let parsed = Parser::parse_sql(dialect.sqlparser_dialect(), query);
-    match parsed.ok().as_deref() {
+    let parsed = dialect
+        .sqlparser_dialect()
+        .and_then(|parser| Parser::parse_sql(parser, query).ok());
+    match parsed.as_deref() {
         Some([Statement::Query(parsed)]) => from_query(parsed),
         _ => from_tokens(query, dialect),
     }

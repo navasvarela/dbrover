@@ -107,6 +107,7 @@ impl Lexer<'_> {
             }
             ('-', Some('-')) if self.dashes_start_comment() => self.line_comment(),
             ('#', _) if self.rules.hash_comments => self.line_comment(),
+            ('/', Some('/')) if self.rules.slash_comments => self.line_comment(),
             ('/', Some('*')) => self.block_comment(),
             ('\'', _) => self.quoted('\'', TokenKind::String),
             ('e' | 'E', Some('\'')) if self.rules.escape_strings => {
@@ -454,6 +455,32 @@ mod tests {
         for (sql, dialect, expected) in cases {
             assert_eq!(kinds(sql, dialect), expected, "{sql}");
         }
+    }
+
+    /// CQL's `//` comments, `$$` strings and `''` quotes, with no backslash escapes; `//` is two
+    /// divisions elsewhere.
+    #[test]
+    fn reads_cql_comments_and_strings() {
+        use TokenKind::*;
+        assert_eq!(
+            kinds("a // b\n$$ c; $$ 'it''s \\' /* d */", Dialect::Cassandra),
+            [
+                (Word, "a"),
+                (LineComment, "// b"),
+                (String, "$$ c; $$"),
+                (String, "'it''s \\'"),
+                (BlockComment, "/* d */"),
+            ]
+        );
+        assert_eq!(
+            kinds("a // b", Dialect::Postgres),
+            [
+                (Word, "a"),
+                (Punctuation, "/"),
+                (Punctuation, "/"),
+                (Word, "b")
+            ]
+        );
     }
 
     /// What DbRover generates must read back as one token in its own dialect: a quoted name
