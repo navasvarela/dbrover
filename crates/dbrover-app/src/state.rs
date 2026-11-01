@@ -180,6 +180,7 @@ impl AppState {
             | Event::ExportProgress { .. }
             | Event::ExportFinished { .. }
             | Event::TableDescribed { .. }
+            | Event::TablesDescribed { .. }
             | Event::EditsApplied { .. }
             | Event::RoleDescribed { .. }
             | Event::DdlApplied { .. }

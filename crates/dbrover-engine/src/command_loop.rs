@@ -314,6 +314,10 @@ impl Engine {
             Command::DescribeTable { data_source, table } => {
                 self.request(data_source, SessionRequest::DescribeTable(table));
             }
+            Command::DescribeTables {
+                data_source,
+                tables,
+            } => self.request(data_source, SessionRequest::DescribeTables(tables)),
             Command::DescribeRole { data_source, path } => {
                 self.request(data_source, SessionRequest::DescribeRole(path));
             }

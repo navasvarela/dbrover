@@ -1735,6 +1735,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "dbrover-diagram"
+version = "0.20.0"
+
+[[package]]
 name = "dbrover-document"
 version = "0.20.0"
 dependencies = [
