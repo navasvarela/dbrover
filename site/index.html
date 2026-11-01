@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DbRover — ten databases, one native app</title>
-  <meta name="description" content="DbRover is a free, open-source desktop database tool written in Rust for ten databases: PostgreSQL, MySQL and MariaDB, SQLite, SQL Server, DuckDB, ClickHouse, Redis and Valkey, MongoDB, Elasticsearch and OpenSearch, and Cassandra and ScyllaDB. It is native and fast, needs no account, keeps production safe with safety levels, and lets AI assistants in over MCP only as far as you allow.">
+  <title>DbRover — eleven databases, one native app</title>
+  <meta name="description" content="DbRover is a free, open-source desktop database tool written in Rust for eleven databases: PostgreSQL, MySQL and MariaDB, SQLite, SQL Server, DuckDB, ClickHouse, Redis and Valkey, MongoDB, Elasticsearch and OpenSearch, Cassandra and ScyllaDB, and Amazon DynamoDB. It is native and fast, needs no account, keeps production safe with safety levels, and lets AI assistants in over MCP only as far as you allow.">
   <meta name="color-scheme" content="dark light">
   <meta property="og:title" content="DbRover">
-  <meta property="og:description" content="A free, open-source, native database tool for ten databases, from PostgreSQL to Cassandra, with safety levels and safe access for AI assistants over MCP.">
+  <meta property="og:description" content="A free, open-source, native database tool for eleven databases, from PostgreSQL to DynamoDB, with safety levels and safe access for AI assistants over MCP.">
   <meta property="og:image" content="https://dbrover.org/assets/brand/social-preview.png">
   <meta property="og:url" content="https://dbrover.org/">
   <meta name="twitter:card" content="summary_large_image">
@@ -31,8 +31,8 @@
 
   <main id="main">
     <section class="hero" aria-labelledby="hero-title">
-      <p class="eyebrow">PostgreSQL · MySQL and MariaDB · SQLite · SQL Server · DuckDB · ClickHouse · Redis and Valkey · MongoDB · Elasticsearch and OpenSearch · Cassandra and ScyllaDB</p>
-      <h1 id="hero-title">Ten databases, one native app</h1>
+      <p class="eyebrow">PostgreSQL · MySQL and MariaDB · SQLite · SQL Server · DuckDB · ClickHouse · Redis and Valkey · MongoDB · Elasticsearch and OpenSearch · Cassandra and ScyllaDB · DynamoDB</p>
+      <h1 id="hero-title">Eleven databases, one native app</h1>
       <p class="lede">
         DbRover is a native desktop database tool written in Rust: it opens in a moment and stays
         quick with millions of rows. Safety levels guard production, and AI assistants reach
@@ -216,9 +216,9 @@
         <div class="copy">
           <p class="eyebrow">Beyond SQL</p>
           <h3>Keys, documents and indices too</h3>
-          <p>Redis, Valkey and Dragonfly, MongoDB, Elasticsearch and OpenSearch, and Cassandra
-            and ScyllaDB each get a console in their own language, with completion, and an
-            explorer that knows their shape.</p>
+          <p>Redis, Valkey and Dragonfly, MongoDB, Elasticsearch and OpenSearch, Cassandra and
+            ScyllaDB, and DynamoDB each get a console in their own language, with completion,
+            and an explorer that knows their shape.</p>
           <ul>
             <li>Redis keys grouped by their separator, read with <code>SCAN</code> so even
               millions never stall the server.</li>
@@ -228,6 +228,8 @@
               every hit paged in as you scroll.</li>
             <li>Cassandra and ScyllaDB in CQL, checked by the server as you type, with maps and
               sets as a tree and rows edited by their primary key.</li>
+            <li>DynamoDB's PartiQL, signed in with your AWS profile, and a guard that asks
+              before a statement reads a whole table.</li>
           </ul>
           <a class="more" href="manual/consoles.html#redis-commands">Redis, MongoDB and Elasticsearch consoles in the manual</a>
         </div>
@@ -361,7 +363,7 @@ db.orders.<span class="k">find</span>({status: <span class="s">"open"</span>}).<
     </section>
 
     <section class="databases" aria-labelledby="databases-title">
-      <h2 id="databases-title">Ten databases</h2>
+      <h2 id="databases-title">Eleven databases</h2>
       <ul class="engine-list">
         <li><span class="engine-logo postgresql" aria-hidden="true"></span>PostgreSQL</li>
         <li><span class="engine-logo mysql" aria-hidden="true"></span>MySQL and MariaDB</li>
@@ -373,6 +375,7 @@ db.orders.<span class="k">find</span>({status: <span class="s">"open"</span>}).<
         <li><span class="engine-logo mongodb" aria-hidden="true"></span>MongoDB</li>
         <li><span class="engine-logo elasticsearch" aria-hidden="true"></span>Elasticsearch and OpenSearch</li>
         <li><span class="engine-logo cassandra" aria-hidden="true"></span>Cassandra and ScyllaDB</li>
+        <li><span class="engine-logo dynamodb" aria-hidden="true"></span>Amazon DynamoDB</li>
       </ul>
       <p class="planned">Oracle is planned.</p>
     </section>

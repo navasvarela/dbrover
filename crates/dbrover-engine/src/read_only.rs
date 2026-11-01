@@ -108,7 +108,7 @@ pub enum Guard {
 pub fn guard(driver: DriverKind, storage: Storage) -> Guard {
     match mode(driver, storage) {
         Some(mode) => Guard::Session(mode),
-        None if driver.uses_password() => Guard::Login,
+        None if driver.has_logins() => Guard::Login,
         None => Guard::CheckOnly,
     }
 }
@@ -371,10 +371,8 @@ mod tests {
                 | DriverKind::Redis
                 | DriverKind::Mongo
                 | DriverKind::Elasticsearch
-                | DriverKind::Cassandra => guard == Guard::Login,
-                // Signed in by a profile, not a login with a password: MCP clients aren't
-                // served until the MCP profile is its guard (docs/nosql.md, N5·8).
-                DriverKind::DynamoDb => guard == Guard::CheckOnly,
+                | DriverKind::Cassandra
+                | DriverKind::DynamoDb => guard == Guard::Login,
             };
             assert!(expected, "{driver:?}: {guard:?}");
         }

@@ -64,7 +64,7 @@ pub enum ServeError {
 /// login whose grants the database enforces makes the permissions airtight.
 fn warn_about_shared_logins(project: &ServedProject) {
     for data_source in &project.data_sources {
-        if data_source.mcp_login.is_none() && data_source.config.driver().uses_password() {
+        if data_source.mcp_login.is_none() && data_source.config.driver().has_logins() {
             tracing::warn!(
                 project = project.slug(),
                 data_source = %data_source.name,

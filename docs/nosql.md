@@ -6,7 +6,7 @@ built** (2026-11-01), in the layers listed under
 [N1](#n1--redis-valkey-and-dragonfly), [N2](#n2--mongodb),
 [N3](#n3--elasticsearch-and-opensearch) and [N4](#n4--cassandra-and-scylladb). W7 (exports) has
 landed.
-[N5](#n5--dynamodb), DynamoDB, was planned on 2026-11-01 and is built beside N4.
+[N5](#n5--dynamodb), DynamoDB, was planned and built on 2026-11-01, beside N4.
 
 DbRover speaks seven SQL engines. Many of the teams that use them keep a Redis beside their
 PostgreSQL, documents in MongoDB, or logs in Elasticsearch, and today they open another tool for
@@ -1538,12 +1538,39 @@ From N5·4 on, each runs against DynamoDB Local in CI.
     read back with its type;
   - the result is read again after the edits, and that run isn't asked about by the scan guard:
     it is the statement the user already ran.
-- **N5·8 — Safety, MCP and the manual:** the read-only dialog's advice, the MCP profile, the
-  MCP test binary `dynamodb`, the manual's chapter on DynamoDB, and the engine count in the
-  README, the manual's introduction and the website.
+- **N5·8 — Safety, MCP and the manual** (built): the read-only dialog's advice, the MCP
+  profile, the MCP test binary `dynamodb`, the manual's chapter on DynamoDB, and the engine
+  count in the README, the manual's introduction and the website. How it came out:
+  - an engine whose data sources sign in as someone whose grants the database enforces has
+    logins (`DriverKind::has_logins`): those with a password, and DynamoDB, whose login is an
+    AWS profile. Such an engine without a read-only mode is served to MCP clients only through
+    an MCP login, so DynamoDB is now served, for reading, through its **MCP profile**, which
+    needs no password of DbRover's; the dialog asks only for its name;
+  - the MCP server refuses a statement that would read a whole table while the data source's
+    guard is on, in `query` and `execute` alike: an MCP client can't be asked. This is the MCP
+    half of N5·6's guard;
+  - the MCP test runs on DynamoDB Local, both data sources signed in as an emulator: one with an
+    MCP profile is served and reads by key, is refused a Scan by the guard and an `UPDATE` by the
+    check; one without isn't served. DynamoDB Local doesn't check IAM, so the profile's policy
+    refusing a write is tried by hand, with AWS;
+  - the manual has a chapter of its own, **DynamoDB**, after the consoles', and the data
+    sources and MCP chapters point to it. The engine count is eleven, with N4's Cassandra and
+    ScyllaDB, which landed first.
 
 Unlike N2's and N3's, the manual changes in the last layer, in one chapter, since N5 is
 reviewed as a stack and the chapter reads better whole.
+
+N5 is built. Its exit was checked against DynamoDB Local 3.3.2 on 2026-11-01, each part by a
+test that runs in CI: connecting through an endpoint (the driver's lifecycle test); tables,
+keys and indexes (the catalog tests); a `SELECT` by partition key paged past 500 items; a
+filtered `SELECT` held until allowed, and **Open data** read a page at a time (the engine's
+guard test and the console's); a number set read as `$numberSet` and shown as `<<…>>`
+(`dbrover-document`); an attribute of each type edited and read back with its type; a
+read-only data source refusing `UPDATE`; and an MCP client reading through an MCP profile and
+refused a Scan. ⌘. was checked against a server that never answers, since DynamoDB Local
+answers each request too quickly to be stopped part-way. What the exit needs by hand, before
+release, with an AWS account: a profile that signs in with IAM Identity Center, and an MCP
+profile whose IAM policy refuses a write by AWS itself.
 
 ### Later: Neo4j
 

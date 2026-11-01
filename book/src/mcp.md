@@ -89,7 +89,7 @@ Each statement it runs shows up in the data source's **History**, marked **MCP**
 | `list_objects` | One level of a data source's catalog, as the explorer shows it. Each object comes with the `path` that lists its children. A large level, such as a Redis database's keys or a schema of thousands of tables, comes 1,000 objects at a time, with a `next` to ask for the rest; a `filter` keeps the objects whose name contains it, searched by the database. |
 | `describe_table` | A table's columns with their types, its primary key, indexes and constraints. |
 | `get_definition` | The source of a view, function, trigger or index. |
-| `query` | Runs one statement that only reads (on Redis, one command, such as `HGETALL`; on MongoDB, one shell command, such as `db.orders.find({status: "open"})`, whose documents come as canonical Extended JSON; on Elasticsearch and OpenSearch, one request, such as a search, whose hits come as documents, or a `_sql` query; on Cassandra and ScyllaDB, one CQL `SELECT`, whose collections come as JSON), and returns its rows as text: as JSON, or with `format` set to `csv`, `markdown` or `jsonl`, as that text, ready to save or paste. |
+| `query` | Runs one statement that only reads (on Redis, one command, such as `HGETALL`; on MongoDB, one shell command, such as `db.orders.find({status: "open"})`, whose documents come as canonical Extended JSON; on Elasticsearch and OpenSearch, one request, such as a search, whose hits come as documents, or a `_sql` query; on Cassandra and ScyllaDB, one CQL `SELECT`, whose collections come as JSON; on DynamoDB, one PartiQL `SELECT`, refused if it would read a whole table while the data source's guard is on), and returns its rows as text: as JSON, or with `format` set to `csv`, `markdown` or `jsonl`, as that text, ready to save or paste. |
 | `explain` | Shows how the database would run one read statement, without running it. |
 | `execute` | Runs statements that change something, in one transaction. Only offered when the project allows `write`, `schema` or `admin`. |
 
@@ -150,8 +150,10 @@ a project's page warns when it allows changes and one of its data sources has no
 login.
 
 SQL Server has no read-only transaction, and Redis, MongoDB, Elasticsearch and OpenSearch,
-and Cassandra and ScyllaDB have no read-only session at all, so their data sources are served to MCP clients only through
-an [MCP login](#the-mcp-login) whose grants allow nothing but reading. Without one, a data
+Cassandra and ScyllaDB, and DynamoDB have no read-only session at all, so their data sources
+are served to MCP clients only through an [MCP login](#the-mcp-login) whose grants allow
+nothing but reading. DynamoDB's is an **MCP profile**, an AWS profile whose IAM policy allows
+only reading; see [DynamoDB](dynamodb.md#safety-and-ai-assistants). Without one, a data
 source isn't served, and the server's log says why when it starts; the project's page lists it
 too.
 

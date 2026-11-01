@@ -215,9 +215,14 @@ pub enum ConnectionConfig {
 }
 
 impl ConnectionConfig {
-    /// The same configuration signing in as `user`; `None` for engines without a login.
+    /// The same configuration signing in as `user`; `None` for engines without a login. A
+    /// DynamoDB data source's login is an AWS profile, and an emulator's is unused.
     pub fn with_user(&self, user: &str) -> Option<Self> {
         let mut config = self.clone();
+        if let Self::DynamoDb(dynamodb) = &mut config {
+            user.clone_into(&mut dynamodb.profile);
+            return Some(config);
+        }
         let server = config.server_mut()?;
         user.clone_into(&mut server.user);
         Some(config)
@@ -430,6 +435,13 @@ impl ConnectionConfig {
 }
 
 impl DriverKind {
+    /// Whether a data source signs in as someone whose grants the database enforces: a user
+    /// with a password, or, on DynamoDB, an AWS profile whose IAM policy AWS enforces. Such an
+    /// engine without a read-only mode is served to MCP clients through an MCP login.
+    pub fn has_logins(self) -> bool {
+        self.uses_password() || self == Self::DynamoDb
+    }
+
     /// Whether connections authenticate with a password, so the keychain is worth asking.
     /// Skipping the lookup for other drivers avoids pointless keychain prompts.
     pub fn uses_password(self) -> bool {
