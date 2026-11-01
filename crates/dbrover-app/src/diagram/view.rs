@@ -11,11 +11,9 @@ use egui::{
 
 use dbrover_store::DiagramKey;
 
-use super::geometry::{
-    self, HEADER_HEIGHT, MARK_WIDTH, PADDING, ROW_HEIGHT, TYPE_GAP, arrowhead, key_curve,
-};
+use super::geometry::{self, HEADER_HEIGHT, MARK_WIDTH, PADDING, ROW_HEIGHT, TYPE_GAP, arrowhead};
 use super::model::{BoxShape, Diagram, KeyLine, TableState};
-use super::{DiagramTab, TabAction};
+use super::{DiagramTab, PictureFormat, TabAction};
 use crate::fonts;
 use crate::icons;
 use crate::theme::Palette;
@@ -38,7 +36,7 @@ const ERROR_PREVIEW: usize = 48;
 
 pub(super) fn show(ui: &mut Ui, tab: &mut DiagramTab, key: &DiagramKey) -> Option<TabAction> {
     let palette = Palette::for_visuals(ui.visuals());
-    toolbar(ui, tab);
+    let exported = toolbar(ui, tab);
     let deleted = confirm_delete(ui, tab, key);
     measure(ui, &mut tab.diagram);
     if tab.diagram.place() {
@@ -67,7 +65,7 @@ pub(super) fn show(ui: &mut Ui, tab: &mut DiagramTab, key: &DiagramKey) -> Optio
             }
         });
     tab.scene_rect = scene_rect;
-    deleted.then_some(TabAction::Delete)
+    deleted.then_some(TabAction::Delete).or(exported)
 }
 
 /// **Delete diagram…**'s question, while it is asked; whether it was confirmed.
@@ -93,8 +91,11 @@ fn confirm_delete(ui: &Ui, tab: &mut DiagramTab, key: &DiagramKey) -> bool {
     deleted
 }
 
-fn toolbar(ui: &mut Ui, tab: &mut DiagramTab) {
+/// **Arrange**, **Fit**, **Export ›** and **Delete diagram…**, then how loading and the last
+/// save and export went. Returns the export chosen, if one was.
+fn toolbar(ui: &mut Ui, tab: &mut DiagramTab) -> Option<TabAction> {
     let palette = Palette::for_visuals(ui.visuals());
+    let mut action = None;
     widgets::toolbar(ui, |ui| {
         let arrange = widgets::icon_text(ui, icons::GRAPH, palette.primary, "Arrange");
         let arrange = widgets::name(ui.button(arrange), WidgetType::Button, "Arrange", true);
@@ -106,6 +107,15 @@ fn toolbar(ui: &mut Ui, tab: &mut DiagramTab) {
         if fit.on_hover_text("Show the whole diagram").clicked() {
             tab.fit = true;
         }
+        let export = widgets::icon_text(ui, icons::EXPORT, palette.text, "Export");
+        let menu = ui.menu_button(export, |ui| {
+            for format in PictureFormat::ALL {
+                if ui.button(format.label()).clicked() {
+                    action = Some(TabAction::Export(format));
+                }
+            }
+        });
+        widgets::name(menu.response, WidgetType::Button, "Export", true);
         let delete = widgets::icon_text(ui, icons::TRASH, palette.text, "Delete diagram…");
         let delete = widgets::name(
             ui.button(delete),
@@ -120,6 +130,15 @@ fn toolbar(ui: &mut Ui, tab: &mut DiagramTab) {
         if let Some(error) = &tab.save_error {
             ui.colored_label(palette.error, format!("Could not save: {error}"));
         }
+        match &tab.exported {
+            Some(Ok(path)) => {
+                ui.weak(format!("Exported to {}", path.display()));
+            }
+            Some(Err(error)) => {
+                ui.colored_label(palette.error, format!("Could not export: {error}"));
+            }
+            None => {}
+        }
         let (described, total) = tab.diagram.progress();
         if tab.diagram.is_loading() {
             ui.spinner();
@@ -131,6 +150,7 @@ fn toolbar(ui: &mut Ui, tab: &mut DiagramTab) {
             });
         }
     });
+    action
 }
 
 /// What a box shows under its header.
@@ -287,28 +307,26 @@ fn table_menu(response: &Response, index: usize, edits: &mut Vec<TableEdit>) {
 }
 
 fn paint_line(painter: &Painter, diagram: &Diagram, line: KeyLine, lit: bool, palette: &Palette) {
-    let (Some(from), Some(to)) = (diagram.rect(line.from), diagram.rect(line.to)) else {
+    let Some(path) = diagram.key_path(line) else {
         return;
     };
-    let curve = key_curve(
-        from,
-        geometry::row_middle(from, line.from_row),
-        to,
-        geometry::row_middle(to, line.to_row),
-    );
     let (color, width) = if lit {
         (palette.primary, 2.0)
     } else {
         (palette.text_weak, 1.2)
     };
-    painter.add(CubicBezierShape::from_points_stroke(
-        curve,
-        false,
-        Color32::TRANSPARENT,
-        Stroke::new(width, color),
-    ));
-    let head = arrowhead(&curve, ARROW_SIZE);
-    painter.add(Shape::convex_polygon(head.to_vec(), color, Stroke::NONE));
+    for curve in &path {
+        painter.add(CubicBezierShape::from_points_stroke(
+            *curve,
+            false,
+            Color32::TRANSPARENT,
+            Stroke::new(width, color),
+        ));
+    }
+    if let Some(last) = path.last() {
+        let head = arrowhead(last, ARROW_SIZE);
+        painter.add(Shape::convex_polygon(head.to_vec(), color, Stroke::NONE));
+    }
 }
 
 fn paint_box(painter: &Painter, diagram: &Diagram, index: usize, lit: bool, palette: &Palette) {

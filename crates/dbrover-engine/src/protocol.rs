@@ -207,6 +207,12 @@ pub enum Command {
     },
     /// Removes a diagram's file, if it exists.
     DeleteDiagram(DiagramKey),
+    /// Writes a picture of a diagram to a file, replacing it once whole. Answered by
+    /// [`Event::DiagramExported`].
+    ExportDiagram {
+        path: PathBuf,
+        picture: DiagramPicture,
+    },
     /// Reads a `.sql` file from anywhere on disk, to show in a console. Answered by
     /// [`Event::SqlFileRead`]. Reads, saves and checks of `.sql` files happen, and are
     /// answered, in the order sent.
@@ -388,6 +394,19 @@ pub struct DescribedTable {
     pub result: Result<Option<TableDescription>, String>,
 }
 
+/// A picture of a diagram, as [`Command::ExportDiagram`] writes it.
+#[derive(Debug, Clone)]
+pub enum DiagramPicture {
+    /// The SVG, as it is.
+    Svg(String),
+    /// The SVG drawn at `scale` times its size in points, with these fonts.
+    Png {
+        svg: String,
+        scale: f32,
+        fonts: dbrover_diagram::Fonts,
+    },
+}
+
 /// How a console's statements are committed.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum TransactionMode {
@@ -471,6 +490,11 @@ pub enum Event {
     DiagramSaveFailed {
         key: DiagramKey,
         error: String,
+    },
+    /// The answer to [`Command::ExportDiagram`].
+    DiagramExported {
+        path: PathBuf,
+        result: Result<(), String>,
     },
     /// The bindings `keymap.toml` sets, read at start-up (before the data sources) and on
     /// request. Empty if there is no file.

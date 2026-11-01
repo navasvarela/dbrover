@@ -310,6 +310,23 @@ impl Diagram {
             .reduce(|bounds, rect| bounds.union(rect))
     }
 
+    /// The line of `key`, as curves end to end, bending around the boxes between its tables;
+    /// `None` until both its tables are placed.
+    pub fn key_path(&self, key: KeyLine) -> Option<Vec<geometry::Curve>> {
+        let (from, to) = (self.rect(key.from)?, self.rect(key.to)?);
+        let others: Vec<Rect> = (0..self.tables.len())
+            .filter(|&index| index != key.from && index != key.to)
+            .filter_map(|index| self.rect(index))
+            .collect();
+        Some(geometry::key_path(
+            from,
+            geometry::row_middle(from, key.from_row),
+            to,
+            geometry::row_middle(to, key.to_row),
+            &others,
+        ))
+    }
+
     /// Every key between two tables of the diagram, each once.
     pub fn key_lines(&self) -> Vec<KeyLine> {
         let mut lines = Vec::new();

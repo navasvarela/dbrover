@@ -308,6 +308,12 @@ impl Engine {
                 }
             }
             Command::DeleteDiagram(key) => diagram_files::delete(&self.diagram_files, key).await,
+            Command::ExportDiagram { path, picture } => {
+                let events = self.events.clone();
+                tokio::spawn(
+                    async move { events.send(diagram_files::export(path, picture).await) },
+                );
+            }
             // Reads, saves and checks of `.sql` files are awaited rather than spawned, so they
             // happen, and are answered, in the order sent. A check spawned before a save could
             // otherwise read the file's old text and be answered after the save: the console,

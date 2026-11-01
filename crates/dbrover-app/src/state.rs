@@ -167,6 +167,7 @@ impl AppState {
             | Event::ConsolesLoaded(_)
             | Event::DiagramsLoaded(_)
             | Event::DiagramSaveFailed { .. }
+            | Event::DiagramExported { .. }
             | Event::KeymapLoaded { .. }
             | Event::CustomFileLoaded { .. }
             | Event::TrustedCommandsLoaded(_)

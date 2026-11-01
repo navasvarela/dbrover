@@ -108,18 +108,26 @@ struct Faces {
     mono: FontData,
 }
 
+const INTER_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/inter/Inter-Regular.ttf");
+const INTER_SEMIBOLD: &[u8] = include_bytes!("../../../assets/fonts/inter/Inter-SemiBold.ttf");
+const JETBRAINS_MONO: &[u8] =
+    include_bytes!("../../../assets/fonts/jetbrains-mono/JetBrainsMono-Regular.ttf");
+
+/// The bundled faces, for drawing a diagram's PNG with the app's own text whatever the
+/// system has.
+pub fn bundled_files() -> dbrover_diagram::Fonts {
+    dbrover_diagram::Fonts {
+        files: vec![INTER_REGULAR, INTER_SEMIBOLD, JETBRAINS_MONO],
+        fallback_family: "Inter",
+    }
+}
+
 impl Faces {
     fn bundled() -> Self {
         Self {
-            sans: FontData::from_static(include_bytes!(
-                "../../../assets/fonts/inter/Inter-Regular.ttf"
-            )),
-            sans_semibold: FontData::from_static(include_bytes!(
-                "../../../assets/fonts/inter/Inter-SemiBold.ttf"
-            )),
-            mono: FontData::from_static(include_bytes!(
-                "../../../assets/fonts/jetbrains-mono/JetBrainsMono-Regular.ttf"
-            )),
+            sans: FontData::from_static(INTER_REGULAR),
+            sans_semibold: FontData::from_static(INTER_SEMIBOLD),
+            mono: FontData::from_static(JETBRAINS_MONO),
         }
     }
 
