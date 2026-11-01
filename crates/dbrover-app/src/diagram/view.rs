@@ -5,15 +5,17 @@ use dbrover_core::TableDescription;
 use egui::epaint::CubicBezierShape;
 use egui::epaint::FontsView;
 use egui::{
-    Align2, Color32, CornerRadius, FontId, Id, Painter, Rect, Scene, Sense, Shape, Stroke,
-    StrokeKind, Ui, WidgetInfo, WidgetType, pos2, vec2,
+    Align, Align2, Color32, CornerRadius, FontId, Id, Layout, Modal, Painter, Rect, Response,
+    Scene, Sense, Shape, Stroke, StrokeKind, Ui, Vec2, WidgetInfo, WidgetType, pos2, vec2,
 };
 
-use super::DiagramTab;
+use dbrover_store::DiagramKey;
+
 use super::geometry::{
     self, HEADER_HEIGHT, MARK_WIDTH, PADDING, ROW_HEIGHT, TYPE_GAP, arrowhead, key_curve,
 };
 use super::model::{BoxShape, Diagram, KeyLine, TableState};
+use super::{DiagramTab, TabAction};
 use crate::fonts;
 use crate::icons;
 use crate::theme::Palette;
@@ -34,17 +36,20 @@ const ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.05..=1.5;
 /// How much of an error a box shows, in characters; the rest is in its tooltip.
 const ERROR_PREVIEW: usize = 48;
 
-pub(super) fn show(ui: &mut Ui, tab: &mut DiagramTab) {
+pub(super) fn show(ui: &mut Ui, tab: &mut DiagramTab, key: &DiagramKey) -> Option<TabAction> {
     let palette = Palette::for_visuals(ui.visuals());
     toolbar(ui, tab);
+    let deleted = confirm_delete(ui, tab, key);
     measure(ui, &mut tab.diagram);
     if tab.diagram.place() {
         tab.fit = true;
     }
-    if std::mem::take(&mut tab.fit)
+    // A diagram is shown whole once its boxes are placed: on opening, and after Arrange.
+    if tab.fit
         && let Some(bounds) = tab.diagram.bounds()
     {
         tab.scene_rect = bounds.expand(FIT_MARGIN);
+        tab.fit = false;
     }
     let background = ui.available_rect_before_wrap();
     ui.painter().rect_filled(background, 0.0, palette.panel);
@@ -52,9 +57,40 @@ pub(super) fn show(ui: &mut Ui, tab: &mut DiagramTab) {
     Scene::new()
         .zoom_range(ZOOM_RANGE)
         .show(ui, &mut scene_rect, |ui| {
-            draw(ui, &mut tab.diagram, &palette)
+            draw(ui, &mut tab.diagram, &palette);
+            #[cfg(test)]
+            {
+                tab.to_screen = ui
+                    .ctx()
+                    .layer_transform_to_global(ui.layer_id())
+                    .unwrap_or_default();
+            }
         });
     tab.scene_rect = scene_rect;
+    deleted.then_some(TabAction::Delete)
+}
+
+/// **Delete diagram…**'s question, while it is asked; whether it was confirmed.
+fn confirm_delete(ui: &Ui, tab: &mut DiagramTab, key: &DiagramKey) -> bool {
+    if !tab.confirming_delete {
+        return false;
+    }
+    let modal = Modal::new(Id::new(("delete_diagram", key))).show(ui.ctx(), |ui| {
+        ui.heading(format!("Delete the diagram {}?", key.name));
+        ui.label("Its file is removed. The database and its tables are untouched.");
+        ui.separator();
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let deleted = ui.button("Delete").clicked();
+            let cancelled = ui.button("Cancel").clicked();
+            (deleted, cancelled)
+        })
+        .inner
+    });
+    let (deleted, cancelled) = modal.inner;
+    if deleted || cancelled || modal.should_close() {
+        tab.confirming_delete = false;
+    }
+    deleted
 }
 
 fn toolbar(ui: &mut Ui, tab: &mut DiagramTab) {
@@ -70,7 +106,20 @@ fn toolbar(ui: &mut Ui, tab: &mut DiagramTab) {
         if fit.on_hover_text("Show the whole diagram").clicked() {
             tab.fit = true;
         }
+        let delete = widgets::icon_text(ui, icons::TRASH, palette.text, "Delete diagram…");
+        let delete = widgets::name(
+            ui.button(delete),
+            WidgetType::Button,
+            "Delete diagram…",
+            true,
+        );
+        if delete.clicked() {
+            tab.confirming_delete = true;
+        }
         ui.add_space(8.0);
+        if let Some(error) = &tab.save_error {
+            ui.colored_label(palette.error, format!("Could not save: {error}"));
+        }
         let (described, total) = tab.diagram.progress();
         if tab.diagram.is_loading() {
             ui.spinner();
@@ -176,26 +225,37 @@ fn type_font() -> FontId {
     FontId::monospace(TYPE_TEXT_SIZE)
 }
 
-/// Lets each box be dragged, then draws the lines under the boxes.
+/// What the user did to a table's box this frame.
+enum TableEdit {
+    Move(usize, Vec2),
+    AddRelated(usize),
+    Remove(usize),
+}
+
+/// Lets each box be dragged or right-clicked, then draws the lines under the boxes.
 fn draw(ui: &mut Ui, diagram: &mut Diagram, palette: &Palette) {
     let mut hovered = None;
+    let mut edits = Vec::new();
     for index in 0..diagram.tables().len() {
         let Some(rect) = diagram.rect(index) else {
             continue;
         };
         let table = &diagram.tables()[index];
         let label = diagram.label(&table.name);
-        let response = ui.interact(rect, Id::new(("diagram_table", &table.name)), Sense::drag());
+        let id = Id::new(("diagram_table", &table.name));
+        let response = ui.interact(rect, id, Sense::click_and_drag());
         response.widget_info(|| WidgetInfo::labeled(WidgetType::Other, true, &label));
         if response.hovered() || response.dragged() {
             hovered = Some(index);
         }
-        if let TableState::Failed(error) = &table.state {
-            response.clone().on_hover_text(error);
-        }
         if response.dragged() {
-            diagram.move_table(index, response.drag_delta());
+            edits.push(TableEdit::Move(index, response.drag_delta()));
         }
+        let response = match &table.state {
+            TableState::Failed(error) => response.on_hover_text(error),
+            _ => response,
+        };
+        table_menu(&response, index, &mut edits);
     }
     let painter = ui.painter();
     for line in diagram.key_lines() {
@@ -205,6 +265,25 @@ fn draw(ui: &mut Ui, diagram: &mut Diagram, palette: &Palette) {
     for index in 0..diagram.tables().len() {
         paint_box(painter, diagram, index, hovered == Some(index), palette);
     }
+    // After drawing, since removing a table moves the ones after it.
+    for edit in edits {
+        match edit {
+            TableEdit::Move(index, delta) => diagram.move_table(index, delta),
+            TableEdit::AddRelated(index) => diagram.add_related(index),
+            TableEdit::Remove(index) => diagram.remove(index),
+        }
+    }
+}
+
+fn table_menu(response: &Response, index: usize, edits: &mut Vec<TableEdit>) {
+    response.context_menu(|ui| {
+        if widgets::menu_item(ui, icons::GRAPH, "Add related tables").clicked() {
+            edits.push(TableEdit::AddRelated(index));
+        }
+        if widgets::menu_item(ui, icons::X, "Remove from diagram").clicked() {
+            edits.push(TableEdit::Remove(index));
+        }
+    });
 }
 
 fn paint_line(painter: &Painter, diagram: &Diagram, line: KeyLine, lit: bool, palette: &Palette) {

@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use dbrover_core::{DataSource, DataSourceId, Password, ProjectId, describe_error};
 use dbrover_store::{
-    ConsoleFiles, CustomFiles, ImportPlan, KeymapFile, Project, Secret, SecretError, SecretStore,
-    SettingsFile, TrustedCommand, TrustedCommands, TrustedCommandsFile,
+    ConsoleFiles, CustomFiles, DiagramFiles, ImportPlan, KeymapFile, Project, Secret, SecretError,
+    SecretStore, SettingsFile, TrustedCommand, TrustedCommands, TrustedCommandsFile,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::{oneshot, watch};
@@ -14,6 +14,7 @@ use tokio::task::{JoinError, JoinSet};
 
 use crate::config_files;
 use crate::console_files;
+use crate::diagram_files;
 use crate::events::EventSink;
 use crate::export;
 use crate::history::{HistoryExport, HistoryLog};
@@ -69,6 +70,7 @@ pub(crate) async fn run(
     let registry = Registry::load(config.data_sources).await;
     events.send(registry.loaded_event());
     events.send(console_files::load(&config.consoles).await);
+    events.send(diagram_files::load(&config.diagrams).await);
     let (history, history_task) = HistoryLog::start(config.history, events.clone());
     if let Some(retention) = retention {
         history.prune(retention);
@@ -83,6 +85,7 @@ pub(crate) async fn run(
         tunnels: Tunnels::new(config.known_hosts),
         idle_ping_after: config.idle_ping_after,
         console_files: config.consoles,
+        diagram_files: config.diagrams,
         keymap_file: config.keymap,
         settings_file: config.settings,
         custom_files: config.custom_files,
@@ -125,6 +128,7 @@ struct Engine {
     tunnels: Tunnels,
     idle_ping_after: Duration,
     console_files: ConsoleFiles,
+    diagram_files: DiagramFiles,
     keymap_file: KeymapFile,
     settings_file: SettingsFile,
     custom_files: CustomFiles,
@@ -298,6 +302,12 @@ impl Engine {
             Command::DeleteConsoleFile(key) => {
                 console_files::delete(&self.console_files, key).await;
             }
+            Command::SaveDiagram { key, file } => {
+                if let Some(failed) = diagram_files::save(&self.diagram_files, key, file).await {
+                    self.events.send(failed);
+                }
+            }
+            Command::DeleteDiagram(key) => diagram_files::delete(&self.diagram_files, key).await,
             // Reads, saves and checks of `.sql` files are awaited rather than spawned, so they
             // happen, and are answered, in the order sent. A check spawned before a save could
             // otherwise read the file's old text and be answered after the save: the console,

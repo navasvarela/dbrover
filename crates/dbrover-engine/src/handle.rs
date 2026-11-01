@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dbrover_store::{
-    ConsoleFiles, CustomFiles, DataSourceFile, HistoryFile, KeymapFile, ProjectFile, SecretStore,
-    SettingsFile, TrustedCommandsFile,
+    ConsoleFiles, CustomFiles, DataSourceFile, DiagramFiles, HistoryFile, KeymapFile, ProjectFile,
+    SecretStore, SettingsFile, TrustedCommandsFile,
 };
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender, error::TryRecvError};
@@ -38,6 +38,7 @@ pub struct EngineConfig {
     pub projects: ProjectFile,
     pub secrets: Arc<dyn SecretStore>,
     pub consoles: ConsoleFiles,
+    pub diagrams: DiagramFiles,
     pub history: HistoryFile,
     pub keymap: KeymapFile,
     pub settings: SettingsFile,

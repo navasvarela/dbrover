@@ -10,9 +10,10 @@ use dbrover_core::{
 use dbrover_export::{ExportSpec, SqlTable};
 use dbrover_sql::{ExistingTable, ParameterValues};
 use dbrover_store::{
-    ActionId, ConsoleKey, CustomFile, CustomFileKind, HistoryEntry, HistoryQuery, ImportPlan,
-    ImportPreview, KeymapBindings, McpOverrides, McpPermissions, Project, Projects, RowChange,
-    SavedConsole, Secret, Separator, Settings, SqlFileContents, TrustedCommand, TrustedCommands,
+    ActionId, ConsoleKey, CustomFile, CustomFileKind, DiagramFile, DiagramKey, HistoryEntry,
+    HistoryQuery, ImportPlan, ImportPreview, KeymapBindings, McpOverrides, McpPermissions, Project,
+    Projects, RowChange, SavedConsole, SavedDiagram, Secret, Separator, Settings, SqlFileContents,
+    TrustedCommand, TrustedCommands,
 };
 
 use crate::{
@@ -198,6 +199,14 @@ pub enum Command {
     },
     /// Removes a console's file, if it exists.
     DeleteConsoleFile(ConsoleKey),
+    /// Writes a diagram's file. Saves are applied in the order sent. A failure is reported as
+    /// [`Event::DiagramSaveFailed`].
+    SaveDiagram {
+        key: DiagramKey,
+        file: DiagramFile,
+    },
+    /// Removes a diagram's file, if it exists.
+    DeleteDiagram(DiagramKey),
     /// Reads a `.sql` file from anywhere on disk, to show in a console. Answered by
     /// [`Event::SqlFileRead`]. Reads, saves and checks of `.sql` files happen, and are
     /// answered, in the order sent.
@@ -457,6 +466,12 @@ pub enum Event {
     },
     /// Every saved console file, read once at start-up, right after the data sources.
     ConsolesLoaded(Vec<SavedConsole>),
+    /// Every saved diagram file, read once at start-up, right after the consoles.
+    DiagramsLoaded(Vec<SavedDiagram>),
+    DiagramSaveFailed {
+        key: DiagramKey,
+        error: String,
+    },
     /// The bindings `keymap.toml` sets, read at start-up (before the data sources) and on
     /// request. Empty if there is no file.
     KeymapLoaded {

@@ -222,6 +222,7 @@ fn prunes_at_start_up_and_when_the_retention_is_saved() {
     engine.expect(Event::ProjectsLoaded(dbrover_store::Projects::default()));
     engine.expect(Event::DataSourcesLoaded(vec![]));
     engine.expect(Event::ConsolesLoaded(vec![]));
+    engine.expect(Event::DiagramsLoaded(vec![]));
     let sqls = |engine: &mut TestEngine| -> Vec<String> {
         history_of(engine, id)
             .into_iter()

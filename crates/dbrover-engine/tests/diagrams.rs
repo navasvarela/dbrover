@@ -1,6 +1,6 @@
-//! Describing the tables of a diagram (ER1): many tables in one command on the explorer's
-//! connection, each answered with its description, `None` for one that isn't a plain table,
-//! in the order asked. On PostgreSQL, when `DBROVER_TEST_POSTGRES_URL` is set, a schema of 150
+//! ER diagrams (ER1): describing many tables in one command on the explorer's connection,
+//! each answered with its description, `None` for one that isn't a plain table, in the order
+//! asked; and diagram files, saved, read again at start-up and deleted. On PostgreSQL, when `DBROVER_TEST_POSTGRES_URL` is set, a schema of 150
 //! tables is described eight at a time, and how long that takes is printed.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -16,6 +16,9 @@ use dbrover_core::{
     RelationName, Route, SafetyLevel,
 };
 use dbrover_engine::{Command, DescribedTable, Event, PasswordUpdate};
+use dbrover_store::{
+    DiagramFile, DiagramFolder, DiagramKey, DiagramName, PlacedTable, SavedDiagram,
+};
 
 const SHOP: &str = "
     CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
@@ -111,6 +114,51 @@ fn describes_each_table_in_order_and_none_for_what_isnt_a_table() {
     assert_eq!(referenced, ["customers", "products"]);
     let customers = described[3].result.as_ref().unwrap().as_ref().unwrap();
     assert_eq!(customers.referenced_by.len(), 1, "orders points at it");
+}
+
+#[test]
+fn saves_a_diagram_reads_it_at_the_next_start_and_deletes_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = start(dir.path());
+    let key = DiagramKey {
+        folder: DiagramFolder::NoProject,
+        name: DiagramName::try_from("shop".to_owned()).unwrap(),
+    };
+    let file = DiagramFile {
+        data_source: DataSourceId::generate(),
+        schema: Some("main".to_owned()),
+        tables: vec![PlacedTable {
+            schema: "main".to_owned(),
+            name: "orders".to_owned(),
+            x: Some(260),
+            y: Some(-40),
+        }],
+    };
+    engine.send(Command::SaveDiagram {
+        key: key.clone(),
+        file: file.clone(),
+    });
+    engine.shut_down();
+
+    let mut restarted = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    restarted.expect(Event::Started);
+    let saved = loop {
+        if let Event::DiagramsLoaded(saved) = restarted.next_event() {
+            break saved;
+        }
+    };
+    assert_eq!(
+        saved,
+        [SavedDiagram {
+            key: key.clone(),
+            file
+        }]
+    );
+    assert!(dir.path().join("diagrams/_none/shop.toml").is_file());
+
+    restarted.send(Command::DeleteDiagram(key));
+    restarted.shut_down();
+    assert!(!dir.path().join("diagrams/_none/shop.toml").exists());
 }
 
 #[test]

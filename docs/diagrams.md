@@ -105,25 +105,30 @@ throwing away where the user moved things.
   `diagrams/_none/<name>.toml` for a data source in no project (see
   [decisions](#decisions)). The engine owns the folder, as it owns `consoles/`: it reads every
   diagram at start-up and writes one atomically when asked.
-- **What the file holds:** the data source's id, and each table with where its box sits. Columns
+- **What the file holds:** the data source's id, the schema it was opened on (whose tables it
+  names without it), and each table with where its box sits, in whole points. Columns
   and keys are not saved: they are described again when the diagram opens, so a diagram never
   shows a schema older than the database's.
 
   ```toml
-  # A DbRover ER diagram. Each table is described again when the diagram opens.
+  # A DbRover ER diagram: its data source, and where each table's box sits. Each table is
+  # described again when the diagram opens. DbRover rewrites this file as the diagram changes,
+  # dropping comments.
+
   data_source = "6f1c0d9e-3b8a-4c3e-9f57-2d1e8a7b5c40"
+  schema = "public"
 
   [[table]]
   schema = "public"
   name = "customers"
-  x = 0.0
-  y = 0.0
+  x = 0
+  y = 0
 
   [[table]]
   schema = "public"
   name = "orders"
-  x = 260.0
-  y = 0.0
+  x = 260
+  y = 48
   ```
 
 - **When:** a second after the last change (a table moved, added or removed, Arrange), as a

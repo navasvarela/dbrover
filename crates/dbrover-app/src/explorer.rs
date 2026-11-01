@@ -9,7 +9,7 @@ use dbrover_core::{
 use dbrover_engine::SessionState;
 use dbrover_language::QueryLanguage;
 use dbrover_sql::{Capabilities, Dialect, SchemaCreation, TableChange, UserModel};
-use dbrover_store::{ActionId, ActionTarget, ConsoleKey, CustomAction, Project};
+use dbrover_store::{ActionId, ActionTarget, ConsoleKey, CustomAction, DiagramKey, Project};
 use egui::{
     Color32, CornerRadius, Id, Label, Rect, Response, RichText, ScrollArea, Sense, Shape, TextEdit,
     TextStyle, Ui, WidgetInfo, WidgetType, vec2,
@@ -18,6 +18,7 @@ use egui::{
 use crate::catalog_tree::{CatalogTree, Children, LevelEnd};
 use crate::consoles::SavedConsoles;
 use crate::custom_actions;
+use crate::diagram::SavedDiagrams;
 use crate::icons;
 use crate::mcp_client_config;
 use crate::state::{DataSourceEntry, DataSources};
@@ -73,6 +74,8 @@ pub enum ExplorerAction {
     Diagram(DataSourceId, CatalogPath),
     /// Diagram with related tables: the table at the path and every table its keys join.
     DiagramRelated(DataSourceId, CatalogPath),
+    /// Reopens a saved diagram, or brings its tab to the front.
+    OpenDiagram(DiagramKey),
     /// Makes the node at the path, or the data source for the root, the one that keys and the
     /// Actions menu act on.
     Select(DataSourceId, CatalogPath),
@@ -150,6 +153,8 @@ pub struct ExplorerView<'a> {
     pub projects: &'a [Project],
     /// Offered for reopening in each data source's menu.
     pub saved_consoles: &'a SavedConsoles,
+    /// Offered for reopening in each data source's menu, too.
+    pub saved_diagrams: &'a SavedDiagrams,
     /// Offered in the menus of the nodes they apply to.
     pub actions: &'a [CustomAction],
 }
@@ -184,6 +189,7 @@ pub fn show(
             let tree = SourcesView {
                 projects: view.projects,
                 saved_consoles: view.saved_consoles,
+                saved_diagrams: view.saved_diagrams,
                 actions: view.actions,
                 selected: options.selected.as_ref(),
             };
@@ -205,6 +211,7 @@ pub fn show(
 struct SourcesView<'a> {
     projects: &'a [Project],
     saved_consoles: &'a SavedConsoles,
+    saved_diagrams: &'a SavedDiagrams,
     actions: &'a [CustomAction],
     selected: Option<&'a (DataSourceId, CatalogPath)>,
 }
@@ -573,6 +580,7 @@ fn data_source_menu(
         actions.push(ExplorerAction::NewConsole(id));
     }
     saved_consoles_menu(ui, id, tree.saved_consoles, actions);
+    saved_diagrams_menu(ui, id, tree.saved_diagrams, actions);
     let root = CatalogPath::root();
     let mut new = Vec::new();
     if let Some(capabilities) = QueryLanguage::from(entry.data_source.config.driver())
@@ -1210,6 +1218,27 @@ fn saved_consoles_menu(
             }
         }
     });
+}
+
+/// Lists the data source's saved diagrams, if it has any.
+fn saved_diagrams_menu(
+    ui: &mut Ui,
+    id: DataSourceId,
+    saved_diagrams: &SavedDiagrams,
+    actions: &mut Vec<ExplorerAction>,
+) {
+    if saved_diagrams.of(id).next().is_none() {
+        return;
+    }
+    let label = widgets::icon_text(ui, icons::GRAPH, Color32::PLACEHOLDER, "Diagrams");
+    let menu = ui.menu_button(label, |ui| {
+        for key in saved_diagrams.of(id) {
+            if ui.button(key.name.as_str()).clicked() {
+                actions.push(ExplorerAction::OpenDiagram(key.clone()));
+            }
+        }
+    });
+    widgets::name(menu.response, WidgetType::Button, "Diagrams", true);
 }
 
 fn toggle_expansion(id: DataSourceId, path: &CatalogPath, expanded: bool) -> ExplorerAction {

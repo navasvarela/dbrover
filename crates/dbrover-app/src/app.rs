@@ -27,7 +27,9 @@ use crate::data_source_dialog::{DataSourceDialog, DialogAction};
 use crate::data_source_form::McpPasswordChange;
 use crate::definition_window::DefinitionWindow;
 use crate::delete_dialog::{DeleteChoice, DeleteConfirmation};
-use crate::diagram::{Diagram, DiagramDialog, DiagramDialogAction, Diagrams, Growth};
+use crate::diagram::{
+    Diagram, DiagramAction, DiagramDialog, DiagramDialogAction, Diagrams, Growth,
+};
 use crate::explorer::{ExplorerAction, ExplorerOptions};
 use crate::export_dialog::{
     self, ExportChoices, ExportDialog, ExportDialogAction, ExportPreview, ExportSubject,
@@ -194,8 +196,7 @@ impl DbRoverApp {
         // No saved layout means a first launch (or a layout version change): maximize the
         // window rather than keep the small default size.
         let maximize_window = saved_layout.is_none();
-        let mut dock = saved_layout.unwrap_or_else(workspace::default_layout);
-        workspace::close_diagram_tabs(&mut dock);
+        let dock = saved_layout.unwrap_or_else(workspace::default_layout);
         let export_choices = cc
             .storage
             .and_then(|storage| eframe::get_value(storage, export_dialog::STORAGE_KEY))
@@ -334,6 +335,12 @@ impl DbRoverApp {
         self.diagrams.iter()
     }
 
+    /// Where a diagram's table was last drawn on screen.
+    #[cfg(test)]
+    pub fn diagram_table_on_screen(&self, key: &DiagramKey, table: &str) -> Option<egui::Rect> {
+        self.diagrams.screen_rect(key, table)
+    }
+
     /// The open consoles, for tests that look at what a console drew.
     #[cfg(test)]
     pub fn open_consoles(&self) -> impl Iterator<Item = &crate::console::QueryConsole> {
@@ -446,6 +453,9 @@ impl DbRoverApp {
             self.keymap_file = result.clone();
             self.keymap_path = Some(path.clone());
             self.rebuild_keymap();
+        }
+        if matches!(event, Event::DiagramsLoaded(_)) {
+            self.restore_diagram_tabs();
         }
         if matches!(event, Event::ConsolesLoaded(_)) {
             self.restore_console_tabs();
@@ -921,6 +931,46 @@ impl DbRoverApp {
         self.send_all(reads);
     }
 
+    /// Reopens the diagram tabs the saved layout holds, now that their files are read.
+    fn restore_diagram_tabs(&mut self) {
+        let Self {
+            dock,
+            diagrams,
+            state,
+            ..
+        } = self;
+        let mut first_batches = Vec::new();
+        workspace::restore_diagrams(dock, |key| {
+            let data_source_exists = diagrams
+                .data_source_of(key)
+                .is_some_and(|id| state.data_source(id).is_some());
+            if !data_source_exists {
+                return false;
+            }
+            first_batches.extend(diagrams.reopen(key));
+            diagrams.is_open(key)
+        });
+        self.send_all(first_batches);
+    }
+
+    fn save_diagrams(&mut self, ctx: &egui::Context) {
+        let (saves, next_due) = self.diagrams.due_saves(Instant::now());
+        self.send_all(saves);
+        if let Some(delay) = next_due {
+            repaint::request_repaint_after_pause(ctx, delay);
+        }
+    }
+
+    fn handle_diagram_action(&mut self, action: DiagramAction) {
+        match action {
+            DiagramAction::Delete(key) => {
+                self.diagrams.forget(&key);
+                workspace::close_diagram_tab(&mut self.dock, &key);
+                self.send(Command::DeleteDiagram(key));
+            }
+        }
+    }
+
     fn send_all(&self, commands: impl IntoIterator<Item = Command>) {
         for command in commands {
             self.send(command);
@@ -1050,6 +1100,13 @@ impl DbRoverApp {
             ExplorerAction::ImportCsv(id, path) => self.open_csv_import(id, &path),
             ExplorerAction::ExportData(id, path) => self.open_table_export(id, &path),
             ExplorerAction::Diagram(id, path) => self.open_diagram_dialog(id, &path),
+            ExplorerAction::OpenDiagram(key) => {
+                let first = self.diagrams.reopen(&key);
+                if self.diagrams.is_open(&key) {
+                    workspace::open_diagram_tab(&mut self.dock, key);
+                }
+                self.send_if(first);
+            }
             ExplorerAction::DiagramRelated(id, path) => {
                 let schema = path.name_of(NodeKind::Schema).map(str::to_owned);
                 if let (Some(schema), Some(table)) = (schema, path.last()) {
@@ -2253,6 +2310,7 @@ impl eframe::App for DbRoverApp {
         let mut console_actions = Vec::new();
         let mut close_requests = Vec::new();
         let mut settings_actions = Vec::new();
+        let mut diagram_actions = Vec::new();
         let palette = &Palette::for_visuals(ui.visuals());
         let lint = self.settings.lint_options();
         let (open_consoles, saved_consoles, recent_completions) =
@@ -2285,6 +2343,7 @@ impl eframe::App for DbRoverApp {
                     mcp_defaults: &mut self.mcp_defaults,
                     settings_actions: &mut settings_actions,
                     diagrams: &mut self.diagrams,
+                    diagram_actions: &mut diagram_actions,
                 },
             );
         if let Some(text) = self.clipboard.take() {
@@ -2295,6 +2354,9 @@ impl eframe::App for DbRoverApp {
         }
         for action in settings_actions {
             self.handle_settings_action(action, &ctx);
+        }
+        for action in diagram_actions {
+            self.handle_diagram_action(action);
         }
         for (console, action) in console_actions {
             match action {
@@ -2331,6 +2393,7 @@ impl eframe::App for DbRoverApp {
         self.show_rollback_confirmation(&ctx);
 
         self.save_consoles(&ctx);
+        self.save_diagrams(&ctx);
         self.check_sql_files(&ctx);
         self.show_open_file_dialog(&ctx);
         let given = self.consoles.show_parameters_dialog(&ctx);
@@ -2388,6 +2451,8 @@ impl eframe::App for DbRoverApp {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         // Sent before the engine stops: it handles every queued command before shutting down.
         let unsaved = self.consoles.unsaved();
+        self.send_all(unsaved);
+        let unsaved = self.diagrams.unsaved();
         self.send_all(unsaved);
         self.shut_down_engine();
         if let Some(restart) = self.updates.restart_after_quit() {
@@ -2470,6 +2535,7 @@ mod tests {
             projects: ProjectFile::new(dir.join("projects.toml")),
             secrets: Arc::new(NoSecrets),
             consoles: ConsoleFiles::new(dir.join("consoles")),
+            diagrams: dbrover_store::DiagramFiles::new(dir.join("diagrams")),
             history: HistoryFile::new(dir.join("history.sqlite")),
             keymap: KeymapFile::new(dir.join("keymap.toml")),
             settings: SettingsFile::new(dir.join("settings.toml")),

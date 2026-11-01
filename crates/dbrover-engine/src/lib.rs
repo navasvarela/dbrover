@@ -8,6 +8,7 @@
 mod command_loop;
 mod config_files;
 mod console_files;
+mod diagram_files;
 mod environment;
 mod events;
 mod export;

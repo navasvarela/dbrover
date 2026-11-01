@@ -31,7 +31,10 @@ pub use custom::{
     TrustedCommandsFile, driver_id, parse_actions, parse_snippets, parse_theme,
 };
 pub use data_sources::{DataSourceFile, StoreError};
-pub use diagrams::{DiagramFolder, DiagramKey, DiagramName, InvalidDiagramName};
+pub use diagrams::{
+    DiagramFile, DiagramFiles, DiagramFolder, DiagramKey, DiagramName, DiagramStoreError,
+    InvalidDiagramName, PlacedTable, SavedDiagram,
+};
 pub use history::{
     History, HistoryEntry, HistoryError, HistoryExportError, HistoryFile, HistoryOutcome,
     HistoryQuery, HistorySource, HistorySourceKind, NamedCell, ReplacedCell, RowChange,

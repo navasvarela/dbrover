@@ -165,6 +165,8 @@ impl AppState {
             | Event::ProjectSaveFailed { .. }
             | Event::McpDefaultsSaveFailed { .. }
             | Event::ConsolesLoaded(_)
+            | Event::DiagramsLoaded(_)
+            | Event::DiagramSaveFailed { .. }
             | Event::KeymapLoaded { .. }
             | Event::CustomFileLoaded { .. }
             | Event::TrustedCommandsLoaded(_)
