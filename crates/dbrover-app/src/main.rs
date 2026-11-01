@@ -80,8 +80,8 @@ use std::sync::Arc;
 use anyhow::{Context as _, anyhow};
 use dbrover_engine::{EngineConfig, GithubReleases, PackagerInstaller, ProcessRunner};
 use dbrover_store::{
-    APP_NAME, AppPaths, ConsoleFiles, DataSourceFile, HistoryFile, KeymapFile, ProjectFile,
-    SettingsFile, os_keychain,
+    APP_NAME, AppPaths, ConsoleFiles, DataSourceFile, DiagramFiles, HistoryFile, KeymapFile,
+    ProjectFile, SettingsFile, os_keychain,
 };
 
 use crate::app::DbRoverApp;
@@ -152,6 +152,7 @@ fn open_window(adopted: Adopted, log_feed: LogFeed, files: Vec<PathBuf>) -> anyh
         projects: ProjectFile::new(paths.projects_file()),
         secrets: os_keychain(),
         consoles: ConsoleFiles::new(paths.consoles_dir()),
+        diagrams: DiagramFiles::new(paths.diagrams_dir()),
         history: HistoryFile::new(paths.history_file()),
         keymap: KeymapFile::new(paths.keymap_file()),
         settings: SettingsFile::new(paths.settings_file()),

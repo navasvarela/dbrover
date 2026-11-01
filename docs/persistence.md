@@ -14,6 +14,8 @@ dbrover/
 ├── app.ron               # eframe storage: window size, egui_dock layout, open tabs
 ├── consoles/             # M4
 │   └── <data-source-id>/<console-name>.sql
+├── diagrams/             # ER1, ER diagrams
+│   └── <project-slug or _none>/<diagram-name>.toml
 ├── history.sqlite        # M4, query history
 ├── trusted_commands.toml # H2 and W9, commands trusted to run (data folder, see below)
 └── logs/dbrover.<date>.log # daily rolling file log, last 7 kept
@@ -159,6 +161,23 @@ An id in `lint.disabled` that names no rule is listed in the Settings window, an
 - A file that can't be read is logged and left alone; its tab is dropped from the layout.
 - Closing a console's tab removes its file if nobody typed in it, and keeps it otherwise.
 - Deleting a data source leaves its console folder in place: the SQL in it is the user's.
+
+## ER diagrams
+
+- One TOML file per diagram (ER1, [ER diagrams](diagrams.md#saving)):
+  `diagrams/<project-slug>/<name>.toml`, or `diagrams/_none/<name>.toml` for a data source in no
+  project (`_none` can't be a slug, which has no underscores). The file names its data source by
+  id, the schema it was opened on, and each table with where its box sits, in whole points; a
+  table without `x` and `y` is placed by the layout. Columns and keys are never saved: they are
+  described again when the diagram opens.
+- Owned by the engine (`DiagramFiles` in `dbrover-store`): read once at start-up, right after
+  the consoles, and written atomically on `SaveDiagram`. The UI sends a save a second after the
+  diagram last changed, when its tab closes, and for every unsaved diagram on quit. An unknown
+  field makes the file unreadable, so a typo is reported; rewriting it drops comments.
+- Listed under the data source's **Diagrams** menu wherever they are under `diagrams/`, by the
+  data source they name: moving a data source to another project moves no file.
+- A file that can't be read is logged and left alone. Deleting a data source leaves its
+  diagrams; **Delete diagram…** in a diagram's tab removes its file.
 
 ## `.sql` files
 

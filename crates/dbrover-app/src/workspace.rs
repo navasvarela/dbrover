@@ -15,7 +15,7 @@ use crate::console::{
 };
 use crate::consoles::SavedConsoles;
 use crate::custom_actions::{SubjectKind, SubjectOn};
-use crate::diagram::Diagrams;
+use crate::diagram::{DiagramAction, Diagrams};
 use crate::explorer::{self, ExplorerAction, ExplorerOptions};
 use crate::fonts;
 use crate::icons::{self, Icon, Role};
@@ -98,22 +98,33 @@ pub fn focus_console_tab(layout: &mut DockState<Tab>, key: &ConsoleKey) {
     focus_tab(layout, &Tab::QueryConsole(key.clone()));
 }
 
-/// Adds a diagram's tab next to the consoles, and makes it the active tab.
+/// Brings a diagram's tab to the front, opening it next to the consoles if it isn't open.
 pub fn open_diagram_tab(layout: &mut DockState<Tab>, key: DiagramKey) {
-    open_in_main_area(layout, Tab::Diagram(key));
+    let tab = Tab::Diagram(key);
+    if !focus_tab(layout, &tab) {
+        open_in_main_area(layout, tab);
+    }
 }
 
-/// Drops every diagram tab. A diagram isn't kept anywhere yet, so a restored layout's diagram
-/// tabs would have nothing to show.
-pub fn close_diagram_tabs(layout: &mut DockState<Tab>) {
-    let keys: Vec<Tab> = layout
+pub fn close_diagram_tab(layout: &mut DockState<Tab>, key: &DiagramKey) {
+    if let Some(path) = layout.find_tab(&Tab::Diagram(key.clone())) {
+        layout.remove_tab(path);
+    }
+}
+
+/// Drops the diagram tabs `reopen` can't reopen (their file or data source is gone), so a
+/// restored layout never shows an empty tab.
+pub fn restore_diagrams(layout: &mut DockState<Tab>, mut reopen: impl FnMut(&DiagramKey) -> bool) {
+    let keys: Vec<DiagramKey> = layout
         .iter_all_tabs()
-        .filter(|(_, tab)| matches!(tab, Tab::Diagram(_)))
-        .map(|(_, tab)| tab.clone())
+        .filter_map(|(_, tab)| match tab {
+            Tab::Diagram(key) => Some(key.clone()),
+            _ => None,
+        })
         .collect();
-    for tab in keys {
-        if let Some(path) = layout.find_tab(&tab) {
-            layout.remove_tab(path);
+    for key in keys {
+        if !reopen(&key) {
+            close_diagram_tab(layout, &key);
         }
     }
 }
@@ -201,6 +212,8 @@ pub struct Panels<'a> {
     /// What the user asked of the Settings tab this frame.
     pub settings_actions: &'a mut Vec<SettingsAction>,
     pub diagrams: &'a mut Diagrams,
+    /// What the user asked of the diagram tabs this frame.
+    pub diagram_actions: &'a mut Vec<DiagramAction>,
 }
 
 impl TabViewer for Panels<'_> {
@@ -289,6 +302,7 @@ impl TabViewer for Panels<'_> {
                     data_sources: self.data_sources,
                     projects: self.projects,
                     saved_consoles: self.saved_consoles,
+                    saved_diagrams: self.diagrams.saved(),
                     actions: self.custom_actions,
                 },
                 self.explorer_options,
@@ -304,7 +318,7 @@ impl TabViewer for Panels<'_> {
                 },
                 self.settings_actions,
             ),
-            Tab::Diagram(key) => self.diagrams.show(ui, key),
+            Tab::Diagram(key) => self.diagram_actions.extend(self.diagrams.show(ui, key)),
             Tab::QueryConsole(key) => match self.consoles.get_mut(key) {
                 Some(query_console) => {
                     let data_source = query_console.data_source();

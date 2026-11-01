@@ -74,6 +74,11 @@ impl AppPaths {
         self.dirs.config_dir().join("projects.toml")
     }
 
+    /// ER diagram files, one folder per project. Not guaranteed to exist yet.
+    pub fn diagrams_dir(&self) -> PathBuf {
+        self.dirs.config_dir().join("diagrams")
+    }
+
     /// Query console files, one folder per data source. Not guaranteed to exist yet.
     pub fn consoles_dir(&self) -> PathBuf {
         self.dirs.config_dir().join("consoles")

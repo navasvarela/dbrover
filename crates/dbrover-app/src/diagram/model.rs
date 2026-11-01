@@ -7,6 +7,7 @@ use std::collections::{HashSet, VecDeque};
 use dbrover_core::{DataSourceId, Identifier, RelationName, TableDescription, TableName};
 use dbrover_diagram::{Graph, NodeId, Point, Size};
 use dbrover_engine::{Command, DescribedTable};
+use dbrover_store::{DiagramFile, PlacedTable};
 use egui::{Pos2, Rect, Vec2, pos2, vec2};
 
 use super::geometry;
@@ -103,6 +104,44 @@ impl Diagram {
         diagram
     }
 
+    /// The diagram a file holds, every table to describe again, each where it was left.
+    pub fn from_file(file: &DiagramFile) -> Self {
+        let tables: Vec<TableName> = file
+            .tables
+            .iter()
+            .map(|table| TableName {
+                schema: table.schema.clone(),
+                name: table.name.clone(),
+            })
+            .collect();
+        let mut diagram = Self::new(file.data_source, file.schema.clone(), tables, None);
+        for (table, placed) in diagram.tables.iter_mut().zip(&file.tables) {
+            if let (Some(x), Some(y)) = (placed.x, placed.y) {
+                table.position = Some(pos2(x as f32, y as f32));
+            }
+        }
+        diagram.arranged = diagram.tables.iter().all(|table| table.position.is_none());
+        diagram
+    }
+
+    /// What the diagram's file holds: its tables, each where its box sits, to the point.
+    pub fn to_file(&self) -> DiagramFile {
+        DiagramFile {
+            data_source: self.data_source,
+            schema: self.home_schema.clone(),
+            tables: self
+                .tables
+                .iter()
+                .map(|table| PlacedTable {
+                    schema: table.name.schema.clone(),
+                    name: table.name.name.clone(),
+                    x: table.position.map(|p| p.x.round() as i32),
+                    y: table.position.map(|p| p.y.round() as i32),
+                })
+                .collect(),
+        }
+    }
+
     pub fn tables(&self) -> &[DiagramTable] {
         &self.tables
     }
@@ -188,6 +227,26 @@ impl Diagram {
                 self.unplaced = true;
             }
         }
+    }
+
+    /// Adds the tables the table at `index` joins, both ways: **Add related tables**.
+    pub fn add_related(&mut self, index: usize) {
+        let Some(table) = self.tables.get(index) else {
+            return;
+        };
+        let related = self.related(std::slice::from_ref(&table.name), Growth::Related);
+        self.add(related);
+    }
+
+    /// Drops the table at `index` from the diagram, and from its file: **Remove from
+    /// diagram**. The database is untouched.
+    pub fn remove(&mut self, index: usize) {
+        if index >= self.tables.len() {
+            return;
+        }
+        let table = self.tables.remove(index);
+        self.to_describe.retain(|name| *name != table.name);
+        self.unplaced = true;
     }
 
     /// Lays every box out again, forgetting where the user moved them: **Arrange**.
@@ -641,6 +700,47 @@ mod tests {
         diagram.arrange();
         assert!(diagram.place());
         assert_ne!(diagram.rect(customers).unwrap().min, moved);
+    }
+
+    #[test]
+    fn reopens_from_its_file_where_it_was_left_and_lays_out_only_new_tables() {
+        let mut diagram = Diagram::new(
+            DataSourceId::generate(),
+            Some("public".to_owned()),
+            vec![name("orders")],
+            Some(Growth::Referenced),
+        );
+        answer_all(&mut diagram);
+        measure_all(&mut diagram);
+        diagram.place();
+        diagram.move_table(0, vec2(10.4, -3.6));
+        let file = diagram.to_file();
+
+        let mut reopened = Diagram::from_file(&file);
+
+        assert_eq!(reopened.to_file(), file, "nothing moves on reopening");
+        assert_eq!(names(&reopened), names(&diagram));
+        assert!(reopened.is_loading(), "every table is described again");
+        answer_all(&mut reopened);
+        measure_all(&mut reopened);
+        assert!(!reopened.place(), "the boxes stay where they were left");
+        assert_eq!(reopened.to_file(), file);
+    }
+
+    #[test]
+    fn grows_by_a_tables_related_tables_and_drops_a_table() {
+        let mut diagram =
+            Diagram::new(DataSourceId::generate(), None, vec![name("products")], None);
+        answer_all(&mut diagram);
+
+        diagram.add_related(0);
+        answer_all(&mut diagram);
+        assert_eq!(names(&diagram), ["orders", "products", "reviews"]);
+
+        let reviews = diagram.index_of(&name("reviews")).unwrap();
+        diagram.remove(reviews);
+        assert_eq!(names(&diagram), ["orders", "products"]);
+        assert!(diagram.to_file().tables.iter().all(|t| t.name != "reviews"));
     }
 
     #[test]

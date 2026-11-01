@@ -516,6 +516,7 @@ fn never_overwrites_an_unreadable_data_sources_file() {
         Event::DataSourcesUnavailable { .. }
     ));
     engine.expect(Event::ConsolesLoaded(vec![]));
+    engine.expect(Event::DiagramsLoaded(vec![]));
 
     let data_source = sqlite_data_source(dir.path().join("app.db"));
     engine.send(Command::SaveDataSource {

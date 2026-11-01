@@ -185,6 +185,7 @@ fn never_overwrites_an_unreadable_projects_file() {
     ));
     engine.expect(Event::DataSourcesLoaded(vec![]));
     engine.expect(Event::ConsolesLoaded(vec![]));
+    engine.expect(Event::DiagramsLoaded(vec![]));
 
     let id = ProjectId::generate();
     engine.send(Command::CreateProject {

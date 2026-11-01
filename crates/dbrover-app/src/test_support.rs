@@ -12,8 +12,8 @@ use dbrover_engine::{
     ProgramOutput, ProgramRunner, Release, ReleaseError, ReleaseFeed, Restart, UpdateInstaller,
 };
 use dbrover_store::{
-    ConsoleFiles, CustomFiles, DataSourceFile, HistoryFile, KeymapFile, ProjectFile, Secret,
-    SecretError, SecretStore, SettingsFile, TrustedCommandsFile,
+    ConsoleFiles, CustomFiles, DataSourceFile, DiagramFiles, HistoryFile, KeymapFile, ProjectFile,
+    Secret, SecretError, SecretStore, SettingsFile, TrustedCommandsFile,
 };
 use egui_kittest::kittest::Queryable;
 use egui_kittest::{Harness, HarnessBuilder};
@@ -156,6 +156,7 @@ pub fn start_app(
         projects: ProjectFile::new(dir.join("projects.toml")),
         secrets: Arc::new(secrets),
         consoles: ConsoleFiles::new(dir.join("consoles")),
+        diagrams: DiagramFiles::new(dir.join("diagrams")),
         history: HistoryFile::new(dir.join("history.sqlite")),
         keymap: KeymapFile::new(dir.join("keymap.toml")),
         settings: SettingsFile::new(dir.join("settings.toml")),

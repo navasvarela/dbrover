@@ -25,9 +25,9 @@ use dbrover_engine::{
 use dbrover_language::QueryLanguage;
 use dbrover_sql::Dialect;
 use dbrover_store::{
-    ConsoleFiles, CustomFile, CustomFileKind, CustomFiles, DataSourceFile, HistoryFile,
-    KeymapBindings, KeymapFile, ProjectFile, Projects, Secret, SecretError, SecretStore, Settings,
-    SettingsFile, TrustedCommands, TrustedCommandsFile,
+    ConsoleFiles, CustomFile, CustomFileKind, CustomFiles, DataSourceFile, DiagramFiles,
+    HistoryFile, KeymapBindings, KeymapFile, ProjectFile, Projects, Secret, SecretError,
+    SecretStore, Settings, SettingsFile, TrustedCommands, TrustedCommandsFile,
 };
 
 pub const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -224,6 +224,7 @@ impl TestEngine {
             projects: ProjectFile::new(dir.join("projects.toml")),
             secrets,
             consoles: ConsoleFiles::new(dir.join("consoles")),
+            diagrams: DiagramFiles::new(dir.join("diagrams")),
             history: HistoryFile::new(dir.join("history.sqlite")),
             keymap: KeymapFile::new(dir.join("keymap.toml")),
             settings: SettingsFile::new(dir.join("settings.toml")),
@@ -280,6 +281,7 @@ impl TestEngine {
         self.expect(Event::ProjectsLoaded(projects));
         self.expect(Event::DataSourcesLoaded(data_sources));
         self.expect(Event::ConsolesLoaded(vec![]));
+        self.expect(Event::DiagramsLoaded(vec![]));
     }
 
     pub fn expect_keymap(&mut self, expected: Result<KeymapBindings, String>) {
