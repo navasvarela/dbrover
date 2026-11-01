@@ -277,3 +277,168 @@ fn exports_the_diagram_as_svg_and_as_png() {
     let png_width = u32::from_be_bytes([png[16], png[17], png[18], png[19]]);
     assert_eq!(png_width, (svg_width * 2.0) as u32, "drawn at 2×");
 }
+
+/// A database of the test's own on the PostgreSQL test server, holding the exit's tables in
+/// `public` and one more, and dropped when the test ends.
+struct ExitDatabase<'a> {
+    runtime: &'a tokio::runtime::Runtime,
+    admin: Box<dyn dbrover_core::Connection>,
+    name: String,
+}
+
+impl<'a> ExitDatabase<'a> {
+    fn create(server: &PostgresTestServer, runtime: &'a tokio::runtime::Runtime) -> Self {
+        let name = format!("dbrover_er1_{}", std::process::id());
+        let mut admin = server.open(runtime, &server.database);
+        first_value(
+            runtime,
+            &mut admin,
+            &format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)"),
+        );
+        first_value(runtime, &mut admin, &format!("CREATE DATABASE {name}"));
+        let mut shop = server.open(runtime, &name);
+        for statement in [
+            "CREATE TABLE customers (id int PRIMARY KEY, name text NOT NULL)",
+            "CREATE TABLE products (id int PRIMARY KEY, name text NOT NULL, price numeric(10, 2))",
+            "CREATE TABLE orders (id int PRIMARY KEY, \
+             customer_id int NOT NULL REFERENCES customers (id), \
+             product_id int REFERENCES products (id), placed_at timestamptz)",
+            "CREATE TABLE audit_log (id bigint PRIMARY KEY, happened text)",
+        ] {
+            first_value(runtime, &mut shop, statement);
+        }
+        let _ = runtime.block_on(shop.close());
+        Self {
+            runtime,
+            admin,
+            name,
+        }
+    }
+}
+
+impl Drop for ExitDatabase<'_> {
+    fn drop(&mut self) {
+        let drop = format!("DROP DATABASE IF EXISTS {} WITH (FORCE)", self.name);
+        first_value(self.runtime, &mut self.admin, &drop);
+    }
+}
+
+/// ER1's exit: on the PostgreSQL test server, right-click `public` → **Diagram…**, pick
+/// `orders` and tick **Add the tables these reference**: `orders`, `customers` and `products`
+/// appear, laid out with their keys drawn. Move `products`, quit, start again and reopen the
+/// diagram: `products` is where it was left. **Export › SVG…** writes the same boxes and lines.
+#[test]
+fn draws_moves_reopens_and_exports_a_diagram_on_postgres() {
+    let Some(server) = PostgresTestServer::from_env() else {
+        return;
+    };
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let database = ExitDatabase::create(&server, &runtime);
+    let dir = tempfile::tempdir().unwrap();
+    let source = server.data_source(&database.name, "pg");
+    DataSourceFile::new(dir.path().join("data_sources.toml"))
+        .save(std::slice::from_ref(&source))
+        .unwrap();
+    let start = || {
+        let (_layer, feed) = log_console::pipeline();
+        crate::test_support::start_app(
+            harness_at_default_size(),
+            dir.path(),
+            feed,
+            server.secrets(&source),
+        )
+    };
+
+    let mut harness = start();
+    for (expand, appears) in [
+        ("Expand pg", format!("Expand {}", database.name)),
+        (
+            &*format!("Expand {}", database.name),
+            "Expand public".to_owned(),
+        ),
+    ] {
+        step_until_visible(&mut harness, expand);
+        harness.get_by_label(expand).click();
+        step_until_visible(&mut harness, &appears);
+    }
+    node_menu(&mut harness, "public", "Diagram…");
+    step_until_visible(&mut harness, "audit_log");
+    harness.run_steps(2);
+    for (role, label) in [
+        (Role::Button, "None"),
+        (Role::CheckBox, "orders"),
+        (Role::CheckBox, "Add the tables these reference"),
+        (Role::Button, "Open"),
+    ] {
+        harness.get_by_role_and_label(role, label).click();
+        harness.run_steps(2);
+    }
+    let (key, laid_out) = loaded_diagram(&mut harness);
+    assert_eq!(table_names(&laid_out), ["customers", "orders", "products"]);
+    assert_eq!(laid_out.key_lines().len(), 2, "orders' two keys");
+    assert!(left_of(&laid_out, "customers") < left_of(&laid_out, "orders"));
+
+    let products = harness
+        .state()
+        .diagram_table_on_screen(&key, "products")
+        .unwrap()
+        .center();
+    harness.hover_at(products);
+    harness.run_steps(2);
+    harness.drag_at(products);
+    harness.run_steps(2);
+    for step in 1..=4 {
+        harness.hover_at(products + egui::vec2(20.0, 25.0) * step as f32);
+        harness.run_steps(1);
+    }
+    harness.drop_at(products + egui::vec2(80.0, 100.0));
+    harness.run_steps(2);
+    let (_, moved) = loaded_diagram(&mut harness);
+    assert_ne!(
+        top_left(&moved, "products"),
+        top_left(&laid_out, "products")
+    );
+    let file = dir.path().join("diagrams/_none/public.toml");
+    step_until(
+        &mut harness,
+        "the diagram's file being written",
+        |harness| {
+            let saved = std::fs::read_to_string(&file).unwrap_or_default();
+            let (_, diagram) = harness.state().open_diagrams().next().unwrap();
+            toml::from_str::<dbrover_store::DiagramFile>(&saved).ok() == Some(diagram.to_file())
+        },
+    );
+    drop(harness);
+
+    let mut harness = start();
+    step_until_visible(&mut harness, "Expand pg");
+    harness.get_by_label("pg").click_secondary();
+    harness.run_steps(2);
+    harness.get_by_label("Diagrams").hover();
+    harness.run_steps(2);
+    harness
+        .get_by_role_and_label(Role::Button, "public")
+        .click();
+    let (_, reopened) = loaded_diagram(&mut harness);
+    assert_eq!(
+        top_left(&reopened, "products"),
+        top_left(&moved, "products").round(),
+        "where it was left"
+    );
+
+    let svg_path = dir.path().join("public.svg");
+    let answer = svg_path.clone();
+    harness.state_mut().pick_picture = Box::new(move |_, _| Some(answer.clone()));
+    harness.get_by_label("Export").click();
+    harness.run_steps(2);
+    harness.get_by_label("SVG…").click();
+    step_until_visible(&mut harness, "Exported to");
+    let svg = std::fs::read_to_string(&svg_path).unwrap();
+    for table in ["customers", "orders", "products"] {
+        assert!(
+            svg.contains(&format!(">{table}</text>")),
+            "{table} in the SVG"
+        );
+    }
+    assert!(!svg.contains(">audit_log</text>"));
+}

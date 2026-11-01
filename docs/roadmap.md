@@ -1345,12 +1345,11 @@ three to five, **L** a track of its own).
 ## Diagrams track
 
 Pictures of a schema. Every other tool in [the comparison](comparison.md) has ER diagrams, and
-they show what a database holds better than any list. Planned, not a top priority: this comes
-after the near-term work above, W9 to W12 included. ER diagrams were a non-goal in
-[Vision](vision.md) until 2026-10-29.
+they show what a database holds better than any list. ER1 was built on 2026-11-01; ER diagrams
+were a non-goal in [Vision](vision.md) until 2026-10-29.
 
 - **ER1 — Read-only ER diagrams (M):** designed on 2026-11-01 in
-  [ER diagrams](diagrams.md). A diagram of the tables you pick, or of a whole schema, with their
+  [ER diagrams](diagrams.md), and built. A diagram of the tables you pick, or of a whole schema, with their
   columns and the foreign keys between them. It shows the schema and changes nothing in it:
   editing from the diagram is out of scope.
   - **Opening one:** right-click a schema → **Diagram…** picks its tables, all of them by
@@ -1383,8 +1382,8 @@ after the near-term work above, W9 to W12 included. ER diagrams were a non-goal 
     no text, so its `text` feature is turned on, with the app's bundled fonts.
   - **Decided:** a data source outside any project keeps its diagrams in `diagrams/_none/`,
     since most are in none; the dialog asks to narrow a choice of more than 150 tables, to be
-    confirmed by measurement in ER1b and ER1c. Reasons are in
-    [the design](diagrams.md#decisions).
+    confirmed by measuring it (layout about 1 ms, a frame about 1.2 ms, loading 0.28 s locally
+    and about 12 s at 20 ms a round trip). Reasons are in [the design](diagrams.md#decisions).
   - **ER1a — The plan:** the design and this entry.
   - **ER1b — Describing many tables, and the layout:** `Command::DescribeTables`, and the
     `dbrover-diagram` crate's layered layout.
@@ -1394,6 +1393,25 @@ after the near-term work above, W9 to W12 included. ER diagrams were a non-goal 
     restored at start-up, missing tables, adding and removing tables.
   - **ER1e — Export:** SVG, and PNG through resvg.
   - **ER1f — Manual:** a chapter on diagrams and this demo note. The site's clip comes later.
+
+  **ER1 demo note:** built in #315, #317, #320, #321, #327 and #328. On the shop, right-click
+  `main` (or `public` on PostgreSQL) → **Diagram…**, keep every table and **Open**: customers
+  and products sit in the first column, orders next, order items after, and a table no key
+  joins in a column of its own; each key is a curve from its column to the one it refers to.
+  Drag a table, close the tab and quit; start again and the data source's **Diagrams** menu
+  reopens it as it was left, from `diagrams/_none/main.toml`. Drop a table from the database
+  and it comes back dashed and **missing**. **Export › SVG…** writes a picture a browser shows,
+  and **PNG at 2×…** the same drawn with DbRover's own fonts. Right-click a table in the tree
+  for **Diagram with related tables**, and one in the diagram for **Add related tables** and
+  **Remove from diagram**. Departures from the design: places are saved in whole points, so
+  the file reads better and its events compare; the file names the schema the diagram was
+  opened on; boxes are dragged anywhere on them, not by the header; and a line that would pass
+  behind a box between its tables bends around it, added when the first export showed one
+  looking as if it ended at the wrong table. Covered by the layout's unit tests, engine tests
+  on SQLite and PostgreSQL (150 tables in batches), whole-app tests on SQLite (the dialog,
+  related tables, moving, saving, reopening, a missing table, export) and the exit on the
+  PostgreSQL test server. Still to do: the site's clip, and routing lines along the layout's
+  dummy vertices so they cross each other less.
 
   **Exit:** on the PostgreSQL test server, right-click `public` → **Diagram…**, pick `orders`
   and tick **Add the tables these reference**: `orders`, `customers` and `products` appear,
