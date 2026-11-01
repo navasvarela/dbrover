@@ -1,5 +1,8 @@
 //! The chart tab beside the grid (W12): a chart of the loaded rows' columns, in the grid's
-//! order and through its filter, drawn from what `dbrover_chart` lays out.
+//! order and through its filter, drawn from what `dbrover_chart` lays out, and exported as
+//! SVG or PNG from the same layout.
+
+mod svg;
 
 use std::sync::Arc;
 
@@ -8,9 +11,11 @@ use dbrover_chart::{
     TextMeasure,
 };
 use dbrover_core::{ColumnInfo, Row, ValueKind};
+use dbrover_engine::Picture;
 use dbrover_sql::Dialect;
 use egui::{Align2, Color32, FontId, Galley, Painter, Pos2, Sense, Stroke, TextStyle, Ui, Vec2};
 
+use crate::picture::PictureFormat;
 use crate::theme::Palette;
 
 /// The series' colours, in the order series take them, for the light theme and the dark one:
@@ -85,11 +90,35 @@ impl ChartTab {
     /// The chart as last laid out.
     #[cfg(test)]
     pub fn drawing(&self) -> Option<&Drawing> {
-        self.view
-            .as_ref()?
-            .drawing
-            .as_ref()
-            .map(|(_, drawing)| &**drawing)
+        self.laid_out().map(|laid_out| &*laid_out.drawing)
+    }
+
+    fn laid_out(&self) -> Option<&LaidOut> {
+        self.view.as_ref()?.laid_out.as_ref()
+    }
+
+    /// The chart as it was last drawn, as `format`; `None` until it has been drawn.
+    pub fn picture(&self, format: PictureFormat) -> Option<Picture> {
+        let laid_out = self.laid_out()?;
+        let svg = svg::svg(&laid_out.drawing, laid_out.text_size);
+        Some(match format {
+            PictureFormat::Svg => Picture::Svg(svg),
+            PictureFormat::Png { scale } => Picture::Png {
+                svg,
+                scale: f32::from(scale),
+                fonts: crate::fonts::bundled_files(),
+            },
+        })
+    }
+
+    /// A name for the chart's file: its first series by its X column, `total by month`.
+    pub fn file_name(&self) -> String {
+        let named = self.view.as_ref().and_then(|view| {
+            let choice = view.choice.as_ref()?;
+            let y = column_name(&view.columns, *choice.ys.first()?);
+            Some(format!("{y} by {}", column_name(&view.columns, choice.x)))
+        });
+        named.unwrap_or_else(|| "chart".to_owned())
     }
 }
 
@@ -112,7 +141,15 @@ struct ChartView {
     /// `None` when there is no column of numbers to chart.
     choice: Option<Choice>,
     data: Option<Charted>,
-    drawing: Option<(Size, Arc<Drawing>)>,
+    laid_out: Option<LaidOut>,
+}
+
+/// The chart as last laid out, and what it was laid out for.
+struct LaidOut {
+    size: Size,
+    /// The size of the text it measured, which an export writes its text at.
+    text_size: f32,
+    drawing: Arc<Drawing>,
 }
 
 /// The points of a choice, and what they were read from.
@@ -137,7 +174,7 @@ impl ChartView {
             roles_from: source.rows.len(),
             choice,
             data: None,
-            drawing: None,
+            laid_out: None,
         }
     }
 
@@ -174,7 +211,7 @@ impl ChartView {
         if roles != self.roles {
             self.roles = roles;
             self.data = None;
-            self.drawing = None;
+            self.laid_out = None;
         }
         self.roles_from = rows.len();
     }
@@ -197,7 +234,7 @@ impl ChartView {
                 order: source.order.to_vec(),
                 data: ChartData::read(&self.columns, &self.roles, &rows, choice),
             });
-            self.drawing = None;
+            self.laid_out = None;
         }
         self.data.as_ref().map(|charted| &charted.data)
     }
@@ -247,12 +284,12 @@ impl ChartTab {
     }
 }
 
-/// The kind, X and Y, above the chart.
-pub fn controls(ui: &mut Ui, tab: &mut ChartTab, source: &Source<'_>) {
+/// The kind, X and Y, and **Export ›**, above the chart. Returns the format picked from
+/// **Export ›**, if one was.
+pub fn controls(ui: &mut Ui, tab: &mut ChartTab, source: &Source<'_>) -> Option<PictureFormat> {
     let view = tab.view(source);
-    let Some(choice) = &mut view.choice else {
-        return;
-    };
+    let drawn = view.laid_out.is_some();
+    let choice = view.choice.as_mut()?;
     for kind in ChartKind::ALL {
         ui.selectable_value(&mut choice.kind, kind, kind.label());
     }
@@ -283,6 +320,25 @@ pub fn controls(ui: &mut Ui, tab: &mut ChartTab, source: &Source<'_>) {
             }
         }
     });
+    ui.separator();
+    export_menu(ui, drawn)
+}
+
+/// **Export ›**: the picture formats, offered once the chart has been drawn.
+fn export_menu(ui: &mut Ui, drawn: bool) -> Option<PictureFormat> {
+    let mut picked = None;
+    ui.add_enabled_ui(drawn, |ui| {
+        ui.menu_button("Export", |ui| {
+            for format in PictureFormat::ALL {
+                if ui.button(format.label()).clicked() {
+                    picked = Some(format);
+                }
+            }
+        })
+        .response
+        .on_hover_text("Save the chart as it is drawn here, in light colours on white");
+    });
+    picked
 }
 
 fn y_label(columns: &[Column], ys: &[usize]) -> String {
@@ -328,7 +384,7 @@ pub fn show(ui: &mut Ui, tab: &mut ChartTab, source: &Source<'_>) {
     };
     let ChartView {
         data: Some(charted),
-        drawing: laid_out,
+        laid_out,
         ..
     } = &mut *view
     else {
@@ -345,20 +401,26 @@ pub fn show(ui: &mut Ui, tab: &mut ChartTab, source: &Source<'_>) {
     ui.weak(note);
 }
 
-/// `data` laid out in `size`, from `laid_out` when it was laid out in that size already.
+/// `data` laid out in `size`, from `laid_out` when it was laid out for that already.
 fn drawing(
-    laid_out: &mut Option<(Size, Arc<Drawing>)>,
+    laid_out: &mut Option<LaidOut>,
     data: &ChartData,
     size: Size,
     measure: &Measure<'_>,
 ) -> Arc<Drawing> {
-    if let Some((in_size, drawing)) = laid_out
-        && *in_size == size
+    let text_size = measure.font.size;
+    if let Some(cached) = laid_out
+        && cached.size == size
+        && cached.text_size == text_size
     {
-        return Arc::clone(drawing);
+        return Arc::clone(&cached.drawing);
     }
     let drawing = Arc::new(dbrover_chart::layout(data, size, measure));
-    *laid_out = Some((size, Arc::clone(&drawing)));
+    *laid_out = Some(LaidOut {
+        size,
+        text_size,
+        drawing: Arc::clone(&drawing),
+    });
     drawing
 }
 

@@ -89,10 +89,11 @@ fn marks(drawing: &Drawing) -> (usize, usize, Vec<String>) {
     (bars, lines, texts)
 }
 
-/// W12's exit: totals by month chart as bars and as lines. A month written as text opens as
-/// bars; as a timestamp, the chart stays open for the next run and starts as a line over time.
+/// W12's exit: totals by month chart as bars, exported as SVG (and PNG), and as lines. A month
+/// written as text opens as bars; as a timestamp, the chart stays open for the next run and
+/// starts as a line over time.
 #[test]
-fn charts_totals_by_month_as_bars_and_as_lines() {
+fn charts_totals_by_month_as_bars_and_lines_and_exports_an_svg() {
     let Some(server) = PostgresTestServer::from_env() else {
         return;
     };
@@ -119,6 +120,38 @@ fn charts_totals_by_month_as_bars_and_as_lines() {
     for label in ["2026-01", "2026-02", "2026-03", "month", "total"] {
         assert!(texts.contains(&label.to_owned()), "{label} in {texts:?}");
     }
+
+    let pictures = dir.path().join("pictures");
+    std::fs::create_dir_all(&pictures).unwrap();
+    let answer = pictures.clone();
+    harness.state_mut().pick_picture =
+        Box::new(move |name, format| Some(answer.join(format!("{name}.{}", format.extension()))));
+    for (item, file) in [
+        ("SVG…", "total by month.svg"),
+        ("PNG at 2×…", "total by month.png"),
+    ] {
+        harness.get_by_label("Export").click();
+        harness.run_steps(2);
+        harness.get_by_label(item).click();
+        step_until_visible(
+            &mut harness,
+            &format!("Exported to {}", pictures.join(file).display()),
+        );
+    }
+    let svg = std::fs::read_to_string(pictures.join("total by month.svg")).unwrap();
+    let bars = svg
+        .lines()
+        .filter(|line| line.starts_with("<rect x=") && line.contains(" rx="))
+        .count();
+    assert_eq!(bars, 3, "{svg}");
+    for label in ["2026-01", "2026-02", "2026-03", "month", "total"] {
+        assert!(
+            svg.contains(&format!(">{label}</text>")),
+            "{label} in the SVG"
+        );
+    }
+    let png = std::fs::read(pictures.join("total by month.png")).unwrap();
+    assert!(png.starts_with(b"\x89PNG"));
 
     harness.get_by_label("Lines").click();
     harness.run_steps(2);

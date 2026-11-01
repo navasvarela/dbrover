@@ -1327,8 +1327,7 @@ three to five, **L** a track of its own).
   that writes; ClickHouse's functions don't write, so a `SELECT` that lifts `readonly`, and an
   `INSERT` sent past the check); an MCP client can query a SQL Server data source that has an
   MCP login.
-- **W12 — Charts from results (M):** built but for export (W12e, which waits for ER1e);
-  designed on 2026-11-01 in
+- **W12 — Charts from results (M):** built; designed on 2026-11-01 in
   [A well-rounded app](well-rounded.md#w12--charts-from-results). A bar, line or scatter chart
   of a result's columns, in a tab beside the grid, from the rows already fetched, exported as
   PNG or SVG like ER1's diagrams.
@@ -1341,8 +1340,9 @@ three to five, **L** a track of its own).
     chart the first 250 rows, lines and scatter the first 50,000.
   - **Drawn with egui's shapes,** not `egui_plot`, from one pure layout into marks, in a new
     crate, `dbrover-chart`; the export draws the same marks, so the SVG is the chart on screen.
-  - **Export** goes through ER1e's code (SVG, and PNG through resvg with the bundled fonts,
-    written by the engine), shared rather than copied. W12's export layer waits for ER1e.
+  - **Export** goes through ER1e's code (`Command::ExportPicture`, PNG through
+    `dbrover-picture` with the bundled fonts, `crate::picture`'s formats and SVG helpers),
+    shared rather than copied; the chart writes only its own marks as SVG.
   - **W12a — The plan:** the design and this entry.
   - **W12b — The chart:** `dbrover-chart`: column roles, the starting choice, series, ticks and
     the layout into marks, unit-tested.
@@ -1350,7 +1350,7 @@ three to five, **L** a track of its own).
   - **W12d — Manual:** a section on charts, and this demo note.
   - **W12e — Export:** SVG and PNG through ER1e's export.
 
-  **W12 demo note:** built in #319, #324, #325 and this manual layer, with a section on charts
+  **W12 demo note:** built in #319, #324, #325, #329 and the export layer, with a section on charts
   in [Query consoles](../book/src/consoles.md#charts). Run
   `SELECT to_char(day, 'YYYY-MM') AS month, sum(total) AS total FROM orders GROUP BY 1 ORDER
   BY 1` on PostgreSQL and click **Chart** beside **Grid**: the months open as bars from zero,
@@ -1358,12 +1358,15 @@ three to five, **L** a track of its own).
   shows its month and total. **Lines** joins them; **Grid** goes back to the rows, and nothing
   runs again. With `date_trunc('month', day)` in place of `to_char`, the next run keeps the
   chart open and starts as a line over time, its ticks dated. A null total is a gap, counted
-  under the chart; a result with no numbers says so. Departures from the design: none of
-  substance; the line under the chart reads "Charting 12 rows" rather than "12 rows", which
-  the summary above the grid already says. Covered by `dbrover-chart`'s unit tests, kittest
-  tests of the tab, and a whole-app test of the exit's bars and lines on the PostgreSQL test
-  server. Still to come: export (W12e). Still to try by eye: a 50,000-point scatter's frame
-  time, against the limit.
+  under the chart; a result with no numbers says so. **Export › SVG…** saves the chart as
+  drawn, named `total by month.svg`, in light colours on white, and a browser shows it;
+  **PNG at 1×, 2× or 3×** draws the same picture with the bundled fonts. Departures from the
+  design: none of substance; the line under the chart reads "Charting 12 rows" rather than
+  "12 rows", which the summary above the grid already says, and the menu is ER1's **Export ›**
+  rather than a shared widget, which one menu didn't need. Covered by `dbrover-chart`'s unit
+  tests, kittest tests of the tab, tests of the chart's SVG (drawn as a PNG too), and a
+  whole-app test of the exit on the PostgreSQL test server: bars, an SVG and a PNG exported,
+  then lines. Still to try by eye: a 50,000-point scatter's frame time, against the limit.
 
   **Exit:** a `GROUP BY` result of months and totals charts as bars and lines, and exports as an
   SVG a browser shows.
