@@ -101,8 +101,10 @@ On Windows, in PowerShell, print the installer's checksum and compare it with it
 Get-FileHash dbrover-*-windows-x64-setup.exe -Algorithm SHA256
 ```
 
-**Help › About DbRover** shows the version and the commit it was built from, and **Copy
-version** copies them for a bug report. From a terminal, `dbrover --version` prints the same.
+The right end of the status bar shows the version you're running, for example **v0.21.0**;
+click it to open **About DbRover**. **Help › About DbRover** shows the version and the commit
+it was built from, and **Copy version** copies them for a bug report. From a terminal,
+`dbrover --version` prints the same.
 **Help › Report a problem…** fills them in for you; see
 [Reporting a problem](troubleshooting.md#reporting-a-problem).
 
