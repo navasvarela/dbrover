@@ -22,9 +22,10 @@ Explain analyse), v0.21.0 (Cassandra, ScyllaDB and DynamoDB, ER diagrams, charts
 results, read-only on every engine, Settings pages for the keymap, actions and projects,
 settings in `~/.config/dbrover` or a folder of your choice, and roomier buttons, menus and
 dialogs), v0.22.0 (your own export formats in `exports.toml`: presets, templates and
-programs) and v0.23.0 (signing in with Google Cloud and Microsoft Entra ID accounts,
+programs), v0.23.0 (signing in with Google Cloud and Microsoft Entra ID accounts,
 PostgreSQL, MySQL and SQL Server signed into with a cloud account, cost guards on every data
-source, a progress line while statements run, and search across a whole catalog).
+source, a progress line while statements run, and search across a whole catalog) and v0.24.0 (reports: a report file with parameters, run in a
+worker process with its limits, written to CSV and Excel with a declared schema).
 R3's update notice is built, ahead of R2 (see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
