@@ -1,6 +1,6 @@
 # Exports and your own formats
 
-Status: **W7 built** (2026-10-30); W8 planned, its details confirmed on 2026-11-01. This is the design of W7 and W8 in
+Status: **W7 built** (2026-10-30); **W8 built** (2026-11-01). This is the design of W7 and W8 in
 [A well-rounded app](well-rounded.md#w7--exports); the [roadmap](roadmap.md#well-rounded-track)
 tracks them.
 
@@ -475,23 +475,24 @@ Each layer is one pull request in a stack, and is useful and tested on its own.
 **W8 — Your own formats**
 
 - **W8a — Plan:** this section confirmed, the roadmap entry in layers.
-- **W8b — Reading `exports.toml`, and presets:** `CustomFileKind::Exports` and its checks in the
-  store, preset options checked in `dbrover-export`; the **Exports** settings page with **Reload**
-  and **Create exports.toml**, **View › Exports…**, the status bar's problems; presets in the
-  export dialog (remembered by id in `app.ron`) and in **Copy as ›**, with `export.<id>` in the
-  keymap. Store tests of every problem message; kittest tests of the page, the dialog and the
-  menu on SQLite.
-- **W8c — Templates:** `minijinja`, `TemplateEngine`, the context, the filters, escaping, the
-  fuel and output limits. Golden tests of the plan's Confluence table and an XML template, tests
-  of each problem message, of hostile values (quotes, `<`, `{{`, line breaks, emoji, `NULL`) and
-  of an endless loop stopping; the paged-equals-whole test W7 has; kittest tests of a template in
-  the dialog's preview and in **Copy as ›**.
-- **W8d — Programs:** trust under `export = "<id>"`, JSON Lines to the program, its stdout to the
-  partial file, the progress timeout, **Cancel**, `text = true` for **Copy as**. Engine tests with
-  H2's `dbrover-test-program` (loaded rows, every row, a failure, a stop, a program that stops
-  reading); kittest tests of the question and of copying with the scripted runner.
-- **W8e — Manual:** the chapter on `exports.toml` with a preset, a template and a program,
-  [Testing](testing.md), and the demo note.
+- **W8b — Reading `exports.toml`, and presets** (built): `CustomFileKind::Exports` and its
+  checks in the store, preset options checked in `dbrover-export`; the **Exports** settings page
+  with **Reload** and **Create exports.toml**, **View › Exports…**, the status bar's problems;
+  presets in the export dialog (remembered by id in `app.ron`) and in **Copy as ›**, with
+  `export.<id>` in the keymap. Store tests of every problem message; kittest tests of the page,
+  the dialog and the menu on SQLite.
+- **W8c — Templates** (built): `minijinja`, `TemplateEngine`, the context, the filters,
+  escaping, the fuel and output limits. Golden tests of the plan's Confluence table and an XML
+  template, tests of each problem message, of hostile values (quotes, `<`, `{{`, line breaks,
+  emoji, `NULL`) and of an endless loop stopping; the paged-equals-whole test W7 has; kittest
+  tests of a template in the dialog's preview and in **Copy as ›**.
+- **W8d — Programs** (built): trust under `export = "<id>"`, JSON Lines to the program, its
+  stdout to the partial file, the progress timeout, **Cancel**, `text = true` for **Copy as**.
+  Engine tests with H2's `dbrover-test-program` (every row, a table's arguments, a failure, a
+  program that stops reading, trust); kittest tests of the question and of copying with the
+  scripted runner.
+- **W8e — Manual** (built): the chapter on `exports.toml` with a preset, a template and a
+  program, [Testing](testing.md), and the demo note.
 
 ## Decisions
 

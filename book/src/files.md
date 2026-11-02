@@ -22,7 +22,8 @@ settings folder can also be one you choose; see [Choosing the settings folder](#
 | `keymap.toml` (settings folder) | Your shortcuts, if you changed any. See [Keyboard shortcuts](shortcuts.md#changing-them). |
 | `settings.toml` (settings folder) | Your choices in **View → Settings…**, such as how SQL is formatted and whether to check for updates. |
 | `actions.toml`, `snippets.toml`, `theme.toml` (settings folder) | Your own actions, snippets and colours, if you wrote any. See [Actions, snippets and themes](customising.md). |
-| `trusted_commands.toml` (data folder) | The command actions and password commands you chose **Run** for, each as it was then. See [Commands](customising.md#the-first-run) and [Password from a command](data-sources.md#password-from-a-command). |
+| `exports.toml` (settings folder) | Your own export formats, if you wrote any. See [Your own export formats](export-formats.md). |
+| `trusted_commands.toml` (data folder) | The command actions, password commands and export programs you chose **Run** for, each as it was then. See [Commands](customising.md#the-first-run), [Password from a command](data-sources.md#password-from-a-command) and [Programs](export-formats.md#programs). |
 | `settings_folder.toml` (data folder) | The settings folder you chose in **Settings › Files**, if you chose one. |
 | `app.ron` (data folder) | The window's size and position, the panel layout, the theme you picked, the recent `.sql` files and which file each console tab shows. |
 | `logs/dbrover.YYYY-MM-DD.log` (data folder) | One log file per day. The last seven are kept. |
@@ -32,7 +33,7 @@ Passwords are not in any of these files: they are in your system's keychain, und
 name `dbrover`. See [Data sources](data-sources.md#passwords-and-the-keychain).
 
 The settings folder holds what you would want on another machine, and nothing that trusts
-anything: a command in `actions.toml` or a password command in `data_sources.toml` still asks
+anything: a command in `actions.toml` or `exports.toml`, or a password command in `data_sources.toml`, still asks
 before its first run on each machine, because what you trusted is in the data folder.
 
 Up to version 0.20, DbRover kept its files in the platform's own folders:

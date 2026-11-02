@@ -7,7 +7,8 @@ changes the colours. They sit next to `keymap.toml` (see
 
 They are read when DbRover starts. After editing one, click **Reload** on
 **Settings › Custom actions** (**View → Custom actions…** opens it), or in the window the status
-bar opens for `snippets.toml` or `theme.toml`: that reads all three again.
+bar opens for `snippets.toml` or `theme.toml`: that reads all three again, and `exports.toml`,
+which adds export formats of your own (see [Your own export formats](export-formats.md)).
 
 A mistake costs only the entry it is in: an action, snippet or colour that can't be used is
 skipped, and the status bar shows **actions.toml: N problems** (or **snippets.toml**,

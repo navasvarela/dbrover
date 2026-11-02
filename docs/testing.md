@@ -252,6 +252,32 @@ against a real server, such as a cancel arriving after the last row.
   cargo test -p dbrover-export -- --ignored
   ```
 
+### Your own export formats (W8)
+
+- `dbrover-store`'s `custom::exports` tests every problem message of `exports.toml`, and the
+  plan's preset, template and program; `custom::trust` keeps an export program's trust by its id.
+- `dbrover-export` tests:
+  - presets' option names, reading and writing (`custom_tests.rs`);
+  - templates (`template_tests.rs`): golden output for a Confluence table and an XML file over
+    hostile values, the context every part sees, `NULL`, every filter in three dialects and
+    without one, syntax errors and `include` refused, an undefined name, an endless loop
+    running out of fuel, output past the limit, and a file written a page at a time;
+  - a program's JSON Lines, through a recording `ExportProgram`.
+- The engine's `tests/export_programs.rs` runs `dbrover-test-program` (its `copy` mode copies
+  stdin to stdout) on SQLite, so it needs no server:
+  - every row of a 1,200-row query through a trusted program;
+  - a table export's arguments and environment;
+  - untrusted and changed commands refused;
+  - a failing program leaving no file;
+  - a program that stops reading, stopped after a one-second timeout;
+  - Copy as through a program.
+- The app's UI tests are in `app/tests/exports.rs`, against SQLite with a temporary config
+  folder and `ScriptedPrograms`, whose `echo` and `fail` also play export programs:
+  - the Exports page, Create and Reload, and the problems link;
+  - a preset exported, remembered and copied, from the menu and a key;
+  - a template exported, its mistake in the preview, and copied;
+  - a program asking once before it exports, and copying through a program that writes text.
+
 ### Files and parameters
 
 - `dbrover_sql::parameters` has a corpus per dialect in `dbrover-sql/tests/parameters/`, read by
