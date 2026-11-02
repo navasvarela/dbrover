@@ -1,15 +1,16 @@
 //! A report's tab: what it is, what is wrong with it, its parameters and output folder,
-//! **Run** and **Cancel**, and its last run's progress, files, preview or error.
+//! **Run** and **Cancel**, and its last run: a line per step with its progress, then its
+//! files, preview or error.
 
 use std::path::Path;
 
 use dbrover_core::{ByteCount, DataSource};
 use dbrover_export::{ColumnType, CustomFormat};
-use dbrover_report::{LimitHit, Plan, Preview, WrittenFile, grouped};
+use dbrover_report::{LimitHit, Plan, Preview, Step, WrittenFile, grouped};
 use dbrover_store::ReportName;
-use egui::{Grid, RichText, ScrollArea, TextEdit, Ui, vec2};
+use egui::{CollapsingHeader, Grid, RichText, ScrollArea, TextEdit, Ui, vec2};
 
-use super::{ReportAction, Reports, RunEnd, RunRecord};
+use super::{ReportAction, Reports, RunEnd, RunRecord, StepRecord, StepState};
 use crate::form;
 use crate::icons;
 use crate::theme::Palette;
@@ -262,17 +263,21 @@ fn last_run(ui: &mut Ui, reports: &Reports, name: &ReportName, actions: &mut Vec
                 .request_repaint_after(std::time::Duration::from_secs(1));
         }
         Some(RunEnd::Finished { elapsed_ms }) => {
+            let rows = if record.combines() {
+                "combined"
+            } else {
+                "read"
+            };
             widgets::status(
                 ui,
                 icons::CHECK_CIRCLE,
                 palette.success,
                 &format!(
-                    "Finished in {:.1} s: {} rows read.",
+                    "Finished in {:.1} s: {} rows {rows}.",
                     *elapsed_ms as f64 / 1000.0,
                     grouped(record.rows)
                 ),
             );
-            files(ui, &palette, &record.files, actions);
         }
         Some(RunEnd::Failed(failure)) => {
             widgets::status(
@@ -295,25 +300,132 @@ fn last_run(ui: &mut Ui, reports: &Reports, name: &ReportName, actions: &mut Vec
             );
         }
     }
+    steps(ui, &palette, record);
+    if matches!(record.end, Some(RunEnd::Finished { .. })) {
+        files(ui, &palette, &record.files, actions);
+    }
     if let Some(preview) = &record.preview {
         ui.add_space(8.0);
-        preview_grid(ui, preview);
+        preview_grid(ui, preview, record.combines());
     }
 }
 
-/// What the run has done so far.
+/// What the run is doing now, and for how long it has run.
 fn progress(record: &RunRecord) -> String {
     let elapsed = record.started.elapsed().as_secs();
-    let step = if record.source_done {
-        "Writing the files"
-    } else {
-        "Reading the source"
+    let sources = record
+        .steps
+        .iter()
+        .filter(|step| matches!(step.step, Step::Source { .. }));
+    let reading = sources.clone().any(|step| !step.is_over());
+    let combining = record
+        .steps
+        .iter()
+        .any(|step| step.step == Step::Combine && !step.is_over());
+    let phase = match (reading, combining) {
+        (true, _) if sources.count() > 1 => "Reading the sources",
+        (true, _) => "Reading the source",
+        (false, true) => "Combining",
+        (false, false) => "Writing the files",
     };
-    format!(
-        "{step}: {} rows, {} · {elapsed} s",
-        grouped(record.rows),
-        ByteCount(record.bytes)
-    )
+    format!("{phase} · {elapsed} s")
+}
+
+/// A line per source and for the combine step: its state, rows, bytes and time, and a loaded
+/// source's columns and types.
+fn steps(ui: &mut Ui, palette: &Palette, record: &RunRecord) {
+    if record.steps.is_empty() {
+        return;
+    }
+    let running = record.end.is_none();
+    ui.add_space(4.0);
+    Grid::new("report_steps")
+        .num_columns(3)
+        .spacing([10.0, 4.0])
+        .show(ui, |ui| {
+            for step in &record.steps {
+                step_state_icon(ui, palette, step, running);
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(step_name(step));
+                        if let Some(data_source) = &step.data_source {
+                            ui.weak(data_source);
+                        }
+                    });
+                    if !step.table.is_empty() {
+                        table(ui, step);
+                    }
+                    for warning in &step.warnings {
+                        ui.colored_label(palette.warning, warning);
+                    }
+                });
+                ui.weak(step_detail(step));
+                ui.end_row();
+            }
+        });
+}
+
+fn step_state_icon(ui: &mut Ui, palette: &Palette, step: &StepRecord, running: bool) {
+    let (glyph, color) = match step.state {
+        StepState::Running { .. } if running => {
+            ui.spinner();
+            return;
+        }
+        StepState::Waiting | StepState::Running { .. } => (icons::CIRCLE_DASHED, palette.text_weak),
+        StepState::Done { .. } => (icons::CHECK_CIRCLE, palette.success),
+        StepState::Attached => (icons::LINK_SIMPLE, palette.success),
+        StepState::Failed => (icons::X_CIRCLE, palette.error),
+    };
+    ui.label(widgets::glyph(glyph).color(color));
+}
+
+fn step_name(step: &StepRecord) -> String {
+    match &step.step {
+        Step::Source { id } => format!("Source {id}"),
+        Step::Combine => "Combine".to_owned(),
+        other => other.to_string(),
+    }
+}
+
+fn step_detail(step: &StepRecord) -> String {
+    match step.state {
+        StepState::Waiting if step.attached => "to attach".to_owned(),
+        StepState::Waiting => "waiting".to_owned(),
+        StepState::Running {
+            rows,
+            bytes,
+            elapsed_ms,
+        }
+        | StepState::Done {
+            rows,
+            bytes,
+            elapsed_ms,
+        } => format!(
+            "{} rows, {} · {:.1} s",
+            grouped(rows),
+            ByteCount(bytes),
+            elapsed_ms as f64 / 1000.0
+        ),
+        StepState::Attached => "attached, read in place".to_owned(),
+        StepState::Failed => "failed".to_owned(),
+    }
+}
+
+/// A loaded source's columns and the types DuckDB gave them, folded away until asked for.
+fn table(ui: &mut Ui, step: &StepRecord) {
+    CollapsingHeader::new(format!("{} columns in DuckDB", step.table.len()))
+        .id_salt(("report_table", step_name(step)))
+        .show(ui, |ui| {
+            Grid::new(("report_table_columns", step_name(step)))
+                .spacing([12.0, 2.0])
+                .show(ui, |ui| {
+                    for column in &step.table {
+                        ui.label(&column.name);
+                        ui.weak(RichText::new(&column.type_name).monospace());
+                        ui.end_row();
+                    }
+                });
+        });
 }
 
 fn limit_hint(ui: &mut Ui, limit: &LimitHit) {
@@ -366,13 +478,18 @@ fn file_icon(path: &Path) -> &'static str {
     }
 }
 
-fn preview_grid(ui: &mut Ui, preview: &Preview) {
+fn preview_grid(ui: &mut Ui, preview: &Preview, combined: bool) {
     let shown = if preview.more {
         format!("The first {} rows", preview.rows.len())
     } else {
         format!("All {} rows", preview.rows.len())
     };
-    ui.label(RichText::new(format!("Preview: {shown}, as the source returned them")).strong());
+    let from = if combined {
+        "the combine step"
+    } else {
+        "the source"
+    };
+    ui.label(RichText::new(format!("Preview: {shown}, as {from} returned them")).strong());
     ScrollArea::both()
         .id_salt("report_preview")
         .max_height(PREVIEW_HEIGHT)
