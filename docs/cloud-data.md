@@ -153,7 +153,7 @@ a CLI) and with tokens the tests make up. None reads the machine's own sign-in.
   **Exit:** both kinds of file get a token from a fake token endpoint, signed and asked for as
   Google documents; a token is reused until five minutes before it expires; an unknown kind
   and a missing file are errors naming what to do.
-- **C0c — Microsoft Entra ID sign-in:** an `entra` module that asks the sign-in of the Azure
+- **C0c — Microsoft Entra ID sign-in** (built): an `entra` module that asks the sign-in of the Azure
   CLI (`az account get-access-token`) or of the Azure Developer CLI (`azd auth token`) for a
   token, with the program and its arguments as a list (no shell), an optional tenant, a
   timeout, and the resource a database expects (Azure SQL's or Azure Database's). The token
