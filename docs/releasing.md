@@ -21,8 +21,11 @@ can't start), v0.20.0 (Elasticsearch and OpenSearch, and query plans drawn as a 
 Explain analyse), v0.21.0 (Cassandra, ScyllaDB and DynamoDB, ER diagrams, charts from
 results, read-only on every engine, Settings pages for the keymap, actions and projects,
 settings in `~/.config/dbrover` or a folder of your choice, and roomier buttons, menus and
-dialogs) and v0.22.0 (your own export formats in `exports.toml`: presets, templates and
-programs). R3's update notice is built, ahead of R2 (see [R3](#r3--updates)).
+dialogs), v0.22.0 (your own export formats in `exports.toml`: presets, templates and
+programs) and v0.23.0 (signing in with Google Cloud and Microsoft Entra ID accounts,
+PostgreSQL, MySQL and SQL Server signed into with a cloud account, cost guards on every data
+source, a progress line while statements run, and search across a whole catalog).
+R3's update notice is built, ahead of R2 (see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
 Today the only way to run DbRover is to install Rust and build it from source (see the manual's
