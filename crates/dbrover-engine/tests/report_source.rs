@@ -15,7 +15,7 @@ use std::time::Instant;
 use common::{MemorySecrets, postgres_test_server, sqlite_data_source};
 use dbrover_core::{ConnectionConfig, DataSource, DataSourceId, SafetyLevel};
 use dbrover_engine::{PasswordCommands, ProcessRunner, ReportSource, SourceAccess, Tunnels};
-use dbrover_report::{Plan, RunValues, SourceError, read_report, run};
+use dbrover_report::{Plan, RunFolders, RunValues, SourceError, read_report, run};
 use dbrover_store::{Secret, SecretStore, TrustedCommands};
 
 /// A ledger of two accounts, with entries on either side of October 2026.
@@ -138,17 +138,23 @@ async fn writes_a_trial_balance_from_sqlite_with_its_dates_bound() {
     let mut source = open(&plan, &values, &access).await.unwrap();
     let out = folder.path().join("out");
     std::fs::create_dir(&out).unwrap();
+    let staging = out.join(".run");
+    let folders = RunFolders {
+        folder: &out,
+        staging: &staging,
+    };
     let summary = run(
         &plan,
         &values,
         &mut source,
-        &out,
+        folders,
         Instant::now(),
         &mut |_| {},
     )
     .await
     .unwrap();
     source.close().await;
+    assert!(!staging.exists(), "the run removes its staging folder");
 
     assert_eq!(summary.rows, 2);
     assert_eq!(
@@ -238,15 +244,12 @@ async fn stops_a_slow_postgres_source_at_its_timeout() {
     let started = Instant::now();
     let outcome = match open(&plan, &values, &access).await {
         Ok(mut source) => {
-            let outcome = run(
-                &plan,
-                &values,
-                &mut source,
-                folder.path(),
-                started,
-                &mut |_| {},
-            )
-            .await;
+            let staging = folder.path().join(".run");
+            let folders = RunFolders {
+                folder: folder.path(),
+                staging: &staging,
+            };
+            let outcome = run(&plan, &values, &mut source, folders, started, &mut |_| {}).await;
             source.close().await;
             outcome
                 .map(drop)

@@ -106,11 +106,16 @@ async fn run_into(
     folder: &Path,
 ) -> (Result<RunSummary, RunFailure>, Vec<RunEvent>) {
     let mut events = Vec::new();
+    let staging = folder.join(".run");
+    let folders = RunFolders {
+        folder,
+        staging: &staging,
+    };
     let outcome = run(
         plan,
         &values(plan),
         reader,
-        folder,
+        folders,
         Instant::now(),
         &mut |event| events.push(event),
     )

@@ -2,11 +2,12 @@
 //! source's and the outputs' limits (`docs/reporting.md`, "Guardrails in RP1").
 //!
 //! 1. Map each output's schema onto the source's columns, and start its file under a partial
-//!    name.
+//!    name in the run's staging folder.
 //! 2. For each page: count it against the source's caps, keep the preview's rows, convert it
 //!    for each output and count that against the output's caps, then write it.
 //! 3. Once the source has no more rows, complete every file, and only then put them all in
-//!    place, so a run that fails anywhere leaves no file behind and replaces none.
+//!    place, so a run that fails anywhere leaves no file behind and replaces none. The staging
+//!    folder goes with the run, and whoever started a run that was killed removes it.
 
 use std::future::Future;
 use std::path::Path;
@@ -54,6 +55,14 @@ impl SourceError {
     }
 }
 
+/// Where a run writes: its files' folder, and a staging folder of its own inside it, on the
+/// same disk so a complete file is put in place by a rename.
+#[derive(Debug, Clone, Copy)]
+pub struct RunFolders<'a> {
+    pub folder: &'a Path,
+    pub staging: &'a Path,
+}
+
 /// What a finished run read and wrote.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunSummary {
@@ -62,7 +71,7 @@ pub struct RunSummary {
     pub files: Vec<WrittenFile>,
 }
 
-/// Runs `plan` with `values`, reading `reader`, writing into `folder`, and sending each step
+/// Runs `plan` with `values`, reading `reader`, writing into `folders`, and sending each step
 /// to `events` but the run's start and end, which the caller sends. `opened` is when the
 /// source started to be opened, for the time to its first row.
 ///
@@ -73,11 +82,12 @@ pub async fn run<R: SourceReader>(
     plan: &Plan,
     values: &RunValues,
     reader: &mut R,
-    folder: &Path,
+    folders: RunFolders<'_>,
     opened: Instant,
     events: &mut dyn FnMut(RunEvent),
 ) -> Result<RunSummary, RunFailure> {
-    let mut outputs = start_outputs(plan, values, reader.columns(), folder)?;
+    let _staging = Staging::make(folders)?;
+    let mut outputs = start_outputs(plan, values, reader.columns(), folders)?;
     let source = Step::Source {
         id: plan.source.id.clone(),
     };
@@ -147,6 +157,32 @@ pub async fn run<R: SourceReader>(
         bytes: read.bytes,
         files,
     })
+}
+
+/// The staging folder, made for the run and removed when it ends, however it ends.
+struct Staging<'a>(&'a Path);
+
+impl<'a> Staging<'a> {
+    fn make(folders: RunFolders<'a>) -> Result<Self, RunFailure> {
+        std::fs::create_dir_all(folders.staging).map_err(|error| {
+            RunFailure::new(
+                Step::Worker,
+                format!(
+                    "could not make the folder {}: {error}",
+                    folders.staging.display()
+                ),
+            )
+        })?;
+        Ok(Self(folders.staging))
+    }
+}
+
+impl Drop for Staging<'_> {
+    fn drop(&mut self) {
+        // Empty by now unless the run failed; what can't be removed is left for the app's
+        // side, which removes it again after the worker ends.
+        let _ = std::fs::remove_dir_all(self.0);
+    }
 }
 
 fn millis(duration: Duration) -> u64 {
@@ -245,7 +281,7 @@ fn start_outputs<'a>(
     plan: &'a Plan,
     values: &RunValues,
     columns: &[ExportColumn],
-    folder: &Path,
+    folders: RunFolders<'_>,
 ) -> Result<Vec<OutputRun<'a>>, RunFailure> {
     let mut started: Vec<OutputRun<'a>> = Vec::new();
     for (index, (output, file)) in plan.outputs.iter().zip(&values.files).enumerate() {
@@ -262,9 +298,14 @@ fn start_outputs<'a>(
             .and_then(|schema| {
                 let export_columns = schema.export_columns();
                 let converter = RowConverter::new(schema, output.format.target());
-                ExportWriter::create(&folder.join(file), &output.format.spec(), &export_columns)
-                    .map(|writer| (converter, writer))
-                    .map_err(|error| describe(&error))
+                ExportWriter::create_staged(
+                    &folders.folder.join(file),
+                    folders.staging,
+                    &output.format.spec(),
+                    &export_columns,
+                )
+                .map(|writer| (converter, writer))
+                .map_err(|error| describe(&error))
             });
         match writer {
             Ok((converter, writer)) => started.push(OutputRun {

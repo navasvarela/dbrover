@@ -30,7 +30,7 @@ pub use limits::{
 pub use plan::{OutputFormat, Plan, PlannedOutput, PlannedSource, RunValues, TypedValues};
 pub use read::read_report;
 pub use report::{Output, OutputColumns, OutputWriter, Param, Report, Source};
-pub use run::{PREVIEW_ROWS, RunSummary, SourceError, SourceReader, run};
+pub use run::{PREVIEW_ROWS, RunFolders, RunSummary, SourceError, SourceReader, run};
 
 #[cfg(test)]
 mod run_tests;
