@@ -1646,9 +1646,9 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
 [Vision](vision.md)).
 
 - **RP0 — The plan:** [Reports](reporting.md), this entry and the line in Vision.
-- **RP1 — One source, one file** (started 2026-11-02, after C0): a report file in `reports/`
-  with parameters, run in a separate `dbrover report-worker` process with its guardrails,
-  written to CSV and Excel through output schemas on W8's presets. Planned in
+- **RP1 — One source, one file** (built, in seven layers, 2026-11-02, after C0): a report
+  file in `reports/` with parameters, run in a separate `dbrover report-worker` process with its
+  guardrails, written to CSV and Excel through output schemas on W8's presets. Planned in
   [Reports](reporting.md#rp1--one-source-one-file). In layers, one PR each:
   - **RP1a — Plan:** RP1's layers, decisions and risks, and this entry. One `reports/` folder
     for every project, not one per project.
@@ -1665,6 +1665,28 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
 
   **Exit:** from the Reports tab, a one-source report with parameters runs in the worker under
   its guardrails and writes CSV and Excel with its declared schema.
+
+  **Demo note:** built in #389, #390, #392 to #395 and RP1g. To try it: add a SQLite data
+  source named **ledger** with a new file, open `examples/reports/ledger.sql` in its console and
+  run it all (a chart of accounts and three months of made-up journal entries). Right-click
+  **Reports** at the bottom of the explorer, **Open the reports folder**, copy
+  `examples/reports/trial-balance.toml` and `general-ledger.toml` into it, and **Reload**. Open
+  **Trial balance**, type `2026-10-01` and `2026-11-01`, and **Run**: the tab shows the run,
+  then `trial-balance-2026-10.xlsx` and `.csv` in Downloads (their numbers as numbers, in the
+  report's formats) and the preview. Debits and credits both total 309,957.53. To see the
+  guardrails, set `max_rows = 3` on the source and run again: the tab names `max_rows`, its
+  value and where to raise it, and Downloads keeps the files of the run before. **Cancel**
+  stops a run at once, leaving no file.
+
+  Checked: each layer's tests (a schema's types and rounding, 30 kinds of problem in a file, a
+  run under each cap, the source on SQLite and on the PostgreSQL test server's timeout, the real
+  worker binary finishing, failing, cancelled and timed out, and on Linux under a small memory
+  limit, and the tab in kittest with a stand-in worker); the two examples' CSV files match the
+  checked-in ones. Not tried here: the app's window with the real worker, by hand (only its
+  parts are tested: the worker on the real binary, the tab with a stand-in); Windows beyond CI,
+  where the worker's test doesn't run, since it moves `HOME`. Left for later: a Settings page
+  for the limits' defaults (RP4), the status bar counting reports' problems, a Job Object on
+  Windows (RP2), and the values typed being kept across restarts.
 - **RP2 — Several sources:** each source's rows loaded into DuckDB, a combine step in DuckDB
   SQL, DuckDB data sources attached read-only, and exact decimals from source to file.
 - **RP3 — Lookups and documents:** a source read by the keys an earlier source found, in

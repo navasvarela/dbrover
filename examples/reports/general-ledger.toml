@@ -1,0 +1,49 @@
+# General ledger: every entry in a period, by account, with each account's running balance
+# over the period, to CSV and Excel. Runs on the "ledger" data source that ledger.sql makes.
+
+[report]
+name = "General ledger"
+description = "Every entry in a period, with each account's running balance."
+params = { since = "date", until = "date" }
+timeout = "1h"
+
+[[source]]
+id = "entries"
+data_source = "ledger"
+query = """
+SELECT e.booked_on, e.journal, a.code AS account, a.name AS account_name, e.memo,
+       e.debit, e.credit,
+       SUM(e.debit - e.credit) OVER (
+         PARTITION BY a.code ORDER BY e.booked_on, e.journal, e.id
+       ) AS running_balance
+FROM entries e
+JOIN accounts a ON a.id = e.account_id
+WHERE e.booked_on >= :since AND e.booked_on < :until
+ORDER BY a.code, e.booked_on, e.journal, e.id
+"""
+# A year of a busy ledger runs past the default million rows.
+max_rows = 5000000
+max_bytes = "4 GiB"
+timeout = "30m"
+
+[[output]]
+format = "csv"
+file = "general-ledger-{since:%Y-%m}.csv"
+columns = [
+  { name = "Date",    from = "booked_on", type = "date", format = "yyyy-mm-dd" },
+  { name = "Journal", from = "journal",   type = "integer" },
+  { name = "Account", from = "account",   type = "text" },
+  { name = "Name",    from = "account_name" },
+  { name = "Memo",    from = "memo" },
+  { name = "Debit",   from = "debit",           type = "decimal(18,2)", format = "#,##0.00" },
+  { name = "Credit",  from = "credit",          type = "decimal(18,2)", format = "#,##0.00" },
+  { name = "Balance", from = "running_balance", type = "decimal(18,2)", format = "#,##0.00" },
+]
+
+[[output]]
+format = "xlsx"
+file = "general-ledger-{since:%Y-%m}.xlsx"
+sheet_name = "General ledger"
+# Past an Excel sheet's 1,048,576 rows, go on in "General ledger 2", and so on.
+continue_on_new_sheet = true
+columns = "same"

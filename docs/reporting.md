@@ -38,8 +38,8 @@ Out, and staying out:
 
 A report is a TOML file in the `reports/` folder of the settings folder (one folder for every
 project, see [RP1's decisions](#rp1s-decisions)), read the same way as
-`actions.toml` and `exports.toml`: problems are listed in the file's tab and counted in the
-status bar, and a report with a problem can't run. TOML gives the structure; the logic is in
+`actions.toml` and `exports.toml`: problems are listed in the report's tab and marked in the
+explorer, and a report with a problem can't run. TOML gives the structure; the logic is in
 the query languages people already know.
 
 The example below is the use case the design is checked against: crypto transactions in
@@ -394,11 +394,16 @@ W7 types an export. `columns = "same"` takes the first output's.
 
 The app starts `dbrover report-worker --config-dir <its settings folder>` from its own
 executable, writes one JSON request to its standard input (the report file's path, the
-parameter values, the output folder) and reads JSON Lines from its standard output until it
-exits: the run starting, the source's progress (rows and bytes, once a second), a preview of the
+parameter values, the output folder, and a staging folder of the run's own inside it) and reads
+JSON Lines from its standard output until it exits: the run starting, the source's progress (rows and bytes, once a second), a preview of the
 first 200 rows, each file written (path, rows, size, time, warnings), and how the run ended. A
 failure says which step failed, and for a limit, which one, its value, and the key that raises
 it. Standard error goes to the app's log.
+
+Files are written in the staging folder and renamed into the output folder once every one is
+complete. The run removes the staging folder however it ends; a worker killed by **Cancel**,
+by its time limit or by the system can't, so the app's side removes it before it reports how
+the run ended. A run that fails or is stopped leaves the output folder as it was.
 
 The worker reads `data_sources.toml`, `exports.toml`, the trusted commands and the keychain as
 the app does, and asks nobody anything: a data source whose password is neither saved, nor from
@@ -445,38 +450,41 @@ whose metrics show what they should be.
 Each layer is one pull request in a stack, useful and tested on its own, with synthetic data
 only.
 
-- **RP1a — Plan:** this section, RP1's decisions and risks, and the roadmap's entry in layers.
-- **RP1b — Output schemas:** in `dbrover-export`, a column schema that maps a result's columns
+- **RP1a — Plan** (built, #389): this section, RP1's decisions and risks, and the roadmap's
+  entry in layers.
+- **RP1b — Output schemas** (built, #390): in `dbrover-export`, a column schema that maps a result's columns
   to an output's (name, source column, type, Excel format, what to do with a value that doesn't
   fit), exact decimal rounding on text, Excel number formats per column, and the count of cells
   Excel can't hold as numbers.
   **Exit:** golden tests of each type's conversions, and of the CSV and Excel files they make
   (read back with calamine for each cell's type, value and format).
-- **RP1c — The report file:** the `dbrover-report` crate, with no I/O: the file's types, reading
+- **RP1c — The report file** (built, #392): the `dbrover-report` crate, with no I/O: the file's types, reading
   it with every problem as a sentence that names its entry, parameter types and values, file
   names, and the plan (the data source by name or id, the output presets, `columns = "same"`).
-  `AppPaths::reports_dir` in the store.
+  `AppPaths::report_files` in the store.
   **Exit:** the trial balance above reads; each problem, later milestones' keys included, is
   reported with its entry; parameter values and file names are checked and formatted; a data
   source is found by name, by id, and not when two share the name.
-- **RP1d — Running a report:** in `dbrover-report`, the run: the source's rows a page at a time
+- **RP1d — Running a report** (built, #393): in `dbrover-report`, the run: the source's rows a page at a time
   into every output and the preview, its caps, the files put in place only when every output
   finished, and its events; the source read through a trait. In `dbrover-engine`, the reader on a
   real data source: read-only, the cost guard, parameters bound, the watchdog.
   **Exit:** with a reader in memory, each cap stops the run, says which, and leaves no file; on
   SQLite, a report writes CSV and Excel with bound dates, and a statement that writes is refused
   before it is sent; on the PostgreSQL test server, a slow source stops at its timeout.
-- **RP1e — The worker:** `dbrover report-worker`, its JSON Lines, the process limits, and the
+- **RP1e — The worker** (built, #394): `dbrover report-worker`, its JSON Lines, the process limits, and the
   app's side, which starts it, reads its events, kills it on **Cancel** or past the time limit,
   and reports a worker that dies.
   **Exit:** the real binary, given a settings folder with a SQLite data source, writes both files
   and reports each step; killed mid-run, it leaves no file and the app's side says how it ended;
   on Linux, a worker under a small `RLIMIT_DATA` fails cleanly.
-- **RP1f — Reports in the app:** the explorer's section and the report's tab.
+- **RP1f — Reports in the app** (built, #395): the explorer's section and the report's tab.
   **Exit:** a kittest with a worker stand-in picks a report, fills its parameters, runs it and
   sees the files and the preview; a failing run shows its error; a file with problems can't run.
-- **RP1g — Manual and demo note:** a chapter, **Reports**, the examples under
-  `examples/reports/` with a script that makes their synthetic database, and RP1's demo note.
+- **RP1g — Manual and demo note** (built): a chapter, **Reports**, the examples under
+  `examples/reports/` (a trial balance and a general ledger, with `ledger.sql`, which makes
+  their synthetic SQLite ledger, and their October 2026 CSV files checked in, which a test
+  compares each run with), and RP1's demo note.
 
 **Exit:** from the Reports tab, a one-source report with parameters runs in the worker under its
 guardrails and writes CSV and Excel with its declared schema: the trial balance above, on a

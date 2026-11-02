@@ -1,0 +1,9 @@
+Account,Name,Kind,Debit,Credit,Balance
+1000,Cash,asset,76925.41,74284.30,2641.11
+1100,Accounts receivable,asset,81334.80,76925.41,4409.39
+2000,Accounts payable,liability,0.00,77413.02,-77413.02
+3000,Owner's equity,equity,0.00,0.00,0.00
+4000,Sales,income,0.00,81334.80,-81334.80
+5000,Cost of sales,expense,77413.02,0.00,77413.02
+6100,Rent,expense,37222.35,0.00,37222.35
+6200,Software,expense,37061.95,0.00,37061.95

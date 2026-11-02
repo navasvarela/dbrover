@@ -1,0 +1,43 @@
+# Trial balance: each account's debits, credits and balance in a period, to Excel and CSV.
+# Runs on the "ledger" data source that ledger.sql makes.
+
+[report]
+name = "Trial balance"
+description = "Debits, credits and the balance of each account in a period."
+# The period: from :since, up to but not including :until.
+params = { since = "date", until = "date" }
+
+[[source]]
+id = "balances"
+data_source = "ledger"
+query = """
+SELECT a.code AS account, a.name AS account_name, a.kind AS kind,
+       COALESCE(SUM(e.debit), 0) AS debit,
+       COALESCE(SUM(e.credit), 0) AS credit,
+       COALESCE(SUM(e.debit), 0) - COALESCE(SUM(e.credit), 0) AS balance
+FROM accounts a
+LEFT JOIN entries e
+  ON e.account_id = a.id AND e.booked_on >= :since AND e.booked_on < :until
+GROUP BY a.code, a.name, a.kind
+ORDER BY a.code
+"""
+# A chart of accounts has hundreds of rows, not millions: anything more is a mistake.
+max_rows = 10000
+
+[[output]]
+format = "xlsx"
+file = "trial-balance-{since:%Y-%m}.xlsx"
+sheet_name = "Trial balance"
+columns = [
+  { name = "Account", from = "account", type = "text" },
+  { name = "Name",    from = "account_name" },
+  { name = "Kind",    from = "kind" },
+  { name = "Debit",   from = "debit",   type = "decimal(18,2)", format = "#,##0.00" },
+  { name = "Credit",  from = "credit",  type = "decimal(18,2)", format = "#,##0.00" },
+  { name = "Balance", from = "balance", type = "decimal(18,2)", format = "#,##0.00;[Red]-#,##0.00" },
+]
+
+[[output]]
+format = "csv"
+file = "trial-balance-{since:%Y-%m}.csv"
+columns = "same"
