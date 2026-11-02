@@ -699,16 +699,16 @@ failed one its error. A loaded source's line opens to show its table's columns a
 Each layer is one pull request in a stack, useful and tested on its own, with synthetic data
 only.
 
-- **RP2a — Plan:** this section, RP2's decisions and risks, the roadmap's entry in layers, and
+- **RP2a — Plan** (built, #398): this section, RP2's decisions and risks, the roadmap's entry in layers, and
   the design's example made exact (no `power()` in it).
-- **RP2b — The run's DuckDB:** in `dbrover-driver-duckdb`, a database in memory with its limits
+- **RP2b — The run's DuckDB** (built, #399): in `dbrover-driver-duckdb`, a database in memory with its limits
   set, tables loaded a page of text at a time and then cast to their types, DuckDB files
   attached read-only, and the lock-down before a query.
   **Exit:** tests in memory: a table of text loads and casts to `DECIMAL(38,18)` with every
   digit; a file attaches read-only and refuses a write; once locked, a query can't read a file,
   load an extension or change `memory_limit`; a query over a small `memory_limit` spills to the
   temporary folder, and one over a small `max_temp_size` fails saying so.
-- **RP2c — The report file:** several sources, `attach`, `[combine]` and its limits, read and
+- **RP2c — The report file** (built, #401): several sources, `attach`, `[combine]` and its limits, read and
   planned with their problems; `Plan` holds a list of sources and either a combine step or
   one source; the run opens sources through a trait, so the worker no longer opens them
   itself; the events name their step. A combine plan fails at run time, saying RP2d brings it.
@@ -716,7 +716,7 @@ only.
   table, two sources with one id, `attach` on a PostgreSQL source or with a query, a combine
   that writes, two sources without `[combine]`) is reported with its entry; RP1's examples run
   as before.
-- **RP2d — Combining:** in `dbrover-report`, each column's type from the driver or its values,
+- **RP2d — Combining** (built, #402): in `dbrover-report`, each column's type from the driver or its values,
   the sources loaded at the same time under their caps, the attached ones attached, the combine
   query under its timeout and DuckDB's limits, its rows into the outputs, and the events; in the
   worker, the processor-time limit. In `dbrover-engine`, the opener on real data sources.
@@ -724,11 +724,11 @@ only.
   18-decimal products match to the last digit; each limit (a source's cap, `timeout`,
   `memory_limit`, `max_temp_size`) stops the run, says which, and leaves no file; on the
   PostgreSQL test server with a DuckDB file attached, the valuation writes its files.
-- **RP2e — The tab:** a line per step with its progress, a loaded source's columns and types,
+- **RP2e — The tab** (built, #403): a line per step with its progress, a loaded source's columns and types,
   and the failing step marked.
   **Exit:** a kittest with a worker stand-in shows two sources, one attached, and the combine
   step progress to the end, and a run failing at the combine step marks it.
-- **RP2f — Manual and demo note:** the **Reports** chapter's sections on several sources,
+- **RP2f — Manual and demo note** (built): the **Reports** chapter's sections on several sources,
   attaching and combining, exact numbers in DuckDB, and the new limits; the valuation under
   `examples/reports/` with `valuation-postgres.sql` and `valuation-prices.sql` making its
   synthetic data, its October 2026 CSV checked in and compared by a test; RP2's demo note.

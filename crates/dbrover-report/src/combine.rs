@@ -263,6 +263,13 @@ impl Loading<'_> {
 /// What DuckDB's error says, naming the limit when it hit one of the combine step's.
 fn duckdb_failure(error: &DriverError, limits: &CombineLimits) -> SourceError {
     let message = describe_error(error);
+    // DuckDB's own advice follows, to `SET memory_limit` and the like, which a report can't:
+    // the advice below says what can.
+    let message = message
+        .split_once("\n\nPossible solutions")
+        .map_or(message.as_str(), |(cause, _)| cause)
+        .trim_end()
+        .to_owned();
     let (key, value, advice) = match WorkspaceLimit::of(error) {
         Some(WorkspaceLimit::Memory) => (
             "memory_limit",

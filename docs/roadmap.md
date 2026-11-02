@@ -1687,7 +1687,7 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   where the worker's test doesn't run, since it moves `HOME`. Left for later: a Settings page
   for the limits' defaults (RP4), the status bar counting reports' problems, a Job Object on
   Windows (RP2), and the values typed being kept across restarts.
-- **RP2 — Several sources** (started 2026-11-02, after RP1): each source's rows loaded into
+- **RP2 — Several sources** (built, in six layers, 2026-11-02, after RP1): each source's rows loaded into
   DuckDB, a combine step in DuckDB SQL, DuckDB data sources attached read-only, and exact
   decimals from source to file. Planned in
   [Reports](reporting.md#rp2--several-sources). In layers, one PR each:
@@ -1705,6 +1705,35 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
 
   **Exit:** from the Reports tab, a report with a PostgreSQL source and a DuckDB source,
   combined in DuckDB SQL, writes CSV and Excel with exact decimals inside the worker's limits.
+
+  **Demo note:** built in #398, #399, #401 to #403 and RP2f. To try it: add a PostgreSQL data
+  source named **ledger-postgres** on a server you can write to, open
+  `examples/reports/valuation-postgres.sql` in its console and run it all (300 made-up trades
+  with 18-decimal quantities, in the schema `valuation`). Add a DuckDB data source named
+  **prices-duckdb** with a new file, run `valuation-prices.sql` in its console (hourly prices
+  for three months), then edit it and tick **Read-only**. Copy `valuation.toml` into the
+  reports folder, **Reload**, open **Valuation**, type `2026-10-01 00:00` and
+  `2026-11-01 00:00`, and **Run**: the tab shows **Source tx** loading (fold it out to see
+  `quantity` typed `DECIMAL(20,18)` from its values), **Source prices** attached, then
+  **Combine**, and Downloads gets `valuation-2026-10.xlsx` (values to the cent, as numbers) and
+  `.csv` (every value with its 26 places: 109 rows, totalling 118,059,294.34). To see DuckDB's
+  limits, set `memory_limit = "1 MiB"` in `[combine]`: the run fails at the combine step,
+  naming `memory_limit` and where to raise it.
+
+  Checked: each layer's tests (the run's DuckDB loading 38-digit decimals, attaching read-only,
+  locked down, spilling and stopping at its temporary folder's size; 11 new kinds of problem in
+  a file; 22 shapes of value typed; two sources combined to the last digit; each of DuckDB's
+  limits stopping a run with no file left; a SQLite source beside an attached DuckDB file, and
+  on the PostgreSQL test server, `numeric(38,18)` transactions valued at DuckDB prices; the real
+  worker combining two sources; the tab's steps in kittest with a stand-in worker), and the
+  valuation example's CSV matches the checked-in one, every value the exact product of its
+  quantity and price. Not tried here: the app's window with the real worker by hand (as in
+  RP1, the worker and the tab are tested apart); attaching a DuckDB file another process has
+  open for writing, whose lock error the run turns into advice; the combine step on Windows beyond CI; a
+  combine step past a million rows, which RP3's general ledger will run. Left for later:
+  declaring a source's column types (RP3's declared columns), a Job Object on Windows, a
+  Settings page for the limits' defaults (RP4), and stopping a slow source's statement on the
+  server when another source fails first (its connection is dropped instead).
 - **RP3 — Lookups and documents:** a source read by the keys an earlier source found, in
   batches, and declared columns for DynamoDB, MongoDB, Elasticsearch and Redis sources.
 

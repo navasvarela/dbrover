@@ -6,8 +6,9 @@ you chose once. It lives in a file of its own, runs in a process of its own, and
 limits you can see, so a report that reads too much never takes DbRover or your machine with
 it.
 
-This first version reads one data source and writes CSV and Excel files. Reports that combine
-several data sources come next; see [What's next](#whats-next).
+A report reads one data source, or several, combined in DuckDB SQL, and writes CSV and Excel
+files. Lookups by key in DynamoDB and the other document databases come next; see
+[What's next](#whats-next).
 
 ## Your first report
 
@@ -28,6 +29,28 @@ run on a made-up ledger:
 The tab shows the run as it goes, then the two files it wrote, `trial-balance-2026-10.xlsx` and
 `trial-balance-2026-10.csv`, in your Downloads folder. Click one to open it. Under them, a
 preview shows the rows the query returned.
+
+### Combining two data sources
+
+The valuation example values each crypto transaction, kept in PostgreSQL, at its asset's price
+in the hour it ran, kept in a DuckDB file:
+
+1. Add a PostgreSQL data source named **ledger-postgres**, on any server you can write a schema
+   to. Open
+   [`valuation-postgres.sql`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/valuation-postgres.sql)
+   in its console and run it all. It makes the schema `valuation` with 300 made-up trades.
+2. Add a DuckDB data source named **prices-duckdb**, with a new file. Open
+   [`valuation-prices.sql`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/valuation-prices.sql)
+   in its console and run it all. It makes three months of hourly prices.
+3. Edit **prices-duckdb** and tick **Read-only**, so a report can read the file while DbRover
+   has it open (see [Several sources](#several-sources)).
+4. Copy `valuation.toml` into the reports folder, **Reload**, and click **Valuation**.
+5. Type `2026-10-01 00:00` for **since** and `2026-11-01 00:00` for **until**, and click **Run**.
+
+The tab shows each source, then the combine step: the transactions load into DuckDB, the
+price file is attached where it is, and the combined rows go to `valuation-2026-10.xlsx` and
+`valuation-2026-10.csv`. The CSV file keeps every digit of each value, 26 decimal places,
+while the Excel file rounds each to the cent.
 
 ## The Reports section
 
@@ -56,8 +79,10 @@ Click a report to open its tab:
   names of the files the values make;
 - **Run**, and while it runs, **Cancel**.
 
-While a report runs, the tab shows how many rows it has read and for how long. Only one report
-runs at a time; the other tabs say which one. When it ends, the tab shows each file it wrote
+While a report runs, the tab shows a line for each source and, if it has one, for the combine
+step: what each has read so far, and for how long, with a check once it is done. A source loaded
+into DuckDB folds out its columns and the types they were given. Only one report runs at a
+time; the other tabs say which one. When it ends, the tab shows each file it wrote
 with its rows and size, and the preview; or the step that failed and why. Nothing is written
 unless every file is: a run that fails or is cancelled leaves the folder as it was, an older
 file of the same name included.
@@ -66,7 +91,8 @@ The values and the folder are remembered for each report until you quit DbRover.
 
 ## A report file
 
-A report is a TOML file, with one `[report]`, one `[[source]]` and one or more `[[output]]`s:
+A report is a TOML file, with one `[report]`, one or more `[[source]]`s, a `[combine]` when
+there are several, and one or more `[[output]]`s. The trial balance reads one source:
 
 ```toml
 [report]
@@ -123,9 +149,10 @@ and `T` works in place of the space).
 
 | Key | What it is |
 | --- | --- |
-| `id` | What the run's progress and errors call it. Needed. |
+| `id` | What the run's progress and errors call it, and the name of its table in `[combine]`: letters, digits and `_`, starting with a letter. Needed. |
 | `data_source` | The data source it reads, by its name in the explorer. When two share a name, use the data source's id instead (in `data_sources.toml`). Needed. |
-| `query` | One statement that only reads, in the data source's own SQL. Needed. |
+| `query` | One statement that only reads, in the data source's own SQL. Needed, unless `attach = true`. |
+| `attach` | `true` for a DuckDB file that `[combine]` reads in place, without a query. See [Several sources](#several-sources). |
 | `max_rows` | The most rows it may return. 1,000,000 unless you say. |
 | `max_bytes` | The most data it may return, as `"500 MB"` or `"4 GiB"`. 1 GiB unless you say. |
 | `timeout` | How long the query may run, as `"30s"` or `"10m"`. 10 minutes unless you say. |
@@ -134,6 +161,21 @@ The query uses parameters as a console does, as `:since` (see
 [Files, parameters and find](files-parameters.md#parameters)). Each `:name` must be in `params`. A report
 reads PostgreSQL, MySQL and MariaDB, SQLite, SQL Server, DuckDB, ClickHouse, Cassandra and
 ScyllaDB; DynamoDB, MongoDB, Elasticsearch and Redis come later.
+
+### `[combine]`
+
+A report with several sources combines them with a query in DuckDB's SQL, whose rows the
+outputs write:
+
+| Key | What it is |
+| --- | --- |
+| `query` | One statement that only reads, over the sources' tables, with the report's `:name` parameters. Needed. |
+| `timeout` | How long the query may run. 10 minutes unless you say. |
+| `memory_limit` | The memory DuckDB may use before it spills to disk, as `"2 GiB"`. 2 GiB unless you say. |
+| `threads` | How many of the processor's cores DuckDB may use. Half of them unless you say. |
+| `max_temp_size` | The most DuckDB may spill to disk, as `"10 GiB"`. 10 GiB unless you say. |
+
+See [Several sources](#several-sources).
 
 ### `[[output]]`
 
@@ -183,6 +225,83 @@ such as `decimal(38,2)`, to keep its cells numbers.
 A value that doesn't fit stops the run with the output, the column, the row and the value, as
 `row 2, column "Debit": "n/a" isn't a decimal number`.
 
+## Several sources
+
+The valuation reads a PostgreSQL table and a DuckDB file, and joins them:
+
+```toml
+[[source]]
+id = "tx"
+data_source = "ledger-postgres"
+query = """
+SELECT id, wallet, asset, quantity, executed_at
+FROM valuation.transactions
+WHERE executed_at >= :since AND executed_at < :until
+"""
+
+[[source]]
+id = "prices"
+data_source = "prices-duckdb"
+attach = true
+
+[combine]
+query = """
+SELECT tx.executed_at, tx.wallet, tx.asset, tx.quantity, p.price_usd,
+       tx.quantity * p.price_usd AS value_usd
+FROM tx
+ASOF JOIN prices.hourly_prices p
+  ON p.asset = tx.asset AND p.hour <= tx.executed_at
+ORDER BY tx.executed_at, tx.id
+"""
+```
+
+Each run has a DuckDB database of its own, in memory. Every source with a query runs through
+DbRover's own connection to its data source, read-only and under its limits, as a single source
+does, and its rows are loaded into a table named after its `id`: `tx` above. Sources load at
+the same time. A DuckDB file with `attach = true` isn't copied: it is attached, read-only, as a
+database named after its `id`, so `prices.hourly_prices` reads its table in place and DuckDB
+reads only what the query needs. The `[combine]` query then runs over them, with all of
+DuckDB's SQL: joins of every kind, `ASOF JOIN` for "the latest price at or before",
+window functions, `GROUP BY GROUPING SETS` for subtotals, `PIVOT`.
+
+The combine query reads nothing else: no file on your disk, no extension from the internet, no
+setting of DuckDB's. A report with one source and no `[combine]` runs without DuckDB, as in the
+trial balance.
+
+A DuckDB file can be read by one program while another has it open for writing only if neither
+writes. Tick **Read-only** on a DuckDB data source that a report attaches, or disconnect it
+before you run the report; otherwise the run says the file is locked.
+
+### Types in DuckDB
+
+Each loaded column gets a type, shown in the tab when you fold out the source:
+
+- **The data source's type,** where it says more than the values: a `decimal(18,2)` stays
+  `DECIMAL(18,2)`, a float stays `DOUBLE`, and a text column stays text, so codes such as `0042`
+  or `1000` keep their form. Text whose every value is a date or a time, as SQLite keeps them,
+  becomes a `DATE` or a `TIMESTAMP`.
+- **Otherwise, the values':** PostgreSQL, for one, doesn't say. Whole numbers become `BIGINT`
+  (`HUGEINT` past 18 digits); decimal numbers a `DECIMAL` with just the digits they have, so
+  PostgreSQL's `numeric` amounts load exactly; `t` and `f` a `BOOLEAN`; dates and times their
+  types, with a time zone if they carry an offset. Anything else, or a mix, is text.
+
+A number of more than 38 digits, which no DuckDB `DECIMAL` holds, loads as text, and the tab
+warns about its column; cast it in the combine query to what it should be.
+
+### Exact numbers in DuckDB
+
+DuckDB keeps decimals exact through `+`, `-`, `*`, `SUM`, `ROUND` and comparisons: a product's
+places are the sum of its factors', up to 38 digits in all, which is why the valuation's
+values have 26. Two things give a floating-point `DOUBLE` instead, which keeps about 15
+digits:
+
+- **Division:** `a / b` is a `DOUBLE`. Multiply by a decimal instead (`amount * 0.01` rather
+  than `amount / 100`), or cast the result: `CAST(a / b AS DECIMAL(38,18))`.
+- **`power()`**, `sqrt()`, `ln()` and the like.
+
+The outputs then round each value once, as their column's type says: the valuation's Excel file
+writes values as `decimal(38,2)`, and its CSV file every digit.
+
 ## Limits
 
 A report runs in a process of its own, `dbrover report-worker`, which DbRover starts for each
@@ -191,10 +310,16 @@ consoles and their transactions carry on. The limits, cheapest first:
 
 | What | Limit | Change it with |
 | --- | --- | --- |
-| The source | its rows, its data, its time; read-only | `max_rows`, `max_bytes`, `timeout` in `[[source]]` |
+| Each source | its rows, its data, its time; read-only | `max_rows`, `max_bytes`, `timeout` in `[[source]]` |
+| The combine step | DuckDB's memory, threads and spilled data; its time | `memory_limit`, `threads`, `max_temp_size`, `timeout` in `[combine]` |
 | Each output | its data; Excel's rows a sheet | `max_size`, `continue_on_new_sheet` in `[[output]]` |
 | The run | its time | `timeout` in `[report]` |
-| The process | a lower priority; on Linux, half the machine's memory and the run's time on the processor | — |
+| The process | a lower priority; on Linux, half the machine's memory and the run's time on each processor thread | — |
+
+DuckDB spills what doesn't fit in its `memory_limit` to a folder inside the output folder, which
+goes with the run. On macOS and Windows, which don't cap a process's memory, `memory_limit` is
+what keeps a large combine step from filling your machine's memory: lower it on a small
+machine, raise it for a report that combines millions of rows.
 
 A run stopped by a limit names it, its value and where to raise it, as "It stopped at max_rows =
 1,000,000 rows. To allow more, raise max_rows in the `[[source]]` "balances" of the report's
@@ -212,6 +337,7 @@ sign-in (see [Password from a command](data-sources.md#password-from-a-command))
 
 ## What's next
 
-Reports are being built in steps. Coming next: several data sources combined in one report,
-lookups by key in DynamoDB and the other document databases, a record of every run to compare
-them, the PRQL language, and running a report from the command line.
+Reports are being built in steps. Coming next: a source read by the keys an earlier source
+found, and sources on DynamoDB, MongoDB, Elasticsearch and Redis with the columns they declare;
+then a record of every run to compare them, the PRQL language for the combine step, and running
+a report from the command line.
