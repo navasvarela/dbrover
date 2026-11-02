@@ -7,7 +7,7 @@
 
 use std::time::{Duration, Instant};
 
-use dbrover_core::{CancelHandle, DriverError, ResultCursor, describe_error};
+use dbrover_core::{CancelHandle, DriverError, ProgressHandle, ResultCursor, describe_error};
 use dbrover_store::{HistoryEntry, HistoryOutcome, HistorySource, redact_secrets};
 use jiff::Timestamp;
 
@@ -26,6 +26,11 @@ use crate::{
 /// Rows per page. Plenty to look at, few enough to arrive at once; other database tools
 /// default to between 200 and 1,000.
 pub(super) const PAGE_SIZE: usize = 500;
+
+/// How often a running statement's progress is asked for and sent: often enough that the
+/// line moves, seldom enough that asking (a query of ClickHouse's `system.processes`) costs
+/// the server nothing noticeable.
+const PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
 /// How much of a statement the log console shows.
 const LOG_PREVIEW_CHARS: usize = 80;
 
@@ -250,7 +255,12 @@ async fn run_statement(
 ) -> Result<StatementEnd, Disconnected> {
     let run = statement.run;
     let started = Instant::now();
-    let execute = statement.sent.execute(worker.connection);
+    let execute = watched(
+        statement.sent.execute(worker.connection),
+        worker.progress_handle,
+        worker.context,
+        (run, statement.index, started),
+    );
     let mut cursor = match worker
         .signals
         .guard(execute, Some(run), worker.cancel_handle)
@@ -272,7 +282,12 @@ async fn run_statement(
         columns: cursor.columns().to_vec(),
         shape: cursor.shape(),
     });
-    let page = cursor.next_page(PAGE_SIZE);
+    let page = watched(
+        cursor.next_page(PAGE_SIZE),
+        worker.progress_handle,
+        worker.context,
+        (run, statement.index, started),
+    );
     let rows = match worker
         .signals
         .guard(page, Some(run), worker.cancel_handle)
@@ -302,6 +317,43 @@ async fn run_statement(
         })));
     }
     finish(worker, statement, cursor, started, Some(elapsed)).await
+}
+
+/// `work`, while which the statement's progress is sent every [`PROGRESS_INTERVAL`], when
+/// the connection can say what it is (C0f).
+async fn watched<T>(
+    work: impl Future<Output = T>,
+    progress: Option<&dyn ProgressHandle>,
+    context: &SessionContext,
+    (run, statement, started): (RunId, usize, Instant),
+) -> T {
+    let Some(progress) = progress else {
+        return work.await;
+    };
+    let reporting = async {
+        let mut ticks = tokio::time::interval_at(
+            tokio::time::Instant::now() + PROGRESS_INTERVAL,
+            PROGRESS_INTERVAL,
+        );
+        loop {
+            ticks.tick().await;
+            // A failed or empty answer leaves the line as it was; the statement's own
+            // outcome is what reports a problem.
+            if let Ok(Some(progress)) = progress.progress().await {
+                context.send(Event::StatementProgress {
+                    run,
+                    statement,
+                    progress,
+                    elapsed: started.elapsed(),
+                });
+            }
+        }
+    };
+    tokio::select! {
+        biased;
+        output = work => output,
+        never = reporting => match never {},
+    }
 }
 
 /// Ends a statement and reports it. If rows were left unread, the server is asked to stop

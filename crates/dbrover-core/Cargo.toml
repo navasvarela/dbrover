@@ -10,16 +10,19 @@ publish.workspace = true
 
 [features]
 # Exposes the driver conformance suite to driver crates' tests. See docs/testing.md.
-conformance = ["dep:tokio"]
+conformance = ["tokio/io-util", "tokio/net"]
 
 [dependencies]
 async-trait.workspace = true
 serde.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, optional = true, features = ["io-util", "net", "time"] }
+# The pause between a job's polls (C0f).
+tokio = { workspace = true, features = ["time"] }
 uuid.workspace = true
 
 [dev-dependencies]
+# Paused time, for the pauses between a job's polls.
+tokio = { workspace = true, features = ["test-util"] }
 toml.workspace = true
 
 [lints]

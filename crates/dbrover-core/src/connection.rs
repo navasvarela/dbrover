@@ -6,8 +6,8 @@ use async_trait::async_trait;
 
 use crate::{
     CancelHandle, CatalogNode, CatalogPath, Cell, ChildrenPage, ChildrenQuery, CostEstimate,
-    DriverError, RelationName, ResultCursor, RoleDescription, TableConstraints, TableDescription,
-    TableName, TransactionStatus,
+    DriverError, ProgressHandle, RelationName, ResultCursor, RoleDescription, TableConstraints,
+    TableDescription, TableName, TransactionStatus,
 };
 
 /// What a server reported about itself when the connection was opened.
@@ -204,6 +204,13 @@ pub trait Connection: Send {
     /// A handle for cancelling this connection's running statement from another task. Valid
     /// for the connection's whole lifetime.
     fn cancel_handle(&self) -> Arc<dyn CancelHandle>;
+
+    /// A handle for asking what the running statement has done so far, from another task
+    /// while it runs (C0f): engines that run statements as jobs, and ClickHouse. `None`, the
+    /// default, where the engine can't say. Valid for the connection's whole lifetime.
+    fn progress_handle(&self) -> Option<Arc<dyn ProgressHandle>> {
+        None
+    }
 
     async fn close(self: Box<Self>) -> Result<(), DriverError>;
 }

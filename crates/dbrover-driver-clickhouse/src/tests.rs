@@ -476,3 +476,60 @@ async fn walks_the_catalog_and_shows_definitions() {
         run(&mut connection, statement).await;
     }
 }
+
+/// C0f's exit: a slow query reports the rows it has read before it ends, found by its
+/// `query_id`, and cancel still stops it.
+#[tokio::test]
+async fn a_running_query_reports_its_progress_then_stops_on_cancel() {
+    let Some(server) = test_server() else { return };
+    let mut connection = server.connect().await;
+    let progress = connection
+        .progress_handle()
+        .expect("ClickHouse reports progress");
+    let cancel = connection.cancel_handle();
+    assert_eq!(progress.progress().await.expect("nothing runs"), None);
+
+    let watcher = tokio::spawn(async move {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            let seen = progress.progress().await.expect("progress");
+            let read = seen.and_then(|seen| seen.rows_read).unwrap_or(0);
+            if read > 0 || std::time::Instant::now() > deadline {
+                cancel.cancel().await.expect("cancel");
+                return seen;
+            }
+        }
+    });
+    let result = async {
+        let mut cursor = connection.execute(LONG_RUNNING).await?;
+        while !cursor.is_exhausted() {
+            cursor.next_page(500).await?;
+        }
+        cursor.finish().await
+    }
+    .await;
+    let seen = watcher
+        .await
+        .expect("watcher")
+        .expect("progress while running");
+    assert!(seen.rows_read.is_some_and(|rows| rows > 0), "{seen:?}");
+    assert!(seen.bytes_read.is_some(), "{seen:?}");
+    assert!(
+        matches!(result, Err(DriverError::Statement { .. })),
+        "{result:?}"
+    );
+    connection.ping().await.expect("usable after cancel");
+}
+
+#[test]
+fn reads_progress_from_system_processes() {
+    assert_eq!(
+        execution::read_progress("123\t4567\n"),
+        Some(dbrover_core::JobProgress {
+            rows_read: Some(123),
+            bytes_read: Some(dbrover_core::ByteCount(4567)),
+        })
+    );
+    assert_eq!(execution::read_progress(""), None);
+}

@@ -1,7 +1,7 @@
 //! Draws a console: toolbar, editor and results, and turns clicks and shortcuts into
 //! [`ConsoleAction`]s for the app.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use egui::text::{CCursor, CCursorRange};
 use egui::text_edit::TextEditState;
@@ -19,7 +19,7 @@ use crate::picture::PictureFormat;
 use crate::theme::Palette;
 use crate::widgets::{self, IconButton};
 use dbrover_core::{CatalogPath, RelationName};
-use dbrover_core::{SafetyLevel, TransactionStatus};
+use dbrover_core::{JobProgress, SafetyLevel, TransactionStatus};
 use dbrover_engine::{
     CostApproval, RunId, RunOrigin, RunOutcome, SessionState, TransactionEnd, TransactionMode,
 };
@@ -671,7 +671,7 @@ fn run_status(ui: &mut Ui, console: &QueryConsole, palette: &Palette) {
         }
         (_, Some(RunState::Running)) => {
             ui.spinner();
-            ui.weak("Running…");
+            ui.weak(running_text(console.run_progress()));
         }
         (_, Some(RunState::Finished { outcome, elapsed })) => {
             let millis = elapsed.as_millis();
@@ -690,6 +690,20 @@ fn run_status(ui: &mut Ui, console: &QueryConsole, palette: &Palette) {
             ui.weak(format!("Connected to {server}"));
         }
         (_, None) => {}
+    }
+}
+
+/// "Running…", with what the statement has done so far when its engine says (C0f):
+/// `Running… 12 s · 1234 rows · 2.1 GB read`.
+fn running_text(progress: Option<(JobProgress, Duration)>) -> String {
+    let Some((progress, elapsed)) = progress else {
+        return "Running…".to_owned();
+    };
+    let done = progress.to_string();
+    let seconds = elapsed.as_secs();
+    match done.is_empty() {
+        true => format!("Running… {seconds} s"),
+        false => format!("Running… {seconds} s · {done}"),
     }
 }
 
@@ -990,5 +1004,23 @@ mod tests {
         assert_eq!(line_starts(&[false, true, true, false]), [0, 2, 3]);
         assert_eq!(line_starts(&[false]), [0]);
         assert!(line_starts(&[]).is_empty());
+    }
+
+    #[test]
+    fn the_running_line_shows_what_the_engine_reports() {
+        assert_eq!(running_text(None), "Running…");
+        let seconds = Duration::from_millis(12_400);
+        assert_eq!(
+            running_text(Some((JobProgress::default(), seconds))),
+            "Running… 12 s"
+        );
+        let progress = JobProgress {
+            rows_read: Some(1234),
+            bytes_read: Some(dbrover_core::ByteCount(2_100_000_000)),
+        };
+        assert_eq!(
+            running_text(Some((progress, seconds))),
+            "Running… 12 s · 1234 rows · 2.1 GB read"
+        );
     }
 }

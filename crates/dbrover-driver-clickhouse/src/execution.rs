@@ -17,7 +17,8 @@ use async_trait::async_trait;
 use clickhouse::Client;
 use clickhouse::query::{BytesCursor, Query};
 use dbrover_core::{
-    BoxError, CancelHandle, Cell, ColumnInfo, DriverError, Rejection, ResultCursor, Row,
+    BoxError, ByteCount, CancelHandle, Cell, ColumnInfo, DriverError, JobProgress, ProgressHandle,
+    Rejection, ResultCursor, Row,
 };
 use serde_json::value::RawValue;
 use tokio::io::{AsyncBufReadExt, Lines};
@@ -157,7 +158,9 @@ fn cell(value: &RawValue) -> Result<Cell, serde_json::Error> {
 }
 
 /// Stops a statement by its `query_id`, with `KILL QUERY` on a client without the session,
-/// which the statement keeps busy. Killing one's own queries needs no grant.
+/// which the statement keeps busy, and says what it has done so far from
+/// `system.processes`, found by the same id (C0f). Killing one's own queries, and seeing
+/// them, needs no grant.
 pub(crate) struct ClickHouseCancel {
     client: Client,
     running: Mutex<Option<String>>,
@@ -192,6 +195,42 @@ impl ClickHouseCancel {
             .param("query_id", query_id);
         read_all(query, "TabSeparatedRaw").await.map(drop)
     }
+}
+
+/// The columns of `system.processes` that say what a query has read so far.
+const PROGRESS_SQL: &str = "SELECT read_rows, read_bytes FROM system.processes \
+                            WHERE query_id = {query_id:String}";
+
+#[async_trait]
+impl ProgressHandle for ClickHouseCancel {
+    async fn progress(&self) -> Result<Option<JobProgress>, DriverError> {
+        let running = self
+            .running
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let Some(query_id) = running else {
+            return Ok(None);
+        };
+        let query = self
+            .client
+            .query_raw(PROGRESS_SQL)
+            .param("query_id", query_id.as_str());
+        let text = read_all(query, "TabSeparatedRaw")
+            .await
+            .map_err(connection_error)?;
+        Ok(read_progress(&text))
+    }
+}
+
+/// `read_rows` and `read_bytes`, tab-separated, from `system.processes`; `None` once the query
+/// has left it.
+pub(crate) fn read_progress(text: &str) -> Option<JobProgress> {
+    let (rows, bytes) = text.lines().next()?.split_once('\t')?;
+    Some(JobProgress {
+        rows_read: rows.parse().ok(),
+        bytes_read: bytes.parse().ok().map(ByteCount),
+    })
 }
 
 #[async_trait]

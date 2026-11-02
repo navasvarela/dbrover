@@ -4,8 +4,9 @@ use std::time::{Duration, SystemTime};
 
 use dbrover_core::{
     CatalogPath, ChildrenPage, ChildrenQuery, ColumnInfo, CostEstimate, DataSource, DataSourceId,
-    DriverKind, Password, PasswordCommand, ProjectId, ReadPace, Rejection, RelationName,
-    ResultShape, RoleDescription, Row, ServerInfo, TableDescription, TableName, TransactionStatus,
+    DriverKind, JobProgress, Password, PasswordCommand, ProjectId, ReadPace, Rejection,
+    RelationName, ResultShape, RoleDescription, Row, ServerInfo, TableDescription, TableName,
+    TransactionStatus,
 };
 use dbrover_export::{ExportSpec, SqlTable};
 use dbrover_sql::{ExistingTable, ParameterValues};
@@ -740,6 +741,15 @@ pub enum Event {
         columns: Vec<ColumnInfo>,
         /// Whether its rows are rows or documents, one a row (ADR 0006).
         shape: ResultShape,
+    },
+    /// What a statement that is still running has done so far, about once a second, on
+    /// engines that can say (C0f): sent between its start and its first rows or its end.
+    StatementProgress {
+        run: RunId,
+        statement: usize,
+        progress: JobProgress,
+        /// Since the statement was sent.
+        elapsed: Duration,
     },
     RowsFetched {
         run: RunId,

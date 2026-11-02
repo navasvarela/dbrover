@@ -196,7 +196,7 @@ a CLI) and with tokens the tests make up. None reads the machine's own sign-in.
   **Exit:** DynamoDB's guard works as before through the new names, with its tests unchanged
   in substance; the judging function's table of cases covers both kinds of estimate, each
   approval and the limit's edges; a `cost_guard = "off"` written before C0 still reads.
-- **C0f — Queries as jobs:** a `job` module in `dbrover-core` with a `JobService` interface
+- **C0f — Queries as jobs** (built): a `job` module in `dbrover-core` with a `JobService` interface
   (submit a statement, poll it by its `JobId`, page through its result, cancel it) and a
   `JobCursor` and `JobCancel` built once on it, which C3 to C6's engines implement instead of
   each writing its own polling. While a statement runs, the engine asks the connection's
