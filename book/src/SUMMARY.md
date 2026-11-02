@@ -5,6 +5,7 @@
 - [Install and first launch](install.md)
 - [Data sources](data-sources.md)
 - [Moving data sources to another machine](sharing.md)
+- [Cloud sign-in and costs](cloud.md)
 - [The explorer](explorer.md)
 - [Creating and changing tables](objects.md)
 - [Views and schemas](views-schemas.md)

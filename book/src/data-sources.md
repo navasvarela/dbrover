@@ -33,6 +33,7 @@ Every kind has:
 | User | `postgres` | |
 | TLS | `prefer` | Whether to encrypt the connection; see below. |
 | SSH | off | Connect through an SSH server; see [SSH tunnels](#ssh-tunnels). |
+| Sign in with | Password | **Password**, or a cloud account's token: **AWS IAM**, **Google Cloud** or **Microsoft Entra ID**; see [Signing in with a cloud account](cloud.md#signing-in-with-a-cloud-account). |
 | Password | none | Stored in the keychain when you save. See below. |
 | Password from a command | off | Run a program for the password instead, for cloud tokens and secret stores; see [Password from a command](#password-from-a-command). |
 | MCP login | none | Another user, only for AI assistants; see [The MCP login](mcp.md#the-mcp-login). |
@@ -73,6 +74,7 @@ install. Client certificates aren't supported yet.
 | Database | `mysql` | The database unqualified names refer to, as `USE` would set. The explorer lists every database you may see. |
 | User | `root` | |
 | TLS | `prefer` | As for PostgreSQL. MySQL 8 and MariaDB 11.4 encrypt by default, with a self-signed certificate unless the server is given one, so `verify-full` needs that server's CA file. |
+| Sign in with | Password | As for PostgreSQL. A cloud sign-in needs TLS `require` or `verify-full`. |
 | Password | none | Stored in the keychain when you save. |
 | MCP login | none | Another user, only for AI assistants; see [The MCP login](mcp.md#the-mcp-login). |
 | MCP password | none | Shown once there is an MCP login. Stored in the keychain apart from the password. |
@@ -91,8 +93,9 @@ mode: see [How the permissions are enforced](mcp.md#how-the-permissions-are-enfo
 | Host | `localhost` | Name or IP address of the server. For Azure SQL, the server's name, such as `myserver.database.windows.net`. |
 | Port | `1433` | Named instances aren't looked up: give the instance's port. |
 | Database | `master` | The database the console works in. The explorer lists every database the login may open. |
-| User | `sa` | A SQL Server login. Windows and Microsoft Entra ID sign-in aren't supported yet. |
+| User | `sa` | A SQL Server login. Windows sign-in isn't supported yet; for Microsoft Entra ID, choose it in **Sign in with** (see [Signing in with a cloud account](cloud.md#signing-in-with-a-cloud-account)). |
 | TLS | `prefer` | SQL Server always offers encryption, with a certificate of its own making unless it is given one, so `prefer` and `require` encrypt without checking it, and `verify-full` needs that server's CA file (or, for Azure SQL, nothing: its certificate is publicly signed). |
+| Sign in with | Password | **Password**, or **Microsoft Entra ID** for Azure SQL. |
 | Password | none | Stored in the keychain when you save. |
 
 **Test connection** says which server it reached ("Connected to SQL Server 16.0.4305.5"; 16 is
@@ -387,6 +390,8 @@ SQLite data sources have no password, so DbRover never asks the keychain for the
 
 Some passwords aren't for keeping: an AWS RDS or Google Cloud SQL login token lasts fifteen
 minutes or an hour, and a password in 1Password or Vault belongs there, not in a second store.
+For RDS, Cloud SQL and Azure, [Sign in with](cloud.md#signing-in-with-a-cloud-account) a cloud
+account does this without a command; a command covers everything else.
 Tick **Password from a command** and DbRover runs a program on every connection, and its output
 is the password. Every server engine has it: PostgreSQL, MySQL and MariaDB, SQL Server and
 ClickHouse.

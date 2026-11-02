@@ -447,8 +447,8 @@ warehouses. Planned, not scheduled. The providers come in this order: AWS, then 
 then Azure, both across the milestones and within each one. The full plan, with the order, the
 shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.md).
 
-- **C0 — Groundwork:** started on 2026-11-02, after W8, on what N5 built (AWS's sign-in and
-  DynamoDB's cost guard). Planned in
+- **C0 — Groundwork** (built, in eight layers, 2026-11-02, after W8), on what N5 built (AWS's
+  sign-in and DynamoDB's cost guard). Planned in
   [Cloud and big data](cloud-data.md#c0--cloud-sign-in-cost-guards-and-jobs). In layers, one PR
   each:
   - **C0a — Plan:** C0's layers, decisions and risks, and this entry.
@@ -472,6 +472,24 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
 
   **Exit:** an RDS PostgreSQL database connects with an AWS profile and no password, and keeps
   working past the token's 15-minute lifetime (with stand-ins in CI; by hand against RDS).
+
+  **C0 demo note:** the parts that need no cloud account first.
+  - *Progress:* run `docker compose up -d --wait clickhouse`, add a **ClickHouse** data source
+    on `localhost:58123` (user and password `dbrover`), and run `SELECT sum(number) FROM
+    numbers(1000000000000)`. After a second the status line reads `Running… 1 s · … rows ·
+    … GB read` and moves on; ⌘. stops it.
+  - *Searching:* on any SQLite or PostgreSQL data source, expand only the data source, then
+    type part of a table's name in the explorer's filter: **Found on the server** lists it with
+    its schema, and **Open data** on it opens its rows.
+  - *Cost guard:* DynamoDB's works as in N5's note (**Read all of orders?**). The byte limit
+    (`ask_above_bytes`) waits for an engine that estimates bytes.
+  - *Cloud sign-in, by hand with real accounts* (not tried while building C0): an RDS
+    PostgreSQL instance with IAM authentication, **Sign in with** **AWS IAM**, a profile and the
+    region, and a user granted `rds_iam`: it connects with no password, and a console opened
+    after 15 minutes connects too. The same on RDS MySQL (TLS `require`), on Cloud SQL with
+    **Google Cloud** after `gcloud auth application-default login`, and on Azure Database for
+    PostgreSQL and Azure SQL with **Microsoft Entra ID** after `az login`.
+
 - **C1 — Managed databases:** RDS, Aurora and Redshift; Cloud SQL; Azure SQL, Azure Database,
   and Synapse's and Fabric's SQL endpoints; and Neon, Supabase and ClickHouse Cloud, through the
   drivers DbRover has, with presets in the data source dialog.
