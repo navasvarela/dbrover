@@ -1668,10 +1668,12 @@ fn history_audit(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) 
 
 fn explorer_filter(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
     expand(harness, &["shop", "main", "tables", "views"]);
-    let filter = By::new().predicate(|node| node.placeholder() == Some("Filter loaded nodes"));
+    let filter =
+        By::new().predicate(|node| node.placeholder() == Some("Filter, or search the server"));
     harness.get(filter).focus();
     harness.run_ok();
-    let filter = By::new().predicate(|node| node.placeholder() == Some("Filter loaded nodes"));
+    let filter =
+        By::new().predicate(|node| node.placeholder() == Some("Filter, or search the server"));
     harness.get(filter).type_text("order");
     harness.run_ok();
 }

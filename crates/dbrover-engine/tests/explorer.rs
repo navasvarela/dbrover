@@ -1,5 +1,6 @@
 //! An explorer that pages (`docs/nosql.md`, N0a): a schema of thousands of tables loads a page
-//! at a time, with the explorer's filter applied by the server. Each test works in a database
+//! at a time, with the explorer's filter applied by the server; and a search of the whole
+//! catalog on the server (C0g). Each test works in a database
 //! of its own, dropped after it. Skipped unless `DBROVER_TEST_POSTGRES_URL` is set.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -11,8 +12,9 @@ use std::time::Instant;
 
 use common::{ParsedUrl, TestEngine, postgres_test_server};
 use dbrover_core::{
-    CATALOG_PAGE_SIZE, CatalogPath, ChildrenPage, ChildrenQuery, Connection, ConnectionConfig,
-    DataSource, DataSourceId, FolderKind, NodeKind, PostgresConfig, Route, SafetyLevel,
+    CATALOG_PAGE_SIZE, CatalogMatches, CatalogPath, CatalogSearch, ChildrenPage, ChildrenQuery,
+    Connection, ConnectionConfig, DataSource, DataSourceId, FolderKind, NodeKind, PostgresConfig,
+    Route, SafetyLevel,
 };
 use dbrover_engine::{Command, Event, PasswordUpdate};
 
@@ -97,6 +99,81 @@ fn check_paging(server: ParsedUrl, count: usize) {
     engine.shut_down();
 }
 
+/// C0g: a search of the whole database finds tables and views in schemas never expanded, on
+/// the server, with their paths, and is cut at its limit.
+#[test]
+fn searches_every_schema_on_the_server() {
+    let Some(server) = postgres_test_server() else {
+        return;
+    };
+    let mut scratch = Scratch::with_tables(server, 2_500);
+    scratch.run_in_database(
+        "CREATE SCHEMA sales; CREATE TABLE sales.\"Orders\" (id int); \
+         CREATE VIEW sales.open_orders AS SELECT 1 AS id",
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    engine.send(Command::SaveDataSource {
+        data_source: scratch.data_source.clone(),
+        password: PasswordUpdate::Set(scratch.password.clone()),
+        ssh_secret: PasswordUpdate::Keep,
+    });
+    engine.expect(Event::DataSourceSaved(scratch.data_source.clone()));
+
+    let orders = search(&mut engine, &scratch.data_source, "ORDERS");
+    let sales = CatalogPath::root()
+        .child(NodeKind::Database, &scratch.name)
+        .child(NodeKind::Schema, "sales");
+    let in_folder = |folder: FolderKind, kind, name: &str| {
+        sales
+            .child(NodeKind::Folder(folder), folder.label())
+            .child(kind, name)
+    };
+    let paths: Vec<CatalogPath> = orders.nodes.iter().map(|node| node.path.clone()).collect();
+    assert_eq!(
+        paths,
+        [
+            in_folder(FolderKind::Tables, NodeKind::Table, "Orders"),
+            in_folder(FolderKind::Views, NodeKind::View, "open_orders"),
+        ]
+    );
+    assert_eq!(orders.nodes[0].detail.as_deref(), Some("sales"));
+    assert!(!orders.more);
+
+    // t_01200 to t_01299: exactly the limit.
+    let hundred = search(&mut engine, &scratch.data_source, "T_012");
+    assert_eq!((hundred.nodes.len(), hundred.more), (100, false));
+    assert_eq!(hundred.nodes[0].label, "t_01200");
+    // t_01000 to t_01999: cut at the limit.
+    let many = search(&mut engine, &scratch.data_source, "t_01");
+    assert_eq!((many.nodes.len(), many.more), (100, true));
+    engine.shut_down();
+}
+
+fn search(engine: &mut TestEngine, data_source: &DataSource, text: &str) -> CatalogMatches {
+    // Searching uses the open connection, as the explorer does only once connected.
+    engine.send(Command::Connect(data_source.id));
+    let search = CatalogSearch::new(text);
+    engine.send(Command::SearchCatalog {
+        id: data_source.id,
+        search: search.clone(),
+    });
+    loop {
+        match engine.next_event() {
+            Event::CatalogSearched {
+                search: answered,
+                result,
+                ..
+            } if answered == search => {
+                return result.expect("the search").expect("PostgreSQL searches");
+            }
+            Event::SessionChanged { .. } => {}
+            other => panic!("expected CatalogSearched, got {other:?}"),
+        }
+    }
+}
+
 fn load(
     engine: &mut TestEngine,
     data_source: &DataSource,
@@ -137,6 +214,24 @@ struct Scratch {
 }
 
 impl Scratch {
+    /// Runs `sql` in the scratch database, on a connection of its own.
+    fn run_in_database(&mut self, sql: &str) {
+        let config = match &self.data_source.config {
+            ConnectionConfig::Postgres(config) => config.clone(),
+            other => panic!("not PostgreSQL: {other:?}"),
+        };
+        let mut connection = self
+            .runtime
+            .block_on(dbrover_driver_postgres::connect(
+                &config,
+                Some(&self.password),
+                Route::Direct,
+            ))
+            .unwrap();
+        run(&self.runtime, &mut connection, sql);
+        let _ = self.runtime.block_on(Box::new(connection).close());
+    }
+
     fn with_tables(server: ParsedUrl, count: usize) -> Self {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let name = format!(

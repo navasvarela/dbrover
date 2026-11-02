@@ -6,8 +6,8 @@
 //! statement of every table, view, index and trigger, which is what "definition" returns.
 
 use dbrover_core::{
-    CatalogNode, CatalogPath, ChildrenPage, ChildrenQuery, DriverError, FolderKind, NodeKind,
-    PageToken, PathSegment, Quoting, like_contains,
+    CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, ChildrenPage, ChildrenQuery,
+    DriverError, FolderKind, NodeKind, PageToken, PathSegment, Quoting, like_contains,
 };
 use rusqlite::{Connection, Params, Row};
 
@@ -253,6 +253,51 @@ fn relations(
         })
         .collect();
     Ok(ChildrenPage { nodes, next })
+}
+
+/// The tables and views of every attached schema whose names contain the search's text
+/// (C0g), sorted by name, each with the path the explorer lists it under.
+pub(crate) fn search(
+    connection: &Connection,
+    search: &CatalogSearch,
+) -> Result<CatalogMatches, DriverError> {
+    let schemas = rows(
+        connection,
+        "SELECT name FROM pragma_database_list ORDER BY seq",
+        [],
+        |row| row.get::<_, String>(0),
+    )?;
+    let pattern = like_contains(&search.text);
+    let read = i64::try_from(search.limit.saturating_add(1)).unwrap_or(i64::MAX);
+    let mut nodes = Vec::new();
+    for schema in schemas {
+        let sql = format!(
+            "SELECT name, type FROM {}.sqlite_schema WHERE type IN ('table', 'view') \
+             AND name LIKE ?1 ESCAPE '\\' ORDER BY name LIMIT ?2",
+            Quoting::STANDARD.identifier_if_needed(&schema)
+        );
+        let found = rows(connection, &sql, rusqlite::params![pattern, read], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for (name, object_type) in found {
+            let (kind, folder) = match object_type.as_str() {
+                "view" => (NodeKind::View, FolderKind::Views),
+                _ => (NodeKind::Table, FolderKind::Tables),
+            };
+            let folder_path = CatalogPath::root()
+                .child(NodeKind::Schema, schema.clone())
+                .child(NodeKind::Folder(folder), folder.label());
+            nodes.push(CatalogNode {
+                detail: Some(schema.clone()),
+                has_children: true,
+                has_definition: true,
+                system: schema == "temp" || name.starts_with("sqlite_"),
+                ..node(&folder_path, kind, name)
+            });
+        }
+    }
+    nodes.sort_by(|a, b| a.label.cmp(&b.label));
+    Ok(CatalogMatches::cut(nodes, search.limit))
 }
 
 fn columns(

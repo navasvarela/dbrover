@@ -5,10 +5,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
 use dbrover_core::{
-    CancelHandle, CatalogNode, CatalogPath, Cell, ChildrenPage, ChildrenQuery, ColumnInfo,
-    Connection, CostEstimate, DriverError, ProgressHandle, Rejection, RelationName, ResultCursor,
-    ResultShape, RoleDescription, Row, ServerInfo, TableConstraints, TableDescription, TableName,
-    TransactionStatus, describe_error,
+    CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, Cell, ChildrenPage,
+    ChildrenQuery, ColumnInfo, Connection, CostEstimate, DriverError, ProgressHandle, Rejection,
+    RelationName, ResultCursor, ResultShape, RoleDescription, Row, ServerInfo, TableConstraints,
+    TableDescription, TableName, TransactionStatus, describe_error,
 };
 
 use super::{SessionContext, SessionOwner, SessionRequest};
@@ -77,6 +77,14 @@ impl Connection for Watched {
     ) -> Result<ChildrenPage, DriverError> {
         self.loss
             .watch(self.connection.children_page(path, query).await)
+    }
+
+    async fn search_catalog(
+        &mut self,
+        search: &CatalogSearch,
+    ) -> Result<Option<CatalogMatches>, DriverError> {
+        self.loss
+            .watch(self.connection.search_catalog(search).await)
     }
 
     async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError> {
@@ -234,6 +242,11 @@ pub(super) fn refuse(context: &SessionContext, request: SessionRequest, reason: 
             id,
             path,
             query,
+            result: Err(message),
+        },
+        (SessionRequest::Search(search), _) => Event::CatalogSearched {
+            id,
+            search,
             result: Err(message),
         },
         (SessionRequest::Definition(path), _) => Event::DefinitionLoaded {

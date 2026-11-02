@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use dbrover_core::{
-    CatalogPath, ChildrenPage, ChildrenQuery, ColumnInfo, CostEstimate, DataSource, DataSourceId,
-    DriverKind, JobProgress, Password, PasswordCommand, ProjectId, ReadPace, Rejection,
-    RelationName, ResultShape, RoleDescription, Row, ServerInfo, TableDescription, TableName,
-    TransactionStatus,
+    CatalogMatches, CatalogPath, CatalogSearch, ChildrenPage, ChildrenQuery, ColumnInfo,
+    CostEstimate, DataSource, DataSourceId, DriverKind, JobProgress, Password, PasswordCommand,
+    ProjectId, ReadPace, Rejection, RelationName, ResultShape, RoleDescription, Row, ServerInfo,
+    TableDescription, TableName, TransactionStatus,
 };
 use dbrover_export::{ExportSpec, SqlTable};
 use dbrover_sql::{ExistingTable, ParameterValues};
@@ -142,6 +142,12 @@ pub enum Command {
         id: DataSourceId,
         path: CatalogPath,
         query: ChildrenQuery,
+    },
+    /// Searches the data source's whole catalog by name on the server (C0g), on its open
+    /// connection. Answered by [`Event::CatalogSearched`].
+    SearchCatalog {
+        id: DataSourceId,
+        search: CatalogSearch,
     },
     /// Answered by [`Event::DefinitionLoaded`].
     LoadDefinition {
@@ -707,6 +713,12 @@ pub enum Event {
         /// What was asked for, so the answer to a query since replaced can be told apart.
         query: ChildrenQuery,
         result: Result<ChildrenPage, String>,
+    },
+    /// `None` when the driver can't search, and the explorer filters what it has loaded.
+    CatalogSearched {
+        id: DataSourceId,
+        search: CatalogSearch,
+        result: Result<Option<CatalogMatches>, String>,
     },
     DefinitionLoaded {
         id: DataSourceId,

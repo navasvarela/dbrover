@@ -13,9 +13,9 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use dbrover_core::{
-    BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, ChildrenPage, ChildrenQuery,
-    Connection, DriverError, Rejection, RelationName, ResultCursor, ServerInfo, SqliteConfig,
-    TableConstraints, TableDescription, TableName, TransactionStatus,
+    BoxError, CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, Cell,
+    ChildrenPage, ChildrenQuery, Connection, DriverError, Rejection, RelationName, ResultCursor,
+    ServerInfo, SqliteConfig, TableConstraints, TableDescription, TableName, TransactionStatus,
 };
 use rusqlite::OpenFlags;
 
@@ -173,6 +173,16 @@ impl Connection for SqliteConnection {
             .await
     }
 
+    async fn search_catalog(
+        &mut self,
+        search: &CatalogSearch,
+    ) -> Result<Option<CatalogMatches>, DriverError> {
+        let search = search.clone();
+        self.run_blocking(move |connection| catalog::search(connection, &search))
+            .await
+            .map(Some)
+    }
+
     async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError> {
         let path = path.clone();
         self.run_blocking(move |connection| catalog::definition(connection, &path))
@@ -291,6 +301,69 @@ mod tests {
         };
         let odd = connection.children_page(&tables, &wildcard).await.unwrap();
         assert_eq!(odd.nodes.len(), 1, "% and _ match themselves");
+    }
+
+    /// C0g: a search finds tables and views in every attached schema, as their levels list
+    /// them, cut at the limit when there are more.
+    #[tokio::test]
+    async fn searches_every_schema_without_loading_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("main.db");
+        let creates: String = (0..2_500)
+            .map(|n| format!("CREATE TABLE t_{n:04} (id INTEGER);"))
+            .collect();
+        rusqlite::Connection::open(&main)
+            .unwrap()
+            .execute_batch(&format!(
+                "BEGIN; {creates} CREATE VIEW Orders_Open AS SELECT 1; COMMIT;"
+            ))
+            .unwrap();
+        let mut connection = connect(&SqliteConfig {
+            path: main,
+            read_only: false,
+        })
+        .await
+        .unwrap();
+        let archive = dir.path().join("archive.db");
+        rusqlite::Connection::open(&archive)
+            .unwrap()
+            .execute_batch("CREATE TABLE old_orders (id INTEGER)")
+            .unwrap();
+        let attach = format!(
+            "ATTACH DATABASE '{}' AS archive",
+            archive.display().to_string().replace('\'', "''")
+        );
+        connection
+            .execute(&attach)
+            .await
+            .unwrap()
+            .finish()
+            .await
+            .unwrap();
+
+        let orders = conformance::check_catalog_search(&mut connection, "ORDERS").await;
+        let found: Vec<(&str, Option<&str>)> = orders
+            .nodes
+            .iter()
+            .map(|node| (node.label.as_str(), node.detail.as_deref()))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("Orders_Open", Some("main")),
+                ("old_orders", Some("archive"))
+            ]
+        );
+        assert!(!orders.more);
+
+        let hundred = conformance::check_catalog_search(&mut connection, "t_12").await;
+        assert_eq!((hundred.nodes.len(), hundred.more), (100, false));
+        let many = connection
+            .search_catalog(&CatalogSearch::new("t_1"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!((many.nodes.len(), many.more), (100, true));
     }
 
     #[tokio::test]

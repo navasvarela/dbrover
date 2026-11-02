@@ -5,7 +5,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use dbrover_core::{CatalogNode, CatalogPath, ChildrenPage, ChildrenQuery, PageToken};
+use dbrover_core::{
+    CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, ChildrenPage, ChildrenQuery, PageToken,
+};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct CatalogTree {
@@ -13,6 +15,27 @@ pub struct CatalogTree {
     children: HashMap<CatalogPath, Children>,
     /// The levels whose first page wasn't all of them, or that the server filtered.
     paged: HashMap<CatalogPath, Paging>,
+    /// The search of the whole catalog for the explorer's filter, on the server (C0g).
+    search: Search,
+}
+
+/// Where the search of the whole catalog for the explorer's filter is.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub enum Search {
+    /// No filter, or nothing asked yet.
+    #[default]
+    Idle,
+    /// The driver can't search: the explorer filters what it has loaded, and asks no more.
+    Unsupported,
+    Searching(String),
+    Found {
+        text: String,
+        matches: CatalogMatches,
+    },
+    Failed {
+        text: String,
+        error: String,
+    },
 }
 
 /// A level the server pages and filters.
@@ -252,6 +275,78 @@ impl CatalogTree {
         self.expanded.clear();
         self.children.clear();
         self.paged.clear();
+        self.search = Search::default();
+    }
+
+    pub fn search(&self) -> &Search {
+        &self.search
+    }
+
+    /// Starts searching for `filter`, unless that search is already on its way or done, or the
+    /// driver can't search. Returns the search to send.
+    #[must_use]
+    pub fn search_for(&mut self, filter: Option<&str>) -> Option<CatalogSearch> {
+        let Some(text) = filter else {
+            if self.search != Search::Unsupported {
+                self.search = Search::Idle;
+            }
+            return None;
+        };
+        let current = match &self.search {
+            Search::Unsupported => return None,
+            Search::Idle => None,
+            Search::Searching(current)
+            | Search::Found { text: current, .. }
+            | Search::Failed { text: current, .. } => Some(current.as_str()),
+        };
+        if current == Some(text) {
+            return None;
+        }
+        self.search = Search::Searching(text.to_owned());
+        Some(CatalogSearch::new(text))
+    }
+
+    /// Records what a search found, unless the filter has changed since it was asked.
+    pub fn searched(
+        &mut self,
+        search: &CatalogSearch,
+        result: &Result<Option<CatalogMatches>, String>,
+    ) {
+        if self.search != Search::Searching(search.text.clone()) {
+            return;
+        }
+        let text = search.text.clone();
+        self.search = match result {
+            Ok(Some(matches)) => Search::Found {
+                text,
+                matches: matches.clone(),
+            },
+            Ok(None) => Search::Unsupported,
+            Err(error) => Search::Failed {
+                text,
+                error: error.clone(),
+            },
+        };
+    }
+
+    /// The matches of the last search that the tree doesn't already show: those whose level
+    /// hasn't been loaded with them in it.
+    pub fn found_elsewhere(&self) -> Vec<&CatalogNode> {
+        let Search::Found { matches, .. } = &self.search else {
+            return Vec::new();
+        };
+        matches
+            .nodes
+            .iter()
+            .filter(|found| {
+                let shown = found
+                    .path
+                    .parent()
+                    .and_then(|parent| self.loaded_children(&parent))
+                    .is_some_and(|level| level.iter().any(|node| node.path == found.path));
+                !shown
+            })
+            .collect()
     }
 }
 
@@ -424,5 +519,74 @@ mod tests {
             tree.filter_paged_levels(Some("x")).is_empty(),
             "whole once unfiltered, so the explorer filters it"
         );
+    }
+
+    fn found_table(schema: &str, name: &str) -> CatalogNode {
+        let parent = CatalogPath::root()
+            .child(NodeKind::Schema, schema)
+            .child(NodeKind::Folder(dbrover_core::FolderKind::Tables), "tables");
+        CatalogNode {
+            path: parent.child(NodeKind::Table, name),
+            label: name.to_owned(),
+            detail: Some(schema.to_owned()),
+            has_children: true,
+            has_definition: true,
+            system: false,
+        }
+    }
+
+    #[test]
+    fn searches_once_per_filter_and_keeps_only_the_latest_answer() {
+        let mut tree = CatalogTree::default();
+        assert_eq!(tree.search_for(None), None);
+        let first = tree.search_for(Some("ord")).unwrap();
+        assert_eq!(tree.search_for(Some("ord")), None, "already on its way");
+        let second = tree.search_for(Some("orde")).unwrap();
+        let found = CatalogMatches {
+            nodes: vec![found_table("sales", "orders")],
+            more: false,
+        };
+        tree.searched(&first, &Ok(Some(found.clone())));
+        assert_eq!(tree.search(), &Search::Searching("orde".to_owned()));
+        tree.searched(&second, &Ok(Some(found)));
+        assert_eq!(tree.found_elsewhere().len(), 1);
+        assert_eq!(tree.search_for(Some("orde")), None, "already found");
+
+        assert_eq!(tree.search_for(None), None);
+        assert_eq!(tree.search(), &Search::Idle);
+    }
+
+    #[test]
+    fn a_driver_that_cant_search_is_asked_no_more() {
+        let mut tree = CatalogTree::default();
+        let search = tree.search_for(Some("ord")).unwrap();
+        tree.searched(&search, &Ok(None));
+        assert_eq!(tree.search_for(Some("orders")), None);
+        assert_eq!(tree.search_for(None), None);
+        assert_eq!(tree.search(), &Search::Unsupported);
+    }
+
+    #[test]
+    fn a_match_the_tree_already_shows_isnt_shown_again() {
+        let mut tree = CatalogTree::default();
+        let search = tree.search_for(Some("ord")).unwrap();
+        let shown = found_table("main", "orders");
+        let elsewhere = found_table("archive", "old_orders");
+        tree.searched(
+            &search,
+            &Ok(Some(CatalogMatches {
+                nodes: vec![shown.clone(), elsewhere.clone()],
+                more: false,
+            })),
+        );
+        let level = shown.path.parent().unwrap();
+        assert!(tree.expand(&level));
+        tree.loaded_whole(&level, Ok(vec![shown]));
+        let found: Vec<&str> = tree
+            .found_elsewhere()
+            .iter()
+            .map(|node| node.label.as_str())
+            .collect();
+        assert_eq!(found, ["old_orders"]);
     }
 }

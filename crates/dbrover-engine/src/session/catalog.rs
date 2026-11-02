@@ -1,7 +1,8 @@
 use std::time::Instant;
 
 use dbrover_core::{
-    CatalogPath, ChildrenQuery, Connection, RelationName, TableDescription, describe_error,
+    CatalogPath, CatalogSearch, ChildrenQuery, Connection, RelationName, TableDescription,
+    describe_error,
 };
 
 use super::SessionContext;
@@ -34,6 +35,27 @@ pub(super) async fn children(
         id: context.data_source.id,
         path,
         query,
+        result: result.map_err(|error| describe_error(&error)),
+    });
+}
+
+pub(super) async fn search(
+    context: &SessionContext,
+    connection: &mut dyn Connection,
+    search: CatalogSearch,
+) {
+    let result = connection.search_catalog(&search).await;
+    if let Err(error) = &result {
+        tracing::warn!(
+            data_source = %context.name(),
+            "could not search the catalog for {:?}: {}",
+            search.text,
+            describe_error(error)
+        );
+    }
+    context.send(Event::CatalogSearched {
+        id: context.data_source.id,
+        search,
         result: result.map_err(|error| describe_error(&error)),
     });
 }

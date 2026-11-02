@@ -15,7 +15,7 @@ use egui::{
     TextStyle, Ui, WidgetInfo, WidgetType, vec2,
 };
 
-use crate::catalog_tree::{CatalogTree, Children, LevelEnd};
+use crate::catalog_tree::{CatalogTree, Children, LevelEnd, Search};
 use crate::consoles::SavedConsoles;
 use crate::custom_actions;
 use crate::diagram::SavedDiagrams;
@@ -443,7 +443,7 @@ fn toolbar(ui: &mut Ui, options: &mut ExplorerOptions, actions: &mut Vec<Explore
         ui.label(widgets::glyph(icons::MAGNIFYING_GLASS).color(palette.text_weak));
         ui.add(
             TextEdit::singleline(&mut options.filter)
-                .hint_text("Filter loaded nodes")
+                .hint_text("Filter, or search the server")
                 .desired_width(f32::INFINITY),
         );
     });
@@ -541,7 +541,8 @@ fn data_source_tree(
                 .map(|(_, path)| path),
         };
         ui.indent(Id::new(id), |ui| {
-            children(ui, &tree, &root, filter, actions)
+            children(ui, &tree, &root, filter, actions);
+            found_on_server(ui, &tree, filter, actions);
         });
     }
 }
@@ -744,7 +745,9 @@ impl TreeFilter<'_> {
         };
         if self.matches(&entry.data_source.name, needle) {
             Visibility::Shown
-        } else if self.has_matching_descendant(&entry.catalog, &CatalogPath::root()) {
+        } else if self.has_matching_descendant(&entry.catalog, &CatalogPath::root())
+            || !self.found_on_server(&entry.catalog).is_empty()
+        {
             Visibility::LeadsToMatch
         } else {
             Visibility::Hidden
@@ -765,6 +768,19 @@ impl TreeFilter<'_> {
         } else {
             Visibility::Hidden
         }
+    }
+
+    /// The matches of the server's search for the filter that the tree doesn't show already,
+    /// system objects only when asked for (C0g).
+    fn found_on_server<'c>(&self, catalog: &'c CatalogTree) -> Vec<&'c CatalogNode> {
+        if self.needle.is_none() {
+            return Vec::new();
+        }
+        catalog
+            .found_elsewhere()
+            .into_iter()
+            .filter(|node| self.show_system || !node.system)
+            .collect()
     }
 
     fn has_matching_descendant(&self, catalog: &CatalogTree, path: &CatalogPath) -> bool {
@@ -817,6 +833,44 @@ fn children(
                 }
             }
             level_end(ui, tree, path, actions);
+        }
+    }
+}
+
+/// **Found on the server**: what the server's search for the explorer's filter found that
+/// the tree doesn't show, each acting as the node itself, with its schema beside it (C0g).
+fn found_on_server(
+    ui: &mut Ui,
+    tree: &TreeView<'_>,
+    filter: &TreeFilter<'_>,
+    actions: &mut Vec<ExplorerAction>,
+) {
+    if filter.needle.is_none() {
+        return;
+    }
+    match tree.catalog.search() {
+        Search::Idle | Search::Unsupported => {}
+        Search::Searching(_) => {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.weak("Searching the server…");
+            });
+        }
+        Search::Failed { error, .. } => {
+            ui.colored_label(ui.visuals().error_fg_color, error);
+        }
+        Search::Found { matches, .. } => {
+            let found = filter.found_on_server(tree.catalog);
+            if found.is_empty() {
+                return;
+            }
+            ui.weak("Found on the server");
+            for node in found {
+                node_row(ui, tree, node, false, &filter.below_match(), actions);
+            }
+            if matches.more {
+                ui.weak("More matches: type more of the name");
+            }
         }
     }
 }
