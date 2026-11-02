@@ -316,10 +316,12 @@ matching are hidden while you type.
 
 ![The explorer filtered by "order"](images/explorer-filter.png)
 
-The filter searches what has already been loaded: expand the parts you want to search first.
-The exception is a schema with more objects than the explorer shows at once (below): there,
-once you stop typing, the database is asked for the objects whose names contain the text, so
-the filter finds them all, loaded or not.
+The filter searches what has already been loaded. A schema with more objects than the explorer
+shows at once (below) is the first exception: there, once you stop typing, the database is asked
+for the objects whose names contain the text, so the filter finds them all, loaded or not. The
+second is a connected PostgreSQL or SQLite data source, which is searched whole on the server
+and shows what it found under **Found on the server**; see
+[Searching a large catalog](cloud.md#searching-a-large-catalog).
 
 ## Large schemas
 

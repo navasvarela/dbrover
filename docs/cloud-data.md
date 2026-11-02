@@ -1,6 +1,6 @@
 # Cloud and big data
 
-Status: **C0 in progress** (started 2026-11-02); C1 to C6 planned, not scheduled. Proposed on
+Status: **C0 built** (2026-11-02); C1 to C6 planned, not scheduled. Proposed on
 2026-10-27; the order and the decisions below are confirmed as each milestone starts. The
 providers' priority was set on 2026-10-28: AWS, then Google Cloud, then Azure. On 2026-11-01
 DynamoDB was moved ahead of the track, as the NoSQL track's [N5](nosql.md#n5--dynamodb), with
@@ -162,10 +162,10 @@ a CLI) and with tokens the tests make up. None reads the machine's own sign-in.
   **Exit:** a stand-in program's JSON becomes a token with the right expiry, for each CLI; a
   program that isn't installed, fails, says nothing or runs past the timeout is an error that
   says which, with its standard error.
-- **C0d — Signing in to a database with a cloud account** (built): the password of a PostgreSQL, MySQL
-  or SQL Server data source can come from a cloud sign-in instead of the keychain or a command
-  (W9), chosen in the dialog's **Password** section as **AWS IAM**, **Google Cloud** or
-  **Microsoft Entra ID**:
+- **C0d — Signing in to a database with a cloud account** (built): the password of a PostgreSQL,
+  MySQL or SQL Server data source can come from a cloud sign-in instead of the keychain or a command
+  (W9), chosen in the dialog's **Password** section as **AWS IAM**, **Google Cloud** or **Microsoft
+  Entra ID**:
   - AWS: an RDS IAM authentication token, made on the machine from the profile's credentials
     with AWS's own signer (`aws-sigv4`, already in the build for N5) for the data source's
     host, port, user and region; nothing is sent to AWS to make it.
@@ -223,8 +223,8 @@ a CLI) and with tokens the tests make up. None reads the machine's own sign-in.
   box and opened; on the PostgreSQL test server, a search among 2,500 tables and a second schema
   returns the matches with their paths, capped, with the server's case-insensitive match; a
   conformance check that each match is the node its level lists.
-- **C0h — Manual and demo note:** a chapter, **Cloud sign-in and costs**, on signing in with a
-  cloud account, the cost guard, the progress line and searching the explorer, and the C0 demo
+- **C0h — Manual and demo note** (built): a chapter, **Cloud sign-in and costs**, on signing in with
+  a cloud account, the cost guard, the progress line and searching the explorer, and the C0 demo
   note in the roadmap.
 
 **Exit:** an RDS PostgreSQL database connects with an AWS profile and no password, and keeps
