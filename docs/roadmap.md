@@ -447,14 +447,31 @@ warehouses. Planned, not scheduled. The providers come in this order: AWS, then 
 then Azure, both across the milestones and within each one. The full plan, with the order, the
 shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.md).
 
-- **C0 — Groundwork:**
-  - signing in with AWS, Google Cloud and Microsoft Entra ID accounts, reusing the sign-in
-    already on the machine and never storing a cloud secret; AWS's comes first, with DynamoDB
-    (the NoSQL track's N5);
-  - cost guards per data source, so that nothing scans a whole table unasked; DynamoDB's
-    comes first, with N5;
-  - queries run as jobs (submit, poll, page, cancel by id);
-  - lazy, searchable catalogs for very large ones.
+- **C0 — Groundwork:** started on 2026-11-02, after W8, on what N5 built (AWS's sign-in and
+  DynamoDB's cost guard). Planned in
+  [Cloud and big data](cloud-data.md#c0--cloud-sign-in-cost-guards-and-jobs). In layers, one PR
+  each:
+  - **C0a — Plan:** C0's layers, decisions and risks, and this entry.
+  - **C0b — Google Cloud sign-in:** Application Default Credentials (a user's refresh token or
+    a service account's key), and a token cache shared by every provider.
+  - **C0c — Microsoft Entra ID sign-in:** a token from the Azure CLI's or the Azure Developer
+    CLI's sign-in, run without a shell.
+  - **C0d — Databases signed into with a cloud account:** PostgreSQL, MySQL and SQL Server take
+    an RDS IAM token, a Google Cloud token or an Entra ID token in place of a password, fetched
+    on every connection and never stored.
+  - **C0e — Cost guards per data source:** a cost estimate (a whole table, or bytes) judged by
+    one function against the data source's guard, with a byte limit beside N5's switch.
+  - **C0f — Queries as jobs:** submit, poll, page and cancel by id, built once; a progress line
+    (rows, bytes, time) while a statement runs, ClickHouse first.
+  - **C0g — Searching a catalog without loading it:** **Found on the server** in the explorer,
+    PostgreSQL and SQLite first.
+  - **C0h — Manual:** a chapter on cloud sign-in and costs, and the demo note.
+
+  Nothing is tried against a real cloud account while building C0: providers are tested with
+  local stand-ins, and the live checks are listed in the demo note.
+
+  **Exit:** an RDS PostgreSQL database connects with an AWS profile and no password, and keeps
+  working past the token's 15-minute lifetime (with stand-ins in CI; by hand against RDS).
 - **C1 — Managed databases:** RDS, Aurora and Redshift; Cloud SQL; Azure SQL, Azure Database,
   and Synapse's and Fabric's SQL endpoints; and Neon, Supabase and ClickHouse Cloud, through the
   drivers DbRover has, with presets in the data source dialog.
