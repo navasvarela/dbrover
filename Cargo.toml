@@ -114,6 +114,9 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = ["s
 # Decodes the PNGs egui_extras loads (the logo on the Welcome tab).
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+# Signs Google service accounts' token requests (RS256) in dbrover-cloud: the version rustls
+# already builds as its crypto provider, so nothing new is compiled.
+ring = "0.17.14"
 # HMAC-SHA1, which OpenSSH hashes host names in known_hosts with. The versions russh uses.
 # hmac also checks SCRAM verifiers in dbrover-sql's tests, with sha2 and base64, at the
 # versions postgres-protocol uses.

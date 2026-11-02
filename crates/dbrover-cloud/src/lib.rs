@@ -1,7 +1,32 @@
 //! Signing in to cloud providers with the sign-in already on the machine, never storing a
 //! cloud secret: the groundwork C0 of `docs/cloud-data.md` plans for every cloud data source.
 //!
-//! AWS comes first, for DynamoDB (`docs/nosql.md`, N5). Google Cloud and Microsoft Entra ID
-//! join it as modules of their own when their milestones come.
+//! AWS came first, for DynamoDB (`docs/nosql.md`, N5), through AWS's own SDK. Google Cloud
+//! signs in with Application Default Credentials over a small HTTPS client of DbRover's own,
+//! and hands out [`AccessToken`]s that a [`TokenCache`] keeps until they are about to expire.
 
 pub mod aws;
+pub mod google;
+mod http;
+pub mod token;
+
+use std::error::Error;
+
+pub use http::HttpError;
+pub use token::{AccessToken, TokenCache};
+
+/// `error`'s message followed by each of its causes', as AWS's SDK and hyper nest them: the
+/// message alone often says only that a provider or a request failed.
+pub(crate) fn with_causes(error: &dyn Error) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        let cause_text = cause.to_string();
+        if !text.contains(&cause_text) {
+            text.push_str(": ");
+            text.push_str(&cause_text);
+        }
+        source = cause.source();
+    }
+    text
+}
