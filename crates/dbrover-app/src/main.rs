@@ -53,6 +53,7 @@ mod relaunch;
 mod renderer;
 mod repaint;
 mod report_worker;
+mod reports;
 mod rollback_dialog;
 #[cfg(test)]
 mod screenshots;
@@ -161,6 +162,7 @@ fn open_window(session: Session, log_feed: LogFeed, files: Vec<PathBuf>) -> anyh
     let folder_notice = session.notice();
     let mcp_config_dir = session.folder_for_mcp_clients();
     let folder_in_use = session.folder_in_use();
+    let reports = reports_setup(paths);
     let engine_config = EngineConfig {
         data_sources: DataSourceFile::new(paths.data_sources_file()),
         projects: ProjectFile::new(paths.projects_file()),
@@ -214,7 +216,8 @@ fn open_window(session: Session, log_feed: LogFeed, files: Vec<PathBuf>) -> anyh
             .with_files_to_open(files)
             .with_folder_notice(folder_notice)
             .with_mcp_config_dir(mcp_config_dir)
-            .with_folder_in_use(folder_in_use);
+            .with_folder_in_use(folder_in_use)
+            .with_reports(reports);
         #[cfg(target_os = "macos")]
         let app = app
             .with_native_menu(native_menu::NativeMenu::install(&cc.egui_ctx))
@@ -222,4 +225,25 @@ fn open_window(session: Session, log_feed: LogFeed, files: Vec<PathBuf>) -> anyh
             .with_system_look(system_look::SystemLook::install(&cc.egui_ctx));
         Ok(Box::new(app))
     })
+}
+
+/// Reports in `reports/` of the settings folder, run by this executable as
+/// `dbrover report-worker` on the same folder, their files going to Downloads until a report
+/// is given a folder of its own.
+fn reports_setup(paths: &AppPaths) -> reports::ReportsSetup {
+    let executable = std::env::current_exe().unwrap_or_else(|error| {
+        tracing::warn!("could not find DbRover's own executable ({error}); reports start dbrover");
+        PathBuf::from("dbrover")
+    });
+    let default_folder = directories::UserDirs::new()
+        .and_then(|folders| folders.download_dir().map(Path::to_path_buf))
+        .unwrap_or_else(|| paths.home().to_path_buf());
+    reports::ReportsSetup {
+        files: paths.report_files(),
+        launcher: Box::new(reports::ProcessLauncher {
+            executable,
+            settings_folder: paths.folders().settings.clone(),
+        }),
+        default_folder,
+    }
 }

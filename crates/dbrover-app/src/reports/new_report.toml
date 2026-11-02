@@ -1,0 +1,37 @@
+# A DbRover report: a query, the parameters it takes, and the files it writes.
+# Edit it, save it, and run it from its tab. The manual's "Reports" chapter has every key.
+
+[report]
+name = "New report"
+description = "What this report is for."
+# Each parameter and its type: text, integer, decimal, boolean, date or timestamp.
+params = { since = "date", until = "date" }
+
+[[source]]
+id = "rows"
+# A data source, by its name in the explorer.
+data_source = "{data_source}"
+# Runs read-only. :since and :until are the parameters above.
+query = """
+SELECT *
+FROM my_table
+WHERE created_at >= :since AND created_at < :until
+"""
+# Guardrails: the run stops past any of these.
+max_rows = 100000
+timeout = "5m"
+
+[[output]]
+format = "xlsx"
+# {since:%Y-%m} is the parameter, formatted.
+file = "new-report-{since:%Y-%m}.xlsx"
+# Without columns, every column is written as it comes. With them, each gets a header, a
+# type and Excel's number format:
+# columns = [
+#   { name = "Created", from = "created_at", type = "timestamp", format = "yyyy-mm-dd hh:mm" },
+#   { name = "Amount",  from = "amount",     type = "decimal(18,2)", format = "#,##0.00" },
+# ]
+
+[[output]]
+format = "csv"
+file = "new-report-{since:%Y-%m}.csv"

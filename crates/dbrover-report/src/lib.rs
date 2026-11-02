@@ -32,7 +32,7 @@ pub use plan::{OutputFormat, Plan, PlannedOutput, PlannedSource, RunValues, Type
 pub use read::read_report;
 pub use report::{Output, OutputColumns, OutputWriter, Param, Report, Source};
 pub use request::RunRequest;
-pub use run::{PREVIEW_ROWS, RunFolders, RunSummary, SourceError, SourceReader, run};
+pub use run::{PREVIEW_ROWS, RunFolders, RunSummary, SourceError, SourceReader, grouped, run};
 
 #[cfg(test)]
 mod run_tests;

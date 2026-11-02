@@ -6,6 +6,8 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
 use crate::config_text::create_new;
 
 const EXTENSION: &str = "toml";
@@ -17,8 +19,27 @@ const MAX_NUMBERED: u32 = 1_000;
 /// A report file's name, without `.toml`: what the explorer and the worker know a report by
 /// until its file is read. Always a plain file name, so joining it to the folder can never
 /// point outside it.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct ReportName(String);
+
+#[derive(Debug, thiserror::Error)]
+#[error("{0:?} can't be a report file's name")]
+pub struct InvalidReportName(String);
+
+impl TryFrom<String> for ReportName {
+    type Error = InvalidReportName;
+
+    fn try_from(name: String) -> Result<Self, Self::Error> {
+        Self::new(&name).ok_or(InvalidReportName(name))
+    }
+}
+
+impl From<ReportName> for String {
+    fn from(name: ReportName) -> Self {
+        name.0
+    }
+}
 
 impl ReportName {
     /// `None` for anything that isn't a plain file name: empty, a dot or two, or with a folder
