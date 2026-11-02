@@ -98,6 +98,7 @@ impl Settings {
                 .map(|(name, value)| (name.to_owned(), value.to_owned()))
                 .collect(),
             folder: self.out(),
+            staging: self.out().join(".run"),
             memory_limit: None,
         }
     }

@@ -15,7 +15,9 @@ use std::time::Instant;
 
 use dbrover_core::describe_error;
 use dbrover_engine::{PasswordCommands, ProcessRunner, ReportSource, SourceAccess, Tunnels};
-use dbrover_report::{Plan, RunEvent, RunFailure, RunRequest, RunValues, Step, read_report};
+use dbrover_report::{
+    Plan, RunEvent, RunFailure, RunFolders, RunRequest, RunValues, Step, read_report,
+};
 use dbrover_store::{AppPaths, CustomFile, CustomFileKind, DataSourceFile, os_keychain};
 
 use crate::{settings_folder, telemetry};
@@ -44,7 +46,11 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
                 source: plan.source.id.clone(),
                 data_source: plan.source.data_source.name.clone(),
             });
-            run_report(&paths, &plan, &values, &request.folder, &mut out)
+            let folders = RunFolders {
+                folder: &request.folder,
+                staging: &request.staging,
+            };
+            run_report(&paths, &plan, &values, folders, &mut out)
         });
     match outcome {
         Ok(()) => {
@@ -133,7 +139,7 @@ fn run_report(
     paths: &AppPaths,
     plan: &Plan,
     values: &RunValues,
-    folder: &Path,
+    folders: RunFolders<'_>,
     out: &mut Events<impl Write>,
 ) -> Result<(), RunFailure> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -148,7 +154,7 @@ fn run_report(
             )
         })?;
     runtime.block_on(async {
-        make_folder(folder)?;
+        make_folder(folders.folder)?;
         let secrets = os_keychain();
         let tunnels = Tunnels::new(paths.ssh_known_hosts_file());
         let commands =
@@ -169,7 +175,7 @@ fn run_report(
                 message: error.message,
                 limit: error.limit,
             })?;
-        let ran = dbrover_report::run(plan, values, &mut source, folder, opened, &mut |event| {
+        let ran = dbrover_report::run(plan, values, &mut source, folders, opened, &mut |event| {
             out.send(&event);
         })
         .await;

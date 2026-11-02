@@ -11,6 +11,7 @@
 //! blocking std calls, and a run ties up nothing of the engine's runtime.
 
 use std::io::{self, BufRead, BufReader, Write};
+use std::path::PathBuf;
 use std::process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -112,6 +113,7 @@ impl WorkerRun {
         spawn_log_reader(stderr, Arc::clone(&log));
         spawn_watchdog(stopped, timeout, Arc::clone(&child), Arc::clone(&stop));
         let reader = OutputReader {
+            staging: request.staging.clone(),
             child: Arc::clone(&child),
             stop: Arc::clone(&stop),
             log,
@@ -217,6 +219,8 @@ fn spawn_watchdog(
 /// Reads the worker's events until it exits, then says how the run ended if the worker
 /// didn't.
 struct OutputReader {
+    /// The run's staging folder, which a worker that ended without saying so may have left.
+    staging: PathBuf,
     child: Arc<Mutex<Child>>,
     stop: Arc<AtomicU8>,
     log: Arc<Mutex<Vec<String>>>,
@@ -247,6 +251,7 @@ impl OutputReader {
         if ended {
             return;
         }
+        self.remove_staging();
         let event = match Stop::from_u8(self.stop.load(Ordering::SeqCst)) {
             Stop::Cancelled => RunEvent::Cancelled,
             Stop::TimedOut => RunEvent::Failed(timed_out(self.timeout)),
@@ -256,6 +261,19 @@ impl OutputReader {
             }
         };
         self.send(event);
+    }
+
+    /// Removes what a killed worker had started writing, before the run's end is sent, so the
+    /// output folder is as it was by the time anyone looks.
+    fn remove_staging(&self) {
+        match std::fs::remove_dir_all(&self.staging) {
+            Ok(()) => tracing::info!("removed {}", self.staging.display()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => tracing::warn!(
+                "could not remove the report's staging folder {}: {error}",
+                self.staging.display()
+            ),
+        }
     }
 
     /// The worker's exit status, polled rather than waited for, so **Cancel** can still take

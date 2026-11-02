@@ -14,6 +14,10 @@ pub struct RunRequest {
     pub values: TypedValues,
     /// The folder the files go in, made if it doesn't exist.
     pub folder: PathBuf,
+    /// A folder of this run's own inside `folder`, where files are written until they are
+    /// all complete. The run removes it; the app's side removes it again after a worker it had
+    /// to kill, which couldn't.
+    pub staging: PathBuf,
     /// The memory the worker may use, in bytes, instead of its default: half the machine's,
     /// on Linux, where it is enforced. Nothing in the app sets it; tests do.
     #[serde(default, skip_serializing_if = "Option::is_none")]
