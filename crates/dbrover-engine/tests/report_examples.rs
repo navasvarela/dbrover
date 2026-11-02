@@ -70,9 +70,16 @@ async fn run_example(name: &str, ledger: &DataSource, out: &Path) {
         folder: out,
         staging: &staging,
     };
-    run(&plan, &values, &mut source, folders, Instant::now(), &mut |_| {})
-        .await
-        .unwrap();
+    run(
+        &plan,
+        &values,
+        &mut source,
+        folders,
+        Instant::now(),
+        &mut |_| {},
+    )
+    .await
+    .unwrap();
     source.close().await;
 }
 
