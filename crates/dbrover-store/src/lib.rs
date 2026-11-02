@@ -16,6 +16,7 @@ mod paths;
 mod portable;
 mod previous_install;
 mod projects;
+mod reports;
 mod secrets;
 mod settings;
 mod settings_folder;
@@ -55,6 +56,7 @@ pub use projects::{
     InvalidSchemaScope, InvalidSlug, InvalidTimeout, McpOverrides, McpPermissions, Project,
     ProjectFile, ProjectSlug, ProjectStoreError, Projects, SchemaScope, StatementTimeout,
 };
+pub use reports::{ReportFiles, ReportName};
 pub use secrets::{Secret, SecretError, SecretStore, os_keychain};
 pub use settings::{
     FormatSettings, HistorySettings, KeywordCase, LintSettings, Settings, SettingsError,

@@ -45,6 +45,16 @@ impl ColumnType {
         }
     }
 
+    /// `text` in the type's plain form, as a CSV file writes it (`12.50`, `2026-10-01`), or
+    /// why it isn't a value of the type, as the end of a sentence that starts with the value.
+    ///
+    /// # Errors
+    ///
+    /// Why `text` isn't a value of the type: "isn't a date, as 2026-10-01".
+    pub fn plain_form(self, text: &str) -> Result<String, String> {
+        convert::value(self, None, CellTarget::Text, text)
+    }
+
     fn is_number(self) -> bool {
         matches!(self, Self::Integer | Self::Decimal(_))
     }
@@ -340,29 +350,30 @@ impl RowConverter {
                 converted.push(value);
                 continue;
             };
-            let cell = match convert::value(column_type, declared, self.target, text) {
-                Ok(written) => {
-                    if self.target == CellTarget::Excel
-                        && column_type.is_number()
-                        && convert::beyond_excel(&written)
-                    {
-                        self.beyond_excel[position] += 1;
+            let cell =
+                match convert::value(column_type, declared.time_zone.as_ref(), self.target, text) {
+                    Ok(written) => {
+                        if self.target == CellTarget::Excel
+                            && column_type.is_number()
+                            && convert::beyond_excel(&written)
+                        {
+                            self.beyond_excel[position] += 1;
+                        }
+                        Some(written)
                     }
-                    Some(written)
-                }
-                Err(reason) => match declared.if_invalid {
-                    IfInvalid::Fail => {
-                        return Err(InvalidValue {
-                            column: declared.name.clone(),
-                            row: self.rows,
-                            value: text.chars().take(SHOWN_VALUE_CHARS).collect(),
-                            reason,
-                        });
-                    }
-                    IfInvalid::Null => None,
-                    IfInvalid::Text => Some(text.to_owned()),
-                },
-            };
+                    Err(reason) => match declared.if_invalid {
+                        IfInvalid::Fail => {
+                            return Err(InvalidValue {
+                                column: declared.name.clone(),
+                                row: self.rows,
+                                value: text.chars().take(SHOWN_VALUE_CHARS).collect(),
+                                reason,
+                            });
+                        }
+                        IfInvalid::Null => None,
+                        IfInvalid::Text => Some(text.to_owned()),
+                    },
+                };
             converted.push(cell);
         }
         Ok(converted)
