@@ -9,6 +9,7 @@ mod execution;
 mod parquet;
 mod table;
 mod values;
+mod workspace;
 
 use std::collections::HashMap;
 use std::fs;
@@ -24,6 +25,7 @@ use dbrover_core::{
 use duckdb::AccessMode;
 
 pub use parquet::{ParquetCompression, ParquetWriter};
+pub use workspace::{DuckDbType, TableLoader, Workspace, WorkspaceLimit, WorkspaceLimits};
 
 const PRODUCT: &str = "DuckDB";
 
@@ -333,3 +335,5 @@ impl Connection for DuckDbConnection {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod workspace_tests;
