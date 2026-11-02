@@ -18,6 +18,7 @@
 - [Working with table data](table-data.md)
 - [Exporting and copying rows](exporting.md)
 - [Your own export formats](export-formats.md)
+- [Reports](reports.md)
 - [The query history](history.md)
 - [Keyboard shortcuts](shortcuts.md)
 - [Settings](settings.md)

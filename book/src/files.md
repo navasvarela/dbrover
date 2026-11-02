@@ -23,6 +23,7 @@ settings folder can also be one you choose; see [Choosing the settings folder](#
 | `settings.toml` (settings folder) | Your choices in **View → Settings…**, such as how SQL is formatted and whether to check for updates. |
 | `actions.toml`, `snippets.toml`, `theme.toml` (settings folder) | Your own actions, snippets and colours, if you wrote any. See [Actions, snippets and themes](customising.md). |
 | `exports.toml` (settings folder) | Your own export formats, if you wrote any. See [Your own export formats](export-formats.md). |
+| `reports/*.toml` (settings folder) | Your reports, one file each, for every project. See [Reports](reports.md). |
 | `trusted_commands.toml` (data folder) | The command actions, password commands and export programs you chose **Run** for, each as it was then. See [Commands](customising.md#the-first-run), [Password from a command](data-sources.md#password-from-a-command) and [Programs](export-formats.md#programs). |
 | `settings_folder.toml` (data folder) | The settings folder you chose in **Settings › Files**, if you chose one. |
 | `app.ron` (data folder) | The window's size and position, the panel layout, the theme you picked, the recent `.sql` files and which file each console tab shows. |
