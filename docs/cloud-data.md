@@ -1,10 +1,10 @@
 # Cloud and big data
 
-Status: **planned**, not scheduled. Proposed on 2026-10-27; the order and the decisions below are
-confirmed when the track starts. The providers' priority was set on 2026-10-28: AWS, then Google
-Cloud, then Azure. On 2026-11-01 DynamoDB was moved ahead of the track, as the NoSQL track's
-[N5](nosql.md#n5--dynamodb), with the two parts of C0 it needs: the AWS sign-in and a cost
-guard against reading a whole table.
+Status: **C0 in progress** (started 2026-11-02); C1 to C6 planned, not scheduled. Proposed on
+2026-10-27; the order and the decisions below are confirmed as each milestone starts. The
+providers' priority was set on 2026-10-28: AWS, then Google Cloud, then Azure. On 2026-11-01
+DynamoDB was moved ahead of the track, as the NoSQL track's [N5](nosql.md#n5--dynamodb), with
+the two parts of C0 it needs: the AWS sign-in and a cost guard against reading a whole table.
 
 DbRover connects to databases you run or reach by host and port. Much of the data people query
 today lives elsewhere: managed databases signed into with a cloud account instead of a password,
@@ -92,9 +92,11 @@ Left out on purpose:
 
 ### C0 — Cloud sign-in, cost guards and jobs
 
-The groundwork every later milestone needs.
+The groundwork every later milestone needs. Started on 2026-11-02, right after W8, with AWS's
+sign-in and DynamoDB's cost guard already built by [N5](nosql.md#n5--dynamodb); C0 builds the
+rest on them rather than beside them.
 
-- **Credential providers** in a new `dbrover-cloud` crate, chosen per data source, built in the
+- **Credential providers** in the `dbrover-cloud` crate, chosen per data source, built in the
   providers' order:
   - AWS: the default credential chain of AWS's own SDK, `aws-config`, with a profile and a
     region per data source, for AWS's APIs, built first for DynamoDB in N5 as the crate's
@@ -117,8 +119,112 @@ The groundwork every later milestone needs.
   `query_id` cancel is the first user.
 - **Lazy, searchable catalogs** in the explorer, for catalogs with thousands of children.
 
+#### What N5 already built
+
+- `dbrover-cloud::aws`: `AwsSignIn` (default chain, a profile alone, or a local emulator's
+  made-up keys), on rustls with ring, with a test that no AWS crate brings aws-lc-rs.
+- `CostGuard` on `DynamoDbConfig` (`cost_guard = "off"` turns it off), read through
+  `ConnectionConfig::cost_guard`; `Connection::full_scan` and `FullScan`; the engine's
+  `session/cost.rs`, `Event::ScanHeld` and `ScanApproval`; the console's **Scan anyway**; Run
+  to file and the MCP server refusing.
+- Paging and the server's filter in the explorer came earlier still, with
+  [N0a·4](nosql.md#n0a--groundwork-languages-safety-and-the-explorer): every level loads when it
+  is expanded, a large one a thousand nodes at a time, and the filter box asks the server again
+  for a partial level.
+
+#### Layers
+
+Each layer is one pull request in a stack, useful and tested on its own, with no cloud account:
+providers are tried with local fakes (a token endpoint on `127.0.0.1`, a program standing in for
+a CLI) and with tokens the tests make up. None reads the machine's own sign-in.
+
+- **C0a — Plan:** this section, C0's rows in [Decisions](#decisions) and [Risks](#risks), and
+  the roadmap's entry in layers.
+- **C0b — Google Cloud sign-in:** a provider-neutral `AccessToken` (the secret, which never
+  prints, and when it expires) and a cache that fetches a new one when less than five minutes
+  are left, shared by every provider. A `google` module signs in with Application Default
+  Credentials as Google's own libraries find them: the file `GOOGLE_APPLICATION_CREDENTIALS`
+  names, else the one `gcloud auth application-default login` writes. Its two common kinds are
+  read by DbRover: a user's refresh token (`authorized_user`) and a service account's key
+  (`service_account`, a JWT signed with RS256 by ring). The other kinds (workload identity
+  federation, impersonation) and the metadata server of a Google Cloud VM are refused with
+  their names, and wait for someone to need them. Requests go over hyper and rustls with ring,
+  as the Elasticsearch driver's do.
+  **Exit:** both kinds of file get a token from a fake token endpoint, signed and asked for as
+  Google documents; a token is reused until five minutes before it expires; an unknown kind
+  and a missing file are errors naming what to do.
+- **C0c — Microsoft Entra ID sign-in:** an `entra` module that asks the sign-in of the Azure
+  CLI (`az account get-access-token`) or of the Azure Developer CLI (`azd auth token`) for a
+  token, with the program and its arguments as a list (no shell), an optional tenant, a
+  timeout, and the resource a database expects (Azure SQL's or Azure Database's). The token
+  and its expiry come from the program's JSON. Managed identity, a service principal's secret
+  and a browser sign-in come later, when someone needs them.
+  **Exit:** a stand-in program's JSON becomes a token with the right expiry, for each CLI; a
+  program that isn't installed, fails, says nothing or runs past the timeout is an error that
+  says which, with its standard error.
+- **C0d — Signing in to a database with a cloud account:** the password of a PostgreSQL, MySQL
+  or SQL Server data source can come from a cloud sign-in instead of the keychain or a command
+  (W9), chosen in the dialog's **Password** section as **AWS IAM**, **Google Cloud** or
+  **Microsoft Entra ID**:
+  - AWS: an RDS IAM authentication token, made on the machine from the profile's credentials
+    with AWS's own signer (`aws-sigv4`, already in the build for N5) for the data source's
+    host, port, user and region; nothing is sent to AWS to make it.
+  - Google Cloud: the ADC token, as the password of Cloud SQL's IAM users.
+  - Entra ID: the CLI's token, as the password on PostgreSQL and MySQL, and through TDS's own
+    token sign-in (`tiberius`'s `AuthMethod::AADToken`) on SQL Server.
+  The token is fetched on every connection, as W9's command is run, so reconnecting and each
+  new console sign in afresh; it is never written to the keychain, a file, the log or the
+  history. A data source has either a password command or a cloud sign-in, never both.
+  **Exit:** an RDS token for fixed credentials and a fixed time matches the one AWS's own
+  signer makes, with `X-Amz-Expires=900`; on the PostgreSQL test server, a data source whose
+  sign-in is a stand-in provider connects with the token it hands out and asks for a new one
+  on the next connection; the dialog's choice is written to and read from
+  `data_sources.toml`.
+- **C0e — Cost guards per data source:** `Connection::full_scan` becomes
+  `Connection::estimate_cost`, answering with a `CostEstimate`: a whole-table read (N5's
+  `FullScan`), or the bytes a statement will scan (BigQuery's dry run in C4; Athena reports
+  them after the run). The data source's `CostGuard` gains a byte limit beside its whole-table
+  switch, and judges an estimate in one pure function that every caller uses: the console's
+  question, Run to file's and the MCP server's refusals, and the engine's automatic runs.
+  `Event::ScanHeld` and `ScanApproval` become `Event::CostHeld` and `CostApproval`, with
+  **Open data**'s approval (reads a page at a time) still asking about bytes, since a page of a
+  byte-billed result costs the whole query. No engine estimates bytes yet, so the limit has no
+  field in the dialog until C3 or C4 brings one; it is read from and written to the file.
+  **Exit:** DynamoDB's guard works as before through the new names, with its tests unchanged
+  in substance; the judging function's table of cases covers both kinds of estimate, each
+  approval and the limit's edges; a `cost_guard = "off"` written before C0 still reads.
+- **C0f — Queries as jobs:** a `job` module in `dbrover-core` with a `JobService` interface
+  (submit a statement, poll it by its `JobId`, page through its result, cancel it) and a
+  `JobCursor` and `JobCancel` built once on it, which C3 to C6's engines implement instead of
+  each writing its own polling. While a statement runs, the engine asks the connection's
+  progress handle what it has done (rows and bytes read, elapsed time) once a second and sends
+  it as `Event::StatementProgress`; the console's status line shows it beside the elapsed time.
+  ClickHouse is the first user: its progress is read from `system.processes` by the statement's
+  `query_id`, the same id its cancel already kills it by.
+  **Exit:** a fake service in `dbrover-core`'s tests submits, polls with a growing pause,
+  pages through three pages and cancels by id, and a failed job's message reaches the cursor;
+  on the ClickHouse test server, a slow `SELECT` reports rows read before it ends, and cancel
+  still stops it.
+- **C0g — Searching a catalog without loading it:** `Connection::search_catalog` finds objects
+  by name anywhere in the connected database, on the server, a hundred at most; drivers that
+  can't return `None`, and the explorer filters what it has loaded, as before. PostgreSQL
+  searches every schema of its database (tables, views, materialized views, sequences and
+  functions), and SQLite every attached schema, so the explorer is tested without a server.
+  While the filter box has text, a data source that searches shows **Found on the server**
+  under its row: the matches not already shown, each with its path (`sales › public ›
+  orders`), acting as the node itself (Open data, Show definition, its menu). Levels still load
+  only when expanded.
+  **Exit:** on SQLite in a kittest, a table in a schema never expanded is found from the filter
+  box and opened; on the PostgreSQL test server, a search among 2,500 tables in two schemas
+  returns the matches, capped, with the server's case-insensitive match.
+- **C0h — Manual and demo note:** a chapter, **Cloud sign-in and costs**, on signing in with a
+  cloud account, the cost guard, the progress line and searching the explorer, and the C0 demo
+  note in the roadmap.
+
 **Exit:** an RDS PostgreSQL database connects with an AWS profile and no password, and keeps
-working past the token's 15-minute lifetime.
+working past the token's 15-minute lifetime. C0 can only show this with stand-ins (C0d's exit);
+trying it against RDS, Cloud SQL and Azure Database with real accounts is left to the user
+before release, as N5's IAM Identity Center check was.
 
 ### C1 — Managed databases
 
@@ -185,6 +291,18 @@ Proposed defaults; each is confirmed when its milestone starts.
 | DuckDB extensions | **Downloaded by DuckDB on first use**, signed by DuckDB, rather than compiled in. | Downloads stay the same size; the first use of S3 or Iceberg needs network access. |
 | What runs without asking | **Nothing that scans a whole table** on a data source with a cost limit: no row counts, **Open data** with a `LIMIT`, export and import asking first. | A few conveniences are slower to reach on warehouses, in exchange for no surprise bills. |
 
+C0's own decisions, taken on 2026-11-02 when it started; each can be overturned in review.
+
+| Question | Chosen | Consequence |
+| --- | --- | --- |
+| How Google Cloud signs in | **Application Default Credentials, read by DbRover** for the two kinds `gcloud` and the console write (a user's refresh token, a service account's key), not by running `gcloud`. | Works with only a key file and no `gcloud` installed, as Google's libraries do. Workload identity federation, impersonation and a VM's metadata server are refused by name until someone needs them. |
+| How Entra ID signs in | **The Azure CLI's or the Azure Developer CLI's own sign-in, asked for a token** by running `az` or `azd` without a shell, not by reading their token caches. | The caches are encrypted on Windows and macOS and their format is the CLI's own; running the program is what Azure's own libraries do. Users need `az` or `azd` signed in; managed identity and a browser sign-in come later. |
+| Where a cloud sign-in goes in a data source | **In the server's settings, in place of the password**, beside W9's password command and exclusive of it: `cloud_sign_in = { provider = "aws", profile = "…", region = "…" }`. | The token is the password the driver already sends, so PostgreSQL and MySQL need no change; only SQL Server's Entra token takes TDS's own path. |
+| When a token is fetched | **On every connection**, from a cache that refreshes it five minutes before it expires; RDS tokens are made on the machine each time. | A connection lasts past its token, as the databases allow; reconnecting signs in afresh. |
+| The cost guard's limit | **A byte limit beside N5's whole-table switch,** in the engine's own settings as N5's switch is; a time budget waits for Snowflake and Databricks (C5, C6), which bill by time and have their own statement timeouts to set. | One judging function for every estimate; the limit has no field in the dialog until an engine estimates bytes. |
+| Jobs | **One `JobService` interface and one `JobCursor`**, polling with a growing pause (0.1 s doubling to 2 s), rather than each warehouse driver writing its own loop. | C3 to C6 implement four calls each; the engine and the console see an ordinary cursor and a progress handle. |
+| Searching a catalog | **A search on the server, a hundred matches at most, shown apart from the tree** under **Found on the server**, rather than expanding the tree to each match. | Nothing loads that wasn't asked for; a match is usable at once without loading its parents' levels. |
+
 ## Risks
 
 - **Surprise bills.** A missed automatic query on a large table costs the user money. Every
@@ -196,3 +314,10 @@ Proposed defaults; each is confirmed when its milestone starts.
   moves to a nightly job, as [More databases](databases.md#risks) plans for large engines.
 - **Accounts to test with.** Some services need a paid account to try at all. A milestone ships
   only what was tried against the real service, and says what wasn't.
+- **Tokens in the wrong place.** A token is a password for its lifetime. It lives in memory only,
+  in the type that never prints its secret, and is never put in an error message, the log, a
+  file or the history; a test checks the `Debug` of every type that holds one.
+- **Sign-ins that can't be tried here.** C0 is built with stand-ins and no cloud account. What
+  only the real services can show (RDS's and Cloud SQL's IAM users, Azure Database's Entra
+  sign-in, MySQL's cleartext plugin over TLS for RDS) is listed in C0's demo note for the user
+  to try before release.
