@@ -15,7 +15,9 @@ use std::time::Instant;
 use common::{MemorySecrets, postgres_test_server, sqlite_data_source};
 use dbrover_core::{ConnectionConfig, DataSource, DataSourceId, SafetyLevel};
 use dbrover_engine::{PasswordCommands, ProcessRunner, ReportSource, SourceAccess, Tunnels};
-use dbrover_report::{Plan, RunFolders, RunValues, SourceError, read_report, run};
+use dbrover_report::{
+    Logic, Plan, RunFolders, RunValues, SourceError, SourceOpener, read_report, run,
+};
 use dbrover_store::{Secret, SecretStore, TrustedCommands};
 
 /// A ledger of two accounts, with entries on either side of October 2026.
@@ -125,7 +127,10 @@ async fn open(
     values: &RunValues,
     access: &Access,
 ) -> Result<ReportSource, SourceError> {
-    ReportSource::open(&plan.source, &values.parameters, access.get()).await
+    let Logic::Direct(source) = &plan.logic else {
+        panic!("{:?} has a combine step", plan.name);
+    };
+    access.get().open(source, &values.parameters).await
 }
 
 #[tokio::test]
@@ -135,7 +140,6 @@ async fn writes_a_trial_balance_from_sqlite_with_its_dates_bound() {
     let plan = plan(TRIAL_BALANCE, &ledger);
     let values = october(&plan);
     let access = Access::new(Arc::new(MemorySecrets::default()), folder.path());
-    let mut source = open(&plan, &values, &access).await.unwrap();
     let out = folder.path().join("out");
     std::fs::create_dir(&out).unwrap();
     let staging = out.join(".run");
@@ -143,17 +147,9 @@ async fn writes_a_trial_balance_from_sqlite_with_its_dates_bound() {
         folder: &out,
         staging: &staging,
     };
-    let summary = run(
-        &plan,
-        &values,
-        &mut source,
-        folders,
-        Instant::now(),
-        &mut |_| {},
-    )
-    .await
-    .unwrap();
-    source.close().await;
+    let summary = run(&plan, &values, &access.get(), folders, &mut |_| {})
+        .await
+        .unwrap();
     assert!(!staging.exists(), "the run removes its staging folder");
 
     assert_eq!(summary.rows, 2);
@@ -242,21 +238,15 @@ async fn stops_a_slow_postgres_source_at_its_timeout() {
         .unwrap();
     let access = Access::new(secrets, folder.path());
     let started = Instant::now();
-    let outcome = match open(&plan, &values, &access).await {
-        Ok(mut source) => {
-            let staging = folder.path().join(".run");
-            let folders = RunFolders {
-                folder: folder.path(),
-                staging: &staging,
-            };
-            let outcome = run(&plan, &values, &mut source, folders, started, &mut |_| {}).await;
-            source.close().await;
-            outcome
-                .map(drop)
-                .map_err(|failure| failure.limit.map(|limit| limit.key))
-        }
-        Err(error) => Err(error.limit.map(|limit| limit.key)),
+    let staging = folder.path().join(".run");
+    let folders = RunFolders {
+        folder: folder.path(),
+        staging: &staging,
     };
+    let outcome = run(&plan, &values, &access.get(), folders, &mut |_| {})
+        .await
+        .map(drop)
+        .map_err(|failure| failure.limit.map(|limit| limit.key));
     assert_eq!(outcome, Err(Some("timeout".to_owned())));
     assert!(
         started.elapsed().as_secs() < 15,

@@ -1,5 +1,6 @@
-//! Reports: saved, re-runnable recipes of a query, the parameters it takes and the files it
-//! writes, each with a declared schema. The design is in `docs/reporting.md`.
+//! Reports: saved, re-runnable recipes of queries on one or more data sources, a DuckDB query
+//! that combines their rows, the parameters they take and the files they write, each with a
+//! declared schema. The design is in `docs/reporting.md`.
 //!
 //! A report goes through three steps, each a type:
 //!
@@ -10,8 +11,8 @@
 //!    names they make.
 //!
 //! Reading a file and connecting to a data source are left to the store, the engine and the
-//! worker, which hand this crate what they read. [`run`] then streams a source's rows
-//! ([`SourceReader`]) into the output files.
+//! worker, which hand this crate what they read. [`run`] then opens the sources through a
+//! [`SourceOpener`] and streams their rows ([`SourceReader`]) into the output files.
 
 mod events;
 mod file_name;
@@ -22,17 +23,25 @@ mod report;
 mod request;
 mod run;
 
-pub use events::{LimitHit, Preview, RunEvent, RunFailure, Step, WrittenFile};
+pub use events::{
+    LimitHit, LoadedColumn, Preview, RunEvent, RunFailure, SourceStart, Step, WrittenFile,
+};
 pub use file_name::FileName;
 pub use limits::{
-    ByteSize, DEFAULT_MAX_BYTES, DEFAULT_MAX_ROWS, DEFAULT_MAX_SIZE, DEFAULT_RUN_TIMEOUT,
+    ByteSize, CombineLimits, DEFAULT_COMBINE_TIMEOUT, DEFAULT_MAX_BYTES, DEFAULT_MAX_ROWS,
+    DEFAULT_MAX_SIZE, DEFAULT_MAX_TEMP_SIZE, DEFAULT_MEMORY_LIMIT, DEFAULT_RUN_TIMEOUT,
     DEFAULT_SOURCE_TIMEOUT, OutputLimits, SourceLimits,
 };
-pub use plan::{OutputFormat, Plan, PlannedOutput, PlannedSource, RunValues, TypedValues};
+pub use plan::{
+    AttachedSource, Combined, Logic, OutputFormat, Plan, PlannedCombine, PlannedOutput,
+    PlannedSource, QuerySource, RunValues, TypedValues,
+};
 pub use read::read_report;
-pub use report::{Output, OutputColumns, OutputWriter, Param, Report, Source};
+pub use report::{Combine, Output, OutputColumns, OutputWriter, Param, Report, Source, SourceRead};
 pub use request::RunRequest;
-pub use run::{PREVIEW_ROWS, RunFolders, RunSummary, SourceError, SourceReader, grouped, run};
+pub use run::{
+    PREVIEW_ROWS, RunFolders, RunSummary, SourceError, SourceOpener, SourceReader, grouped, run,
+};
 
 #[cfg(test)]
 mod run_tests;

@@ -11,11 +11,10 @@ mod common;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
 
 use common::{MemorySecrets, sqlite_data_source};
 use dbrover_core::DataSource;
-use dbrover_engine::{PasswordCommands, ProcessRunner, ReportSource, SourceAccess, Tunnels};
+use dbrover_engine::{PasswordCommands, ProcessRunner, SourceAccess, Tunnels};
 use dbrover_report::{Plan, RunFolders, read_report, run};
 use dbrover_store::{SecretStore, TrustedCommands};
 
@@ -62,25 +61,14 @@ async fn run_example(name: &str, ledger: &DataSource, out: &Path) {
         tunnels: &tunnels,
         commands: &commands,
     };
-    let mut source = ReportSource::open(&plan.source, &values.parameters, access)
-        .await
-        .unwrap();
     let staging = out.join(".run");
     let folders = RunFolders {
         folder: out,
         staging: &staging,
     };
-    run(
-        &plan,
-        &values,
-        &mut source,
-        folders,
-        Instant::now(),
-        &mut |_| {},
-    )
-    .await
-    .unwrap();
-    source.close().await;
+    run(&plan, &values, &access, folders, &mut |_| {})
+        .await
+        .unwrap();
 }
 
 /// Whether `file` in `out` is the one checked in under `expected/`.

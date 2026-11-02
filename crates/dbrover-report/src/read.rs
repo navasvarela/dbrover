@@ -3,38 +3,34 @@
 //! that names where it is (`[report]`, `source "balances"`, `output 2, column "Debit"`).
 
 use std::collections::BTreeMap;
+use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use dbrover_export::{ColumnType, CustomFormatId, ExportFormat, IfInvalid, Preset, SchemaColumn};
 
 use crate::{
-    ByteSize, DEFAULT_RUN_TIMEOUT, FileName, Output, OutputColumns, OutputLimits, OutputWriter,
-    Param, Report, Source, SourceLimits,
+    ByteSize, Combine, CombineLimits, DEFAULT_RUN_TIMEOUT, FileName, Output, OutputColumns,
+    OutputLimits, OutputWriter, Param, Report, Source, SourceLimits, SourceRead,
 };
 
 /// Keys of later milestones, and what each waits for, so a file written for one says why it
 /// can't run yet rather than running something else.
-const LATER_REPORT_KEYS: [(&str, &str); 2] = [
-    (
-        "combine",
-        "[combine] combines several sources in DuckDB, which comes with RP2",
-    ),
-    ("prql", "PRQL comes with RP5"),
-];
-const LATER_SOURCE_KEYS: [(&str, &str); 3] = [
+const LATER_REPORT_KEYS: [(&str, &str); 1] = [("prql", "PRQL comes with RP5")];
+const LATER_SOURCE_KEYS: [(&str, &str); 2] = [
     (
         "lookup",
         "a lookup reads by the keys an earlier source found, which comes with RP3",
-    ),
-    (
-        "attach",
-        "attaching a DuckDB data source to the combine step comes with RP2",
     ),
     (
         "columns",
         "a source's declared columns come with RP3, for document data sources",
     ),
 ];
+const LATER_COMBINE_KEYS: [(&str, &str); 1] = [("prql", "PRQL in [combine] comes with RP5")];
+
+/// Names DuckDB gives its own catalogs and schemas, which a source's table or attached
+/// database can't take.
+const RESERVED_IDS: [&str; 4] = ["main", "memory", "system", "temp"];
 
 /// Reads a report file's text.
 ///
@@ -50,13 +46,17 @@ pub fn read_report(text: &str) -> Result<Report, Vec<String>> {
     let mut file = Fields::new(table);
     let header = file.table("report");
     let sources = file.tables("source");
+    let combine = file.table("combine");
     let outputs = file.tables("output");
     for (key, later) in LATER_REPORT_KEYS {
         if file.take(key).is_some() {
             problems.push(later.to_owned());
         }
     }
-    problems.extend(file.unknown("a report file", "[report], [[source]] and [[output]]"));
+    problems.extend(file.unknown(
+        "a report file",
+        "[report], [[source]], [combine] and [[output]]",
+    ));
 
     let header = match header {
         Ok(Some(header)) => read_header(header, &mut problems),
@@ -80,13 +80,27 @@ pub fn read_report(text: &str) -> Result<Report, Vec<String>> {
         })
         .unwrap_or_default();
 
-    let source = match sources {
+    let sources = match sources {
         Ok(sources) => read_sources(sources, &mut problems),
+        Err(problem) => {
+            problems.push(problem);
+            Vec::new()
+        }
+    };
+    let combine = match combine {
+        Ok(Some(combine)) => read_combine(combine, &mut problems),
+        Ok(None) => None,
         Err(problem) => {
             problems.push(problem);
             None
         }
     };
+    if !problems
+        .iter()
+        .any(|problem| problem.starts_with("[combine]"))
+    {
+        check_shape(&sources, combine.is_some(), &mut problems);
+    }
     let outputs = match outputs {
         Ok(outputs) => read_outputs(outputs, &params, &mut problems),
         Err(problem) => {
@@ -95,13 +109,14 @@ pub fn read_report(text: &str) -> Result<Report, Vec<String>> {
         }
     };
 
-    match (header, source) {
-        (Some(header), Some(source)) if problems.is_empty() => Ok(Report {
+    match header {
+        Some(header) if problems.is_empty() => Ok(Report {
             name: header.name,
             description: header.description,
             params: header.params,
             timeout: header.timeout,
-            source,
+            sources,
+            combine,
             outputs,
         }),
         _ => Err(problems),
@@ -200,23 +215,53 @@ fn is_param_name(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-fn read_sources(sources: Vec<toml::Table>, problems: &mut Vec<String>) -> Option<Source> {
-    let count = sources.len();
-    let mut sources = sources.into_iter();
-    let Some(first) = sources.next() else {
-        problems.push(
+/// Each source, with a problem for each id that can't name a table or that another source
+/// already has. A source with a problem is left out, and its problems listed.
+fn read_sources(sources: Vec<toml::Table>, problems: &mut Vec<String>) -> Vec<Source> {
+    let mut read: Vec<Source> = Vec::new();
+    for table in sources {
+        let Some(source) = read_source(table, problems) else {
+            continue;
+        };
+        if read
+            .iter()
+            .any(|kept| kept.id.eq_ignore_ascii_case(&source.id))
+        {
+            problems.push(format!(
+                "source {:?}: another source already has this id; each source's id names its \
+                 table, so each is different",
+                source.id
+            ));
+            continue;
+        }
+        read.push(source);
+    }
+    read
+}
+
+/// What only the whole list of sources shows: whether there is one, and whether the sources
+/// need a combine step they don't have.
+fn check_shape(sources: &[Source], combined: bool, problems: &mut Vec<String>) {
+    let source_problems = problems
+        .iter()
+        .any(|problem| problem.starts_with("source ") || problem.starts_with("[[source]]"));
+    match sources {
+        [] if !source_problems => problems.push(
             "the file has no [[source]] table, with the query whose rows the report writes"
                 .to_owned(),
-        );
-        return None;
-    };
-    if count > 1 {
-        problems.push(format!(
-            "the file has {count} [[source]] tables; a report reads one until RP2 combines \
-             several"
-        ));
+        ),
+        [one] if !combined && one.read == SourceRead::Attach => problems.push(format!(
+            "source {:?}: an attached source is read in place by a [combine] query; add \
+             one, or give the source a query",
+            one.id
+        )),
+        [_, _, ..] if !combined => problems.push(format!(
+            "the file has {} [[source]] tables; several sources are combined by a [combine] \
+             query over their tables",
+            sources.len()
+        )),
+        _ => {}
     }
-    read_source(first, problems)
 }
 
 fn read_source(table: toml::Table, problems: &mut Vec<String>) -> Option<Source> {
@@ -228,19 +273,18 @@ fn read_source(table: toml::Table, problems: &mut Vec<String>) -> Option<Source>
     };
     let mut found = Vec::new();
     let id = id.and_then(|id| {
-        id.filter(|id| !id.trim().is_empty())
-            .ok_or_else(|| "needs an id, as id = \"balances\"".to_owned())
+        let id = id
+            .filter(|id| !id.trim().is_empty())
+            .ok_or_else(|| "needs an id, as id = \"balances\"".to_owned())?;
+        check_id(&id).map(|()| id)
     });
     let data_source = fields.string("data_source").and_then(|name| {
         name.filter(|name| !name.trim().is_empty()).ok_or_else(|| {
             "needs the data source it reads, by name: data_source = \"ledger\"".to_owned()
         })
     });
-    let query = fields.string("query").and_then(|query| {
-        query
-            .filter(|query| !query.trim().is_empty())
-            .ok_or_else(|| "needs a query".to_owned())
-    });
+    let attach = fields.boolean("attach");
+    let query = fields.string("query");
     let max_rows = fields.count("max_rows");
     let max_bytes = fields.byte_size("max_bytes");
     let timeout = fields.duration("timeout");
@@ -251,29 +295,70 @@ fn read_source(table: toml::Table, problems: &mut Vec<String>) -> Option<Source>
     }
     found.extend(fields.unknown(
         "a source",
-        "id, data_source, query, max_rows, max_bytes and timeout",
+        "id, data_source, query, attach, max_rows, max_bytes and timeout",
     ));
-    let defaults = SourceLimits::default();
-    let source = match (id, data_source, query, max_rows, max_bytes, timeout) {
-        (Ok(id), Ok(data_source), Ok(query), Ok(max_rows), Ok(max_bytes), Ok(timeout)) => {
-            Some(Source {
-                id,
-                data_source,
-                query,
-                limits: SourceLimits {
-                    max_rows: max_rows.unwrap_or(defaults.max_rows),
-                    max_bytes: max_bytes.unwrap_or(defaults.max_bytes),
-                    timeout: timeout.unwrap_or(defaults.timeout),
-                },
-            })
+    let read = match (attach, query, max_rows, max_bytes, timeout) {
+        (Ok(Some(true)), query, max_rows, max_bytes, timeout) => {
+            if !matches!(query, Ok(None)) {
+                found.push(
+                    "an attached source has no query: the [combine] query reads its tables in \
+                     place"
+                        .to_owned(),
+                );
+            }
+            let limits = [
+                ("max_rows", max_rows.map(|value| value.is_some())),
+                ("max_bytes", max_bytes.map(|value| value.is_some())),
+                ("timeout", timeout.map(|value| value.is_some())),
+            ];
+            for (key, set) in limits {
+                if !matches!(set, Ok(false)) {
+                    found.push(format!(
+                        "{key} bounds what a source's query copies, and an attached source \
+                         copies nothing; [combine] sets the limits of what reads it"
+                    ));
+                }
+            }
+            Ok(SourceRead::Attach)
         }
-        (id, data_source, query, max_rows, max_bytes, timeout) => {
+        (Ok(_), Ok(query), Ok(max_rows), Ok(max_bytes), Ok(timeout)) => {
+            let defaults = SourceLimits::default();
+            query
+                .filter(|query| !query.trim().is_empty())
+                .map(|query| SourceRead::Query {
+                    query,
+                    limits: SourceLimits {
+                        max_rows: max_rows.unwrap_or(defaults.max_rows),
+                        max_bytes: max_bytes.unwrap_or(defaults.max_bytes),
+                        timeout: timeout.unwrap_or(defaults.timeout),
+                    },
+                })
+                .ok_or_else(|| {
+                    vec![
+                        "needs a query, or attach = true to read a DuckDB file in place".to_owned(),
+                    ]
+                })
+        }
+        (attach, query, max_rows, max_bytes, timeout) => {
+            let mut errors = Vec::new();
+            errors.extend(attach.err());
+            errors.extend(query.err());
+            errors.extend(max_rows.err());
+            errors.extend(max_bytes.err());
+            errors.extend(timeout.err());
+            Err(errors)
+        }
+    };
+    let source = match (id, data_source, read) {
+        (Ok(id), Ok(data_source), Ok(read)) => Some(Source {
+            id,
+            data_source,
+            read,
+        }),
+        (id, data_source, read) => {
             found.extend(id.err());
             found.extend(data_source.err());
-            found.extend(query.err());
-            found.extend(max_rows.err());
-            found.extend(max_bytes.err());
-            found.extend(timeout.err());
+            found.extend(read.err().into_iter().flatten());
             None
         }
     };
@@ -284,6 +369,84 @@ fn read_source(table: toml::Table, problems: &mut Vec<String>) -> Option<Source>
             .map(|problem| format!("{label}: {problem}")),
     );
     source
+}
+
+/// Whether `id` can name a source's table in DuckDB, unquoted.
+fn check_id(id: &str) -> Result<(), String> {
+    let plain = id.starts_with(|c: char| c.is_ascii_alphabetic())
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if !plain {
+        return Err(
+            "an id names the source's table in [combine], so it is letters, digits and _, \
+             starting with a letter"
+                .to_owned(),
+        );
+    }
+    if RESERVED_IDS
+        .iter()
+        .any(|reserved| reserved.eq_ignore_ascii_case(id))
+    {
+        return Err(format!(
+            "{id:?} is a name DuckDB keeps for itself; name the source another way"
+        ));
+    }
+    Ok(())
+}
+
+fn read_combine(table: toml::Table, problems: &mut Vec<String>) -> Option<Combine> {
+    let mut fields = Fields::new(table);
+    let mut found = Vec::new();
+    let query = fields.string("query").and_then(|query| {
+        query
+            .filter(|query| !query.trim().is_empty())
+            .ok_or_else(|| {
+                "needs a query, the DuckDB SQL that combines the sources' tables".to_owned()
+            })
+    });
+    let timeout = fields.duration("timeout");
+    let memory_limit = fields.byte_size("memory_limit");
+    let threads = fields.count("threads");
+    let max_temp_size = fields.byte_size("max_temp_size");
+    for (key, later) in LATER_COMBINE_KEYS {
+        if fields.take(key).is_some() {
+            found.push(later.to_owned());
+        }
+    }
+    found.extend(fields.unknown(
+        "[combine]",
+        "query, timeout, memory_limit, threads and max_temp_size",
+    ));
+    let combine = match (query, timeout, memory_limit, threads, max_temp_size) {
+        (Ok(query), Ok(timeout), Ok(memory_limit), Ok(threads), Ok(max_temp_size)) => {
+            let defaults = CombineLimits::default();
+            Some(Combine {
+                query,
+                limits: CombineLimits {
+                    timeout: timeout.unwrap_or(defaults.timeout),
+                    memory_limit: memory_limit.unwrap_or(defaults.memory_limit),
+                    threads: threads
+                        .and_then(|threads| usize::try_from(threads).ok())
+                        .and_then(NonZeroUsize::new),
+                    max_temp_size: max_temp_size.unwrap_or(defaults.max_temp_size),
+                },
+            })
+        }
+        (query, timeout, memory_limit, threads, max_temp_size) => {
+            found.extend(query.err());
+            found.extend(timeout.err());
+            found.extend(memory_limit.err());
+            found.extend(threads.err());
+            found.extend(max_temp_size.err());
+            None
+        }
+    };
+    let combine = combine.filter(|_| found.is_empty());
+    problems.extend(
+        found
+            .into_iter()
+            .map(|problem| format!("[combine]: {problem}")),
+    );
+    combine
 }
 
 fn read_outputs(

@@ -18,7 +18,7 @@ use dbrover_core::{
 };
 use dbrover_export::ExportColumn;
 use dbrover_language::QueryLanguage;
-use dbrover_report::{LimitHit, PlannedSource, SourceError, SourceReader};
+use dbrover_report::{LimitHit, QuerySource, SourceError, SourceOpener, SourceReader};
 use dbrover_sql::ParameterValues;
 use dbrover_store::SecretStore;
 
@@ -41,6 +41,18 @@ pub struct SourceAccess<'a> {
     pub commands: &'a PasswordCommands,
 }
 
+impl SourceOpener for SourceAccess<'_> {
+    type Reader = ReportSource;
+
+    async fn open(
+        &self,
+        source: &QuerySource,
+        parameters: &ParameterValues,
+    ) -> Result<ReportSource, SourceError> {
+        ReportSource::open(source, parameters, *self).await
+    }
+}
+
 /// A report's source, open and running its statement.
 pub struct ReportSource {
     connection: Box<dyn Connection>,
@@ -61,7 +73,7 @@ impl ReportSource {
     /// [`SourceError`] saying why: a statement that doesn't only read, a connection that
     /// fails, the cost guard, or the database's own error.
     pub async fn open(
-        source: &PlannedSource,
+        source: &QuerySource,
         values: &ParameterValues,
         access: SourceAccess<'_>,
     ) -> Result<Self, SourceError> {
@@ -145,12 +157,6 @@ impl ReportSource {
             id: source.id.clone(),
         })
     }
-
-    /// Ends the statement, rolls back the read-only transaction and disconnects. What fails
-    /// here is only logged: the run is over either way.
-    pub async fn close(self) {
-        close(self.connection, self.cursor, self.mode).await;
-    }
 }
 
 impl SourceReader for ReportSource {
@@ -170,6 +176,12 @@ impl SourceReader for ReportSource {
         };
         let page = watch(page, self.deadline, &self.cancel, &self.id, self.timeout).await?;
         Ok((!page.is_empty()).then_some(page))
+    }
+
+    /// Ends the statement, rolls back the read-only transaction and disconnects. What fails
+    /// here is only logged: the run is over either way.
+    async fn close(self) {
+        close(self.connection, self.cursor, self.mode).await;
     }
 }
 

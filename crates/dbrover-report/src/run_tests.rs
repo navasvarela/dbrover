@@ -1,9 +1,9 @@
 //! Runs with a source in memory: what they write, what they report, and each limit that
 //! stops one, leaving no file behind.
 
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 use calamine::{Data, Reader, Xlsx, open_workbook};
 use dbrover_core::{
@@ -30,6 +30,38 @@ impl SourceReader for MemoryReader {
             Some(page) => Ok(Some(page)),
             None => self.then.take().map_or(Ok(None), Err),
         }
+    }
+
+    async fn close(self) {}
+}
+
+/// Hands over the reader of each source by its id, once.
+#[derive(Default)]
+struct MemoryOpener {
+    readers: RefCell<Vec<(String, MemoryReader)>>,
+}
+
+impl MemoryOpener {
+    fn with(id: &str, reader: MemoryReader) -> Self {
+        Self {
+            readers: RefCell::new(vec![(id.to_owned(), reader)]),
+        }
+    }
+}
+
+impl SourceOpener for MemoryOpener {
+    type Reader = MemoryReader;
+
+    async fn open(
+        &self,
+        source: &QuerySource,
+        _parameters: &dbrover_sql::ParameterValues,
+    ) -> Result<MemoryReader, SourceError> {
+        let mut readers = self.readers.borrow_mut();
+        let found = readers.iter().position(|(id, _)| *id == source.id);
+        found
+            .map(|index| readers.remove(index).1)
+            .ok_or_else(|| SourceError::new(format!("no rows for {:?}", source.id)))
     }
 }
 
@@ -99,10 +131,10 @@ fn values(plan: &Plan) -> RunValues {
     .unwrap()
 }
 
-/// Runs `plan` on `reader` into `folder`, with the events it sent.
+/// Runs `plan` with its source reading `reader`, into `folder`, with the events it sent.
 async fn run_into(
     plan: &Plan,
-    reader: &mut MemoryReader,
+    reader: MemoryReader,
     folder: &Path,
 ) -> (Result<RunSummary, RunFailure>, Vec<RunEvent>) {
     let mut events = Vec::new();
@@ -111,14 +143,10 @@ async fn run_into(
         folder,
         staging: &staging,
     };
-    let outcome = run(
-        plan,
-        &values(plan),
-        reader,
-        folders,
-        Instant::now(),
-        &mut |event| events.push(event),
-    )
+    let opener = MemoryOpener::with("balances", reader);
+    let outcome = run(plan, &values(plan), &opener, folders, &mut |event| {
+        events.push(event);
+    })
     .await;
     (outcome, events)
 }
@@ -137,8 +165,7 @@ fn files_in(folder: &Path) -> Vec<String> {
 async fn writes_every_output_with_its_schema_and_reports_each_step() {
     let folder = tempfile::tempdir().unwrap();
     let plan = plan("", BOTH);
-    let mut reader = ledger(250, 100);
-    let (outcome, events) = run_into(&plan, &mut reader, folder.path()).await;
+    let (outcome, events) = run_into(&plan, ledger(250, 100), folder.path()).await;
     let summary = outcome.unwrap();
     assert_eq!(summary.rows, 250);
     assert_eq!(
@@ -212,7 +239,7 @@ async fn stops_at_each_limit_and_leaves_no_file() {
         let folder = tempfile::tempdir().unwrap();
         std::fs::write(folder.path().join("balances-2026-10.csv"), "last month's").unwrap();
         let plan = plan(source_limits, outputs);
-        let (outcome, _) = run_into(&plan, &mut ledger(250, 100), folder.path()).await;
+        let (outcome, _) = run_into(&plan, ledger(250, 100), folder.path()).await;
         let failure = outcome.unwrap_err();
         assert_eq!(
             failure.limit.as_ref().map(|limit| limit.key.as_str()),
@@ -232,7 +259,7 @@ async fn names_the_limit_and_where_to_raise_it() {
     let folder = tempfile::tempdir().unwrap();
     let (outcome, _) = run_into(
         &plan("max_rows = 120", BOTH),
-        &mut ledger(250, 100),
+        ledger(250, 100),
         folder.path(),
     )
     .await;
@@ -257,7 +284,7 @@ async fn fails_on_a_value_that_doesnt_fit_and_on_a_missing_column() {
     let folder = tempfile::tempdir().unwrap();
     let mut reader = ledger(3, 10);
     reader.pages[0][1][1] = Some("n/a".to_owned());
-    let (outcome, _) = run_into(&plan("", BOTH), &mut reader, folder.path()).await;
+    let (outcome, _) = run_into(&plan("", BOTH), reader, folder.path()).await;
     assert_eq!(
         outcome.unwrap_err().to_string(),
         "output 1 (balances-2026-10.xlsx): row 2, column \"Balance\": \"n/a\" isn't a decimal \
@@ -266,7 +293,7 @@ async fn fails_on_a_value_that_doesnt_fit_and_on_a_missing_column() {
     assert_eq!(files_in(folder.path()), Vec::<String>::new());
 
     let missing = BOTH.replace("from = \"balance\"", "from = \"total\"");
-    let (outcome, _) = run_into(&plan("", &missing), &mut ledger(3, 10), folder.path()).await;
+    let (outcome, _) = run_into(&plan("", &missing), ledger(3, 10), folder.path()).await;
     let failure = outcome.unwrap_err();
     assert_eq!(
         failure.step,
@@ -294,7 +321,7 @@ async fn passes_on_the_sources_own_failure() {
             raise_in: "the [[source]] \"balances\"".to_owned(),
         })),
     });
-    let (outcome, _) = run_into(&plan("", BOTH), &mut reader, folder.path()).await;
+    let (outcome, _) = run_into(&plan("", BOTH), reader, folder.path()).await;
     let failure = outcome.unwrap_err();
     assert_eq!(
         failure.step,
@@ -314,8 +341,40 @@ fn events_are_json_lines_the_app_reads_back() {
     let events = [
         RunEvent::Started {
             report: "Trial balance".to_owned(),
-            source: "balances".to_owned(),
-            data_source: "ledger".to_owned(),
+            sources: vec![SourceStart {
+                id: "balances".to_owned(),
+                data_source: "ledger".to_owned(),
+                attached: false,
+            }],
+            combine: false,
+        },
+        RunEvent::Progress {
+            step: Step::Combine,
+            rows: 10,
+            bytes: 100,
+            elapsed_ms: 1000,
+        },
+        RunEvent::SourceDone {
+            id: "tx".to_owned(),
+            rows: 10,
+            bytes: 100,
+            first_row_ms: Some(5),
+            elapsed_ms: 1000,
+            table: vec![LoadedColumn {
+                name: "quantity".to_owned(),
+                type_name: "DECIMAL(38,18)".to_owned(),
+            }],
+            warnings: Vec::new(),
+        },
+        RunEvent::SourceAttached {
+            id: "prices".to_owned(),
+            path: PathBuf::from("/tmp/prices.duckdb"),
+        },
+        RunEvent::CombineDone {
+            rows: 10,
+            bytes: 100,
+            first_row_ms: None,
+            elapsed_ms: 1000,
         },
         RunEvent::Failed(RunFailure::at_limit(
             Step::Source {
@@ -329,7 +388,7 @@ fn events_are_json_lines_the_app_reads_back() {
             },
         )),
     ];
-    let line = serde_json::to_string(&events[1]).unwrap();
+    let line = serde_json::to_string(&events[5]).unwrap();
     assert_eq!(
         line,
         r#"{"event":"failed","step":{"step":"source","id":"balances"},"message":"too many","limit":{"key":"max_rows","value":"120 rows","raise_in":"the [[source]] \"balances\""}}"#

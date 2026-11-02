@@ -1,5 +1,6 @@
-//! A run: the source's rows, a page at a time, into every output and the preview, under the
-//! source's and the outputs' limits (`docs/reporting.md`, "Guardrails in RP1").
+//! A run: the rows of its one source, or of its combine step, a page at a time, into every
+//! output and the preview, under the source's and the outputs' limits (`docs/reporting.md`,
+//! "Guardrails in RP1").
 //!
 //! 1. Map each output's schema onto the source's columns, and start its file under a partial
 //!    name in the run's staging folder.
@@ -18,8 +19,11 @@ use dbrover_export::{
     CompletedFile, EXCEL_MAX_ROWS, ExportColumn, ExportWriter, OutputSchema, RowConverter,
 };
 
+use dbrover_sql::ParameterValues;
+
 use crate::{
-    LimitHit, Plan, PlannedOutput, Preview, RunEvent, RunFailure, RunValues, Step, WrittenFile,
+    LimitHit, Logic, Plan, PlannedOutput, Preview, QuerySource, RunEvent, RunFailure, RunValues,
+    Step, WrittenFile,
 };
 
 /// How many rows the preview keeps: a screenful or two, enough to see a report is right.
@@ -28,6 +32,18 @@ pub const PREVIEW_ROWS: usize = 200;
 /// How often a [`RunEvent::Progress`] is sent while the source returns rows.
 const PROGRESS_EVERY: Duration = Duration::from_secs(1);
 
+/// Opens a report's sources: the engine on real data sources, tests in memory.
+pub trait SourceOpener {
+    type Reader: SourceReader;
+
+    /// Connects to `source`'s data source and starts its query with `parameters`.
+    fn open(
+        &self,
+        source: &QuerySource,
+        parameters: &ParameterValues,
+    ) -> impl Future<Output = Result<Self::Reader, SourceError>>;
+}
+
 /// A source's rows, read a page at a time.
 pub trait SourceReader {
     /// The result's columns.
@@ -35,6 +51,10 @@ pub trait SourceReader {
 
     /// The next page of rows, or `None` once every row has been read.
     fn next_page(&mut self) -> impl Future<Output = Result<Option<Vec<Row>>, SourceError>>;
+
+    /// Ends the source's statement and its connection, however far it was read. What fails
+    /// here can only be logged: the run has its rows, or has already failed.
+    fn close(self) -> impl Future<Output = ()>;
 }
 
 /// Why a source stopped returning rows.
@@ -51,6 +71,15 @@ impl SourceError {
         Self {
             message: message.into(),
             limit: None,
+        }
+    }
+
+    /// The run's failure, at `step`.
+    pub fn at(self, step: Step) -> RunFailure {
+        RunFailure {
+            step,
+            message: self.message,
+            limit: self.limit,
         }
     }
 }
@@ -71,27 +100,96 @@ pub struct RunSummary {
     pub files: Vec<WrittenFile>,
 }
 
-/// Runs `plan` with `values`, reading `reader`, writing into `folders`, and sending each step
-/// to `events` but the run's start and end, which the caller sends. `opened` is when the
-/// source started to be opened, for the time to its first row.
+/// Runs `plan` with `values`, opening its sources with `opener`, writing into `folders`, and
+/// sending each step to `events` but the run's start and end, which the caller sends.
 ///
 /// # Errors
 ///
 /// [`RunFailure`] naming the step that failed and, for a guardrail, which one.
-pub async fn run<R: SourceReader>(
+pub async fn run<O: SourceOpener>(
+    plan: &Plan,
+    values: &RunValues,
+    opener: &O,
+    folders: RunFolders<'_>,
+    events: &mut dyn FnMut(RunEvent),
+) -> Result<RunSummary, RunFailure> {
+    let _staging = Staging::make(folders)?;
+    match &plan.logic {
+        Logic::Direct(source) => {
+            let opened = Instant::now();
+            let mut reader = opener
+                .open(source, &values.parameters)
+                .await
+                .map_err(|error| {
+                    error.at(Step::Source {
+                        id: source.id.clone(),
+                    })
+                })?;
+            let feed = Feed::Source(source);
+            let written = write(plan, values, &mut reader, &feed, folders, opened, events).await;
+            reader.close().await;
+            written
+        }
+        Logic::Combine(_) => Err(RunFailure::new(
+            Step::Combine,
+            "combining sources in DuckDB comes with RP2d",
+        )),
+    }
+}
+
+/// What the outputs are written from.
+enum Feed<'a> {
+    /// A source's rows, as it returns them, under its caps.
+    Source(&'a QuerySource),
+}
+
+impl Feed<'_> {
+    fn step(&self) -> Step {
+        match self {
+            Self::Source(source) => Step::Source {
+                id: source.id.clone(),
+            },
+        }
+    }
+
+    /// Whether what has been read so far is within the feed's caps.
+    fn check(&self, read: &Count) -> Result<(), RunFailure> {
+        match self {
+            Self::Source(source) => read.check(source),
+        }
+    }
+
+    /// The event that says the feed has given its last row.
+    fn done(&self, read: &Count, elapsed: Duration) -> RunEvent {
+        let first_row_ms = read.first_row.map(millis);
+        match self {
+            Self::Source(source) => RunEvent::SourceDone {
+                id: source.id.clone(),
+                rows: read.rows,
+                bytes: read.bytes,
+                first_row_ms,
+                elapsed_ms: millis(elapsed),
+                table: Vec::new(),
+                warnings: Vec::new(),
+            },
+        }
+    }
+}
+
+/// Writes `reader`'s rows, a page at a time, into every output and the preview, then puts
+/// the files in place. `opened` is when the feed started, for the time to its first row.
+async fn write<R: SourceReader>(
     plan: &Plan,
     values: &RunValues,
     reader: &mut R,
+    feed: &Feed<'_>,
     folders: RunFolders<'_>,
     opened: Instant,
     events: &mut dyn FnMut(RunEvent),
 ) -> Result<RunSummary, RunFailure> {
-    let _staging = Staging::make(folders)?;
     let mut outputs = start_outputs(plan, values, reader.columns(), folders)?;
-    let source = Step::Source {
-        id: plan.source.id.clone(),
-    };
-    let mut read = SourceCount::default();
+    let step = feed.step();
+    let mut read = Count::default();
     let mut preview = Preview {
         columns: reader
             .columns()
@@ -106,19 +204,14 @@ pub async fn run<R: SourceReader>(
         let page = match reader.next_page().await {
             Ok(Some(page)) => page,
             Ok(None) => break Ok(()),
-            Err(error) => {
-                break Err(RunFailure {
-                    step: source.clone(),
-                    message: error.message,
-                    limit: error.limit,
-                });
-            }
+            Err(error) => break Err(error.at(step.clone())),
         };
         if page.is_empty() {
             continue;
         }
         read.first_row.get_or_insert_with(|| opened.elapsed());
-        if let Err(failure) = read.add(&page, plan) {
+        read.add(&page);
+        if let Err(failure) = feed.check(&read) {
             break Err(failure);
         }
         keep_for_preview(&mut preview, &page);
@@ -131,6 +224,7 @@ pub async fn run<R: SourceReader>(
         if last_progress.elapsed() >= PROGRESS_EVERY {
             last_progress = Instant::now();
             events(RunEvent::Progress {
+                step: step.clone(),
                 rows: read.rows,
                 bytes: read.bytes,
                 elapsed_ms: millis(opened.elapsed()),
@@ -141,12 +235,7 @@ pub async fn run<R: SourceReader>(
         outputs.into_iter().for_each(OutputRun::abandon);
         return Err(failure);
     }
-    events(RunEvent::SourceDone {
-        rows: read.rows,
-        bytes: read.bytes,
-        first_row_ms: read.first_row.map(millis),
-        elapsed_ms: millis(opened.elapsed()),
-    });
+    events(feed.done(&read, opened.elapsed()));
     events(RunEvent::Preview(preview));
     let files = put_in_place(complete_outputs(outputs)?)?;
     for file in &files {
@@ -189,25 +278,27 @@ fn millis(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
-/// What the source has returned so far.
+/// What a source, or the combine step, has returned so far.
 #[derive(Default)]
-struct SourceCount {
+struct Count {
     rows: u64,
     bytes: u64,
     first_row: Option<Duration>,
 }
 
-impl SourceCount {
-    /// Counts `page`, or says which cap it crossed.
-    fn add(&mut self, page: &[Row], plan: &Plan) -> Result<(), RunFailure> {
-        let source = &plan.source;
+impl Count {
+    fn add(&mut self, page: &[Row]) {
+        self.rows += page.len() as u64;
+        self.bytes += page.iter().map(|row| row_bytes(row)).sum::<u64>();
+    }
+
+    /// Whether `source`'s caps hold what it has returned, or which one it crossed.
+    fn check(&self, source: &QuerySource) -> Result<(), RunFailure> {
         let limits = source.limits;
         let step = Step::Source {
             id: source.id.clone(),
         };
         let raise_in = format!("the [[source]] {:?}", source.id);
-        self.rows += page.len() as u64;
-        self.bytes += page.iter().map(|row| row_bytes(row)).sum::<u64>();
         if self.rows > limits.max_rows {
             let value = format!("{} rows", grouped(limits.max_rows));
             return Err(RunFailure::at_limit(
