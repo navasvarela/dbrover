@@ -3,11 +3,15 @@
 //! dialog, the clipboard and the file agree on them. See `docs/exports.md`.
 
 use std::fmt;
+use std::sync::Arc;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::text::{CsvOptions, HtmlOptions, InsertOptions, MarkdownOptions, RowSource, TsvOptions};
-use crate::{ExportFormat, ExportOptions, ExportSpec, ParquetOptions, XlsxOptions};
+use crate::{
+    ExportContext, ExportFormat, ExportOptions, ExportSpec, ParquetOptions, TemplateSource,
+    TemplateSpec, XlsxOptions,
+};
 
 /// A custom format's stable name: what `keymap.toml` binds as `export.<id>`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -62,17 +66,30 @@ pub struct CustomFormat {
 pub enum CustomFormatKind {
     /// A built-in format with options of its own.
     Preset(Preset),
+    /// A header, a template per row and a footer (W8c).
+    Template(Arc<TemplateSource>),
 }
 
 impl CustomFormat {
-    /// The format to write rows from `source` in.
+    /// The format to write rows from `source` in, about the export `context` describes.
     ///
     /// # Errors
     ///
     /// Why the format can't write these rows, as a built-in format's would say.
-    pub fn spec(&self, source: &RowSource) -> Result<ExportSpec, &'static str> {
+    pub fn spec(
+        &self,
+        source: &RowSource,
+        context: &ExportContext,
+    ) -> Result<ExportSpec, &'static str> {
         match &self.kind {
             CustomFormatKind::Preset(preset) => preset.options.spec(preset.format, source),
+            CustomFormatKind::Template(template) => {
+                Ok(ExportSpec::Template(Box::new(TemplateSpec {
+                    source: Arc::clone(template),
+                    context: context.clone(),
+                    dialect: source.dialect,
+                })))
+            }
         }
     }
 
@@ -80,23 +97,28 @@ impl CustomFormat {
     pub fn writes_text(&self) -> bool {
         match &self.kind {
             CustomFormatKind::Preset(preset) => preset.format.writes_text(),
+            CustomFormatKind::Template(_) => true,
         }
     }
 
-    /// The built-in format it writes, for the rules that depend on one: which rows it can
-    /// write, and its icon.
-    pub fn builtin(&self) -> ExportFormat {
+    /// The built-in format it is a preset of, for the rules that depend on one: which rows it
+    /// can write, and its icon. `None` for the other kinds.
+    pub fn preset_of(&self) -> Option<ExportFormat> {
         match &self.kind {
-            CustomFormatKind::Preset(preset) => preset.format,
+            CustomFormatKind::Preset(preset) => Some(preset.format),
+            CustomFormatKind::Template(_) => None,
         }
     }
 
-    /// What it writes, for a tooltip: its description, or the format it is a preset of.
+    /// What it writes, for a tooltip: its description, or what kind of format it is.
     pub fn summary(&self) -> String {
         match (&self.description, &self.kind) {
             (Some(description), _) => description.clone(),
             (None, CustomFormatKind::Preset(preset)) => {
                 format!("{} with options from exports.toml", preset.format.name())
+            }
+            (None, CustomFormatKind::Template(_)) => {
+                format!("A .{} file from a template in exports.toml", self.extension)
             }
         }
     }

@@ -8,12 +8,12 @@ mod subject;
 
 use std::path::PathBuf;
 
-use dbrover_core::{ResultShape, Row, ValueKind};
+use dbrover_core::{Cell, ResultShape, Row, ValueKind};
 use dbrover_engine::{Event, Exporter, RunId};
 use dbrover_export::{
-    CSV_FOR_EXCEL, CsvOptions, CustomFormat, CustomFormatId, ExportChoice, ExportColumn,
-    ExportFormat, ExportOptions, ExportSpec, RowSource, SourceTable, SqlTable, export_choices,
-    render,
+    CSV_FOR_EXCEL, CsvOptions, CustomFormat, CustomFormatId, CustomFormatKind, ExportChoice,
+    ExportColumn, ExportContext, ExportFormat, ExportOptions, ExportSpec, RowSource, SourceTable,
+    SqlTable, export_choices, try_render,
 };
 use egui::{
     Button, Id, Response, RichText, ScrollArea, TextEdit, TextStyle, Ui, WidgetInfo, WidgetType,
@@ -91,6 +91,24 @@ pub struct ExportPreview {
     pub document_sample: Vec<Row>,
     pub loaded: usize,
     pub source: RowSource,
+    /// What a template is told about the export.
+    pub context: ExportContext,
+}
+
+/// What a template is told about an export starting now, of rows from `data_source`, from
+/// `table` if they come from one, with the run's `parameters` in the order it asked for them.
+pub fn export_context(
+    data_source: &str,
+    table: Option<&SqlTable>,
+    parameters: Vec<(String, Cell)>,
+) -> ExportContext {
+    ExportContext {
+        data_source: data_source.to_owned(),
+        table: table.map(ToString::to_string),
+        parameters,
+        // Whole seconds: `2026-11-01T12:00:00Z`.
+        exported_at: format!("{:.0}", jiff::Timestamp::now()),
+    }
 }
 
 pub enum ExportDialogAction {
@@ -251,17 +269,20 @@ impl ExportDialog {
             ui.add_enabled_ui(choosing, |ui| self.format_choice(ui));
         });
         let format = self.format();
-        let asks_for_table = format == ExportFormat::SqlInsert
+        let asks_for_table = format == Some(ExportFormat::SqlInsert)
             && self.preview.source.table.is_none()
             && self.can_name_table();
         form::section(ui, "Options", |ui| {
             ui.add_enabled_ui(choosing, |ui| {
                 form::card(ui, |rows| {
                     match self.chosen_custom().cloned() {
-                        Some(custom) => preset_options(rows, &custom),
-                        None => {
-                            options_ui(rows, format, &mut self.choices.options, &mut self.texts)
-                        }
+                        Some(custom) => custom_options(rows, &custom),
+                        None => options_ui(
+                            rows,
+                            self.choices.format,
+                            &mut self.choices.options,
+                            &mut self.texts,
+                        ),
                     }
                     if asks_for_table {
                         self.table.show(rows);
@@ -374,10 +395,11 @@ impl ExportDialog {
                 || self.rows == ExportedRows::All)
     }
 
-    /// Why `format` can't write these rows when it otherwise could.
-    fn refusal(&self, format: ExportFormat) -> Option<&'static str> {
+    /// Why `format` can't write these rows when it otherwise could. `None` for a format of
+    /// the user's own that writes no built-in one, which gets rows as the table formats do.
+    fn refusal(&self, format: Option<ExportFormat>) -> Option<&'static str> {
         (self.documents_from_database()
-            && !matches!(format, ExportFormat::Json | ExportFormat::JsonLines))
+            && !matches!(format, Some(ExportFormat::Json | ExportFormat::JsonLines)))
         .then_some(DOCUMENTS_AS_JSON)
     }
 
@@ -386,14 +408,14 @@ impl ExportDialog {
     /// below.
     fn unavailable(
         &self,
-        format: ExportFormat,
+        format: Option<ExportFormat>,
         spec: &Result<ExportSpec, &'static str>,
     ) -> Option<&'static str> {
         if let Some(refusal) = self.refusal(format) {
             return Some(refusal);
         }
         match spec {
-            Err(_) if format == ExportFormat::SqlInsert && self.can_name_table() => None,
+            Err(_) if format == Some(ExportFormat::SqlInsert) && self.can_name_table() => None,
             Err(reason) => Some(*reason),
             Ok(_) => None,
         }
@@ -436,7 +458,7 @@ impl ExportDialog {
                 .into_iter()
                 .map(|choice: ExportChoice| Tile {
                     selected: built_in_label == Some(choice.name),
-                    unavailable: self.unavailable(choice.format, &choice.spec),
+                    unavailable: self.unavailable(Some(choice.format), &choice.spec),
                     glyph: built_in_glyph(&choice),
                     name: choice.name.to_owned(),
                     description: choice.description.to_owned(),
@@ -448,8 +470,11 @@ impl ExportDialog {
         let custom = self.custom.iter().map(|format| Tile {
             selected: self.choices.custom.as_ref() == Some(&format.id)
                 && self.chosen_custom().is_some(),
-            unavailable: self.unavailable(format.builtin(), &format.spec(&self.preview.source)),
-            glyph: glyph(format.builtin()),
+            unavailable: self.unavailable(
+                format.preset_of(),
+                &format.spec(&self.preview.source, &self.preview.context),
+            ),
+            glyph: format.preset_of().map_or(icons::CODE, glyph),
             name: format.name.clone(),
             description: format.summary(),
             choice: Choice::Custom(format.id.clone()),
@@ -477,10 +502,13 @@ impl ExportDialog {
         self.custom.iter().find(|format| format.id == *id)
     }
 
-    /// The built-in format written: the chosen one's, or the one a custom format is a preset of.
-    fn format(&self) -> ExportFormat {
-        self.chosen_custom()
-            .map_or(self.choices.format, CustomFormat::builtin)
+    /// The built-in format written: the chosen one, or the one a custom format is a preset
+    /// of; `None` for another kind of custom format.
+    fn format(&self) -> Option<ExportFormat> {
+        match self.chosen_custom() {
+            Some(custom) => custom.preset_of(),
+            None => Some(self.choices.format),
+        }
     }
 
     /// The chosen built-in format's name, or CSV for Excel while CSV has that preset's options;
@@ -530,18 +558,18 @@ impl ExportDialog {
         let custom = self.chosen_custom();
         let format = self.format();
         if custom.is_none() {
-            self.texts.problem(format)?;
+            self.texts.problem(self.choices.format)?;
         }
         if let Some(refusal) = self.refusal(format) {
             return Err(refusal.to_owned());
         }
         let source = self.source();
         let spec = match custom {
-            Some(custom) => custom.spec(&source),
-            None => self.choices.options.spec(format, &source),
+            Some(custom) => custom.spec(&source, &self.preview.context),
+            None => self.choices.options.spec(self.choices.format, &source),
         };
         spec.map_err(|reason| match format {
-            ExportFormat::SqlInsert if self.can_name_table() => {
+            Some(ExportFormat::SqlInsert) if self.can_name_table() => {
                 "Name the table to insert into".to_owned()
             }
             _ => reason.to_owned(),
@@ -571,9 +599,14 @@ impl ExportDialog {
         } else {
             &self.preview.sample
         };
-        match render(spec, columns, sample) {
-            Some(text) => text_preview(ui, &text),
-            None => column_preview(ui, spec.format(), columns),
+        match (try_render(spec, columns, sample), spec.format()) {
+            (Some(Ok(text)), _) => text_preview(ui, &text),
+            (Some(Err(error)), _) => {
+                let palette = Palette::for_visuals(ui.visuals());
+                ui.colored_label(palette.error, error.to_string());
+            }
+            (None, Some(format)) => column_preview(ui, format, columns),
+            (None, None) => {}
         }
     }
 }
@@ -631,15 +664,31 @@ fn format_tile(ui: &mut Ui, tile: &Tile, width: f32) -> Response {
     response
 }
 
-/// A preset's options as `exports.toml` sets them, for reading: they are changed in the file.
-fn preset_options(rows: &mut form::Rows<'_>, custom: &CustomFormat) {
+/// What a custom format writes, for reading: it is changed in `exports.toml`. A preset's
+/// options as they are set; a template's row.
+fn custom_options(rows: &mut form::Rows<'_>, custom: &CustomFormat) {
+    let preset = match &custom.kind {
+        CustomFormatKind::Preset(preset) => preset,
+        CustomFormatKind::Template(template) => {
+            rows.full(|ui| {
+                form::description_label(
+                    ui,
+                    &format!(
+                        "Written by the template “{}” in exports.toml; change it there",
+                        custom.id
+                    ),
+                );
+                ui.label(RichText::new(template.row.trim_end()).monospace());
+            });
+            return;
+        }
+    };
     rows.full(|ui| {
         form::description_label(
             ui,
             &format!("Set in exports.toml as “{}”; change them there", custom.id),
         );
     });
-    let dbrover_export::CustomFormatKind::Preset(preset) = &custom.kind;
     let mut options = preset.options.clone();
     let mut texts = OptionTexts::new(&options);
     rows.full(|ui| {

@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::ExportColumn;
 use crate::options::ExportOptions;
 use crate::parquet::ParquetOptions;
+use crate::template::{TemplateFormat, TemplateSpec};
 use crate::text::{
     Csv, CsvOptions, Html, HtmlOptions, Insert, InsertSpec, Json, JsonDocuments, JsonLines,
     JsonLinesDocuments, Markdown, MarkdownOptions, RowSource, TextFormat, Tsv, TsvOptions, Update,
@@ -157,11 +158,14 @@ pub enum ExportSpec {
     Parquet(ParquetOptions),
     Html(HtmlOptions),
     SqlUpdate(Box<UpdateSpec>),
+    /// A template from `exports.toml` (W8c), with what it writes about.
+    Template(Box<TemplateSpec>),
 }
 
 impl ExportSpec {
-    pub fn format(&self) -> ExportFormat {
-        match self {
+    /// The built-in format written; `None` for a format of the user's own.
+    pub fn format(&self) -> Option<ExportFormat> {
+        Some(match self {
             Self::Csv(_) => ExportFormat::Csv,
             Self::Xlsx(_) => ExportFormat::Xlsx,
             Self::Tsv(_) => ExportFormat::Tsv,
@@ -172,7 +176,8 @@ impl ExportSpec {
             Self::Parquet(_) => ExportFormat::Parquet,
             Self::Html(_) => ExportFormat::Html,
             Self::SqlUpdate(_) => ExportFormat::SqlUpdate,
-        }
+            Self::Template(_) => return None,
+        })
     }
 
     /// Whether the format writes documents whole, so its rows must be the documents, one cell
@@ -204,6 +209,7 @@ impl ExportSpec {
             Self::JsonLinesDocuments => Box::new(JsonLinesDocuments),
             Self::Html(options) => Box::new(Html::new(options.clone())),
             Self::SqlUpdate(spec) => Box::new(Update::new(spec.as_ref().clone())),
+            Self::Template(spec) => Box::new(TemplateFormat::new(spec)),
         })
     }
 

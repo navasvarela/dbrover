@@ -725,7 +725,7 @@ impl QueryResult {
             .map(|column| ExportColumn::typed_by(column, self.dialect))
             .collect();
         json!({
-            "format": spec.format().id(),
+            "format": spec.format().map(ExportFormat::id),
             "text": render(&spec, &columns, &self.rows.rows).unwrap_or_default(),
             "row_count": self.rows.rows.len(),
             "truncated": self.rows.truncated,

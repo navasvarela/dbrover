@@ -91,10 +91,13 @@ fn a_preset_writes_its_format_with_its_options() {
 
     let format = preset("excel-semicolon", semicolon);
     assert!(format.writes_text());
-    assert_eq!(format.builtin(), ExportFormat::Csv);
+    assert_eq!(format.preset_of(), Some(ExportFormat::Csv));
     assert_eq!(format.summary(), "CSV with options from exports.toml");
     let spec = format
-        .spec(&RowSource::untabled(dbrover_sql::Dialect::Sqlite))
+        .spec(
+            &RowSource::untabled(dbrover_sql::Dialect::Sqlite),
+            &ExportContext::default(),
+        )
         .unwrap();
     let columns = ["id", "note"].map(ExportColumn::text).to_vec();
     let rows = vec![vec![text("1"), text("a;b")], vec![text("2"), None]];
@@ -145,7 +148,10 @@ fn a_preset_of_a_table_format_needs_the_table() {
     );
     assert!(
         update
-            .spec(&RowSource::untabled(dbrover_sql::Dialect::Sqlite))
+            .spec(
+                &RowSource::untabled(dbrover_sql::Dialect::Sqlite),
+                &ExportContext::default()
+            )
             .is_err()
     );
 }

@@ -2478,6 +2478,7 @@ dependencies = [
  "dbrover-core",
  "dbrover-document",
  "dbrover-sql",
+ "minijinja",
  "rusqlite",
  "rust_xlsxwriter",
  "serde",
@@ -5045,6 +5046,12 @@ dependencies = [
  "phf_shared 0.11.3",
  "unicase",
 ]
+
+[[package]]
+name = "minijinja"
+version = "3.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "00f5a04892e86ddb4fc254e9160835370b63a0d44042d3ab4725bc2dbcbab136"
 
 [[package]]
 name = "minisign-verify"

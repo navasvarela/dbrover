@@ -50,6 +50,8 @@ pub struct TableTarget {
     /// The qualified name, as the dialog's heading shows it.
     pub title: String,
     pub dialect: Dialect,
+    /// The data source's name, which templates are told.
+    pub data_source_name: String,
 }
 
 impl TableTarget {
@@ -81,6 +83,7 @@ impl TableTarget {
             title: path.qualified_name(dialect.quoting())?,
             relation: relation.clone(),
             dialect,
+            data_source_name: data_source.name.clone(),
         };
         let describe = Command::DescribeTable {
             data_source: data_source.id,
@@ -106,6 +109,11 @@ impl TableTarget {
                     key: None,
                 }),
             },
+            context: super::export_context(
+                &self.data_source_name,
+                Some(&self.sql_table()),
+                Vec::new(),
+            ),
         }
     }
 

@@ -18,6 +18,20 @@ id = "orders-sheet"
 name = "Orders workbook"
 format = "xlsx"
 sheet_name = "Orders"
+
+[[export]]
+id = "confluence"
+name = "Confluence table"
+extension = "txt"
+header = "{{ data_source }}: {{ table }}\n||{% for column in columns %} {{ column.name }} ||{% endfor %}\n"
+row = "|{% for value in row %} {{ value }} |{% endfor %}\n"
+footer = "{{ count }} rows\n"
+
+[[export]]
+id = "typo"
+name = "Broken template"
+extension = "txt"
+row = "{{ recrod.id }}\n"
 "#;
 
 /// The shop with two orders, `exports.toml` and, if given, `keymap.toml`, opened on the orders.
@@ -62,12 +76,14 @@ fn view_exports_creates_the_file_once_and_lists_every_format_after_a_reload() {
 
     std::fs::write(&file, EXPORTS).unwrap();
     harness.get_by_label("Reload").click();
-    step_until_visible(&mut harness, "2 formats");
+    step_until_visible(&mut harness, "4 formats");
     harness.get_by_label("export.semicolon");
     harness.get_by_label("Preset of CSV");
     harness.get_by_label("separator = \";\"");
     harness.get_by_label("Preset of Excel");
     harness.get_by_label("files only");
+    assert_eq!(harness.get_all_by_label("Template").count(), 2);
+    harness.get_by_label("{{ recrod.id }}");
 
     harness.get_by_label("Create exports.toml").click();
     step_until(&mut harness, "the second create being refused", |harness| {
@@ -92,7 +108,7 @@ fn lists_what_exports_toml_gets_wrong_on_its_page() {
     let mut harness = start_app(dir.path(), feed);
     step_until_visible(&mut harness, "exports.toml: 1 problem");
     harness.get_by_label("exports.toml: 1 problem").click();
-    step_until_visible(&mut harness, "2 formats");
+    step_until_visible(&mut harness, "4 formats");
     harness.get_by_label(
         "export \"tabs\": \"separator\" is not an option of TSV; its options are header, \
          null_text",
@@ -179,5 +195,55 @@ fn copies_as_a_preset_from_the_cell_menu_and_its_key() {
     assert_eq!(
         copied(&harness).as_deref(),
         Some("customer\n\"Zoë; Ltd\"\n")
+    );
+}
+
+/// A template is a tile like any format: it writes its file a part at a time, knowing the data
+/// source and the table, and a mistake in it shows in the preview rather than in a file.
+#[test]
+fn exports_rows_through_a_template_and_previews_its_mistakes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut harness = start_with_exports(dir.path(), None);
+    let folder = dir.path().to_owned();
+    harness.state_mut().pick_export_path =
+        Box::new(move |file, what| Some(folder.join(format!("{what}.{}", file.extension))));
+
+    open_export_dialog(&mut harness, "Loaded rows", Some("Broken template"));
+    harness.get_by_label_contains("row 1: the row template, line 1: undefined value");
+    harness.get_by_label("Confluence table").click();
+    harness.run_steps(2);
+    harness.get_by_label_contains("Written by the template “confluence”");
+    confirm_export(&mut harness);
+    step_until_visible(&mut harness, "Exported 2 rows");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("rows.txt")).unwrap(),
+        "shop: main.orders\n|| id || customer ||\n| 1 | Zoë; Ltd |\n| 2 |  |\n2 rows\n"
+    );
+}
+
+/// Templates are under Copy as, writing the selected cells; one that stops says why where an
+/// export's problem shows.
+#[test]
+fn copies_as_a_template() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut harness = start_with_exports(dir.path(), None);
+    let copy_as = |harness: &mut Harness<'_, DbRoverApp>, format: &str| {
+        harness.get_by_label("Zoë; Ltd").click_secondary();
+        harness.run();
+        harness.get_by_label("Copy as ⏵").click();
+        harness.run();
+        harness.get_by_label(format).click();
+        harness.step();
+        copied(harness)
+    };
+    assert_eq!(
+        copy_as(&mut harness, "Confluence table").as_deref(),
+        Some("shop: main.orders\n|| customer ||\n| Zoë; Ltd |\n1 rows\n")
+    );
+    harness.run();
+    assert_eq!(copy_as(&mut harness, "Broken template"), None);
+    step_until_visible(
+        &mut harness,
+        "row 1: the row template, line 1: undefined value",
     );
 }

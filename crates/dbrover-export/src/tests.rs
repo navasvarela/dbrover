@@ -229,7 +229,7 @@ fn offers_the_sql_formats_only_for_sql_rows() {
     assert_eq!(writes_documents(&source()), [false, false]);
     assert_eq!(
         spec_for(ExportFormat::JsonLines, &documents_source()).format(),
-        ExportFormat::JsonLines
+        Some(ExportFormat::JsonLines)
     );
 }
 
@@ -298,7 +298,7 @@ fn writes_the_same_file_a_page_at_a_time_in_every_format() {
         let Some(text) = render(spec, &columns, &rows) else {
             continue;
         };
-        let extension = spec.format().extension();
+        let extension = choice.format.extension();
         let paged_path = dir.path().join(format!("paged.{extension}"));
         let mut writer = ExportWriter::create(&paged_path, spec, &columns).unwrap();
         for row in &rows {
