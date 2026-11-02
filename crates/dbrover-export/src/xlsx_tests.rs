@@ -19,6 +19,7 @@ fn column(name: &str, kind: ValueKind) -> ExportColumn {
         name: name.to_owned(),
         type_name: None,
         kind,
+        excel_format: None,
     }
 }
 

@@ -48,6 +48,7 @@ fn columns() -> Vec<ExportColumn> {
             name: "id".to_owned(),
             type_name: Some("INTEGER".to_owned()),
             kind: ValueKind::Integer,
+            excel_format: None,
         },
         ExportColumn::text("note"),
         ExportColumn::text("id"),

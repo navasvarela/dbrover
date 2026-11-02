@@ -153,6 +153,8 @@ pub(crate) struct XlsxFile {
     options: XlsxOptions,
     columns: Vec<ExportColumn>,
     formats: Formats,
+    /// Each column's own number format, when it declares one.
+    column_formats: Vec<Option<Format>>,
     /// How many sheets there are; rows go to the last.
     sheets: usize,
     /// The next row to write in the last sheet, counted from 0.
@@ -186,6 +188,13 @@ impl XlsxFile {
             options,
             columns: columns.to_vec(),
             formats: Formats::new(),
+            column_formats: columns
+                .iter()
+                .map(|column| {
+                    let format = column.excel_format.as_deref()?;
+                    Some(Format::new().set_num_format(format))
+                })
+                .collect(),
             sheets: 0,
             row: 0,
             max_rows,
@@ -240,13 +249,17 @@ impl XlsxFile {
             self.add_sheet()?;
         }
         let at = self.row;
-        let kinds: Vec<_> = self.columns.iter().map(|column| column.kind).collect();
         let sheet = self.workbook.worksheet_from_index(self.sheets - 1)?;
-        for ((column, cell), kind) in (0..).zip(row).zip(kinds) {
+        let columns = self.columns.iter().zip(&self.column_formats);
+        for ((column, cell), (info, own_format)) in (0..).zip(row).zip(columns) {
             let Some(text) = cell else {
                 continue;
             };
-            write_cell(sheet, &self.formats, (at, column), cell_value(kind, text))?;
+            let formats = CellFormats {
+                defaults: &self.formats,
+                column: own_format.as_ref(),
+            };
+            write_cell(sheet, &formats, (at, column), cell_value(info.kind, text))?;
         }
         self.row += 1;
         Ok(())
@@ -279,24 +292,36 @@ fn set_widths(sheet: &mut Worksheet, widths: &[f64]) -> Result<(), XlsxError> {
     Ok(())
 }
 
+/// The formats a cell can be written in: its column's own, else DbRover's for its kind.
+struct CellFormats<'a> {
+    defaults: &'a Formats,
+    column: Option<&'a Format>,
+}
+
 fn write_cell(
     sheet: &mut Worksheet,
-    formats: &Formats,
+    formats: &CellFormats<'_>,
     (row, column): (u32, u16),
     value: CellValue<'_>,
 ) -> Result<(), XlsxError> {
+    if let (Some(format), CellValue::Number(number)) = (formats.column, &value) {
+        sheet.write_number_with_format(row, column, *number, format)?;
+        return Ok(());
+    }
     match value {
         CellValue::Number(number) => sheet.write_number(row, column, number)?,
         CellValue::Boolean(boolean) => sheet.write_boolean(row, column, boolean)?,
         CellValue::Date(date) => {
-            sheet.write_datetime_with_format(row, column, excel_date(date)?, &formats.date)?
+            let format = formats.column.unwrap_or(&formats.defaults.date);
+            sheet.write_datetime_with_format(row, column, excel_date(date)?, format)?
         }
         CellValue::DateTime(date, time) => {
-            let format = if time.fraction {
-                &formats.date_time_millis
+            let default = if time.fraction {
+                &formats.defaults.date_time_millis
             } else {
-                &formats.date_time
+                &formats.defaults.date_time
             };
+            let format = formats.column.unwrap_or(default);
             let value = excel_date(date)?.and_hms_milli(
                 time.hour,
                 time.minute,
