@@ -66,11 +66,12 @@ WHERE executed_at >= :since AND executed_at < :until
 id = "assets"
 data_source = "assets-dynamodb"
 lookup = { from = "tx", column = "asset_id", as = "asset_ids" }
-query = "SELECT asset_id, symbol, decimals, chain FROM assets WHERE asset_id IN :asset_ids"
+query = "SELECT asset_id, symbol, unit, chain FROM assets WHERE asset_id IN :asset_ids"
 columns = [
   { name = "asset_id", type = "text" },
   { name = "symbol",   type = "text" },
-  { name = "decimals", type = "integer" },
+  # The size of the asset's smallest unit: 0.000000000000000001 for 18 decimals.
+  { name = "unit",     type = "decimal(38,18)" },
   { name = "chain",    type = "text", default = "unknown" },
 ]
 
@@ -83,15 +84,16 @@ attach = true
 [combine]
 query = """
 SELECT tx.executed_at, tx.wallet_id, assets.symbol, assets.chain,
-       tx.amount / power(10, assets.decimals)               AS quantity,
+       tx.amount * assets.unit               AS quantity,
        p.price_usd,
-       tx.amount / power(10, assets.decimals) * p.price_usd AS value_usd
+       tx.amount * assets.unit * p.price_usd AS value_usd
 FROM tx
 JOIN assets USING (asset_id)
 ASOF JOIN prices.hourly_prices p
   ON p.asset_id = tx.asset_id AND p.hour <= tx.executed_at
 ORDER BY tx.executed_at
 """
+memory_limit = "2 GiB"
 
 [[output]]
 format = "xlsx"
@@ -275,7 +277,8 @@ After W8, which this builds on. One GitHub stack per milestone:
   output schemas, and the Reports tab. A report with one source writes CSV and Excel. In
   layers RP1a to RP1g, [below](#rp1--one-source-one-file).
 - **RP2 — Several sources:** sources loaded into DuckDB, the combine step, attached DuckDB
-  sources, exact decimals end to end.
+  sources, exact decimals end to end. In layers RP2a to RP2f,
+  [below](#rp2--several-sources).
 - **RP3 — Lookups and documents:** lookups with batching, declared columns for document
   sources. The first iteration's exit: the four accounting reports above run and match.
 - **RP4 — Metrics:** the run history, the comparison of runs, and the hints.
@@ -519,6 +522,249 @@ Taken on 2026-11-02 when RP1 started; each can be overturned in review.
   unless its column rounds it; the warning names the column.
 - **A typed password.** People who type a password each session can't run reports on that
   data source until they save it or use a command.
+
+## RP2 — Several sources
+
+Started on 2026-11-02, after RP1. RP2 puts DuckDB between RP1's two ends: each source's rows
+are loaded into a DuckDB database of the run's own, DuckDB data sources are attached to it
+instead of copied, and a `[combine]` query in DuckDB SQL makes the rows the outputs write.
+Outputs, parameters, file names and the worker stay as RP1 built them.
+
+### The report file in RP2
+
+Transactions in a PostgreSQL ledger, valued at the hourly price each asset had when it ran,
+from a DuckDB file of prices:
+
+```toml
+[report]
+name = "Valuation"
+description = "Each transaction valued at its asset's price in the hour it ran."
+params = { since = "timestamp", until = "timestamp" }
+
+# PostgreSQL: the period's transactions, filtered at the source, then loaded into DuckDB.
+[[source]]
+id = "tx"
+data_source = "ledger-postgres"
+query = """
+SELECT id, wallet, asset, quantity, executed_at
+FROM valuation.transactions
+WHERE executed_at >= :since AND executed_at < :until
+"""
+
+# DuckDB: the price file, attached read-only and read in place.
+[[source]]
+id = "prices"
+data_source = "prices-duckdb"
+attach = true
+
+[combine]
+query = """
+SELECT tx.executed_at, tx.wallet, tx.asset, tx.quantity, p.price_usd,
+       tx.quantity * p.price_usd AS value_usd
+FROM tx
+ASOF JOIN prices.hourly_prices p
+  ON p.asset = tx.asset AND p.hour <= tx.executed_at
+ORDER BY tx.executed_at, tx.id
+"""
+memory_limit = "1 GiB"
+
+[[output]]
+format = "xlsx"
+file = "valuation-{since:%Y-%m}.xlsx"
+sheet_name = "Valuation"
+columns = [
+  { name = "Executed (UTC)", from = "executed_at", type = "timestamp", format = "yyyy-mm-dd hh:mm" },
+  { name = "Wallet",         from = "wallet" },
+  { name = "Asset",          from = "asset" },
+  { name = "Quantity",       from = "quantity",  type = "decimal(38,18)" },
+  { name = "Price (USD)",    from = "price_usd", type = "decimal(38,8)", format = "#,##0.00######" },
+  { name = "Value (USD)",    from = "value_usd", type = "decimal(38,2)", format = "#,##0.00" },
+]
+
+[[output]]
+format = "csv"
+file = "valuation-{since:%Y-%m}.csv"
+columns = "same"
+```
+
+What RP2 reads, beyond RP1:
+
+- **Several `[[source]]`s,** each with an `id` that names its table in DuckDB: letters, digits
+  and `_`, starting with a letter, unique in the file, and none of DuckDB's own catalogs
+  (`memory`, `system`, `temp`, `main`).
+- **`attach = true`** on a source whose data source is a DuckDB file: attached read-only under
+  its `id`, so `[combine]` reads `prices.hourly_prices` where the data is. An attached source
+  has no `query` and no caps; a DuckDB data source in memory can't be attached.
+- **`[combine]`:** `query`, one DuckDB statement that only reads, over the sources' tables and
+  the attached databases, with the report's `:name` parameters; and the limits of the DuckDB it
+  runs in: `timeout`, `memory_limit`, `threads` and `max_temp_size` (see
+  [Guardrails in RP2](#guardrails-in-rp2)).
+- **Without `[combine]`,** a report has one source, which isn't attached, and runs as in RP1:
+  its rows go straight to the outputs, and DuckDB isn't started. With `[combine]`, the outputs
+  write the combine's rows, and a report may have one source or several.
+- **Still later:** `lookup` and a source's `columns` (RP3), `prql` (RP5), and two outputs in one
+  file, each a problem naming its milestone.
+
+### Loading a source
+
+A source runs as in RP1, through DbRover's own driver, read-only, under the cost guard and its
+caps, and its pages are appended to a table of text in DuckDB as they arrive. Once its last row
+is in, each column gets a type and the table is rewritten as `CREATE TABLE <id> AS SELECT
+CAST(…)`, so the combine step sees numbers as numbers. Sources load at the same time, each on a
+connection of its own; RP3's lookups will order those that need an earlier source's keys.
+
+A column's type comes from, in order:
+
+1. **The driver's,** when it reports one with a precision: DuckDB's `DECIMAL(18,2)`, SQLite's
+   declared types. A `TEXT` column stays text even when its values look like numbers, so
+   `0042` and `"1000"` codes keep their form.
+2. **The values,** when the driver reports none (PostgreSQL's text protocol, MySQL's
+   expressions) or a decimal without its precision (`numeric`):
+
+   | Every value is | Type |
+   | --- | --- |
+   | a whole number, no leading zero, up to 18 digits | `BIGINT` |
+   | a whole number up to 38 digits | `HUGEINT` |
+   | a decimal number, at most 38 digits in all | `DECIMAL(p,s)`: the most digits before the point and the most after it among the values |
+   | a number with an exponent (`1.5e+20`) | `DOUBLE` |
+   | `t`/`f` or `true`/`false` | `BOOLEAN` |
+   | a date, `2026-10-01` | `DATE` |
+   | a date and time, without an offset | `TIMESTAMP` |
+   | a date and time with an offset | `TIMESTAMP WITH TIME ZONE`, read in UTC |
+   | anything else, or a mix | `VARCHAR` |
+
+   Empty values (`NULL`) don't count. A decimal of more than 38 digits stays text, and the
+   source's result says so once per column: DuckDB's `DECIMAL` holds 38, and casting it in the
+   combine step is the author's choice to make.
+
+The run reports each loaded table's columns and their types, so the tab shows what the
+combine step works with.
+
+### Exact numbers in RP2
+
+From the driver to the file, a decimal never passes through `f64`: drivers hand over text,
+which loads into `DECIMAL(p,s)` with the digits it has, and DuckDB's results come back as text
+again, written by RP1b's schemas. In the combine step, DuckDB keeps decimals exact through
+`+`, `-`, `*`, `SUM` and `ROUND` (a product's scale is the sum of its factors', up to 38
+digits), but **`/` and `power()` return `DOUBLE`**. The manual says to multiply by a decimal
+(`* 0.01`) or `CAST(a / b AS DECIMAL(38,18))` where a division is needed, and the output's
+declared type then rounds once, at the end.
+
+DuckDB's `TimeZone` is set to UTC in the run's database, so a `TIMESTAMP WITH TIME ZONE` reads
+the same on every machine.
+
+### Guardrails in RP2
+
+By layer, as in [Guardrails](#guardrails), what changes from RP1:
+
+1. **Sources:** each copied source keeps RP1's caps (`max_rows`, `max_bytes`, `timeout`), counted
+   as its rows load. An attached source copies nothing, so it has none; what the combine step
+   reads from it is bounded by the next layer.
+2. **Combine:** the run's DuckDB lives in memory, with
+   - `memory_limit`, default **2 GiB**, past which DuckDB spills to disk, and fails what can't
+     spill;
+   - `threads`, default **half the processor's cores**;
+   - `temp_directory` in the run's staging folder, removed with it, and `max_temp_size`
+     (DuckDB's `max_temp_directory_size`), default **10 GiB**;
+   - `timeout`, default **10 minutes**, after which the statement is interrupted;
+   - no extension downloads or loads, no files read or written by the query (DuckDB's
+     `enable_external_access` is turned off once the sources are attached), and its
+     configuration locked, so a query can't raise its own limits;
+   - the query checked to be one statement that only reads.
+
+   A run stopped by DuckDB's memory or disk limit names `memory_limit` or `max_temp_size` in
+   `[combine]`, as RP1's caps do.
+3. **Outputs:** as in RP1.
+4. **The process:** as in RP1. On Linux, `RLIMIT_CPU` grows to the run's time limit times
+   DuckDB's threads and one, since DuckDB's threads use the processor at once. On macOS and
+   Windows, DuckDB's `memory_limit` is now the main bound on a run's memory.
+5. **One run at a time,** as in RP1.
+
+### Progress in RP2
+
+The worker's events name the step they are about. `started` lists the sources (attached or
+not) and whether there is a combine step; `progress` names its step; a loaded source's
+`source_done` carries its table's columns and types and any warning about them; an attached
+source sends `source_attached`; the combine step ends with `combine_done`; `step` in a failure
+may now be `combine`.
+
+The report's tab shows a line per step: each source with its data source, rows, bytes and time
+(or *attached*), then **Combine**, then the outputs; the step that is running has a spinner, a
+failed one its error. A loaded source's line opens to show its table's columns and types.
+
+### Layers
+
+Each layer is one pull request in a stack, useful and tested on its own, with synthetic data
+only.
+
+- **RP2a — Plan:** this section, RP2's decisions and risks, the roadmap's entry in layers, and
+  the design's example made exact (no `power()` in it).
+- **RP2b — The run's DuckDB:** in `dbrover-driver-duckdb`, a database in memory with its limits
+  set, tables loaded a page of text at a time and then cast to their types, DuckDB files
+  attached read-only, and the lock-down before a query.
+  **Exit:** tests in memory: a table of text loads and casts to `DECIMAL(38,18)` with every
+  digit; a file attaches read-only and refuses a write; once locked, a query can't read a file,
+  load an extension or change `memory_limit`; a query over a small `memory_limit` spills to the
+  temporary folder, and one over a small `max_temp_size` fails saying so.
+- **RP2c — The report file:** several sources, `attach`, `[combine]` and its limits, read and
+  planned with their problems; `Plan` holds a list of sources and either a combine step or
+  one source; the run opens sources through a trait, so the worker no longer opens them
+  itself; the events name their step. A combine plan fails at run time, saying RP2d brings it.
+  **Exit:** the valuation above reads and plans; each new problem (an id that can't name a
+  table, two sources with one id, `attach` on a PostgreSQL source or with a query, a combine
+  that writes, two sources without `[combine]`) is reported with its entry; RP1's examples run
+  as before.
+- **RP2d — Combining:** in `dbrover-report`, each column's type from the driver or its values,
+  the sources loaded at the same time under their caps, the attached ones attached, the combine
+  query under its timeout and DuckDB's limits, its rows into the outputs, and the events; in the
+  worker, the processor-time limit. In `dbrover-engine`, the opener on real data sources.
+  **Exit:** with readers in memory, two sources and a combine write CSV and Excel whose
+  18-decimal products match to the last digit; each limit (a source's cap, `timeout`,
+  `memory_limit`, `max_temp_size`) stops the run, says which, and leaves no file; on the
+  PostgreSQL test server with a DuckDB file attached, the valuation writes its files.
+- **RP2e — The tab:** a line per step with its progress, a loaded source's columns and types,
+  and the failing step marked.
+  **Exit:** a kittest with a worker stand-in shows two sources, one attached, and the combine
+  step progress to the end, and a run failing at the combine step marks it.
+- **RP2f — Manual and demo note:** the **Reports** chapter's sections on several sources,
+  attaching and combining, exact numbers in DuckDB, and the new limits; the valuation under
+  `examples/reports/` with `valuation-postgres.sql` and `valuation-prices.sql` making its
+  synthetic data, its October 2026 CSV checked in and compared by a test; RP2's demo note.
+
+**Exit:** from the Reports tab, a report with a PostgreSQL source and a DuckDB source, combined
+in DuckDB SQL, writes CSV and Excel with exact decimals inside the worker's limits: the
+valuation above, on the examples' synthetic data, whose 18-decimal quantities times 8-decimal
+prices match a computation by hand to the cent, and to the last digit before rounding.
+
+### RP2's decisions
+
+Taken on 2026-11-02 when RP2 started; each can be overturned in review.
+
+| Question | Chosen | Consequence |
+| --- | --- | --- |
+| Where DuckDB's code lives | **A `Workspace` in `dbrover-driver-duckdb`,** which `dbrover-report` uses. | One crate knows how DuckDB is built and linked (bundled or prebuilt), and reuses its Arrow-to-text formatting and cancel; `dbrover-report` stays free of the `duckdb` crate's build switch, and its tests run DuckDB in memory, as the design wanted. |
+| Typing a loaded source | **The driver's type when it has one, else inferred from the values,** exactly, after loading as text. | PostgreSQL, whose text protocol reports no types, gets `DECIMAL(p,s)` for its `numeric`s with no declaration. A column with leading zeros or mixed values stays text. Declaring a source's columns, which overrides this, comes with RP3's declared columns. |
+| A decimal past 38 digits | **Text, with a warning.** | DuckDB's `DECIMAL` holds 38 digits; guessing which digits to drop would be silent loss. |
+| How sources load | **At the same time,** each on its own DuckDB connection. | A report's time is its slowest source, not their sum. RP3's lookups add the order some sources need. |
+| One source without `[combine]` | **Runs as in RP1,** without DuckDB. | RP1's reports and examples are unchanged, and a simple report starts no DuckDB. |
+| Where spilled data goes | **The run's staging folder,** inside the output folder. | One folder to remove however the run ends, which the app already removes after a killed worker. Spills land on the output folder's disk. |
+| Limits' defaults | **Constants:** 2 GiB of memory, half the cores, 10 GiB spilled, 10 minutes. | As RP1's; RP4's metrics will say whether they should move. A quarter of the machine's memory, as the design first said, would need a dependency to read on macOS and Windows, and makes a report run differently from one machine to the next. |
+| Where DuckDB's limits are set | **In `[combine]`.** | They bound the database the sources load into and the combine runs in, which exists only with a combine step. |
+| Locking the query down | **DuckDB's own settings** (`enable_external_access`, `lock_configuration`, no extension autoload), plus a check that the query is one statement that only reads. | The combine step reads only what the report loaded or attached; the attached files are read-only. |
+| Windows | **Still no Job Object.** | DuckDB's `memory_limit` bounds a run's largest user of memory on Windows, as on macOS; a Job Object waits for a safe wrapper in the build. |
+| A DuckDB file the app has open | **The run fails, saying so,** and the manual says to mark the data source read-only. | DuckDB locks a file one way at a time between processes: a writable connection in the app keeps the worker from attaching it, while a read-only one doesn't. |
+
+### RP2's risks
+
+- **Inferred types.** A column whose values happen to be whole numbers in one period and
+  decimals in the next gets a different type each run; the combine step's arithmetic still
+  works, but a comparison with text doesn't. RP3's declared columns fix a type.
+- **Division.** `/` in the combine step returns `DOUBLE`; the manual's examples cast, and an
+  output's decimal type rounds the result, but a careless `/` loses digits past 15.
+- **Spilling to the output folder's disk.** A large combine fills the disk the files go to,
+  up to `max_temp_size`.
+- **A file open for writing.** A DuckDB data source the app has open for writing can't be
+  attached by the worker; the run's error says to make it read-only or disconnect it.
 
 ## Decisions
 

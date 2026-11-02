@@ -1687,8 +1687,24 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   where the worker's test doesn't run, since it moves `HOME`. Left for later: a Settings page
   for the limits' defaults (RP4), the status bar counting reports' problems, a Job Object on
   Windows (RP2), and the values typed being kept across restarts.
-- **RP2 — Several sources:** each source's rows loaded into DuckDB, a combine step in DuckDB
-  SQL, DuckDB data sources attached read-only, and exact decimals from source to file.
+- **RP2 — Several sources** (started 2026-11-02, after RP1): each source's rows loaded into
+  DuckDB, a combine step in DuckDB SQL, DuckDB data sources attached read-only, and exact
+  decimals from source to file. Planned in
+  [Reports](reporting.md#rp2--several-sources). In layers, one PR each:
+  - **RP2a — Plan:** RP2's layers, decisions and risks, and this entry. Loaded columns are
+    typed by the driver or, exactly, by their values; DuckDB's limits are constants set in
+    `[combine]`.
+  - **RP2b — The run's DuckDB:** a DuckDB in memory with its limits, tables loaded as text and
+    cast to their types, files attached read-only, and the lock-down before a query.
+  - **RP2c — The report file:** several sources, `attach` and `[combine]`, read and planned;
+    sources opened through a trait; events that name their step.
+  - **RP2d — Combining:** types from the driver or the values, sources loaded at the same time
+    under their caps, the combine query under DuckDB's limits, into the outputs.
+  - **RP2e — The tab:** a line per step with its progress, types and errors.
+  - **RP2f — Manual:** the chapter's new sections, the valuation example, and the demo note.
+
+  **Exit:** from the Reports tab, a report with a PostgreSQL source and a DuckDB source,
+  combined in DuckDB SQL, writes CSV and Excel with exact decimals inside the worker's limits.
 - **RP3 — Lookups and documents:** a source read by the keys an earlier source found, in
   batches, and declared columns for DynamoDB, MongoDB, Elasticsearch and Redis sources.
 
