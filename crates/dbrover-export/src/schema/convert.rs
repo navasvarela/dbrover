@@ -4,7 +4,7 @@ use jiff::civil::{Date, DateTime};
 use jiff::{Timestamp, Unit};
 
 use super::decimal::Decimal;
-use super::{ColumnType, DecimalSpec, SchemaColumn};
+use super::{ColumnType, DecimalSpec};
 
 /// Excel's numbers are IEEE doubles, exact to 15 significant decimal digits.
 const EXCEL_DIGITS: usize = 15;
@@ -23,7 +23,7 @@ pub enum CellTarget {
 /// starts with the value.
 pub(super) fn value(
     column_type: ColumnType,
-    column: &SchemaColumn,
+    zone: Option<&jiff::tz::TimeZone>,
     target: CellTarget,
     text: &str,
 ) -> Result<String, String> {
@@ -33,7 +33,7 @@ pub(super) fn value(
         ColumnType::Decimal(spec) => decimal(text, spec),
         ColumnType::Boolean => boolean(text),
         ColumnType::Date => date(text),
-        ColumnType::Timestamp => timestamp(text, column.time_zone.as_ref(), target),
+        ColumnType::Timestamp => timestamp(text, zone, target),
     }
 }
 

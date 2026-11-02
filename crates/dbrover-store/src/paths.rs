@@ -2,7 +2,9 @@ use std::path::{Path, PathBuf};
 
 use directories::{BaseDirs, ProjectDirs};
 
-use crate::{ChosenFolderFile, CustomFileKind, CustomFiles, InstallFolders, TrustedCommandsFile};
+use crate::{
+    ChosenFolderFile, CustomFileKind, CustomFiles, InstallFolders, ReportFiles, TrustedCommandsFile,
+};
 
 /// The application name used for DbRover's folders and the OS keychain. Also the eframe app
 /// id.
@@ -20,12 +22,13 @@ const DATA_SOURCES_FILE_NAME: &str = "data_sources.toml";
 const PROJECTS_FILE_NAME: &str = "projects.toml";
 const DIAGRAMS_FOLDER_NAME: &str = "diagrams";
 const CONSOLES_FOLDER_NAME: &str = "consoles";
+const REPORTS_FOLDER_NAME: &str = "reports";
 const KEYMAP_FILE_NAME: &str = "keymap.toml";
 const SETTINGS_FILE_NAME: &str = "settings.toml";
 
 /// Everything DbRover may keep in a settings folder. A folder with any of them holds someone's
 /// settings, and choosing it uses them rather than copying over them.
-pub(crate) const SETTINGS_FOLDER_ENTRIES: [&str; 10] = [
+pub(crate) const SETTINGS_FOLDER_ENTRIES: [&str; 11] = [
     DATA_SOURCES_FILE_NAME,
     PROJECTS_FILE_NAME,
     SETTINGS_FILE_NAME,
@@ -35,6 +38,7 @@ pub(crate) const SETTINGS_FOLDER_ENTRIES: [&str; 10] = [
     CustomFileKind::Theme.file_name(),
     CONSOLES_FOLDER_NAME,
     DIAGRAMS_FOLDER_NAME,
+    REPORTS_FOLDER_NAME,
     HISTORY_FILE_NAME,
 ];
 
@@ -149,6 +153,11 @@ impl AppPaths {
     /// ER diagram files, one folder per project. Not guaranteed to exist yet.
     pub fn diagrams_dir(&self) -> PathBuf {
         self.folders.settings.join(DIAGRAMS_FOLDER_NAME)
+    }
+
+    /// Report files, one folder for every project. Not guaranteed to exist yet.
+    pub fn report_files(&self) -> ReportFiles {
+        ReportFiles::new(self.folders.settings.join(REPORTS_FOLDER_NAME))
     }
 
     /// Query console files, one folder per data source. Not guaranteed to exist yet.

@@ -2556,6 +2556,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dbrover-report"
+version = "0.22.0"
+dependencies = [
+ "dbrover-core",
+ "dbrover-export",
+ "dbrover-language",
+ "dbrover-sql",
+ "jiff",
+ "serde",
+ "thiserror 2.0.21",
+ "toml",
+]
+
+[[package]]
 name = "dbrover-sql"
 version = "0.23.0"
 dependencies = [
