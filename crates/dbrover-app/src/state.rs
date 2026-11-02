@@ -175,6 +175,8 @@ impl AppState {
             | Event::PictureExported { .. }
             | Event::KeymapLoaded { .. }
             | Event::CustomFileLoaded { .. }
+            | Event::ReportsListed(_)
+            | Event::ReportCreated(_)
             | Event::TrustedCommandsLoaded(_)
             | Event::ProgramFinished { .. }
             | Event::SettingsLoaded { .. }

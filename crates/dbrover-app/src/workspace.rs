@@ -3,8 +3,11 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use dbrover_core::DataSource;
 use dbrover_core::SourceColor;
-use dbrover_store::{ConsoleKey, CustomAction, DiagramKey, McpPermissions, Project, Snippet};
+use dbrover_store::{
+    ConsoleKey, CustomAction, DiagramKey, McpPermissions, Project, ReportName, Snippet,
+};
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, FontId, Id, Ui, WidgetText};
 use egui_dock::tab_viewer::OnCloseResponse;
@@ -29,6 +32,7 @@ use crate::icons::{self, Icon, Role};
 use crate::keymap::Keymap;
 use crate::log_console::LogConsole;
 use crate::mcp_settings::McpDefaultsEditor;
+use crate::reports::{self, ReportAction, ReportView, Reports};
 use crate::settings::AppSettings;
 use crate::settings_tab::{SettingsAction, SettingsTab, SettingsView};
 use crate::state::DataSources;
@@ -65,6 +69,8 @@ pub enum Tab {
     Settings,
     /// An ER diagram, by its file.
     Diagram(DiagramKey),
+    /// A report, by its file in `reports/`.
+    Report(ReportName),
 }
 
 /// The consoles whose tabs the layout holds, so they can be reopened at start-up.
@@ -138,6 +144,14 @@ pub fn restore_diagrams(layout: &mut DockState<Tab>, mut reopen: impl FnMut(&Dia
 
 /// Brings the Settings tab to the front, opening it beside the consoles the first time, as an
 /// editor opens its settings.
+/// Opens a report's tab beside the consoles, or brings it to the front.
+pub fn open_report_tab(layout: &mut DockState<Tab>, name: ReportName) {
+    let tab = Tab::Report(name);
+    if !focus_tab(layout, &tab) {
+        open_in_main_area(layout, tab);
+    }
+}
+
 pub fn open_settings_tab(layout: &mut DockState<Tab>) {
     if !focus_tab(layout, &Tab::Settings) {
         open_in_main_area(layout, Tab::Settings);
@@ -151,7 +165,7 @@ fn open_in_main_area(layout: &mut DockState<Tab>, tab: Tab) {
     let in_main_area = |tab: &Tab| {
         matches!(
             tab,
-            Tab::QueryConsole(_) | Tab::Welcome | Tab::Settings | Tab::Diagram(_)
+            Tab::QueryConsole(_) | Tab::Welcome | Tab::Settings | Tab::Diagram(_) | Tab::Report(_)
         )
     };
     match tree.find_tab_from(in_main_area) {
@@ -229,6 +243,11 @@ pub struct Panels<'a> {
     pub diagrams: &'a mut Diagrams,
     /// What the user asked of the diagram tabs this frame.
     pub diagram_actions: &'a mut Vec<DiagramAction>,
+    pub reports: &'a mut Reports,
+    /// The saved data sources, which reports name.
+    pub report_sources: &'a [DataSource],
+    /// What the user asked of the report tabs this frame.
+    pub report_actions: &'a mut Vec<ReportAction>,
 }
 
 impl TabViewer for Panels<'_> {
@@ -275,6 +294,21 @@ impl TabViewer for Panels<'_> {
                 key.name.as_str(),
                 FontId::proportional(TAB_TITLE_SIZE),
             ),
+            Tab::Report(name) => {
+                let title = self
+                    .reports
+                    .find(name)
+                    .map_or_else(|| name.to_string(), |listed| listed.title().to_owned());
+                tab_title(
+                    palette,
+                    Icon {
+                        glyph: icons::CLIPBOARD_TEXT,
+                        role: Role::Primary,
+                    },
+                    &title,
+                    FontId::proportional(TAB_TITLE_SIZE),
+                )
+            }
             Tab::QueryConsole(key) => {
                 let title = self
                     .consoles
@@ -319,6 +353,7 @@ impl TabViewer for Panels<'_> {
                     saved_consoles: self.saved_consoles,
                     saved_diagrams: self.diagrams.saved(),
                     actions: self.custom_actions,
+                    reports: self.reports,
                 },
                 self.explorer_options,
                 self.explorer_actions,
@@ -342,6 +377,16 @@ impl TabViewer for Panels<'_> {
                 self.settings_actions,
             ),
             Tab::Diagram(key) => self.diagram_actions.extend(self.diagrams.show(ui, key)),
+            Tab::Report(name) => reports::show(
+                ui,
+                self.reports,
+                name,
+                &ReportView {
+                    data_sources: self.report_sources,
+                    presets: self.custom_formats,
+                },
+                self.report_actions,
+            ),
             Tab::QueryConsole(key) => match self.consoles.get_mut(key) {
                 Some(query_console) => {
                     let data_source = query_console.data_source();
@@ -404,7 +449,7 @@ impl TabViewer for Panels<'_> {
     fn is_closeable(&self, tab: &Tab) -> bool {
         matches!(
             tab,
-            Tab::Welcome | Tab::QueryConsole(_) | Tab::Settings | Tab::Diagram(_)
+            Tab::Welcome | Tab::QueryConsole(_) | Tab::Settings | Tab::Diagram(_) | Tab::Report(_)
         )
     }
 

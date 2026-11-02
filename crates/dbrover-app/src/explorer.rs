@@ -20,6 +20,7 @@ use crate::consoles::SavedConsoles;
 use crate::custom_actions;
 use crate::diagram::SavedDiagrams;
 use crate::icons;
+use crate::reports::{ReportAction, Reports};
 use crate::state::{DataSourceEntry, DataSources};
 use crate::theme::Palette;
 use crate::widgets::{self, IconButton};
@@ -77,6 +78,8 @@ pub enum ExplorerAction {
     DiagramRelated(DataSourceId, CatalogPath),
     /// Reopens a saved diagram, or brings its tab to the front.
     OpenDiagram(DiagramKey),
+    /// Something asked of the **Reports** section.
+    Report(ReportAction),
     /// Makes the node at the path, or the data source for the root, the one that keys and the
     /// Actions menu act on.
     Select(DataSourceId, CatalogPath),
@@ -145,6 +148,8 @@ pub enum Group {
     Project(ProjectId),
     /// Data sources in no project, or in one `projects.toml` doesn't know.
     NoProject,
+    /// Not data sources: the **Reports** under them.
+    Reports,
 }
 
 /// What the explorer shows.
@@ -158,6 +163,8 @@ pub struct ExplorerView<'a> {
     pub saved_diagrams: &'a SavedDiagrams,
     /// Offered in the menus of the nodes they apply to.
     pub actions: &'a [CustomAction],
+    /// Listed under the data sources, when there is a reports folder.
+    pub reports: &'a Reports,
 }
 
 pub fn show(
@@ -202,6 +209,9 @@ pub fn show(
                     for (group, members) in groups(view.projects, entries) {
                         group_tree(ui, &tree, group, &members, &filter, collapsed, actions);
                     }
+                }
+                if view.reports.is_set_up() {
+                    reports_section(ui, view.reports, &filter, collapsed, actions);
                 }
             });
         }
@@ -1269,6 +1279,110 @@ fn saved_consoles_menu(
             }
         }
     });
+}
+
+/// **Reports**: the report files, under the data sources, each opening its tab, with a mark on
+/// those that can't run. Hidden while filtering unless a report's name matches.
+fn reports_section(
+    ui: &mut Ui,
+    reports: &Reports,
+    filter: &TreeFilter<'_>,
+    collapsed: &mut BTreeSet<Group>,
+    actions: &mut Vec<ExplorerAction>,
+) {
+    let palette = &Palette::for_visuals(ui.visuals());
+    let shown: Vec<_> = reports
+        .listed()
+        .iter()
+        .filter(|listed| {
+            filter
+                .needle
+                .is_none_or(|needle| filter.matches(listed.title(), needle))
+        })
+        .collect();
+    if filter.needle.is_some() && shown.is_empty() {
+        return;
+    }
+    ui.add_space(4.0);
+    let expanded = filter.needle.is_some() || !collapsed.contains(&Group::Reports);
+    let row = ui.horizontal(|ui| {
+        let toggled = expander(ui, expanded, "Reports").clicked();
+        ui.label(widgets::glyph(icons::CLIPBOARD_TEXT).color(palette.primary));
+        let name = ui.add(
+            Label::new(RichText::new("Reports").strong())
+                .selectable(false)
+                .sense(Sense::click()),
+        );
+        widgets::count_badge(ui, reports.listed().len());
+        (name, toggled)
+    });
+    let (name, toggled) = row.inner;
+    if toggled || name.double_clicked() {
+        if expanded {
+            collapsed.insert(Group::Reports);
+        } else {
+            collapsed.remove(&Group::Reports);
+        }
+    }
+    widgets::context_menu(&name, |ui| reports_menu(ui, actions));
+    if !expanded {
+        return;
+    }
+    ui.indent(Id::new("explorer_reports"), |ui| {
+        if let Some(error) = reports.unavailable() {
+            ui.colored_label(
+                palette.error,
+                format!("Can't read the reports folder: {error}"),
+            );
+        } else if reports.listed().is_empty() {
+            ui.weak("No reports yet. Right-click Reports for New report.");
+        }
+        for listed in shown {
+            ui.horizontal(|ui| {
+                let (glyph, color) = match &listed.read {
+                    Ok(_) => (icons::CLIPBOARD_TEXT, palette.text_weak),
+                    Err(_) => (icons::WARNING, palette.error),
+                };
+                ui.label(widgets::glyph(glyph).color(color));
+                let row = ui.add(
+                    Label::new(listed.title())
+                        .selectable(false)
+                        .sense(Sense::click()),
+                );
+                let row = match &listed.read {
+                    Ok(_) => row.on_hover_text(listed.path.display().to_string()),
+                    Err(problems) => row.on_hover_text(format!(
+                        "{} problem(s) in {}",
+                        problems.len(),
+                        listed.path.display()
+                    )),
+                };
+                if row.clicked() {
+                    actions.push(ExplorerAction::Report(ReportAction::Open(
+                        listed.name.clone(),
+                    )));
+                }
+                widgets::context_menu(&row, |ui| reports_menu(ui, actions));
+            });
+        }
+    });
+}
+
+fn reports_menu(ui: &mut Ui, actions: &mut Vec<ExplorerAction>) {
+    let items = [
+        (icons::FILE_PLUS, "New report", ReportAction::New),
+        (
+            icons::FOLDER_OPEN,
+            "Open the reports folder",
+            ReportAction::OpenFolder,
+        ),
+        (icons::ARROWS_CLOCKWISE, "Reload", ReportAction::Reload),
+    ];
+    for (glyph, label, action) in items {
+        if widgets::menu_item(ui, glyph, label).clicked() {
+            actions.push(ExplorerAction::Report(action));
+        }
+    }
 }
 
 /// Lists the data source's saved diagrams, if it has any.

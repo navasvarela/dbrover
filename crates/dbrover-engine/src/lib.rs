@@ -30,6 +30,7 @@ pub mod read_write;
 mod registry;
 mod releases;
 mod repaint;
+mod report_files;
 mod report_source;
 mod report_worker;
 #[cfg(test)]
@@ -55,9 +56,9 @@ pub use programs::{
 };
 pub use protocol::{
     Command, ConsoleId, CostApproval, DatabaseFile, DdlFailure, DescribedTable, EditFailure, Event,
-    Exporter, ImportFailure, PasswordKept, PasswordUpdate, Picture, RowEdit, RowsImport, RunId,
-    RunOrigin, RunOutcome, RunPurpose, SessionState, StatementCheck, StatementFailure,
-    StatementSummary, TableExport, TransactionEnd, TransactionMode,
+    Exporter, ImportFailure, PasswordKept, PasswordUpdate, Picture, ReportText, RowEdit,
+    RowsImport, RunId, RunOrigin, RunOutcome, RunPurpose, SessionState, StatementCheck,
+    StatementFailure, StatementSummary, TableExport, TransactionEnd, TransactionMode,
 };
 pub use releases::{GithubReleases, Release, ReleaseError, ReleaseFeed};
 pub use repaint::Repaint;

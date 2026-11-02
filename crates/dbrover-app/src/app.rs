@@ -60,6 +60,7 @@ use crate::picture::PictureFormat;
 use crate::project_dialog::{
     DeleteProjectChoice, DeleteProjectConfirmation, ProjectDialogAction, ProjectNameDialog,
 };
+use crate::reports::{self, ReportAction, Reports, ReportsSetup};
 use crate::rollback_dialog::{Closing, RollbackChoice, RollbackConfirmation};
 use crate::settings::AppSettings;
 use crate::settings_tab::{Page, SettingsAction, SettingsTab};
@@ -181,6 +182,9 @@ pub struct DbRoverApp {
     pub(crate) pick_csv_file: Box<dyn Fn() -> Option<PathBuf>>,
     consoles: Consoles,
     diagrams: Diagrams,
+    reports: Reports,
+    /// Asks for the folder a report's files go in. A field so tests can answer it.
+    pub(crate) pick_report_folder: Box<PickFolder>,
     /// **Diagram…**, choosing a schema's tables.
     diagram_dialog: Option<DiagramDialog>,
     /// The `.sql` files consoles show, and the recent ones.
@@ -289,6 +293,8 @@ impl DbRoverApp {
             updates: Updates::new(install_support),
             consoles: Consoles::default(),
             diagrams: Diagrams::default(),
+            reports: Reports::default(),
+            pick_report_folder: Box::new(file_picker::pick_report_folder),
             diagram_dialog: None,
             sql_files: SqlFiles::new(remembered_files),
             open_file_dialog: None,
@@ -323,6 +329,13 @@ impl DbRoverApp {
     /// `Session::folder_for_mcp_clients`).
     pub fn with_mcp_config_dir(mut self, folder: Option<PathBuf>) -> Self {
         self.mcp_config_dir = folder;
+        self
+    }
+
+    /// Where reports are kept and how they run, which turns on the explorer's **Reports**.
+    pub fn with_reports(mut self, setup: ReportsSetup) -> Self {
+        self.reports = Reports::new(setup);
+        self.send_if(self.reports.reload());
         self
     }
 
@@ -425,6 +438,11 @@ impl DbRoverApp {
 
     fn apply(&mut self, event: &Event) {
         self.state.apply(event);
+        let (open, command) = self.reports.apply(event);
+        if let Some(name) = open {
+            workspace::open_report_tab(&mut self.dock, name);
+        }
+        self.send_if(command);
         match event {
             Event::ProjectsLoaded(projects) => self.mcp_defaults.follow(&projects.mcp_defaults),
             Event::McpDefaultsSaved(defaults) => self.mcp_defaults.follow(defaults),
@@ -1068,6 +1086,63 @@ impl DbRoverApp {
         }
     }
 
+    fn handle_report_action(&mut self, action: ReportAction, ctx: &egui::Context) {
+        match action {
+            ReportAction::Open(name) => workspace::open_report_tab(&mut self.dock, name),
+            ReportAction::New => {
+                let first = self
+                    .state
+                    .data_sources
+                    .entries()
+                    .first()
+                    .map(|entry| entry.data_source.name.clone());
+                self.send_if(self.reports.create(first.as_deref()));
+            }
+            ReportAction::Reload => self.send_if(self.reports.reload()),
+            ReportAction::OpenFolder => {
+                if let Some(folder) = self.reports.folder() {
+                    // Made on first use, so the system has a folder to show.
+                    if let Err(error) = std::fs::create_dir_all(folder) {
+                        tracing::warn!("could not make {}: {error}", folder.display());
+                    }
+                    reports::open_path(ctx, folder);
+                }
+            }
+            ReportAction::Run(name) => self.run_report(&name, ctx),
+            ReportAction::Cancel => self.reports.cancel(),
+            ReportAction::ChooseFolder(name) => {
+                let current = self.reports.output_folder(&name).unwrap_or_default();
+                if let Some(folder) = (self.pick_report_folder)(&current) {
+                    self.reports.state_mut(&name).folder = Some(folder);
+                }
+            }
+            ReportAction::OpenPath(path) => reports::open_path(ctx, &path),
+        }
+    }
+
+    /// Starts the report in its worker, if it plans against the data sources as they are, and
+    /// reads the reports folder again so the tab shows the file the worker runs.
+    fn run_report(&mut self, name: &dbrover_store::ReportName, ctx: &egui::Context) {
+        let data_sources: Vec<dbrover_core::DataSource> = self
+            .state
+            .data_sources
+            .entries()
+            .iter()
+            .map(|entry| entry.data_source.clone())
+            .collect();
+        let plan = self
+            .reports
+            .find(name)
+            .map(|listed| listed.plan(&data_sources, self.custom_files.exports()));
+        let Some(Ok(plan)) = plan else {
+            return;
+        };
+        let ctx = ctx.clone();
+        self.reports
+            .start(name, &plan, move || ctx.request_repaint());
+        self.send_if(self.reports.reload());
+    }
+
     fn handle_diagram_action(&mut self, action: DiagramAction) {
         match action {
             DiagramAction::Delete(key) => {
@@ -1229,6 +1304,7 @@ impl DbRoverApp {
             ExplorerAction::ImportCsv(id, path) => self.open_csv_import(id, &path),
             ExplorerAction::ExportData(id, path) => self.open_table_export(id, &path),
             ExplorerAction::Diagram(id, path) => self.open_diagram_dialog(id, &path),
+            ExplorerAction::Report(action) => self.handle_report_action(action, ctx),
             ExplorerAction::OpenDiagram(key) => {
                 let first = self.diagrams.reopen(&key);
                 if self.diagrams.is_open(&key) {
@@ -2498,6 +2574,7 @@ impl eframe::App for DbRoverApp {
         }
         self.maximize_window_once(ctx);
         self.drain_engine_events();
+        self.reports.poll();
         if let Some(text) = self.copied_by_program.take() {
             ctx.copy_text(text);
         }
@@ -2531,6 +2608,14 @@ impl eframe::App for DbRoverApp {
         let mut close_requests = Vec::new();
         let mut settings_actions = Vec::new();
         let mut diagram_actions = Vec::new();
+        let mut report_actions = Vec::new();
+        let report_sources: Vec<dbrover_core::DataSource> = self
+            .state
+            .data_sources
+            .entries()
+            .iter()
+            .map(|entry| entry.data_source.clone())
+            .collect();
         let palette = &Palette::for_visuals(ui.visuals());
         let lint = self.settings.lint_options();
         let (open_consoles, saved_consoles, recent_completions) =
@@ -2570,6 +2655,9 @@ impl eframe::App for DbRoverApp {
                     settings_actions: &mut settings_actions,
                     diagrams: &mut self.diagrams,
                     diagram_actions: &mut diagram_actions,
+                    reports: &mut self.reports,
+                    report_sources: &report_sources,
+                    report_actions: &mut report_actions,
                 },
             );
         if let Some(text) = self.clipboard.take() {
@@ -2580,6 +2668,9 @@ impl eframe::App for DbRoverApp {
         }
         for action in settings_actions {
             self.handle_settings_action(action, &ctx);
+        }
+        for action in report_actions {
+            self.handle_report_action(action, &ctx);
         }
         for action in diagram_actions {
             self.handle_diagram_action(action);
@@ -2708,6 +2799,7 @@ mod tests {
     mod parameters;
     mod password_commands;
     mod plans;
+    mod reports;
     mod settings;
     mod title_bar;
 

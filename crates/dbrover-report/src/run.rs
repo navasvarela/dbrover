@@ -247,8 +247,8 @@ fn row_bytes(row: &[Option<String>]) -> u64 {
     row.iter().flatten().map(|value| value.len() as u64).sum()
 }
 
-/// `1234567` as `1,234,567`, for messages about limits.
-fn grouped(number: u64) -> String {
+/// `1234567` as `1,234,567`, for messages about limits and counts of rows.
+pub fn grouped(number: u64) -> String {
     let digits = number.to_string();
     let mut grouped = String::new();
     for (index, digit) in digits.chars().enumerate() {

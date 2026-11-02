@@ -13,8 +13,8 @@ use dbrover_sql::{ExistingTable, ParameterValues};
 use dbrover_store::{
     ActionId, ConsoleKey, CustomFile, CustomFileKind, DiagramFile, DiagramKey, HistoryEntry,
     HistoryQuery, ImportPlan, ImportPreview, KeymapBindings, McpOverrides, McpPermissions, Project,
-    Projects, RowChange, SavedConsole, SavedDiagram, Secret, Separator, Settings, SqlFileContents,
-    TrustedCommand, TrustedCommands,
+    Projects, ReportFiles, ReportName, RowChange, SavedConsole, SavedDiagram, Secret, Separator,
+    Settings, SqlFileContents, TrustedCommand, TrustedCommands,
 };
 
 use crate::{
@@ -333,6 +333,16 @@ pub enum Command {
         kind: CustomFileKind,
         text: String,
     },
+    /// Lists the report files in `reports/`, with their text. Answered by
+    /// [`Event::ReportsListed`].
+    ListReports(ReportFiles),
+    /// Writes `text` as a new report named after `name`, or `name-2`, … if that is taken.
+    /// Answered by [`Event::ReportCreated`].
+    CreateReport {
+        files: ReportFiles,
+        name: ReportName,
+        text: String,
+    },
     /// Runs a command action's program on the node or cells it was chosen on, if the user has
     /// trusted it, with what the request names filled in. It runs until it ends, its timeout
     /// passes or [`Command::StopProgram`] stops it. Answered by [`Event::ProgramFinished`].
@@ -531,6 +541,10 @@ pub enum Event {
         path: PathBuf,
         file: CustomFile,
     },
+    /// The report files [`Command::ListReports`] found, or why the folder couldn't be read.
+    ReportsListed(Result<Vec<ReportText>, String>),
+    /// The name [`Command::CreateReport`] wrote the new report under, or why it couldn't.
+    ReportCreated(Result<ReportName, String>),
     /// The command actions the user trusted to run, read at start-up right after the
     /// customisation files, and again after each [`Command::TrustCommand`].
     TrustedCommandsLoaded(TrustedCommands),
@@ -988,4 +1002,12 @@ pub enum SessionState {
     /// request; a console only when asked, since its transaction, temporary tables and
     /// session settings went with the connection.
     Lost(String),
+}
+
+/// A report file found in `reports/`, and its text or why it couldn't be read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReportText {
+    pub name: ReportName,
+    pub path: PathBuf,
+    pub text: Result<String, String>,
 }

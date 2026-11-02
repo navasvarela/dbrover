@@ -2179,6 +2179,7 @@ dependencies = [
  "dbrover-report",
  "dbrover-sql",
  "dbrover-store",
+ "directories",
  "eframe",
  "egui",
  "egui-phosphor",

@@ -151,6 +151,16 @@ pub fn pick_settings_folder(current: &Path) -> Option<PathBuf> {
     dialog.pick_folder()
 }
 
+/// Shows the folder dialog for where a report's files go, starting in `current`, or `None` if
+/// it was cancelled.
+pub fn pick_report_folder(current: &Path) -> Option<PathBuf> {
+    let mut dialog = rfd::FileDialog::new().set_title("Choose where the report's files go");
+    if current.is_dir() {
+        dialog = dialog.set_directory(current);
+    }
+    dialog.pick_folder()
+}
+
 /// Shows the open-file dialog for a CSV file to import into a table, or `None` if it was
 /// cancelled. Files of any extension can be chosen: tab-separated files are often `.tsv` or
 /// `.txt`.

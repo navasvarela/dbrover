@@ -29,6 +29,7 @@ use crate::programs::{self, ProgramFailure, ProgramId, ProgramRequest, ProgramRu
 use crate::projects::{ProjectError, ProjectRegistry};
 use crate::registry::{Registry, RegistryError};
 use crate::releases::{self, ReleaseFeed};
+use crate::report_files;
 use crate::session::{Script, Services, Session, SessionOwner, SessionRequest};
 use crate::settings;
 use crate::sql_files;
@@ -403,6 +404,11 @@ impl Engine {
             Command::CreateCustomFile { kind, text } => {
                 self.events
                     .send(config_files::create_custom(&self.custom_files, kind, text).await);
+            }
+            Command::ListReports(files) => self.events.send(report_files::list(files).await),
+            Command::CreateReport { files, name, text } => {
+                self.events
+                    .send(report_files::create(files, name, text).await);
             }
             Command::ReloadCustomFiles => {
                 for event in config_files::load_custom(&self.custom_files).await {
