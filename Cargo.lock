@@ -2176,6 +2176,7 @@ dependencies = [
  "dbrover-mcp",
  "dbrover-picture",
  "dbrover-plan",
+ "dbrover-report",
  "dbrover-sql",
  "dbrover-store",
  "eframe",
@@ -2194,6 +2195,7 @@ dependencies = [
  "rfd",
  "rmcp",
  "rusqlite",
+ "rustix 1.1.5",
  "semver",
  "serde",
  "serde_json",
@@ -2558,7 +2560,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-report"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "calamine",
  "dbrover-core",

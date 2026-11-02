@@ -116,6 +116,10 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = ["s
 # Decodes the PNGs egui_extras loads (the logo on the Welcome tab).
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+# The report worker's priority and, on Linux, its memory and processor time
+# (`docs/reporting.md`, RP1): safe wrappers of setpriority and setrlimit, which the workspace's
+# `unsafe_code = "forbid"` rules out calling directly. The version tempfile already builds.
+rustix = { version = "1.1.5", default-features = false, features = ["std", "process"] }
 # Signs Google service accounts' token requests (RS256) in dbrover-cloud: the version rustls
 # already builds as its crypto provider, so nothing new is compiled.
 ring = "0.17.14"
