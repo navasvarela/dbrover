@@ -307,8 +307,8 @@ impl TestEngine {
         }
     }
 
-    /// Expects `actions.toml`, `snippets.toml` and `theme.toml` to be reported, in that order,
-    /// and returns what each held.
+    /// Expects `actions.toml`, `snippets.toml`, `theme.toml` and `exports.toml` to be reported,
+    /// in that order, and returns what each held.
     pub fn expect_custom_files(&mut self) -> Vec<CustomFile> {
         CustomFileKind::ALL
             .into_iter()

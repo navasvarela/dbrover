@@ -26,7 +26,9 @@ use dbrover_engine::{
 use dbrover_language::ExplainDepth;
 use dbrover_language::redis::KeyView;
 use dbrover_sql::{Dialect, ProblemSource, Severity};
-use dbrover_store::{ActionId, CustomAction, Snippet};
+use dbrover_store::{ActionId, Snippet};
+
+use super::CellMenuItems;
 
 use crate::custom_actions::GridCells;
 
@@ -112,8 +114,8 @@ pub struct ConsoleContext<'a> {
     pub lint: &'a LintOptions,
     /// Completions accepted lately, which rank first.
     pub recent: &'a RecentCompletions,
-    /// The custom actions the grid's cell menu offers, for this console's driver.
-    pub cell_actions: &'a [&'a CustomAction],
+    /// What the grid's cell menu offers from the user's files.
+    pub cell_menu: CellMenuItems<'a>,
     /// The snippets completion offers, for this console's driver.
     pub snippets: &'a [&'a Snippet],
 }
@@ -141,7 +143,7 @@ pub fn show(
     });
     splitter(ui, console);
     ui.allocate_ui(vec2(width, results_height), |ui| {
-        results::show(ui, console, keymap, context.cell_actions, actions);
+        results::show(ui, console, keymap, context.cell_menu, actions);
     });
     cell_viewer::show(ui.ctx(), console);
     actions.extend(

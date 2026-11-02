@@ -54,7 +54,7 @@ pub(crate) async fn create_custom(
     }
 }
 
-/// Reads `actions.toml`, `snippets.toml` and `theme.toml`, as one
+/// Reads `actions.toml`, `snippets.toml`, `theme.toml` and `exports.toml`, as one
 /// [`Event::CustomFileLoaded`] each. What a file gets wrong is in its event, never fatal.
 pub(crate) async fn load_custom(files: &CustomFiles) -> Vec<Event> {
     let mut events = Vec::new();

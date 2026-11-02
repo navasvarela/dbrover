@@ -9,18 +9,20 @@ use egui::KeyboardShortcut;
 use muda::accelerator::{Key, KeyAccelerator, Modifiers, NamedKey};
 use muda::{CheckMenuItem, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 
+use dbrover_export::CustomFormat;
 use dbrover_store::CustomAction;
 
 use super::pasteboard;
 use crate::commands::{self, AppCommand, CommandState, EditCommand, Entry, Menu, SystemItem};
 use crate::keymap::Keymap;
-use crate::native_menu::Chosen;
+use crate::native_menu::{Chosen, CustomEntries};
 
 pub struct NativeMenu {
     /// What the menu was last built from; a change rebuilds it.
     recent_files: Vec<PathBuf>,
     keymap: Keymap,
     actions: Vec<CustomAction>,
+    formats: Vec<CustomFormat>,
     built: Built,
     /// Ids of the items picked since the last frame, from muda's event handler.
     picked: Receiver<MenuId>,
@@ -40,13 +42,18 @@ impl NativeMenu {
             repaint.request_repaint();
         }));
         let keymap = Keymap::default();
-        let built = Built::new(&[], &keymap, &[])
+        let none = CustomEntries {
+            actions: &[],
+            formats: &[],
+        };
+        let built = Built::new(&[], &keymap, none)
             .inspect_err(|error| tracing::warn!("couldn't build the macOS menu bar: {error}"))
             .ok()?;
         Some(Self {
             recent_files: Vec::new(),
             keymap,
             actions: Vec::new(),
+            formats: Vec::new(),
             built,
             picked,
         })
@@ -65,23 +72,28 @@ impl NativeMenu {
     }
 
     /// Brings enabled and checked marks up to date, and rebuilds the menu when the recent files,
-    /// the keymap or the custom actions changed, which happens rarely enough not to track item
-    /// by item.
+    /// the keymap, the custom actions or the custom formats changed, which happens rarely
+    /// enough not to track item by item.
     pub fn sync(
         &mut self,
         state: &CommandState,
         keymap: &Keymap,
         recent_files: &[PathBuf],
-        actions: &[CustomAction],
+        custom: CustomEntries<'_>,
     ) {
-        if self.recent_files != recent_files || self.keymap != *keymap || self.actions != actions {
-            match Built::new(recent_files, keymap, actions) {
+        let changed = self.recent_files != recent_files
+            || self.keymap != *keymap
+            || self.actions != custom.actions
+            || self.formats != custom.formats;
+        if changed {
+            match Built::new(recent_files, keymap, custom) {
                 Ok(built) => self.built = built,
                 Err(error) => tracing::warn!("couldn't rebuild the macOS menu bar: {error}"),
             }
             recent_files.clone_into(&mut self.recent_files);
             self.keymap = keymap.clone();
-            actions.clone_into(&mut self.actions);
+            custom.actions.clone_into(&mut self.actions);
+            custom.formats.clone_into(&mut self.formats);
         }
         for item in &mut self.built.items {
             item.sync(state);
@@ -114,7 +126,7 @@ impl Built {
     fn new(
         recent_files: &[PathBuf],
         keymap: &Keymap,
-        actions: &[CustomAction],
+        custom: CustomEntries<'_>,
     ) -> muda::Result<Self> {
         let mut built = Self {
             _menu: muda::Menu::new(),
@@ -122,7 +134,9 @@ impl Built {
             chosen: HashMap::new(),
         };
         let mut submenus = Vec::new();
-        for menu in commands::macos_menu_bar(recent_files.iter().cloned(), actions) {
+        let menus =
+            commands::macos_menu_bar(recent_files.iter().cloned(), custom.actions, custom.formats);
+        for menu in menus {
             let submenu = built.submenu(&menu, keymap)?;
             built._menu.append(&submenu)?;
             submenus.push((menu.title, submenu));

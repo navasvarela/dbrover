@@ -2,17 +2,19 @@
 //! counts and the results page both come from [`Found`], so a page whose items are added here
 //! is searched and counted alike.
 
+use dbrover_export::CustomFormat;
 use dbrover_store::{CustomAction, Project};
 
 use super::keymap_page::Shortcut;
 use super::setting::Setting;
-use super::{Page, actions_page, project_page};
+use super::{Page, actions_page, exports_page, project_page};
 
 /// One thing a search can find, with the page it belongs to.
 pub enum Found<'a> {
     Setting(Setting),
     Shortcut(Shortcut<'a>),
     Action(&'a CustomAction),
+    Export(&'a CustomFormat),
     Project(&'a Project),
 }
 
@@ -22,6 +24,7 @@ impl Found<'_> {
             Self::Setting(setting) => Page::Settings(setting.category()),
             Self::Shortcut(_) => Page::Keymap,
             Self::Action(_) => Page::Actions,
+            Self::Export(_) => Page::Exports,
             Self::Project(project) => Page::Project(project.id),
         }
     }
@@ -32,6 +35,7 @@ impl Found<'_> {
             Self::Setting(setting) => setting.section(),
             Self::Shortcut(shortcut) => shortcut.section.title(),
             Self::Action(_) => "Actions",
+            Self::Export(_) => "Formats",
             Self::Project(_) => "Projects",
         }
     }
@@ -41,7 +45,7 @@ impl Found<'_> {
     pub fn caption(&self) -> String {
         match self {
             Self::Project(_) => self.section().to_owned(),
-            Self::Setting(_) | Self::Shortcut(_) | Self::Action(_) => {
+            Self::Setting(_) | Self::Shortcut(_) | Self::Action(_) | Self::Export(_) => {
                 format!("{} › {}", self.page().title(), self.section())
             }
         }
@@ -52,6 +56,7 @@ impl Found<'_> {
             Self::Setting(setting) => setting.matches(query),
             Self::Shortcut(shortcut) => shortcut.matches(query),
             Self::Action(action) => actions_page::matches(action, query),
+            Self::Export(format) => exports_page::matches(format, query),
             Self::Project(project) => project_page::matches(project, query),
         }
     }

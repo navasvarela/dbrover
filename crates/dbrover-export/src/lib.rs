@@ -7,6 +7,7 @@
 //! the clipboard get the same bytes.
 
 mod column;
+mod custom;
 mod options;
 mod parquet;
 mod spec;
@@ -15,6 +16,7 @@ mod writer;
 mod xlsx;
 
 pub use column::ExportColumn;
+pub use custom::{CustomFormat, CustomFormatId, CustomFormatKind, Preset};
 pub use options::ExportOptions;
 pub use parquet::{ParquetCompression, ParquetOptions};
 pub use spec::{CSV_FOR_EXCEL, ExportChoice, ExportFormat, ExportSpec, export_choices};
@@ -26,6 +28,8 @@ pub use text::{
 pub use writer::{ExportError, ExportWriter, FileFormat, export_rows};
 pub use xlsx::{EXCEL_MAX_ROWS, InvalidSheetName, SheetName, XlsxOptions};
 
+#[cfg(test)]
+mod custom_tests;
 #[cfg(test)]
 mod sql_tests;
 #[cfg(test)]

@@ -1,5 +1,6 @@
-//! The files that customise DbRover without a rebuild: `actions.toml`, `snippets.toml` and
-//! `theme.toml`, next to `keymap.toml`. See `docs/hackability.md`.
+//! The files that customise DbRover without a rebuild: `actions.toml`, `snippets.toml`,
+//! `theme.toml` and `exports.toml`, next to `keymap.toml`. See `docs/hackability.md` and
+//! `docs/exports.md`.
 //!
 //! Each is read leniently, as `keymap.toml` is: an entry that doesn't parse is skipped and
 //! listed as a problem, so one typo doesn't cost the rest of the file. A missing file adds
@@ -7,6 +8,7 @@
 
 mod actions;
 mod commands;
+mod exports;
 mod snippets;
 mod theme;
 mod trust;
@@ -14,9 +16,11 @@ mod trust;
 use std::path::{Path, PathBuf};
 
 use dbrover_core::DriverKind;
+use dbrover_export::CustomFormat;
 
 pub use actions::{ActionBody, ActionId, ActionTarget, CustomAction, parse_actions};
 pub use commands::{CommandAction, CommandOutput, DEFAULT_COMMAND_TIMEOUT, StdinFormat};
+pub use exports::parse_exports;
 pub use snippets::{Snippet, SnippetBody, parse_snippets};
 pub use theme::{Rgb, ThemeOverrides, ThemeToken, parse_theme};
 pub use trust::{TrustError, TrustedCommand, TrustedCommands, TrustedCommandsFile};
@@ -28,16 +32,18 @@ pub enum CustomFileKind {
     Actions,
     Snippets,
     Theme,
+    Exports,
 }
 
 impl CustomFileKind {
-    pub const ALL: [Self; 3] = [Self::Actions, Self::Snippets, Self::Theme];
+    pub const ALL: [Self; 4] = [Self::Actions, Self::Snippets, Self::Theme, Self::Exports];
 
     pub const fn file_name(self) -> &'static str {
         match self {
             Self::Actions => "actions.toml",
             Self::Snippets => "snippets.toml",
             Self::Theme => "theme.toml",
+            Self::Exports => "exports.toml",
         }
     }
 }
@@ -56,6 +62,7 @@ pub enum CustomFile {
     Actions(Checked<Vec<CustomAction>>),
     Snippets(Checked<Vec<Snippet>>),
     Theme(Checked<ThemeOverrides>),
+    Exports(Checked<Vec<CustomFormat>>),
 }
 
 impl CustomFile {
@@ -65,6 +72,7 @@ impl CustomFile {
             CustomFileKind::Actions => Self::Actions(parse_actions(text)),
             CustomFileKind::Snippets => Self::Snippets(parse_snippets(text)),
             CustomFileKind::Theme => Self::Theme(parse_theme(text)),
+            CustomFileKind::Exports => Self::Exports(parse_exports(text)),
         }
     }
 
@@ -79,6 +87,7 @@ impl CustomFile {
             Self::Actions(checked) => checked.problems.push(problem),
             Self::Snippets(checked) => checked.problems.push(problem),
             Self::Theme(checked) => checked.problems.push(problem),
+            Self::Exports(checked) => checked.problems.push(problem),
         }
         self
     }
@@ -88,6 +97,7 @@ impl CustomFile {
             Self::Actions(_) => CustomFileKind::Actions,
             Self::Snippets(_) => CustomFileKind::Snippets,
             Self::Theme(_) => CustomFileKind::Theme,
+            Self::Exports(_) => CustomFileKind::Exports,
         }
     }
 
@@ -96,6 +106,7 @@ impl CustomFile {
             Self::Actions(checked) => &checked.problems,
             Self::Snippets(checked) => &checked.problems,
             Self::Theme(checked) => &checked.problems,
+            Self::Exports(checked) => &checked.problems,
         }
     }
 }

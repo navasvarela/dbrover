@@ -234,9 +234,9 @@ fn exports_the_loaded_rows_in_other_formats() {
     let mut harness = start_app(dir.path(), feed);
     let picked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let (folder, paths) = (dir.path().to_owned(), picked.clone());
-    harness.state_mut().pick_export_path = Box::new(move |format, _| {
+    harness.state_mut().pick_export_path = Box::new(move |file, _| {
         let mut paths = paths.lock().unwrap();
-        let path = folder.join(format!("orders{}.{}", paths.len(), format.extension()));
+        let path = folder.join(format!("orders{}.{}", paths.len(), file.extension));
         paths.push(path.clone());
         Some(path)
     });

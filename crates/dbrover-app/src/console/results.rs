@@ -4,6 +4,7 @@
 use dbrover_core::SafetyLevel;
 use dbrover_core::{Cell, ColumnInfo, Row};
 use dbrover_engine::{RunId, StatementSummary};
+use dbrover_export::CustomFormat;
 use dbrover_language::ExplainDepth;
 use dbrover_language::redis::KeyView;
 use dbrover_sql::first_word;
@@ -42,7 +43,7 @@ pub fn show(
     ui: &mut Ui,
     console: &mut QueryConsole,
     keymap: &Keymap,
-    cell_actions: &[&CustomAction],
+    cell_menu: CellMenuItems<'_>,
     actions: &mut Vec<ConsoleAction>,
 ) {
     let dialect = console.dialect();
@@ -117,7 +118,7 @@ pub fn show(
                 documents::document_view(ui, results, shown, egui::Id::new(("document", run_id.0)));
             }
             _ => {
-                grid_output = grid(ui, run_id, statement, keymap, cell_actions);
+                grid_output = grid(ui, run_id, statement, keymap, cell_menu);
                 grid_output.rearrange |= rearrange;
             }
         }
@@ -738,7 +739,7 @@ fn grid(
     run: RunId,
     statement: &mut StatementView,
     keymap: &Keymap,
-    cell_actions: &[&CustomAction],
+    cell_menu: CellMenuItems<'_>,
 ) -> GridOutput {
     let StatementView {
         columns,
@@ -824,7 +825,7 @@ fn grid(
                                     defaults: &defaults,
                                     links,
                                     palette,
-                                    cell_actions,
+                                    cell_menu,
                                     documents: results,
                                 };
                                 cell(ui, cell_pos, &context)
@@ -1085,6 +1086,24 @@ fn row_number(ui: &mut Ui, row: RowRef) {
     );
 }
 
+/// What the cell menu offers besides DbRover's own items, from the user's files.
+#[derive(Debug, Clone, Copy)]
+pub struct CellMenuItems<'a> {
+    /// The custom actions on cells, for this console's driver.
+    pub actions: &'a [&'a CustomAction],
+    /// The formats from `exports.toml`; those that write text are under Copy as.
+    pub copy_formats: &'a [CustomFormat],
+}
+
+impl CellMenuItems<'_> {
+    /// Nothing from the user's files.
+    #[cfg(test)]
+    pub const NONE: Self = Self {
+        actions: &[],
+        copy_formats: &[],
+    };
+}
+
 /// What a cell needs to know besides its own position.
 struct CellContext<'a> {
     grid: &'a GridView,
@@ -1095,7 +1114,7 @@ struct CellContext<'a> {
     defaults: &'a [NewCell],
     links: &'a KeyLinks,
     palette: &'a Palette,
-    cell_actions: &'a [&'a CustomAction],
+    cell_menu: CellMenuItems<'a>,
     /// The documents the rows were flattened from, for a result of documents.
     documents: Option<&'a DocumentResult>,
 }
@@ -1296,9 +1315,9 @@ fn cell_menu(
                 RowRef::New(_) => choice.delete = ui.button("Remove row").clicked(),
             }
         }
-        if matches!(context.row, RowRef::Loaded(_)) && !context.cell_actions.is_empty() {
+        if matches!(context.row, RowRef::Loaded(_)) && !context.cell_menu.actions.is_empty() {
             ui.separator();
-            for action in context.cell_actions {
+            for action in context.cell_menu.actions {
                 if widgets::menu_item(ui, icons::MAGIC_WAND, &action.name).clicked() {
                     choice.action = Some(action.id.clone());
                 }
@@ -1325,6 +1344,25 @@ fn copy_as_menu(ui: &mut Ui, context: &CellContext<'_>, choice: &mut MenuChoice)
             );
         if item.clicked() {
             choice.copy = Some(ClipboardCopy::As(format));
+        }
+    }
+    let custom: Vec<&CustomFormat> = context
+        .cell_menu
+        .copy_formats
+        .iter()
+        .filter(|format| format.writes_text())
+        .collect();
+    if custom.is_empty() {
+        return;
+    }
+    ui.separator();
+    for format in custom {
+        if ui
+            .button(&format.name)
+            .on_hover_text(format.summary())
+            .clicked()
+        {
+            choice.copy = Some(ClipboardCopy::Custom(Box::new(format.clone())));
         }
     }
 }

@@ -4,6 +4,7 @@
 use std::borrow::Cow;
 use std::path::Path;
 
+use dbrover_export::CustomFormat;
 use dbrover_store::CustomAction;
 use egui::{KeyboardShortcut, RichText, Ui};
 
@@ -21,6 +22,7 @@ pub enum KeymapSection {
     File,
     App,
     Custom,
+    Exports,
 }
 
 impl KeymapSection {
@@ -43,6 +45,7 @@ impl KeymapSection {
             Self::File => "File",
             Self::App => "App",
             Self::Custom => "Custom actions",
+            Self::Exports => "Copy as your own formats",
         }
     }
 }
@@ -73,12 +76,14 @@ impl Shortcut<'_> {
     }
 }
 
-/// Every action's row, DbRover's own and then `custom`'s, in the page's order, with keys as
+/// Every action's row, DbRover's own, then `custom`'s, then copying as each of `formats` that
+/// writes text, in the page's order, with keys as
 /// `format` writes them (the menus' way, `Context::format_shortcut`, in the app).
 pub fn shortcuts<'a>(
     format: impl Fn(&KeyboardShortcut) -> String,
     keymap: &'a Keymap,
     custom: &'a [CustomAction],
+    formats: &'a [CustomFormat],
 ) -> Vec<Shortcut<'a>> {
     let keys =
         |bindings: &[KeyboardShortcut]| -> Vec<String> { bindings.iter().map(&format).collect() };
@@ -99,6 +104,17 @@ pub fn shortcuts<'a>(
         what: &action.name,
         keys: keys(keymap.custom_bindings(&action.id)),
     }));
+    shortcuts.extend(
+        formats
+            .iter()
+            .filter(|format| format.writes_text())
+            .map(|format| Shortcut {
+                section: KeymapSection::Exports,
+                id: Cow::Owned(format.id.keymap_id()),
+                what: &format.name,
+                keys: keys(keymap.format_bindings(&format.id)),
+            }),
+    );
     shortcuts
 }
 
@@ -177,7 +193,7 @@ mod tests {
     fn finds_a_shortcut_by_what_it_does_its_id_or_its_keys() {
         let format = |shortcut: &KeyboardShortcut| shortcut.format(&ModifierNames::NAMES, false);
         let keymap = Keymap::default();
-        let shortcuts = shortcuts(format, &keymap, &[]);
+        let shortcuts = shortcuts(format, &keymap, &[], &[]);
         let found = |query: &str| -> Vec<&str> {
             shortcuts
                 .iter()

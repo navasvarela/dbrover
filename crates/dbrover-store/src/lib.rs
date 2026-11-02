@@ -29,7 +29,7 @@ pub use custom::{
     ActionBody, ActionId, ActionTarget, Checked, CommandAction, CommandOutput, CustomAction,
     CustomFile, CustomFileKind, CustomFiles, DEFAULT_COMMAND_TIMEOUT, Rgb, Snippet, SnippetBody,
     StdinFormat, ThemeOverrides, ThemeToken, TrustError, TrustedCommand, TrustedCommands,
-    TrustedCommandsFile, driver_id, parse_actions, parse_snippets, parse_theme,
+    TrustedCommandsFile, driver_id, parse_actions, parse_exports, parse_snippets, parse_theme,
 };
 pub use data_sources::{DataSourceFile, StoreError};
 pub use diagrams::{

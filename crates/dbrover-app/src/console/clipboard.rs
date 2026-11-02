@@ -3,8 +3,8 @@
 
 use dbrover_core::Row;
 use dbrover_export::{
-    ExportColumn, ExportFormat, ExportOptions, ExportSpec, HtmlDocument, RowSource, TsvOptions,
-    render,
+    CustomFormat, ExportColumn, ExportFormat, ExportOptions, ExportSpec, HtmlDocument, RowSource,
+    TsvOptions, render,
 };
 
 /// The formats the clipboard takes: those that write text. Its own type, so a key can't be
@@ -76,12 +76,14 @@ impl ClipboardFormat {
 }
 
 /// What to put on the clipboard.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClipboardCopy {
     /// TSV with the header line, whatever TSV's options in the export dialog.
     WithHeaders,
     /// The format with the export dialog's options for it, HTML as a table without a page.
     As(ClipboardFormat),
+    /// A format from `exports.toml` that writes text, as it is defined there.
+    Custom(Box<CustomFormat>),
 }
 
 /// The selected cells, as [`ClipboardCopy`] turns them into text.
@@ -98,7 +100,7 @@ pub struct Selection {
 impl ClipboardCopy {
     /// The text to copy, or why this selection can't be copied this way.
     pub fn text(
-        self,
+        &self,
         selection: &Selection,
         options: &ExportOptions,
     ) -> Result<String, &'static str> {
@@ -109,6 +111,7 @@ impl ClipboardCopy {
                 options.html.document = HtmlDocument::Fragment;
                 options.spec(format.format(), &selection.source)?
             }
+            Self::Custom(format) => format.spec(&selection.source)?,
         };
         let rows = if spec.writes_documents() {
             &selection.documents

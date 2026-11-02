@@ -10,6 +10,7 @@ mod console;
 mod consoles;
 mod csv_import;
 mod custom_actions;
+mod custom_exports;
 mod custom_files;
 mod data_source_dialog;
 mod data_source_form;

@@ -2,6 +2,9 @@
 //! [`NativeMenu`] has no values, so the app always draws egui's menu bar there, and the code
 //! that uses it compiles everywhere without `cfg`s of its own.
 
+use dbrover_export::CustomFormat;
+use dbrover_store::CustomAction;
+
 use crate::commands::AppCommand;
 #[cfg(not(target_os = "macos"))]
 use crate::commands::CommandState;
@@ -9,6 +12,17 @@ use crate::commands::CommandState;
 use crate::keymap::Keymap;
 #[cfg(target_os = "macos")]
 pub use crate::macos::menu::NativeMenu;
+
+/// What the user's own files add to the menus: custom actions, and formats to copy as.
+#[cfg_attr(
+    not(target_os = "macos"),
+    allow(dead_code, reason = "only the macOS menu bar reads them")
+)]
+#[derive(Debug, Clone, Copy)]
+pub struct CustomEntries<'a> {
+    pub actions: &'a [CustomAction],
+    pub formats: &'a [CustomFormat],
+}
 
 /// What picking a native menu item asks of the app.
 #[cfg_attr(
@@ -36,7 +50,7 @@ impl NativeMenu {
         _: &CommandState,
         _: &Keymap,
         _: &[std::path::PathBuf],
-        _: &[dbrover_store::CustomAction],
+        _: CustomEntries<'_>,
     ) {
         match *self {}
     }
