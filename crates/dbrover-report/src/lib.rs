@@ -14,6 +14,7 @@
 //! worker, which hand this crate what they read. [`run`] then opens the sources through a
 //! [`SourceOpener`] and streams their rows ([`SourceReader`]) into the output files.
 
+mod combine;
 mod events;
 mod file_name;
 mod limits;
@@ -22,6 +23,7 @@ mod read;
 mod report;
 mod request;
 mod run;
+mod typing;
 
 pub use events::{
     LimitHit, LoadedColumn, Preview, RunEvent, RunFailure, SourceStart, Step, WrittenFile,
@@ -43,6 +45,8 @@ pub use run::{
     PREVIEW_ROWS, RunFolders, RunSummary, SourceError, SourceOpener, SourceReader, grouped, run,
 };
 
+#[cfg(test)]
+mod combine_tests;
 #[cfg(test)]
 mod run_tests;
 #[cfg(test)]

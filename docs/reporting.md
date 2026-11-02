@@ -615,9 +615,11 @@ connection of its own; RP3's lookups will order those that need an earlier sourc
 
 A column's type comes from, in order:
 
-1. **The driver's,** when it reports one with a precision: DuckDB's `DECIMAL(18,2)`, SQLite's
-   declared types. A `TEXT` column stays text even when its values look like numbers, so
-   `0042` and `"1000"` codes keep their form.
+1. **The driver's,** where it says more than the values: a `DECIMAL(18,2)` keeps its
+   precision, a float stays `DOUBLE`, and a text column stays `VARCHAR` even when its values
+   look like numbers, so `0042` and `1000` codes keep their form. A text column whose every
+   value is a date or a time is the exception, since SQLite keeps dates as text: it gets the
+   type of the values.
 2. **The values,** when the driver reports none (PostgreSQL's text protocol, MySQL's
    expressions) or a decimal without its precision (`numeric`):
 

@@ -215,6 +215,17 @@ impl Plan {
         })
     }
 
+    /// The processor time the run may use: its time limit on each of DuckDB's threads and
+    /// one more, since DuckDB's threads use the processor at once.
+    pub fn processor_time(&self) -> Duration {
+        let threads = match &self.logic {
+            Logic::Direct(_) => 0,
+            Logic::Combine(combined) => combined.combine.limits.threads(),
+        };
+        self.timeout
+            .saturating_mul(u32::try_from(threads + 1).unwrap_or(u32::MAX))
+    }
+
     /// Each source, as the run's start lists them.
     pub fn source_starts(&self) -> Vec<SourceStart> {
         let start = |source: &PlannedSource| SourceStart {

@@ -29,8 +29,8 @@ use crate::{
 /// How many rows the preview keeps: a screenful or two, enough to see a report is right.
 pub const PREVIEW_ROWS: usize = 200;
 
-/// How often a [`RunEvent::Progress`] is sent while the source returns rows.
-const PROGRESS_EVERY: Duration = Duration::from_secs(1);
+/// How often a [`RunEvent::Progress`] is sent while a step returns rows.
+pub(crate) const PROGRESS_EVERY: Duration = Duration::from_secs(1);
 
 /// Opens a report's sources: the engine on real data sources, tests in memory.
 pub trait SourceOpener {
@@ -114,6 +114,11 @@ pub async fn run<O: SourceOpener>(
     events: &mut dyn FnMut(RunEvent),
 ) -> Result<RunSummary, RunFailure> {
     let _staging = Staging::make(folders)?;
+    let outputs = Outputs {
+        plan,
+        values,
+        folders,
+    };
     match &plan.logic {
         Logic::Direct(source) => {
             let opened = Instant::now();
@@ -126,21 +131,27 @@ pub async fn run<O: SourceOpener>(
                     })
                 })?;
             let feed = Feed::Source(source);
-            let written = write(plan, values, &mut reader, &feed, folders, opened, events).await;
+            let written = outputs.write(&mut reader, &feed, opened, events).await;
             reader.close().await;
             written
         }
-        Logic::Combine(_) => Err(RunFailure::new(
-            Step::Combine,
-            "combining sources in DuckDB comes with RP2d",
-        )),
+        Logic::Combine(combined) => {
+            let combining = crate::combine::Combining {
+                outputs,
+                combined,
+                opener,
+            };
+            combining.run(events).await
+        }
     }
 }
 
 /// What the outputs are written from.
-enum Feed<'a> {
+pub(crate) enum Feed<'a> {
     /// A source's rows, as it returns them, under its caps.
     Source(&'a QuerySource),
+    /// The combine step's rows.
+    Combine,
 }
 
 impl Feed<'_> {
@@ -149,6 +160,7 @@ impl Feed<'_> {
             Self::Source(source) => Step::Source {
                 id: source.id.clone(),
             },
+            Self::Combine => Step::Combine,
         }
     }
 
@@ -156,6 +168,7 @@ impl Feed<'_> {
     fn check(&self, read: &Count) -> Result<(), RunFailure> {
         match self {
             Self::Source(source) => read.check(source),
+            Self::Combine => Ok(()),
         }
     }
 
@@ -172,80 +185,100 @@ impl Feed<'_> {
                 table: Vec::new(),
                 warnings: Vec::new(),
             },
+            Self::Combine => RunEvent::CombineDone {
+                rows: read.rows,
+                bytes: read.bytes,
+                first_row_ms,
+                elapsed_ms: millis(elapsed),
+            },
         }
     }
 }
 
-/// Writes `reader`'s rows, a page at a time, into every output and the preview, then puts
-/// the files in place. `opened` is when the feed started, for the time to its first row.
-async fn write<R: SourceReader>(
-    plan: &Plan,
-    values: &RunValues,
-    reader: &mut R,
-    feed: &Feed<'_>,
-    folders: RunFolders<'_>,
-    opened: Instant,
-    events: &mut dyn FnMut(RunEvent),
-) -> Result<RunSummary, RunFailure> {
-    let mut outputs = start_outputs(plan, values, reader.columns(), folders)?;
-    let step = feed.step();
-    let mut read = Count::default();
-    let mut preview = Preview {
-        columns: reader
-            .columns()
-            .iter()
-            .map(|column| column.name.clone())
-            .collect(),
-        rows: Vec::new(),
-        more: false,
-    };
-    let mut last_progress = Instant::now();
-    let streamed = loop {
-        let page = match reader.next_page().await {
-            Ok(Some(page)) => page,
-            Ok(None) => break Ok(()),
-            Err(error) => break Err(error.at(step.clone())),
+/// What writing a run's files needs: the outputs, the files the values name, and where.
+#[derive(Clone, Copy)]
+pub(crate) struct Outputs<'a> {
+    pub(crate) plan: &'a Plan,
+    pub(crate) values: &'a RunValues,
+    pub(crate) folders: RunFolders<'a>,
+}
+
+impl Outputs<'_> {
+    /// Writes `reader`'s rows, a page at a time, into every output and the preview, then
+    /// puts the files in place. `opened` is when the feed started, for the time to its
+    /// first row.
+    pub(crate) async fn write<R: SourceReader>(
+        self,
+        reader: &mut R,
+        feed: &Feed<'_>,
+        opened: Instant,
+        events: &mut dyn FnMut(RunEvent),
+    ) -> Result<RunSummary, RunFailure> {
+        let Self {
+            plan,
+            values,
+            folders,
+        } = self;
+        let mut outputs = start_outputs(plan, values, reader.columns(), folders)?;
+        let step = feed.step();
+        let mut read = Count::default();
+        let mut preview = Preview {
+            columns: reader
+                .columns()
+                .iter()
+                .map(|column| column.name.clone())
+                .collect(),
+            rows: Vec::new(),
+            more: false,
         };
-        if page.is_empty() {
-            continue;
+        let mut last_progress = Instant::now();
+        let streamed = loop {
+            let page = match reader.next_page().await {
+                Ok(Some(page)) => page,
+                Ok(None) => break Ok(()),
+                Err(error) => break Err(error.at(step.clone())),
+            };
+            if page.is_empty() {
+                continue;
+            }
+            read.first_row.get_or_insert_with(|| opened.elapsed());
+            read.add(&page);
+            if let Err(failure) = feed.check(&read) {
+                break Err(failure);
+            }
+            keep_for_preview(&mut preview, &page);
+            if let Err(failure) = outputs
+                .iter_mut()
+                .try_for_each(|output| output.write(&page))
+            {
+                break Err(failure);
+            }
+            if last_progress.elapsed() >= PROGRESS_EVERY {
+                last_progress = Instant::now();
+                events(RunEvent::Progress {
+                    step: step.clone(),
+                    rows: read.rows,
+                    bytes: read.bytes,
+                    elapsed_ms: millis(opened.elapsed()),
+                });
+            }
+        };
+        if let Err(failure) = streamed {
+            outputs.into_iter().for_each(OutputRun::abandon);
+            return Err(failure);
         }
-        read.first_row.get_or_insert_with(|| opened.elapsed());
-        read.add(&page);
-        if let Err(failure) = feed.check(&read) {
-            break Err(failure);
+        events(feed.done(&read, opened.elapsed()));
+        events(RunEvent::Preview(preview));
+        let files = put_in_place(complete_outputs(outputs)?)?;
+        for file in &files {
+            events(RunEvent::OutputWritten(file.clone()));
         }
-        keep_for_preview(&mut preview, &page);
-        if let Err(failure) = outputs
-            .iter_mut()
-            .try_for_each(|output| output.write(&page))
-        {
-            break Err(failure);
-        }
-        if last_progress.elapsed() >= PROGRESS_EVERY {
-            last_progress = Instant::now();
-            events(RunEvent::Progress {
-                step: step.clone(),
-                rows: read.rows,
-                bytes: read.bytes,
-                elapsed_ms: millis(opened.elapsed()),
-            });
-        }
-    };
-    if let Err(failure) = streamed {
-        outputs.into_iter().for_each(OutputRun::abandon);
-        return Err(failure);
+        Ok(RunSummary {
+            rows: read.rows,
+            bytes: read.bytes,
+            files,
+        })
     }
-    events(feed.done(&read, opened.elapsed()));
-    events(RunEvent::Preview(preview));
-    let files = put_in_place(complete_outputs(outputs)?)?;
-    for file in &files {
-        events(RunEvent::OutputWritten(file.clone()));
-    }
-    Ok(RunSummary {
-        rows: read.rows,
-        bytes: read.bytes,
-        files,
-    })
 }
 
 /// The staging folder, made for the run and removed when it ends, however it ends.
@@ -274,26 +307,26 @@ impl Drop for Staging<'_> {
     }
 }
 
-fn millis(duration: Duration) -> u64 {
+pub(crate) fn millis(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
 /// What a source, or the combine step, has returned so far.
 #[derive(Default)]
-struct Count {
-    rows: u64,
-    bytes: u64,
-    first_row: Option<Duration>,
+pub(crate) struct Count {
+    pub(crate) rows: u64,
+    pub(crate) bytes: u64,
+    pub(crate) first_row: Option<Duration>,
 }
 
 impl Count {
-    fn add(&mut self, page: &[Row]) {
+    pub(crate) fn add(&mut self, page: &[Row]) {
         self.rows += page.len() as u64;
         self.bytes += page.iter().map(|row| row_bytes(row)).sum::<u64>();
     }
 
     /// Whether `source`'s caps hold what it has returned, or which one it crossed.
-    fn check(&self, source: &QuerySource) -> Result<(), RunFailure> {
+    pub(crate) fn check(&self, source: &QuerySource) -> Result<(), RunFailure> {
         let limits = source.limits;
         let step = Step::Source {
             id: source.id.clone(),

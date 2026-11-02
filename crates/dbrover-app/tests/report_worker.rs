@@ -137,6 +137,38 @@ file = "trial-balance-{since:%Y-%m}.csv"
 columns = "same"
 "##;
 
+/// The trial balance again, with the ledger's two tables as two sources combined in DuckDB.
+const COMBINED: &str = r##"
+[report]
+name = "Combined trial balance"
+params = { since = "date", until = "date" }
+
+[[source]]
+id = "accounts"
+data_source = "ledger"
+query = "SELECT id, code FROM accounts"
+
+[[source]]
+id = "entries"
+data_source = "ledger"
+query = """
+SELECT account_id, debit, credit FROM entries
+WHERE booked_on >= :since AND booked_on < :until
+"""
+
+[combine]
+query = """
+SELECT a.code AS account, SUM(e.debit) - SUM(e.credit) AS balance
+FROM entries e JOIN accounts a ON a.id = e.account_id
+GROUP BY a.code ORDER BY a.code
+"""
+threads = 1
+
+[[output]]
+format = "csv"
+file = "combined-{since:%Y-%m}.csv"
+"##;
+
 /// A source that counts for a long time before returning its one row.
 const SLOW: &str = r#"
 [report]
@@ -193,6 +225,38 @@ fn files_in(folder: &Path) -> Vec<String> {
         .collect();
     names.sort();
     names
+}
+
+#[test]
+fn combines_two_sources_in_duckdb() {
+    let settings = Settings::new();
+    let report = settings.write_report("combined", COMBINED);
+    let run = settings.start(&settings.request(&report), Duration::from_secs(120));
+    let events = all_events(&run);
+    let mut kinds: Vec<&str> = events
+        .iter()
+        .map(kind)
+        .filter(|kind| *kind != "progress")
+        .collect();
+    // The two sources load at the same time, so either may finish first.
+    kinds.dedup();
+    assert_eq!(
+        kinds,
+        [
+            "started",
+            "source done",
+            "combine done",
+            "preview",
+            "written",
+            "finished"
+        ],
+        "{events:#?}"
+    );
+    assert_eq!(files_in(&settings.out()), ["combined-2026-10.csv"]);
+    assert_eq!(
+        std::fs::read_to_string(settings.out().join("combined-2026-10.csv")).unwrap(),
+        "account,balance\r\n1000,100.25\r\n4000,-100.25\r\n"
+    );
 }
 
 /// Waits until the run has started its source, so what follows happens mid-run.
