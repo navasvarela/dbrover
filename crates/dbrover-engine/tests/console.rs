@@ -21,9 +21,9 @@ use dbrover_core::{
 };
 use dbrover_core::{Quoting, RejectionKind, TransactionStatus};
 use dbrover_engine::{
-    Command, ConsoleId, EditFailure, Event, PasswordUpdate, RowEdit, RunId, RunOrigin, RunOutcome,
-    RunPurpose, ScanApproval, SessionState, StatementCheck, StatementFailure, TransactionEnd,
-    TransactionMode,
+    Command, ConsoleId, CostApproval, EditFailure, Event, PasswordUpdate, RowEdit, RunId,
+    RunOrigin, RunOutcome, RunPurpose, SessionState, StatementCheck, StatementFailure,
+    TransactionEnd, TransactionMode,
 };
 use dbrover_store::{HistoryOutcome, HistoryQuery};
 
@@ -75,7 +75,7 @@ fn execute_in(
         transactions,
         purpose: RunPurpose::Run,
         origin: RunOrigin::Console,
-        scans: ScanApproval::Ask,
+        cost: CostApproval::Ask,
     });
 }
 
@@ -806,7 +806,7 @@ fn explains_on_sqlserver_with_showplan_and_switches_it_off() {
         transactions: TransactionMode::Auto,
         purpose: RunPurpose::Explain,
         origin: RunOrigin::Console,
-        scans: ScanApproval::Ask,
+        cost: CostApproval::Ask,
     };
 
     engine.send(explain(
@@ -1345,8 +1345,11 @@ fn holds_a_scan_back_until_allowed_on_a_guarded_dynamodb_data_source() {
     assert!(
         events.iter().any(|event| matches!(
             event,
-            Event::ScanHeld { statement: 1, scan, .. }
-                if scan.table == table && scan.partition_key == "pk"
+            Event::CostHeld {
+                statement: 1,
+                estimate: dbrover_core::CostEstimate::WholeTable(scan),
+                ..
+            } if scan.table == table && scan.partition_key == "pk"
         )),
         "{events:?}"
     );
@@ -1376,7 +1379,7 @@ fn holds_a_scan_back_until_allowed_on_a_guarded_dynamodb_data_source() {
         transactions: TransactionMode::Auto,
         purpose: RunPurpose::Run,
         origin: RunOrigin::Console,
-        scans: ScanApproval::AllowFirst,
+        cost: CostApproval::AllowFirst,
     });
     let events = run_events(&mut engine, 2);
     assert!(
@@ -1389,7 +1392,7 @@ fn holds_a_scan_back_until_allowed_on_a_guarded_dynamodb_data_source() {
     assert!(
         events
             .iter()
-            .any(|event| matches!(event, Event::ScanHeld { statement: 1, .. })),
+            .any(|event| matches!(event, Event::CostHeld { statement: 1, .. })),
         "{events:?}"
     );
 
@@ -1426,7 +1429,7 @@ fn holds_a_scan_back_until_allowed_on_a_guarded_dynamodb_data_source() {
         project: None,
         mcp_login: None,
         config: ConnectionConfig::DynamoDb(dbrover_core::DynamoDbConfig {
-            cost_guard: dbrover_core::CostGuard::Off,
+            cost_guard: dbrover_core::CostGuard::OFF,
             ..config
         }),
     };
@@ -1446,13 +1449,13 @@ fn holds_a_scan_back_until_allowed_on_a_guarded_dynamodb_data_source() {
         transactions: TransactionMode::Auto,
         purpose: RunPurpose::Run,
         origin: RunOrigin::Console,
-        scans: ScanApproval::Ask,
+        cost: CostApproval::Ask,
     });
     let events = run_events(&mut engine, 4);
     assert!(
         !events
             .iter()
-            .any(|event| matches!(event, Event::ScanHeld { .. })),
+            .any(|event| matches!(event, Event::CostHeld { .. })),
         "{events:?}"
     );
     assert!(events.iter().any(|event| matches!(

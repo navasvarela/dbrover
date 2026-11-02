@@ -33,8 +33,8 @@ use dbrover_core::{
     SafetyLevel, TableDescription, TransactionStatus,
 };
 use dbrover_engine::{
-    Command, ConsoleId, EditFailure, Event, Export, ExportAll, Exporter, RowEdit, RunId, RunOrigin,
-    RunOutcome, RunPurpose, ScanApproval, SessionState, StatementFailure, StatementSummary,
+    Command, ConsoleId, CostApproval, EditFailure, Event, Export, ExportAll, Exporter, RowEdit,
+    RunId, RunOrigin, RunOutcome, RunPurpose, SessionState, StatementFailure, StatementSummary,
     TransactionEnd, TransactionMode, WatchedFile,
 };
 use dbrover_export::{
@@ -106,7 +106,7 @@ pub struct SubmittedRun {
     pub destination: RunDestination,
     /// Whether a statement that would read a whole table runs, on a data source whose cost
     /// guard asks first.
-    pub scans: ScanApproval,
+    pub cost: CostApproval,
 }
 
 /// Where a run's rows go.
@@ -906,7 +906,7 @@ impl QueryConsole {
             destination: RunDestination::Grid,
             // The statement ran already, as the user allowed; reading it again after edits
             // isn't asked about twice.
-            scans: ScanApproval::Allow,
+            cost: CostApproval::PageAtATime,
         })
     }
 
@@ -925,7 +925,7 @@ impl QueryConsole {
             parameters: self.parameters.clone(),
             origin: RunOrigin::Console,
             destination: RunDestination::Grid,
-            scans: ScanApproval::Ask,
+            cost: CostApproval::Ask,
         })
     }
 
@@ -979,7 +979,7 @@ impl QueryConsole {
             parameters: dbrover_sql::ParameterValues::default(),
             origin: RunOrigin::Console,
             destination: RunDestination::Grid,
-            scans: ScanApproval::Ask,
+            cost: CostApproval::Ask,
         })
     }
 
@@ -1685,7 +1685,7 @@ impl QueryConsole {
             parameters: self.parameters.clone(),
             origin: RunOrigin::Console,
             destination: RunDestination::Grid,
-            scans: ScanApproval::Ask,
+            cost: CostApproval::Ask,
         })
     }
 
@@ -1941,7 +1941,7 @@ impl QueryConsole {
             parameters: ParameterValues::default(),
             origin: RunOrigin::Console,
             destination: RunDestination::Grid,
-            scans: ScanApproval::Ask,
+            cost: CostApproval::Ask,
         })
     }
 
@@ -2114,7 +2114,7 @@ impl QueryConsole {
             parameters: ParameterValues::default(),
             origin: RunOrigin::Console,
             destination: RunDestination::Grid,
-            scans: ScanApproval::Ask,
+            cost: CostApproval::Ask,
         })
     }
 

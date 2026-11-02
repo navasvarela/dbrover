@@ -3,7 +3,7 @@
 
 use std::time::Instant;
 
-use dbrover_core::{CancelHandle, DriverError, ResultCursor, Row, describe_error};
+use dbrover_core::{CancelHandle, DriverError, ReadPace, ResultCursor, Row, describe_error};
 use dbrover_export::{ExportColumn, ExportWriter};
 use dbrover_sql::{ParameterValues, RowSql};
 
@@ -78,9 +78,12 @@ pub(super) async fn write_all(
         .map_err(|missing| missing.to_string());
     let written = match &sendable {
         Ok(sendable) => match read_only_check(worker, &sendable.checked).await? {
-            Ok(()) => match cost::held_scan(worker, &sendable.checked).await? {
+            Ok(()) => match cost::held_cost(worker, &sendable.checked, ReadPace::Whole).await? {
                 Ok(None) => export_rows(worker, &export, sendable).await?,
-                Ok(Some(scan)) => Err(Stopped::Failed(cost::refused(&scan, worker.context.name()))),
+                Ok(Some(estimate)) => Err(Stopped::Failed(cost::refused(
+                    &estimate,
+                    worker.context.name(),
+                ))),
                 Err(error) => Err(Stopped::Failed(describe_error(&error))),
             },
             Err(refused) => Err(Stopped::Failed(refused)),

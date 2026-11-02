@@ -3,9 +3,9 @@
 use std::path::Path;
 
 use dbrover_core::{
-    AzureTool, CloudProvider, CostGuard, DataSource, DataSourceId, DriverKind, DynamoDbSignIn,
-    ElasticsearchAuth, MongoConfig, SafetyLevel, ServerInfo, SourceColor, expand, expand_path,
-    has_placeholder,
+    AzureTool, CloudProvider, DataSource, DataSourceId, DriverKind, DynamoDbSignIn,
+    ElasticsearchAuth, MongoConfig, SafetyLevel, ScanGuard, ServerInfo, SourceColor, expand,
+    expand_path, has_placeholder,
 };
 use dbrover_engine::read_only::{self, Guard};
 use dbrover_engine::{DatabaseFile, Event, PasswordUpdate, ProcessEnvironment};
@@ -459,7 +459,7 @@ fn dynamodb_rows(ui: &mut Ui, fields: &mut DynamoDbFields) {
         }
     }
     ui.label("Cost guard");
-    let mut asks = fields.cost_guard == CostGuard::AskBeforeScans;
+    let mut asks = fields.cost_guard.whole_table == ScanGuard::AskBeforeScans;
     let checkbox = ui
         .checkbox(&mut asks, "Ask before reading a whole table")
         .on_hover_text(
@@ -467,9 +467,9 @@ fn dynamodb_rows(ui: &mut Ui, fields: &mut DynamoDbFields) {
              bills each one. Run to file and MCP clients are refused one instead.",
         );
     if checkbox.changed() {
-        fields.cost_guard = match asks {
-            true => CostGuard::AskBeforeScans,
-            false => CostGuard::Off,
+        fields.cost_guard.whole_table = match asks {
+            true => ScanGuard::AskBeforeScans,
+            false => ScanGuard::Off,
         };
     }
     ui.end_row();

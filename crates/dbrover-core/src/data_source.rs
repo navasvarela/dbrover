@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::placeholder::{PlaceholderError, Setting, Variables, expand, expand_path};
-use crate::{CloudSignIn, DriverError, PasswordCommand};
+use crate::{CloudSignIn, CostGuard, DriverError, PasswordCommand};
 
 /// Stable identity of a data source. Written once when the data source is created, so renaming
 /// it never breaks the keychain entry, consoles or history that refer to it.
@@ -964,8 +964,8 @@ pub struct DynamoDbConfig {
     /// emulator needs one.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub endpoint: String,
-    /// Written only when turned off.
-    #[serde(default, skip_serializing_if = "CostGuard::is_default")]
+    /// Written only where it differs from the default (C0e).
+    #[serde(flatten)]
     pub cost_guard: CostGuard,
 }
 
@@ -1011,26 +1011,6 @@ impl fmt::Display for DynamoDbConfig {
                 write!(f, "{endpoint} ({region}) as profile {profile}")
             }
         }
-    }
-}
-
-/// What a data source on an engine that bills each read does before a statement that would
-/// read a whole table: C0's cost guard (`docs/cloud-data.md`), DynamoDB's first
-/// (`docs/nosql.md`, N5). Kept in the engine's own settings while DynamoDB is the only engine
-/// that has one.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum CostGuard {
-    /// A console asks first; Run to file and the MCP server refuse.
-    #[default]
-    AskBeforeScans,
-    /// Nothing asks. Each page a result shows still reads only so much.
-    Off,
-}
-
-impl CostGuard {
-    pub fn is_default(&self) -> bool {
-        *self == Self::default()
     }
 }
 
@@ -1142,6 +1122,7 @@ impl DriverKind {
 mod tests {
     use super::*;
     use crate::placeholder::tests::Fixed;
+    use crate::{ByteCount, ScanGuard};
 
     #[derive(Debug, PartialEq, Serialize, Deserialize)]
     struct File {
@@ -1303,7 +1284,20 @@ mod tests {
         let emulator = DynamoDbConfig {
             sign_in: DynamoDbSignIn::LocalEmulator,
             endpoint: "http://localhost:8000".to_owned(),
-            cost_guard: CostGuard::Off,
+            cost_guard: CostGuard {
+                whole_table: ScanGuard::Off,
+                ask_above_bytes: None,
+            },
+            ..DynamoDbConfig::default()
+        };
+        // C0e's byte limit, which no DynamoDB statement is estimated against, read and written
+        // beside N5's switch.
+        let limited = DynamoDbConfig {
+            region: "eu-west-1".to_owned(),
+            cost_guard: CostGuard {
+                whole_table: ScanGuard::AskBeforeScans,
+                ask_above_bytes: Some(ByteCount(10_000_000_000)),
+            },
             ..DynamoDbConfig::default()
         };
         for (config, written, name, shown) in [
@@ -1324,6 +1318,12 @@ mod tests {
                 "sign_in = \"local-emulator\"\nendpoint = \"http://localhost:8000\"\ncost_guard = \"off\"",
                 "http://localhost:8000",
                 "http://localhost:8000 (local emulator, the profile's region)",
+            ),
+            (
+                limited,
+                "region = \"eu-west-1\"\nask_above_bytes = 10000000000",
+                "eu-west-1",
+                "DynamoDB in eu-west-1",
             ),
         ] {
             let file = File {
@@ -1347,7 +1347,7 @@ mod tests {
             assert_eq!(
                 config
                     .cost_guard()
-                    .is_some_and(|guard| guard == CostGuard::Off),
+                    .is_some_and(|guard| guard.whole_table == ScanGuard::Off),
                 written.contains("cost_guard")
             );
         }

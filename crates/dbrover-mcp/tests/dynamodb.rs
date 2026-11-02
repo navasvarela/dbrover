@@ -83,7 +83,7 @@ async fn reads_dynamodb_through_an_mcp_profile() {
         profile: String::new(),
         region: String::new(),
         endpoint,
-        cost_guard: CostGuard::AskBeforeScans,
+        cost_guard: CostGuard::default(),
     });
     let unguarded = data_source("unguarded", project_id, config.clone());
     let mut guarded = data_source("guarded", project_id, config);

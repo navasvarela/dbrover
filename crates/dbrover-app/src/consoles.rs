@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use dbrover_core::{CatalogPath, DataSource, DataSourceId, FullScan, NodeKind, SafetyLevel};
+use dbrover_core::{CatalogPath, CostEstimate, DataSource, DataSourceId, NodeKind, SafetyLevel};
 use dbrover_engine::{
-    Command, ConsoleId, Event, RunId, RunOrigin, RunPurpose, ScanApproval, TransactionMode,
+    Command, ConsoleId, CostApproval, Event, RunId, RunOrigin, RunPurpose, TransactionMode,
     WatchedFile,
 };
 use dbrover_export::ExportSpec;
@@ -279,7 +279,7 @@ impl Consoles {
             destination: RunDestination::Grid,
             // What the explorer opens reads one page and then only what the user pages
             // through, so a scan's cost guard has nothing to ask (docs/nosql.md, N5).
-            scans: ScanApproval::Allow,
+            cost: CostApproval::PageAtATime,
         };
         let command = self.start_run(&key, run)?;
         Some((key, command))
@@ -307,7 +307,7 @@ impl Consoles {
             parameters: ParameterValues::default(),
             origin,
             destination: RunDestination::Grid,
-            scans: ScanApproval::Ask,
+            cost: CostApproval::Ask,
         };
         let command = self.submit(&key, run);
         (key, command)
@@ -476,25 +476,30 @@ impl Consoles {
         for console in self.open.values_mut() {
             console.apply(event);
         }
-        if let Event::ScanHeld {
+        if let Event::CostHeld {
             run,
             statement,
-            scan,
+            estimate,
         } = event
         {
-            self.ask_to_scan(*run, *statement, scan);
+            self.ask_about_cost(*run, *statement, estimate);
         }
     }
 
     /// Asks whether to run, after all, the statement the cost guard held back in `run`, and
     /// the ones after it.
-    fn ask_to_scan(&mut self, run: RunId, statement: usize, scan: &FullScan) {
+    fn ask_about_cost(&mut self, run: RunId, statement: usize, estimate: &CostEstimate) {
         let held = self.open.iter().find_map(|(key, console)| {
             let rest = console.rest_of_run(run, statement)?;
             Some((key.clone(), console.data_source_name().to_owned(), rest))
         });
         if let Some((key, data_source, rest)) = held {
-            self.hazard = Some(hazard_dialog::confirm_scan(key, &data_source, scan, rest));
+            self.hazard = Some(hazard_dialog::confirm_cost(
+                key,
+                &data_source,
+                estimate,
+                rest,
+            ));
         }
     }
 
@@ -639,7 +644,7 @@ impl Consoles {
                 .collect(),
             parameters: submitted.parameters,
             origin: submitted.origin,
-            scans: submitted.scans,
+            cost: submitted.cost,
         })
     }
 
@@ -664,7 +669,7 @@ impl Consoles {
         let choice = self.hazard.as_ref()?.show(ctx)?;
         let confirmation = self.hazard.take()?;
         match (choice, confirmation.pending) {
-            (HazardChoice::RunAnyway, Pending::Run(run) | Pending::Scan(run)) => {
+            (HazardChoice::RunAnyway, Pending::Run(run) | Pending::Cost(run)) => {
                 self.start_run(&confirmation.console, run)
             }
             (HazardChoice::RunAnyway, Pending::Edits) => {
@@ -781,7 +786,7 @@ mod tests {
             parameters,
             origin: RunOrigin::Console,
             destination: RunDestination::Grid,
-            scans: ScanApproval::Ask,
+            cost: CostApproval::Ask,
         })
     }
 
@@ -1000,22 +1005,22 @@ mod tests {
             parameters: ParameterValues::default(),
             origin: RunOrigin::Console,
             destination: RunDestination::Grid,
-            scans: ScanApproval::Ask,
+            cost: CostApproval::Ask,
         };
-        let Some(Command::Execute { run: id, scans, .. }) = consoles.start_run(&key, run) else {
+        let Some(Command::Execute { run: id, cost, .. }) = consoles.start_run(&key, run) else {
             panic!("expected a run");
         };
-        assert_eq!(scans, ScanApproval::Ask);
-        consoles.apply(&Event::ScanHeld {
+        assert_eq!(cost, CostApproval::Ask);
+        consoles.apply(&Event::CostHeld {
             run: id,
             statement: 1,
-            scan: FullScan {
+            estimate: CostEstimate::WholeTable(dbrover_core::FullScan {
                 table: "orders".to_owned(),
                 index: None,
                 partition_key: "pk".to_owned(),
-            },
+            }),
         });
-        let Some(Pending::Scan(rest)) = consoles.hazard.take().map(|hazard| hazard.pending) else {
+        let Some(Pending::Cost(rest)) = consoles.hazard.take().map(|hazard| hazard.pending) else {
             panic!("expected to be asked about the scan");
         };
         let sql: Vec<&str> = rest.statements.iter().map(|s| s.sql.as_str()).collect();
@@ -1026,7 +1031,7 @@ mod tests {
                 "SELECT * FROM orders WHERE pk = 'a'"
             ]
         );
-        assert_eq!(rest.scans, ScanApproval::AllowFirst);
+        assert_eq!(rest.cost, CostApproval::AllowFirst);
     }
 
     #[test]

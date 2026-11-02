@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use dbrover_core::{
-    CatalogPath, ChildrenPage, ChildrenQuery, ColumnInfo, DataSource, DataSourceId, DriverKind,
-    FullScan, Password, PasswordCommand, ProjectId, Rejection, RelationName, ResultShape,
-    RoleDescription, Row, ServerInfo, TableDescription, TableName, TransactionStatus,
+    CatalogPath, ChildrenPage, ChildrenQuery, ColumnInfo, CostEstimate, DataSource, DataSourceId,
+    DriverKind, Password, PasswordCommand, ProjectId, ReadPace, Rejection, RelationName,
+    ResultShape, RoleDescription, Row, ServerInfo, TableDescription, TableName, TransactionStatus,
 };
 use dbrover_export::{ExportSpec, SqlTable};
 use dbrover_sql::{ExistingTable, ParameterValues};
@@ -160,9 +160,9 @@ pub enum Command {
     /// parameter has no value fails without being sent. With none, statements go as typed.
     /// The history records each statement as typed, followed by a comment naming its values.
     ///
-    /// On a data source whose cost guard asks before scans, a statement that would read a
-    /// whole table isn't run unless `scans` allows it: [`Event::ScanHeld`] says which, and the
-    /// run stops there.
+    /// On a data source with a cost guard, a statement the guard holds (one that would read a
+    /// whole table, or scan more than its limit) isn't run unless `cost` allows it:
+    /// [`Event::CostHeld`] says which, and the run stops there.
     Execute {
         console: ConsoleId,
         data_source: DataSourceId,
@@ -172,7 +172,7 @@ pub enum Command {
         transactions: TransactionMode,
         purpose: RunPurpose,
         origin: RunOrigin,
-        scans: ScanApproval,
+        cost: CostApproval,
     },
     /// Commits or rolls back the console's open transaction. Answered by
     /// [`Event::TransactionEnded`].
@@ -753,14 +753,14 @@ pub enum Event {
         statement: usize,
         result: Result<StatementSummary, StatementFailure>,
     },
-    /// The run's statement wasn't run because it would read a whole table and the data
-    /// source's cost guard asks first. Sent just before that statement's
+    /// The run's statement wasn't run because the data source's cost guard holds what it would
+    /// cost: a whole table read, or more bytes than its limit. Sent just before that statement's
     /// [`Event::StatementFinished`], a failure that says why; the run stops there. Running the
-    /// statements again from this one with [`ScanApproval::AllowFirst`] runs it.
-    ScanHeld {
+    /// statements again from this one with [`CostApproval::AllowFirst`] runs it.
+    CostHeld {
         run: RunId,
         statement: usize,
-        scan: FullScan,
+        estimate: CostEstimate,
     },
     /// Every statement has run, or one failed. Rows of the last statement may still be
     /// fetched afterwards.
@@ -908,27 +908,30 @@ pub enum RunPurpose {
     ExplainAnalyse,
 }
 
-/// Whether a run may read whole tables on a data source whose cost guard asks first
-/// (`dbrover_core::CostGuard`).
+/// What a run may cost on a data source with a cost guard (`dbrover_core::CostGuard`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ScanApproval {
-    /// A statement that would scan is held back, and the user asked.
+pub enum CostApproval {
+    /// A statement the guard holds is held back, and the user asked.
     #[default]
     Ask,
-    /// The run's first statement runs whatever it reads, since the user said yes to it; the
+    /// The run's first statement runs whatever it costs, since the user said yes to it; the
     /// ones after it are asked about as ever.
     AllowFirst,
-    /// Every statement runs: the run reads a page at a time by design, as **Open data** does.
-    Allow,
+    /// The run reads a page at a time by design, as **Open data** does: a whole-table read
+    /// runs, since each page reads only so much, but a byte estimate over the limit is still
+    /// asked about, since the statement scans it whatever is paged.
+    PageAtATime,
 }
 
-impl ScanApproval {
-    /// Whether the statement at `index` of its run is asked about.
-    pub fn asks(self, index: usize) -> bool {
+impl CostApproval {
+    /// How the statement at `index` of its run is judged: read at this pace, or, with
+    /// `None`, not at all.
+    pub fn pace(self, index: usize) -> Option<ReadPace> {
         match self {
-            Self::Ask => true,
-            Self::AllowFirst => index > 0,
-            Self::Allow => false,
+            Self::Ask => Some(ReadPace::Whole),
+            Self::AllowFirst if index == 0 => None,
+            Self::AllowFirst => Some(ReadPace::Whole),
+            Self::PageAtATime => Some(ReadPace::PageAtATime),
         }
     }
 }

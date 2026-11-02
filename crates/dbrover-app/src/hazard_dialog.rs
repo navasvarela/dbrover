@@ -3,8 +3,8 @@ use dbrover_sql::commits_implicitly;
 use dbrover_store::ConsoleKey;
 use egui::{Align, Id, Layout};
 
-use dbrover_core::FullScan;
-use dbrover_engine::{RunPurpose, ScanApproval};
+use dbrover_core::CostEstimate;
+use dbrover_engine::{CostApproval, RunPurpose};
 
 use crate::console::{ChangeCount, SubmittedRun, SubmittedStatement};
 use crate::form;
@@ -35,9 +35,9 @@ pub enum Pending {
     Run(SubmittedRun),
     /// The grid's pending edits.
     Edits,
-    /// The rest of a run, from a statement its data source's cost guard held back because it
-    /// would read a whole table; it runs allowed to.
-    Scan(SubmittedRun),
+    /// The rest of a run, from a statement its data source's cost guard held back because of
+    /// what it would cost; it runs allowed to.
+    Cost(SubmittedRun),
 }
 
 /// The outcome of checking statements before running them.
@@ -110,20 +110,24 @@ pub fn confirm_edits(
 
 /// Asks before running a statement the data source's cost guard held back, and the
 /// statements after it, which `rest` holds.
-pub fn confirm_scan(
+pub fn confirm_cost(
     console: ConsoleKey,
     data_source: &str,
-    scan: &FullScan,
+    estimate: &CostEstimate,
     mut rest: SubmittedRun,
 ) -> HazardConfirmation {
-    rest.scans = ScanApproval::AllowFirst;
+    rest.cost = CostApproval::AllowFirst;
+    let asks = match estimate {
+        CostEstimate::WholeTable(_) => "reading a whole table",
+        CostEstimate::Bytes(_) => "a statement scans more than its limit",
+    };
     HazardConfirmation {
         console,
-        pending: Pending::Scan(rest),
-        heading: format!("Read all of {}?", scan.table),
+        pending: Pending::Cost(rest),
+        heading: estimate.heading(),
         warnings: vec![
-            scan.describe(),
-            format!("\u{201c}{data_source}\u{201d} asks before reading a whole table."),
+            estimate.describe(),
+            format!("\u{201c}{data_source}\u{201d} asks before {asks}."),
         ],
     }
 }
@@ -133,7 +137,7 @@ impl HazardConfirmation {
         let confirm = match self.pending {
             Pending::Run(_) => "Run anyway",
             Pending::Edits => "Apply",
-            Pending::Scan(_) => "Scan anyway",
+            Pending::Cost(_) => "Scan anyway",
         };
         let modal = widgets::dialog(ctx, Id::new("hazard_confirmation")).show(ctx, |ui| {
             ui.heading(&self.heading);
@@ -304,7 +308,7 @@ mod tests {
                 parameters: dbrover_sql::ParameterValues::default(),
                 origin: dbrover_engine::RunOrigin::Console,
                 destination: RunDestination::Grid,
-                scans: ScanApproval::Ask,
+                cost: CostApproval::Ask,
             }
         };
         let context = |careful| ReviewContext {

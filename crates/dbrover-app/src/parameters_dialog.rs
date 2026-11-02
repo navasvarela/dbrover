@@ -157,7 +157,7 @@ mod tests {
             parameters: ParameterValues::default(),
             origin: RunOrigin::Console,
             destination: crate::console::RunDestination::Grid,
-            scans: dbrover_engine::ScanApproval::Ask,
+            cost: dbrover_engine::CostApproval::Ask,
         };
         let names = ["since", "note", "new"].map(str::to_owned).to_vec();
 

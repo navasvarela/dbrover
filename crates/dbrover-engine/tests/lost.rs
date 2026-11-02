@@ -17,8 +17,8 @@ use dbrover_core::{
     SafetyLevel,
 };
 use dbrover_engine::{
-    Command, ConsoleId, Event, PasswordUpdate, RunId, RunOrigin, RunOutcome, RunPurpose,
-    ScanApproval, SessionState, TransactionMode,
+    Command, ConsoleId, CostApproval, Event, PasswordUpdate, RunId, RunOrigin, RunOutcome,
+    RunPurpose, SessionState, TransactionMode,
 };
 
 /// A database created for one test and dropped after it, with a connection to the server's
@@ -144,7 +144,7 @@ fn run(engine: &TestEngine, scratch: &Scratch, run: u64) {
         transactions: TransactionMode::Auto,
         purpose: RunPurpose::Run,
         origin: RunOrigin::Console,
-        scans: ScanApproval::Ask,
+        cost: CostApproval::Ask,
     });
 }
 

@@ -60,7 +60,7 @@ mod tests {
             profile: "dev".into(),
             region: " eu-west-1 ".into(),
             endpoint: String::new(),
-            cost_guard: CostGuard::Off,
+            cost_guard: CostGuard::OFF,
         };
         assert_eq!(fields.to_config(), Err(FormError::EndpointMissing));
         fields.endpoint = "http://localhost:8000".into();
@@ -73,7 +73,7 @@ mod tests {
         fields.endpoint.clear();
         let config = fields.to_config().unwrap();
         assert_eq!(config.profile, "dev");
-        assert_eq!(config.cost_guard, CostGuard::Off);
+        assert_eq!(config.cost_guard, CostGuard::OFF);
         assert_eq!(DynamoDbFields::from_config(&config).profile, "dev");
     }
 }
