@@ -21,8 +21,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dbrover_core::{
-    CancelHandle, CatalogPath, ChildrenQuery, Connection, DataSource, DataSourceId, ProgressHandle,
-    RelationName, SafetyLevel, TransactionStatus, describe_error,
+    CancelHandle, CatalogPath, CatalogSearch, ChildrenQuery, Connection, DataSource, DataSourceId,
+    ProgressHandle, RelationName, SafetyLevel, TransactionStatus, describe_error,
 };
 use dbrover_language::QueryLanguage;
 use dbrover_sql::{Dialect, ParameterValues};
@@ -49,6 +49,7 @@ use loss::{Loss, Watched};
 #[derive(Debug)]
 pub(crate) enum SessionRequest {
     Children(CatalogPath, ChildrenQuery),
+    Search(CatalogSearch),
     Definition(CatalogPath),
     Execute(Script),
     FetchMore(RunId),
@@ -615,6 +616,10 @@ impl Worker<'_> {
         match request {
             SessionRequest::Children(path, query) => {
                 let work = catalog::children(self.context, &mut *self.connection, path, query);
+                self.signals.guard(work, None, self.cancel_handle).await
+            }
+            SessionRequest::Search(search) => {
+                let work = catalog::search(self.context, &mut *self.connection, search);
                 self.signals.guard(work, None, self.cancel_handle).await
             }
             SessionRequest::Definition(path) => {

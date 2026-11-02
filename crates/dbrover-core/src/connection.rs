@@ -5,9 +5,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::{
-    CancelHandle, CatalogNode, CatalogPath, Cell, ChildrenPage, ChildrenQuery, CostEstimate,
-    DriverError, ProgressHandle, RelationName, ResultCursor, RoleDescription, TableConstraints,
-    TableDescription, TableName, TransactionStatus,
+    CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, Cell, ChildrenPage,
+    ChildrenQuery, CostEstimate, DriverError, ProgressHandle, RelationName, ResultCursor,
+    RoleDescription, TableConstraints, TableDescription, TableName, TransactionStatus,
 };
 
 /// What a server reported about itself when the connection was opened.
@@ -79,6 +79,21 @@ pub trait Connection: Send {
         query: &ChildrenQuery,
     ) -> Result<ChildrenPage, DriverError> {
         Ok(ChildrenPage::whole(self.children(path).await?, query))
+    }
+
+    /// Objects anywhere in the connected database whose name contains the search's text,
+    /// ignoring case, found on the server without loading the levels they are in (C0g), up
+    /// to the search's limit. `None`, the default, where the driver can't search: the explorer
+    /// then filters the levels it has loaded.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError::Connection`] if the catalog query fails.
+    async fn search_catalog(
+        &mut self,
+        _search: &CatalogSearch,
+    ) -> Result<Option<CatalogMatches>, DriverError> {
+        Ok(None)
     }
 
     /// The source of the object at `path` (a `CREATE VIEW`, function body, index definition,

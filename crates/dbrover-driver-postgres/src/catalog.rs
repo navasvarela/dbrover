@@ -5,8 +5,8 @@
 //! confusing in a browsing tool. See `docs/features/connection-explorer.md`.
 
 use dbrover_core::{
-    CatalogNode, CatalogPath, ChildrenPage, ChildrenQuery, DriverError, FolderKind, NodeKind,
-    PageToken, PathSegment, Quoting, like_contains,
+    CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, ChildrenPage, ChildrenQuery,
+    DriverError, FolderKind, NodeKind, PageToken, PathSegment, Quoting, like_contains,
 };
 use tokio_postgres::types::ToSql;
 use tokio_postgres::{Client, Row};
@@ -232,6 +232,53 @@ pub(crate) async fn children_page(
         return relations.page(client, path, schema, query).await;
     }
     Ok(ChildrenPage::whole(children(client, path).await?, query))
+}
+
+/// The tables, views, materialized views and sequences of every schema of the connected
+/// database whose names contain the search's text (C0g), each with the path the explorer
+/// lists it under, sorted by name.
+pub(crate) async fn search(
+    client: &Client,
+    search: &CatalogSearch,
+) -> Result<CatalogMatches, DriverError> {
+    let sql = "SELECT current_database(), n.nspname, c.relname, c.relkind::text FROM pg_class c \
+               JOIN pg_namespace n ON n.oid = c.relnamespace \
+               WHERE c.relkind::text = ANY($1) AND c.relname::text ILIKE $2 \
+               ORDER BY c.relname::text COLLATE \"C\", n.nspname::text COLLATE \"C\" LIMIT $3";
+    let relkinds = ["r", "p", "v", "m", "S"];
+    let pattern = like_contains(&search.text);
+    let read = i64::try_from(search.limit.saturating_add(1)).unwrap_or(i64::MAX);
+    let rows = query(client, sql, &[&&relkinds[..], &pattern, &read]).await?;
+    let nodes = rows
+        .iter()
+        .map(|row| {
+            let (database, schema, name) = (text(row, 0)?, text(row, 1)?, text(row, 2)?);
+            let (kind, folder) = match text(row, 3)?.as_str() {
+                "v" => (NodeKind::View, FolderKind::Views),
+                "m" => (NodeKind::MaterializedView, FolderKind::MaterializedViews),
+                "S" => (NodeKind::Sequence, FolderKind::Sequences),
+                _ => (NodeKind::Table, FolderKind::Tables),
+            };
+            let system = is_system_schema(&schema);
+            let folder_path = CatalogPath::root()
+                .child(NodeKind::Database, database)
+                .child(NodeKind::Schema, schema.clone())
+                .child(NodeKind::Folder(folder), folder.label());
+            let has_definition = matches!(kind, NodeKind::View | NodeKind::MaterializedView);
+            Ok(CatalogNode {
+                detail: Some(schema),
+                system,
+                ..node(
+                    &folder_path,
+                    kind,
+                    name,
+                    relation_folder(kind).is_some(),
+                    has_definition,
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, DriverError>>()?;
+    Ok(CatalogMatches::cut(nodes, search.limit))
 }
 
 async fn schema_objects(

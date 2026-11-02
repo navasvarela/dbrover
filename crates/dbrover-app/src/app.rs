@@ -1413,6 +1413,10 @@ impl DbRoverApp {
                     .into_iter()
                     .map(|(path, query)| Command::LoadChildren { id, path, query }),
             );
+            // Only on an open connection: typing in the filter never connects anything.
+            let connected = matches!(entry.session, dbrover_engine::SessionState::Connected(_));
+            let search = entry.catalog.search_for(filter.filter(|_| connected));
+            requests.extend(search.map(|search| Command::SearchCatalog { id, search }));
         }
         for request in requests {
             self.send(request);
@@ -3481,7 +3485,7 @@ mod tests {
             egui_kittest::kittest::By::new().predicate(move |node| {
                 node.role() == Role::TextInput
                     && if old.is_empty() {
-                        node.placeholder() == Some("Filter loaded nodes")
+                        node.placeholder() == Some("Filter, or search the server")
                     } else {
                         node.value().as_deref() == Some(old.as_str())
                     }
@@ -3495,8 +3499,9 @@ mod tests {
         if !new.is_empty() {
             harness
                 .get(
-                    egui_kittest::kittest::By::new()
-                        .predicate(|node| node.placeholder() == Some("Filter loaded nodes")),
+                    egui_kittest::kittest::By::new().predicate(|node| {
+                        node.placeholder() == Some("Filter, or search the server")
+                    }),
                 )
                 .type_text(new);
         }
@@ -4162,6 +4167,36 @@ mod tests {
         harness.get_by_label("Load more…").click();
         step_until_visible(&mut harness, "Expand t_1100");
         assert!(harness.query_by_label("Load more…").is_none());
+    }
+
+    /// C0g: a table in a schema the explorer never expanded is found by the server's search
+    /// from the filter box, under **Found on the server**, and opened from there.
+    #[test]
+    fn finds_a_table_never_loaded_on_the_server_and_opens_it() {
+        let dir = tempfile::tempdir().unwrap();
+        save_shop(
+            dir.path(),
+            "CREATE TABLE customers (id INTEGER); CREATE TABLE orders (id INTEGER); \
+             INSERT INTO orders VALUES (41), (42);",
+        );
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "Expand shop");
+        harness.get_by_label("Expand shop").click();
+        step_until_visible(&mut harness, "Expand main");
+        assert!(
+            harness.query_by_label("orders").is_none(),
+            "main isn't expanded"
+        );
+
+        replace_filter(&mut harness, "", "ORD");
+        step_until_visible(&mut harness, "Found on the server");
+        assert!(harness.query_by_label("customers").is_none());
+        harness.get_by_label("orders").click_secondary();
+        harness.run();
+        harness.get_by_label("Open data").click();
+        step_until_visible(&mut harness, "2 rows");
+        step_until_runs_finish(&mut harness);
     }
 
     /// Expands the `shop` data source down to its tables folder, and waits until `table` shows.

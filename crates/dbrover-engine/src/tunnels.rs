@@ -7,10 +7,10 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use async_trait::async_trait;
 use dbrover_core::{
-    CancelHandle, CatalogNode, CatalogPath, Cell, ChildrenPage, ChildrenQuery, Connection,
-    CostEstimate, DataSourceId, DriverError, ProgressHandle, Rejection, RelationName, ResultCursor,
-    RoleDescription, ServerInfo, SshConfig, TableConstraints, TableDescription, TableName,
-    TransactionStatus,
+    CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, Cell, ChildrenPage,
+    ChildrenQuery, Connection, CostEstimate, DataSourceId, DriverError, ProgressHandle, Rejection,
+    RelationName, ResultCursor, RoleDescription, ServerInfo, SshConfig, TableConstraints,
+    TableDescription, TableName, TransactionStatus,
 };
 use dbrover_ssh::{SshError, Tunnel, TunnelRequest};
 
@@ -116,6 +116,13 @@ impl Connection for Tunnelled {
         query: &ChildrenQuery,
     ) -> Result<ChildrenPage, DriverError> {
         self.connection.children_page(path, query).await
+    }
+
+    async fn search_catalog(
+        &mut self,
+        search: &CatalogSearch,
+    ) -> Result<Option<CatalogMatches>, DriverError> {
+        self.connection.search_catalog(search).await
     }
 
     async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError> {

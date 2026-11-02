@@ -160,6 +160,11 @@ impl AppState {
                     catalog.loaded(path, query, result);
                 }
             }
+            Event::CatalogSearched { id, search, result } => {
+                if let Some(catalog) = self.catalog_mut(*id) {
+                    catalog.searched(search, result);
+                }
+            }
             // The dialogs, the definition window and the consoles track these themselves.
             Event::DataSourceSaveFailed { .. }
             | Event::ProjectSaveFailed { .. }

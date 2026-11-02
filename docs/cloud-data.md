@@ -208,18 +208,21 @@ a CLI) and with tokens the tests make up. None reads the machine's own sign-in.
   pages through three pages and cancels by id, and a failed job's message reaches the cursor;
   on the ClickHouse test server, a slow `SELECT` reports rows read before it ends, and cancel
   still stops it.
-- **C0g — Searching a catalog without loading it:** `Connection::search_catalog` finds objects
-  by name anywhere in the connected database, on the server, a hundred at most; drivers that
-  can't return `None`, and the explorer filters what it has loaded, as before. PostgreSQL
-  searches every schema of its database (tables, views, materialized views, sequences and
-  functions), and SQLite every attached schema, so the explorer is tested without a server.
-  While the filter box has text, a data source that searches shows **Found on the server**
-  under its row: the matches not already shown, each with its path (`sales › public ›
-  orders`), acting as the node itself (Open data, Show definition, its menu). Levels still load
-  only when expanded.
+- **C0g — Searching a catalog without loading it** (built): `Connection::search_catalog` finds
+  objects by name anywhere in the connected database, on the server, a hundred at most; drivers
+  that can't return `None`, and the explorer filters what it has loaded, as before. PostgreSQL
+  searches the tables, views, materialized views and sequences of every schema of its database
+  (functions are left out: their names carry their arguments), and SQLite the tables and views
+  of every attached schema, so the explorer is tested without a server. Once the filter box's
+  typing pauses, each connected data source that searches shows **Found on the server** under
+  its row: the matches the tree doesn't already show, each with its schema beside it, acting as
+  the node itself (Open data, Show definition, its menu, expanding it). Typing never connects a
+  data source, and levels still load only when expanded. The filter box's hint becomes **Filter,
+  or search the server**.
   **Exit:** on SQLite in a kittest, a table in a schema never expanded is found from the filter
-  box and opened; on the PostgreSQL test server, a search among 2,500 tables in two schemas
-  returns the matches, capped, with the server's case-insensitive match.
+  box and opened; on the PostgreSQL test server, a search among 2,500 tables and a second schema
+  returns the matches with their paths, capped, with the server's case-insensitive match; a
+  conformance check that each match is the node its level lists.
 - **C0h — Manual and demo note:** a chapter, **Cloud sign-in and costs**, on signing in with a
   cloud account, the cost guard, the progress line and searching the explorer, and the C0 demo
   note in the roadmap.

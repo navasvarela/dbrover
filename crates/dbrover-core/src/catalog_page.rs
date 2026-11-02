@@ -90,6 +90,45 @@ impl ChildrenPage {
     }
 }
 
+/// How many matches a search of a whole catalog returns at most: enough to find what was
+/// meant, few enough to list at once. Typing more narrows a search that found more.
+pub const CATALOG_SEARCH_LIMIT: usize = 100;
+
+/// A search of a whole catalog by name, on the server, without loading its levels (C0g,
+/// `docs/cloud-data.md`): every object whose name contains `text`, ignoring case.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogSearch {
+    pub text: String,
+    pub limit: usize,
+}
+
+impl CatalogSearch {
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            limit: CATALOG_SEARCH_LIMIT,
+        }
+    }
+}
+
+/// What a search found, each a node with its whole path, as [`Connection::children`]
+/// (crate::Connection::children) would have listed it under its parent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogMatches {
+    pub nodes: Vec<CatalogNode>,
+    /// There were more than the search's limit.
+    pub more: bool,
+}
+
+impl CatalogMatches {
+    /// `nodes`, read with one more than `limit` asked for, cut at the limit.
+    pub fn cut(mut nodes: Vec<CatalogNode>, limit: usize) -> Self {
+        let more = nodes.len() > limit;
+        nodes.truncate(limit);
+        Self { nodes, more }
+    }
+}
+
 /// The SQL `LIKE` pattern for "contains `filter`", with `\` as its escape character, so that
 /// `%` and `_` typed in the filter match themselves.
 pub fn like_contains(filter: &str) -> String {

@@ -253,6 +253,9 @@ impl Engine {
             Command::LoadChildren { id, path, query } => {
                 self.request(id, SessionRequest::Children(path, query));
             }
+            Command::SearchCatalog { id, search } => {
+                self.request(id, SessionRequest::Search(search));
+            }
             Command::LoadDefinition { id, path } => {
                 self.request(id, SessionRequest::Definition(path));
             }

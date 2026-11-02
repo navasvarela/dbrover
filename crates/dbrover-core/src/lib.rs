@@ -26,7 +26,10 @@ mod table;
 pub mod conformance;
 
 pub use catalog::{CatalogNode, CatalogPath, FolderKind, KeyType, NodeKind, PathSegment};
-pub use catalog_page::{CATALOG_PAGE_SIZE, ChildrenPage, ChildrenQuery, PageToken, like_contains};
+pub use catalog_page::{
+    CATALOG_PAGE_SIZE, CATALOG_SEARCH_LIMIT, CatalogMatches, CatalogSearch, ChildrenPage,
+    ChildrenQuery, PageToken, like_contains,
+};
 pub use cloud_sign_in::{AzureTool, CloudProvider, CloudSignIn};
 pub use command_template::{CommandTemplate, DataSourceFields};
 pub use connection::{Connection, Rejection, RejectionKind, ServerInfo};

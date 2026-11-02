@@ -6,8 +6,9 @@
 use std::time::{Duration, Instant};
 
 use crate::{
-    CatalogNode, CatalogPath, ChildrenQuery, Connection, DriverError, Identifier, NodeKind,
-    RejectionKind, RelationName, ResultCursor, TransactionStatus, describe_error,
+    CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, ChildrenQuery, Connection,
+    DriverError, Identifier, NodeKind, RejectionKind, RelationName, ResultCursor,
+    TransactionStatus, describe_error,
 };
 
 /// A fresh connection reports its server, answers pings, and closes cleanly.
@@ -19,6 +20,49 @@ pub async fn check_lifecycle(mut connection: Box<dyn Connection>) {
     connection.ping().await.expect("first ping");
     connection.ping().await.expect("second ping");
     connection.close().await.expect("close");
+}
+
+/// A search of the whole catalog for `text` (C0g) finds only nodes whose label contains it,
+/// ignoring case, at most its limit, each exactly as the level it belongs to lists it (its
+/// detail aside, which a match uses to say where it is). Returns the matches.
+pub async fn check_catalog_search(connection: &mut dyn Connection, text: &str) -> CatalogMatches {
+    let search = CatalogSearch::new(text);
+    let matches = connection
+        .search_catalog(&search)
+        .await
+        .expect("a search")
+        .expect("the driver searches");
+    assert!(matches.nodes.len() <= search.limit, "over the limit");
+    let needle = text.to_lowercase();
+    for found in &matches.nodes {
+        assert!(
+            found.label.to_lowercase().contains(&needle),
+            "{} doesn't contain {text}",
+            found.label
+        );
+        let parent = found.path.parent().expect("a match has a parent");
+        let level = connection
+            .children(&parent)
+            .await
+            .expect("the match's level");
+        let listed = level
+            .iter()
+            .find(|node| node.path == found.path)
+            .unwrap_or_else(|| panic!("{} isn't listed under {parent}", found.path));
+        assert_eq!(
+            CatalogNode {
+                detail: None,
+                ..found.clone()
+            },
+            CatalogNode {
+                detail: None,
+                ..listed.clone()
+            },
+            "{} differs from its level's node",
+            found.path
+        );
+    }
+    matches
 }
 
 /// Paging through the level at `path`, `limit` nodes at a time, gives exactly what
