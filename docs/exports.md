@@ -1,6 +1,6 @@
 # Exports and your own formats
 
-Status: **W7 built** (2026-10-30); W8 planned. This is the design of W7 and W8 in
+Status: **W7 built** (2026-10-30); W8 planned, its details confirmed on 2026-11-01. This is the design of W7 and W8 in
 [A well-rounded app](well-rounded.md#w7--exports); the [roadmap](roadmap.md#well-rounded-track)
 tracks them.
 
@@ -262,9 +262,18 @@ MCP crate with the same `TextFormat`s.
 
 The [hackability plan](hackability.md) puts export formats among the extension points, opened
 by command actions in H2 and by plugins in H3. W8 gives them a file of their own, `exports.toml`,
-next to `actions.toml` in the config folder, read like it (H1a's reader: at start-up and on
-**Reload**, each entry checked on its own, problems listed in the status bar and in **View ›
-Exports…**). Each entry has an `id`, a `name` and an `extension`, and is one of three kinds:
+next to `actions.toml` in the settings folder, read like it (H1a's reader: at start-up and on
+**Reload**, each entry checked on its own, problems listed in the status bar). **View ›
+Exports…** opens an **Exports** page in the Settings tab, as **View › Custom actions…** opens
+its own: every entry with its kind and what it writes, the file's problems, **Reload** and
+**Create exports.toml**, which writes a commented example. Confirmed on
+2026-11-01, once W7 had shipped; what changed since the first draft is listed
+[below](#what-changed-from-the-first-draft).
+
+Every entry has an `id` (lowercase letters, digits, `-` and `_`, as an action's), a `name` and
+an optional `description`, and is one of three kinds, told apart by the key that only that kind
+has: `format` for a preset, `row` for a template, `command` for a program. An entry with two of
+them, or none, is a problem.
 
 ```toml
 # A preset: a built-in format with its options.
@@ -281,8 +290,7 @@ id = "confluence"
 name = "Confluence table"
 extension = "txt"
 header = "||{% for column in columns %} {{ column.name }} ||{% endfor %}\n"
-row = "|{% for value in row %} {{ value | default('') }} |{% endfor %}\n"
-footer = ""
+row = "|{% for value in row %} {{ value }} |{% endfor %}\n"
 
 # A program: the rows as JSON Lines on stdin, the file from its stdout.
 [[export]]
@@ -292,27 +300,145 @@ extension = "pdf"
 command = ["/Users/me/bin/rows-to-pdf", "--title", "{table}"]
 ```
 
-They appear in the export dialog's format list and in **Copy as ›** (a program's output only
-where it is text), each with a keymap id, `export.<id>`.
+Each appears in the export dialog's format list, after the built-in formats, and in **Copy as ›**
+when it writes text: a preset of a text format, every template, and a program marked
+`text = true`. A **Copy as** entry's keymap id is `export.<id>`, unbound unless the user binds
+it; the prefix keeps a user's `csv` apart from the built-in `grid.copy-as.csv`. The same formats
+are offered wherever the dialog opens: the grid's **Export…**, **Export data…** on a table and
+**Run to file…**.
 
-- **Templates** use [MiniJinja](https://docs.rs/minijinja), Jinja's syntax, rendered a row at a
-  time so a template streams like every other format. `header` gets `columns` (name and type),
-  `data_source`, `table` (when there is one), `parameters` (the run's `:name` values) and
-  `exported_at`; `row` gets `row` (the values in order), `record` (by column name), `columns` and
-  `index`; `footer` gets `count`. Templates have no file access, no includes and a fuel limit, so
-  a runaway loop stops with a problem rather than hanging. With `escape = "html"` every value is
-  HTML-escaped unless marked safe; filters added for exports: `sql_literal`, `sql_name`, `csv`,
-  `json`. A template can also be a file in `exports/`, with the three parts as `{% block %}`s.
-- **Programs** run as H2's command actions do: no shell, a timeout, a stop, no secret in any
-  argument or variable, and trusted by their exact definition before the first run, recorded in
-  `trusted_commands.toml`. They get the rows as JSON Lines on stdin, streamed, and their stdout
-  goes to the file as it arrives (no 4 MB cap, unlike H2's viewer output), so a program can
-  export any number of rows. A non-zero exit removes the partial file and shows stderr.
-- **Where it stops:** no grouping, totals, sorting or computed columns in templates beyond what
-  Jinja's expressions do on one row, no reports made of several queries, no charts, no scheduled
-  exports. Each is SQL's job, or a program's.
+### Presets
 
-The details are confirmed when W8 starts, after W7 has shipped and the format trait has settled.
+- `format` is a built-in format's id (`csv`, `xlsx`, `tsv`, `markdown`, `sql-insert`, `json`,
+  `jsonl`, `parquet`, `html`, `sql-update`), and the format's options sit beside it under the
+  names the dialog saves them by in `app.ron`: `separator`, `quoting`, `header`, `null_text`,
+  `line_ending` and `bom` for CSV; `sheet_name`, `freeze_header` and `autofilter` for Excel;
+  `rows_per_statement` for `INSERT`; and so on. An option the format doesn't have is a problem
+  naming the ones it does, so a typo never silently writes the default.
+- `extension` is the format's own unless given.
+- Choosing a preset in the dialog shows its options as set, without editing them: the file is
+  where they change, so what a team shares stays the one definition. **CSV for Excel** stays
+  built in.
+- `sql-insert` and `sql-update` presets still take their table from the rows, as the built-in
+  formats do, and are greyed out where those are.
+
+### Templates
+
+- **Parts:** `row` (required), `header` and `footer` (both empty unless given), in
+  [MiniJinja](https://docs.rs/minijinja)'s Jinja syntax. Each part is rendered on its own,
+  `header` once, `row` once a row as it arrives, `footer` once, so a template streams like every
+  other format and a footer sees how many rows there were, never the rows. `extension` is
+  required. Long templates fit in TOML's multi-line strings (`'''…'''`).
+- **What every part sees:**
+  - `columns`: each column's `name`, its `type` as the database names it (or none) and its
+    `kind` (`integer`, `decimal`, `float`, `boolean`, `date`, `timestamp`,
+    `timestamp_with_zone`, `text`, `undeclared`), the same list every format gets;
+  - `data_source` (its name), `table` (the table the rows came from, when there is one),
+    `parameters` (the run's `:name` values, by name) and `exported_at` (an ISO timestamp).
+- **What each part adds:** `row` gets `row` (the values in column order), `record` (the values by
+  column name, a repeated name suffixed `_2` as JSON's keys are) and `index` (counting from 1);
+  `footer` gets `count`.
+- **Values are text or `none`** (ADR 0004). `none` is written as nothing, where MiniJinja would
+  write `none`; `{{ value if value is not none else "NULL" }}` writes something else.
+- **Filters** added for exports: `sql_literal` and `sql_name` (quoted for the data source's
+  dialect; a problem on rows of a language without one), `csv` (a field quoted as RFC 4180 asks)
+  and `json` (a JSON string, or `null`). MiniJinja's own filters and tests are there too.
+- **Escaping:** `escape = "html"` HTML-escapes every value unless marked `safe`; the default,
+  `"none"`, writes values as they are.
+- **Mistakes show early:** each part is compiled when the file is read, so a syntax error is a
+  problem in the status bar naming the entry, the part and the line. A variable that doesn't
+  exist (`{{ recrod.id }}`) is an error rather than an empty string, shown in the dialog's
+  preview before anything is written.
+- **Limits:** templates have no file access (no loader, so `include`, `extends` and `import`
+  find nothing outside the entry), and each render of a part has a fuel limit
+  (`FUEL_PER_RENDER`, MiniJinja counting instructions) and an output limit
+  (`MAX_BYTES_PER_RENDER`), so an endless loop or a runaway string stops the export with a
+  problem naming the row, rather than hanging DbRover or filling the disk. Both are named
+  constants, the same for every template, and recorded with their reasons in the code.
+- **Behind a small interface:** `dbrover-export` defines what a template is given (the context
+  above, as DbRover's own types) and a `TemplateEngine` trait that compiles the three parts and
+  renders one part into any writer. MiniJinja is its one implementation, in one module; nothing
+  else names MiniJinja's types.
+
+### Programs
+
+- **Run as H2's command actions are:** no shell, `{table}`, `{schema}`, `{database}`, `{host}`,
+  `{port}`, `{user}` and `{file}` placeholders in the arguments, the context in `DBROVER_*`
+  variables (with `DBROVER_EXPORT` the entry's id and `DBROVER_FORMAT=jsonl`), no secret in any
+  argument or variable, a stop, and trust by the exact definition, asked for in full before the
+  first run and recorded in `trusted_commands.toml` as `export = "<id>"` beside the actions and
+  password commands. The engine checks the trust again before it starts anything.
+- **Input:** the rows as JSON Lines, exactly as the JSON Lines format writes them (an object a
+  line, keys in column order, values strings or `null`), streamed a page at a time.
+- **Output:** stdout goes straight into the export's `.partial` file, with no cap, so a program
+  can export any number of rows; stderr's first 64 KB are kept for the error. A non-zero exit
+  removes the partial file and shows the exit status and stderr.
+- **Timeout:** `timeout` (60 s by default, as an action's) is how long the program may go without
+  taking more input, and how long it has to finish once its input has ended. A long export of a
+  program that keeps reading never times out; **Cancel** stops it at any time.
+- **Text:** `text = true` says the program writes text, which adds it to **Copy as ›**. Copying
+  runs it on the selected cells with H2's limits (4 MB of output kept, the timeout as a whole)
+  and puts what it wrote on the clipboard.
+- **Tests start no processes in the app:** the engine runs programs through H2's
+  `ProgramRunner`, which gains a method for exports, and the app's tests give it the scripted
+  runner. The engine's tests run H2's `dbrover-test-program`, which gains a mode that copies its
+  stdin to stdout.
+
+### Where it stops
+
+- No grouping, totals, sorting or computed columns beyond what Jinja's expressions do on one row,
+  no reports made of several queries, no charts, no scheduled exports. Each is SQL's job, or a
+  program's.
+- MCP keeps the built-in formats: a template would be safe to offer there, but a program can't
+  ask to be trusted, and nothing yet asks for either. See Later.
+- A data source export carries no exports, as it carries no actions.
+
+### What changed from the first draft
+
+- **Template files in `exports/` are left for later.** Multi-line TOML strings hold long
+  templates, and one file keeps the reader, its problems and **Reload** as they are for the other
+  customisation files.
+- **`none` is written as nothing**, and the first draft's `default('')` isn't needed: MiniJinja's
+  `default` replaces only undefined values, never `none`.
+- **Undefined variables are errors**, so a typo shows in the preview instead of writing blanks.
+- **Every part sees the shared context**, the footer included, so a closing line can name the
+  table; `index` counts from 1.
+- **The program timeout is about progress**, not the whole run, so a ten-million-row export isn't
+  cut off, and **`text = true`** decides **Copy as**, since an extension alone can't say whether
+  a program writes text.
+- **The list is a Settings page, not a window,** as custom actions' became in W14.
+- **Keymap ids are `export.<id>`, and only for Copy as**: the dialog needs no binding of its
+  own, since it opens on the format used last.
+
+### With reporting in mind
+
+A later exploration may look at reports: several data sources, a language over query results, an
+export template that sets the output's columns and their names (mostly for CSV and Excel),
+metrics such as duration and size, and guardrails on memory and CPU. W8 builds none of that, but
+keeps what it would build on:
+
+- **Columns are declared, not guessed:** every format, built in or not, gets the same list of
+  `ExportColumn`s (name, declared type, kind) and rows of text. A template that sets the output's
+  columns would be a step that maps a result's columns to that list before any format sees it,
+  so presets, templates, programs, `.xlsx` and Parquet would all follow it unchanged. For that
+  reason W8's presets are only a format and its options; naming or choosing columns belongs to
+  that later step, not to each preset.
+- **The template engine is replaceable:** templates are given DbRover's own context through
+  `TemplateEngine`, so a different language over the same context would be a second
+  implementation, not a change to every caller.
+- **Everything streams:** a template part sees one row at a time and the footer only the count.
+  Totals in a report would be values DbRover computes as rows pass and hands to the footer, which
+  keeps that contract; W8 adds none.
+- **Limits are explicit:** fuel and output size per render are named constants passed to the
+  engine as one `TemplateLimits` value, which a report could later set for itself. Memory beyond
+  one render is bounded by streaming; CPU by fuel and by **Cancel**.
+- **Metrics:** `ExportWriter` already counts rows; bytes written and the duration would be two
+  more fields in `ExportFinished`, left out of W8 as nothing shows them yet.
+
+What I would design differently with that direction in mind, rather than as the first draft did:
+the context as DbRover's types behind `TemplateEngine` instead of MiniJinja values built at each
+call; limits as one value rather than constants read inside the template module; and no column
+options in presets, so a later column mapping has one place to live.
 
 ## Layers
 
@@ -348,15 +474,24 @@ Each layer is one pull request in a stack, and is useful and tested on its own.
 
 **W8 — Your own formats**
 
-- **W8a — Plan:** confirm this section's details.
-- **W8b — Reading `exports.toml`:** the format and its checks in `dbrover-export` and the store,
-  **View › Exports…**, **Create exports.toml**; presets in the dialog and **Copy as ›**.
-- **W8c — Templates:** MiniJinja, the context, the filters, the fuel limit; tests of each
-  problem message and of templates with hostile values.
-- **W8d — Programs:** JSON Lines to a trusted program, its stdout to the file; engine tests with
-  the test program H2 built, UI tests with its scripted runner.
-- **W8e — Manual:** the chapter on `exports.toml`, with a preset, a template and a program, and
-  the demo note.
+- **W8a — Plan:** this section confirmed, the roadmap entry in layers.
+- **W8b — Reading `exports.toml`, and presets:** `CustomFileKind::Exports` and its checks in the
+  store, preset options checked in `dbrover-export`; the **Exports** settings page with **Reload**
+  and **Create exports.toml**, **View › Exports…**, the status bar's problems; presets in the
+  export dialog (remembered by id in `app.ron`) and in **Copy as ›**, with `export.<id>` in the
+  keymap. Store tests of every problem message; kittest tests of the page, the dialog and the
+  menu on SQLite.
+- **W8c — Templates:** `minijinja`, `TemplateEngine`, the context, the filters, escaping, the
+  fuel and output limits. Golden tests of the plan's Confluence table and an XML template, tests
+  of each problem message, of hostile values (quotes, `<`, `{{`, line breaks, emoji, `NULL`) and
+  of an endless loop stopping; the paged-equals-whole test W7 has; kittest tests of a template in
+  the dialog's preview and in **Copy as ›**.
+- **W8d — Programs:** trust under `export = "<id>"`, JSON Lines to the program, its stdout to the
+  partial file, the progress timeout, **Cancel**, `text = true` for **Copy as**. Engine tests with
+  H2's `dbrover-test-program` (loaded rows, every row, a failure, a stop, a program that stops
+  reading); kittest tests of the question and of copying with the scripted runner.
+- **W8e — Manual:** the chapter on `exports.toml` with a preset, a template and a program,
+  [Testing](testing.md), and the demo note.
 
 ## Decisions
 
@@ -374,6 +509,21 @@ Agreed on 2026-10-29.
 | Reformatting dates and numbers | **No.** Values are written as the database printed them. | Exact; formatting belongs in SQL. |
 | Parquet | **Through DuckDB, already in DbRover,** not the `parquet` and `arrow` crates. | No new dependency; DuckDB's writer is well tested. |
 | Rich HTML on the clipboard | **Not in W7.** | Pasting a table into Google Sheets or Word takes TSV, which they read; rich paste comes later. |
+
+Confirmed for W8 on 2026-11-01, from the first draft above, with the changes listed in
+[What changed from the first draft](#what-changed-from-the-first-draft):
+
+| Question | Decision | Consequence |
+| --- | --- | --- |
+| Telling kinds apart | **By the key only that kind has:** `format`, `row` or `command`. | No `kind` key to keep in step; two of them is a problem. |
+| Editing a preset in the dialog | **No:** its options show as set. | `exports.toml` stays the one definition a team shares. |
+| `NULL` in templates | **`none`, written as nothing.** | `{{ value }}` reads naturally; other text is one expression away. |
+| Undefined variables | **An error**, shown in the preview. | Typos never write blanks into a file. |
+| Template files in `exports/` | **Later.** | One file, one reader; multi-line strings hold long templates. |
+| Program timeout | **Time without progress,** 60 s by default. | Exports of any length; a stuck program still stops. |
+| Programs in Copy as | **Only with `text = true`.** | Nothing binary reaches the clipboard. |
+| Keymap | **`export.<id>`, copying as the format.** | User ids never collide with built-in ones. |
+| MCP | **Built-in formats only.** | A program can't ask to be trusted there. |
 
 ## Risks
 
@@ -409,7 +559,9 @@ loading them. An assistant asks MCP for rows as CSV.
 
 **W8:** I add a semicolon CSV preset, a Confluence table template and a program that makes a
 PDF to `exports.toml`, and each appears in the export dialog and where it applies in **Copy as ›**;
-a template with an infinite loop stops with a problem; the program asks once before it first runs.
+a template with an endless loop stops with a problem naming the row; a typo in a template shows
+in the preview; the program asks once before it first runs, and writes every row of a table
+larger than a page.
 
 ## Later
 
@@ -420,3 +572,7 @@ a template with an infinite loop stops with a problem; the program asks once bef
 - Encodings other than UTF-8, compressed output, splitting files by size.
 - Exporting the history in every format.
 - Importing `.xlsx`, JSON Lines and Parquet, the counterpart of W5e.
+- Templates in files of their own, in an `exports/` folder, with the three parts as
+  `{% block %}`s.
+- Templates as MCP formats, once someone asks; programs stay out of MCP.
+- The rows, bytes and duration of every export in `ExportFinished`, for a status line or a report.

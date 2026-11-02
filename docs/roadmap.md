@@ -1246,14 +1246,29 @@ The gaps that keep DbRover from being an everyday tool. The full plan is in
   format, `calamine` and DuckDB reading files back, engine tests on every server of the compose
   file and kittest tests on SQLite. Still to try by eye: opening the files in Excel itself, and
   watching DbRover's memory while it writes a ten-million-row table to Parquet.
-- **W8 — Your own export formats:** planned, after W7. `exports.toml`, beside `actions.toml` and
-  read like it, defines named presets of the built-in formats, templates (a header, a row and a
-  footer in MiniJinja, streamed, with no file access and a fuel limit) and programs that get the
-  rows as JSON Lines on stdin and write the file on stdout, trusted as H2's commands are. They
-  appear in the export dialog and **Copy as ›**. No grouping, totals or charts: those are SQL's
-  job, or a program's. Layers: **W8a** plan, **W8b** reading the file and presets, **W8c**
-  templates, **W8d** programs, **W8e** manual. Designed in
-  [Exports and your own formats](exports.md#w8--your-own-formats).
+- **W8 — Your own export formats:** planned; details confirmed on 2026-11-01 in
+  [Exports and your own formats](exports.md#w8--your-own-formats). `exports.toml`, beside
+  `actions.toml` and read like it, defines formats of the user's own, which appear in the export
+  dialog and **Copy as ›**. In layers, one PR each:
+  - **W8a — Plan:** this entry and the design's W8 section.
+  - **W8b — Reading the file, and presets:** named presets of the built-in formats with their
+    options, checked entry by entry; an **Exports** page in Settings (**View › Exports…**) with
+    **Reload** and **Create exports.toml**; `export.<id>` in the keymap.
+  - **W8c — Templates:** a header, a row and a footer in MiniJinja, behind a small
+    `TemplateEngine` interface, rendered a row at a time, with no file access and fuel and output
+    limits on every render.
+  - **W8d — Programs:** the rows as JSON Lines on stdin, stdout straight into the file, trusted
+    as H2's commands are, stopped when they make no progress or on **Cancel**.
+  - **W8e — Manual:** a chapter on `exports.toml`, and the demo note.
+
+  No grouping, totals or charts: those are SQL's job, or a program's. The design also notes what
+  W8 keeps for a later look at reports: declared columns, a replaceable template engine,
+  streaming and explicit limits.
+
+  **Exit:** a semicolon CSV preset, a Confluence table template and a PDF program each appear in
+  the export dialog and where they apply in **Copy as ›**; an endless template loop stops with a
+  problem naming the row; the program asks once before it first runs and writes every row of a
+  table larger than a page.
 
 Also planned, from the gaps in [the comparison](comparison.md#gaps-worth-closing-soon), in
 this order. Not scheduled yet; each is sized there (**S** a pull request or two, **M** a stack of
