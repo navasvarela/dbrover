@@ -3,9 +3,11 @@
 //!
 //! AWS came first, for DynamoDB (`docs/nosql.md`, N5), through AWS's own SDK. Google Cloud
 //! signs in with Application Default Credentials over a small HTTPS client of DbRover's own,
-//! and hands out [`AccessToken`]s that a [`TokenCache`] keeps until they are about to expire.
+//! and Microsoft Entra ID through the Azure CLIs' sign-in. Both hand out [`AccessToken`]s,
+//! which a [`TokenCache`] keeps until they are about to expire.
 
 pub mod aws;
+pub mod entra;
 pub mod google;
 mod http;
 pub mod token;
