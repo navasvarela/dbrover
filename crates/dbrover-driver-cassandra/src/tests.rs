@@ -115,6 +115,7 @@ fn parse_url(name: &'static str, url: &str) -> TestServer {
                 tls,
                 ssh: None,
                 password_command: None,
+                cloud_sign_in: None,
             },
             local_datacenter: String::new(),
             statement_timeout: None,

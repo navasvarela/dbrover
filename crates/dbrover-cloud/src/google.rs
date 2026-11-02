@@ -401,13 +401,14 @@ mod tests {
 
     #[tokio::test]
     async fn a_users_refresh_token_is_exchanged_for_an_access_token() {
-        let (endpoint, received) = stand_in::token_endpoint(200, TOKEN_ANSWER).await;
+        let mut endpoint = stand_in::token_endpoint(200, TOKEN_ANSWER).await.unwrap();
         let before = SystemTime::now();
-        let token = parse(&user_file(&endpoint)).unwrap().token().await.unwrap();
+        let credentials = parse(&user_file(&endpoint.address)).unwrap();
+        let token = credentials.token().await.unwrap();
         assert_eq!(token.secret.expose(), "ya29.token");
         let lasts = token.expires_at.duration_since(before).unwrap();
         assert!((3590..=3600).contains(&lasts.as_secs()), "{lasts:?}");
-        let received = received.await.unwrap();
+        let received = endpoint.received.recv().await.unwrap();
         assert_eq!(received.field("grant_type"), Some("refresh_token"));
         assert_eq!(received.field("refresh_token"), Some("refresh-token"));
         assert_eq!(received.field("client_secret"), Some("client-secret"));
@@ -419,12 +420,12 @@ mod tests {
 
     #[tokio::test]
     async fn a_service_account_signs_its_request_with_its_key() {
-        let (endpoint, received) = stand_in::token_endpoint(200, TOKEN_ANSWER).await;
-        let credentials = parse(&service_account_file(&endpoint)).unwrap();
+        let mut endpoint = stand_in::token_endpoint(200, TOKEN_ANSWER).await.unwrap();
+        let credentials = parse(&service_account_file(&endpoint.address)).unwrap();
         let token = credentials.token().await.unwrap();
         assert_eq!(token.secret.expose(), "ya29.token");
 
-        let received = received.await.unwrap();
+        let received = endpoint.received.recv().await.unwrap();
         assert_eq!(
             received.field("grant_type"),
             Some("urn:ietf:params:oauth:grant-type:jwt-bearer")
@@ -440,7 +441,7 @@ mod tests {
         assert_eq!(header["kid"], "key-1");
         let claims = decode(parts[1]);
         assert_eq!(claims["iss"], "reader@project.iam.gserviceaccount.com");
-        assert_eq!(claims["aud"], endpoint.as_str());
+        assert_eq!(claims["aud"], endpoint.address.as_str());
         assert_eq!(claims["scope"], SCOPES);
         let lifetime = claims["exp"].as_u64().unwrap() - claims["iat"].as_u64().unwrap();
         assert_eq!(lifetime, 3600);
@@ -459,12 +460,13 @@ mod tests {
 
     #[tokio::test]
     async fn an_expired_user_sign_in_says_to_sign_in_again() {
-        let (endpoint, _received) = stand_in::token_endpoint(
+        let endpoint = stand_in::token_endpoint(
             400,
             r#"{"error":"invalid_grant","error_description":"Token has been expired or revoked."}"#,
         )
-        .await;
-        let error = parse(&user_file(&endpoint))
+        .await
+        .unwrap();
+        let error = parse(&user_file(&endpoint.address))
             .unwrap()
             .token()
             .await

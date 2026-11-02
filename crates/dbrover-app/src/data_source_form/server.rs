@@ -1,10 +1,13 @@
 //! The server section of the data source form: host, port, database, user, password (or the
-//! command that prints it), TLS and SSH, shared by every network engine. An engine embeds [`ServerFields`] in its own fields and
+//! command that prints it, or the cloud account that signs in), TLS and SSH, shared by every
+//! network engine. An engine embeds [`ServerFields`] in its own fields and
 //! adds only what is particular to it.
 
 use std::path::PathBuf;
 
-use dbrover_core::{PasswordCommand, ServerConfig, TlsMode, has_placeholder};
+use dbrover_core::{
+    AzureTool, CloudProvider, CloudSignIn, PasswordCommand, ServerConfig, TlsMode, has_placeholder,
+};
 
 use super::{FormError, SshFields, parse_port, required};
 
@@ -20,6 +23,9 @@ pub struct ServerDefaults {
     pub user: &'static str,
     pub user_field: UserField,
     pub tls: TlsOffer,
+    /// The cloud accounts the engine's managed services sign in with, offered in place of a
+    /// password; empty hides the choice.
+    pub cloud: &'static [CloudProvider],
 }
 
 /// What a server's Database field names.
@@ -125,6 +131,10 @@ pub struct ServerFields {
     /// The program, then each argument, one per line. Kept while the keychain is chosen, so
     /// switching back doesn't lose it.
     pub password_command: String,
+    /// The cloud account that signs in instead of a password, when one is chosen: it wins over
+    /// the password and its command, which are kept for switching back.
+    pub cloud_provider: Option<CloudProvider>,
+    pub cloud: CloudFields,
     pub tls: TlsChoice,
     /// Only used by [`TlsChoice::VerifyFull`], but kept while another mode is chosen so
     /// switching back doesn't lose it. Empty trusts the public web authorities.
@@ -143,6 +153,8 @@ impl ServerFields {
             password: String::new(),
             password_from_command: false,
             password_command: String::new(),
+            cloud_provider: None,
+            cloud: CloudFields::default(),
             tls: defaults.tls.initial_choice(),
             ca_file: String::new(),
             ssh: SshFields::default(),
@@ -192,6 +204,12 @@ impl ServerFields {
                 .as_ref()
                 .map(|command| command.source().join("\n"))
                 .unwrap_or_default(),
+            cloud_provider: config.cloud_sign_in.as_ref().map(CloudSignIn::provider),
+            cloud: config
+                .cloud_sign_in
+                .as_ref()
+                .map(CloudFields::from_sign_in)
+                .unwrap_or_default(),
             tls: TlsChoice::from(&config.tls),
             ca_file,
             ssh: SshFields::from_config(config.ssh.as_ref()),
@@ -207,13 +225,21 @@ impl ServerFields {
             user: self.defaults.user_field.parse(&self.user)?,
             tls: self.tls_mode(),
             ssh: self.ssh.to_config()?,
-            password_command: self.parsed_password_command()?,
+            password_command: match self.cloud_provider {
+                Some(_) => None,
+                None => self.parsed_password_command()?,
+            },
+            cloud_sign_in: self
+                .cloud_provider
+                .map(|provider| self.cloud.sign_in(provider)),
         })
     }
 
-    /// Whether the password typed in the form counts: not when a command prints it.
+    /// Whether the password typed in the form counts: not when a command prints it or a cloud
+    /// account signs in.
     pub fn typed_password(&self) -> Option<&str> {
-        (!self.password_from_command && !self.password.is_empty()).then_some(self.password.as_str())
+        let typed = !self.password_from_command && self.cloud_provider.is_none();
+        (typed && !self.password.is_empty()).then_some(self.password.as_str())
     }
 
     /// One item per line, each trimmed, blank lines skipped: a trailing newline or a stray
@@ -298,6 +324,65 @@ impl From<&TlsMode> for TlsChoice {
     }
 }
 
+/// The settings of every cloud sign-in, as typed, kept while another is chosen so switching
+/// back doesn't lose them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CloudFields {
+    /// AWS: empty for the default chain.
+    pub profile: String,
+    /// AWS: empty for the profile's.
+    pub region: String,
+    /// Google Cloud: empty for Application Default Credentials.
+    pub credentials_file: String,
+    /// Entra ID.
+    pub tool: AzureTool,
+    /// Entra ID: empty for the CLI's default directory.
+    pub tenant: String,
+}
+
+impl CloudFields {
+    fn from_sign_in(sign_in: &CloudSignIn) -> Self {
+        match sign_in {
+            CloudSignIn::Aws { profile, region } => Self {
+                profile: profile.clone(),
+                region: region.clone(),
+                ..Self::default()
+            },
+            CloudSignIn::Google { credentials_file } => Self {
+                credentials_file: credentials_file
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_default(),
+                ..Self::default()
+            },
+            CloudSignIn::Entra { tool, tenant } => Self {
+                tool: *tool,
+                tenant: tenant.clone(),
+                ..Self::default()
+            },
+        }
+    }
+
+    fn sign_in(&self, provider: CloudProvider) -> CloudSignIn {
+        let trimmed = |text: &str| text.trim().to_owned();
+        match provider {
+            CloudProvider::Aws => CloudSignIn::Aws {
+                profile: trimmed(&self.profile),
+                region: trimmed(&self.region),
+            },
+            CloudProvider::Google => CloudSignIn::Google {
+                credentials_file: Some(self.credentials_file.trim())
+                    .filter(|path| !path.is_empty())
+                    .map(PathBuf::from),
+            },
+            CloudProvider::Entra => CloudSignIn::Entra {
+                tool: self.tool,
+                tenant: trimmed(&self.tenant),
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use dbrover_core::Port;
@@ -312,6 +397,7 @@ mod tests {
         user: "postgres",
         user_field: UserField::Required,
         tls: TlsOffer::Negotiated,
+        cloud: &[],
     };
 
     fn fields(edit: impl FnOnce(&mut ServerFields)) -> ServerFields {
@@ -385,6 +471,7 @@ mod tests {
                 tls: TlsMode::Prefer,
                 ssh: None,
                 password_command: None,
+                cloud_sign_in: None,
             }
         );
     }
@@ -456,6 +543,7 @@ mod tests {
                 tls,
                 ssh: None,
                 password_command: None,
+                cloud_sign_in: None,
             };
 
             let fields = ServerFields::from_config(&config, DEFAULTS);
@@ -500,6 +588,55 @@ mod tests {
         });
         assert_eq!(fields.to_config().unwrap().password_command, None);
         assert_eq!(fields.typed_password(), Some("secret"));
+    }
+
+    #[test]
+    fn a_cloud_sign_in_wins_over_the_password_and_its_command() {
+        let cases = [
+            (
+                CloudProvider::Aws,
+                CloudSignIn::Aws {
+                    profile: "analytics".to_owned(),
+                    region: "eu-west-1".to_owned(),
+                },
+            ),
+            (
+                CloudProvider::Google,
+                CloudSignIn::Google {
+                    credentials_file: Some(PathBuf::from("~/keys/reader.json")),
+                },
+            ),
+            (
+                CloudProvider::Entra,
+                CloudSignIn::Entra {
+                    tool: AzureTool::AzureDeveloperCli,
+                    tenant: "contoso.onmicrosoft.com".to_owned(),
+                },
+            ),
+        ];
+        for (provider, expected) in cases {
+            let fields = fields(|f| {
+                f.password = "typed, then left".to_owned();
+                f.password_from_command = true;
+                f.password_command = "printf\ndbrover".to_owned();
+                f.cloud_provider = Some(provider);
+                f.cloud = CloudFields {
+                    profile: " analytics ".to_owned(),
+                    region: "eu-west-1".to_owned(),
+                    credentials_file: "~/keys/reader.json".to_owned(),
+                    tool: AzureTool::AzureDeveloperCli,
+                    tenant: "contoso.onmicrosoft.com".to_owned(),
+                };
+            });
+            let config = fields.to_config().unwrap();
+            assert_eq!(config.cloud_sign_in.as_ref(), Some(&expected));
+            assert_eq!(config.password_command, None);
+            assert_eq!(fields.typed_password(), None);
+
+            let read_back = ServerFields::from_config(&config, DEFAULTS);
+            assert_eq!(read_back.cloud_provider, Some(provider));
+            assert_eq!(read_back.to_config(), Ok(config));
+        }
     }
 
     #[test]

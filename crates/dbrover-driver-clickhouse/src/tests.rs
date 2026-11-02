@@ -56,6 +56,7 @@ fn parse_url(url: &str) -> TestServer {
                 tls: TlsMode::Disable,
                 ssh: None,
                 password_command: None,
+                cloud_sign_in: None,
             },
             read_only: false,
         },
@@ -134,6 +135,7 @@ async fn unreachable_server_is_a_connect_error() {
             tls: TlsMode::Disable,
             ssh: None,
             password_command: None,
+            cloud_sign_in: None,
         },
         read_only: false,
     };

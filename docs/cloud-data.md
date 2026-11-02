@@ -162,7 +162,7 @@ a CLI) and with tokens the tests make up. None reads the machine's own sign-in.
   **Exit:** a stand-in program's JSON becomes a token with the right expiry, for each CLI; a
   program that isn't installed, fails, says nothing or runs past the timeout is an error that
   says which, with its standard error.
-- **C0d — Signing in to a database with a cloud account:** the password of a PostgreSQL, MySQL
+- **C0d — Signing in to a database with a cloud account** (built): the password of a PostgreSQL, MySQL
   or SQL Server data source can come from a cloud sign-in instead of the keychain or a command
   (W9), chosen in the dialog's **Password** section as **AWS IAM**, **Google Cloud** or
   **Microsoft Entra ID**:
@@ -174,7 +174,9 @@ a CLI) and with tokens the tests make up. None reads the machine's own sign-in.
     token sign-in (`tiberius`'s `AuthMethod::AADToken`) on SQL Server.
   The token is fetched on every connection, as W9's command is run, so reconnecting and each
   new console sign in afresh; it is never written to the keychain, a file, the log or the
-  history. A data source has either a password command or a cloud sign-in, never both.
+  history. A data source has either a password command or a cloud sign-in, never both. On
+  MySQL, IAM users sign in with the `mysql_clear_password` plugin, so a cloud sign-in needs TLS
+  that can't fall back to plain text (**require** or **verify-full**).
   **Exit:** an RDS token for fixed credentials and a fixed time matches the one AWS's own
   signer makes, with `X-Amz-Expires=900`; on the PostgreSQL test server, a data source whose
   sign-in is a stand-in provider connects with the token it hands out and asks for a new one

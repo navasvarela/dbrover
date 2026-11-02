@@ -52,6 +52,7 @@ fn unreachable(command: PasswordCommand) -> DataSource {
             tls: TlsMode::Disable,
             ssh: None,
             password_command: None,
+            cloud_sign_in: None,
         },
         command,
     )

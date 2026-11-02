@@ -865,6 +865,7 @@ fn postgres_data_source(url: &str) -> (DataSource, Password) {
                 tls: TlsMode::default(),
                 ssh: None,
                 password_command: None,
+                cloud_sign_in: None,
             },
         }),
     };
@@ -1218,6 +1219,7 @@ fn import_preview(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture)
                 tls: TlsMode::Require,
                 ssh: None,
                 password_command: None,
+                cloud_sign_in: None,
             },
         }),
     };

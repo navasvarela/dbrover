@@ -396,6 +396,7 @@ mod tests {
                 tls: TlsMode::default(),
                 ssh: None,
                 password_command: None,
+                cloud_sign_in: None,
             },
         };
         let password = parsed
@@ -492,6 +493,7 @@ mod tests {
                 tls: TlsMode::default(),
                 ssh: None,
                 password_command: None,
+                cloud_sign_in: None,
             },
         };
 

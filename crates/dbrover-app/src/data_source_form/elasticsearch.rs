@@ -16,6 +16,7 @@ pub const ELASTICSEARCH_DEFAULTS: ServerDefaults = ServerDefaults {
     user: "elastic",
     user_field: UserField::Optional,
     tls: TlsOffer::OwnPort(ElasticsearchConfig::DEFAULT_PORT),
+    cloud: &[],
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

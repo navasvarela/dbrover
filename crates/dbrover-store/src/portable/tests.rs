@@ -40,6 +40,7 @@ fn server(host: &str, port: u16, tls: TlsMode) -> ServerConfig {
         tls,
         ssh: None,
         password_command: None,
+        cloud_sign_in: None,
     }
 }
 
@@ -88,6 +89,9 @@ fn every_kind(home: &Path, beside: &Path, project: ProjectId) -> Vec<DataSource>
                         port: 22.into(),
                         user: "juan".to_owned(),
                         login: SshLogin::Agent,
+                    }),
+                    cloud_sign_in: Some(dbrover_core::CloudSignIn::Google {
+                        credentials_file: Some(home.join("keys/reader.json")),
                     }),
                     ..server("${SHOP_HOST}", 0, TlsMode::Require)
                 },
@@ -213,6 +217,10 @@ fn writes_portable_paths_and_reads_them_back_for_another_home_and_folder() {
     assert!(text.contains(r#"path = "/srv/scratch.db""#), "{text}");
     assert!(text.contains(r#"host = "${SHOP_HOST}""#), "{text}");
     assert!(text.contains(r#"key_file = "~/.ssh/id_ed25519""#), "{text}");
+    assert!(
+        text.contains(r#"credentials_file = "~/keys/reader.json""#),
+        "{text}"
+    );
     assert!(text.contains(r#"login = "agent""#), "{text}");
     assert!(text.contains(r#"login = "password""#), "{text}");
     assert!(

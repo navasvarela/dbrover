@@ -8,10 +8,17 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# A token endpoint on the loopback address, for other crates' tests that sign in to Google
+# Cloud without an account. Its listener needs tokio's `net` and `io-util`.
+stand-in = ["tokio/net", "tokio/io-util"]
+
 [dependencies]
 aws-config.workspace = true
 aws-credential-types.workspace = true
 aws-runtime.workspace = true
+# Signs RDS IAM authentication tokens (C0d): the version aws-runtime already builds.
+aws-sigv4.workspace = true
 aws-smithy-http-client.workspace = true
 base64.workspace = true
 dbrover-core.workspace = true

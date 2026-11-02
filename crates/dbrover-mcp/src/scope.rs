@@ -138,6 +138,7 @@ mod tests {
             tls: TlsMode::Prefer,
             ssh: None,
             password_command: None,
+            cloud_sign_in: None,
         }
     }
 

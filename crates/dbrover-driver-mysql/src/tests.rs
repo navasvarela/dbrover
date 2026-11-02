@@ -56,6 +56,7 @@ fn parse_url(variable: &'static str, url: &str) -> TestServer {
                 tls: TlsMode::default(),
                 ssh: None,
                 password_command: None,
+                cloud_sign_in: None,
             },
         },
         password: Some(Password::new(password)),
@@ -180,6 +181,7 @@ async fn unreachable_server_is_a_connect_error() {
             tls: TlsMode::Disable,
             ssh: None,
             password_command: None,
+            cloud_sign_in: None,
         },
     };
 
@@ -391,5 +393,35 @@ fn tells_mysql_and_mariadb_apart_by_version() {
             (info.product.as_str(), info.version.as_str()),
             (product, number)
         );
+    }
+}
+
+/// IAM users sign in with `mysql_clear_password`, so a TLS mode that may fall back to plain
+/// text would send the token in the clear: connecting stops before anything is sent.
+#[tokio::test]
+async fn a_cloud_sign_in_needs_tls_that_cant_fall_back() {
+    for tls in [TlsMode::Disable, TlsMode::Prefer] {
+        let config = MysqlConfig {
+            server: ServerConfig {
+                host: "127.0.0.1".to_owned(),
+                port: 9.into(),
+                database: "app".to_owned(),
+                user: "iam_user".to_owned(),
+                tls: tls.clone(),
+                ssh: None,
+                password_command: None,
+                cloud_sign_in: Some(dbrover_core::CloudSignIn::Aws {
+                    profile: String::new(),
+                    region: "eu-west-1".to_owned(),
+                }),
+            },
+        };
+        let token = Password::new("db.example:3306/?Action=connect");
+        let refused = connect(&config, Some(&token), Route::Direct).await;
+        let Err(error) = refused else {
+            panic!("{tls:?} connected");
+        };
+        let message = dbrover_core::describe_error(&error);
+        assert!(message.contains("needs TLS"), "{tls:?}: {message}");
     }
 }

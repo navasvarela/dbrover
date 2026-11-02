@@ -5,6 +5,7 @@
 //! It sends commands with [`EngineHandle::send`] and drains events with
 //! [`EngineHandle::try_recv`] once per frame. See `docs/adr/0003-ui-engine-message-passing.md`.
 
+mod cloud_sign_in;
 mod command_loop;
 mod config_files;
 mod console_files;

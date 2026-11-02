@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::placeholder::{PlaceholderError, Setting, Variables, expand, expand_path};
-use crate::{DriverError, PasswordCommand};
+use crate::{CloudSignIn, DriverError, PasswordCommand};
 
 /// Stable identity of a data source. Written once when the data source is created, so renaming
 /// it never breaks the keychain entry, consoles or history that refer to it.
@@ -519,6 +519,14 @@ pub struct ServerConfig {
     /// for tokens that expire. Written only when set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password_command: Option<PasswordCommand>,
+    /// A cloud account whose token is the password on every connection, in place of the
+    /// keychain's (C0d). Written only when set.
+    ///
+    /// A data source has this or [`Self::password_command`], never both: the dialog offers one
+    /// choice, and connecting refuses both. Two options rather than one enum keep W9's
+    /// `password_command = [...]` key as it was written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud_sign_in: Option<CloudSignIn>,
 }
 
 impl ServerConfig {
@@ -569,6 +577,11 @@ impl ServerConfig {
             // in an argument stays as written: the program gets DbRover's environment and can
             // read the variable itself.
             password_command: self.password_command.clone(),
+            cloud_sign_in: self
+                .cloud_sign_in
+                .as_ref()
+                .map(|sign_in| sign_in.resolve(variables))
+                .transpose()?,
         })
     }
 }
@@ -1157,6 +1170,7 @@ mod tests {
                             },
                             ssh: None,
                             password_command: None,
+                            cloud_sign_in: None,
                         },
                     }),
                 },
@@ -1202,6 +1216,7 @@ mod tests {
                         tls: TlsMode::Require,
                         ssh: None,
                         password_command: None,
+                        cloud_sign_in: None,
                     },
                     separator: RedisConfig::DEFAULT_SEPARATOR.to_owned(),
                 }),
@@ -1245,6 +1260,7 @@ mod tests {
                         tls: TlsMode::Disable,
                         ssh: None,
                         password_command: None,
+                        cloud_sign_in: None,
                     },
                     auth_database: String::new(),
                     connection_string: Some(
@@ -1355,6 +1371,7 @@ mod tests {
                     tls: TlsMode::VerifyFull { ca_file: None },
                     ssh: None,
                     password_command: None,
+                    cloud_sign_in: None,
                 },
                 auth,
             }),
@@ -1390,6 +1407,7 @@ mod tests {
             tls: TlsMode::Prefer,
             ssh: None,
             password_command: None,
+            cloud_sign_in: None,
         };
         let mut data_source = DataSource {
             id: DataSourceId::generate(),
@@ -1427,6 +1445,7 @@ mod tests {
             tls: TlsMode::Prefer,
             ssh: None,
             password_command: None,
+            cloud_sign_in: None,
         };
         let mysql = ConnectionConfig::Mysql(MysqlConfig { server });
 
@@ -1497,6 +1516,7 @@ mod tests {
                             tls,
                             ssh: None,
                             password_command: None,
+                            cloud_sign_in: None,
                         },
                     }),
                 }],
@@ -1707,6 +1727,7 @@ mod tests {
                 tls: TlsMode::Require,
                 ssh: None,
                 password_command: None,
+                cloud_sign_in: None,
             },
         });
         let sqlite = ConnectionConfig::Sqlite(SqliteConfig {
@@ -1874,6 +1895,7 @@ mod tests {
                     login: SshLogin::Password,
                 }),
                 password_command: None,
+                cloud_sign_in: None,
             },
         });
 
@@ -1897,6 +1919,7 @@ mod tests {
                     tls: TlsMode::Prefer,
                     ssh: None,
                     password_command: None,
+                    cloud_sign_in: None,
                 },
             })
         };

@@ -37,7 +37,7 @@ pub enum EntraTool {
 }
 
 /// What the token is for: each kind of Azure database accepts tokens for its own resource.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EntraResource {
     /// Azure SQL, Synapse's SQL pools and Fabric's SQL endpoints, over SQL Server's protocol.
     AzureSql,

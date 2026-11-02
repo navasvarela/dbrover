@@ -14,6 +14,7 @@ use dbrover_store::{Secret, SecretError, SecretStore};
 use tokio::task::JoinError;
 use tokio::time::timeout;
 
+use crate::cloud_sign_in::{self, CloudSignInError};
 use crate::environment::ProcessEnvironment;
 use crate::events::EventSink;
 use crate::password_commands::{PasswordCommandError, PasswordCommands};
@@ -38,6 +39,8 @@ pub enum OpenError {
     },
     #[error(transparent)]
     PasswordCommand(#[from] PasswordCommandError),
+    #[error("could not sign in with the cloud account: {0}")]
+    CloudSignIn(#[from] CloudSignInError),
     #[error(transparent)]
     Placeholder(#[from] PlaceholderError),
     #[error(
@@ -142,25 +145,30 @@ pub(crate) async fn open(
     Ok(Box::new(Tunnelled { connection, tunnel }))
 }
 
-/// The password typed in the dialog, or else the one the data source's password command
-/// prints, or else the one the session or the keychain holds.
+/// The password typed in the dialog, or else the token of the data source's cloud sign-in or
+/// the one its password command prints, or else the one the session or the keychain holds.
 ///
-/// A typed password wins over the command so the MCP login, whose own password is passed in
-/// as typed, signs in with that rather than with a token made for the data source's user.
+/// A typed password wins over the command and the cloud sign-in so the MCP login, whose own
+/// password is passed in as typed, signs in with that rather than with a token made for the
+/// data source's user.
 async fn database_password(
     id: DataSourceId,
     config: &ConnectionConfig,
     typed: &TypedSecrets,
     connector: Connector<'_>,
 ) -> Result<Option<Password>, OpenError> {
-    let command = config
-        .server()
-        .and_then(|server| server.password_command.as_ref());
-    match (command, &typed.password) {
-        (Some(command), PasswordUpdate::Keep) => Ok(Some(
+    let server = config.server();
+    let command = server.and_then(|server| server.password_command.as_ref());
+    let cloud = server.and_then(|server| Some((server, server.cloud_sign_in.as_ref()?)));
+    match (cloud, command, &typed.password) {
+        (Some(_), Some(_), _) => Err(CloudSignInError::Both.into()),
+        (Some((server, sign_in)), None, PasswordUpdate::Keep) => Ok(Some(
+            cloud_sign_in::password(sign_in, server, config.driver()).await?,
+        )),
+        (None, Some(command), PasswordUpdate::Keep) => Ok(Some(
             connector.commands.password(id, command, config).await?,
         )),
-        (_, typed_password) => {
+        (_, _, typed_password) => {
             passwords::resolve(
                 id,
                 Secret::Database,

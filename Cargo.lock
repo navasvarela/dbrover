@@ -2223,6 +2223,7 @@ dependencies = [
  "aws-config",
  "aws-credential-types",
  "aws-runtime",
+ "aws-sigv4",
  "aws-smithy-http-client",
  "aws-types",
  "base64 0.22.1",
