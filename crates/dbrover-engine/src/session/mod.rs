@@ -21,8 +21,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dbrover_core::{
-    CancelHandle, CatalogPath, ChildrenQuery, Connection, DataSource, DataSourceId, RelationName,
-    SafetyLevel, TransactionStatus, describe_error,
+    CancelHandle, CatalogPath, ChildrenQuery, Connection, DataSource, DataSourceId, ProgressHandle,
+    RelationName, SafetyLevel, TransactionStatus, describe_error,
 };
 use dbrover_language::QueryLanguage;
 use dbrover_sql::{Dialect, ParameterValues};
@@ -342,10 +342,12 @@ async fn run(
         let loss = Loss::default();
         let mut connection: Box<dyn Connection> = Box::new(Watched::new(connection, loss.clone()));
         let cancel_handle = connection.cancel_handle();
+        let progress_handle = connection.progress_handle();
         let mut worker = Worker {
             context: &context,
             connection: connection.as_mut(),
             cancel_handle: cancel_handle.as_ref(),
+            progress_handle: progress_handle.as_deref(),
             signals: &mut signals,
             loss: &loss,
             last_used: Instant::now(),
@@ -505,6 +507,8 @@ struct Worker<'a> {
     context: &'a SessionContext,
     connection: &'a mut dyn Connection,
     cancel_handle: &'a dyn CancelHandle,
+    /// Asks what a running statement has done, for the console's progress line (C0f).
+    progress_handle: Option<&'a dyn ProgressHandle>,
     signals: &'a mut Signals,
     /// Why the connection was lost, once any call has found out.
     loss: &'a Loss,

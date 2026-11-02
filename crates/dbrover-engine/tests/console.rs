@@ -834,6 +834,69 @@ fn explains_on_sqlserver_with_showplan_and_switches_it_off() {
     }
 }
 
+/// C0f: while a slow ClickHouse statement runs, the console hears what it has read so far,
+/// once a second, and cancelling still stops it. Needs `DBROVER_TEST_CLICKHOUSE_URL`.
+#[test]
+fn reports_a_running_clickhouse_statements_progress() {
+    let Some((config, password)) = clickhouse_test_server() else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let data_source = DataSource {
+        id: DataSourceId::generate(),
+        name: "test server".to_owned(),
+        color: None,
+        safety: dbrover_core::SafetyLevel::Normal,
+        project: None,
+        mcp_login: None,
+        config: ConnectionConfig::ClickHouse(config),
+    };
+    let id = data_source.id;
+    engine.send(Command::SaveDataSource {
+        data_source,
+        password: PasswordUpdate::Set(password),
+        ssh_secret: PasswordUpdate::Keep,
+    });
+    assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
+
+    execute(
+        &engine,
+        id,
+        1,
+        &["SELECT sum(number) FROM numbers(1000000000000)"],
+    );
+    let progress = loop {
+        match next_run_event(&mut engine) {
+            Event::StatementProgress {
+                progress, elapsed, ..
+            } => break (progress, elapsed),
+            event @ Event::RunFinished { .. } => panic!("ended without progress: {event:?}"),
+            _ => {}
+        }
+    };
+    assert!(
+        progress.0.rows_read.is_some_and(|rows| rows > 0),
+        "{progress:?}"
+    );
+    assert!(
+        progress.1 >= std::time::Duration::from_secs(1),
+        "{progress:?}"
+    );
+    engine.send(Command::Cancel {
+        console: CONSOLE,
+        run: RunId(1),
+    });
+    let outcome = loop {
+        if let Event::RunFinished { outcome, .. } = next_run_event(&mut engine) {
+            break outcome;
+        }
+    };
+    assert_eq!(outcome, RunOutcome::Cancelled);
+    engine.shut_down();
+}
+
 /// A ClickHouse console keeps its session from run to run: a temporary table outlives the run
 /// that made it, and `EXPLAIN` sees it. Needs
 /// `DBROVER_TEST_CLICKHOUSE_URL`; skipped without it.

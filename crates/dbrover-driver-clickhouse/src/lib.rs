@@ -19,8 +19,8 @@ use async_trait::async_trait;
 use clickhouse::Client;
 use dbrover_core::{
     BoxError, CancelHandle, CatalogNode, CatalogPath, ClickHouseConfig, Connection, DriverError,
-    Password, Quoting, Rejection, RelationName, ResultCursor, Route, ServerInfo, TableConstraints,
-    TableDescription, TableName, TlsMode, TransactionStatus,
+    Password, ProgressHandle, Quoting, Rejection, RelationName, ResultCursor, Route, ServerInfo,
+    TableConstraints, TableDescription, TableName, TlsMode, TransactionStatus,
 };
 pub use dbrover_tls::TlsSetupError;
 use hyper_rustls::FixedServerNameResolver;
@@ -224,6 +224,10 @@ impl Connection for ClickHouseConnection {
 
     fn cancel_handle(&self) -> Arc<dyn CancelHandle> {
         Arc::clone(&self.cancel) as Arc<dyn CancelHandle>
+    }
+
+    fn progress_handle(&self) -> Option<Arc<dyn ProgressHandle>> {
+        Some(Arc::clone(&self.cancel) as Arc<dyn ProgressHandle>)
     }
 
     /// Nothing to close: the server ends the session once it has been idle for its timeout.

@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 use async_trait::async_trait;
 use dbrover_core::{
     CancelHandle, CatalogNode, CatalogPath, Cell, ChildrenPage, ChildrenQuery, Connection,
-    CostEstimate, DataSourceId, DriverError, Rejection, RelationName, ResultCursor,
+    CostEstimate, DataSourceId, DriverError, ProgressHandle, Rejection, RelationName, ResultCursor,
     RoleDescription, ServerInfo, SshConfig, TableConstraints, TableDescription, TableName,
     TransactionStatus,
 };
@@ -169,6 +169,10 @@ impl Connection for Tunnelled {
 
     fn cancel_handle(&self) -> Arc<dyn CancelHandle> {
         self.connection.cancel_handle()
+    }
+
+    fn progress_handle(&self) -> Option<Arc<dyn ProgressHandle>> {
+        self.connection.progress_handle()
     }
 
     /// Closes the connection first, so it can say goodbye to the server through the tunnel.

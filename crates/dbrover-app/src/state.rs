@@ -209,6 +209,7 @@ impl AppState {
             | Event::ConsoleSessionChanged { .. }
             | Event::StatementsValidated { .. }
             | Event::StatementStarted { .. }
+            | Event::StatementProgress { .. }
             | Event::RowsFetched { .. }
             | Event::StatementFinished { .. }
             | Event::CostHeld { .. }

@@ -29,8 +29,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use dbrover_core::{
-    Cell, ColumnInfo, DataSource, DataSourceId, Identifier, RelationName, ResultShape, Row,
-    SafetyLevel, TableDescription, TransactionStatus,
+    Cell, ColumnInfo, DataSource, DataSourceId, Identifier, JobProgress, RelationName, ResultShape,
+    Row, SafetyLevel, TableDescription, TransactionStatus,
 };
 use dbrover_engine::{
     Command, ConsoleId, CostApproval, EditFailure, Event, Export, ExportAll, Exporter, RowEdit,
@@ -246,6 +246,9 @@ pub struct RunView {
     state: RunState,
     /// The statement whose result is shown.
     selected: usize,
+    /// What the running statement has done so far and how long it has run, while the engine
+    /// reports it and no rows have come (C0f).
+    progress: Option<(JobProgress, Duration)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1916,6 +1919,7 @@ impl QueryConsole {
                 .collect(),
             state: RunState::Running,
             selected: 0,
+            progress: None,
         });
     }
 
@@ -2055,6 +2059,16 @@ impl QueryConsole {
                     view.selected = *statement;
                 }
             }
+            Event::StatementProgress {
+                run,
+                progress,
+                elapsed,
+                ..
+            } => {
+                if let Some(view) = self.current_run_mut(*run) {
+                    view.progress = Some((*progress, *elapsed));
+                }
+            }
             Event::RowsFetched {
                 run,
                 statement,
@@ -2068,12 +2082,20 @@ impl QueryConsole {
                     statement_view.more = *more;
                     statement_view.fetching = false;
                 }
+                if let Some(view) = self.current_run_mut(*run) {
+                    view.progress = None;
+                }
             }
             Event::StatementFinished {
                 run,
                 statement,
                 result,
-            } => self.statement_finished(*run, *statement, result),
+            } => {
+                if let Some(view) = self.current_run_mut(*run) {
+                    view.progress = None;
+                }
+                self.statement_finished(*run, *statement, result);
+            }
             Event::RunFinished {
                 run,
                 outcome,
@@ -2119,6 +2141,11 @@ impl QueryConsole {
     }
 
     /// The latest run, if it is `run`: events for older runs are stale and ignored.
+    /// What the running statement has done so far, while the engine reports it.
+    pub fn run_progress(&self) -> Option<(JobProgress, Duration)> {
+        self.run.as_ref().and_then(|run| run.progress)
+    }
+
     fn current_run_mut(&mut self, run: RunId) -> Option<&mut RunView> {
         self.run.as_mut().filter(|view| view.id == run)
     }

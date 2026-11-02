@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use async_trait::async_trait;
 use dbrover_core::{
     CancelHandle, CatalogNode, CatalogPath, Cell, ChildrenPage, ChildrenQuery, ColumnInfo,
-    Connection, CostEstimate, DriverError, Rejection, RelationName, ResultCursor, ResultShape,
-    RoleDescription, Row, ServerInfo, TableConstraints, TableDescription, TableName,
+    Connection, CostEstimate, DriverError, ProgressHandle, Rejection, RelationName, ResultCursor,
+    ResultShape, RoleDescription, Row, ServerInfo, TableConstraints, TableDescription, TableName,
     TransactionStatus, describe_error,
 };
 
@@ -142,6 +142,10 @@ impl Connection for Watched {
 
     fn cancel_handle(&self) -> Arc<dyn CancelHandle> {
         self.connection.cancel_handle()
+    }
+
+    fn progress_handle(&self) -> Option<Arc<dyn ProgressHandle>> {
+        self.connection.progress_handle()
     }
 
     async fn close(self: Box<Self>) -> Result<(), DriverError> {

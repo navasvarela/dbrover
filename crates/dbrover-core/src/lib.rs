@@ -12,6 +12,7 @@ mod cost;
 mod data_source;
 mod error;
 mod execution;
+mod job;
 mod mongo_uri;
 mod password;
 mod password_command;
@@ -41,6 +42,7 @@ pub use error::{BoxError, DriverError, describe_error};
 pub use execution::{
     CancelHandle, Cell, ColumnInfo, ResultCursor, ResultShape, Row, TransactionStatus, ValueKind,
 };
+pub use job::{JobId, JobPage, JobProgress, JobService, JobState, Jobs, ProgressHandle};
 pub use mongo_uri::MongoUri;
 pub use password::Password;
 pub use password_command::PasswordCommand;
