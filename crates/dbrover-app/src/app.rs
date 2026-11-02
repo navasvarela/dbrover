@@ -3548,6 +3548,7 @@ mod tests {
                     tls: dbrover_core::TlsMode::Prefer,
                     ssh: None,
                     password_command: None,
+                    cloud_sign_in: None,
                 },
             }),
             ..shop.clone()
@@ -3878,6 +3879,7 @@ mod tests {
                         login: dbrover_core::SshLogin::KeyFile { key_file },
                     }),
                     password_command: None,
+                    cloud_sign_in: None,
                 },
             }),
         };
@@ -3963,6 +3965,7 @@ mod tests {
                     tls: dbrover_core::TlsMode::Disable,
                     ssh: None,
                     password_command: None,
+                    cloud_sign_in: None,
                 },
             }),
         };
@@ -5010,6 +5013,7 @@ mod tests {
                         tls: dbrover_core::TlsMode::Disable,
                         ssh: None,
                         password_command: None,
+                        cloud_sign_in: None,
                     },
                 }),
             }

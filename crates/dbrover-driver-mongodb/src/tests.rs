@@ -56,6 +56,7 @@ fn test_server() -> Option<TestServer> {
                 tls: TlsMode::Disable,
                 ssh: None,
                 password_command: None,
+                cloud_sign_in: None,
             },
             auth_database: String::new(),
             connection_string: None,

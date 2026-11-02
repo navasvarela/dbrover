@@ -112,23 +112,25 @@ fn sendable(address: &str) -> Result<Uri, HttpError> {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod stand_in {
-    //! A token endpoint on this machine's loopback address that answers one request with a
-    //! canned body, and hands back what it was sent.
+#[cfg(any(test, feature = "stand-in"))]
+pub mod stand_in {
+    //! A token endpoint on this machine's loopback address that answers every request with
+    //! the same canned body and hands back what it was sent, for tests that sign in without a
+    //! cloud account.
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::TcpListener;
-    use tokio::sync::oneshot;
+    use tokio::net::{TcpListener, TcpStream};
+    use tokio::sync::mpsc;
 
     /// What the stand-in received: the request line and the form, decoded.
-    pub(crate) struct Received {
+    #[derive(Debug)]
+    pub struct Received {
         pub request_line: String,
         pub form: Vec<(String, String)>,
     }
 
     impl Received {
-        pub(crate) fn field(&self, name: &str) -> Option<&str> {
+        pub fn field(&self, name: &str) -> Option<&str> {
             self.form
                 .iter()
                 .find(|(key, _)| key == name)
@@ -136,37 +138,52 @@ pub(crate) mod stand_in {
         }
     }
 
-    /// Starts the endpoint; returns its address and what it will have received.
-    pub(crate) async fn token_endpoint(
-        status: u16,
-        body: &str,
-    ) -> (String, oneshot::Receiver<Received>) {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = format!("http://{}/token", listener.local_addr().unwrap());
-        let body = body.to_owned();
-        let (sender, receiver) = oneshot::channel();
-        tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let request = read_request(&mut stream).await;
-            let response = format!(
-                "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\
-                 connection: close\r\n\r\n{body}",
-                body.len()
-            );
-            stream.write_all(response.as_bytes()).await.unwrap();
-            let _ = sender.send(request);
-        });
-        (address, receiver)
+    /// A running stand-in: where it listens, and each request it has answered.
+    pub struct TokenEndpoint {
+        /// `http://127.0.0.1:<port>/token`.
+        pub address: String,
+        pub received: mpsc::UnboundedReceiver<Received>,
     }
 
-    async fn read_request(stream: &mut tokio::net::TcpStream) -> Received {
+    /// Starts the endpoint, which answers with `status` and the JSON `body` until the test's
+    /// runtime ends.
+    ///
+    /// # Errors
+    ///
+    /// When the loopback address can't be listened on.
+    pub async fn token_endpoint(status: u16, body: &str) -> std::io::Result<TokenEndpoint> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = format!("http://{}/token", listener.local_addr()?);
+        let response = format!(
+            "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\
+             connection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let (sender, received) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let request = read_request(&mut stream).await;
+                let _ = stream.write_all(response.as_bytes()).await;
+                let _ = sender.send(request);
+            }
+        });
+        Ok(TokenEndpoint { address, received })
+    }
+
+    async fn read_request(stream: &mut TcpStream) -> Received {
         let mut bytes = Vec::new();
         let mut buffer = [0; 4096];
         loop {
-            let read = stream.read(&mut buffer).await.unwrap();
+            let read = stream.read(&mut buffer).await.unwrap_or(0);
             bytes.extend_from_slice(&buffer[..read]);
             let text = String::from_utf8_lossy(&bytes).into_owned();
             let Some((head, body)) = text.split_once("\r\n\r\n") else {
+                if read == 0 {
+                    return Received {
+                        request_line: text,
+                        form: Vec::new(),
+                    };
+                }
                 continue;
             };
             let length = head
@@ -209,15 +226,20 @@ mod tests {
 
     #[tokio::test]
     async fn a_form_is_posted_and_the_answer_read() {
-        let (address, received) = stand_in::token_endpoint(200, "{\"ok\":true}").await;
+        let mut endpoint = stand_in::token_endpoint(200, "{\"ok\":true}")
+            .await
+            .unwrap();
         let answer = Https::new()
             .unwrap()
-            .post_form(&address, &[("grant_type", "refresh_token"), ("a b", "c&d")])
+            .post_form(
+                &endpoint.address,
+                &[("grant_type", "refresh_token"), ("a b", "c&d")],
+            )
             .await
             .unwrap();
         assert_eq!(answer.status, 200);
         assert_eq!(&answer.body[..], b"{\"ok\":true}");
-        let received = received.await.unwrap();
+        let received = endpoint.received.recv().await.unwrap();
         assert_eq!(received.request_line, "POST /token HTTP/1.1");
         assert_eq!(received.field("grant_type"), Some("refresh_token"));
         assert_eq!(received.field("a b"), Some("c&d"));

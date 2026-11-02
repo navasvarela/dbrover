@@ -79,6 +79,7 @@ fn postgres() -> DataSource {
                 tls: TlsMode::Disable,
                 ssh: None,
                 password_command: None,
+                cloud_sign_in: None,
             },
         }),
         ..shop(SafetyLevel::Normal, None)

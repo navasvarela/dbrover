@@ -98,6 +98,7 @@ fn reloads_saved_data_sources_and_stores_passwords_in_the_secret_store() {
                     login: SshLogin::Password,
                 }),
                 password_command: None,
+                cloud_sign_in: None,
             },
         }),
     };

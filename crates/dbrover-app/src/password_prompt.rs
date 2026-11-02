@@ -177,6 +177,7 @@ mod tests {
                         login,
                     }),
                     password_command: None,
+                    cloud_sign_in: None,
                 },
             }),
         }

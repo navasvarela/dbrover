@@ -48,6 +48,7 @@ fn server_from_env() -> Option<(ServerConfig, Password)> {
             tls: TlsMode::Disable,
             ssh: None,
             password_command: None,
+            cloud_sign_in: None,
         },
         Password::new(password),
     ))

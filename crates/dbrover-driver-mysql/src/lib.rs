@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use dbrover_core::{
     BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, Connection, DriverError, MysqlConfig,
     Password, Quoting, Rejection, RelationName, ResultCursor, Route, ServerInfo, TableConstraints,
-    TableDescription, TableName, TransactionStatus,
+    TableDescription, TableName, TlsMode, TransactionStatus,
 };
 use mysql_async::consts::StatusFlags;
 use mysql_async::prelude::Queryable;
@@ -51,6 +51,16 @@ pub async fn connect(
     route: Route,
 ) -> Result<MysqlConnection, DriverError> {
     install_crypto_provider();
+    let always_encrypted = matches!(
+        config.server.tls,
+        TlsMode::Require | TlsMode::VerifyFull { .. }
+    );
+    if config.server.cloud_sign_in.is_some() && !always_encrypted {
+        return Err(connect_error(
+            "a cloud sign-in sends its token to MySQL as clear text, so it needs TLS: set TLS \
+             to require or verify-full",
+        ));
+    }
     let address = match route {
         Route::Direct => (config.server.host.clone(), config.server.port_number()?),
         Route::Tunnel(local) => (local.ip().to_string(), local.port()),
@@ -121,6 +131,10 @@ fn base_opts(
         // open on the server for nothing.
         .stmt_cache_size(Some(0))
         .connect_attribute("program_name", APPLICATION_NAME)
+        // RDS's, Cloud SQL's and Azure Database's IAM users sign in with
+        // `mysql_clear_password`, which only ever goes over TLS: `connect` refuses a cloud
+        // sign-in whose TLS mode could fall back to plain text.
+        .enable_cleartext_plugin(server.cloud_sign_in.is_some())
 }
 
 const MARIADB: &str = "MariaDB";

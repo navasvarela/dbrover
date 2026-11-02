@@ -19,6 +19,7 @@ pub const CASSANDRA_DEFAULTS: ServerDefaults = ServerDefaults {
     user: "cassandra",
     user_field: UserField::Optional,
     tls: TlsOffer::OwnPort(CassandraConfig::DEFAULT_TLS_PORT),
+    cloud: &[],
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

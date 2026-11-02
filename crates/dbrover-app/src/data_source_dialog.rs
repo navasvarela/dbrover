@@ -3,8 +3,9 @@
 use std::path::Path;
 
 use dbrover_core::{
-    CostGuard, DataSource, DataSourceId, DriverKind, DynamoDbSignIn, ElasticsearchAuth,
-    MongoConfig, SafetyLevel, ServerInfo, SourceColor, expand, expand_path, has_placeholder,
+    AzureTool, CloudProvider, CostGuard, DataSource, DataSourceId, DriverKind, DynamoDbSignIn,
+    ElasticsearchAuth, MongoConfig, SafetyLevel, ServerInfo, SourceColor, expand, expand_path,
+    has_placeholder,
 };
 use dbrover_engine::read_only::{self, Guard};
 use dbrover_engine::{DatabaseFile, Event, PasswordUpdate, ProcessEnvironment};
@@ -14,9 +15,10 @@ use egui::{
 };
 
 use crate::data_source_form::{
-    CassandraFields, DataSourceForm, DatabaseField, DriverFields, DuckDbFields, DuckDbLocation,
-    DynamoDbFields, ElasticsearchFields, FormError, McpLoginFields, McpPasswordChange, MongoFields,
-    MongoTarget, ServerFields, SshFields, SshLoginChoice, TlsChoice,
+    CassandraFields, CloudFields, DataSourceForm, DatabaseField, DriverFields, DuckDbFields,
+    DuckDbLocation, DynamoDbFields, ElasticsearchFields, FormError, McpLoginFields,
+    McpPasswordChange, MongoFields, MongoTarget, ServerFields, SshFields, SshLoginChoice,
+    TlsChoice,
 };
 use crate::file_picker::{self, FileEngine};
 use crate::form;
@@ -473,9 +475,91 @@ fn dynamodb_rows(ui: &mut Ui, fields: &mut DynamoDbFields) {
     ui.end_row();
 }
 
-/// The password to save in the keychain, or the command that prints one on every connection.
+/// The password to save in the keychain, or the command that prints one on every connection,
+/// or, on engines with managed services, the cloud account that signs in instead.
 fn password_rows(ui: &mut Ui, fields: &mut ServerFields, password_hint: &str) {
-    secret_rows(ui, fields, "Password", password_hint);
+    if !fields.defaults.cloud.is_empty() {
+        sign_in_choice_row(ui, fields);
+    }
+    match fields.cloud_provider {
+        None => secret_rows(ui, fields, "Password", password_hint),
+        Some(provider) => cloud_rows(ui, provider, &mut fields.cloud),
+    }
+}
+
+fn sign_in_choice_row(ui: &mut Ui, fields: &mut ServerFields) {
+    let label = ui.label("Sign in with");
+    let selected = fields
+        .cloud_provider
+        .map_or_else(|| "Password".to_owned(), |provider| provider.to_string());
+    egui::ComboBox::from_id_salt("data_source_sign_in")
+        .selected_text(selected)
+        .show_ui(ui, |ui| {
+            ui.selectable_value(&mut fields.cloud_provider, None, "Password");
+            for provider in fields.defaults.cloud {
+                ui.selectable_value(
+                    &mut fields.cloud_provider,
+                    Some(*provider),
+                    provider.to_string(),
+                );
+            }
+        })
+        .response
+        .labelled_by(label.id)
+        .on_hover_text(
+            "A cloud account's short-lived token in place of a password, fetched on every \
+             connection from the sign-in already on this machine; DbRover stores no secret",
+        );
+    ui.end_row();
+}
+
+/// The settings of the chosen cloud sign-in, each left to the provider's own tools when empty.
+fn cloud_rows(ui: &mut Ui, provider: CloudProvider, cloud: &mut CloudFields) {
+    let note = match provider {
+        CloudProvider::Aws => {
+            setting_row(ui, "Profile", &mut cloud.profile, "default", Resolve::Text);
+            setting_row(
+                ui,
+                "Region",
+                &mut cloud.region,
+                "the profile's",
+                Resolve::Text,
+            );
+            "An RDS IAM token, made from the profile's credentials. The user needs rds_iam \
+             (PostgreSQL) or AWSAuthenticationPlugin (MySQL)."
+        }
+        CloudProvider::Google => {
+            setting_row(
+                ui,
+                "Credentials file",
+                &mut cloud.credentials_file,
+                "Application Default Credentials",
+                Resolve::Path,
+            );
+            "A Google Cloud token, for Cloud SQL's IAM users: gcloud auth \
+             application-default login, or a service account's key file."
+        }
+        CloudProvider::Entra => {
+            ui.label("Signed in with");
+            ui.horizontal(|ui| {
+                for tool in [AzureTool::AzureCli, AzureTool::AzureDeveloperCli] {
+                    ui.radio_value(&mut cloud.tool, tool, tool.to_string());
+                }
+            });
+            ui.end_row();
+            setting_row(
+                ui,
+                "Tenant",
+                &mut cloud.tenant,
+                "the CLI's default",
+                Resolve::Text,
+            );
+            "A Microsoft Entra ID token from az login's or azd auth login's sign-in."
+        }
+    };
+    ui.label("");
+    ui.weak(note);
+    ui.end_row();
 }
 
 /// [`password_rows`] for a secret with another name, such as an API key.

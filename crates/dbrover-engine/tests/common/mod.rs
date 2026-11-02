@@ -507,6 +507,7 @@ pub fn search_test_servers() -> Vec<(&'static str, ElasticsearchConfig, Password
                 tls,
                 ssh: None,
                 password_command: None,
+                cloud_sign_in: None,
             },
             auth: ElasticsearchAuth::Password,
         };
@@ -539,6 +540,7 @@ pub fn cql_test_servers() -> Vec<(&'static str, CassandraConfig, PasswordUpdate)
                 tls: TlsMode::Disable,
                 ssh: None,
                 password_command: None,
+                cloud_sign_in: None,
             },
             local_datacenter: String::new(),
             statement_timeout: None,
@@ -722,6 +724,7 @@ fn parse_server(rest: &str, default_port: &str) -> (ServerConfig, Password) {
         tls: TlsMode::default(),
         ssh: None,
         password_command: None,
+        cloud_sign_in: None,
     };
     (server, Password::new(password))
 }

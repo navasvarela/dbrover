@@ -10,11 +10,14 @@ pub mod aws;
 pub mod entra;
 pub mod google;
 mod http;
+pub mod rds;
 pub mod token;
 
 use std::error::Error;
 
 pub use http::HttpError;
+#[cfg(any(test, feature = "stand-in"))]
+pub use http::stand_in;
 pub use token::{AccessToken, TokenCache};
 
 /// `error`'s message followed by each of its causes', as AWS's SDK and hyper nest them: the

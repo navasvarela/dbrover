@@ -11,6 +11,7 @@ publish.workspace = true
 [dependencies]
 async-trait.workspace = true
 cargo-packager-updater.workspace = true
+dbrover-cloud.workspace = true
 dbrover-core.workspace = true
 dbrover-picture.workspace = true
 dbrover-driver-cassandra.workspace = true
@@ -40,7 +41,8 @@ ureq.workspace = true
 [dev-dependencies]
 # Creates the DynamoDB tests' tables, which PartiQL can't.
 aws-sdk-dynamodb.workspace = true
-dbrover-cloud.workspace = true
+# Its stand-in token endpoint signs the cloud sign-in tests in without an account.
+dbrover-cloud = { workspace = true, features = ["stand-in"] }
 dbrover-language = { workspace = true, features = ["test-language"] }
 # Reads the plans the explain tests get back, as the app does.
 dbrover-plan.workspace = true

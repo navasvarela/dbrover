@@ -197,6 +197,7 @@ pub fn server_from_env(variable: &str) -> Option<(ServerConfig, Password)> {
             tls: TlsMode::default(),
             ssh: None,
             password_command: None,
+            cloud_sign_in: None,
         },
         Password::new(password),
     ))

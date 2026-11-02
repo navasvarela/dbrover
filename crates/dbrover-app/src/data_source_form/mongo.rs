@@ -16,6 +16,7 @@ pub const MONGO_DEFAULTS: ServerDefaults = ServerDefaults {
     user: "",
     user_field: UserField::Optional,
     tls: TlsOffer::OwnPort(MongoConfig::DEFAULT_PORT),
+    cloud: &[],
 };
 
 /// How a MongoDB data source says where the server is.

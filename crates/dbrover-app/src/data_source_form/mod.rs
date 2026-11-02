@@ -20,7 +20,9 @@ pub use cassandra::CassandraFields;
 pub use dynamodb::DynamoDbFields;
 pub use elasticsearch::ElasticsearchFields;
 pub use mongo::{MongoFields, MongoTarget};
-pub use server::{DatabaseField, ServerDefaults, ServerFields, TlsChoice, TlsOffer, UserField};
+pub use server::{
+    CloudFields, DatabaseField, ServerDefaults, ServerFields, TlsChoice, TlsOffer, UserField,
+};
 pub use ssh::{SshFields, SshLoginChoice};
 
 const POSTGRES_DEFAULTS: ServerDefaults = ServerDefaults {
@@ -31,6 +33,7 @@ const POSTGRES_DEFAULTS: ServerDefaults = ServerDefaults {
     user: "postgres",
     user_field: UserField::Required,
     tls: TlsOffer::Negotiated,
+    cloud: DriverKind::Postgres.cloud_providers(),
 };
 
 /// `mysql` exists on every server, as `postgres` does on PostgreSQL; `root` is the account
@@ -43,6 +46,7 @@ const MYSQL_DEFAULTS: ServerDefaults = ServerDefaults {
     user: "root",
     user_field: UserField::Required,
     tls: TlsOffer::Negotiated,
+    cloud: DriverKind::Mysql.cloud_providers(),
 };
 
 /// `master` exists on every server and every login may open it; `sa` is the administrator
@@ -55,6 +59,7 @@ const SQL_SERVER_DEFAULTS: ServerDefaults = ServerDefaults {
     user: "sa",
     user_field: UserField::Required,
     tls: TlsOffer::Negotiated,
+    cloud: DriverKind::SqlServer.cloud_providers(),
 };
 
 /// `default` exists on every server, and is the user every installation (and the official
@@ -67,6 +72,7 @@ const CLICKHOUSE_DEFAULTS: ServerDefaults = ServerDefaults {
     user: "default",
     user_field: UserField::Required,
     tls: TlsOffer::OwnPort(ClickHouseConfig::DEFAULT_TLS_PORT),
+    cloud: &[],
 };
 
 /// Every server has database `0` and the `default` user, which signs in with no user name.
@@ -80,6 +86,7 @@ const REDIS_DEFAULTS: ServerDefaults = ServerDefaults {
     user: "default",
     user_field: UserField::Optional,
     tls: TlsOffer::OwnPort(RedisConfig::DEFAULT_PORT),
+    cloud: &[],
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -550,6 +557,7 @@ mod tests {
                     },
                     ssh: None,
                     password_command: None,
+                    cloud_sign_in: None,
                 },
             }),
             ConnectionConfig::Mysql(MysqlConfig {
@@ -568,6 +576,7 @@ mod tests {
                         },
                     }),
                     password_command: None,
+                    cloud_sign_in: None,
                 },
             }),
         ];

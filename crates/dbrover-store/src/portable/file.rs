@@ -11,10 +11,11 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
 use dbrover_core::{
-    CassandraConfig, ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DuckDbConfig,
-    DuckDbDatabase, DynamoDbConfig, ElasticsearchAuth, ElasticsearchConfig, McpLogin, MongoConfig,
-    MysqlConfig, PasswordCommand, Port, PostgresConfig, ProjectId, RedisConfig, SafetyLevel,
-    ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode,
+    CassandraConfig, ClickHouseConfig, CloudSignIn, ConnectionConfig, DataSource, DataSourceId,
+    DuckDbConfig, DuckDbDatabase, DynamoDbConfig, ElasticsearchAuth, ElasticsearchConfig, McpLogin,
+    MongoConfig, MysqlConfig, PasswordCommand, Port, PostgresConfig, ProjectId, RedisConfig,
+    SafetyLevel, ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin,
+    TlsMode,
 };
 use serde::{Deserialize, Serialize};
 
@@ -381,6 +382,10 @@ struct PortableServer {
     /// command asks before it first runs there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     password_command: Option<PasswordCommand>,
+    /// Travels as written, like the password command: it names a profile, a key file or a
+    /// tenant, never a credential, and each machine signs in with its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cloud_sign_in: Option<CloudSignIn>,
 }
 
 impl PortableServer {
@@ -393,6 +398,7 @@ impl PortableServer {
             tls,
             ssh,
             password_command,
+            cloud_sign_in,
         } = server;
         Self {
             host: host.clone(),
@@ -402,6 +408,9 @@ impl PortableServer {
             tls: PortableTls::export(tls, path),
             ssh: ssh.as_ref().map(|ssh| PortableSsh::export(ssh, path)),
             password_command: password_command.clone(),
+            cloud_sign_in: cloud_sign_in
+                .as_ref()
+                .map(|sign_in| portable_sign_in(sign_in, path)),
         }
     }
 
@@ -414,6 +423,7 @@ impl PortableServer {
             tls,
             ssh,
             password_command,
+            cloud_sign_in,
         } = self;
         ServerConfig {
             host,
@@ -423,7 +433,20 @@ impl PortableServer {
             tls: tls.import(path),
             ssh: ssh.map(|ssh| ssh.import(path)),
             password_command,
+            cloud_sign_in: cloud_sign_in.map(|sign_in| portable_sign_in(&sign_in, path)),
         }
+    }
+}
+
+/// `sign_in` with its credentials file, if it names one, moved as every other path is.
+fn portable_sign_in(sign_in: &CloudSignIn, path: &impl Fn(&Path) -> PathBuf) -> CloudSignIn {
+    match sign_in {
+        CloudSignIn::Google {
+            credentials_file: Some(file),
+        } => CloudSignIn::Google {
+            credentials_file: Some(path(file)),
+        },
+        other => other.clone(),
     }
 }
 

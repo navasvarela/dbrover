@@ -50,6 +50,8 @@ pub enum Setting {
     Profile,
     Region,
     Endpoint,
+    CredentialsFile,
+    Tenant,
 }
 
 impl fmt::Display for Setting {
@@ -71,6 +73,8 @@ impl fmt::Display for Setting {
             Self::Profile => "the AWS profile",
             Self::Region => "the region",
             Self::Endpoint => "the endpoint",
+            Self::CredentialsFile => "the credentials file",
+            Self::Tenant => "the tenant",
         })
     }
 }

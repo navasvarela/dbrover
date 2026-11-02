@@ -25,6 +25,7 @@ fn server(host: &str, port: Port, tls: TlsMode) -> ServerConfig {
         tls,
         ssh: None,
         password_command: None,
+        cloud_sign_in: None,
     }
 }
 

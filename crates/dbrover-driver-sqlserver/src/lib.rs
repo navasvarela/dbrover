@@ -17,8 +17,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use dbrover_core::{
-    BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, Connection, DriverError, Password,
-    Quoting, Rejection, RelationName, ResultCursor, Route, ServerInfo, SqlServerConfig,
+    BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, CloudSignIn, Connection, DriverError,
+    Password, Quoting, Rejection, RelationName, ResultCursor, Route, ServerInfo, SqlServerConfig,
     TableConstraints, TableDescription, TableName, TransactionStatus,
 };
 use tiberius::{AuthMethod, Client, Config};
@@ -93,10 +93,14 @@ fn base_config(config: &SqlServerConfig, port: u16, password: Option<&Password>)
     // leaves the connection unusable. A console's statements may rightly run for hours; ⌘.
     // stops one.
     tiberius_config.command_timeout(None);
-    tiberius_config.authentication(AuthMethod::sql_server(
-        &server.user,
-        password.map_or("", Password::expose),
-    ));
+    let secret = password.map_or("", Password::expose);
+    // An Entra ID token signs in through TDS's federated authentication, which carries no
+    // user name: the token says who it is.
+    let authentication = match &server.cloud_sign_in {
+        Some(CloudSignIn::Entra { .. }) => AuthMethod::aad_token(secret),
+        _ => AuthMethod::sql_server(&server.user, secret),
+    };
+    tiberius_config.authentication(authentication);
     tiberius_config
 }
 

@@ -61,6 +61,7 @@ fn parse_url(variable: &'static str, url: &str) -> TestServer {
                 tls: TlsMode::Disable,
                 ssh: None,
                 password_command: None,
+                cloud_sign_in: None,
             },
             separator: RedisConfig::DEFAULT_SEPARATOR.to_owned(),
         },
@@ -162,6 +163,7 @@ async fn unreachable_server_is_a_connect_error() {
             tls: TlsMode::Disable,
             ssh: None,
             password_command: None,
+            cloud_sign_in: None,
         },
         separator: RedisConfig::DEFAULT_SEPARATOR.to_owned(),
     };
