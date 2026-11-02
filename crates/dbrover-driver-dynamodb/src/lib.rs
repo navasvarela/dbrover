@@ -21,9 +21,9 @@ use async_trait::async_trait;
 use aws_sdk_dynamodb::Client;
 use dbrover_cloud::aws::{AwsCredentials, AwsSignIn};
 use dbrover_core::{
-    CancelHandle, CatalogNode, CatalogPath, ChildrenPage, ChildrenQuery, Connection, DriverError,
-    DynamoDbConfig, DynamoDbSignIn, FullScan, Rejection, RejectionKind, RelationName, ResultCursor,
-    ServerInfo, TableConstraints, TableDescription, TableName, TransactionStatus,
+    CancelHandle, CatalogNode, CatalogPath, ChildrenPage, ChildrenQuery, Connection, CostEstimate,
+    DriverError, DynamoDbConfig, DynamoDbSignIn, FullScan, Rejection, RejectionKind, RelationName,
+    ResultCursor, ServerInfo, TableConstraints, TableDescription, TableName, TransactionStatus,
 };
 use dbrover_language::partiql::{self, Access, Verb};
 
@@ -184,7 +184,7 @@ impl Connection for DynamoConnection {
 
     /// Reads the statement and its table's keys: a `SELECT` without `=` or `IN` on the
     /// partition key of what it reads, at the top of its `WHERE`, scans.
-    async fn full_scan(&mut self, text: &str) -> Result<Option<FullScan>, DriverError> {
+    async fn estimate_cost(&mut self, text: &str) -> Result<Option<CostEstimate>, DriverError> {
         let Ok(statement) = partiql::parse(text) else {
             return Ok(None);
         };
@@ -212,11 +212,11 @@ impl Connection for DynamoConnection {
         };
         Ok(match statement.access(partition_key) {
             Access::Partitions => None,
-            Access::Scan => Some(FullScan {
+            Access::Scan => Some(CostEstimate::WholeTable(FullScan {
                 table: statement.table.clone(),
                 index: statement.index.clone(),
                 partition_key: partition_key.clone(),
-            }),
+            })),
         })
     }
 

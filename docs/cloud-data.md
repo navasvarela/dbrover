@@ -182,7 +182,7 @@ a CLI) and with tokens the tests make up. None reads the machine's own sign-in.
   sign-in is a stand-in provider connects with the token it hands out and asks for a new one
   on the next connection; the dialog's choice is written to and read from
   `data_sources.toml`.
-- **C0e — Cost guards per data source:** `Connection::full_scan` becomes
+- **C0e — Cost guards per data source** (built): `Connection::full_scan` becomes
   `Connection::estimate_cost`, answering with a `CostEstimate`: a whole-table read (N5's
   `FullScan`), or the bytes a statement will scan (BigQuery's dry run in C4; Athena reports
   them after the run). The data source's `CostGuard` gains a byte limit beside its whole-table
@@ -191,7 +191,8 @@ a CLI) and with tokens the tests make up. None reads the machine's own sign-in.
   `Event::ScanHeld` and `ScanApproval` become `Event::CostHeld` and `CostApproval`, with
   **Open data**'s approval (reads a page at a time) still asking about bytes, since a page of a
   byte-billed result costs the whole query. No engine estimates bytes yet, so the limit has no
-  field in the dialog until C3 or C4 brings one; it is read from and written to the file.
+  field in the dialog until C3 or C4 brings one; it is read from and written to the file as
+  `ask_above_bytes`, beside N5's `cost_guard`, which keeps its key.
   **Exit:** DynamoDB's guard works as before through the new names, with its tests unchanged
   in substance; the judging function's table of cases covers both kinds of estimate, each
   approval and the limit's edges; a `cost_guard = "off"` written before C0 still reads.

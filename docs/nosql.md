@@ -1515,6 +1515,9 @@ From N5·4 on, each runs against DynamoDB Local in CI.
     and the error says why;
   - the read units after each statement wait for C0's status line for jobs, as the milestone
     says.
+  - C0e later renamed these as the guard grew a byte limit (`docs/cloud-data.md`):
+    `estimate_cost` and `CostEstimate`, `Event::CostHeld`, and `CostApproval`, whose
+    `PageAtATime` is **Open data**'s `Allow`.
 - **N5·7 — Editing** (built): `DocumentView` gains DynamoDB's `TableView`: keys from the
   table's description, values written in PartiQL with their types, and an undo for each change.
   Tests: an attribute of each type edited and read back with its type, a set edited, an item

@@ -17,8 +17,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dbrover_core::{
-    CancelHandle, ColumnInfo, Connection, ConnectionConfig, CostGuard, DriverError, FullScan, Row,
-    describe_error,
+    CancelHandle, ColumnInfo, Connection, ConnectionConfig, CostEstimate, CostGuard, DriverError,
+    ReadPace, Row, describe_error,
 };
 use dbrover_engine::read_only::{self, Guard, ReadOnlyMode, Storage};
 use dbrover_engine::read_write::{self, WriteMode};
@@ -36,14 +36,24 @@ pub(crate) enum RunError {
     /// read-write mode (see `read_write::mode`).
     #[error("DbRover has no transaction to run this in on {0} for MCP clients")]
     NoTransaction(&'static str),
-    /// The statement would read a whole table, which the data source's cost guard asks about
-    /// first, and an MCP client can't be asked (`docs/nosql.md`, N5).
-    #[error(
-        "{} The data source asks before reading a whole table, which an MCP client can't be \
-         asked: name the partition key, or turn the guard off in DbRover",
-        .0.describe()
-    )]
-    Scan(FullScan),
+    /// The data source's cost guard holds what the statement would cost, and an MCP client
+    /// can't be asked (`docs/nosql.md`, N5; `docs/cloud-data.md`, C0e).
+    #[error("{} {}", .0.describe(), cost_advice(.0))]
+    Cost(CostEstimate),
+}
+
+/// What an MCP client can do about a statement the cost guard refused.
+fn cost_advice(estimate: &CostEstimate) -> &'static str {
+    match estimate {
+        CostEstimate::WholeTable(_) => {
+            "The data source asks before reading a whole table, which an MCP client can't be \
+             asked: name the partition key, or turn the guard off in DbRover"
+        }
+        CostEstimate::Bytes(_) => {
+            "The data source asks before scanning that much, which an MCP client can't be \
+             asked: read less, or raise the limit in DbRover"
+        }
+    }
 }
 
 impl RunError {
@@ -57,22 +67,23 @@ impl RunError {
     }
 }
 
-/// Refuses `sql` when it would read a whole table and the data source's cost guard asks first.
+/// Refuses `sql` when the data source's cost guard holds what it would cost, since nobody can
+/// be asked: an MCP client reads a result whole.
 ///
 /// # Errors
 ///
-/// [`RunError::Scan`] for such a statement, and the driver's error if it can't tell.
-pub(crate) async fn check_scan(
+/// [`RunError::Cost`] for such a statement, and the driver's error if it can't tell.
+pub(crate) async fn check_cost(
     connection: &mut dyn Connection,
     guard: Option<CostGuard>,
     sql: &str,
 ) -> Result<(), RunError> {
-    if guard != Some(CostGuard::AskBeforeScans) {
+    let Some(guard) = guard.filter(CostGuard::is_on) else {
         return Ok(());
-    }
-    match connection.full_scan(sql).await? {
-        Some(scan) => Err(RunError::Scan(scan)),
-        None => Ok(()),
+    };
+    match connection.estimate_cost(sql).await? {
+        Some(estimate) if guard.holds(&estimate, ReadPace::Whole) => Err(RunError::Cost(estimate)),
+        _ => Ok(()),
     }
 }
 

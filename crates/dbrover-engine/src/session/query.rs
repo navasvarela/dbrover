@@ -186,15 +186,15 @@ async fn run_statements(
             outcome = RunOutcome::Failed;
             break;
         }
-        if script.scans.asks(index) {
-            match cost::held_scan(worker, &checked).await? {
+        if let Some(pace) = script.cost.pace(index) {
+            match cost::held_cost(worker, &checked, pace).await? {
                 Ok(None) => {}
-                Ok(Some(scan)) => {
-                    let message = scan.describe();
-                    worker.context.send(Event::ScanHeld {
+                Ok(Some(estimate)) => {
+                    let message = estimate.describe();
+                    worker.context.send(Event::CostHeld {
                         run,
                         statement: index,
-                        scan,
+                        estimate,
                     });
                     guard::close(worker).await?;
                     report_refusal(worker.context, &statement, message);

@@ -5,9 +5,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::{
-    CancelHandle, CatalogNode, CatalogPath, Cell, ChildrenPage, ChildrenQuery, DriverError,
-    RelationName, ResultCursor, RoleDescription, TableConstraints, TableDescription, TableName,
-    TransactionStatus,
+    CancelHandle, CatalogNode, CatalogPath, Cell, ChildrenPage, ChildrenQuery, CostEstimate,
+    DriverError, RelationName, ResultCursor, RoleDescription, TableConstraints, TableDescription,
+    TableName, TransactionStatus,
 };
 
 /// What a server reported about itself when the connection was opened.
@@ -42,34 +42,6 @@ pub enum RejectionKind {
     UnknownName,
     /// Anything else: a type mismatch, an ambiguous column, …
     Other,
-}
-
-/// A statement that would read every item of a table or index, which an engine that bills each
-/// read charges for whatever its filter keeps: what a data source's
-/// [`CostGuard`](crate::CostGuard) asks about first.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FullScan {
-    pub table: String,
-    /// The secondary index read instead of the table, when the statement names one.
-    pub index: Option<String>,
-    /// The key whose value, given at the top of the statement's condition, would have read
-    /// only its partitions.
-    pub partition_key: String,
-}
-
-impl FullScan {
-    /// Why the statement reads everything, for the question before it runs and the refusals.
-    pub fn describe(&self) -> String {
-        let read = match &self.index {
-            Some(index) => format!("every item of {}'s index {index}", self.table),
-            None => format!("every item of {}", self.table),
-        };
-        format!(
-            "This reads {read}, billed for each item read whatever the WHERE keeps: it has no = \
-             or IN on the partition key {} at the top of its WHERE.",
-            self.partition_key
-        )
-    }
 }
 
 /// A live connection to a database, implemented once per driver.
@@ -203,17 +175,21 @@ pub trait Connection: Send {
     /// [`DriverError::Connection`] if the database can't be asked.
     async fn validate(&mut self, sql: &str) -> Result<Option<Rejection>, DriverError>;
 
-    /// Whether `statement` would read a whole table or index, on an engine that bills each read
-    /// ([`FullScan`]). Asked before the statement runs when the data source's cost guard is
-    /// on; the statement isn't run. `None`, the default, for a statement that reads by key, for
-    /// one the driver can't read (the database will say why when it runs), and on every engine
-    /// that doesn't bill reads.
+    /// What `statement` would cost to run, on an engine that bills each read: whether it reads
+    /// a whole table or index, or how many bytes it scans ([`CostEstimate`]). Asked before the
+    /// statement runs when the data source's [`CostGuard`](crate::CostGuard) is on; the
+    /// statement isn't run. `None`, the default, for a statement that costs nothing worth
+    /// asking about, for one the driver can't read (the database will say why when it runs),
+    /// and on every engine that doesn't bill reads.
     ///
     /// # Errors
     ///
     /// [`DriverError::Connection`] if what the answer depends on can't be read, such as a
     /// table's keys.
-    async fn full_scan(&mut self, _statement: &str) -> Result<Option<FullScan>, DriverError> {
+    async fn estimate_cost(
+        &mut self,
+        _statement: &str,
+    ) -> Result<Option<CostEstimate>, DriverError> {
         Ok(None)
     }
 

@@ -23,8 +23,8 @@ use dbrover_core::{
     PostgresConfig, RelationName, RoleAttribute, RoleDescription, SafetyLevel, TableDescription,
 };
 use dbrover_engine::{
-    Command, ConsoleId, DatabaseFile, DdlFailure, Event, PasswordUpdate, RunId, RunOrigin,
-    RunPurpose, ScanApproval, SessionState, TransactionMode,
+    Command, ConsoleId, CostApproval, DatabaseFile, DdlFailure, Event, PasswordUpdate, RunId,
+    RunOrigin, RunPurpose, SessionState, TransactionMode,
 };
 use dbrover_sql::{
     Check, ColumnSpec, DdlOperation, Dialect, ExistingTable, ForeignKey, ObjectName, OwnedObjects,
@@ -1188,7 +1188,7 @@ fn query(
         transactions: TransactionMode::Auto,
         purpose: RunPurpose::Run,
         origin: RunOrigin::Console,
-        scans: ScanApproval::Ask,
+        cost: CostApproval::Ask,
     });
     let mut rows = Vec::new();
     loop {

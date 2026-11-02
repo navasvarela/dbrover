@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use async_trait::async_trait;
 use dbrover_core::{
     CancelHandle, CatalogNode, CatalogPath, Cell, ChildrenPage, ChildrenQuery, ColumnInfo,
-    Connection, DriverError, FullScan, Rejection, RelationName, ResultCursor, ResultShape,
+    Connection, CostEstimate, DriverError, Rejection, RelationName, ResultCursor, ResultShape,
     RoleDescription, Row, ServerInfo, TableConstraints, TableDescription, TableName,
     TransactionStatus, describe_error,
 };
@@ -128,8 +128,12 @@ impl Connection for Watched {
         self.loss.watch(self.connection.validate(sql).await)
     }
 
-    async fn full_scan(&mut self, statement: &str) -> Result<Option<FullScan>, DriverError> {
-        self.loss.watch(self.connection.full_scan(statement).await)
+    async fn estimate_cost(
+        &mut self,
+        statement: &str,
+    ) -> Result<Option<CostEstimate>, DriverError> {
+        self.loss
+            .watch(self.connection.estimate_cost(statement).await)
     }
 
     async fn transaction_status(&mut self) -> Result<TransactionStatus, DriverError> {

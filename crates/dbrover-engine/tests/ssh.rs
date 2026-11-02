@@ -11,8 +11,8 @@ use common::{MemorySecrets, SshTestServer, TestEngine, ssh_test_server};
 use dbrover_core::ChildrenQuery;
 use dbrover_core::{CatalogPath, DataSource, DataSourceId, SshLogin};
 use dbrover_engine::{
-    Command, ConsoleId, Event, PasswordKept, PasswordNeeded, PasswordUpdate, RunId, RunOrigin,
-    RunOutcome, RunPurpose, ScanApproval, SessionState, TransactionMode,
+    Command, ConsoleId, CostApproval, Event, PasswordKept, PasswordNeeded, PasswordUpdate, RunId,
+    RunOrigin, RunOutcome, RunPurpose, SessionState, TransactionMode,
 };
 use dbrover_store::Secret;
 
@@ -69,7 +69,7 @@ impl Machine {
             transactions: TransactionMode::Auto,
             purpose: RunPurpose::Run,
             origin: RunOrigin::Console,
-            scans: ScanApproval::Ask,
+            cost: CostApproval::Ask,
         });
         loop {
             if let Event::RunFinished {

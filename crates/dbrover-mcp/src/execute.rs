@@ -122,7 +122,7 @@ impl DbRoverMcp {
                 Box::pin(async move {
                     let mut results = Vec::with_capacity(texts.len());
                     for text in &texts {
-                        transaction::check_scan(connection, cost_guard, text).await?;
+                        transaction::check_cost(connection, cost_guard, text).await?;
                         let rows = watchdog
                             .watch(transaction::fetch(connection, text, max_rows))
                             .await?;

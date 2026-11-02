@@ -17,8 +17,8 @@ use dbrover_core::{
     SafetyLevel,
 };
 use dbrover_engine::{
-    Command, ConsoleId, EditFailure, Event, PasswordUpdate, RunId, RunOrigin, RunOutcome,
-    RunPurpose, ScanApproval, TransactionMode,
+    Command, ConsoleId, CostApproval, EditFailure, Event, PasswordUpdate, RunId, RunOrigin,
+    RunOutcome, RunPurpose, TransactionMode,
 };
 
 const SETUP_CONSOLE: ConsoleId = ConsoleId(1);
@@ -85,7 +85,7 @@ fn run_for(
         transactions: TransactionMode::Auto,
         purpose,
         origin: RunOrigin::Console,
-        scans: ScanApproval::Ask,
+        cost: CostApproval::Ask,
     });
     let mut failure = None;
     loop {
@@ -484,7 +484,7 @@ fn page_through(engine: &mut TestEngine, data_source: DataSourceId, run: u64) ->
         transactions: TransactionMode::Auto,
         purpose: RunPurpose::Run,
         origin: RunOrigin::Console,
-        scans: ScanApproval::Ask,
+        cost: CostApproval::Ask,
     });
     let mut pages = Vec::new();
     loop {

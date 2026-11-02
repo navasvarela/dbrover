@@ -52,9 +52,9 @@ pub use programs::{
     ProgramRunner,
 };
 pub use protocol::{
-    Command, ConsoleId, DatabaseFile, DdlFailure, DescribedTable, EditFailure, Event, Exporter,
-    ImportFailure, PasswordKept, PasswordUpdate, Picture, RowEdit, RowsImport, RunId, RunOrigin,
-    RunOutcome, RunPurpose, ScanApproval, SessionState, StatementCheck, StatementFailure,
+    Command, ConsoleId, CostApproval, DatabaseFile, DdlFailure, DescribedTable, EditFailure, Event,
+    Exporter, ImportFailure, PasswordKept, PasswordUpdate, Picture, RowEdit, RowsImport, RunId,
+    RunOrigin, RunOutcome, RunPurpose, SessionState, StatementCheck, StatementFailure,
     StatementSummary, TableExport, TransactionEnd, TransactionMode,
 };
 pub use releases::{GithubReleases, Release, ReleaseError, ReleaseFeed};

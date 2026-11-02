@@ -40,7 +40,7 @@ fn run_with(
         transactions: TransactionMode::Auto,
         purpose: RunPurpose::Run,
         origin: RunOrigin::Console,
-        scans: ScanApproval::Ask,
+        cost: CostApproval::Ask,
     });
     let mut rows = Vec::new();
     let mut failure = None;

@@ -31,7 +31,7 @@ fn emulator(endpoint: &str) -> DynamoDbConfig {
         profile: String::new(),
         region: String::new(),
         endpoint: endpoint.to_owned(),
-        cost_guard: dbrover_core::CostGuard::AskBeforeScans,
+        cost_guard: dbrover_core::CostGuard::default(),
     }
 }
 
@@ -400,11 +400,11 @@ async fn tells_a_scan_from_a_read_by_key_with_the_keys_of_what_it_reads() {
     };
     let name = &table.name;
     let scan = |index: Option<&str>, partition_key: &str| {
-        Some(FullScan {
+        Some(CostEstimate::WholeTable(FullScan {
             table: name.clone(),
             index: index.map(str::to_owned),
             partition_key: partition_key.to_owned(),
-        })
+        }))
     };
     let cases = [
         (
@@ -437,7 +437,10 @@ async fn tells_a_scan_from_a_read_by_key_with_the_keys_of_what_it_reads() {
         ("SELECT * FROM".to_owned(), None),
     ];
     for (statement, expected) in cases {
-        let answer = connection.full_scan(&statement).await.expect("an answer");
+        let answer = connection
+            .estimate_cost(&statement)
+            .await
+            .expect("an answer");
         assert_eq!(answer, expected, "{statement}");
     }
     table.drop().await;
