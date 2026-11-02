@@ -16,6 +16,8 @@ use aws_smithy_http_client::tls::{self, rustls_provider::CryptoMode};
 
 pub use aws_config::SdkConfig;
 
+use crate::with_causes;
+
 /// The made-up credentials of [`AwsCredentials::LocalEmulator`]. DynamoDB Local and LocalStack
 /// take any; DynamoDB Local keeps a database per access key, so it stays the same.
 const EMULATOR_KEY: &str = "dbrover";
@@ -162,22 +164,6 @@ impl AwsSignIn {
         }
         Ok(loader)
     }
-}
-
-/// `error`'s message followed by each of its causes', as the SDK nests them: its own message
-/// alone often says only that a provider failed.
-fn with_causes(error: &dyn Error) -> String {
-    let mut text = error.to_string();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        let cause_text = cause.to_string();
-        if !text.contains(&cause_text) {
-            text.push_str(": ");
-            text.push_str(&cause_text);
-        }
-        source = cause.source();
-    }
-    text
 }
 
 #[cfg(test)]

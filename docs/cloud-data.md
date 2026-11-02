@@ -140,7 +140,7 @@ a CLI) and with tokens the tests make up. None reads the machine's own sign-in.
 
 - **C0a — Plan:** this section, C0's rows in [Decisions](#decisions) and [Risks](#risks), and
   the roadmap's entry in layers.
-- **C0b — Google Cloud sign-in:** a provider-neutral `AccessToken` (the secret, which never
+- **C0b — Google Cloud sign-in** (built): a provider-neutral `AccessToken` (the secret, which never
   prints, and when it expires) and a cache that fetches a new one when less than five minutes
   are left, shared by every provider. A `google` module signs in with Application Default
   Credentials as Google's own libraries find them: the file `GOOGLE_APPLICATION_CREDENTIALS`
