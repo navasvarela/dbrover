@@ -1,0 +1,341 @@
+//! Runs with a source in memory: what they write, what they report, and each limit that
+//! stops one, leaving no file behind.
+
+use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+
+use calamine::{Data, Reader, Xlsx, open_workbook};
+use dbrover_core::{
+    ConnectionConfig, DataSource, DataSourceId, Row, SafetyLevel, SqliteConfig, ValueKind,
+};
+use dbrover_export::ExportColumn;
+
+use super::*;
+
+/// Pages of rows handed over one at a time, then perhaps an error.
+struct MemoryReader {
+    columns: Vec<ExportColumn>,
+    pages: VecDeque<Vec<Row>>,
+    then: Option<SourceError>,
+}
+
+impl SourceReader for MemoryReader {
+    fn columns(&self) -> &[ExportColumn] {
+        &self.columns
+    }
+
+    async fn next_page(&mut self) -> Result<Option<Vec<Row>>, SourceError> {
+        match self.pages.pop_front() {
+            Some(page) => Ok(Some(page)),
+            None => self.then.take().map_or(Ok(None), Err),
+        }
+    }
+}
+
+fn column(name: &str) -> ExportColumn {
+    ExportColumn {
+        name: name.to_owned(),
+        type_name: None,
+        kind: ValueKind::Undeclared,
+        excel_format: None,
+    }
+}
+
+/// `count` accounts, each a row of its code and a balance, in pages of `page`.
+fn ledger(count: usize, page: usize) -> MemoryReader {
+    let rows: Vec<Row> = (0..count)
+        .map(|n| vec![Some(format!("{}", 1000 + n)), Some(format!("{n}.505"))])
+        .collect();
+    MemoryReader {
+        columns: vec![column("account"), column("balance")],
+        pages: rows.chunks(page).map(<[Row]>::to_vec).collect(),
+        then: None,
+    }
+}
+
+fn plan(source_limits: &str, outputs: &str) -> Plan {
+    let text = format!(
+        "[report]\nname = \"Balances\"\nparams = {{ since = \"date\" }}\n\
+         [[source]]\nid = \"balances\"\ndata_source = \"ledger\"\n\
+         query = \"SELECT * FROM b WHERE d >= :since\"\n{source_limits}\n{outputs}"
+    );
+    let report = read_report(&text).unwrap();
+    let ledger = DataSource {
+        id: DataSourceId::generate(),
+        name: "ledger".to_owned(),
+        color: None,
+        safety: SafetyLevel::Normal,
+        project: None,
+        mcp_login: None,
+        config: ConnectionConfig::Sqlite(SqliteConfig {
+            path: PathBuf::from("/tmp/ledger.db"),
+            read_only: false,
+        }),
+    };
+    Plan::new(report, &[ledger], &[]).unwrap()
+}
+
+const BOTH: &str = r##"
+[[output]]
+format = "xlsx"
+file = "balances-{since:%Y-%m}.xlsx"
+columns = [
+  { name = "Account", from = "account", type = "text" },
+  { name = "Balance", from = "balance", type = "decimal(18,2)", format = "#,##0.00" },
+]
+[[output]]
+format = "csv"
+file = "balances-{since:%Y-%m}.csv"
+columns = "same"
+"##;
+
+fn values(plan: &Plan) -> RunValues {
+    plan.values(
+        &[("since".to_owned(), "2026-10-01".to_owned())]
+            .into_iter()
+            .collect(),
+    )
+    .unwrap()
+}
+
+/// Runs `plan` on `reader` into `folder`, with the events it sent.
+async fn run_into(
+    plan: &Plan,
+    reader: &mut MemoryReader,
+    folder: &Path,
+) -> (Result<RunSummary, RunFailure>, Vec<RunEvent>) {
+    let mut events = Vec::new();
+    let staging = folder.join(".run");
+    let folders = RunFolders {
+        folder,
+        staging: &staging,
+    };
+    let outcome = run(
+        plan,
+        &values(plan),
+        reader,
+        folders,
+        Instant::now(),
+        &mut |event| events.push(event),
+    )
+    .await;
+    (outcome, events)
+}
+
+/// The names of the files in `folder`.
+fn files_in(folder: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(folder)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+#[tokio::test]
+async fn writes_every_output_with_its_schema_and_reports_each_step() {
+    let folder = tempfile::tempdir().unwrap();
+    let plan = plan("", BOTH);
+    let mut reader = ledger(250, 100);
+    let (outcome, events) = run_into(&plan, &mut reader, folder.path()).await;
+    let summary = outcome.unwrap();
+    assert_eq!(summary.rows, 250);
+    assert_eq!(
+        files_in(folder.path()),
+        ["balances-2026-10.csv", "balances-2026-10.xlsx"]
+    );
+
+    let csv = std::fs::read_to_string(folder.path().join("balances-2026-10.csv")).unwrap();
+    let mut lines = csv.lines();
+    assert_eq!(lines.next(), Some("Account,Balance"));
+    assert_eq!(lines.next(), Some("1000,0.51"));
+    assert_eq!(lines.next(), Some("1001,1.51"));
+    assert_eq!(csv.lines().count(), 251);
+
+    let mut book: Xlsx<_> = open_workbook(folder.path().join("balances-2026-10.xlsx")).unwrap();
+    let range = book.worksheet_range("Rows").unwrap();
+    assert_eq!(range.get((2, 1)), Some(&Data::Float(1.51)));
+    assert_eq!(range.height(), 251);
+
+    let kinds: Vec<&str> = events
+        .iter()
+        .map(|event| match event {
+            RunEvent::Progress { .. } => "progress",
+            RunEvent::SourceDone { .. } => "source done",
+            RunEvent::Preview(_) => "preview",
+            RunEvent::OutputWritten(_) => "written",
+            other => panic!("the run sent {other:?}"),
+        })
+        .filter(|kind| *kind != "progress")
+        .collect();
+    assert_eq!(kinds, ["source done", "preview", "written", "written"]);
+    let Some(RunEvent::Preview(preview)) = events
+        .iter()
+        .find(|event| matches!(event, RunEvent::Preview(_)))
+    else {
+        unreachable!("the kinds above include a preview");
+    };
+    assert_eq!(preview.columns, ["account", "balance"]);
+    assert_eq!(preview.rows.len(), PREVIEW_ROWS);
+    assert_eq!(
+        preview.rows[0],
+        [Some("1000".to_owned()), Some("0.505".to_owned())]
+    );
+    assert!(preview.more);
+    let written: Vec<&WrittenFile> = events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::OutputWritten(file) => Some(file),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(written[0].path, folder.path().join("balances-2026-10.xlsx"));
+    assert_eq!(written[0].rows, 250);
+    assert!(written[1].size > 0);
+}
+
+/// Each guardrail a run can hit, the key that raises it, and that the folder is left as it was,
+/// an older file under an output's name included.
+#[tokio::test]
+async fn stops_at_each_limit_and_leaves_no_file() {
+    let cases: [(&str, &str, &str); 3] = [
+        ("max_rows = 120", BOTH, "max_rows"),
+        ("max_bytes = 900", BOTH, "max_bytes"),
+        (
+            "",
+            "[[output]]\nformat = \"csv\"\nfile = \"balances-{since:%Y-%m}.csv\"\nmax_size = 500",
+            "max_size",
+        ),
+    ];
+    for (source_limits, outputs, key) in cases {
+        let folder = tempfile::tempdir().unwrap();
+        std::fs::write(folder.path().join("balances-2026-10.csv"), "last month's").unwrap();
+        let plan = plan(source_limits, outputs);
+        let (outcome, _) = run_into(&plan, &mut ledger(250, 100), folder.path()).await;
+        let failure = outcome.unwrap_err();
+        assert_eq!(
+            failure.limit.as_ref().map(|limit| limit.key.as_str()),
+            Some(key),
+            "{failure:?}"
+        );
+        assert_eq!(files_in(folder.path()), ["balances-2026-10.csv"], "{key}");
+        assert_eq!(
+            std::fs::read_to_string(folder.path().join("balances-2026-10.csv")).unwrap(),
+            "last month's"
+        );
+    }
+}
+
+#[tokio::test]
+async fn names_the_limit_and_where_to_raise_it() {
+    let folder = tempfile::tempdir().unwrap();
+    let (outcome, _) = run_into(
+        &plan("max_rows = 120", BOTH),
+        &mut ledger(250, 100),
+        folder.path(),
+    )
+    .await;
+    let failure = outcome.unwrap_err();
+    assert_eq!(
+        failure.to_string(),
+        "source \"balances\": the source returned more than 120 rows, its max_rows; filter in \
+         its query, or raise max_rows"
+    );
+    assert_eq!(
+        failure.limit,
+        Some(Box::new(LimitHit {
+            key: "max_rows".to_owned(),
+            value: "120 rows".to_owned(),
+            raise_in: "the [[source]] \"balances\"".to_owned(),
+        }))
+    );
+}
+
+#[tokio::test]
+async fn fails_on_a_value_that_doesnt_fit_and_on_a_missing_column() {
+    let folder = tempfile::tempdir().unwrap();
+    let mut reader = ledger(3, 10);
+    reader.pages[0][1][1] = Some("n/a".to_owned());
+    let (outcome, _) = run_into(&plan("", BOTH), &mut reader, folder.path()).await;
+    assert_eq!(
+        outcome.unwrap_err().to_string(),
+        "output 1 (balances-2026-10.xlsx): row 2, column \"Balance\": \"n/a\" isn't a decimal \
+         number"
+    );
+    assert_eq!(files_in(folder.path()), Vec::<String>::new());
+
+    let missing = BOTH.replace("from = \"balance\"", "from = \"total\"");
+    let (outcome, _) = run_into(&plan("", &missing), &mut ledger(3, 10), folder.path()).await;
+    let failure = outcome.unwrap_err();
+    assert_eq!(
+        failure.step,
+        Step::Output {
+            number: 1,
+            file: "balances-2026-10.xlsx".to_owned()
+        }
+    );
+    assert!(
+        failure.message.contains("comes from \"total\""),
+        "{failure}"
+    );
+    assert_eq!(files_in(folder.path()), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn passes_on_the_sources_own_failure() {
+    let folder = tempfile::tempdir().unwrap();
+    let mut reader = ledger(150, 100);
+    reader.then = Some(SourceError {
+        message: "cancelled after its timeout of 10m".to_owned(),
+        limit: Some(Box::new(LimitHit {
+            key: "timeout".to_owned(),
+            value: "10m".to_owned(),
+            raise_in: "the [[source]] \"balances\"".to_owned(),
+        })),
+    });
+    let (outcome, _) = run_into(&plan("", BOTH), &mut reader, folder.path()).await;
+    let failure = outcome.unwrap_err();
+    assert_eq!(
+        failure.step,
+        Step::Source {
+            id: "balances".to_owned()
+        }
+    );
+    assert_eq!(
+        failure.limit.map(|limit| limit.key),
+        Some("timeout".to_owned())
+    );
+    assert_eq!(files_in(folder.path()), Vec::<String>::new());
+}
+
+#[test]
+fn events_are_json_lines_the_app_reads_back() {
+    let events = [
+        RunEvent::Started {
+            report: "Trial balance".to_owned(),
+            source: "balances".to_owned(),
+            data_source: "ledger".to_owned(),
+        },
+        RunEvent::Failed(RunFailure::at_limit(
+            Step::Source {
+                id: "balances".to_owned(),
+            },
+            "too many",
+            LimitHit {
+                key: "max_rows".to_owned(),
+                value: "120 rows".to_owned(),
+                raise_in: "the [[source]] \"balances\"".to_owned(),
+            },
+        )),
+    ];
+    let line = serde_json::to_string(&events[1]).unwrap();
+    assert_eq!(
+        line,
+        r#"{"event":"failed","step":{"step":"source","id":"balances"},"message":"too many","limit":{"key":"max_rows","value":"120 rows","raise_in":"the [[source]] \"balances\""}}"#
+    );
+    for event in events {
+        let line = serde_json::to_string(&event).unwrap();
+        assert_eq!(serde_json::from_str::<RunEvent>(&line).unwrap(), event);
+    }
+}

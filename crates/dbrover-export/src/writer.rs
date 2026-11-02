@@ -118,9 +118,33 @@ impl ExportWriter {
         path: &Path,
         start: impl FnOnce(&Path) -> io::Result<Box<dyn FileFormat>>,
     ) -> Result<Self, ExportError> {
-        let mut partial_name = path.file_name().unwrap_or_default().to_owned();
-        partial_name.push(".partial");
-        let partial = path.with_file_name(partial_name);
+        let partial = path.with_file_name(partial_name(path));
+        Self::start(path, partial, start)
+    }
+
+    /// As [`ExportWriter::create`], with the partial file in `staging` rather than beside
+    /// `path`: a folder on the same disk that whoever runs the export removes, so a process
+    /// killed while writing leaves nothing under the name chosen nor beside it.
+    ///
+    /// # Errors
+    ///
+    /// [`ExportError`] if the file can't be created or written.
+    pub fn create_staged(
+        path: &Path,
+        staging: &Path,
+        spec: &ExportSpec,
+        columns: &[ExportColumn],
+    ) -> Result<Self, ExportError> {
+        Self::start(path, staging.join(partial_name(path)), |partial| {
+            spec.file_format(partial, columns)
+        })
+    }
+
+    fn start(
+        path: &Path,
+        partial: PathBuf,
+        start: impl FnOnce(&Path) -> io::Result<Box<dyn FileFormat>>,
+    ) -> Result<Self, ExportError> {
         let format = start(&partial).map_err(|source| {
             // Starting failed; the partial file's removal, if there is one, can only add to
             // that.
@@ -162,18 +186,30 @@ impl ExportWriter {
     ///
     /// [`ExportError`] if the file can't be written or renamed.
     pub fn finish(self) -> Result<(), ExportError> {
+        self.complete()?.put_in_place()
+    }
+
+    /// Ends the file, but leaves it under its partial name, so that several files can be
+    /// completed before any is put in place: a report's outputs appear together or not at all.
+    ///
+    /// # Errors
+    ///
+    /// [`ExportError`] if the file can't be written; the partial file is removed.
+    pub fn complete(self) -> Result<CompletedFile, ExportError> {
         let Self {
             format,
             path,
             partial,
             ..
         } = self;
-        let finished = format.finish().and_then(|()| fs::rename(&partial, &path));
-        finished.map_err(|source| {
-            // Nothing more can be done about a partial file that won't go.
-            let _ = fs::remove_file(&partial);
-            ExportError { path, source }
-        })
+        match format.finish() {
+            Ok(()) => Ok(CompletedFile { path, partial }),
+            Err(source) => {
+                // Nothing more can be done about a partial file that won't go.
+                let _ = fs::remove_file(&partial);
+                Err(ExportError { path, source })
+            }
+        }
     }
 
     /// Stops writing and removes what was written.
@@ -186,10 +222,67 @@ impl ExportWriter {
         let _ = fs::remove_file(partial);
     }
 
+    /// The file it will be put in place as.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
     fn error(&self, source: io::Error) -> ExportError {
         ExportError {
             path: self.path.clone(),
             source,
         }
+    }
+}
+
+/// The name a file is written under until it is complete: its own, plus `.partial`.
+fn partial_name(path: &Path) -> std::ffi::OsString {
+    let mut name = path.file_name().unwrap_or_default().to_owned();
+    name.push(".partial");
+    name
+}
+
+/// A file written whole, still under its partial name.
+#[derive(Debug)]
+pub struct CompletedFile {
+    path: PathBuf,
+    partial: PathBuf,
+}
+
+impl CompletedFile {
+    /// The file it will be put in place as.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// How many bytes the file holds.
+    ///
+    /// # Errors
+    ///
+    /// If the file's size can't be read.
+    pub fn size(&self) -> io::Result<u64> {
+        fs::metadata(&self.partial).map(|metadata| metadata.len())
+    }
+
+    /// Renames the file to its name, replacing any file there.
+    ///
+    /// # Errors
+    ///
+    /// [`ExportError`] if the rename fails; the partial file is removed.
+    pub fn put_in_place(self) -> Result<(), ExportError> {
+        fs::rename(&self.partial, &self.path).map_err(|source| {
+            // Nothing more can be done about a partial file that won't go.
+            let _ = fs::remove_file(&self.partial);
+            ExportError {
+                path: self.path,
+                source,
+            }
+        })
+    }
+
+    /// Removes the file.
+    pub fn abandon(self) {
+        // Nothing more can be done about a partial file that won't go; its name says what it is.
+        let _ = fs::remove_file(self.partial);
     }
 }

@@ -30,6 +30,7 @@ pub mod read_write;
 mod registry;
 mod releases;
 mod repaint;
+mod report_source;
 #[cfg(test)]
 mod repository_rename_tests;
 mod session;
@@ -59,6 +60,7 @@ pub use protocol::{
 };
 pub use releases::{GithubReleases, Release, ReleaseError, ReleaseFeed};
 pub use repaint::Repaint;
+pub use report_source::{ReportSource, SourceAccess};
 pub use sql_files::WatchedFile;
 pub use tunnels::Tunnels;
 pub use updater::{
