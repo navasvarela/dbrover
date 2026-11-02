@@ -1642,12 +1642,29 @@ were a non-goal in [Vision](vision.md) until 2026-10-29.
 Reports that combine several data sources into files with a declared schema, run again with new
 parameters, with metrics per run and guardrails so a report can't take over the machine.
 Planned on 2026-11-01 in [Reports](reporting.md), after W8, whose output layer it builds on.
-Not scheduled yet. Dashboards, schedules and sharing stay out (see [Vision](vision.md)).
+RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
+[Vision](vision.md)).
 
 - **RP0 — The plan:** [Reports](reporting.md), this entry and the line in Vision.
-- **RP1 — One source, one file:** a report file in `reports/` with parameters, run in a
-  separate `dbrover report-worker` process with its guardrails, written to CSV and Excel through
-  output schemas on W8's presets.
+- **RP1 — One source, one file** (started 2026-11-02, after C0): a report file in `reports/`
+  with parameters, run in a separate `dbrover report-worker` process with its guardrails,
+  written to CSV and Excel through output schemas on W8's presets. Planned in
+  [Reports](reporting.md#rp1--one-source-one-file). In layers, one PR each:
+  - **RP1a — Plan:** RP1's layers, decisions and risks, and this entry. One `reports/` folder
+    for every project, not one per project.
+  - **RP1b — Output schemas:** columns with a name, a source column, a type, Excel's number
+    format and a rule for values that don't fit, with exact decimal rounding.
+  - **RP1c — The report file:** the `dbrover-report` crate: reading a report with its
+    problems, typed parameters, file names, and the plan.
+  - **RP1d — Running a report:** one source's rows, under its caps, into every output and a
+    preview, read through DbRover's own drivers in read-only mode.
+  - **RP1e — The worker:** `dbrover report-worker`, its JSON Lines, the process's limits, and
+    the app's side that starts, cancels and watches it.
+  - **RP1f — Reports in the app:** the explorer's **Reports** and the report's tab.
+  - **RP1g — Manual:** the **Reports** chapter, the examples, and the demo note.
+
+  **Exit:** from the Reports tab, a one-source report with parameters runs in the worker under
+  its guardrails and writes CSV and Excel with its declared schema.
 - **RP2 — Several sources:** each source's rows loaded into DuckDB, a combine step in DuckDB
   SQL, DuckDB data sources attached read-only, and exact decimals from source to file.
 - **RP3 — Lookups and documents:** a source read by the keys an earlier source found, in
