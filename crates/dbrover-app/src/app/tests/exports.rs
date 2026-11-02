@@ -32,6 +32,19 @@ id = "typo"
 name = "Broken template"
 extension = "txt"
 row = "{{ recrod.id }}\n"
+
+[[export]]
+id = "pdf"
+name = "PDF report"
+extension = "pdf"
+command = ["echo", "{table}"]
+
+[[export]]
+id = "yaml"
+name = "YAML"
+extension = "yaml"
+command = ["echo"]
+text = true
 "#;
 
 /// The shop with two orders, `exports.toml` and, if given, `keymap.toml`, opened on the orders.
@@ -76,12 +89,17 @@ fn view_exports_creates_the_file_once_and_lists_every_format_after_a_reload() {
 
     std::fs::write(&file, EXPORTS).unwrap();
     harness.get_by_label("Reload").click();
-    step_until_visible(&mut harness, "4 formats");
+    step_until_visible(&mut harness, "6 formats");
     harness.get_by_label("export.semicolon");
     harness.get_by_label("Preset of CSV");
     harness.get_by_label("separator = \";\"");
     harness.get_by_label("Preset of Excel");
-    harness.get_by_label("files only");
+    assert_eq!(harness.get_all_by_label("files only").count(), 2);
+    assert_eq!(harness.get_all_by_label("Program").count(), 2);
+    assert_eq!(
+        harness.get_all_by_label("Asks before it next runs").count(),
+        2
+    );
     assert_eq!(harness.get_all_by_label("Template").count(), 2);
     harness.get_by_label("{{ recrod.id }}");
 
@@ -108,7 +126,7 @@ fn lists_what_exports_toml_gets_wrong_on_its_page() {
     let mut harness = start_app(dir.path(), feed);
     step_until_visible(&mut harness, "exports.toml: 1 problem");
     harness.get_by_label("exports.toml: 1 problem").click();
-    step_until_visible(&mut harness, "4 formats");
+    step_until_visible(&mut harness, "6 formats");
     harness.get_by_label(
         "export \"tabs\": \"separator\" is not an option of TSV; its options are header, \
          null_text",
@@ -245,5 +263,76 @@ fn copies_as_a_template() {
     step_until_visible(
         &mut harness,
         "row 1: the row template, line 1: undefined value",
+    );
+}
+
+/// Clicks the question's Run, once it has settled: a console's toolbar has a Run button too,
+/// and the question is drawn after it.
+fn run_it(harness: &mut Harness<'_, DbRoverApp>) {
+    step_until_visible(harness, "Run a program?");
+    harness.run();
+    let Some(run) = harness.query_all_by_label("Run").last() else {
+        panic!("the question has no Run button");
+    };
+    run.click();
+    harness.step();
+}
+
+/// A program asks before its first export, showing its command in full, and not again; it gets
+/// the rows as JSON Lines, and what it writes is the file.
+#[test]
+fn exports_through_a_program_after_asking_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut harness = start_with_exports(dir.path(), None);
+    let folder = dir.path().to_owned();
+    harness.state_mut().pick_export_path =
+        Box::new(move |file, what| Some(folder.join(format!("{what}.{}", file.extension))));
+
+    open_export_dialog(&mut harness, "Loaded rows", Some("PDF report"));
+    harness.get_by_label_contains("Written by the program “pdf”");
+    confirm_export(&mut harness);
+    step_until_visible(&mut harness, "Run a program?");
+    harness.get_by_label("[\"echo\", \"{table}\"]");
+    harness.get_by_label("every row exported, as JSON Lines");
+    harness.run();
+    harness.get_by_label("Run and export…").click();
+    step_until_visible(&mut harness, "Exported 2 rows");
+    let file = dir.path().join("rows.pdf");
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "{\"id\":\"1\",\"customer\":\"Zoë; Ltd\"}\n{\"id\":\"2\",\"customer\":null}\n"
+    );
+    let trusted = std::fs::read_to_string(dir.path().join("trusted_commands.toml")).unwrap();
+    assert!(trusted.contains("export = \"pdf\""), "{trusted}");
+
+    std::fs::remove_file(&file).unwrap();
+    open_export_dialog(&mut harness, "Loaded rows", None);
+    confirm_export(&mut harness);
+    step_until(&mut harness, "the second export", |_| file.exists());
+    assert!(harness.query_by_label("Run a program?").is_none());
+}
+
+/// A program that writes text is under Copy as; it asks before its first run, and what it
+/// writes goes on the clipboard. One that writes only files isn't offered.
+#[test]
+fn copies_through_a_program_that_writes_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut harness = start_with_exports(dir.path(), None);
+    harness.get_by_label("Zoë; Ltd").click_secondary();
+    harness.run();
+    harness.get_by_label("Copy as ⏵").click();
+    harness.run();
+    assert!(harness.query_by_label("PDF report").is_none());
+    harness.get_by_label("YAML").click();
+    harness.step();
+    run_it(&mut harness);
+    step_until(
+        &mut harness,
+        "the program's output on the clipboard",
+        |harness| copied(harness).is_some(),
+    );
+    assert_eq!(
+        copied(&harness).as_deref(),
+        Some("{\"customer\":\"Zoë; Ltd\"}\n")
     );
 }

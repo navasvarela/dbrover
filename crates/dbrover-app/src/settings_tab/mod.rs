@@ -339,7 +339,13 @@ impl SettingsTab {
                 view.command_runs,
                 actions,
             ),
-            Page::Exports => exports_page::show(ui, view.custom_files, view.keymap, actions),
+            Page::Exports => exports_page::show(
+                ui,
+                view.custom_files,
+                view.keymap,
+                view.command_runs,
+                actions,
+            ),
             Page::Project(_) => {}
         }
     }

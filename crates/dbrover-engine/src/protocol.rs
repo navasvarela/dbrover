@@ -17,8 +17,8 @@ use dbrover_store::{
 };
 
 use crate::{
-    Export, ExportAll, HostKey, InstalledUpdate, PasswordNeeded, ProgramFailure, ProgramId,
-    ProgramOutput, ProgramRequest, Release, WatchedFile,
+    Export, ExportAll, ExportProgramRequest, HostKey, InstalledUpdate, PasswordNeeded,
+    ProgramFailure, ProgramId, ProgramOutput, ProgramRequest, Release, WatchedFile,
 };
 
 /// Identifies a query console. Chosen by the UI, unique for the app's lifetime.
@@ -330,6 +330,10 @@ pub enum Command {
     /// trusted it, with what the request names filled in. It runs until it ends, its timeout
     /// passes or [`Command::StopProgram`] stops it. Answered by [`Event::ProgramFinished`].
     RunProgram(Box<ProgramRequest>),
+    /// Runs a program from `exports.toml` on the selected cells, given as JSON Lines, for Copy
+    /// as, if the user has trusted it. Stopped like a command action's, by its timeout or
+    /// [`Command::StopProgram`]. Answered by [`Event::ProgramFinished`].
+    RunExportProgram(Box<ExportProgramRequest>),
     /// Stops a running program, killing it. Answered by its [`Event::ProgramFinished`].
     StopProgram(ProgramId),
     /// Lets the command run without asking from now on, in place of whatever its action ran

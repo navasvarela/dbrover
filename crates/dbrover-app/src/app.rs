@@ -8,7 +8,7 @@ use dbrover_engine::{
     Command, EngineConfig, EngineError, EngineHandle, Event, PasswordKept, Repaint, Restart,
     RunOrigin,
 };
-use dbrover_export::{CustomFormatId, ExportSpec};
+use dbrover_export::{CustomFormatId, CustomFormatKind, ExportSpec};
 use dbrover_language::QueryLanguage;
 use dbrover_store::{
     ActionBody, ActionId, ConsoleKey, CustomFileKind, DiagramFolder, DiagramKey, DiagramName,
@@ -155,6 +155,8 @@ pub struct DbRoverApp {
     theme_changed: bool,
     /// Why the last custom action couldn't run, shown in the status bar until the next one.
     action_problem: Option<String>,
+    /// What an export program wrote for Copy as, for the clipboard on the next frame.
+    copied_by_program: Option<String>,
     command_runs: CommandRuns,
     about_open: bool,
     /// What happened to the settings folder at start-up, until dismissed.
@@ -274,6 +276,7 @@ impl DbRoverApp {
             custom_files: CustomFiles::default(),
             theme_changed: false,
             action_problem: None,
+            copied_by_program: None,
             command_runs: CommandRuns::default(),
             about_open: false,
             folder_notice: None,
@@ -452,8 +455,12 @@ impl DbRoverApp {
             self.show_change(dialog.data_source(), changed);
         }
         self.apply_to_copied_ddl(event);
-        if let Some(Finished::OpenConsole { data_source, text }) = self.command_runs.apply(event) {
-            self.open_program_output(data_source, text);
+        match self.command_runs.apply(event) {
+            Some(Finished::OpenConsole { data_source, text }) => {
+                self.open_program_output(data_source, text);
+            }
+            Some(Finished::Copy(text)) => self.copied_by_program = Some(text),
+            None => {}
         }
         if let Some(window) = &mut self.definition_window {
             window.apply(event);
@@ -731,6 +738,28 @@ impl DbRoverApp {
         let triggered = ctx.input_mut(|input| self.keymap.consume_custom(input));
         for action in triggered {
             self.run_action_on_selection(&action);
+        }
+    }
+
+    /// Copies the console's selected cells as `copy` says: at once, or through an export
+    /// program, whose output reaches the clipboard when it finishes.
+    fn copy_cells(&mut self, console: &ConsoleKey, copy: ClipboardCopy, ctx: &egui::Context) {
+        if let ClipboardCopy::Custom(format) = &copy
+            && matches!(format.kind, CustomFormatKind::Program(_))
+        {
+            if let Some((spec, stdin)) = self.consoles.program_input(console, format) {
+                let run = self
+                    .command_runs
+                    .start_copy(format, spec, console.data_source, stdin);
+                self.send_if(run);
+            }
+            return;
+        }
+        if let Some(text) = self
+            .consoles
+            .copy(console, copy, &self.export_choices.options)
+        {
+            ctx.copy_text(text);
         }
     }
 
@@ -1877,12 +1906,8 @@ impl DbRoverApp {
                 }
             }
             AppCommand::Copy(copy) => {
-                if let Some(console) = self.focused_console()
-                    && let Some(text) =
-                        self.consoles
-                            .copy(&console, copy, &self.export_choices.options)
-                {
-                    ctx.copy_text(text);
+                if let Some(console) = self.focused_console() {
+                    self.copy_cells(&console, copy, ctx);
                 }
             }
             AppCommand::FormatAll => self.format_focused_console(FormatScope::All),
@@ -2068,11 +2093,16 @@ impl DbRoverApp {
         let Some(dialog) = &mut self.export_dialog else {
             return;
         };
-        match dialog.show(ctx) {
-            Some(ExportDialogAction::Export(spec, file)) => {
+        match dialog.show(ctx, &self.command_runs) {
+            Some(ExportDialogAction::Export { spec, file, trust }) => {
                 self.export_choices = dialog.choices().clone();
                 let subject = dialog.subject().clone();
                 let rows = dialog.rows();
+                if let Some(trusted) = trust {
+                    // Before the export: the engine checks the trust when it starts one.
+                    self.command_runs.trust(trusted.clone());
+                    self.send(Command::TrustCommand(trusted));
+                }
                 self.export_to_file(subject, rows, spec, &file);
             }
             Some(ExportDialogAction::Cancel(run)) => {
@@ -2464,6 +2494,9 @@ impl eframe::App for DbRoverApp {
         }
         self.maximize_window_once(ctx);
         self.drain_engine_events();
+        if let Some(text) = self.copied_by_program.take() {
+            ctx.copy_text(text);
+        }
         self.filter_paged_levels(ctx);
         if std::mem::take(&mut self.theme_changed) {
             theme::install_palettes(ctx, self.custom_files.palettes());
@@ -2552,12 +2585,7 @@ impl eframe::App for DbRoverApp {
                 ConsoleAction::ShowHistory => self.open_history(console),
                 ConsoleAction::OpenExportDialog => self.open_export_dialog(console),
                 ConsoleAction::RunToFile => self.open_run_to_file(console),
-                ConsoleAction::Copy(copy) => {
-                    let options = &self.export_choices.options;
-                    if let Some(text) = self.consoles.copy(&console, copy, options) {
-                        ctx.copy_text(text);
-                    }
-                }
+                ConsoleAction::Copy(copy) => self.copy_cells(&console, copy, &ctx),
                 ConsoleAction::OpenRows(rows) => self.open_rows(&console, &rows),
                 ConsoleAction::ExportChart(format) => self.export_chart(&console, format),
                 ConsoleAction::RunAction(action, cells) => {

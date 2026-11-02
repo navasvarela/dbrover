@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dbrover_core::{DataSource, DataSourceId, Password, ProjectId, describe_error};
+use dbrover_export::ExportSpec;
 use dbrover_store::{
     ConsoleFiles, CustomFiles, DiagramFiles, ImportPlan, KeymapFile, Project, Secret, SecretError,
     SecretStore, SettingsFile, TrustedCommand, TrustedCommands, TrustedCommandsFile,
@@ -17,6 +18,7 @@ use crate::console_files;
 use crate::diagram_files;
 use crate::events::EventSink;
 use crate::export;
+use crate::export_programs::{self, ExportProgramRequest};
 use crate::history::{HistoryExport, HistoryLog};
 use crate::keymap;
 use crate::open::{TestServices, TypedSecrets, create_database_file, test_connection};
@@ -414,31 +416,63 @@ impl Engine {
                 }
                 self.events.send(saved);
             }
-            Command::ExportRows { console, export } => {
-                tokio::spawn(export::run(console, export, self.events.clone()));
+            Command::ExportRows {
+                console,
+                mut export,
+            } => {
+                let data_source = self.consoles.get(&console).map(|entry| entry.data_source);
+                match self.prepare_export(&mut export.spec, data_source) {
+                    Ok(()) => {
+                        tokio::spawn(export::run(console, export, self.events.clone()));
+                    }
+                    Err(error) => {
+                        self.export_refused(Exporter::Console(console), export.path, error)
+                    }
+                }
             }
             Command::ExportTable {
                 data_source,
-                export,
-            } => self.request(data_source, SessionRequest::ExportTable(export)),
+                mut export,
+            } => match self.prepare_export(&mut export.spec, Some(data_source)) {
+                Ok(()) => self.request(data_source, SessionRequest::ExportTable(export)),
+                Err(error) => {
+                    self.export_refused(Exporter::DataSource(data_source), export.path, error);
+                }
+            },
             Command::RunToFile {
                 console,
                 data_source,
-                export,
-            } => self.run_to_file(console, data_source, export),
+                mut export,
+            } => match self.prepare_export(&mut export.spec, Some(data_source)) {
+                Ok(()) => self.run_to_file(console, data_source, export),
+                Err(error) => self.export_refused(Exporter::Console(console), export.path, error),
+            },
+            Command::RunExportProgram(request) => self.run_export_program(*request),
             Command::CancelTableExport { data_source, run } => {
                 if let Some(session) = self.sessions.get(&data_source) {
                     session.cancel(run);
                 }
             }
-            Command::ExportAllRows { console, export } => match self.consoles.get(&console) {
-                Some(session) => session.session.request(SessionRequest::ExportAll(export)),
-                None => self.events.send(Event::ExportFinished {
-                    exporter: Exporter::Console(console),
-                    path: export.path,
-                    result: Err("the console isn't connected; run its query again".to_owned()),
-                }),
-            },
+            Command::ExportAllRows {
+                console,
+                mut export,
+            } => {
+                let data_source = self.consoles.get(&console).map(|entry| entry.data_source);
+                let prepared = self.prepare_export(&mut export.spec, data_source);
+                match (self.consoles.get(&console), prepared) {
+                    (Some(session), Ok(())) => {
+                        session.session.request(SessionRequest::ExportAll(export));
+                    }
+                    (_, Err(error)) => {
+                        self.export_refused(Exporter::Console(console), export.path, error);
+                    }
+                    (None, Ok(())) => self.export_refused(
+                        Exporter::Console(console),
+                        export.path,
+                        "the console isn't connected; run its query again".to_owned(),
+                    ),
+                }
+            }
             Command::SearchHistory(query) => self.history.search(query),
             Command::ExportHistory {
                 query,
@@ -913,6 +947,84 @@ impl Engine {
             program,
             invocation,
             request.command.timeout,
+            stopped,
+            Arc::clone(&self.program_runner),
+            self.events.clone(),
+        ));
+    }
+
+    /// Fills in the program an export writes through, once the user has trusted it, so the
+    /// writer can start it; any other format is left as it is.
+    fn prepare_export(
+        &self,
+        spec: &mut ExportSpec,
+        data_source: Option<DataSourceId>,
+    ) -> Result<(), String> {
+        let ExportSpec::Program(program) = spec else {
+            return Ok(());
+        };
+        let data_source = data_source
+            .and_then(|id| self.registry.get(id))
+            .ok_or_else(|| ProgramFailure::NoDataSource.to_string())?;
+        let prepared = export_programs::prepare(
+            program,
+            &self.trusted.borrow(),
+            data_source,
+            &ProcessEnvironment,
+            Arc::clone(&self.program_runner),
+        )
+        .map_err(|failure| failure.to_string())?;
+        program.prepared = Some(prepared);
+        Ok(())
+    }
+
+    /// Reports an export that didn't start, and why.
+    fn export_refused(&self, exporter: Exporter, path: PathBuf, error: String) {
+        tracing::warn!("export refused: {error}");
+        self.events.send(Event::ExportFinished {
+            exporter,
+            path,
+            result: Err(error),
+        });
+    }
+
+    /// Copies the selected cells through a program from `exports.toml`, as a command action's
+    /// program runs: under its timeout and a stop, answered by [`Event::ProgramFinished`].
+    fn run_export_program(&mut self, request: ExportProgramRequest) {
+        let ExportProgramRequest {
+            program,
+            data_source,
+            spec,
+            stdin,
+        } = request;
+        let invocation = if export_programs::is_trusted(&self.trusted.borrow(), &spec) {
+            self.registry
+                .get(data_source)
+                .ok_or(ProgramFailure::NoDataSource)
+                .and_then(|data_source| {
+                    export_programs::invocation(&spec, data_source, &ProcessEnvironment, stdin)
+                })
+        } else {
+            Err(ProgramFailure::NotTrusted)
+        };
+        let invocation = match invocation {
+            Ok(invocation) => invocation,
+            Err(failure) => {
+                tracing::warn!("{}: {failure}", spec.id);
+                self.events.send(Event::ProgramFinished {
+                    program,
+                    result: Err(failure),
+                });
+                return;
+            }
+        };
+        let (stop, stopped) = oneshot::channel();
+        self.programs.retain(|_, stop| !stop.is_closed());
+        self.programs.insert(program, stop);
+        tokio::spawn(programs::run(
+            program,
+            invocation,
+            spec.program.timeout,
             stopped,
             Arc::clone(&self.program_runner),
             self.events.clone(),

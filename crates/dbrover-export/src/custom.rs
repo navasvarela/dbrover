@@ -9,8 +9,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::text::{CsvOptions, HtmlOptions, InsertOptions, MarkdownOptions, RowSource, TsvOptions};
 use crate::{
-    ExportContext, ExportFormat, ExportOptions, ExportSpec, ParquetOptions, TemplateSource,
-    TemplateSpec, XlsxOptions,
+    ExportContext, ExportFormat, ExportOptions, ExportSpec, ParquetOptions, ProgramFormat,
+    ProgramSpec, TemplateSource, TemplateSpec, XlsxOptions,
 };
 
 /// A custom format's stable name: what `keymap.toml` binds as `export.<id>`.
@@ -68,6 +68,8 @@ pub enum CustomFormatKind {
     Preset(Preset),
     /// A header, a template per row and a footer (W8c).
     Template(Arc<TemplateSource>),
+    /// A program that gets the rows as JSON Lines and writes the file (W8d).
+    Program(Arc<ProgramFormat>),
 }
 
 impl CustomFormat {
@@ -90,6 +92,12 @@ impl CustomFormat {
                     dialect: source.dialect,
                 })))
             }
+            CustomFormatKind::Program(program) => Ok(ExportSpec::Program(Box::new(ProgramSpec {
+                id: self.id.clone(),
+                program: Arc::clone(program),
+                table: source.table.as_ref().map(|table| table.name.clone()),
+                prepared: None,
+            }))),
         }
     }
 
@@ -98,6 +106,7 @@ impl CustomFormat {
         match &self.kind {
             CustomFormatKind::Preset(preset) => preset.format.writes_text(),
             CustomFormatKind::Template(_) => true,
+            CustomFormatKind::Program(program) => program.text,
         }
     }
 
@@ -106,7 +115,7 @@ impl CustomFormat {
     pub fn preset_of(&self) -> Option<ExportFormat> {
         match &self.kind {
             CustomFormatKind::Preset(preset) => Some(preset.format),
-            CustomFormatKind::Template(_) => None,
+            CustomFormatKind::Template(_) | CustomFormatKind::Program(_) => None,
         }
     }
 
@@ -119,6 +128,13 @@ impl CustomFormat {
             }
             (None, CustomFormatKind::Template(_)) => {
                 format!("A .{} file from a template in exports.toml", self.extension)
+            }
+            (None, CustomFormatKind::Program(program)) => {
+                format!(
+                    "A .{} file written by {}",
+                    self.extension,
+                    program.command.program()
+                )
             }
         }
     }

@@ -1,13 +1,19 @@
-//! Command actions' programs, from choosing one to showing what it wrote: the question before
-//! a command first runs, the programs still running, and the windows their output or failure
-//! opens. The engine runs them (see `docs/hackability.md`).
+//! Command actions' programs, and export programs copying to the clipboard (W8d), from
+//! choosing one to showing what it wrote: the question before a command first runs, the
+//! programs still running, and the windows their output or failure opens. The engine runs them
+//! (see `docs/hackability.md` and `docs/exports.md`).
 
 mod windows;
+
+pub use windows::{ProgramFacts, program_facts};
 
 use std::collections::BTreeMap;
 
 use dbrover_core::{DataSourceId, TemplateValues};
-use dbrover_engine::{Command, Event, ProgramFailure, ProgramId, ProgramOutput, ProgramRequest};
+use dbrover_engine::{
+    Command, Event, ExportProgramRequest, ProgramFailure, ProgramId, ProgramOutput, ProgramRequest,
+};
+use dbrover_export::{CustomFormat, ProgramSpec};
 use dbrover_store::{
     ActionId, CommandAction, CommandOutput, CustomAction, StdinFormat, TrustedCommand,
     TrustedCommands,
@@ -29,14 +35,66 @@ pub struct CommandRuns {
 /// A program running, and where its output goes.
 struct Run {
     name: String,
-    output: CommandOutput,
+    output: Destination,
     data_source: DataSourceId,
+}
+
+/// Where a finished program's output goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Destination {
+    /// Where its command action says.
+    Action(CommandOutput),
+    /// The clipboard: Copy as an export program.
+    Clipboard,
 }
 
 /// The question before a command's first run.
 struct Question {
     name: String,
-    request: ProgramRequest,
+    run: Pending,
+}
+
+/// A run waiting for the user to trust its command.
+enum Pending {
+    Action(ProgramRequest),
+    Copy(ExportProgramRequest),
+}
+
+impl Pending {
+    fn trusted(&self) -> TrustedCommand {
+        match self {
+            Self::Action(request) => trusted(request),
+            Self::Copy(request) => TrustedCommand::export(&request.spec.id, &request.spec.program),
+        }
+    }
+
+    fn program(&self) -> ProgramId {
+        match self {
+            Self::Action(request) => request.program,
+            Self::Copy(request) => request.program,
+        }
+    }
+
+    fn data_source(&self) -> DataSourceId {
+        match self {
+            Self::Action(request) => request.data_source,
+            Self::Copy(request) => request.data_source,
+        }
+    }
+
+    fn destination(&self) -> Destination {
+        match self {
+            Self::Action(request) => Destination::Action(request.command.output),
+            Self::Copy(_) => Destination::Clipboard,
+        }
+    }
+
+    fn into_command(self) -> Command {
+        match self {
+            Self::Action(request) => Command::RunProgram(Box::new(request)),
+            Self::Copy(request) => Command::RunExportProgram(Box::new(request)),
+        }
+    }
 }
 
 /// What a finished program opens: its output, or why it failed.
@@ -60,6 +118,8 @@ pub enum Finished {
         data_source: DataSourceId,
         text: String,
     },
+    /// Put what an export program wrote on the clipboard.
+    Copy(String),
 }
 
 impl CommandRuns {
@@ -80,41 +140,71 @@ impl CommandRuns {
             command: command.clone(),
             values,
         };
-        if self.trusted.contains(&trusted(&request)) {
-            return Some(self.run(action.name.clone(), request));
+        self.start_or_ask(action.name.clone(), Pending::Action(request))
+    }
+
+    /// Copies the selected cells, `stdin` as JSON Lines, through `format`'s program `spec`, if
+    /// it is trusted as it is now; otherwise asks first.
+    pub fn start_copy(
+        &mut self,
+        format: &CustomFormat,
+        spec: ProgramSpec,
+        data_source: DataSourceId,
+        stdin: String,
+    ) -> Option<Command> {
+        self.next_id += 1;
+        let request = ExportProgramRequest {
+            program: ProgramId(self.next_id),
+            data_source,
+            spec,
+            stdin,
+        };
+        self.start_or_ask(format.name.clone(), Pending::Copy(request))
+    }
+
+    fn start_or_ask(&mut self, name: String, run: Pending) -> Option<Command> {
+        if self.trusted.contains(&run.trusted()) {
+            return Some(self.run(name, run));
         }
-        self.asking = Some(Question {
-            name: action.name.clone(),
-            request,
-        });
+        self.asking = Some(Question { name, run });
         None
     }
 
-    fn run(&mut self, name: String, request: ProgramRequest) -> Command {
+    fn run(&mut self, name: String, run: Pending) -> Command {
         self.notice = None;
         self.running.insert(
-            request.program,
+            run.program(),
             Run {
                 name,
-                output: request.command.output,
-                data_source: request.data_source,
+                output: run.destination(),
+                data_source: run.data_source(),
             },
         );
-        Command::RunProgram(Box::new(request))
+        run.into_command()
     }
 
     /// The user's answer to the question: trust the command and run it, or forget it.
     fn answer(&mut self, run: bool) -> Vec<Command> {
-        let Some(Question { name, request }) = self.asking.take() else {
+        let Some(Question { name, run: pending }) = self.asking.take() else {
             return Vec::new();
         };
         if !run {
             return Vec::new();
         }
-        let trusted = trusted(&request);
+        let trusted = pending.trusted();
         self.trusted.trust(trusted.clone());
         // In this order: the engine trusts it before it is asked to run it.
-        vec![Command::TrustCommand(trusted), self.run(name, request)]
+        vec![Command::TrustCommand(trusted), self.run(name, pending)]
+    }
+
+    /// Trusts `command` here at once, as the engine is told to, so what is shown follows.
+    pub fn trust(&mut self, command: TrustedCommand) {
+        self.trusted.trust(command);
+    }
+
+    /// Whether the export program `format` runs without asking.
+    pub fn trusts(&self, command: &TrustedCommand) -> bool {
+        self.trusted.contains(command)
     }
 
     pub fn is_trusted(&self, id: &ActionId, command: &CommandAction) -> bool {
@@ -166,7 +256,16 @@ impl CommandRuns {
                 return None;
             }
         };
-        match run.output {
+        let output_to = match run.output {
+            Destination::Action(output_to) => output_to,
+            Destination::Clipboard => {
+                if output.truncated {
+                    self.notice = Some(format!("{}: {}", run.name, windows::CUT_SHORT));
+                }
+                return Some(Finished::Copy(output.stdout.clone()));
+            }
+        };
+        match output_to {
             CommandOutput::Viewer => self.windows.push(OutputWindow::Output {
                 program,
                 name: run.name,

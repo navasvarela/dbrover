@@ -25,6 +25,13 @@ pub const TEMPLATE: &str = r#"# Your own export formats. Uncomment and change on
 # nothing. Filters for exports: sql_literal, sql_name, csv and json. escape = "html" escapes
 # every value. A template reads no files, and a loop that never ends is stopped.
 #
+# A program gets the rows as JSON Lines on stdin and writes the file on stdout, with
+# command = [program, arguments…] and no shell; arguments can name {table}, {schema},
+# {database}, {data_source}, {host}, {port}, {user} and {file}. It needs an extension.
+# timeout = "30s" stops it after that long without taking rows or finishing (default 60s), and
+# text = true puts it under Copy as. DbRover shows the command in full and asks before its
+# first run.
+#
 # Bind copying as a format to a key in keymap.toml as "export.<id>" = "cmd+alt+c".
 
 # [[export]]
@@ -48,6 +55,13 @@ pub const TEMPLATE: &str = r#"# Your own export formats. Uncomment and change on
 # extension = "txt"
 # header = "||{% for column in columns %} {{ column.name }} ||{% endfor %}\n"
 # row = "|{% for value in row %} {{ value }} |{% endfor %}\n"
+
+# [[export]]
+# id = "yaml"
+# name = "YAML"
+# extension = "yaml"
+# command = ["yq", "-P", "-p", "json"]
+# text = true
 "#;
 
 #[cfg(test)]
@@ -66,6 +80,6 @@ mod tests {
             .collect();
         let checked = dbrover_store::parse_exports(&uncommented);
         assert!(checked.problems.is_empty(), "{:?}", checked.problems);
-        assert_eq!(checked.value.len(), 3);
+        assert_eq!(checked.value.len(), 4);
     }
 }
