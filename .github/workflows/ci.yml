@@ -104,10 +104,12 @@ jobs:
     # `check (macos-latest)` name, which branch protection requires, whatever it runs on. An empty
     # CODE (a broken `changes`) still gets the real runner.
     runs-on: ${{ needs.changes.outputs.code == 'false' && 'ubuntu-latest' || matrix.os }}
-    # The 30 most recent green runs took at most 6 minutes on Linux, 5 on macOS and 11 on Windows.
     # 30 minutes leaves room for a cold Rust cache and still fails a hung runner fast: a Linux job
     # once sat in `apt-get update` for 80 minutes, and without a limit GitHub waits 6 hours.
-    timeout-minutes: 30
+    # Windows gets 45: since the reports' worker tests its tests alone take about 24 minutes, so at
+    # 30 main's cache save was cut off every time, no Windows cache was ever saved, and every pull
+    # request then compiled cold and timed out (#397).
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 45 || 30 }}
     env:
       CODE: ${{ needs.changes.outputs.code }}
     # Every step runs unless `changes` said documentation only.
