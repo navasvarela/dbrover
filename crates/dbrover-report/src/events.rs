@@ -38,6 +38,18 @@ pub enum RunEvent {
         elapsed_ms: u64,
     },
     Failed(RunFailure),
+    /// **Cancel** stopped the worker. Sent by the app's side, never by the worker.
+    Cancelled,
+}
+
+impl RunEvent {
+    /// Whether the run is over: nothing comes after this event.
+    pub fn ends_run(&self) -> bool {
+        matches!(
+            self,
+            Self::Finished { .. } | Self::Failed(_) | Self::Cancelled
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

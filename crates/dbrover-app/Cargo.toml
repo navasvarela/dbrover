@@ -20,6 +20,7 @@ dbrover-diagram.workspace = true
 dbrover-picture.workspace = true
 dbrover-document.workspace = true
 dbrover-engine.workspace = true
+dbrover-report.workspace = true
 dbrover-export.workspace = true
 dbrover-language.workspace = true
 dbrover-mcp.workspace = true
@@ -44,6 +45,9 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-appender.workspace = true
 tracing-subscriber.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda.workspace = true

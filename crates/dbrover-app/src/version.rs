@@ -13,9 +13,13 @@ pub fn describe() -> String {
     format!("dbrover {VERSION} ({COMMIT})")
 }
 
+/// The subcommand the app starts a report's worker with.
+pub const REPORT_WORKER: &str = "report-worker";
+
 const USAGE: &str = "\
 Usage: dbrover [--config-dir <folder>] [--version | --help] [FILE.sql …]
        dbrover mcp --project <slug> [--config-dir <folder>]
+       dbrover report-worker [--config-dir <folder>]
 
 Starts the DbRover desktop app, opening each FILE.sql given in a console. With --version (-V),
 prints the version and exits.
@@ -23,6 +27,10 @@ prints the version and exits.
 `dbrover mcp --project <slug>` runs an MCP server for the project with that slug, read-only,
 over standard input and output, without opening a window. An MCP client starts it; see
 \"Connecting an AI assistant\" in the manual.
+
+`dbrover report-worker` runs one report for the app, in a process of its own: it reads the
+request from standard input and writes the run's progress to standard output as JSON Lines.
+The app starts it; see \"Reports\" in the manual.
 
 --config-dir <folder> keeps the settings in that folder instead of ~/.config/dbrover or the
 folder chosen in Settings, as the DBROVER_CONFIG_DIR environment variable does. The folder
@@ -36,6 +44,10 @@ pub enum CliRequest {
     /// Serve a project to an MCP client, headless.
     Mcp {
         project: String,
+        config_dir: Option<PathBuf>,
+    },
+    /// Run one report for the app, headless.
+    ReportWorker {
         config_dir: Option<PathBuf>,
     },
     /// Arguments that can't be followed, with what was wrong.
@@ -54,6 +66,9 @@ impl CliRequest {
         let mut args = args.into_iter().peekable();
         if args.peek().is_some_and(|first| first == "mcp") {
             return Self::parse_mcp(args.skip(1));
+        }
+        if args.peek().is_some_and(|first| first == REPORT_WORKER) {
+            return Self::parse_report_worker(args.skip(1));
         }
         let mut help = false;
         let mut files = Vec::new();
@@ -118,13 +133,29 @@ impl CliRequest {
         }
     }
 
+    /// Strict, as `mcp` is: only the app starts it, and a wrong argument is a bug to see.
+    fn parse_report_worker(args: impl Iterator<Item = String>) -> Self {
+        let mut args = args.peekable();
+        let mut config_dir = None;
+        while let Some(arg) = args.next() {
+            match parse_config_dir(&arg, &mut args) {
+                Some(Ok(folder)) => config_dir = Some(folder),
+                Some(Err(problem)) => return Self::Invalid(problem),
+                None => return Self::Invalid(format!("unknown argument {arg:?}")),
+            }
+        }
+        Self::ReportWorker { config_dir }
+    }
+
     /// Prints what was asked for, if it is only something to print. Returns `true` if
     /// nothing else should happen.
     pub fn answer(&self) -> bool {
         match self {
             Self::Version => println!("{}", describe()),
             Self::Help => println!("{}\n\n{USAGE}", describe()),
-            Self::Mcp { .. } | Self::Invalid(_) | Self::Run { .. } => return false,
+            Self::Mcp { .. } | Self::ReportWorker { .. } | Self::Invalid(_) | Self::Run { .. } => {
+                return false;
+            }
         }
         true
     }
@@ -208,6 +239,34 @@ mod tests {
                     files: vec!["mcp".into()],
                     config_dir: None,
                 },
+            ),
+        ];
+        for (args, expected) in cases {
+            let parsed = CliRequest::parse(args.iter().map(|arg| (*arg).to_owned()));
+            assert_eq!(parsed, expected, "{args:?}");
+        }
+    }
+
+    #[test]
+    fn parses_the_report_worker_subcommand_strictly() {
+        let cases: [(&[&str], CliRequest); 4] = [
+            (
+                &["report-worker"],
+                CliRequest::ReportWorker { config_dir: None },
+            ),
+            (
+                &["report-worker", "--config-dir", "/srv/dbrover"],
+                CliRequest::ReportWorker {
+                    config_dir: Some("/srv/dbrover".into()),
+                },
+            ),
+            (
+                &["report-worker", "--project", "shop"],
+                CliRequest::Invalid("unknown argument \"--project\"".to_owned()),
+            ),
+            (
+                &["report-worker", "--config-dir"],
+                CliRequest::Invalid("--config-dir needs a folder".to_owned()),
             ),
         ];
         for (args, expected) in cases {

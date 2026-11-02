@@ -93,6 +93,21 @@ pub fn init_headless(logs_dir: &Path) -> anyhow::Result<Option<WorkerGuard>> {
         .ok())
 }
 
+/// Logs to standard error only, for `dbrover report-worker`: the app reads it into its own
+/// log, so one process writes the log files.
+pub fn init_stderr() -> anyhow::Result<()> {
+    let stderr_layer = fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .with_filter(targets());
+    tracing_subscriber::registry()
+        .with(stderr_layer)
+        .try_init()
+        .context("could not install the tracing subscriber")?;
+    log_panics();
+    Ok(())
+}
+
 /// Logs every panic as an error, then lets the default hook print it as before.
 ///
 /// An app started from Finder or the Dock has nowhere to print to, so without this a crash
