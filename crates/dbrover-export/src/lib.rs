@@ -11,6 +11,7 @@ mod custom;
 mod options;
 mod parquet;
 mod program;
+mod schema;
 mod spec;
 mod template;
 mod text;
@@ -22,6 +23,10 @@ pub use custom::{CustomFormat, CustomFormatId, CustomFormatKind, Preset};
 pub use options::ExportOptions;
 pub use parquet::{ParquetCompression, ParquetOptions};
 pub use program::{ExportPipe, ExportProgram, ProgramFormat, ProgramSpec};
+pub use schema::{
+    CellTarget, ColumnType, DecimalSpec, IfInvalid, InvalidValue, MissingColumn, OutputSchema,
+    RowConverter, SchemaColumn, UnknownType,
+};
 pub use spec::{CSV_FOR_EXCEL, ExportChoice, ExportFormat, ExportSpec, export_choices};
 pub use template::{
     Escape, ExportContext, Part, TemplateContext, TemplateEngine, TemplateError, TemplateLimits,
@@ -37,6 +42,8 @@ pub use xlsx::{EXCEL_MAX_ROWS, InvalidSheetName, SheetName, XlsxOptions};
 
 #[cfg(test)]
 mod custom_tests;
+#[cfg(test)]
+mod schema_tests;
 #[cfg(test)]
 mod sql_tests;
 #[cfg(test)]

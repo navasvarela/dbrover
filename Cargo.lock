@@ -2491,6 +2491,7 @@ dependencies = [
  "dbrover-core",
  "dbrover-document",
  "dbrover-sql",
+ "jiff",
  "minijinja",
  "rusqlite",
  "rust_xlsxwriter",

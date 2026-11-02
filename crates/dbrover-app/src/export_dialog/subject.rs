@@ -127,6 +127,7 @@ impl TableTarget {
                 name: column.name.clone(),
                 type_name: Some(column.data_type.clone()),
                 kind: self.dialect.value_kind(Some(&column.data_type)),
+                excel_format: None,
             })
             .collect();
         let key = description

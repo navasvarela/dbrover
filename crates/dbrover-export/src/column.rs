@@ -13,6 +13,9 @@ pub struct ExportColumn {
     /// The type as the driver names it, when it reports one.
     pub type_name: Option<String>,
     pub kind: ValueKind,
+    /// Excel's number format for the column's cells, when a report's output declares one
+    /// (`#,##0.00`). Other formats don't read it.
+    pub excel_format: Option<String>,
 }
 
 impl ExportColumn {
@@ -22,6 +25,7 @@ impl ExportColumn {
             name: column.name.clone(),
             type_name: column.type_name.clone(),
             kind: dialect.value_kind(column.type_name.as_deref()),
+            excel_format: None,
         }
     }
 
@@ -34,6 +38,7 @@ impl ExportColumn {
                 name: column.name.clone(),
                 type_name: column.type_name.clone(),
                 kind: ValueKind::Undeclared,
+                excel_format: None,
             },
         }
     }
@@ -44,6 +49,7 @@ impl ExportColumn {
             name: name.into(),
             type_name: None,
             kind: ValueKind::Text,
+            excel_format: None,
         }
     }
 }
