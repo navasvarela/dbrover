@@ -27,6 +27,7 @@ dbrover-driver-sqlite.workspace = true
 dbrover-driver-sqlserver.workspace = true
 dbrover-export.workspace = true
 dbrover-language.workspace = true
+dbrover-report.workspace = true
 dbrover-sql.workspace = true
 dbrover-ssh.workspace = true
 dbrover-store.workspace = true

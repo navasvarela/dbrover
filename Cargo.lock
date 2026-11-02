@@ -2468,6 +2468,7 @@ dependencies = [
  "dbrover-language",
  "dbrover-picture",
  "dbrover-plan",
+ "dbrover-report",
  "dbrover-sql",
  "dbrover-ssh",
  "dbrover-store",
@@ -2559,13 +2560,17 @@ dependencies = [
 name = "dbrover-report"
 version = "0.22.0"
 dependencies = [
+ "calamine",
  "dbrover-core",
  "dbrover-export",
  "dbrover-language",
  "dbrover-sql",
  "jiff",
  "serde",
+ "serde_json",
+ "tempfile",
  "thiserror 2.0.21",
+ "tokio",
  "toml",
 ]
 

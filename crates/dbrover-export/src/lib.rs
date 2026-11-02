@@ -37,7 +37,7 @@ pub use text::{
     InvalidSeparator, LineEnding, MAX_ROWS_PER_INSERT, MarkdownOptions, Quoting, RowSource,
     RowsPerInsert, SourceTable, SqlTable, TextFormat, TsvOptions, UpdateSpec, render, try_render,
 };
-pub use writer::{ExportError, ExportWriter, FileFormat, export_rows};
+pub use writer::{CompletedFile, ExportError, ExportWriter, FileFormat, export_rows};
 pub use xlsx::{EXCEL_MAX_ROWS, InvalidSheetName, SheetName, XlsxOptions};
 
 #[cfg(test)]
