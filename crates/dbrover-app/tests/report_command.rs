@@ -4,8 +4,7 @@
 //! its arguments, what it prints, the files it leaves and the exit code for each outcome.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Command;
 
 const BINARY: &str = env!("CARGO_BIN_EXE_dbrover");
 
@@ -53,6 +52,9 @@ fn prints_its_usage_when_asked() {
 /// ignores when it looks up the user's folders, and the tests must not use the real one's.
 #[cfg(unix)]
 mod runs {
+    use std::path::{Path, PathBuf};
+    use std::process::Output;
+
     use super::*;
 
     const OCTOBER: [&str; 4] = ["-p", "since=2026-10-01", "-p", "until=2026-11-01"];
