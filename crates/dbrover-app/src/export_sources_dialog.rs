@@ -7,15 +7,13 @@ use std::path::PathBuf;
 use dbrover_core::{DataSource, DataSourceId, ProjectId};
 use dbrover_engine::{Command, Event};
 use dbrover_store::Project;
-use egui::{Align, Id, Layout, RichText, ScrollArea, Ui};
+use egui::{Id, RichText, ScrollArea, Ui};
 
+use crate::dialog::{self, DialogSize};
 use crate::form;
 use crate::icons;
 use crate::theme::Palette;
 use crate::widgets;
-
-const DIALOG_WIDTH: f32 = 420.0;
-const LIST_HEIGHT: f32 = 320.0;
 
 pub enum ExportAction {
     /// Ask where to write, then send [`ExportSourcesDialog::command`].
@@ -78,7 +76,8 @@ impl ExportSourcesDialog {
         projects: &[Project],
         data_sources: &[DataSource],
     ) -> Option<ExportAction> {
-        let modal = widgets::dialog(ctx, Id::new("export_data_sources"))
+        let id = Id::new("export_data_sources");
+        let modal = dialog::modal(ctx, id, DialogSize::Wide)
             .show(ctx, |ui| self.contents(ui, projects, data_sources));
         if modal.should_close() {
             return Some(ExportAction::Close);
@@ -92,24 +91,21 @@ impl ExportSourcesDialog {
         projects: &[Project],
         data_sources: &[DataSource],
     ) -> Option<ExportAction> {
-        ui.set_width(DIALOG_WIDTH);
         let palette = &Palette::for_visuals(ui.visuals());
-        ui.heading("Export data sources");
+        form::Header::new(icons::UPLOAD_SIMPLE, "Export data sources")
+            .subtitle("Their settings and their projects', without passwords")
+            .show(ui);
         ui.label(
-            RichText::new(
-                "Writes their settings, and their projects', to a file to import on another \
-                 machine. Passwords stay in this machine's keychain.",
-            )
-            .color(palette.text_weak),
+            "Writes them to a file to import on another machine. Passwords stay in this \
+             machine's keychain.",
         );
         ui.add_space(ui.spacing().item_spacing.y);
         ScrollArea::vertical()
-            .max_height(LIST_HEIGHT)
+            .max_height(dialog::LIST_HEIGHT)
             .show(ui, |ui| self.choices(ui, projects, data_sources));
         ui.add_space(ui.spacing().item_spacing.y);
         self.status_line(ui, palette);
-        ui.separator();
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        form::footer(ui, |ui| {
             let exporting = matches!(self.status, Status::Exporting(_));
             let chosen = !self.data_sources.is_empty() || !self.projects.is_empty();
             if form::primary_button(ui, "Export…", chosen && !exporting).clicked() {
@@ -117,7 +113,6 @@ impl ExportSourcesDialog {
             }
             ui.button("Close").clicked().then_some(ExportAction::Close)
         })
-        .inner
     }
 
     /// A checkbox per project, with its data sources under it, then the data sources in no

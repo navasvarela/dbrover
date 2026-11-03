@@ -10,13 +10,12 @@ use dbrover_store::{
 };
 use egui::{Align, Id, Layout, RichText, ScrollArea, Ui};
 
+use crate::dialog::{self, DialogSize};
 use crate::form;
 use crate::icons;
 use crate::theme::Palette;
 use crate::widgets;
 
-const DIALOG_WIDTH: f32 = 560.0;
-const LIST_HEIGHT: f32 = 380.0;
 const CHOICE_WIDTH: f32 = 140.0;
 
 pub enum ImportAction {
@@ -81,8 +80,8 @@ impl ImportDialog {
     }
 
     pub fn show(&mut self, ctx: &egui::Context) -> Option<ImportAction> {
-        let modal =
-            widgets::dialog(ctx, Id::new("import_data_sources")).show(ctx, |ui| self.contents(ui));
+        let id = Id::new("import_data_sources");
+        let modal = dialog::modal(ctx, id, DialogSize::Wide).show(ctx, |ui| self.contents(ui));
         if modal.should_close() {
             return Some(ImportAction::Close);
         }
@@ -90,11 +89,10 @@ impl ImportDialog {
     }
 
     fn contents(&mut self, ui: &mut Ui) -> Option<ImportAction> {
-        ui.set_width(DIALOG_WIDTH);
         let palette = &Palette::for_visuals(ui.visuals());
-        ui.heading("Import data sources");
-        ui.label(RichText::new(self.path.display().to_string()).color(palette.text_weak));
-        ui.add_space(ui.spacing().item_spacing.y);
+        form::Header::new(icons::DOWNLOAD_SIMPLE, "Import data sources")
+            .subtitle(&self.path.display().to_string())
+            .show(ui);
         let mut import = None;
         match &mut self.state {
             State::Reading => {
@@ -108,7 +106,7 @@ impl ImportDialog {
             }
             State::Previewing { preview, choices } => {
                 ScrollArea::vertical()
-                    .max_height(LIST_HEIGHT)
+                    .max_height(dialog::TALL_LIST_HEIGHT)
                     .show(ui, |ui| entries(ui, preview, choices, palette));
                 ui.add_space(ui.spacing().item_spacing.y);
                 let plan = preview.plan(choices);
@@ -137,18 +135,15 @@ impl ImportDialog {
                 ui.colored_label(palette.error, format!("Could not import: {error}"));
             }
         }
-        ui.separator();
-        let (import_clicked, close) = ui
-            .with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let import_clicked = import.as_ref().is_some_and(|plan| {
-                    form::primary_button(ui, "Import", !plan.is_empty())
-                        .on_disabled_hover_text("Nothing would change")
-                        .clicked()
-                });
-                let close_label = if import.is_some() { "Cancel" } else { "Close" };
-                (import_clicked, ui.button(close_label).clicked())
-            })
-            .inner;
+        let (import_clicked, close) = form::footer(ui, |ui| match &import {
+            Some(plan) => {
+                let import_clicked = form::primary_button(ui, "Import", !plan.is_empty())
+                    .on_disabled_hover_text("Nothing would change")
+                    .clicked();
+                (import_clicked, ui.button("Cancel").clicked())
+            }
+            None => (false, form::primary_button(ui, "Close", true).clicked()),
+        });
         if close {
             return Some(ImportAction::Close);
         }

@@ -1,8 +1,8 @@
 use dbrover_core::{DataSource, DataSourceId};
 use egui::Id;
 
-use crate::form;
-use crate::widgets;
+use crate::dialog::{self, DialogSize};
+use crate::{form, icons};
 
 pub enum DeleteChoice {
     Confirmed(DataSourceId),
@@ -24,8 +24,12 @@ impl DeleteConfirmation {
     }
 
     pub fn show(&self, ctx: &egui::Context) -> Option<DeleteChoice> {
-        let modal = widgets::dialog(ctx, Id::new("delete_data_source")).show(ctx, |ui| {
-            ui.heading("Delete data source");
+        let id = Id::new("delete_data_source");
+        let modal = dialog::modal(ctx, id, DialogSize::Confirm).show(ctx, |ui| {
+            form::Header::new(icons::TRASH, "Delete data source")
+                .subtitle(&self.name)
+                .danger()
+                .show(ui);
             ui.label(format!(
                 "Delete \"{}\"? Its saved password is removed from the keychain too.",
                 self.name

@@ -5,8 +5,8 @@ use dbrover_core::TableDescription;
 use egui::epaint::CubicBezierShape;
 use egui::epaint::FontsView;
 use egui::{
-    Align, Align2, Color32, CornerRadius, FontId, Id, Layout, Painter, Rect, Response, Scene,
-    Sense, Shape, Stroke, StrokeKind, Ui, Vec2, WidgetInfo, WidgetType, pos2, vec2,
+    Align2, Color32, CornerRadius, FontId, Id, Painter, Rect, Response, Scene, Sense, Shape,
+    Stroke, StrokeKind, Ui, Vec2, WidgetInfo, WidgetType, pos2, vec2,
 };
 
 use dbrover_store::DiagramKey;
@@ -14,6 +14,7 @@ use dbrover_store::DiagramKey;
 use super::geometry::{self, HEADER_HEIGHT, MARK_WIDTH, PADDING, ROW_HEIGHT, TYPE_GAP, arrowhead};
 use super::model::{BoxShape, Diagram, KeyLine, TableState};
 use super::{DiagramTab, TabAction};
+use crate::dialog::{self, DialogSize};
 use crate::fonts;
 use crate::form;
 use crate::icons;
@@ -75,16 +76,17 @@ fn confirm_delete(ui: &Ui, tab: &mut DiagramTab, key: &DiagramKey) -> bool {
     if !tab.confirming_delete {
         return false;
     }
-    let modal = widgets::dialog(ui.ctx(), Id::new(("delete_diagram", key))).show(ui.ctx(), |ui| {
-        ui.heading(format!("Delete the diagram {}?", key.name));
+    let id = Id::new(("delete_diagram", key));
+    let modal = dialog::modal(ui.ctx(), id, DialogSize::Confirm).show(ui.ctx(), |ui| {
+        form::Header::new(icons::TRASH, &format!("Delete the diagram {}?", key.name))
+            .danger()
+            .show(ui);
         ui.label("Its file is removed. The database and its tables are untouched.");
-        ui.separator();
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        form::footer(ui, |ui| {
             let deleted = form::danger_button(ui, "Delete", true).clicked();
             let cancelled = ui.button("Cancel").clicked();
             (deleted, cancelled)
         })
-        .inner
     });
     let (deleted, cancelled) = modal.inner;
     if deleted || cancelled || modal.should_close() {

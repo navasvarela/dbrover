@@ -6,11 +6,12 @@ use std::time::{Duration, Instant};
 
 use dbrover_core::{DataSource, DataSourceId};
 use dbrover_store::ConsoleKey;
-use egui::{Align, Id, Layout};
+use egui::Id;
 use serde::{Deserialize, Serialize};
 
+use crate::dialog::{self, DialogSize};
 use crate::form;
-use crate::widgets;
+use crate::icons;
 
 /// How many files File › Open recent lists.
 pub const RECENT_FILES: usize = 10;
@@ -177,20 +178,22 @@ impl OpenFileDialog {
         ctx: &egui::Context,
         data_sources: &[&DataSource],
     ) -> Option<OpenFileAction> {
-        let modal = widgets::dialog(ctx, Id::new("open_file_dialog")).show(ctx, |ui| match self {
+        let size = match self {
+            Self::ChooseDataSource { .. } => DialogSize::Form,
+            Self::Failed { .. } => DialogSize::Confirm,
+        };
+        let id = Id::new("open_file_dialog");
+        let modal = dialog::modal(ctx, id, size).show(ctx, |ui| match self {
             Self::ChooseDataSource { path, chosen } => {
                 choose_data_source(ui, path, chosen, data_sources)
             }
             Self::Failed { error } => {
-                ui.heading("Couldn't open the file");
+                form::Header::new(icons::WARNING, "Couldn't open the file").show(ui);
                 ui.label(error.as_str());
-                ui.separator();
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.button("Close")
-                        .clicked()
-                        .then_some(OpenFileAction::Close)
+                form::footer(ui, |ui| {
+                    let close = form::primary_button(ui, "Close", true);
+                    close.clicked().then_some(OpenFileAction::Close)
                 })
-                .inner
             }
         });
         if modal.should_close() {
@@ -210,7 +213,7 @@ fn choose_data_source(
         || path.display().to_string(),
         |name| name.to_string_lossy().into_owned(),
     );
-    ui.heading(format!("Open {name}"));
+    form::Header::new(icons::FILE_SQL, &format!("Open {name}")).show(ui);
     if data_sources.is_empty() {
         ui.label("There is no data source to run it on yet. Add one in the explorer first.");
     } else {
@@ -227,8 +230,7 @@ fn choose_data_source(
                 }
             });
     }
-    ui.separator();
-    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+    form::footer(ui, |ui| {
         let open = form::primary_button(ui, "Open", chosen.is_some());
         if open.clicked()
             && let Some(id) = *chosen
@@ -240,7 +242,6 @@ fn choose_data_source(
             None
         }
     })
-    .inner
 }
 
 #[cfg(test)]

@@ -2,22 +2,21 @@
 //! program opens, and the status bar's note of what is running.
 
 use dbrover_engine::{Command, ProgramFailure};
-use egui::{Align, Grid, Id, Layout, RichText, Window};
+use egui::{Grid, Id, RichText};
 
 use super::{
     CommandRuns, OutputWindow, Pending, Question, command_text, output_text, stdin_text,
     timeout_text,
 };
 use crate::console::cell_viewer;
+use crate::dialog::{self, DialogSize};
 use crate::form;
+use crate::icons;
 use crate::theme::Palette;
-use crate::widgets;
 
 /// Says so when a program wrote more than the engine keeps of it.
 pub(super) const CUT_SHORT: &str = "the program wrote more than 4 MB and was stopped; this is \
      what it wrote first";
-
-const WINDOW_SIZE: [f32; 2] = [520.0, 360.0];
 
 impl CommandRuns {
     /// Draws the question and the output windows, and returns what to send the engine.
@@ -68,11 +67,10 @@ pub struct ProgramFacts<'a> {
 
 /// The heart of the question, for every program asked about: what it runs and with what.
 pub fn program_facts(ui: &mut egui::Ui, facts: &ProgramFacts<'_>) {
-    ui.heading("Run a program?");
-    ui.label(format!(
-        "\u{201c}{}\u{201d} runs this command from {}:",
-        facts.name, facts.file
-    ));
+    form::Header::new(icons::TERMINAL_WINDOW, "Run a program?")
+        .subtitle(facts.name)
+        .show(ui);
+    ui.label(format!("It runs this command from {}:", facts.file));
     ui.label(RichText::new(command_text(facts.command)).monospace());
     Grid::new("command_question_details")
         .num_columns(2)
@@ -120,10 +118,10 @@ impl Question {
 
     /// `Some(true)` to run, `Some(false)` to cancel, `None` while unanswered.
     fn show(&self, ctx: &egui::Context) -> Option<bool> {
-        let modal = widgets::dialog(ctx, Id::new("command_question")).show(ctx, |ui| {
+        let id = Id::new("command_question");
+        let modal = dialog::modal(ctx, id, DialogSize::Form).show(ctx, |ui| {
             program_facts(ui, &self.facts());
-            ui.separator();
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            form::footer(ui, |ui| {
                 if form::primary_button(ui, "Run", true).clicked() {
                     Some(true)
                 } else if ui.button("Cancel").clicked() {
@@ -132,7 +130,6 @@ impl Question {
                     None
                 }
             })
-            .inner
         });
         if modal.should_close() {
             return Some(false);
@@ -145,17 +142,19 @@ impl OutputWindow {
     /// Draws the window. `false` once the user closed it.
     fn show(&self, ctx: &egui::Context) -> bool {
         let mut open = true;
+        let mut closed = false;
         match self {
             Self::Output {
                 program,
                 name,
                 output,
             } => {
-                Window::new(format!("Output of {name}"))
-                    .id(Id::new(("program_output", program.0)))
+                let id = Id::new(("program_output", program.0));
+                dialog::window(ctx, format!("Output of {name}"), id, DialogSize::Wide)
+                    .default_height(dialog::TALL_LIST_HEIGHT)
                     .open(&mut open)
-                    .default_size(WINDOW_SIZE)
                     .show(ctx, |ui| {
+                        closed = close_or_copy(ui, id, &output.stdout);
                         if output.truncated {
                             ui.label(CUT_SHORT);
                         }
@@ -171,11 +170,16 @@ impl OutputWindow {
                 name,
                 failure,
             } => {
-                Window::new(format!("{name} failed"))
-                    .id(Id::new(("program_failure", program.0)))
+                let id = Id::new(("program_failure", program.0));
+                let copied = match failure {
+                    ProgramFailure::Exited { stderr, .. } if !stderr.is_empty() => stderr.clone(),
+                    _ => failure.to_string(),
+                };
+                dialog::window(ctx, format!("{name} failed"), id, DialogSize::Wide)
+                    .default_height(dialog::TALL_LIST_HEIGHT)
                     .open(&mut open)
-                    .default_size(WINDOW_SIZE)
                     .show(ctx, |ui| {
+                        closed = close_or_copy(ui, id, &copied);
                         ui.label(failure.to_string());
                         if let ProgramFailure::Exited { stderr, .. } = failure
                             && !stderr.is_empty()
@@ -186,6 +190,18 @@ impl OutputWindow {
                     });
             }
         }
-        open
+        open && !closed
     }
+}
+
+/// The output windows' footer: **Close**, and **Copy** for `text`. Returns whether Close was
+/// clicked.
+fn close_or_copy(ui: &mut egui::Ui, id: Id, text: &str) -> bool {
+    dialog::window_footer(ui, id.with("footer"), |ui| {
+        let close = form::primary_button(ui, "Close", true).clicked();
+        if ui.button("Copy").clicked() {
+            ui.ctx().copy_text(text.to_owned());
+        }
+        close
+    })
 }

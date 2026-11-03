@@ -4,11 +4,12 @@
 use dbrover_core::Cell;
 use dbrover_sql::ParameterValues;
 use dbrover_store::ConsoleKey;
-use egui::{Align, Id, Key, Layout, TextEdit, vec2};
+use egui::{Id, Key, TextEdit, vec2};
 
 use crate::console::SubmittedRun;
+use crate::dialog::{self, DialogSize};
 use crate::form;
-use crate::widgets;
+use crate::icons;
 
 /// Room for a date and time, or a short sentence, in each value field.
 const VALUE_WIDTH: f32 = 260.0;
@@ -80,10 +81,11 @@ impl ParametersDialog {
     }
 
     pub fn show(&mut self, ctx: &egui::Context) -> Option<ParametersChoice> {
-        let modal = widgets::dialog(ctx, Id::new("parameters_dialog")).show(ctx, |ui| {
-            ui.heading("Parameter values");
-            ui.label("Each value is sent as text, which the database converts as it needs.");
-            ui.add_space(4.0);
+        let id = Id::new("parameters_dialog");
+        let modal = dialog::modal(ctx, id, DialogSize::Form).show(ctx, |ui| {
+            form::Header::new(icons::BRACKETS_CURLY, "Parameter values")
+                .subtitle("Each value is sent as text, which the database converts as it needs.")
+                .show(ui);
             egui::Grid::new("parameter_fields")
                 .num_columns(3)
                 .spacing([8.0, 6.0])
@@ -110,9 +112,8 @@ impl ParametersDialog {
                         ui.end_row();
                     }
                 });
-            ui.separator();
             let enter = ui.input(|input| input.key_pressed(Key::Enter));
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            form::footer(ui, |ui| {
                 if form::primary_button(ui, "Run", true).clicked() || enter {
                     Some(ParametersChoice::Run)
                 } else if ui.button("Cancel").clicked() {
@@ -121,7 +122,6 @@ impl ParametersDialog {
                     None
                 }
             })
-            .inner
         });
         if modal.should_close() {
             return Some(ParametersChoice::Cancel);

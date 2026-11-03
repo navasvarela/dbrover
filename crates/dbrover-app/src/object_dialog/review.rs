@@ -6,10 +6,12 @@ use dbrover_engine::DdlFailure;
 use dbrover_language::QueryLanguage;
 use dbrover_sql::DdlError;
 use dbrover_store::redact_secrets;
-use egui::{Align, Id, Layout, ScrollArea, TextEdit, Ui};
+use egui::{Id, ScrollArea, TextEdit, Ui};
 
 use super::Target;
 use crate::console::highlight::{self, Marks};
+use crate::dialog::{self, DialogSize};
+use crate::form;
 use crate::theme::Palette;
 use crate::{icons, widgets};
 
@@ -20,6 +22,22 @@ pub(super) enum ReviewAction {
     Execute,
     OpenInConsole,
     Cancel,
+}
+
+/// Whether the statements destroy something, and if they do, whether the user has confirmed
+/// it in the form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Approval {
+    /// Nothing is destroyed.
+    NotNeeded,
+    Awaited,
+    Given,
+}
+
+impl Approval {
+    fn granted(self) -> bool {
+        self != Self::Awaited
+    }
 }
 
 #[derive(Default)]
@@ -99,13 +117,12 @@ impl Review {
         }
     }
 
-    /// `confirmed` is whether the destruction, if any, has been confirmed.
     pub(super) fn show(
         &mut self,
         ui: &mut Ui,
         target: &Target,
         statements: &Result<Vec<String>, DdlError>,
-        confirmed: bool,
+        approval: Approval,
     ) -> Option<ReviewAction> {
         let palette = &Palette::for_visuals(ui.visuals());
         ui.strong("SQL");
@@ -127,8 +144,7 @@ impl Review {
                 ui.colored_label(palette.warning, applied_note(*applied));
             }
         }
-        ui.separator();
-        let action = self.buttons(ui, target, shown.as_ref(), confirmed);
+        let action = self.buttons(ui, target, shown.as_ref(), approval);
         let action = match action {
             Some(ReviewAction::Execute) if target.safety == SafetyLevel::Careful => {
                 self.confirming = true;
@@ -148,55 +164,49 @@ impl Review {
         ui: &mut Ui,
         target: &Target,
         shown: Option<&Shown>,
-        confirmed: bool,
+        approval: Approval,
     ) -> Option<ReviewAction> {
         let running = self.is_running();
         let writable = target.safety != SafetyLevel::ReadOnly;
         let ready = shown.is_some() && !running;
         let shareable = shown.is_some_and(|shown| !shown.holds_password);
-        // Inside a row, so the buttons take one line's height rather than all that is left.
-        ui.horizontal(|ui| {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let execute = ui
-                    .add_enabled(
-                        ready && confirmed && writable,
-                        egui::Button::new(widgets::icon_text(
-                            ui,
-                            icons::PLAY,
-                            egui::Color32::PLACEHOLDER,
-                            "Execute",
-                        )),
-                    )
-                    .on_disabled_hover_text(execute_disabled_reason(target, confirmed, running));
-                let execute = widgets::name(execute, egui::WidgetType::Button, "Execute", ready);
-                if running {
-                    ui.spinner();
-                }
-                let console = ui
-                    .add_enabled(ready && shareable, egui::Button::new("Open in console"))
-                    .on_disabled_hover_text(HOLDS_PASSWORD);
-                let copy = ui
-                    .add_enabled(shareable, egui::Button::new("Copy"))
-                    .on_disabled_hover_text(HOLDS_PASSWORD);
-                let cancel = ui.add_enabled(!running, egui::Button::new("Cancel"));
-                if copy.clicked()
-                    && let Some(shown) = shown
-                {
-                    ui.ctx().copy_text(shown.text.clone());
-                }
-                if execute.clicked() {
-                    Some(ReviewAction::Execute)
-                } else if console.clicked() {
-                    Some(ReviewAction::OpenInConsole)
-                } else if cancel.clicked() {
-                    Some(ReviewAction::Cancel)
-                } else {
-                    None
-                }
-            })
-            .inner
+        form::footer(ui, |ui| {
+            let enabled = ready && approval.granted() && writable;
+            // Red when it drops or empties something, as every destructive action is.
+            let execute = match approval {
+                Approval::NotNeeded => form::primary_button(ui, "Execute", enabled),
+                Approval::Awaited | Approval::Given => form::danger_button(ui, "Execute", enabled),
+            };
+            let execute = execute.on_disabled_hover_text(execute_disabled_reason(
+                target,
+                approval.granted(),
+                running,
+            ));
+            if running {
+                ui.spinner();
+            }
+            let console = ui
+                .add_enabled(ready && shareable, egui::Button::new("Open in console"))
+                .on_disabled_hover_text(HOLDS_PASSWORD);
+            let copy = ui
+                .add_enabled(shareable, egui::Button::new("Copy"))
+                .on_disabled_hover_text(HOLDS_PASSWORD);
+            let cancel = ui.add_enabled(!running, egui::Button::new("Cancel"));
+            if copy.clicked()
+                && let Some(shown) = shown
+            {
+                ui.ctx().copy_text(shown.text.clone());
+            }
+            if execute.clicked() {
+                Some(ReviewAction::Execute)
+            } else if console.clicked() {
+                Some(ReviewAction::OpenInConsole)
+            } else if cancel.clicked() {
+                Some(ReviewAction::Cancel)
+            } else {
+                None
+            }
         })
-        .inner
     }
 
     /// On a careful data source, Execute asks once more, naming the data source.
@@ -208,15 +218,16 @@ impl Review {
         if !self.confirming {
             return None;
         }
-        let modal = widgets::dialog(ctx, Id::new("object_dialog_careful")).show(ctx, |ui| {
-            ui.heading(format!("Run on \u{201c}{}\u{201d}?", target.name));
+        let id = Id::new("object_dialog_careful");
+        let title = format!("Run on \u{201c}{}\u{201d}?", target.name);
+        let modal = dialog::modal(ctx, id, DialogSize::Confirm).show(ctx, |ui| {
+            form::Header::new(icons::WARNING, &title).danger().show(ui);
             ui.label(format!(
                 "\u{201c}{}\u{201d} is careful, and this changes the schema.",
                 target.name
             ));
-            ui.separator();
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Run").clicked() {
+            form::footer(ui, |ui| {
+                if form::danger_button(ui, "Run", true).clicked() {
                     Some(true)
                 } else if ui.button("Cancel").clicked() {
                     Some(false)
@@ -224,7 +235,6 @@ impl Review {
                     None
                 }
             })
-            .inner
         });
         let choice = if modal.should_close() {
             Some(false)

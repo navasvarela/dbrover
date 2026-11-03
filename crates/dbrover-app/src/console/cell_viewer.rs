@@ -50,7 +50,7 @@ fn contents(ui: &mut egui::Ui, viewed: &mut ViewedCell, console: u64) {
         return;
     };
     if viewed.tree.is_none() {
-        text_view(ui, value);
+        copyable_text_view(ui, value);
         return;
     }
     ui.horizontal(|ui| {
@@ -59,7 +59,7 @@ fn contents(ui: &mut egui::Ui, viewed: &mut ViewedCell, console: u64) {
     });
     match viewed.shown_as {
         ShownAs::Tree => tree_view(ui, viewed, console),
-        ShownAs::Text => text_view(ui, value),
+        ShownAs::Text => copyable_text_view(ui, value),
     }
 }
 
@@ -85,19 +85,26 @@ fn tree_view(ui: &mut egui::Ui, viewed: &ViewedCell, console: u64) {
     });
 }
 
-/// Long text laid out for reading, JSON and XML indented, with **Copy** for it as it is. The
-/// cell viewer's, and a command action's output's.
+/// A [`text_view`] with **Copy** for the value as stored above it.
+fn copyable_text_view(ui: &mut egui::Ui, value: &str) {
+    if ui.button("Copy").clicked() {
+        ui.ctx().copy_text(value.to_owned());
+    }
+    text_view(ui, value);
+}
+
+/// Long text laid out for reading, JSON and XML indented. The cell viewer's, and a command
+/// action's output's.
 pub fn text_view(ui: &mut egui::Ui, value: &str) {
     let pretty = pretty(value);
-    ui.horizontal(|ui| {
-        if ui.button("Copy").clicked() {
-            ui.ctx().copy_text(value.to_owned());
-        }
-        if let Some((structure, _)) = &pretty {
-            ui.weak(structure.note());
-        }
-    });
-    let mut shown = pretty.as_ref().map_or(value, |(_, text)| text.as_str());
+    if let Some((structure, _)) = &pretty {
+        ui.weak(structure.note());
+    }
+    read_only_text(ui, pretty.as_ref().map_or(value, |(_, text)| text.as_str()));
+}
+
+/// Text to read, select and copy from, but not to change, filling the space left.
+pub fn read_only_text(ui: &mut egui::Ui, mut shown: &str) {
     ScrollArea::both().auto_shrink(false).show(ui, |ui| {
         // A `&str` buffer makes the editor read-only but still selectable.
         ui.add(

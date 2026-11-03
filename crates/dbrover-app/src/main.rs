@@ -18,6 +18,7 @@ mod database_brand;
 mod definition_window;
 mod delete_dialog;
 mod diagram;
+mod dialog;
 mod explorer;
 mod export_dialog;
 mod export_sources_dialog;

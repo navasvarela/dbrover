@@ -136,8 +136,12 @@ fn an_action_on_rows_runs_once_per_row_and_a_change_to_every_row_asks_first() {
     harness.run();
     harness.get_by_label("Wipe").click();
     step_until_visible(&mut harness, "Run anyway?");
-    harness.get_by_label("Cancel").click();
+    // Escape rather than a click on Cancel: the dialog's first frame is egui's invisible
+    // sizing pass, where its buttons aren't where they end up, and the console's own Cancel
+    // shows from the next frame on.
+    harness.key_press(egui::Key::Escape);
     harness.run();
+    assert!(harness.query_by_label("Run anyway?").is_none());
     assert_eq!(order_ids(dir.path()), [1, 2, 3]);
 
     harness.get_by_label("orders").click_secondary();

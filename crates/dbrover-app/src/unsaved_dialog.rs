@@ -1,11 +1,12 @@
 //! Asks before closing a console, or quitting, would lose changes not written to `.sql` files.
 
 use dbrover_store::ConsoleKey;
-use egui::{Align, Id, Layout};
+use egui::Id;
 
+use crate::dialog::{self, DialogSize};
 use crate::form;
+use crate::icons;
 use crate::rollback_dialog::Closing;
-use crate::widgets;
 
 pub enum UnsavedChoice {
     /// Write the files, then close.
@@ -28,28 +29,31 @@ impl UnsavedConfirmation {
             .iter()
             .map(|(_, title)| title.as_str())
             .collect();
-        let modal = widgets::dialog(ctx, Id::new("unsaved_confirmation")).show(ctx, |ui| {
-            ui.heading(match names.as_slice() {
-                [name] => format!("Save the changes to {name}?"),
-                _ => "Save the changes to these files?".to_owned(),
-            });
+        let title = match names.as_slice() {
+            [name] => format!("Save the changes to {name}?"),
+            _ => "Save the changes to these files?".to_owned(),
+        };
+        let id = Id::new("unsaved_confirmation");
+        let modal = dialog::modal(ctx, id, DialogSize::Confirm).show(ctx, |ui| {
+            form::Header::new(icons::FLOPPY_DISK, &title).show(ui);
             if names.len() > 1 {
                 ui.label(names.join(", "));
             }
             ui.label("Your changes are lost if you don't save them.");
-            ui.separator();
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if form::primary_button(ui, "Save", true).clicked() {
-                    Some(UnsavedChoice::Save)
-                } else if ui.button("Don't save").clicked() {
-                    Some(UnsavedChoice::Discard)
-                } else if ui.button("Cancel").clicked() {
-                    Some(UnsavedChoice::Cancel)
-                } else {
-                    None
-                }
-            })
-            .inner
+            let (discard, choice) = form::footer_with_leading(
+                ui,
+                |ui| form::discard_button(ui, "Don't save").clicked(),
+                |ui| {
+                    if form::primary_button(ui, "Save", true).clicked() {
+                        Some(UnsavedChoice::Save)
+                    } else if ui.button("Cancel").clicked() {
+                        Some(UnsavedChoice::Cancel)
+                    } else {
+                        None
+                    }
+                },
+            );
+            discard.then_some(UnsavedChoice::Discard).or(choice)
         });
         if modal.should_close() {
             return Some(UnsavedChoice::Cancel);

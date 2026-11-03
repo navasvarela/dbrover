@@ -14,15 +14,15 @@ use dbrover_engine::{Command, Event, ImportFailure, RowsImport};
 use dbrover_language::QueryLanguage;
 use dbrover_sql::Dialect;
 use dbrover_store::Separator;
-use egui::{Align, Button, ComboBox, Grid, Id, Layout, RichText, ScrollArea, Ui};
+use egui::{Button, ComboBox, Grid, Id, RichText, ScrollArea, Ui};
 
+use crate::dialog::{self, DialogSize};
 use crate::form;
 use crate::icons;
 use crate::theme::Palette;
 use crate::widgets;
 use preview::{Preview, Warning};
 
-const DIALOG_WIDTH: f32 = 640.0;
 const SECTION_HEIGHT: f32 = 180.0;
 /// How many warnings are listed; the rest are counted.
 const WARNINGS_SHOWN: usize = 8;
@@ -174,7 +174,8 @@ impl CsvImportDialog {
     }
 
     pub fn show(&mut self, ctx: &egui::Context) -> Option<CsvImportAction> {
-        let modal = widgets::dialog(ctx, Id::new("csv_import")).show(ctx, |ui| self.contents(ui));
+        let id = Id::new("csv_import");
+        let modal = dialog::modal(ctx, id, DialogSize::Large).show(ctx, |ui| self.contents(ui));
         if modal.should_close() && !matches!(self.state, State::Importing { .. }) {
             return Some(CsvImportAction::Close);
         }
@@ -182,9 +183,13 @@ impl CsvImportDialog {
     }
 
     fn contents(&mut self, ui: &mut Ui) -> Option<CsvImportAction> {
-        ui.set_width(DIALOG_WIDTH);
         let palette = &Palette::for_visuals(ui.visuals());
-        ui.heading(format!("Import into {}", self.target.title));
+        form::Header::new(
+            icons::FILE_CSV,
+            &format!("Import into {}", self.target.title),
+        )
+        .subtitle(&self.target.data_source_name)
+        .show(ui);
         let action = self.file_row(ui, palette);
         ui.add_space(ui.spacing().item_spacing.y);
         match (&self.table, &self.preview) {
@@ -205,7 +210,6 @@ impl CsvImportDialog {
                 warnings(ui, &preview::check(table, &self.mapping, preview), palette);
             }
         }
-        ui.separator();
         self.status(ui, palette);
         let clicked = self.buttons(ui);
         action.or(clicked)
@@ -334,23 +338,27 @@ impl CsvImportDialog {
 
     fn buttons(&mut self, ui: &mut Ui) -> Option<CsvImportAction> {
         let import = self.import();
-        let (import_clicked, close_clicked) = ui
-            .with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let can_import = matches!(self.state, State::Choosing | State::Confirming);
-                let import_clicked = can_import
-                    && form::primary_button(ui, "Import", import.is_ok())
-                        .on_disabled_hover_text(import.as_ref().err().cloned().unwrap_or_default())
-                        .clicked();
-                let close_label = match self.state {
-                    State::Choosing => "Cancel",
-                    State::Confirming => "Back",
-                    State::Importing { .. } | State::Done(_) => "Close",
-                };
-                let closable = !matches!(self.state, State::Importing { .. });
-                let close_clicked = ui.add_enabled(closable, Button::new(close_label)).clicked();
-                (import_clicked, close_clicked)
-            })
-            .inner;
+        let (import_clicked, close_clicked) = form::footer(ui, |ui| {
+            let can_import = import.is_ok();
+            let import_button = match self.state {
+                State::Choosing => Some(form::primary_button(ui, "Import", can_import)),
+                // The careful data source's question: importing changes it.
+                State::Confirming => Some(form::danger_button(ui, "Import", can_import)),
+                State::Importing { .. } | State::Done(_) => None,
+            };
+            let import_clicked = import_button.is_some_and(|button| {
+                button
+                    .on_disabled_hover_text(import.as_ref().err().cloned().unwrap_or_default())
+                    .clicked()
+            });
+            let close = match self.state {
+                State::Choosing => ui.button("Cancel"),
+                State::Confirming => ui.button("Back"),
+                State::Importing { .. } => ui.add_enabled(false, Button::new("Close")),
+                State::Done(_) => form::primary_button(ui, "Close", true),
+            };
+            (import_clicked, close.clicked())
+        });
         if close_clicked {
             if matches!(self.state, State::Confirming) {
                 self.state = State::Choosing;
