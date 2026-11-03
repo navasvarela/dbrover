@@ -64,6 +64,19 @@ jobs:
           grep -E '^[A-Z_]+=' test-servers.env >> "$GITHUB_ENV"
       - name: Run the tests
         run: cargo llvm-cov --workspace --no-report
+      # The report worker's tests kill the real `dbrover report-worker` on a timeout, a cancel or
+      # a memory limit, and a process killed while writing its profile leaves a truncated
+      # .profraw. llvm-profdata then refuses the whole merge ("no profile can be merged") and the
+      # report step failed. Those processes' coverage is lost either way, so their files go.
+      - name: Drop unreadable profiles
+        run: |
+          profdata="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/llvm-profdata"
+          for profile in target/llvm-cov-target/*.profraw; do
+            if ! "$profdata" show "$profile" >/dev/null 2>&1; then
+              echo "::warning::Dropped unreadable profile $(basename "$profile")"
+              rm -- "$profile"
+            fi
+          done
       - name: Write the reports
         run: |
           mkdir -p coverage
