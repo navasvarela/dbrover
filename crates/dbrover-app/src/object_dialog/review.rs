@@ -125,19 +125,22 @@ impl Review {
         approval: Approval,
     ) -> Option<ReviewAction> {
         let palette = &Palette::for_visuals(ui.visuals());
-        ui.strong("SQL");
-        let shown = match statements {
-            Ok(statements) => {
-                let shown = Shown::new(&script(statements));
-                sql(ui, target, &shown.text);
-                notes(ui, target, statements.len(), shown.holds_password);
-                Some(shown)
-            }
-            Err(error) => {
-                ui.colored_label(palette.warning, error.to_string());
-                None
-            }
-        };
+        let shown = form::section(ui, "SQL", |ui| {
+            form::card(ui, |rows| {
+                rows.full(|ui| match statements {
+                    Ok(statements) => {
+                        let shown = Shown::new(&script(statements));
+                        sql(ui, target, &shown.text);
+                        notes(ui, target, statements.len(), shown.holds_password);
+                        Some(shown)
+                    }
+                    Err(error) => {
+                        ui.colored_label(palette.warning, error.to_string());
+                        None
+                    }
+                })
+            })
+        });
         if let State::Failed { message, applied } = &self.state {
             ui.colored_label(palette.error, message);
             if *applied > 0 {

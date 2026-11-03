@@ -1014,8 +1014,13 @@ fn ssh_data_source_dialog(harness: &mut Harness<'static, DbRoverApp>, _: &Fixtur
     retype(harness, "Key file", "~/.ssh/id_ed25519");
 }
 
-/// Picks `choice` in the combo box showing `current`.
+/// Picks `choice` in the combo box showing `current`, scrolling to it first: a dialog's fields
+/// may scroll, and a box scrolled out of sight can't be clicked.
 fn choose(harness: &mut Harness<'static, DbRoverApp>, current: &str, choice: &str) {
+    harness
+        .get_by(|node| node.role() == Role::ComboBox && node.value().as_deref() == Some(current))
+        .scroll_to_me();
+    harness.run_ok();
     harness
         .get_by(|node| node.role() == Role::ComboBox && node.value().as_deref() == Some(current))
         .click();

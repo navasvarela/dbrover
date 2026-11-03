@@ -10,7 +10,8 @@ use dbrover_core::{
 use dbrover_engine::read_only::{self, Guard};
 use dbrover_engine::{DatabaseFile, Event, PasswordUpdate, ProcessEnvironment};
 use egui::{
-    Button, Color32, Grid, Id, RichText, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetType, vec2,
+    Button, Color32, Grid, Id, RichText, ScrollArea, Sense, Stroke, TextEdit, Ui, WidgetInfo,
+    WidgetType, vec2,
 };
 
 use crate::data_source_form::{
@@ -27,6 +28,10 @@ use crate::theme::Palette;
 use crate::widgets;
 
 const FIELD_WIDTH: f32 = 280.0;
+/// The window height the dialog keeps for everything but its fields: the header, status line
+/// and footer take about 140 points and the margins 32, and the rest keeps the dialog clear of
+/// the window's edges. Less, and a short window pushes the footer off screen.
+const DIALOG_CHROME_HEIGHT: f32 = 240.0;
 const SWATCH_RADIUS: f32 = 8.0;
 
 pub enum DialogAction {
@@ -134,7 +139,12 @@ impl DataSourceDialog {
         let palette = &Palette::for_visuals(ui.visuals());
         let title = self.title();
         form::Header::with_image(icons::driver_logo(self.form.driver(), palette), &title).show(ui);
-        let new_database = self.fields(ui);
+        // Scrolled when the window is too short for every card, so the footer stays on screen.
+        let fields_height = ui.ctx().content_rect().height() - DIALOG_CHROME_HEIGHT;
+        let new_database = ScrollArea::vertical()
+            .max_height(fields_height)
+            .show(ui, |ui| self.fields(ui))
+            .inner;
         ui.add_space(ui.spacing().item_spacing.y);
         self.status_line(ui);
         let action = self.buttons(ui);
@@ -157,66 +167,71 @@ impl DataSourceDialog {
     }
 
     /// Draws the form. Returns a database file if the user chose to create one.
+    /// The form's rows in one card, so its fields stand out from the dialog behind them.
+    /// Returns a database file to create, if the file row asked for one.
     fn fields(&mut self, ui: &mut Ui) -> Option<DatabaseFile> {
+        card_grid(ui, "data_source_fields", |ui| {
+            text_row(ui, "Name", &mut self.form.name, "optional");
+            ui.label("Colour");
+            color_picker(ui, &mut self.form.color);
+            ui.end_row();
+            safety_rows(ui, &mut self.form);
+            let created = self.connection_rows(ui);
+            // Only where `dbrover mcp` can serve the engine; elsewhere it would never be used.
+            match read_only::guard(self.form.driver(), self.form.storage()) {
+                Guard::Session(_) => mcp_login_rows(ui, &mut self.form.mcp_login, false),
+                Guard::Login if !self.form.driver().uses_password() => {
+                    mcp_profile_row(ui, &mut self.form.mcp_login);
+                }
+                Guard::Login => mcp_login_rows(ui, &mut self.form.mcp_login, true),
+                Guard::CheckOnly => {}
+            }
+            created
+        })
+    }
+
+    /// Where the data source is and whom to connect as, by engine.
+    fn connection_rows(&mut self, ui: &mut Ui) -> Option<DatabaseFile> {
         let password_hint = if self.is_new { "none" } else { "unchanged" };
-        Grid::new("data_source_fields")
-            .num_columns(2)
-            .show(ui, |ui| {
-                text_row(ui, "Name", &mut self.form.name, "optional");
-                ui.label("Colour");
-                color_picker(ui, &mut self.form.color);
-                ui.end_row();
-                safety_rows(ui, &mut self.form);
-                let server = match &mut self.form.fields {
-                    DriverFields::Postgres(fields) => Some(&mut fields.server),
-                    DriverFields::Mysql(fields) => Some(&mut fields.server),
-                    DriverFields::SqlServer(fields) => Some(&mut fields.server),
-                    DriverFields::ClickHouse(fields) => Some(&mut fields.server),
-                    DriverFields::Redis(fields) => Some(&mut fields.server),
-                    DriverFields::Cassandra(fields) => Some(&mut fields.server),
-                    DriverFields::Mongo(fields) => {
-                        mongo_rows(ui, fields, password_hint);
-                        None
-                    }
-                    DriverFields::Elasticsearch(fields) => {
-                        elasticsearch_rows(ui, fields, password_hint);
-                        None
-                    }
-                    DriverFields::DynamoDb(fields) => {
-                        dynamodb_rows(ui, fields);
-                        None
-                    }
-                    DriverFields::Sqlite(fields) => {
-                        return file_rows(
-                            ui,
-                            FileEngine::Sqlite,
-                            &mut fields.path,
-                            &mut fields.read_only,
-                        );
-                    }
-                    DriverFields::DuckDb(fields) => return duckdb_rows(ui, fields),
-                };
-                if let Some(server) = server {
-                    server_rows(ui, server, password_hint);
-                }
-                if let DriverFields::Redis(fields) = &mut self.form.fields {
-                    text_row(ui, "Key separator", &mut fields.separator, "none");
-                }
-                if let DriverFields::Cassandra(fields) = &mut self.form.fields {
-                    cassandra_rows(ui, fields);
-                }
-                // Only where `dbrover mcp` can serve the engine; elsewhere it would never be used.
-                match read_only::guard(self.form.driver(), self.form.storage()) {
-                    Guard::Session(_) => mcp_login_rows(ui, &mut self.form.mcp_login, false),
-                    Guard::Login if !self.form.driver().uses_password() => {
-                        mcp_profile_row(ui, &mut self.form.mcp_login);
-                    }
-                    Guard::Login => mcp_login_rows(ui, &mut self.form.mcp_login, true),
-                    Guard::CheckOnly => {}
-                }
+        let server = match &mut self.form.fields {
+            DriverFields::Postgres(fields) => Some(&mut fields.server),
+            DriverFields::Mysql(fields) => Some(&mut fields.server),
+            DriverFields::SqlServer(fields) => Some(&mut fields.server),
+            DriverFields::ClickHouse(fields) => Some(&mut fields.server),
+            DriverFields::Redis(fields) => Some(&mut fields.server),
+            DriverFields::Cassandra(fields) => Some(&mut fields.server),
+            DriverFields::Mongo(fields) => {
+                mongo_rows(ui, fields, password_hint);
                 None
-            })
-            .inner
+            }
+            DriverFields::Elasticsearch(fields) => {
+                elasticsearch_rows(ui, fields, password_hint);
+                None
+            }
+            DriverFields::DynamoDb(fields) => {
+                dynamodb_rows(ui, fields);
+                None
+            }
+            DriverFields::Sqlite(fields) => {
+                return file_rows(
+                    ui,
+                    FileEngine::Sqlite,
+                    &mut fields.path,
+                    &mut fields.read_only,
+                );
+            }
+            DriverFields::DuckDb(fields) => return duckdb_rows(ui, fields),
+        };
+        if let Some(server) = server {
+            server_rows(ui, server, password_hint);
+        }
+        if let DriverFields::Redis(fields) = &mut self.form.fields {
+            text_row(ui, "Key separator", &mut fields.separator, "none");
+        }
+        if let DriverFields::Cassandra(fields) = &mut self.form.fields {
+            cassandra_rows(ui, fields);
+        }
+        None
     }
 
     fn status_line(&self, ui: &mut Ui) {
@@ -1061,6 +1076,16 @@ fn setting_row(ui: &mut Ui, label: &str, value: &mut String, hint: &str, resolve
     }
     .on_hover_text("Placeholders are resolved from the environment DbRover was started in");
     ui.end_row();
+}
+
+/// A card holding a grid of label and field rows. A grid rather than the card's own rows, so
+/// each field stays labelled by its label for screen readers and tests, and the labels line
+/// up. One card rather than a captioned card per group: three cards made the PostgreSQL
+/// dialog too tall for a 900-point window.
+fn card_grid<R>(ui: &mut Ui, id: &str, add_rows: impl FnOnce(&mut Ui) -> R) -> R {
+    form::card(ui, |rows| {
+        rows.full(|ui| Grid::new(id).num_columns(2).show(ui, add_rows).inner)
+    })
 }
 
 /// A label and a text field, linked so screen readers (and UI tests) find the field by label.
