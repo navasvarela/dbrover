@@ -1,14 +1,15 @@
 use dbrover_language::{QueryLanguage, StatementKind};
 use dbrover_sql::commits_implicitly;
 use dbrover_store::ConsoleKey;
-use egui::{Align, Id, Layout};
+use egui::Id;
 
 use dbrover_core::CostEstimate;
 use dbrover_engine::{CostApproval, RunPurpose};
 
 use crate::console::{ChangeCount, SubmittedRun, SubmittedStatement};
+use crate::dialog::{self, DialogSize};
 use crate::form;
-use crate::widgets;
+use crate::icons;
 
 pub enum HazardChoice {
     RunAnyway,
@@ -139,13 +140,15 @@ impl HazardConfirmation {
             Pending::Edits => "Apply",
             Pending::Cost(_) => "Scan anyway",
         };
-        let modal = widgets::dialog(ctx, Id::new("hazard_confirmation")).show(ctx, |ui| {
-            ui.heading(&self.heading);
+        let id = Id::new("hazard_confirmation");
+        let modal = dialog::modal(ctx, id, DialogSize::Confirm).show(ctx, |ui| {
+            form::Header::new(icons::WARNING, &self.heading)
+                .danger()
+                .show(ui);
             for warning in &self.warnings {
                 ui.label(warning);
             }
-            ui.separator();
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            form::footer(ui, |ui| {
                 if form::danger_button(ui, confirm, true).clicked() {
                     Some(HazardChoice::RunAnyway)
                 } else if ui.button("Cancel").clicked() {
@@ -154,7 +157,6 @@ impl HazardConfirmation {
                     None
                 }
             })
-            .inner
         });
         if modal.should_close() {
             return Some(HazardChoice::Cancel);

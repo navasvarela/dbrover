@@ -3,10 +3,12 @@
 
 use std::path::PathBuf;
 
-use egui::{Align, Id, Layout, RichText};
+use egui::{Id, RichText};
 
+use crate::dialog::{self, DialogSize};
+use crate::form;
+use crate::icons;
 use crate::theme::Palette;
-use crate::widgets;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FolderNotice {
@@ -21,12 +23,12 @@ pub enum FolderNotice {
 impl FolderNotice {
     /// Shows the notice. Returns `true` once the user closes it.
     pub fn show(&self, ctx: &egui::Context) -> bool {
-        let modal = widgets::dialog(ctx, Id::new("folder_notice")).show(ctx, |ui| {
+        let id = Id::new("folder_notice");
+        let modal = dialog::modal(ctx, id, DialogSize::Confirm).show(ctx, |ui| {
             let palette = &Palette::for_visuals(ui.visuals());
-            ui.set_max_width(420.0);
             match self {
                 Self::Copied { from, to } => {
-                    ui.heading("Your data was copied");
+                    form::Header::new(icons::FOLDER_SIMPLE, "Your data was copied").show(ui);
                     ui.label(
                         "DbRover now keeps your data sources, projects, consoles, history and \
                          settings in",
@@ -40,7 +42,7 @@ impl FolderNotice {
                     );
                 }
                 Self::Failed { from, reason } => {
-                    ui.heading("Your data couldn't be copied");
+                    form::Header::new(icons::WARNING, "Your data couldn't be copied").show(ui);
                     ui.label(
                         "Your data sources, consoles, history and settings couldn't be copied, \
                          so this time they're used where they are:",
@@ -50,7 +52,8 @@ impl FolderNotice {
                     ui.label("Nothing there was changed. The copy is tried again next time.");
                 }
                 Self::ChoiceUnavailable { problem, default } => {
-                    ui.heading("Your settings folder isn't available");
+                    form::Header::new(icons::WARNING, "Your settings folder isn't available")
+                        .show(ui);
                     ui.label(RichText::new(problem).color(palette.text_weak));
                     ui.label("This time DbRover uses the default folder:");
                     ui.label(RichText::new(default.display().to_string()).monospace());
@@ -60,11 +63,7 @@ impl FolderNotice {
                     );
                 }
             }
-            ui.separator();
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.button("OK").clicked()
-            })
-            .inner
+            form::footer(ui, |ui| form::primary_button(ui, "OK", true).clicked())
         });
         modal.should_close() || modal.inner
     }
@@ -72,7 +71,6 @@ impl FolderNotice {
 
 #[cfg(test)]
 mod tests {
-    use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
 
     use super::*;
@@ -104,7 +102,7 @@ mod tests {
         ];
         for (notice, heading) in notices {
             let mut closed = false;
-            let mut harness = Harness::new_ui(|ui| closed |= notice.show(ui.ctx()));
+            let mut harness = crate::test_support::ui_harness(|ui| closed |= notice.show(ui.ctx()));
             harness.run();
 
             harness.get_by_label(heading);

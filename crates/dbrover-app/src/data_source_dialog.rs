@@ -10,8 +10,7 @@ use dbrover_core::{
 use dbrover_engine::read_only::{self, Guard};
 use dbrover_engine::{DatabaseFile, Event, PasswordUpdate, ProcessEnvironment};
 use egui::{
-    Align, Button, Color32, Grid, Id, Layout, RichText, Sense, Stroke, TextEdit, Ui, WidgetInfo,
-    WidgetType, vec2,
+    Button, Color32, Grid, Id, RichText, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetType, vec2,
 };
 
 use crate::data_source_form::{
@@ -20,13 +19,13 @@ use crate::data_source_form::{
     McpPasswordChange, MongoFields, MongoTarget, ServerFields, SshFields, SshLoginChoice,
     TlsChoice,
 };
+use crate::dialog::{self, DialogSize};
 use crate::file_picker::{self, FileEngine};
 use crate::form;
 use crate::icons;
 use crate::theme::Palette;
 use crate::widgets;
 
-const DIALOG_WIDTH: f32 = 420.0;
 const FIELD_WIDTH: f32 = 280.0;
 const SWATCH_RADIUS: f32 = 8.0;
 
@@ -123,8 +122,8 @@ impl DataSourceDialog {
     }
 
     pub fn show(&mut self, ctx: &egui::Context) -> Option<DialogAction> {
-        let modal =
-            widgets::dialog(ctx, Id::new("data_source_dialog")).show(ctx, |ui| self.contents(ui));
+        let id = Id::new("data_source_dialog");
+        let modal = dialog::modal(ctx, id, DialogSize::Wide).show(ctx, |ui| self.contents(ui));
         if modal.should_close() {
             return Some(DialogAction::Close);
         }
@@ -132,22 +131,12 @@ impl DataSourceDialog {
     }
 
     fn contents(&mut self, ui: &mut Ui) -> Option<DialogAction> {
-        ui.set_width(DIALOG_WIDTH);
         let palette = &Palette::for_visuals(ui.visuals());
-        ui.horizontal(|ui| {
-            let logo_size = ui.text_style_height(&egui::TextStyle::Heading);
-            ui.add(icons::driver_logo_sized(
-                self.form.driver(),
-                palette,
-                logo_size,
-            ));
-            ui.heading(self.title());
-        });
-        ui.add_space(ui.spacing().item_spacing.y);
+        let title = self.title();
+        form::Header::with_image(icons::driver_logo(self.form.driver(), palette), &title).show(ui);
         let new_database = self.fields(ui);
         ui.add_space(ui.spacing().item_spacing.y);
         self.status_line(ui);
-        ui.separator();
         let action = self.buttons(ui);
         match new_database {
             Some(file) => {
@@ -287,19 +276,17 @@ impl DataSourceDialog {
     fn buttons(&mut self, ui: &mut Ui) -> Option<DialogAction> {
         let testing = matches!(self.status, Status::Testing);
         let saving = matches!(self.status, Status::Saving);
-        let (test, save, cancel) = ui
-            .horizontal(|ui| {
-                let test = ui
-                    .add_enabled(!testing && !saving, Button::new("Test connection"))
-                    .clicked();
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let save = form::primary_button(ui, "Save", !saving).clicked();
-                    let cancel = ui.button("Cancel").clicked();
-                    (test, save, cancel)
-                })
-                .inner
-            })
-            .inner;
+        let (test, (save, cancel)) = form::footer_with_leading(
+            ui,
+            |ui| {
+                let test = Button::new("Test connection");
+                ui.add_enabled(!testing && !saving, test).clicked()
+            },
+            |ui| {
+                let save = form::primary_button(ui, "Save", !saving).clicked();
+                (save, ui.button("Cancel").clicked())
+            },
+        );
 
         if cancel {
             Some(DialogAction::Close)

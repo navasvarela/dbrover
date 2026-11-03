@@ -27,6 +27,7 @@ use self::subject::TableProgress;
 pub use self::subject::{ExportSubject, TableTarget};
 use crate::command_runs::{CommandRuns, ProgramFacts, command_text, program_facts, timeout_text};
 use crate::console::ExportedRows;
+use crate::dialog::{self, DialogSize};
 use crate::theme::Palette;
 use crate::{form, icons, widgets};
 
@@ -36,7 +37,6 @@ pub const STORAGE_KEY: &str = "export_choices_v1";
 /// How many of the rows the preview shows.
 pub const PREVIEW_ROWS: usize = 10;
 
-const DIALOG_WIDTH: f32 = 560.0;
 const PREVIEW_HEIGHT: f32 = 120.0;
 /// Tiles a line in the format grid: eleven formats fit in three lines.
 const FORMAT_COLUMNS: usize = 4;
@@ -247,7 +247,8 @@ impl ExportDialog {
 
     /// Draws the dialog. `runs` says which programs run without asking.
     pub fn show(&mut self, ctx: &egui::Context, runs: &CommandRuns) -> Option<ExportDialogAction> {
-        let modal = widgets::dialog(ctx, Id::new("export_rows")).show(ctx, |ui| {
+        let id = Id::new("export_rows");
+        let modal = dialog::modal(ctx, id, DialogSize::Wide).show(ctx, |ui| {
             if self.asking.is_some() {
                 self.question(ui)
             } else {
@@ -261,14 +262,9 @@ impl ExportDialog {
     }
 
     fn contents(&mut self, ui: &mut Ui, runs: &CommandRuns) -> Option<ExportDialogAction> {
-        ui.set_width(DIALOG_WIDTH);
         let (title, subtitle) = (self.subject.heading(), self.subtitle());
-        let header = form::Header {
-            glyph: icons::EXPORT,
-            title: &title,
-            subtitle: &subtitle,
-        };
-        header.show(ui, |ui| {
+        let header = form::Header::new(icons::EXPORT, &title).subtitle(&subtitle);
+        header.show_with(ui, |ui| {
             if matches!(self.subject, ExportSubject::Grid(_)) {
                 self.rows_choice(ui);
             }
@@ -282,7 +278,6 @@ impl ExportDialog {
     /// The question before a program's first run: its command in full, then **Run** to trust
     /// it and export, or **Back** to the formats.
     fn question(&mut self, ui: &mut Ui) -> Option<ExportDialogAction> {
-        ui.set_width(DIALOG_WIDTH);
         let Some(CustomFormat {
             name,
             kind: CustomFormatKind::Program(program),

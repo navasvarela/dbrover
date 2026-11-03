@@ -3,8 +3,8 @@
 //! toggle, a header naming what the form is for, and one primary action at the end.
 
 use egui::{
-    Align, Align2, Button, Color32, CornerRadius, Frame, Layout, Margin, Response, RichText, Sense,
-    Stroke, Ui, WidgetInfo, WidgetType, vec2,
+    Align, Align2, Button, Color32, CornerRadius, Frame, Image, Layout, Margin, Rect, Response,
+    RichText, Sense, Stroke, Ui, WidgetInfo, WidgetType, vec2,
 };
 
 use crate::fonts;
@@ -28,40 +28,112 @@ const SEGMENT_MARGIN: i8 = 2;
 /// A toggle's track, as a multiple of the row height: about the proportions of macOS's switch.
 const TOGGLE_WIDTH: f32 = 1.75;
 
-/// The form's title beside an icon in a tinted badge, with a line about what it acts on.
+/// The form's title beside an icon in a tinted badge, with a line about what it acts on. Every
+/// dialog starts with one.
 pub struct Header<'a> {
-    pub glyph: &'a str,
-    pub title: &'a str,
-    pub subtitle: &'a str,
+    badge: Badge<'a>,
+    title: &'a str,
+    subtitle: Option<&'a str>,
+    tone: Tone,
 }
 
-impl Header<'_> {
+/// What the badge shows.
+enum Badge<'a> {
+    /// An icon, in the tone's colour.
+    Glyph(&'a str),
+    /// A picture in its own colours, such as a database's logo.
+    Image(Image<'a>),
+}
+
+/// What the badge's tint says about the form.
+#[derive(Clone, Copy)]
+enum Tone {
+    Primary,
+    /// The form destroys something, as its danger button will.
+    Danger,
+}
+
+impl<'a> Header<'a> {
+    pub fn new(glyph: &'a str, title: &'a str) -> Self {
+        Self::with_badge(Badge::Glyph(glyph), title)
+    }
+
+    /// A header whose badge shows `image` rather than an icon.
+    pub fn with_image(image: Image<'a>, title: &'a str) -> Self {
+        Self::with_badge(Badge::Image(image), title)
+    }
+
+    fn with_badge(badge: Badge<'a>, title: &'a str) -> Self {
+        Self {
+            badge,
+            title,
+            subtitle: None,
+            tone: Tone::Primary,
+        }
+    }
+
+    /// A line under the title naming what the form acts on: a data source, a table, a file.
+    pub fn subtitle(mut self, subtitle: &'a str) -> Self {
+        self.subtitle = Some(subtitle);
+        self
+    }
+
+    /// Tints the badge with the error colour, for a form whose action destroys something.
+    pub fn danger(mut self) -> Self {
+        self.tone = Tone::Danger;
+        self
+    }
+
+    pub fn show(self, ui: &mut Ui) {
+        self.show_with(ui, |_| {});
+    }
+
     /// Draws the header, with `trailing` (a choice that shapes the whole form, say) at its
     /// right.
-    pub fn show(self, ui: &mut Ui, trailing: impl FnOnce(&mut Ui)) {
+    pub fn show_with(self, ui: &mut Ui, trailing: impl FnOnce(&mut Ui)) {
         let palette = Palette::for_visuals(ui.visuals());
+        let colour = match self.tone {
+            Tone::Primary => palette.primary,
+            Tone::Danger => palette.error,
+        };
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
             let badge_size = vec2(HEADER_BADGE_SIZE, HEADER_BADGE_SIZE);
             let (badge, _) = ui.allocate_exact_size(badge_size, Sense::hover());
-            let painter = ui.painter();
-            painter.rect_filled(
-                badge,
-                CARD_RADIUS,
-                palette.tint(palette.primary, HEADER_BADGE_TINT),
-            );
-            painter.text(
-                badge.center(),
-                Align2::CENTER_CENTER,
-                self.glyph,
-                fonts::icon(HEADER_ICON_SIZE),
-                palette.primary,
-            );
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 1.0;
-                ui.label(RichText::new(self.title).font(fonts::semibold(TITLE_SIZE)));
-                ui.label(RichText::new(self.subtitle).color(palette.text_weak));
-            });
+            ui.painter()
+                .rect_filled(badge, CARD_RADIUS, palette.tint(colour, HEADER_BADGE_TINT));
+            match self.badge {
+                Badge::Glyph(glyph) => {
+                    ui.painter().text(
+                        badge.center(),
+                        Align2::CENTER_CENTER,
+                        glyph,
+                        fonts::icon(HEADER_ICON_SIZE),
+                        colour,
+                    );
+                }
+                Badge::Image(image) => {
+                    let inner = Rect::from_center_size(
+                        badge.center(),
+                        vec2(HEADER_ICON_SIZE, HEADER_ICON_SIZE),
+                    );
+                    image.paint_at(ui, inner);
+                }
+            }
+            let title = RichText::new(self.title).font(fonts::semibold(TITLE_SIZE));
+            match self.subtitle {
+                Some(subtitle) => {
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        ui.label(title);
+                        ui.label(RichText::new(subtitle).color(palette.text_weak));
+                    });
+                }
+                // Straight in the row, which centres it on the badge.
+                None => {
+                    ui.label(title);
+                }
+            }
             let rest = vec2(ui.available_width(), HEADER_BADGE_SIZE);
             ui.allocate_ui_with_layout(rest, Layout::right_to_left(Align::Center), trailing);
         });
@@ -295,6 +367,14 @@ pub fn danger_button(ui: &mut Ui, text: &str, enabled: bool) -> Response {
     filled_button(ui, text, enabled, palette.error)
 }
 
+/// An action that throws work away beside a primary one, such as **Don't save** beside
+/// **Save**: outlined like a secondary button, with the error colour's text. Filled, it would
+/// compete with the primary action for the eye.
+pub fn discard_button(ui: &mut Ui, text: &str) -> Response {
+    let palette = Palette::for_visuals(ui.visuals());
+    ui.button(RichText::new(text).color(palette.error))
+}
+
 /// A button filled with `fill`, a shade darker or lighter under the pointer; greyed out like
 /// any other button when disabled.
 fn filled_button(ui: &mut Ui, text: &str, enabled: bool, fill: Color32) -> Response {
@@ -320,11 +400,33 @@ fn filled_button(ui: &mut Ui, text: &str, enabled: bool, fill: Color32) -> Respo
 /// The row of actions along the bottom of a dialog, laid out right to left so the primary
 /// action added first sits in the corner, under a line across the dialog.
 pub fn footer<R>(ui: &mut Ui, add_actions: impl FnOnce(&mut Ui) -> R) -> R {
+    footer_row(ui, add_actions)
+}
+
+/// A [`footer`] with `add_leading` at its left, apart from the actions that finish the
+/// dialog: the place for an action that throws work away, such as **Don't save**, so a
+/// habitual click on the corner can't reach it, or one that checks rather than finishes, such
+/// as **Test connection**.
+pub fn footer_with_leading<L, R>(
+    ui: &mut Ui,
+    add_leading: impl FnOnce(&mut Ui) -> L,
+    add_actions: impl FnOnce(&mut Ui) -> R,
+) -> (L, R) {
+    footer_row(ui, |ui| {
+        let actions = add_actions(ui);
+        let leading = ui
+            .with_layout(Layout::left_to_right(Align::Center), add_leading)
+            .inner;
+        (leading, actions)
+    })
+}
+
+fn footer_row<R>(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui) -> R) -> R {
     ui.separator();
     ui.add_space(2.0);
     // As tall as a button: a right-to-left layout would otherwise take every point of height
     // a modal allows, and push the dialog off the screen.
     let row = vec2(ui.available_width(), ui.spacing().interact_size.y);
-    ui.allocate_ui_with_layout(row, Layout::right_to_left(Align::Center), add_actions)
+    ui.allocate_ui_with_layout(row, Layout::right_to_left(Align::Center), add_contents)
         .inner
 }

@@ -120,7 +120,7 @@ fn asks_before_a_command_first_runs_and_shows_its_output_in_a_viewer() {
 
     echo(&mut harness);
     step_until_visible(&mut harness, "Run a program?");
-    harness.get_by_label("\u{201c}Echo the rows\u{201d} runs this command from actions.toml:");
+    harness.get_by_label("It runs this command from actions.toml:");
     harness.get_by_label(r#"["echo"]"#);
     harness.get_by_label("the selected cells, as JSON");
     harness.get_by_label("shown in a window");

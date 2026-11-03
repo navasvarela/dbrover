@@ -3,10 +3,11 @@
 
 use dbrover_core::DataSourceId;
 use dbrover_store::ConsoleKey;
-use egui::{Align, Id, Layout};
+use egui::Id;
 
+use crate::dialog::{self, DialogSize};
 use crate::form;
-use crate::widgets;
+use crate::icons;
 
 /// An action that closes console connections.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,14 +55,19 @@ impl RollbackConfirmation {
 
     pub fn show(&self, ctx: &egui::Context) -> Option<RollbackChoice> {
         let verb = self.closing.verb();
-        let modal = widgets::dialog(ctx, Id::new("rollback_confirmation")).show(ctx, |ui| {
-            ui.heading("Roll back open transactions?");
+        let id = Id::new("rollback_confirmation");
+        let modal = dialog::modal(ctx, id, DialogSize::Confirm).show(ctx, |ui| {
+            form::Header::new(
+                icons::ARROW_COUNTER_CLOCKWISE,
+                "Roll back open transactions?",
+            )
+            .danger()
+            .show(ui);
             ui.label(format!(
                 "These consoles have uncommitted changes: {}. If you {verb}, they are rolled back.",
                 self.consoles.join(", ")
             ));
-            ui.separator();
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            form::footer(ui, |ui| {
                 if form::danger_button(ui, &format!("Roll back and {verb}"), true).clicked() {
                     Some(RollbackChoice::Proceed)
                 } else if ui.button("Cancel").clicked() {
@@ -70,7 +76,6 @@ impl RollbackConfirmation {
                     None
                 }
             })
-            .inner
         });
         if modal.should_close() {
             return Some(RollbackChoice::Cancel);

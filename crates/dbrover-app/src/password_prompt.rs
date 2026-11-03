@@ -5,11 +5,11 @@
 use dbrover_core::{DataSource, DataSourceId, Password, SshLogin};
 use dbrover_engine::{Event, PasswordKept, PasswordNeeded};
 use dbrover_store::Secret;
-use egui::{Align, Id, Layout, RichText, TextEdit};
+use egui::{Id, TextEdit};
 
+use crate::dialog::{self, DialogSize};
 use crate::form;
-use crate::theme::Palette;
-use crate::widgets;
+use crate::icons;
 
 const FIELD_WIDTH: f32 = 260.0;
 
@@ -93,8 +93,8 @@ impl PasswordPrompt {
     }
 
     pub fn show(&mut self, ctx: &egui::Context) -> Option<PromptAction> {
-        let modal =
-            widgets::dialog(ctx, Id::new("password_prompt")).show(ctx, |ui| self.contents(ui));
+        let id = Id::new("password_prompt");
+        let modal = dialog::modal(ctx, id, DialogSize::Form).show(ctx, |ui| self.contents(ui));
         if modal.should_close() {
             return Some(PromptAction::Cancel);
         }
@@ -102,9 +102,9 @@ impl PasswordPrompt {
     }
 
     fn contents(&mut self, ui: &mut egui::Ui) -> Option<PromptAction> {
-        let palette = &Palette::for_visuals(ui.visuals());
-        ui.heading(format!("Connect to {}", self.name));
-        ui.label(RichText::new(&self.target).color(palette.text_weak));
+        form::Header::new(icons::LOCK_SIMPLE, &format!("Connect to {}", self.name))
+            .subtitle(&self.target)
+            .show(ui);
         ui.label(format!("Enter {}: {}.", self.wanted, self.reason));
         ui.add_space(ui.spacing().item_spacing.y);
         let entered = ui
@@ -125,13 +125,10 @@ impl PasswordPrompt {
             .inner;
         ui.checkbox(&mut self.save, "Save to keychain")
             .on_hover_text("Otherwise the password is kept only until DbRover quits");
-        ui.separator();
-        let (connect, cancel) = ui
-            .with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let connect = form::primary_button(ui, "Connect", !self.submitted).clicked();
-                (connect, ui.button("Cancel").clicked())
-            })
-            .inner;
+        let (connect, cancel) = form::footer(ui, |ui| {
+            let connect = form::primary_button(ui, "Connect", !self.submitted).clicked();
+            (connect, ui.button("Cancel").clicked())
+        });
         if cancel {
             return Some(PromptAction::Cancel);
         }

@@ -3,11 +3,12 @@
 use dbrover_core::{DataSourceId, ProjectId};
 use dbrover_engine::Event;
 use dbrover_store::Project;
-use egui::{Align, Id, Layout, TextEdit, Ui};
+use egui::{Id, TextEdit, Ui};
 
+use crate::dialog::{self, DialogSize};
 use crate::form;
+use crate::icons;
 use crate::theme::Palette;
-use crate::widgets;
 
 const FIELD_WIDTH: f32 = 280.0;
 
@@ -78,8 +79,8 @@ impl ProjectNameDialog {
     }
 
     pub fn show(&mut self, ctx: &egui::Context) -> Option<ProjectDialogAction> {
-        let modal =
-            widgets::dialog(ctx, Id::new("project_name_dialog")).show(ctx, |ui| self.contents(ui));
+        let id = Id::new("project_name_dialog");
+        let modal = dialog::modal(ctx, id, DialogSize::Form).show(ctx, |ui| self.contents(ui));
         if modal.should_close() {
             return Some(ProjectDialogAction::Close);
         }
@@ -87,11 +88,11 @@ impl ProjectNameDialog {
     }
 
     fn contents(&mut self, ui: &mut Ui) -> Option<ProjectDialogAction> {
-        let (heading, confirm) = match self.purpose {
-            Purpose::Create { .. } => ("New project", "Create"),
-            Purpose::Rename => ("Rename project", "Rename"),
+        let (glyph, heading, confirm) = match self.purpose {
+            Purpose::Create { .. } => (icons::FOLDER_SIMPLE_PLUS, "New project", "Create"),
+            Purpose::Rename => (icons::PENCIL_SIMPLE, "Rename project", "Rename"),
         };
-        ui.heading(heading);
+        form::Header::new(glyph, heading).show(ui);
         let mut submitted = false;
         ui.horizontal(|ui| {
             let label = ui.label("Name");
@@ -110,16 +111,14 @@ impl ProjectNameDialog {
             let palette = &Palette::for_visuals(ui.visuals());
             ui.colored_label(palette.error, format!("Could not save: {error}"));
         }
-        ui.separator();
         let name = self.name.trim();
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        form::footer(ui, |ui| {
             let confirmed = form::primary_button(ui, confirm, !name.is_empty()).clicked();
             if ui.button("Cancel").clicked() {
                 return Some(ProjectDialogAction::Close);
             }
             ((confirmed || submitted) && !name.is_empty()).then(|| self.action(name.to_owned()))
         })
-        .inner
     }
 
     fn action(&self, name: String) -> ProjectDialogAction {
@@ -156,11 +155,14 @@ impl DeleteProjectConfirmation {
     }
 
     pub fn show(&self, ctx: &egui::Context) -> Option<DeleteProjectChoice> {
-        let modal = widgets::dialog(ctx, Id::new("delete_project")).show(ctx, |ui| {
-            ui.heading("Delete project");
+        let id = Id::new("delete_project");
+        let modal = dialog::modal(ctx, id, DialogSize::Confirm).show(ctx, |ui| {
+            form::Header::new(icons::TRASH, "Delete project")
+                .subtitle(&self.name)
+                .danger()
+                .show(ui);
             ui.label(self.message());
-            ui.separator();
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            form::footer(ui, |ui| {
                 if form::danger_button(ui, "Delete", true).clicked() {
                     Some(DeleteProjectChoice::Confirmed(self.id))
                 } else if ui.button("Cancel").clicked() {
@@ -169,7 +171,6 @@ impl DeleteProjectConfirmation {
                     None
                 }
             })
-            .inner
         });
         if modal.should_close() {
             return Some(DeleteProjectChoice::Cancelled);

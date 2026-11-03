@@ -23,7 +23,7 @@ use dbrover_language::QueryLanguage;
 use dbrover_sql::{
     DdlError, DdlOperation, Dialect, ExistingTable, ObjectName, ViewKind, ddl_statements,
 };
-use egui::{Id, Ui, Window};
+use egui::{Id, Ui};
 
 pub use confirm::Destruction;
 use index::{DropIndex, NewIndex};
@@ -34,11 +34,9 @@ use table_form::TableForm;
 use view::{DropView, EditView, NewView, RefreshView, RenameView, ViewAt};
 
 use crate::catalog_tree::CatalogTree;
+use crate::dialog::{self, DialogSize};
 use crate::explorer::Helper;
-use review::{Review, ReviewAction};
-
-/// The window's width when it opens; its height follows what the form shows.
-const DEFAULT_WIDTH: f32 = 620.0;
+use review::{Approval, Review, ReviewAction};
 
 /// The data source a dialog changes, and what about it decides how careful the dialog is.
 #[derive(Debug, Clone)]
@@ -269,12 +267,15 @@ impl ObjectDialog {
     ) -> Option<ObjectDialogAction> {
         let mut open = true;
         let mut action = None;
-        Window::new(self.form.title())
-            .id(Id::new("object_dialog"))
-            .open(&mut open)
-            .collapsible(false)
-            .default_width(DEFAULT_WIDTH)
-            .show(ctx, |ui| action = self.contents(ui, catalog));
+        dialog::window(
+            ctx,
+            self.form.title(),
+            Id::new("object_dialog"),
+            DialogSize::Large,
+        )
+        .open(&mut open)
+        .collapsible(false)
+        .show(ctx, |ui| action = self.contents(ui, catalog));
         if !open && !self.review.is_running() {
             return Some(ObjectDialogAction::Close);
         }
@@ -288,16 +289,19 @@ impl ObjectDialog {
         };
         self.form.show(ui, &context);
         let destruction = self.form.destruction(self.target.dialect);
-        let confirmed = match &destruction {
-            Some(destruction) => self.confirmation.show(ui, destruction, &self.target),
-            None => true,
+        let approval = match &destruction {
+            Some(destruction) if self.confirmation.show(ui, destruction, &self.target) => {
+                Approval::Given
+            }
+            Some(_) => Approval::Awaited,
+            None => Approval::NotNeeded,
         };
         ui.separator();
         let statements = self
             .form
             .operations()
             .and_then(|operations| ddl_statements(&operations, self.target.dialect));
-        let action = self.review.show(ui, &self.target, &statements, confirmed)?;
+        let action = self.review.show(ui, &self.target, &statements, approval)?;
         let statements = statements.ok()?;
         Some(match action {
             ReviewAction::Execute => ObjectDialogAction::Execute {

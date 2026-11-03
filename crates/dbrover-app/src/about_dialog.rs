@@ -1,9 +1,10 @@
-use egui::{Align, Id, Layout, RichText};
+use egui::{Id, RichText};
 
 use crate::brand;
+use crate::dialog::{self, DialogSize};
+use crate::form;
 use crate::theme::Palette;
 use crate::version;
-use crate::widgets;
 
 const LOGO_SIZE: f32 = 72.0;
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
@@ -12,7 +13,8 @@ const LICENSE: &str = env!("CARGO_PKG_LICENSE");
 /// Help › About DbRover: the version and commit to quote in a bug report, the licence, and where
 /// the project lives. Returns `true` once the user closes it.
 pub fn show(ctx: &egui::Context) -> bool {
-    let modal = widgets::dialog(ctx, Id::new("about_dbrover")).show(ctx, |ui| {
+    let id = Id::new("about_dbrover");
+    let modal = dialog::modal(ctx, id, DialogSize::Confirm).show(ctx, |ui| {
         let palette = &Palette::for_visuals(ui.visuals());
         ui.vertical_centered(|ui| {
             ui.add(brand::logo().max_size(egui::vec2(LOGO_SIZE, LOGO_SIZE)));
@@ -28,15 +30,14 @@ pub fn show(ctx: &egui::Context) -> bool {
             ui.label(RichText::new(format!("Licensed under {LICENSE}")).small());
             ui.hyperlink_to("Source and issues on GitHub", REPOSITORY);
         });
-        ui.separator();
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        form::footer(ui, |ui| {
+            let close = form::primary_button(ui, "Close", true).clicked();
             let copy = ui.button("Copy version").on_hover_text("For a bug report");
             if copy.clicked() {
                 ui.ctx().copy_text(version::describe());
             }
-            ui.button("Close").clicked()
+            close
         })
-        .inner
     });
     modal.should_close() || modal.inner
 }

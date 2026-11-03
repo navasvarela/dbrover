@@ -5,13 +5,13 @@
 use dbrover_core::{DataSource, DataSourceId, PasswordCommand};
 use dbrover_engine::Event;
 use dbrover_store::TrustedCommand;
-use egui::{Align, Id, Layout, RichText, ScrollArea, TextEdit};
+use egui::{Id, RichText, ScrollArea, TextEdit};
 
+use crate::dialog::{self, DialogSize};
 use crate::form;
+use crate::icons;
 use crate::theme::Palette;
-use crate::widgets;
 
-const DIALOG_WIDTH: f32 = 460.0;
 /// Rows of the command shown before it scrolls: a cloud CLI's token command, one item per
 /// line, fits.
 const COMMAND_ROWS: usize = 12;
@@ -52,8 +52,8 @@ impl PasswordCommandPrompt {
     }
 
     pub fn show(&mut self, ctx: &egui::Context) -> Option<PasswordCommandAction> {
-        let modal = widgets::dialog(ctx, Id::new("password_command_prompt"))
-            .show(ctx, |ui| self.contents(ui));
+        let id = Id::new("password_command_prompt");
+        let modal = dialog::modal(ctx, id, DialogSize::Form).show(ctx, |ui| self.contents(ui));
         if modal.should_close() {
             return Some(PasswordCommandAction::Cancel);
         }
@@ -61,11 +61,10 @@ impl PasswordCommandPrompt {
     }
 
     fn contents(&mut self, ui: &mut egui::Ui) -> Option<PasswordCommandAction> {
-        ui.set_width(DIALOG_WIDTH);
         let palette = &Palette::for_visuals(ui.visuals());
-        ui.heading("Run this command for a password?");
-        ui.label(RichText::new(&self.name).color(palette.text_weak));
-        ui.add_space(ui.spacing().item_spacing.y);
+        form::Header::new(icons::TERMINAL_WINDOW, "Run this command for a password?")
+            .subtitle(&self.name)
+            .show(ui);
         ui.label(
             "This data source gets its password by running a program, which DbRover hasn't \
              run for it before. It runs with your permissions, directly rather than through a \
@@ -81,7 +80,7 @@ impl PasswordCommandPrompt {
                     TextEdit::multiline(&mut shown)
                         .font(egui::TextStyle::Monospace)
                         .desired_rows(self.command.source().len().min(COMMAND_ROWS))
-                        .desired_width(DIALOG_WIDTH),
+                        .desired_width(f32::INFINITY),
                 );
             });
         ui.label(
@@ -93,13 +92,10 @@ impl PasswordCommandPrompt {
             .small()
             .color(palette.text_weak),
         );
-        ui.separator();
-        let (run, cancel) = ui
-            .with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let run = form::primary_button(ui, "Run and connect", !self.trusting).clicked();
-                (run, ui.button("Cancel").clicked())
-            })
-            .inner;
+        let (run, cancel) = form::footer(ui, |ui| {
+            let run = form::primary_button(ui, "Run and connect", !self.trusting).clicked();
+            (run, ui.button("Cancel").clicked())
+        });
         if cancel {
             return Some(PasswordCommandAction::Cancel);
         }

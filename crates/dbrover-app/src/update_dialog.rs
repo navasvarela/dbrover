@@ -1,11 +1,12 @@
 use dbrover_engine::{InstallSupport, Restart};
-use egui::{Align, Id, Layout, OpenUrl, ProgressBar, RichText};
+use egui::{Id, OpenUrl, ProgressBar, RichText};
 
+use crate::dialog::{self, DialogSize};
 use crate::form;
+use crate::icons;
 use crate::theme::Palette;
 use crate::updates::{InstallState, UpdateStatus, Updates};
 use crate::version;
-use crate::widgets;
 
 /// What the user asked of the updates dialog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,11 +19,12 @@ pub enum UpdateAction {
 /// Help › Check for updates, and the status bar's notice: whether a newer release is out,
 /// installing it when this copy can replace itself, and its release page.
 pub fn show(ctx: &egui::Context, updates: &Updates) -> Option<UpdateAction> {
-    let modal = widgets::dialog(ctx, Id::new("check_for_updates")).show(ctx, |ui| {
+    let id = Id::new("check_for_updates");
+    let modal = dialog::modal(ctx, id, DialogSize::Confirm).show(ctx, |ui| {
         let palette = &Palette::for_visuals(ui.visuals());
-        ui.set_min_width(360.0);
-        ui.heading("Updates");
-        ui.add_space(ui.spacing().item_spacing.y);
+        form::Header::new(icons::ARROW_CIRCLE_UP, "Updates")
+            .subtitle(&format!("DbRover {}", version::VERSION))
+            .show(ui);
         let mut page = None;
         match updates.status() {
             UpdateStatus::NotChecked | UpdateStatus::Checking => {
@@ -47,25 +49,29 @@ pub fn show(ctx: &egui::Context, updates: &Updates) -> Option<UpdateAction> {
                 ui.colored_label(palette.error, error);
             }
         }
-        ui.separator();
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        // The update's own action takes the corner when there is one; otherwise Close does.
+        form::footer(ui, |ui| {
             let mut action = None;
-            if ui.button("Close").clicked() {
-                action = Some(UpdateAction::Close);
+            let install = primary_button(updates);
+            if let Some(button) = install
+                && form::primary_button(ui, button.label(), true).clicked()
+            {
+                action = Some(button.action());
             }
             if let Some(url) = page
                 && ui.button("Open release page").clicked()
             {
                 ui.ctx().open_url(OpenUrl::new_tab(url));
             }
-            if let Some(button) = primary_button(updates)
-                && form::primary_button(ui, button.label(), true).clicked()
-            {
-                action = Some(button.action());
+            let close = match install {
+                Some(_) => ui.button("Close"),
+                None => form::primary_button(ui, "Close", true),
+            };
+            if close.clicked() {
+                action = Some(UpdateAction::Close);
             }
             action
         })
-        .inner
     });
     if modal.should_close() {
         Some(UpdateAction::Close)
@@ -161,7 +167,6 @@ mod tests {
     use std::path::PathBuf;
 
     use dbrover_engine::{Event, InstalledUpdate, Release, StagedInstaller};
-    use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
 
     use super::*;
@@ -179,7 +184,8 @@ mod tests {
     fn offers_to_install_where_it_can_and_the_release_page_everywhere() {
         let updates = with_update(InstallSupport::Supported);
         let mut action = None;
-        let mut harness = Harness::new_ui(|ui| action = action.or(show(ui.ctx(), &updates)));
+        let mut harness =
+            crate::test_support::ui_harness(|ui| action = action.or(show(ui.ctx(), &updates)));
         harness.run();
         harness.get_by_label(&format!(
             "DbRover 9.0.0 is available (you have {}).",
@@ -192,7 +198,7 @@ mod tests {
         assert_eq!(action, Some(UpdateAction::Install));
 
         let updates = with_update(InstallSupport::Unsupported("Only the AppImage".to_owned()));
-        let mut harness = Harness::new_ui(|ui| {
+        let mut harness = crate::test_support::ui_harness(|ui| {
             show(ui.ctx(), &updates);
         });
         harness.run();
@@ -209,7 +215,7 @@ mod tests {
             downloaded: 50,
             total: Some(100),
         });
-        let mut harness = Harness::new_ui(|ui| {
+        let mut harness = crate::test_support::ui_harness(|ui| {
             show(ui.ctx(), &updates);
         });
         harness.run_steps(2);
@@ -222,7 +228,8 @@ mod tests {
             restart: Restart::Relaunch,
         })));
         let mut action = None;
-        let mut harness = Harness::new_ui(|ui| action = action.or(show(ui.ctx(), &updates)));
+        let mut harness =
+            crate::test_support::ui_harness(|ui| action = action.or(show(ui.ctx(), &updates)));
         harness.run();
         harness.get_by_label("DbRover 9.0.0 is installed.");
         harness.get_by_label("Restart now").click();
@@ -241,7 +248,7 @@ mod tests {
                 "dbrover-setup.exe",
             ))),
         })));
-        let mut harness = Harness::new_ui(|ui| {
+        let mut harness = crate::test_support::ui_harness(|ui| {
             show(ui.ctx(), &updates);
         });
         harness.run();

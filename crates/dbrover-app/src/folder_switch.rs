@@ -10,9 +10,10 @@ use dbrover_store::{
 };
 use egui::{Id, RichText};
 
+use crate::dialog::{self, DialogSize};
 use crate::form::{self, Segment};
+use crate::icons;
 use crate::theme::Palette;
-use crate::widgets;
 
 /// The settings folder this session uses, and what Settings › Files needs to change it.
 #[derive(Debug, Clone)]
@@ -111,16 +112,17 @@ pub struct FolderSwitch {
 
 impl FolderSwitch {
     pub fn show(&mut self, ctx: &egui::Context, current: &Path) -> Option<SwitchAction> {
-        let modal = widgets::dialog(ctx, Id::new("folder_switch")).show(ctx, |ui| {
-            ui.set_max_width(460.0);
+        let id = Id::new("folder_switch");
+        let modal = dialog::modal(ctx, id, DialogSize::Form).show(ctx, |ui| {
             let palette = Palette::for_visuals(ui.visuals());
-            ui.heading("Use another settings folder");
-            ui.label(RichText::new(self.folder.display().to_string()).monospace());
-            ui.add_space(4.0);
+            form::Header::new(icons::FOLDER_OPEN, "Use another settings folder")
+                .subtitle(&self.folder.display().to_string())
+                .show(ui);
             let can_switch = self.explain(ui, current, &palette);
             form::footer(ui, |ui| {
                 if !can_switch {
-                    return ui.button("OK").clicked().then_some(SwitchAction::Cancel);
+                    let ok = form::primary_button(ui, "OK", true);
+                    return ok.clicked().then_some(SwitchAction::Cancel);
                 }
                 if form::primary_button(ui, "Restart DbRover", true).clicked() {
                     return Some(SwitchAction::Restart(self.pending(current)));
@@ -189,7 +191,6 @@ impl FolderSwitch {
 
 #[cfg(test)]
 mod tests {
-    use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
     use tempfile::TempDir;
 
@@ -220,7 +221,7 @@ mod tests {
         let mut switch = in_use.switch_to(folder);
         let current = in_use.folders.settings.clone();
         let mut answer = None;
-        let mut harness = Harness::new_ui(|ui| {
+        let mut harness = crate::test_support::ui_harness(|ui| {
             if let Some(action) = switch.show(ui.ctx(), &current) {
                 answer = Some(action);
             }

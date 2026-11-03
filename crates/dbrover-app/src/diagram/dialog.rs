@@ -4,19 +4,19 @@
 use std::collections::BTreeSet;
 
 use dbrover_core::{CatalogNode, CatalogPath, DataSourceId, FolderKind, NodeKind};
-use egui::{Align, Id, Layout, ScrollArea, TextEdit, Ui};
+use egui::{Id, ScrollArea, TextEdit, Ui};
 
 use super::Growth;
 use crate::catalog_tree::{CatalogTree, Children, LevelEnd};
+use crate::dialog::{self, DialogSize};
 use crate::form;
+use crate::icons;
 use crate::theme::Palette;
-use crate::widgets;
 
 /// Past this many tables the dialog asks to narrow the choice before opening: a diagram that
 /// big is hard to read at any zoom that shows it whole, and slow to load from a distant
 /// server. Measured and decided in `docs/diagrams.md`.
 pub const LARGE_DIAGRAM: usize = 150;
-const LIST_HEIGHT: f32 = 280.0;
 const FIELD_WIDTH: f32 = 280.0;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,10 +72,9 @@ impl DiagramDialog {
         ctx: &egui::Context,
         catalog: Option<&CatalogTree>,
     ) -> Option<DiagramDialogAction> {
-        let modal = widgets::dialog(ctx, Id::new("diagram_dialog")).show(ctx, |ui| {
-            ui.set_width(FIELD_WIDTH + 80.0);
-            self.contents(ui, catalog)
-        });
+        let id = Id::new("diagram_dialog");
+        let modal =
+            dialog::modal(ctx, id, DialogSize::Form).show(ctx, |ui| self.contents(ui, catalog));
         if modal.should_close() {
             return Some(DiagramDialogAction::Close);
         }
@@ -88,7 +87,7 @@ impl DiagramDialog {
         catalog: Option<&CatalogTree>,
     ) -> Option<DiagramDialogAction> {
         let palette = Palette::for_visuals(ui.visuals());
-        ui.heading(format!("Diagram of {}", self.schema));
+        form::Header::new(icons::GRAPH, &format!("Diagram of {}", self.schema)).show(ui);
         ui.horizontal(|ui| {
             let label = ui.label("Name");
             ui.add(TextEdit::singleline(&mut self.name).desired_width(FIELD_WIDTH))
@@ -112,9 +111,8 @@ impl DiagramDialog {
                 ),
             );
         }
-        ui.separator();
         let name = self.name.trim().to_owned();
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        form::footer(ui, |ui| {
             let open = if large { "Open anyway" } else { "Open" };
             let can_open = !chosen.is_empty() && !name.is_empty();
             if form::primary_button(ui, open, can_open).clicked() {
@@ -128,7 +126,6 @@ impl DiagramDialog {
                 .clicked()
                 .then_some(DiagramDialogAction::Close)
         })
-        .inner
     }
 
     /// The schema's tables, a box for each, under a filter and **All** and **None**; returns
@@ -146,8 +143,8 @@ impl DiagramDialog {
         };
         self.list_controls(ui, &tables);
         ScrollArea::vertical()
-            .min_scrolled_height(LIST_HEIGHT)
-            .max_height(LIST_HEIGHT)
+            .min_scrolled_height(dialog::LIST_HEIGHT)
+            .max_height(dialog::LIST_HEIGHT)
             .auto_shrink(false)
             .show(ui, |ui| {
                 match catalog.and_then(|c| c.children(&self.tables_path)) {
