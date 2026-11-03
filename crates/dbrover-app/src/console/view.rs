@@ -60,6 +60,8 @@ const RESULTS_HEIGHT: f32 = 280.0;
 /// neither can be dragged (or squeezed by a small window) out of reach.
 const MIN_SHARE: f32 = 0.2;
 const SPLITTER_HEIGHT: f32 = 6.0;
+/// The value panel's width when it first opens, beside the grid; dragging its edge changes it.
+const VALUE_PANEL_WIDTH: f32 = 320.0;
 
 /// What the user asked a console to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -143,9 +145,17 @@ pub fn show(
     });
     splitter(ui, console);
     ui.allocate_ui(vec2(width, results_height), |ui| {
+        if console.value_panel.is_open() {
+            let id = Id::new(("value_panel", console.id.0));
+            egui::Panel::right(id)
+                .resizable(true)
+                .default_size(VALUE_PANEL_WIDTH)
+                .show(ui, |ui| {
+                    cell_viewer::show(ui, &mut console.value_panel, console.id.0);
+                });
+        }
         results::show(ui, console, keymap, context.cell_menu, actions);
     });
-    cell_viewer::show(ui.ctx(), console);
     actions.extend(
         console
             .take_accepted_completion()

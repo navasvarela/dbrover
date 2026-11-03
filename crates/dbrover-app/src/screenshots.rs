@@ -552,6 +552,14 @@ const SCENES: &[Scene] = &[
         needs: &[],
     },
     Scene {
+        name: "value-panel",
+        data_sources: FixtureSources::Shop,
+        play: value_panel,
+        keeps_pointer: false,
+        region: whole_window,
+        needs: &[],
+    },
+    Scene {
         name: "parameters",
         data_sources: FixtureSources::Shop,
         play: parameters,
@@ -1801,6 +1809,28 @@ fn follow_key(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
     step_until_visible(harness, "order_items.order_id");
     harness.get_by_label("order_items.order_id").hover();
     harness.run_ok();
+}
+
+/// The value panel beside the grid, showing a JSON cell as a tree.
+fn value_panel(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    open_console(
+        harness,
+        "shop",
+        "SELECT c.name,\n  json_object('email', c.email, 'country', c.country,\n    \
+         'orders', json_group_array(o.id)) AS profile\nFROM customers c\n\
+         JOIN orders o ON o.customer_id = c.id\nGROUP BY c.id;\n",
+    );
+    // A join can't be edited, so no Add row: Export… shows the rows are in.
+    run_all(harness, "Export…");
+    harness.get_by_label("Value").click();
+    harness.run_ok();
+    harness
+        .get_all_by_label_contains("ada@example.com")
+        .next()
+        .unwrap()
+        .click();
+    harness.run_ok();
+    step_until_visible(harness, "Value of profile");
 }
 
 /// Import CSV… on customers: the columns matched by name, the first rows, and a warning.

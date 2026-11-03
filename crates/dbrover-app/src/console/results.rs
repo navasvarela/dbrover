@@ -12,6 +12,7 @@ use dbrover_store::{ActionId, CustomAction};
 use egui::{Align, Label, Layout, RichText, Sense, TextEdit, Ui};
 use egui_extras::{Column, TableBuilder};
 
+use super::cell_viewer::ValuePanel;
 use super::chart;
 use super::documents::{self, CellLook, ColumnFold, DocumentResult, ShownAs};
 use super::edit::{CellEditor, EditSession, Editability, PendingEdits, RowRef};
@@ -19,7 +20,7 @@ use super::grid::{CellPos, GridView, SortKey, tsv_field};
 use super::keys::{KeyLinks, RowsToOpen};
 use super::plan;
 use super::{
-    ClipboardCopy, ClipboardFormat, ConsoleAction, QueryConsole, RunState, StatementView,
+    CellAt, ClipboardCopy, ClipboardFormat, ConsoleAction, QueryConsole, RunState, StatementView,
     ViewedCell, selected_cells,
 };
 use crate::custom_actions::GridCells;
@@ -75,6 +76,7 @@ pub fn show(
         statement_tabs(ui, &mut run.selected, &run.statements);
     }
     let run_id = run.id;
+    let statement_index = run.selected;
     let running = run.state == RunState::Running;
     let Some(statement) = run.statements.get_mut(run.selected) else {
         return;
@@ -102,12 +104,13 @@ pub fn show(
     }
     let mut grid_output = GridOutput::default();
     if statement.returns_rows() {
-        let toolbar = Toolbar {
+        let mut toolbar = Toolbar {
             dialect,
             export_status: console.export_status.as_ref(),
             exporting: console.exporting,
+            value_panel: &mut console.value_panel,
         };
-        let rearrange = grid_toolbar(ui, statement, &toolbar, actions);
+        let rearrange = grid_toolbar(ui, statement, &mut toolbar, actions);
         match &statement.documents {
             _ if statement.chart.is_shown() => {
                 let (tab, source) = chart_parts(statement, dialect);
@@ -126,8 +129,20 @@ pub fn show(
     if let Some(fold) = grid_output.fold.take() {
         statement.fold_column(&fold);
     }
-    if let Some(viewed) = grid_output.viewed {
-        console.viewed_cell = Some(viewed);
+    // The cell asked for, or, while the value panel is open, the one the selection moved to.
+    let at = |cell| CellAt {
+        run: run_id,
+        statement: statement_index,
+        cell,
+    };
+    let shown = grid_output.viewed.or_else(|| {
+        statement
+            .grid
+            .selected_cell()
+            .filter(|cell| console.value_panel.follows_to(at(*cell)))
+    });
+    if let Some(viewed) = shown.and_then(|cell| viewed_cell(statement, at(cell))) {
+        console.value_panel.view(viewed);
     }
     actions.extend(grid_output.open.map(ConsoleAction::OpenRows));
     actions.extend(
@@ -278,6 +293,7 @@ struct Toolbar<'a> {
     export_status: Option<&'a Result<String, String>>,
     /// An export of every row in progress: its run and the rows written so far.
     exporting: Option<(RunId, usize)>,
+    value_panel: &'a mut ValuePanel,
 }
 
 /// The filter, where it applies, a note when the rows are rearranged, the export menu, and
@@ -286,7 +302,7 @@ struct Toolbar<'a> {
 fn grid_toolbar(
     ui: &mut Ui,
     statement: &mut StatementView,
-    toolbar: &Toolbar<'_>,
+    toolbar: &mut Toolbar<'_>,
     actions: &mut Vec<ConsoleAction>,
 ) -> bool {
     // Wrapped: with editing's buttons and counts, it outgrows a narrow console.
@@ -318,6 +334,7 @@ fn grid_toolbar(
         statement.grid.refresh(&statement.rows);
         arrangement_note(ui, statement);
         export_button(ui, toolbar, actions);
+        value_panel_switch(ui, toolbar.value_panel);
         ui.separator();
         edit_status(ui, statement, actions);
         rearrange
@@ -440,6 +457,16 @@ fn file_run(
 
 /// Export…, which opens the export dialog, and how the last export went, or, while every row
 /// is being exported, its progress and Cancel.
+/// Shows or hides the value panel beside the grid.
+fn value_panel_switch(ui: &mut Ui, panel: &mut ValuePanel) {
+    let switch = ui
+        .selectable_label(panel.is_open(), "Value")
+        .on_hover_text("Show the selected cell's whole value beside the grid");
+    if switch.clicked() {
+        panel.toggle();
+    }
+}
+
 fn export_button(ui: &mut Ui, toolbar: &Toolbar<'_>, actions: &mut Vec<ConsoleAction>) {
     if let Some((run, rows)) = toolbar.exporting {
         ui.weak(format!("Exporting… {rows} rows"));
@@ -694,7 +721,7 @@ struct GridOutput {
     /// next page: scrolling to the bottom loads more.
     last_row_shown: bool,
     /// A cell the user asked to see in full.
-    viewed: Option<ViewedCell>,
+    viewed: Option<CellPos>,
     /// Rows a foreign key leads to, to open in a new console.
     open: Option<RowsToOpen>,
     /// The sort changed, for the database to apply by running the statement again.
@@ -860,7 +887,7 @@ fn grid(
             CellInput::StartDrag(cell) => grid.start_drag(cell),
             CellInput::View(cell) => {
                 grid.select(cell);
-                output.viewed = viewed_cell(columns, rows, grid, cell, results);
+                output.viewed = Some(cell);
             }
             CellInput::Edit { row, column } => start_editing(edits, rows, row, column),
             CellInput::SetNull { row, column } => edits.pending.set(rows, row, column, None),
@@ -914,7 +941,7 @@ fn grid(
             .input_mut(|input| keymap.consume(input, &[Action::ViewCell]))
             .is_empty()
     {
-        output.viewed = viewed_cell(columns, rows, grid, cell, results);
+        output.viewed = Some(cell);
     }
     output
 }
@@ -1484,18 +1511,15 @@ fn new_cell_label(ui: &mut Ui, new: Option<&NewCell>) -> egui::Response {
     .on_hover_text(hover)
 }
 
-fn viewed_cell(
-    columns: &[ColumnInfo],
-    rows: &[Row],
-    grid: &GridView,
-    cell: CellPos,
-    results: Option<&DocumentResult>,
-) -> Option<ViewedCell> {
-    let row = rows.get(*grid.order().get(cell.row)?)?;
+/// A copy of the cell at `at` in `statement`'s grid, as shown.
+fn viewed_cell(statement: &StatementView, at: CellAt) -> Option<ViewedCell> {
+    let cell = at.cell;
+    let row = statement.rows.get(*statement.grid.order().get(cell.row)?)?;
     Some(ViewedCell::new(
-        columns.get(cell.column)?.name.clone(),
+        at,
+        statement.columns.get(cell.column)?.name.clone(),
         row.get(cell.column)?.clone(),
-        documents::cell_syntax(results),
+        documents::cell_syntax(statement.documents.as_ref()),
     ))
 }
 
