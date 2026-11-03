@@ -29,7 +29,7 @@ use dbrover_core::{
 };
 use dbrover_engine::{PasswordCommands, ProcessRunner, SourceAccess, Tunnels};
 use dbrover_language::QueryLanguage;
-use dbrover_report::{Plan, RunFolders, read_report, run};
+use dbrover_report::{LimitDefaults, Plan, RunFolders, read_report, run};
 use dbrover_sql::Dialect;
 use dbrover_store::{Secret, SecretStore, TrustedCommands};
 
@@ -92,7 +92,13 @@ async fn run_example(
     out: &Path,
 ) {
     let text = std::fs::read_to_string(examples().join(format!("{name}.toml"))).unwrap();
-    let plan = Plan::new(read_report(&text).unwrap(), data_sources, &[]).unwrap();
+    let plan = Plan::new(
+        read_report(&text).unwrap(),
+        data_sources,
+        &[],
+        &LimitDefaults::default(),
+    )
+    .unwrap();
     let values = plan
         .values(
             &[("since", period.0), ("until", period.1)]

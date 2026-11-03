@@ -83,6 +83,7 @@ fn control(ui: &mut Ui, setting: Setting, title: &str, draft: &mut Draft<'_>) {
             &COUNTS,
             |count| format!("the newest {count}"),
         ),
+        Setting::Report(default) => default.control(ui, &mut settings.reports),
         Setting::CheckForUpdates => {
             form::toggle(ui, &mut settings.updates.check_on_start, title);
         }

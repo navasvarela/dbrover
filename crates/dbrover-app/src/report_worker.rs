@@ -130,7 +130,7 @@ fn prepare(paths: &AppPaths, request: &RunRequest) -> Result<(Plan, RunValues), 
         // `read` answers with the kind it was asked for.
         _ => Vec::new(),
     };
-    let plan = Plan::new(report, &data_sources, &presets).map_err(fail)?;
+    let plan = Plan::new(report, &data_sources, &presets, &request.defaults).map_err(fail)?;
     let values = plan.values(&request.values).map_err(fail)?;
     Ok((plan, values))
 }

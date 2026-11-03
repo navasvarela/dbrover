@@ -6,7 +6,7 @@ use std::path::Path;
 
 use dbrover_core::{ByteCount, DataSource};
 use dbrover_export::{ColumnType, CustomFormat};
-use dbrover_report::{Batch, LimitHit, Plan, Preview, Step, WrittenFile, grouped};
+use dbrover_report::{Batch, LimitDefaults, LimitHit, Plan, Preview, Step, WrittenFile, grouped};
 use dbrover_store::ReportName;
 use egui::{CollapsingHeader, Grid, RichText, ScrollArea, TextEdit, Ui, vec2};
 
@@ -25,6 +25,8 @@ const PREVIEW_HEIGHT: f32 = 320.0;
 pub struct ReportView<'a> {
     pub data_sources: &'a [DataSource],
     pub presets: &'a [CustomFormat],
+    /// The limits where a report's file leaves one out, from Settings › Reports.
+    pub defaults: &'a LimitDefaults,
 }
 
 pub fn show(
@@ -64,7 +66,7 @@ fn report(
         .as_ref()
         .ok()
         .and_then(|report| report.description.clone());
-    let plan = listed.plan(view.data_sources, view.presets);
+    let plan = listed.plan(view.data_sources, view.presets, view.defaults);
 
     ui.horizontal(|ui| {
         ui.label(
@@ -290,7 +292,7 @@ fn last_run(ui: &mut Ui, reports: &Reports, name: &ReportName, actions: &mut Vec
             );
             ui.colored_label(palette.error, &failure.message);
             if let Some(limit) = &failure.limit {
-                limit_hint(ui, limit);
+                limit_hint(ui, limit, actions);
             }
         }
         Some(RunEnd::Cancelled) => {
@@ -454,11 +456,23 @@ fn table(ui: &mut Ui, step: &StepRecord) {
         });
 }
 
-fn limit_hint(ui: &mut Ui, limit: &LimitHit) {
+/// Where to raise the limit a run stopped at: the report's file, and, for a limit with a
+/// default, Settings › Reports for every report.
+fn limit_hint(ui: &mut Ui, limit: &LimitHit, actions: &mut Vec<ReportAction>) {
     ui.label(format!(
         "It stopped at {} = {}. To allow more, raise {} in {} of the report's file.",
         limit.key, limit.value, limit.key, limit.raise_in
     ));
+    // Excel's rows a sheet is Excel's, not a default.
+    if limit.key == "continue_on_new_sheet" {
+        return;
+    }
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Where the file doesn't set it, its default for every report is in");
+        if ui.link("Settings › Reports").clicked() {
+            actions.push(ReportAction::OpenSettings);
+        }
+    });
 }
 
 fn files(ui: &mut Ui, palette: &Palette, files: &[WrittenFile], actions: &mut Vec<ReportAction>) {

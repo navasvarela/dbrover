@@ -15,8 +15,8 @@ use dbrover_language::QueryLanguage;
 use dbrover_sql::{Dialect, ParameterValues, StatementKind};
 
 use crate::{
-    CombineLimits, FileName, Lookup, Output, OutputColumns, OutputLimits, OutputWriter, Param,
-    Report, Source, SourceColumn, SourceLimits, SourceRead, SourceStart,
+    CombineLimits, FileName, LimitDefaults, Lookup, Output, OutputColumns, OutputLimits,
+    OutputWriter, Param, Report, Source, SourceColumn, SourceLimits, SourceRead, SourceStart,
 };
 
 /// A report ready to run.
@@ -194,7 +194,8 @@ pub struct RunValues {
 }
 
 impl Plan {
-    /// Finds what `report` names among `data_sources` and `presets`.
+    /// Finds what `report` names among `data_sources` and `presets`, its limits being
+    /// `defaults` where its file leaves them out.
     ///
     /// # Errors
     ///
@@ -203,13 +204,14 @@ impl Plan {
         report: Report,
         data_sources: &[DataSource],
         presets: &[CustomFormat],
+        defaults: &LimitDefaults,
     ) -> Result<Self, Vec<String>> {
         let mut problems = Vec::new();
         let sources: Vec<PlannedSource> = report
             .sources
             .iter()
             .filter_map(|source| {
-                plan_source(source, data_sources)
+                plan_source(source, data_sources, defaults.source)
                     .map_err(|problem| {
                         problems.push(format!("source {:?}: {problem}", source.id));
                     })
@@ -222,10 +224,10 @@ impl Plan {
             }
             PlannedCombine {
                 query: combine.query,
-                limits: combine.limits,
+                limits: combine.limits.or(defaults.combine),
             }
         });
-        let outputs = plan_outputs(&report.outputs, presets, &mut problems);
+        let outputs = plan_outputs(&report.outputs, presets, defaults.output, &mut problems);
         let params = if sources.len() == report.sources.len() {
             ordered_params(
                 &report.params,
@@ -252,7 +254,7 @@ impl Plan {
             name: report.name,
             description: report.description,
             params,
-            timeout: report.timeout,
+            timeout: report.timeout.unwrap_or(defaults.run_timeout),
             logic,
             outputs,
         })
@@ -347,7 +349,11 @@ impl Plan {
     }
 }
 
-fn plan_source(source: &Source, data_sources: &[DataSource]) -> Result<PlannedSource, String> {
+fn plan_source(
+    source: &Source,
+    data_sources: &[DataSource],
+    defaults: SourceLimits,
+) -> Result<PlannedSource, String> {
     let data_source = find_data_source(&source.data_source, data_sources)?;
     match &source.read {
         SourceRead::Query {
@@ -360,7 +366,7 @@ fn plan_source(source: &Source, data_sources: &[DataSource]) -> Result<PlannedSo
             data_source,
             QueryRead {
                 query,
-                limits: *limits,
+                limits: limits.or(defaults),
                 lookup: lookup.as_ref(),
                 columns: columns.as_ref(),
             },
@@ -634,6 +640,7 @@ fn ordered_params(
 fn plan_outputs(
     outputs: &[Output],
     presets: &[CustomFormat],
+    defaults: OutputLimits,
     problems: &mut Vec<String>,
 ) -> Vec<PlannedOutput> {
     let first_columns = outputs.first().and_then(|first| match &first.columns {
@@ -668,7 +675,7 @@ fn plan_outputs(
             format,
             file: output.file.clone(),
             columns,
-            limits: output.limits,
+            limits: output.limits.or(defaults),
             continue_on_new_sheet: output.continue_on_new_sheet,
         });
     }

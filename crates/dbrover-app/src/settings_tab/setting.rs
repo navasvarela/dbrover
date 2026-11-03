@@ -6,6 +6,7 @@ use std::borrow::Cow;
 
 use dbrover_sql::LintRule;
 
+use super::report_defaults::ReportDefault;
 use crate::icons;
 
 /// A page of the tab made of settings' rows, listed in the sidebar.
@@ -15,16 +16,18 @@ pub enum Category {
     Appearance,
     Editor,
     History,
+    Reports,
     Mcp,
     Updates,
     Files,
 }
 
 impl Category {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Appearance,
         Self::Editor,
         Self::History,
+        Self::Reports,
         Self::Mcp,
         Self::Updates,
         Self::Files,
@@ -35,6 +38,7 @@ impl Category {
             Self::Appearance => "Appearance",
             Self::Editor => "Editor",
             Self::History => "Query history",
+            Self::Reports => "Reports",
             Self::Mcp => "MCP",
             Self::Updates => "Updates",
             Self::Files => "Files",
@@ -46,6 +50,7 @@ impl Category {
             Self::Appearance => icons::PALETTE,
             Self::Editor => icons::CODE,
             Self::History => icons::CLOCK_COUNTER_CLOCKWISE,
+            Self::Reports => icons::CLIPBOARD_TEXT,
             Self::Mcp => icons::PLUGS_CONNECTED,
             Self::Updates => icons::ARROWS_CLOCKWISE,
             Self::Files => icons::FOLDER_SIMPLE,
@@ -58,6 +63,10 @@ impl Category {
             Self::Appearance => "How DbRover looks.",
             Self::Editor => "How SQL is formatted, and what the console checks while you type.",
             Self::History => "How long the query history keeps what ran.",
+            Self::Reports => {
+                "The limits every report runs under unless its file sets its own, and the runs \
+                 kept."
+            }
             Self::Mcp => "What MCP clients may do in a project that doesn't say otherwise.",
             Self::Updates => "Whether DbRover looks for a new release.",
             Self::Files => "Where DbRover keeps your settings.",
@@ -74,6 +83,7 @@ pub enum Setting {
     Lint(LintRule),
     HistoryAge,
     HistoryCount,
+    Report(ReportDefault),
     CheckForUpdates,
     McpDefaults,
     SettingsFolder,
@@ -89,9 +99,9 @@ impl Setting {
             Self::AskDatabase,
         ];
         settings.extend(LintRule::ALL.into_iter().map(Self::Lint));
+        settings.extend([Self::HistoryAge, Self::HistoryCount]);
+        settings.extend(ReportDefault::ALL.into_iter().map(Self::Report));
         settings.extend([
-            Self::HistoryAge,
-            Self::HistoryCount,
             Self::McpDefaults,
             Self::CheckForUpdates,
             Self::SettingsFolder,
@@ -106,6 +116,7 @@ impl Setting {
                 Category::Editor
             }
             Self::HistoryAge | Self::HistoryCount => Category::History,
+            Self::Report(_) => Category::Reports,
             Self::McpDefaults => Category::Mcp,
             Self::CheckForUpdates => Category::Updates,
             Self::SettingsFolder => Category::Files,
@@ -119,6 +130,7 @@ impl Setting {
             Self::KeywordCase | Self::IndentWidth => "SQL formatting",
             Self::AskDatabase | Self::Lint(_) => "Problems while typing",
             Self::HistoryAge | Self::HistoryCount => "Keeping statements",
+            Self::Report(default) => default.section(),
             Self::McpDefaults => "Defaults for every project",
             Self::CheckForUpdates => "New releases",
             Self::SettingsFolder => "Settings folder",
@@ -134,6 +146,7 @@ impl Setting {
             Self::Lint(rule) => rule.description().into(),
             Self::HistoryAge => "Keep statements for".into(),
             Self::HistoryCount => "Keep per data source".into(),
+            Self::Report(default) => default.title().into(),
             Self::CheckForUpdates => "Check for a new release when DbRover starts".into(),
             Self::McpDefaults => "What MCP clients may do".into(),
             Self::SettingsFolder => "Settings folder".into(),
@@ -151,6 +164,7 @@ impl Setting {
                 "Older statements are deleted at start-up and when this changes.".into()
             }
             Self::HistoryCount => return None,
+            Self::Report(default) => default.description().into(),
             Self::CheckForUpdates => {
                 "Asks GitHub once per start. Help › Check for updates works either way.".into()
             }
@@ -172,6 +186,7 @@ impl Setting {
             Self::IndentWidth => &["format", "spaces", "width"],
             Self::AskDatabase | Self::Lint(_) => &["lint", "check", "warning"],
             Self::HistoryAge | Self::HistoryCount => &["history", "delete", "limit", "prune"],
+            Self::Report(_) => &["report", "limit", "default", "guardrail"],
             Self::CheckForUpdates => &["update", "release", "version"],
             Self::McpDefaults => &[
                 "read",
@@ -201,6 +216,9 @@ impl Setting {
         ];
         parts.extend(self.description());
         parts.extend(self.keywords().iter().map(|&word| Cow::Borrowed(word)));
+        if let Self::Report(default) = self {
+            parts.push(default.key().into());
+        }
         parts.join(" ").to_lowercase()
     }
 }
@@ -224,7 +242,19 @@ mod tests {
             found("history delete"),
             [Setting::HistoryAge, Setting::HistoryCount]
         );
-        assert_eq!(found("timeout"), [Setting::McpDefaults]);
+        assert_eq!(
+            found("timeout"),
+            [
+                Setting::Report(ReportDefault::SourceTimeout),
+                Setting::Report(ReportDefault::CombineTimeout),
+                Setting::Report(ReportDefault::RunTimeout),
+                Setting::McpDefaults
+            ]
+        );
+        assert_eq!(
+            found("memory_limit"),
+            [Setting::Report(ReportDefault::MemoryLimit)]
+        );
         assert!(found("no such setting").is_empty());
         assert_eq!(
             found("").len(),

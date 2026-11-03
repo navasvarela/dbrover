@@ -10,6 +10,7 @@ mod controls;
 mod exports_page;
 mod keymap_page;
 mod project_page;
+mod report_defaults;
 mod search;
 mod setting;
 
@@ -118,6 +119,9 @@ impl Default for Page {
 }
 
 impl Page {
+    /// Settings › Reports, which a report's tab links to.
+    pub const REPORTS: Self = Self::Settings(Category::Reports);
+
     /// The page that lists `kind`'s file and what it got wrong, which a problems link opens.
     pub fn of_file(kind: CustomFileKind) -> Self {
         match kind {

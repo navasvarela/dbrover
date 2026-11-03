@@ -16,7 +16,7 @@ use dbrover_core::{
     SafetyLevel,
 };
 use dbrover_engine::{PasswordCommands, ProcessRunner, SourceAccess, Tunnels};
-use dbrover_report::{Plan, RunEvent, RunFolders, read_report, run};
+use dbrover_report::{LimitDefaults, Plan, RunEvent, RunFolders, read_report, run};
 use dbrover_store::{Secret, SecretStore, TrustedCommands};
 
 async fn execute(connection: &mut dyn Connection, statements: &[&str]) {
@@ -135,7 +135,13 @@ async fn run_valuation(
     out: &Path,
 ) -> Vec<RunEvent> {
     let text = VALUATION.replace("{transactions}", transactions);
-    let plan = Plan::new(read_report(&text).unwrap(), data_sources, &[]).unwrap();
+    let plan = Plan::new(
+        read_report(&text).unwrap(),
+        data_sources,
+        &[],
+        &LimitDefaults::default(),
+    )
+    .unwrap();
     let values = plan
         .values(
             &[("since", "2026-10-01"), ("until", "2026-11-01")]

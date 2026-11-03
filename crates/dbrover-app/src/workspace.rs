@@ -491,6 +491,7 @@ impl TabViewer for Panels<'_> {
                 &ReportView {
                     data_sources: self.report_sources,
                     presets: self.custom_formats,
+                    defaults: &reports::limit_defaults(&self.settings.settings().reports),
                 },
                 self.report_actions,
             ),

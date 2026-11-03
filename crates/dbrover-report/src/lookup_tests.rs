@@ -161,7 +161,13 @@ impl SourceOpener for Scripted {
 }
 
 fn plan(text: &str) -> Plan {
-    Plan::new(read_report(text).unwrap(), &data_sources(), &[]).unwrap()
+    Plan::new(
+        read_report(text).unwrap(),
+        &data_sources(),
+        &[],
+        &LimitDefaults::default(),
+    )
+    .unwrap()
 }
 
 async fn run_plan(

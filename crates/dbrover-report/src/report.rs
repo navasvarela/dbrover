@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use dbrover_export::{ColumnType, CustomFormatId, Preset, SchemaColumn};
 
-use crate::{CombineLimits, FileName, OutputLimits, SourceLimits};
+use crate::{CombineLimitsSet, FileName, OutputLimitsSet, SourceLimitsSet};
 
 /// A report file, checked on its own.
 #[derive(Debug, Clone, PartialEq)]
@@ -14,8 +14,8 @@ pub struct Report {
     pub description: Option<String>,
     /// As the file lists them.
     pub params: Vec<Param>,
-    /// How long the whole run may take before the app stops it.
-    pub timeout: Duration,
+    /// How long the whole run may take before the app stops it, when the file says.
+    pub timeout: Option<Duration>,
     /// As the file lists them: one without `combine`, one or more with it.
     pub sources: Vec<Source>,
     /// The query that combines the sources' tables into the rows the outputs write.
@@ -47,7 +47,7 @@ pub enum SourceRead {
     /// Its query's rows, under its limits.
     Query {
         query: String,
-        limits: SourceLimits,
+        limits: SourceLimitsSet,
         /// The earlier source whose values its query reads by.
         lookup: Option<Lookup>,
         /// The columns its table has, when the file declares them; otherwise the result's.
@@ -86,7 +86,7 @@ pub struct SourceColumn {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Combine {
     pub query: String,
-    pub limits: CombineLimits,
+    pub limits: CombineLimitsSet,
 }
 
 /// A file a run writes.
@@ -95,7 +95,7 @@ pub struct Output {
     pub writer: OutputWriter,
     pub file: FileName,
     pub columns: OutputColumns,
-    pub limits: OutputLimits,
+    pub limits: OutputLimitsSet,
     /// Whether rows past an Excel sheet's limit go on to a new sheet, rather than fail.
     pub continue_on_new_sheet: bool,
 }

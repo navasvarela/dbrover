@@ -1126,6 +1126,7 @@ impl DbRoverApp {
             }
             ReportAction::OpenPath(path) => reports::open_path(ctx, &path),
             ReportAction::ClearRuns(name) => self.send(Command::ClearReportRuns(name)),
+            ReportAction::OpenSettings => self.open_settings_page(Page::REPORTS),
         }
     }
 
@@ -1145,16 +1146,17 @@ impl DbRoverApp {
             .iter()
             .map(|entry| entry.data_source.clone())
             .collect();
+        let defaults = reports::limit_defaults(&self.settings.settings().reports);
         let plan = self
             .reports
             .find(name)
-            .map(|listed| listed.plan(&data_sources, self.custom_files.exports()));
+            .map(|listed| listed.plan(&data_sources, self.custom_files.exports(), &defaults));
         let Some(Ok(plan)) = plan else {
             return;
         };
         let ctx = ctx.clone();
         self.reports
-            .start(name, &plan, move || ctx.request_repaint());
+            .start(name, &plan, defaults, move || ctx.request_repaint());
         self.send_if(self.reports.reload());
     }
 
@@ -2654,7 +2656,9 @@ impl eframe::App for DbRoverApp {
         }
         self.maximize_window_once(ctx);
         self.drain_engine_events();
-        let record = self.reports.poll();
+        let record = self
+            .reports
+            .poll(reports::runs_kept(&self.settings.settings().reports));
         self.send_if(record);
         if let Some(text) = self.copied_by_program.take() {
             ctx.copy_text(text);
