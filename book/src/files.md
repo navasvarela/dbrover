@@ -18,7 +18,7 @@ settings folder can also be one you choose; see [Choosing the settings folder](#
 | `projects.toml` (settings folder) | Your projects. Which project a data source is in is written in `data_sources.toml`. |
 | `consoles/<data source id>/*.sql` (settings folder) | Your query consoles, one file each. See [Query consoles](consoles.md#consoles-are-saved). |
 | `diagrams/<project>/*.toml` (settings folder) | Your ER diagrams, one file each, in a folder per project (`_none` for data sources in no project). See [ER diagrams](diagrams.md#diagrams-are-saved). |
-| `history.sqlite` (settings folder) | Every statement DbRover and MCP clients sent, with its time, duration, outcome and where it came from (see [The query history](history.md)). |
+| `history.sqlite` (settings folder) | Every statement DbRover and MCP clients sent, with its time, duration, outcome and where it came from (see [The query history](history.md)), and each report's last runs (see [Runs](reports.md#runs)). |
 | `keymap.toml` (settings folder) | Your shortcuts, if you changed any. See [Keyboard shortcuts](shortcuts.md#changing-them). |
 | `settings.toml` (settings folder) | Your choices in **View → Settings…**, such as how SQL is formatted and whether to check for updates. |
 | `actions.toml`, `snippets.toml`, `theme.toml` (settings folder) | Your own actions, snippets and colours, if you wrote any. See [Actions, snippets and themes](customising.md). |

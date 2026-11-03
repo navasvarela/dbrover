@@ -87,6 +87,9 @@ max_age_days = 180
 max_per_data_source = 25000
 ```
 
+The same file keeps each report's last runs (see [Runs](reports.md#runs)). These limits don't
+touch them: each report keeps its own newest runs, as many as **Settings › Reports** says.
+
 ## Not a tamper-proof audit
 
 The history is a file in your settings folder (see

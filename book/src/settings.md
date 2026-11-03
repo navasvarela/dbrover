@@ -13,6 +13,8 @@ The sidebar lists its pages:
 - **Editor**: how [Format SQL](consoles.md) writes keywords and indents, and which
   [problems](consoles.md) the console points out while you type.
 - **Query history**: how long [the history](history.md) keeps statements.
+- **Reports**: the limits every [report](reports.md#limits) runs under unless its file sets its
+  own, and how many runs of each report are kept.
 - **MCP**: what [AI assistants](mcp.md) may do in a project that doesn't say otherwise.
 - **Updates**: whether DbRover checks for a new release when it starts.
 - **Files**: the folder DbRover keeps your settings in, and **Choose…** to keep them elsewhere
@@ -35,7 +37,7 @@ in the sidebar to leave the search.
 
 ## Where each page saves
 
-- **Appearance, Editor, Query history and Updates** save every change at once in
+- **Appearance, Editor, Query history, Reports and Updates** save every change at once in
   `settings.toml` (see [Where DbRover keeps its files](files.md)), except the theme, which is kept
   with the window's layout. After editing `settings.toml` by hand, click **Reload** at the
   bottom of the page.

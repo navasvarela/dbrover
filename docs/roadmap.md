@@ -1788,7 +1788,7 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   Elasticsearch and Redis sources beyond their parameters and literals, which no example
   reads. Left for later: `if_invalid` on a source's columns, several lookups on one source, and
   a program step, which the cost basis turned out not to need.
-- **RP4 — Metrics** (started 2026-11-03, after RP3): each run's steps kept in the history,
+- **RP4 — Metrics** (built, in six layers, 2026-11-03, after RP3): each run's steps kept in the history,
   the last runs compared side by side in the report's tab with the step that dominates marked,
   hints for a source that reads far more than the report writes and a combine step that
   spills, and a Settings page for the limits' defaults. Planned in
@@ -1809,6 +1809,59 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   **Exit:** a report run twice shows both runs side by side with each step's time, the step
   that dominates marked, and the spill hint on a combine step past its memory limit; the
   limits' defaults change in Settings.
+
+  **Demo note:** built in #426, #427 and #429 to #431, and RP4f. To try it: make the SQLite
+  **ledger** as RP1's note says, copy `examples/reports/trial-balance.toml` into the reports
+  folder, and run **Trial balance** for `2026-10-01` to `2026-11-01` twice. Under the last run,
+  **Runs** has two columns, each with its start, *finished*, its time, the two dates, and a row
+  for **Source balances** and each of the two outputs (hover over a cell for its bytes and time
+  to the first row); when both runs agree on the step that took the most time, a line under the
+  table names it. To see the hints, add this report beside it and run it:
+
+  ```toml
+  [report]
+  name = "Big sort"
+
+  [[source]]
+  id = "numbers"
+  data_source = "ledger"
+  query = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 20000) SELECT i FROM n"
+
+  [combine]
+  query = "SELECT (SELECT count(*) FROM numbers) AS numbers, max(rn) AS sorted FROM (SELECT row_number() OVER (ORDER BY hash(range), repeat('x', 100) || range) AS rn FROM range(1000000))"
+  memory_limit = "64 MiB"
+  threads = 2
+
+  [[output]]
+  format = "csv"
+  file = "big-sort.csv"
+  ```
+
+  Hover over its **Combine** cell: about 190 MB spilled, beside DuckDB's peak memory. Two hints
+  follow the table: **Source numbers** read 20,000 rows for 1 written, and **Combine** spilled to
+  disk past its `memory_limit`. Open **View › Settings… › Reports** and set **Memory before
+  spilling to disk** to 4 GiB: `settings.toml` gets `[reports]`, and the big sort still spills,
+  since its file sets its own `memory_limit`. Set `max_rows = 10` on the trial balance's source
+  and run it: under the error, a link opens **Settings › Reports**. **Clear history** empties
+  **Runs** after asking.
+
+  Checked: each layer's tests (DuckDB's profiler read after a query, locked down, with a spill
+  and without; a combine step's peaks in its event and each output's time; older events still
+  read; runs read back with every number, the newest kept per report, cleared, a version 2
+  history migrated; the engine's record, list and clear; a run's record for each way it ends,
+  and a finished run in `history.sqlite` from the tab; each step's own time, the dominant step,
+  both hints' thresholds; two runs side by side in kittest; `[reports]` read, written and
+  refused; a file's limits winning over changed defaults; the real worker under a request's
+  defaults; the Settings page saving a default the next run's request carries), and the big
+  sort above through the real worker binary (20,000 rows read, 187 MB spilled, 134 MB peak
+  memory). Not tried here: the app's window with the real worker by hand (the worker and the tab
+  are tested apart, as in RP1 to RP3); the profiler on Windows beyond CI; the hints on the four
+  examples' real data, which reads less than the source hint's 10,000 rows (only the general
+  ledger's slow test reads more, and it writes as many). Left for later: a switch to silence a
+  hint on a report that reads more than it writes on purpose, the run's error saying whether a
+  limit came from the file or from Settings, runs kept when a report's file is renamed, a
+  picture of **Runs** in the manual, and MCP clients running reports, which RP4's numbers may now
+  inform.
 - **RP5 — PRQL:** the combine step in PRQL, compiled to DuckDB SQL by `prqlc`.
 - **RP6 — The command line:** `dbrover report run`, for cron and CI.
 - **RP7 — Manual,** with the example reports.
