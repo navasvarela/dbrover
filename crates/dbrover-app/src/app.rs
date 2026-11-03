@@ -19,6 +19,7 @@ use egui::{Align, Frame, Layout, Margin, RichText, Sense};
 use egui_dock::{DockArea, DockState};
 
 use crate::about_dialog;
+use crate::background_runs::BackgroundRuns;
 use crate::command_runs::{CommandRuns, Finished};
 use crate::commands::{self, AppCommand, CommandState};
 use crate::console::{
@@ -141,6 +142,8 @@ pub struct DbRoverApp {
     export_choices: ExportChoices,
     import_dialog: Option<ImportDialog>,
     csv_import: Option<CsvImportDialog>,
+    /// Table exports and CSV imports under way, once their dialog has closed.
+    background_runs: BackgroundRuns,
     /// Ask where to export data sources to and which file to import. The platform's file
     /// dialogs, except in tests.
     pick_data_sources_export: Box<dyn Fn() -> Option<PathBuf>>,
@@ -271,6 +274,7 @@ impl DbRoverApp {
             export_choices,
             import_dialog: None,
             csv_import: None,
+            background_runs: BackgroundRuns::default(),
             pick_data_sources_export: Box::new(file_picker::pick_data_sources_export),
             pick_data_sources_import: Box::new(file_picker::pick_data_sources_import),
             quit_confirmed: false,
@@ -494,6 +498,7 @@ impl DbRoverApp {
         if let Some(dialog) = &mut self.import_dialog {
             dialog.apply(event);
         }
+        self.background_runs.apply(event);
         if let Some(dialog) = &mut self.csv_import {
             dialog.apply(event);
         }
@@ -2261,19 +2266,14 @@ impl DbRoverApp {
                 }
                 self.export_to_file(subject, rows, spec, &file);
             }
-            Some(ExportDialogAction::Cancel(run)) => {
-                if let ExportSubject::Table(target) = dialog.subject() {
-                    let data_source = target.data_source;
-                    self.send(Command::CancelTableExport { data_source, run });
-                }
-            }
             Some(ExportDialogAction::Close) => self.export_dialog = None,
             None => {}
         }
     }
 
-    /// Asks where to save, then exports `subject` there: a console's rows and a statement in
-    /// the console, which shows how it goes, and a table in the dialog, which stays open.
+    /// Asks where to save, then exports `subject` there and closes the dialog: a console's
+    /// rows and a statement in the console, which shows how it goes, and a table in the
+    /// background, which the status bar shows.
     fn export_to_file(
         &mut self,
         subject: ExportSubject,
@@ -2299,10 +2299,13 @@ impl DbRoverApp {
                 self.consoles.run_to_file(&console, run)
             }
             ExportSubject::Table(target) => {
+                self.export_dialog = None;
                 let run = self.consoles.new_run_id();
-                if let Some(dialog) = &mut self.export_dialog {
-                    dialog.table_export_started(run, path.clone());
-                }
+                self.background_runs.table_export(
+                    target.data_source,
+                    run,
+                    target.table.name.clone(),
+                );
                 Some(Command::ExportTable {
                     data_source: target.data_source,
                     export: dbrover_engine::TableExport {
@@ -2365,7 +2368,13 @@ impl DbRoverApp {
                     dialog.set_file(file);
                 }
             }
-            Some(CsvImportAction::Import(data_source, import)) => {
+            Some(CsvImportAction::Import {
+                data_source,
+                import,
+                table,
+            }) => {
+                self.csv_import = None;
+                self.background_runs.csv_import(data_source, table);
                 self.send(Command::ImportRows {
                     data_source,
                     import,
@@ -2573,6 +2582,8 @@ impl DbRoverApp {
         self.problem_links(ui, palette.warning);
         let stops = self.command_runs.status(ui, palette);
         self.send_all(stops);
+        let cancels = self.background_runs.status(ui, palette);
+        self.send_all(cancels);
         if let Some(problem) = &self.action_problem
             && ui
                 .link(RichText::new(problem).small().color(palette.error))

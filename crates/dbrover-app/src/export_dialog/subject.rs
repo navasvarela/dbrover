@@ -1,13 +1,11 @@
 //! What the export dialog exports: a console's rows, a statement run straight to a file, or a
 //! table's every row, and how a table's export is going.
 
-use std::path::{Path, PathBuf};
-
 use dbrover_core::{
     CatalogPath, DataSource, DataSourceId, Identifier, NodeKind, RelationName, ResultShape,
     TableDescription,
 };
-use dbrover_engine::{Command, RunId};
+use dbrover_engine::Command;
 use dbrover_export::{ExportColumn, RowSource, SourceTable, SqlTable};
 use dbrover_language::QueryLanguage;
 use dbrover_sql::Dialect;
@@ -158,29 +156,5 @@ impl TableTarget {
 
     fn sql_table(&self) -> SqlTable {
         self.table.clone()
-    }
-}
-
-/// How a table's export is going; the dialog stays open to show it, as the explorer has no
-/// toolbar of its own.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TableProgress {
-    Choosing,
-    Exporting {
-        run: RunId,
-        path: PathBuf,
-        rows: usize,
-    },
-    Done(Result<String, String>),
-}
-
-impl TableProgress {
-    pub fn finished(path: &Path, result: &Result<usize, String>) -> Self {
-        Self::Done(
-            result
-                .as_ref()
-                .map(|rows| format!("Exported {rows} rows to {}", path.display()))
-                .map_err(Clone::clone),
-        )
     }
 }
