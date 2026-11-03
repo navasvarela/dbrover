@@ -1,7 +1,7 @@
 # Cloud and big data
 
-Status: **C0 built** (2026-11-02); **C1 started** (2026-11-03); C2 to C6 planned, not
-scheduled. Proposed on
+Status: **C0 built** (2026-11-02); **C1 built** (2026-11-03), tried only against local
+stand-ins; C2 to C6 planned, not scheduled. Proposed on
 2026-10-27; the order and the decisions below are confirmed as each milestone starts. The
 providers' priority was set on 2026-10-28: AWS, then Google Cloud, then Azure. On 2026-11-01
 DynamoDB was moved ahead of the track, as the NoSQL track's [N5](nosql.md#n5--dynamodb), with
@@ -307,7 +307,7 @@ Each layer is one pull request in a stack, useful and tested on its own, with no
 
 - **C1a — Plan:** this section, C1's rows in [Decisions](#decisions) and [Risks](#risks), and
   the roadmap's entry in layers.
-- **C1b — Managed services:** a `ManagedService` table in `dbrover-core`, one row per service
+- **C1b — Managed services** (built): a `ManagedService` table in `dbrover-core`, one row per service
   above, in the providers' order: its driver, port, TLS mode, the sign-ins it takes and the
   host names that recognise it (`*.rds.amazonaws.com`, `*.redshift-serverless.amazonaws.com`,
   `*.database.windows.net`, `*-pooler.*.neon.tech`, `*.clickhouse.cloud`, …). Applying a
@@ -316,7 +316,7 @@ Each layer is one pull request in a stack, useful and tested on its own, with no
   engine.
   **Exit:** a table test per service; a host name of each pattern is recognised and others
   aren't; each service's settings save to and read from `data_sources.toml`.
-- **C1c — PostgreSQL behind a transaction pooler:** the driver's own queries (the explorer,
+- **C1c — PostgreSQL behind a transaction pooler** (built): the driver's own queries (the explorer,
   table descriptions, roles) become unnamed statements, sent with their types in one round
   trip (tokio-postgres's `query_typed`), so no prepared statement outlives the transaction a
   pooler gives the connection, and each is one round trip instead of two. Checking a
@@ -329,7 +329,13 @@ Each layer is one pull request in a stack, useful and tested on its own, with no
   statements in turn on the same server connection without "prepared statement does not
   exist" or "already exists"; a read-only console still refuses writes; the conformance suite
   passes through it.
-- **C1d — Redshift:** the PostgreSQL driver recognises Redshift from `version()` and browses it
+  **As built:** the stand-in is PgBouncer with two server connections used in turn, which
+  reproduced `prepared statement "s2" does not exist` before the change (one server connection
+  hid it). The conformance suite's checks keep temporary tables across statements, which no
+  transaction pooler keeps, so they run on the direct server; through PgBouncer the test checks
+  each of the driver's own queries on two connections in turn, a statement check with its
+  error position, and a read-only transaction refusing a write.
+- **C1d — Redshift** (built): the PostgreSQL driver recognises Redshift from `version()` and browses it
   through `svv_redshift_databases`, `svv_all_schemas`, `svv_all_tables` and
   `svv_all_columns`: databases, schemas, then tables (local and external) and views with their
   columns. Definitions come from `SHOW TABLE` and `SHOW VIEW`; searching the server (C0g)
@@ -339,7 +345,10 @@ Each layer is one pull request in a stack, useful and tested on its own, with no
   **Exit:** the Redshift catalog walks a test database with stand-in `svv_*` views, and every
   node it lists is one its level lists again (the conformance walk); `version()` strings from
   Redshift's documentation are recognised and PostgreSQL's aren't.
-- **C1e — Synapse and Fabric:** the SQL Server driver recognises them (`EngineEdition` and the
+  **As built:** Redshift has no roles folder, and its tables open read-only: PostgreSQL's table
+  description reads catalogs Redshift lacks, and Redshift's own is left for later. The walk
+  checks every node's path but not definitions, since `SHOW TABLE` is Redshift's alone.
+- **C1e — Synapse and Fabric** (built): the SQL Server driver recognises them (`EngineEdition` and the
   host), lists only the folders each has (no sequences, synonyms or triggers; no indexes on
   Fabric), leaves out the constraint kinds each lacks, and reads only the connected database's
   catalog where another's can't be read (a dedicated pool). The object helpers' capabilities
@@ -349,14 +358,20 @@ Each layer is one pull request in a stack, useful and tested on its own, with no
   **Exit:** recognition from each `EngineEdition` and host; on the SQL Server test server with
   each warehouse forced, the explorer walks the narrowed tree with no query failing; the
   narrowed capabilities hide the helpers each lacks.
-- **C1f — Presets in the data source dialog:** **New data source** gains a **Cloud service**
+- **C1f — Presets in the data source dialog** (built): **New data source** gains a **Cloud service**
   submenu, by provider (AWS, Google Cloud, Azure, then the others), opening the dialog with
   the service's settings; the dialog's **Service** row shows the service its host is
   recognised as, and choosing one there applies it. A hint under the host says what the service expects (`verify-full` needs RDS's
   bundle, Supabase's user is `postgres.<project>`).
   **Exit:** a kittest opens each service from the menu and sees its driver, port, TLS and
   sign-in in the form; typing a Neon pooler host shows Neon; saving writes them.
-- **C1g — Manual and demo note:** a page per provider in the Data sources part (Amazon Web
+  **As built:** a submenu per cloud in **New data source** (**Amazon Web Services**, **Google
+  Cloud**, **Microsoft Azure**, **Other cloud services**) rather than one **Cloud service**
+  submenu, which with fifteen services was taller than a 740-point window. The **Service** row
+  shows only for a data source on a service (chosen there, or named by its host), so a plain
+  server's dialog keeps the height a 900-point window only just holds. Each service's preset is
+  checked by a table test of the form; the kittest adds a Fabric warehouse from its menu.
+- **C1g — Manual and demo note** (built): a page per provider in the Data sources part (Amazon Web
   Services, Google Cloud, Microsoft Azure, and Neon, Supabase and ClickHouse Cloud), each
   saying what DbRover does differently there and what wasn't tried, and the C1 demo note in
   the roadmap.

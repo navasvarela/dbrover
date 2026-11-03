@@ -10,6 +10,13 @@
 
 - [Data sources](data-sources.md)
 - [Cloud sign-in and costs](cloud.md)
+- [Managed databases in the cloud](cloud-services.md)
+  - [Amazon Web Services](aws.md)
+  - [Google Cloud](google-cloud.md)
+  - [Microsoft Azure](azure.md)
+  - [Neon](neon.md)
+  - [Supabase](supabase.md)
+  - [ClickHouse Cloud](clickhouse-cloud.md)
 - [DynamoDB](dynamodb.md)
 - [Moving data sources to another machine](sharing.md)
 
