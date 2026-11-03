@@ -1808,6 +1808,7 @@ flowchart LR
     D2 --> D5[D5 Native look on macOS]
     D4 --> D6[D6 Front page refresh]
     D2 --> D7[D7 Roomier buttons and menus]
+    D7 --> D8[D8 Dialogs and tabs]
 ```
 
 ### D1 — Logo and brand palette
@@ -2065,3 +2066,36 @@ around its text, and **Delete** is red beside an outlined **Cancel**; the data s
 **Save** is filled with the primary colour and darkens under the pointer. Running `DELETE FROM`
 a table without `WHERE` asks with a red **Run anyway**. The results grid keeps its row height.
 The manual's pictures and the website's stills and hero clip show the new look.
+
+### D8 — One style for dialogs, and tabs for what stays open
+
+D7 gave dialogs room and buttons by role, but each of the 31 popups still lays itself out: a
+title in one of three styles, a row of buttons built by hand, a width of its own, and some
+roles missing (the object dialog's **Execute** is plain even for a `DROP`). A few of them are
+popups only because the dock once held nothing but consoles: the history and an object's
+definition float over the console they belong beside. The design is in
+[Dialogs and tabs](dialogs-and-tabs.md). In layers, one PR each:
+
+- **D8a — Plan:** this section and the design page. Its four open questions were answered on
+  2026-11-03: the cell viewer becomes a side panel, export and CSV import runs move to the status
+  bar, and the object dialog and program output stay windows.
+- **D8b — The dialog kit:** four dialog sizes as a parameter of `widgets::dialog`, the form
+  header and footer in every modal, one primary or danger action in each, and the floating
+  windows that stay with the same footer, opening at the right of the app's window.
+- **D8c — Cards for the data source and object dialogs,** so their fields have an outline and a
+  card in both themes.
+- **D8d — History as a tab,** one per data source, restored after a restart.
+- **D8e — Definitions as tabs,** with **Open in console**; not restored, since loading one needs
+  a connection.
+- **D8f — The config files' problems in Settings:** `snippets.toml` on the Editor page and
+  `theme.toml` on the Appearance page, like the keymap, custom actions and exports already are.
+- **D8g — The cell viewer as a side panel** in the console, following the selected cell.
+- **D8h — Export and CSV import run in the background,** with their progress and Cancel in the
+  status bar.
+- **D8i — Manual,** pictures and text.
+
+**Exit:** every modal has the same header, footer and sizes, every destructive action is red,
+the history and definitions are dock tabs, the cell viewer is a panel, no export blocks the app,
+and no config file's problems open a window.
+
+**Demo note:** built; the design page's demo note says what to try.
