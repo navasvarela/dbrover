@@ -9,7 +9,9 @@
 //! 2. [`Workspace::attach`] attaches each DuckDB file, and [`Workspace::loader`] loads each
 //!    other source: its rows a page of text at a time, then each column cast to its type;
 //! 3. [`Workspace::lock`] turns off everything outside the database and freezes the limits;
-//! 4. the combine query runs on [`Workspace::connection`], as any statement on a connection.
+//! 4. the combine query runs on [`Workspace::connection`], as any statement on a connection;
+//! 5. [`Workspace::peaks`] says the most memory and disk the database used, as DuckDB's
+//!    profiler measured them.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -24,6 +26,11 @@ use crate::{DuckDbConnection, connection_error, poisoned};
 /// the source's name in `main`. Not a name a report's source can have, since those start with
 /// a letter and this one is dropped before the combine query runs.
 const LOAD_SCHEMA: &str = "dbrover_load";
+
+/// The profiler's metrics a workspace keeps, by DuckDB's names, which [`Workspace::peaks`]
+/// reads. Both are the database's peaks since it opened, not the last statement's alone.
+const PEAK_MEMORY_METRIC: &str = "SYSTEM_PEAK_BUFFER_MEMORY";
+const PEAK_TEMP_SIZE_METRIC: &str = "SYSTEM_PEAK_TEMP_DIR_SIZE";
 
 /// What bounds a workspace.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +66,17 @@ impl WorkspaceLimit {
             None
         }
     }
+}
+
+/// The most a workspace has used, as DuckDB's profiler reports it after a statement; `None`
+/// where this DuckDB doesn't report one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WorkspacePeaks {
+    /// Bytes its buffer manager held at once. It can pass `memory_limit` a little: DuckDB
+    /// counts some memory the limit doesn't hold back.
+    pub memory: Option<u64>,
+    /// Bytes it held in its temporary folder at once, which `max_temp_size` bounds.
+    pub temp_size: Option<u64>,
 }
 
 /// The type a loaded column is cast to.
@@ -133,6 +151,13 @@ impl Workspace {
             ),
             "SET autoinstall_known_extensions = false".to_owned(),
             "SET autoload_known_extensions = false".to_owned(),
+            // Measures without writing anywhere, so it needs no file once external access is
+            // off, and only what `peaks` reads, which costs nothing per statement.
+            "PRAGMA enable_profiling = 'no_output'".to_owned(),
+            format!(
+                "SET custom_profiling_settings = '{{\"{PEAK_MEMORY_METRIC}\": \"true\", \
+                 \"{PEAK_TEMP_SIZE_METRIC}\": \"true\"}}'"
+            ),
             format!("CREATE SCHEMA {LOAD_SCHEMA}"),
         ];
         connection
@@ -262,6 +287,27 @@ impl Workspace {
                 connection
                     .execute_batch(&sql)
                     .map_err(|error| statement_error(error, &sql))
+            })
+            .await
+    }
+
+    /// The most memory and disk the database has used since it opened, once a statement on
+    /// [`Workspace::connection`] has finished: the profiler measures a statement as it ends.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError`] if the connection is in use or has failed.
+    pub async fn peaks(&self) -> Result<WorkspacePeaks, DriverError> {
+        self.connection
+            .run_blocking(|connection| {
+                let Some(info) = connection.get_profiling_info() else {
+                    return Ok(WorkspacePeaks::default());
+                };
+                let metric = |name: &str| info.metrics.get(name)?.parse::<u64>().ok();
+                Ok(WorkspacePeaks {
+                    memory: metric(PEAK_MEMORY_METRIC),
+                    temp_size: metric(PEAK_TEMP_SIZE_METRIC),
+                })
             })
             .await
     }

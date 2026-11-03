@@ -391,6 +391,8 @@ fn events_are_json_lines_the_app_reads_back() {
             bytes: 100,
             first_row_ms: None,
             elapsed_ms: 1000,
+            peak_memory: Some(2 << 30),
+            peak_temp_size: Some(0),
         },
         RunEvent::Failed(RunFailure::at_limit(
             Step::Source {

@@ -361,6 +361,40 @@ async fn stops_at_each_limit_and_leaves_no_file() {
     }
 }
 
+/// A combine query whose window sorts far more than the 64 MiB below holds, returning one row.
+const SORTS_PAST_MEMORY: &str = "SELECT max(rn) AS id, 1 AS quantity, 1 AS value FROM ( \
+                                 SELECT row_number() OVER (ORDER BY hash(range), \
+                                 repeat('x', 100) || range) AS rn FROM range(1000000))";
+
+/// DuckDB's peaks in `combine_done`: memory always, and a spill only past `memory_limit`.
+#[tokio::test]
+async fn says_how_much_memory_and_disk_the_combine_step_used() {
+    let cases = [
+        ("", VALUES, false),
+        ("memory_limit = \"64 MiB\"", SORTS_PAST_MEMORY, true),
+    ];
+    for (combine_limits, query, spills) in cases {
+        let folder = tempfile::tempdir().unwrap();
+        let plan = report("", query, combine_limits);
+        let opener = MemoryOpener::of(vec![("tx", transactions()), ("prices", prices())]);
+        let (outcome, events) = run_with(&plan, &opener, folder.path()).await;
+        outcome.unwrap();
+        let peaks = events.iter().find_map(|event| match event {
+            RunEvent::CombineDone {
+                peak_memory,
+                peak_temp_size,
+                ..
+            } => Some((*peak_memory, *peak_temp_size)),
+            _ => None,
+        });
+        let Some((Some(memory), Some(temp_size))) = peaks else {
+            panic!("{query}: {peaks:?}");
+        };
+        assert!(memory > 0, "{query}");
+        assert_eq!(temp_size > 0, spills, "{query}: {temp_size} bytes spilled");
+    }
+}
+
 #[tokio::test]
 async fn names_the_source_that_fails_to_load_and_the_failing_query() {
     let folder = tempfile::tempdir().unwrap();

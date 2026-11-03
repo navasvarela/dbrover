@@ -149,10 +149,13 @@ pub async fn run<O: SourceOpener>(
             let mut reader = Shaped::open(opener, &statement)
                 .await
                 .map_err(|error| error.at(step()))?;
-            let feed = Feed::Source(source);
-            let written = outputs.write(&mut reader, &feed, opened, events).await;
+            let streamed = outputs
+                .stream(&mut reader, &Feed::Source(source), opened, events)
+                .await;
             reader.close().await;
-            written
+            let streamed = streamed?;
+            events(source_done(source, &streamed.read, opened.elapsed()));
+            streamed.finish(events)
         }
         Logic::Combine(combined) => {
             let combining = crate::combine::Combining {
@@ -190,28 +193,19 @@ impl Feed<'_> {
             Self::Combine => Ok(()),
         }
     }
+}
 
-    /// The event that says the feed has given its last row.
-    fn done(&self, read: &Count, elapsed: Duration) -> RunEvent {
-        let first_row_ms = read.first_row.map(millis);
-        match self {
-            Self::Source(source) => RunEvent::SourceDone {
-                id: source.id.clone(),
-                rows: read.rows,
-                bytes: read.bytes,
-                first_row_ms,
-                elapsed_ms: millis(elapsed),
-                table: Vec::new(),
-                warnings: Vec::new(),
-                batches: None,
-            },
-            Self::Combine => RunEvent::CombineDone {
-                rows: read.rows,
-                bytes: read.bytes,
-                first_row_ms,
-                elapsed_ms: millis(elapsed),
-            },
-        }
+/// The event that says a source whose rows went straight to the outputs gave its last row.
+fn source_done(source: &QuerySource, read: &Count, elapsed: Duration) -> RunEvent {
+    RunEvent::SourceDone {
+        id: source.id.clone(),
+        rows: read.rows,
+        bytes: read.bytes,
+        first_row_ms: read.first_row.map(millis),
+        elapsed_ms: millis(elapsed),
+        table: Vec::new(),
+        warnings: Vec::new(),
+        batches: None,
     }
 }
 
@@ -223,17 +217,20 @@ pub(crate) struct Outputs<'a> {
     pub(crate) folders: RunFolders<'a>,
 }
 
-impl Outputs<'_> {
-    /// Writes `reader`'s rows, a page at a time, into every output and the preview, then
-    /// puts the files in place. `opened` is when the feed started, for the time to its
-    /// first row.
-    pub(crate) async fn write<R: SourceReader>(
+impl<'a> Outputs<'a> {
+    /// Writes `reader`'s rows, a page at a time, into every output and the preview, leaving
+    /// the files under their partial names for [`Streamed::finish`]. `opened` is when the
+    /// feed started, for the time to its first row.
+    ///
+    /// The caller closes `reader` and says the feed is done in between, so the feed's event
+    /// can tell what only its end shows, such as the combine step's peaks.
+    pub(crate) async fn stream<R: SourceReader>(
         self,
         reader: &mut R,
         feed: &Feed<'_>,
         opened: Instant,
         events: &mut dyn FnMut(RunEvent),
-    ) -> Result<RunSummary, RunFailure> {
+    ) -> Result<Streamed<'a>, RunFailure> {
         let Self {
             plan,
             values,
@@ -288,15 +285,33 @@ impl Outputs<'_> {
             outputs.into_iter().for_each(OutputRun::abandon);
             return Err(failure);
         }
-        events(feed.done(&read, opened.elapsed()));
-        events(RunEvent::Preview(preview));
-        let files = put_in_place(complete_outputs(outputs)?)?;
+        Ok(Streamed {
+            outputs,
+            read,
+            preview,
+        })
+    }
+}
+
+/// Every row written to every output, whose files wait under their partial names.
+pub(crate) struct Streamed<'a> {
+    outputs: Vec<OutputRun<'a>>,
+    /// What the feed returned.
+    pub(crate) read: Count,
+    preview: Preview,
+}
+
+impl Streamed<'_> {
+    /// Completes every file and puts them all in place, sending the preview and each file.
+    pub(crate) fn finish(self, events: &mut dyn FnMut(RunEvent)) -> Result<RunSummary, RunFailure> {
+        events(RunEvent::Preview(self.preview));
+        let files = put_in_place(complete_outputs(self.outputs)?)?;
         for file in &files {
             events(RunEvent::OutputWritten(file.clone()));
         }
         Ok(RunSummary {
-            rows: read.rows,
-            bytes: read.bytes,
+            rows: self.read.rows,
+            bytes: self.read.bytes,
             files,
         })
     }
@@ -420,6 +435,8 @@ struct OutputRun<'a> {
     writer: ExportWriter,
     rows: u64,
     bytes: u64,
+    /// The time spent converting and writing its rows so far.
+    busy: Duration,
 }
 
 fn start_outputs<'a>(
@@ -461,6 +478,7 @@ fn start_outputs<'a>(
                 writer,
                 rows: 0,
                 bytes: 0,
+                busy: Duration::ZERO,
             }),
             Err(message) => {
                 started.into_iter().for_each(OutputRun::abandon);
@@ -484,6 +502,13 @@ impl OutputRun<'_> {
     }
 
     fn write(&mut self, page: &[Row]) -> Result<(), RunFailure> {
+        let started = Instant::now();
+        let written = self.convert_and_write(page);
+        self.busy += started.elapsed();
+        written
+    }
+
+    fn convert_and_write(&mut self, page: &[Row]) -> Result<(), RunFailure> {
         let mut converted = Vec::with_capacity(page.len());
         for row in page {
             let row = self
@@ -557,6 +582,8 @@ struct Completed {
     step: Step,
     rows: u64,
     warnings: Vec<String>,
+    /// The time spent in its writer, completing the file included.
+    busy: Duration,
     file: CompletedFile,
 }
 
@@ -566,11 +593,13 @@ fn complete_outputs(outputs: Vec<OutputRun<'_>>) -> Result<Vec<Completed>, RunFa
     while let Some(output) = outputs.next() {
         let step = output.step();
         let warnings = output.converter.warnings();
+        let started = Instant::now();
         match output.writer.complete() {
             Ok(file) => completed.push(Completed {
                 step,
                 rows: output.rows,
                 warnings,
+                busy: output.busy + started.elapsed(),
                 file,
             }),
             Err(error) => {
@@ -599,6 +628,7 @@ fn put_in_place(completed: Vec<Completed>) -> Result<Vec<WrittenFile>, RunFailur
             path,
             rows: done.rows,
             size,
+            elapsed_ms: millis(done.busy),
             warnings: done.warnings,
         });
     }

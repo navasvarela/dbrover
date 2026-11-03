@@ -156,6 +156,7 @@ fn finished_run(folder: &Path) -> Vec<RunEvent> {
             path: folder.join(name),
             rows: 2,
             size,
+            elapsed_ms: 3,
             warnings: Vec::new(),
         })
     };
@@ -279,6 +280,8 @@ fn shows_each_source_and_the_combine_step_of_a_combined_run() {
             bytes: 40,
             first_row_ms: Some(1),
             elapsed_ms: 15,
+            peak_memory: Some(40 << 20),
+            peak_temp_size: Some(0),
         },
         RunEvent::Preview(Preview {
             columns: vec!["account".to_owned(), "balance".to_owned()],
@@ -289,6 +292,7 @@ fn shows_each_source_and_the_combine_step_of_a_combined_run() {
             path: out.join("trial-balance-2026-10.csv"),
             rows: 2,
             size: 48,
+            elapsed_ms: 3,
             warnings: Vec::new(),
         }),
         RunEvent::Finished { elapsed_ms: 1_200 },
@@ -427,6 +431,8 @@ fn shows_a_lookup_waiting_then_its_batches_then_done() {
             bytes: 90,
             first_row_ms: Some(1),
             elapsed_ms: 10,
+            peak_memory: None,
+            peak_temp_size: None,
         },
         RunEvent::Finished { elapsed_ms: 3_000 },
     ];

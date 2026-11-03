@@ -259,6 +259,11 @@ async fn spills_past_its_memory_limit_and_stops_at_its_temp_size() {
         .unwrap();
     let rows = query(&mut spilling, SORT_PAST_MEMORY).await.unwrap();
     assert_eq!(rows.len(), 1_000_000);
+    let peaks = spilling.peaks().await.unwrap();
+    assert!(
+        peaks.temp_size.is_some_and(|spilled| spilled > 0),
+        "{peaks:?}"
+    );
     spilling.close().await;
 
     let mut full = Workspace::open(&limits(folder.path(), 64 * MIB, 2 * MIB))
@@ -272,6 +277,21 @@ async fn spills_past_its_memory_limit_and_stops_at_its_temp_size() {
         describe_error(&error)
     );
     full.close().await;
+}
+
+#[tokio::test]
+async fn reports_its_peaks_once_locked_down() {
+    let folder = tempfile::tempdir().unwrap();
+    let mut workspace = Workspace::open(&roomy(folder.path())).await.unwrap();
+    workspace.lock().await.unwrap();
+    let rows = query(&mut workspace, "SELECT sum(range) FROM range(100000)")
+        .await
+        .unwrap();
+    assert_eq!(rows, [cells(&["4999950000"])]);
+    let peaks = workspace.peaks().await.unwrap();
+    assert!(peaks.memory.is_some_and(|memory| memory > 0), "{peaks:?}");
+    assert_eq!(peaks.temp_size, Some(0), "nothing spills with room");
+    workspace.close().await;
 }
 
 #[test]
