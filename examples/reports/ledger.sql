@@ -24,16 +24,19 @@ INSERT INTO accounts (id, code, name, kind) VALUES
   (8, '6200', 'Software', 'expense');
 
 -- Each journal is two lines whose debit and credit are equal. SQLite has no exact decimal
--- type, so the amounts are floating-point numbers here; the reports' decimal(18,2) columns
--- round each total once, at the end. PostgreSQL's numeric would keep every digit.
+-- type, so the amounts are floating-point numbers here; the reports declare them
+-- decimal(18,2), which rounds each to the cent as it loads. PostgreSQL's numeric would keep
+-- every digit. counterparty_id is the customer, supplier or vendor of the journal, whose name
+-- and country are in MongoDB (ledger-counterparties.js); the owner's opening balance has none.
 CREATE TABLE entries (
-  id         INTEGER PRIMARY KEY,
-  journal    INTEGER NOT NULL,
-  account_id INTEGER NOT NULL REFERENCES accounts (id),
-  booked_on  TEXT NOT NULL,
-  memo       TEXT NOT NULL,
-  debit      NUMERIC NOT NULL DEFAULT 0,
-  credit     NUMERIC NOT NULL DEFAULT 0
+  id              INTEGER PRIMARY KEY,
+  journal         INTEGER NOT NULL,
+  account_id      INTEGER NOT NULL REFERENCES accounts (id),
+  booked_on       TEXT NOT NULL,
+  memo            TEXT NOT NULL,
+  debit           NUMERIC NOT NULL DEFAULT 0,
+  credit          NUMERIC NOT NULL DEFAULT 0,
+  counterparty_id TEXT
 );
 
 -- The owner puts 50,000.00 in on the first day.
@@ -46,15 +49,23 @@ INSERT INTO entries (journal, account_id, booked_on, memo, debit, credit) VALUES
 --   1: a customer pays        debit 1000 Cash,                credit 1100 Accounts receivable
 --   2: a purchase on credit   debit 5000 Cost of sales,       credit 2000 Accounts payable
 --   3: an expense paid        debit 6100 Rent or 6200 Software, credit 1000 Cash
+-- A sale's customer is one of twelve, and pays the invoice the journal before; a purchase's
+-- supplier is one of five; rent goes to the landlord and software to one vendor.
 CREATE TEMP VIEW journals AS
 WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 360)
 SELECT i AS journal,
        date('2026-09-01', '+' || ((i - 1) * 91 / 360) || ' days') AS booked_on,
        i % 4 AS kind,
-       round(100 + (i * 7919) % 4900 + ((i * 31) % 100) / 100.0, 2) AS amount
+       round(100 + (i * 7919) % 4900 + ((i * 31) % 100) / 100.0, 2) AS amount,
+       CASE i % 4
+         WHEN 0 THEN printf('cust-%02d', (i / 4) % 12 + 1)
+         WHEN 1 THEN printf('cust-%02d', ((i - 1) / 4) % 12 + 1)
+         WHEN 2 THEN printf('supp-%02d', (i / 4) % 5 + 1)
+         ELSE CASE (i / 4) % 2 WHEN 0 THEN 'vend-rent' ELSE 'vend-soft' END
+       END AS counterparty_id
 FROM n;
 
-INSERT INTO entries (journal, account_id, booked_on, memo, debit, credit)
+INSERT INTO entries (journal, account_id, booked_on, memo, debit, credit, counterparty_id)
 SELECT journal,
        CASE kind WHEN 0 THEN 2 WHEN 1 THEN 1 WHEN 2 THEN 6 ELSE 7 + (journal / 4) % 2 END,
        booked_on,
@@ -65,10 +76,11 @@ SELECT journal,
          ELSE 'Card payment ' || journal
        END,
        amount,
-       0
+       0,
+       counterparty_id
 FROM journals;
 
-INSERT INTO entries (journal, account_id, booked_on, memo, debit, credit)
+INSERT INTO entries (journal, account_id, booked_on, memo, debit, credit, counterparty_id)
 SELECT journal,
        CASE kind WHEN 0 THEN 5 WHEN 1 THEN 2 WHEN 2 THEN 3 ELSE 1 END,
        booked_on,
@@ -79,7 +91,8 @@ SELECT journal,
          ELSE 'Card payment ' || journal
        END,
        0,
-       amount
+       amount,
+       counterparty_id
 FROM journals;
 
 DROP VIEW journals;

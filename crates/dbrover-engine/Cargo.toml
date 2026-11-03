@@ -42,6 +42,8 @@ ureq.workspace = true
 [dev-dependencies]
 # Creates the DynamoDB tests' tables, which PartiQL can't.
 aws-sdk-dynamodb.workspace = true
+# Reads back the sheets a report's workbook goes on to.
+calamine.workspace = true
 # Its stand-in token endpoint signs the cloud sign-in tests in without an account.
 dbrover-cloud = { workspace = true, features = ["stand-in"] }
 dbrover-language = { workspace = true, features = ["test-language"] }

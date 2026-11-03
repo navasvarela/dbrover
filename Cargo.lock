@@ -2453,6 +2453,7 @@ version = "0.24.0"
 dependencies = [
  "async-trait",
  "aws-sdk-dynamodb",
+ "calamine",
  "cargo-packager-updater",
  "dbrover-cloud",
  "dbrover-core",
@@ -2565,6 +2566,7 @@ version = "0.24.0"
 dependencies = [
  "calamine",
  "dbrover-core",
+ "dbrover-document",
  "dbrover-driver-duckdb",
  "dbrover-export",
  "dbrover-language",

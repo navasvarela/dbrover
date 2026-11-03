@@ -1,247 +1,247 @@
-Date,Journal,Account,Name,Memo,Debit,Credit,Balance
-2026-10-01,121,1000,Cash,Payment for invoice 120,2799.51,0.00,2799.51
-2026-10-01,123,1000,Cash,Card payment 123,0.00,3937.13,-1137.62
-2026-10-02,125,1000,Cash,Payment for invoice 124,175.75,0.00,-961.87
-2026-10-02,127,1000,Cash,Card payment 127,0.00,1313.37,-2275.24
-2026-10-03,129,1000,Cash,Payment for invoice 128,2451.99,0.00,176.75
-2026-10-03,131,1000,Cash,Card payment 131,0.00,3589.61,-3412.86
-2026-10-04,133,1000,Cash,Payment for invoice 132,4727.23,0.00,1314.37
-2026-10-04,135,1000,Cash,Card payment 135,0.00,965.85,348.52
-2026-10-05,137,1000,Cash,Payment for invoice 136,2103.47,0.00,2451.99
-2026-10-05,139,1000,Cash,Card payment 139,0.00,3241.09,-789.10
-2026-10-06,141,1000,Cash,Payment for invoice 140,4379.71,0.00,3590.61
-2026-10-06,143,1000,Cash,Card payment 143,0.00,617.33,2973.28
-2026-10-07,145,1000,Cash,Payment for invoice 144,1755.95,0.00,4729.23
-2026-10-07,147,1000,Cash,Card payment 147,0.00,2893.57,1835.66
-2026-10-08,149,1000,Cash,Payment for invoice 148,4031.19,0.00,5866.85
-2026-10-08,151,1000,Cash,Card payment 151,0.00,269.81,5597.04
-2026-10-09,153,1000,Cash,Payment for invoice 152,1407.43,0.00,7004.47
-2026-10-09,155,1000,Cash,Card payment 155,0.00,2545.05,4459.42
-2026-10-10,157,1000,Cash,Payment for invoice 156,3683.67,0.00,8143.09
-2026-10-10,159,1000,Cash,Card payment 159,0.00,4821.29,3321.80
-2026-10-11,161,1000,Cash,Payment for invoice 160,1059.91,0.00,4381.71
-2026-10-11,163,1000,Cash,Card payment 163,0.00,2197.53,2184.18
-2026-10-12,165,1000,Cash,Payment for invoice 164,3335.15,0.00,5519.33
-2026-10-12,167,1000,Cash,Card payment 167,0.00,4473.77,1045.56
-2026-10-13,169,1000,Cash,Payment for invoice 168,711.39,0.00,1756.95
-2026-10-13,171,1000,Cash,Card payment 171,0.00,1849.01,-92.06
-2026-10-14,173,1000,Cash,Payment for invoice 172,2987.63,0.00,2895.57
-2026-10-14,175,1000,Cash,Card payment 175,0.00,4125.25,-1229.68
-2026-10-15,177,1000,Cash,Payment for invoice 176,363.87,0.00,-865.81
-2026-10-15,179,1000,Cash,Card payment 179,0.00,1501.49,-2367.30
-2026-10-16,181,1000,Cash,Payment for invoice 180,2639.11,0.00,271.81
-2026-10-17,183,1000,Cash,Card payment 183,0.00,3777.73,-3505.92
-2026-10-17,185,1000,Cash,Payment for invoice 184,4915.35,0.00,1409.43
-2026-10-18,187,1000,Cash,Card payment 187,0.00,1153.97,255.46
-2026-10-18,189,1000,Cash,Payment for invoice 188,2291.59,0.00,2547.05
-2026-10-19,191,1000,Cash,Card payment 191,0.00,3429.21,-882.16
-2026-10-19,193,1000,Cash,Payment for invoice 192,4567.83,0.00,3685.67
-2026-10-20,195,1000,Cash,Card payment 195,0.00,805.45,2880.22
-2026-10-20,197,1000,Cash,Payment for invoice 196,1943.07,0.00,4823.29
-2026-10-21,199,1000,Cash,Card payment 199,0.00,3081.69,1741.60
-2026-10-21,201,1000,Cash,Payment for invoice 200,4219.31,0.00,5960.91
-2026-10-22,203,1000,Cash,Card payment 203,0.00,457.93,5502.98
-2026-10-22,205,1000,Cash,Payment for invoice 204,1595.55,0.00,7098.53
-2026-10-23,207,1000,Cash,Card payment 207,0.00,2733.17,4365.36
-2026-10-23,209,1000,Cash,Payment for invoice 208,3871.79,0.00,8237.15
-2026-10-24,211,1000,Cash,Card payment 211,0.00,109.41,8127.74
-2026-10-24,213,1000,Cash,Payment for invoice 212,1247.03,0.00,9374.77
-2026-10-25,215,1000,Cash,Card payment 215,0.00,2385.65,6989.12
-2026-10-25,217,1000,Cash,Payment for invoice 216,3523.27,0.00,10512.39
-2026-10-26,219,1000,Cash,Card payment 219,0.00,4661.89,5850.50
-2026-10-26,221,1000,Cash,Payment for invoice 220,899.51,0.00,6750.01
-2026-10-27,223,1000,Cash,Card payment 223,0.00,2037.13,4712.88
-2026-10-27,225,1000,Cash,Payment for invoice 224,3175.75,0.00,7888.63
-2026-10-28,227,1000,Cash,Card payment 227,0.00,4313.37,3575.26
-2026-10-28,229,1000,Cash,Payment for invoice 228,551.99,0.00,4127.25
-2026-10-29,231,1000,Cash,Card payment 231,0.00,1689.61,2437.64
-2026-10-29,233,1000,Cash,Payment for invoice 232,2827.23,0.00,5264.87
-2026-10-30,235,1000,Cash,Card payment 235,0.00,3965.85,1299.02
-2026-10-30,237,1000,Cash,Payment for invoice 236,203.47,0.00,1502.49
-2026-10-31,239,1000,Cash,Card payment 239,0.00,1341.09,161.40
-2026-10-31,241,1000,Cash,Payment for invoice 240,2479.71,0.00,2641.11
-2026-10-01,120,1100,Accounts receivable,Invoice 120,4680.20,0.00,4680.20
-2026-10-01,121,1100,Accounts receivable,Payment for invoice 120,0.00,2799.51,1880.69
-2026-10-02,124,1100,Accounts receivable,Invoice 124,2056.44,0.00,3937.13
-2026-10-02,125,1100,Accounts receivable,Payment for invoice 124,0.00,175.75,3761.38
-2026-10-03,128,1100,Accounts receivable,Invoice 128,4332.68,0.00,8094.06
-2026-10-03,129,1100,Accounts receivable,Payment for invoice 128,0.00,2451.99,5642.07
-2026-10-04,132,1100,Accounts receivable,Invoice 132,1708.92,0.00,7350.99
-2026-10-04,133,1100,Accounts receivable,Payment for invoice 132,0.00,4727.23,2623.76
-2026-10-05,136,1100,Accounts receivable,Invoice 136,3984.16,0.00,6607.92
-2026-10-05,137,1100,Accounts receivable,Payment for invoice 136,0.00,2103.47,4504.45
-2026-10-06,140,1100,Accounts receivable,Invoice 140,1360.40,0.00,5864.85
-2026-10-06,141,1100,Accounts receivable,Payment for invoice 140,0.00,4379.71,1485.14
-2026-10-07,144,1100,Accounts receivable,Invoice 144,3636.64,0.00,5121.78
-2026-10-07,145,1100,Accounts receivable,Payment for invoice 144,0.00,1755.95,3365.83
-2026-10-08,148,1100,Accounts receivable,Invoice 148,1012.88,0.00,4378.71
-2026-10-08,149,1100,Accounts receivable,Payment for invoice 148,0.00,4031.19,347.52
-2026-10-09,152,1100,Accounts receivable,Invoice 152,3288.12,0.00,3635.64
-2026-10-09,153,1100,Accounts receivable,Payment for invoice 152,0.00,1407.43,2228.21
-2026-10-10,156,1100,Accounts receivable,Invoice 156,664.36,0.00,2892.57
-2026-10-10,157,1100,Accounts receivable,Payment for invoice 156,0.00,3683.67,-791.10
-2026-10-11,160,1100,Accounts receivable,Invoice 160,2940.60,0.00,2149.50
-2026-10-11,161,1100,Accounts receivable,Payment for invoice 160,0.00,1059.91,1089.59
-2026-10-12,164,1100,Accounts receivable,Invoice 164,316.84,0.00,1406.43
-2026-10-12,165,1100,Accounts receivable,Payment for invoice 164,0.00,3335.15,-1928.72
-2026-10-13,168,1100,Accounts receivable,Invoice 168,2592.08,0.00,663.36
-2026-10-13,169,1100,Accounts receivable,Payment for invoice 168,0.00,711.39,-48.03
-2026-10-14,172,1100,Accounts receivable,Invoice 172,4868.32,0.00,4820.29
-2026-10-14,173,1100,Accounts receivable,Payment for invoice 172,0.00,2987.63,1832.66
-2026-10-15,176,1100,Accounts receivable,Invoice 176,2244.56,0.00,4077.22
-2026-10-15,177,1100,Accounts receivable,Payment for invoice 176,0.00,363.87,3713.35
-2026-10-16,180,1100,Accounts receivable,Invoice 180,4520.80,0.00,8234.15
-2026-10-16,181,1100,Accounts receivable,Payment for invoice 180,0.00,2639.11,5595.04
-2026-10-17,184,1100,Accounts receivable,Invoice 184,1896.04,0.00,7491.08
-2026-10-17,185,1100,Accounts receivable,Payment for invoice 184,0.00,4915.35,2575.73
-2026-10-18,188,1100,Accounts receivable,Invoice 188,4172.28,0.00,6748.01
-2026-10-18,189,1100,Accounts receivable,Payment for invoice 188,0.00,2291.59,4456.42
-2026-10-19,192,1100,Accounts receivable,Invoice 192,1548.52,0.00,6004.94
-2026-10-19,193,1100,Accounts receivable,Payment for invoice 192,0.00,4567.83,1437.11
-2026-10-20,196,1100,Accounts receivable,Invoice 196,3824.76,0.00,5261.87
-2026-10-20,197,1100,Accounts receivable,Payment for invoice 196,0.00,1943.07,3318.80
-2026-10-21,200,1100,Accounts receivable,Invoice 200,1200.00,0.00,4518.80
-2026-10-21,201,1100,Accounts receivable,Payment for invoice 200,0.00,4219.31,299.49
-2026-10-22,204,1100,Accounts receivable,Invoice 204,3476.24,0.00,3775.73
-2026-10-22,205,1100,Accounts receivable,Payment for invoice 204,0.00,1595.55,2180.18
-2026-10-23,208,1100,Accounts receivable,Invoice 208,852.48,0.00,3032.66
-2026-10-23,209,1100,Accounts receivable,Payment for invoice 208,0.00,3871.79,-839.13
-2026-10-24,212,1100,Accounts receivable,Invoice 212,3128.72,0.00,2289.59
-2026-10-24,213,1100,Accounts receivable,Payment for invoice 212,0.00,1247.03,1042.56
-2026-10-25,216,1100,Accounts receivable,Invoice 216,504.96,0.00,1547.52
-2026-10-25,217,1100,Accounts receivable,Payment for invoice 216,0.00,3523.27,-1975.75
-2026-10-26,220,1100,Accounts receivable,Invoice 220,2780.20,0.00,804.45
-2026-10-26,221,1100,Accounts receivable,Payment for invoice 220,0.00,899.51,-95.06
-2026-10-27,224,1100,Accounts receivable,Invoice 224,156.44,0.00,61.38
-2026-10-27,225,1100,Accounts receivable,Payment for invoice 224,0.00,3175.75,-3114.37
-2026-10-28,228,1100,Accounts receivable,Invoice 228,2432.68,0.00,-681.69
-2026-10-28,229,1100,Accounts receivable,Payment for invoice 228,0.00,551.99,-1233.68
-2026-10-29,232,1100,Accounts receivable,Invoice 232,4708.92,0.00,3475.24
-2026-10-29,233,1100,Accounts receivable,Payment for invoice 232,0.00,2827.23,648.01
-2026-10-30,236,1100,Accounts receivable,Invoice 236,2084.16,0.00,2732.17
-2026-10-30,237,1100,Accounts receivable,Payment for invoice 236,0.00,203.47,2528.70
-2026-10-31,240,1100,Accounts receivable,Invoice 240,4360.40,0.00,6889.10
-2026-10-31,241,1100,Accounts receivable,Payment for invoice 240,0.00,2479.71,4409.39
-2026-10-01,122,2000,Accounts payable,Supplier bill 122,0.00,918.82,-918.82
-2026-10-02,126,2000,Accounts payable,Supplier bill 126,0.00,3194.06,-4112.88
-2026-10-03,130,2000,Accounts payable,Supplier bill 130,0.00,570.30,-4683.18
-2026-10-04,134,2000,Accounts payable,Supplier bill 134,0.00,2846.54,-7529.72
-2026-10-05,138,2000,Accounts payable,Supplier bill 138,0.00,222.78,-7752.50
-2026-10-06,142,2000,Accounts payable,Supplier bill 142,0.00,2498.02,-10250.52
-2026-10-07,146,2000,Accounts payable,Supplier bill 146,0.00,4774.26,-15024.78
-2026-10-08,150,2000,Accounts payable,Supplier bill 150,0.00,2150.50,-17175.28
-2026-10-09,154,2000,Accounts payable,Supplier bill 154,0.00,4426.74,-21602.02
-2026-10-10,158,2000,Accounts payable,Supplier bill 158,0.00,1802.98,-23405.00
-2026-10-11,162,2000,Accounts payable,Supplier bill 162,0.00,4078.22,-27483.22
-2026-10-12,166,2000,Accounts payable,Supplier bill 166,0.00,1454.46,-28937.68
-2026-10-13,170,2000,Accounts payable,Supplier bill 170,0.00,3730.70,-32668.38
-2026-10-14,174,2000,Accounts payable,Supplier bill 174,0.00,1106.94,-33775.32
-2026-10-15,178,2000,Accounts payable,Supplier bill 178,0.00,3382.18,-37157.50
-2026-10-16,182,2000,Accounts payable,Supplier bill 182,0.00,758.42,-37915.92
-2026-10-17,186,2000,Accounts payable,Supplier bill 186,0.00,3034.66,-40950.58
-2026-10-18,190,2000,Accounts payable,Supplier bill 190,0.00,410.90,-41361.48
-2026-10-19,194,2000,Accounts payable,Supplier bill 194,0.00,2686.14,-44047.62
-2026-10-20,198,2000,Accounts payable,Supplier bill 198,0.00,4962.38,-49010.00
-2026-10-21,202,2000,Accounts payable,Supplier bill 202,0.00,2338.62,-51348.62
-2026-10-22,206,2000,Accounts payable,Supplier bill 206,0.00,4614.86,-55963.48
-2026-10-23,210,2000,Accounts payable,Supplier bill 210,0.00,1990.10,-57953.58
-2026-10-24,214,2000,Accounts payable,Supplier bill 214,0.00,4266.34,-62219.92
-2026-10-25,218,2000,Accounts payable,Supplier bill 218,0.00,1642.58,-63862.50
-2026-10-26,222,2000,Accounts payable,Supplier bill 222,0.00,3918.82,-67781.32
-2026-10-27,226,2000,Accounts payable,Supplier bill 226,0.00,1294.06,-69075.38
-2026-10-28,230,2000,Accounts payable,Supplier bill 230,0.00,3570.30,-72645.68
-2026-10-29,234,2000,Accounts payable,Supplier bill 234,0.00,946.54,-73592.22
-2026-10-30,238,2000,Accounts payable,Supplier bill 238,0.00,3222.78,-76815.00
-2026-10-31,242,2000,Accounts payable,Supplier bill 242,0.00,598.02,-77413.02
-2026-10-01,120,4000,Sales,Invoice 120,0.00,4680.20,-4680.20
-2026-10-02,124,4000,Sales,Invoice 124,0.00,2056.44,-6736.64
-2026-10-03,128,4000,Sales,Invoice 128,0.00,4332.68,-11069.32
-2026-10-04,132,4000,Sales,Invoice 132,0.00,1708.92,-12778.24
-2026-10-05,136,4000,Sales,Invoice 136,0.00,3984.16,-16762.40
-2026-10-06,140,4000,Sales,Invoice 140,0.00,1360.40,-18122.80
-2026-10-07,144,4000,Sales,Invoice 144,0.00,3636.64,-21759.44
-2026-10-08,148,4000,Sales,Invoice 148,0.00,1012.88,-22772.32
-2026-10-09,152,4000,Sales,Invoice 152,0.00,3288.12,-26060.44
-2026-10-10,156,4000,Sales,Invoice 156,0.00,664.36,-26724.80
-2026-10-11,160,4000,Sales,Invoice 160,0.00,2940.60,-29665.40
-2026-10-12,164,4000,Sales,Invoice 164,0.00,316.84,-29982.24
-2026-10-13,168,4000,Sales,Invoice 168,0.00,2592.08,-32574.32
-2026-10-14,172,4000,Sales,Invoice 172,0.00,4868.32,-37442.64
-2026-10-15,176,4000,Sales,Invoice 176,0.00,2244.56,-39687.20
-2026-10-16,180,4000,Sales,Invoice 180,0.00,4520.80,-44208.00
-2026-10-17,184,4000,Sales,Invoice 184,0.00,1896.04,-46104.04
-2026-10-18,188,4000,Sales,Invoice 188,0.00,4172.28,-50276.32
-2026-10-19,192,4000,Sales,Invoice 192,0.00,1548.52,-51824.84
-2026-10-20,196,4000,Sales,Invoice 196,0.00,3824.76,-55649.60
-2026-10-21,200,4000,Sales,Invoice 200,0.00,1200.00,-56849.60
-2026-10-22,204,4000,Sales,Invoice 204,0.00,3476.24,-60325.84
-2026-10-23,208,4000,Sales,Invoice 208,0.00,852.48,-61178.32
-2026-10-24,212,4000,Sales,Invoice 212,0.00,3128.72,-64307.04
-2026-10-25,216,4000,Sales,Invoice 216,0.00,504.96,-64812.00
-2026-10-26,220,4000,Sales,Invoice 220,0.00,2780.20,-67592.20
-2026-10-27,224,4000,Sales,Invoice 224,0.00,156.44,-67748.64
-2026-10-28,228,4000,Sales,Invoice 228,0.00,2432.68,-70181.32
-2026-10-29,232,4000,Sales,Invoice 232,0.00,4708.92,-74890.24
-2026-10-30,236,4000,Sales,Invoice 236,0.00,2084.16,-76974.40
-2026-10-31,240,4000,Sales,Invoice 240,0.00,4360.40,-81334.80
-2026-10-01,122,5000,Cost of sales,Supplier bill 122,918.82,0.00,918.82
-2026-10-02,126,5000,Cost of sales,Supplier bill 126,3194.06,0.00,4112.88
-2026-10-03,130,5000,Cost of sales,Supplier bill 130,570.30,0.00,4683.18
-2026-10-04,134,5000,Cost of sales,Supplier bill 134,2846.54,0.00,7529.72
-2026-10-05,138,5000,Cost of sales,Supplier bill 138,222.78,0.00,7752.50
-2026-10-06,142,5000,Cost of sales,Supplier bill 142,2498.02,0.00,10250.52
-2026-10-07,146,5000,Cost of sales,Supplier bill 146,4774.26,0.00,15024.78
-2026-10-08,150,5000,Cost of sales,Supplier bill 150,2150.50,0.00,17175.28
-2026-10-09,154,5000,Cost of sales,Supplier bill 154,4426.74,0.00,21602.02
-2026-10-10,158,5000,Cost of sales,Supplier bill 158,1802.98,0.00,23405.00
-2026-10-11,162,5000,Cost of sales,Supplier bill 162,4078.22,0.00,27483.22
-2026-10-12,166,5000,Cost of sales,Supplier bill 166,1454.46,0.00,28937.68
-2026-10-13,170,5000,Cost of sales,Supplier bill 170,3730.70,0.00,32668.38
-2026-10-14,174,5000,Cost of sales,Supplier bill 174,1106.94,0.00,33775.32
-2026-10-15,178,5000,Cost of sales,Supplier bill 178,3382.18,0.00,37157.50
-2026-10-16,182,5000,Cost of sales,Supplier bill 182,758.42,0.00,37915.92
-2026-10-17,186,5000,Cost of sales,Supplier bill 186,3034.66,0.00,40950.58
-2026-10-18,190,5000,Cost of sales,Supplier bill 190,410.90,0.00,41361.48
-2026-10-19,194,5000,Cost of sales,Supplier bill 194,2686.14,0.00,44047.62
-2026-10-20,198,5000,Cost of sales,Supplier bill 198,4962.38,0.00,49010.00
-2026-10-21,202,5000,Cost of sales,Supplier bill 202,2338.62,0.00,51348.62
-2026-10-22,206,5000,Cost of sales,Supplier bill 206,4614.86,0.00,55963.48
-2026-10-23,210,5000,Cost of sales,Supplier bill 210,1990.10,0.00,57953.58
-2026-10-24,214,5000,Cost of sales,Supplier bill 214,4266.34,0.00,62219.92
-2026-10-25,218,5000,Cost of sales,Supplier bill 218,1642.58,0.00,63862.50
-2026-10-26,222,5000,Cost of sales,Supplier bill 222,3918.82,0.00,67781.32
-2026-10-27,226,5000,Cost of sales,Supplier bill 226,1294.06,0.00,69075.38
-2026-10-28,230,5000,Cost of sales,Supplier bill 230,3570.30,0.00,72645.68
-2026-10-29,234,5000,Cost of sales,Supplier bill 234,946.54,0.00,73592.22
-2026-10-30,238,5000,Cost of sales,Supplier bill 238,3222.78,0.00,76815.00
-2026-10-31,242,5000,Cost of sales,Supplier bill 242,598.02,0.00,77413.02
-2026-10-01,123,6100,Rent,Card payment 123,3937.13,0.00,3937.13
-2026-10-03,131,6100,Rent,Card payment 131,3589.61,0.00,7526.74
-2026-10-05,139,6100,Rent,Card payment 139,3241.09,0.00,10767.83
-2026-10-07,147,6100,Rent,Card payment 147,2893.57,0.00,13661.40
-2026-10-09,155,6100,Rent,Card payment 155,2545.05,0.00,16206.45
-2026-10-11,163,6100,Rent,Card payment 163,2197.53,0.00,18403.98
-2026-10-13,171,6100,Rent,Card payment 171,1849.01,0.00,20252.99
-2026-10-15,179,6100,Rent,Card payment 179,1501.49,0.00,21754.48
-2026-10-18,187,6100,Rent,Card payment 187,1153.97,0.00,22908.45
-2026-10-20,195,6100,Rent,Card payment 195,805.45,0.00,23713.90
-2026-10-22,203,6100,Rent,Card payment 203,457.93,0.00,24171.83
-2026-10-24,211,6100,Rent,Card payment 211,109.41,0.00,24281.24
-2026-10-26,219,6100,Rent,Card payment 219,4661.89,0.00,28943.13
-2026-10-28,227,6100,Rent,Card payment 227,4313.37,0.00,33256.50
-2026-10-30,235,6100,Rent,Card payment 235,3965.85,0.00,37222.35
-2026-10-02,127,6200,Software,Card payment 127,1313.37,0.00,1313.37
-2026-10-04,135,6200,Software,Card payment 135,965.85,0.00,2279.22
-2026-10-06,143,6200,Software,Card payment 143,617.33,0.00,2896.55
-2026-10-08,151,6200,Software,Card payment 151,269.81,0.00,3166.36
-2026-10-10,159,6200,Software,Card payment 159,4821.29,0.00,7987.65
-2026-10-12,167,6200,Software,Card payment 167,4473.77,0.00,12461.42
-2026-10-14,175,6200,Software,Card payment 175,4125.25,0.00,16586.67
-2026-10-17,183,6200,Software,Card payment 183,3777.73,0.00,20364.40
-2026-10-19,191,6200,Software,Card payment 191,3429.21,0.00,23793.61
-2026-10-21,199,6200,Software,Card payment 199,3081.69,0.00,26875.30
-2026-10-23,207,6200,Software,Card payment 207,2733.17,0.00,29608.47
-2026-10-25,215,6200,Software,Card payment 215,2385.65,0.00,31994.12
-2026-10-27,223,6200,Software,Card payment 223,2037.13,0.00,34031.25
-2026-10-29,231,6200,Software,Card payment 231,1689.61,0.00,35720.86
-2026-10-31,239,6200,Software,Card payment 239,1341.09,0.00,37061.95
+Date,Journal,Account,Name,Counterparty,Country,Memo,Debit,Credit,Balance
+2026-10-01,121,1000,Cash,Gum Garden Centre,unknown,Payment for invoice 120,2799.51,0.00,2799.51
+2026-10-01,123,1000,Cash,Rowan Property Lettings,FR,Card payment 123,0.00,3937.13,-1137.62
+2026-10-02,125,1000,Cash,Hazel Hotels,AT,Payment for invoice 124,175.75,0.00,-961.87
+2026-10-02,127,1000,Cash,Spruce Software,IE,Card payment 127,0.00,1313.37,-2275.24
+2026-10-03,129,1000,Cash,Ivy Interiors,SE,Payment for invoice 128,2451.99,0.00,176.75
+2026-10-03,131,1000,Cash,Rowan Property Lettings,FR,Card payment 131,0.00,3589.61,-3412.86
+2026-10-04,133,1000,Cash,Juniper Joinery,DK,Payment for invoice 132,4727.23,0.00,1314.37
+2026-10-04,135,1000,Cash,Spruce Software,IE,Card payment 135,0.00,965.85,348.52
+2026-10-05,137,1000,Cash,Kauri Kitchens,NL,Payment for invoice 136,2103.47,0.00,2451.99
+2026-10-05,139,1000,Cash,Rowan Property Lettings,FR,Card payment 139,0.00,3241.09,-789.10
+2026-10-06,141,1000,Cash,Larch Lighting,NO,Payment for invoice 140,4379.71,0.00,3590.61
+2026-10-06,143,1000,Cash,Spruce Software,IE,Card payment 143,0.00,617.33,2973.28
+2026-10-07,145,1000,Cash,Alder Bakery,FR,Payment for invoice 144,1755.95,0.00,4729.23
+2026-10-07,147,1000,Cash,Rowan Property Lettings,FR,Card payment 147,0.00,2893.57,1835.66
+2026-10-08,149,1000,Cash,Birch Books,PT,Payment for invoice 148,4031.19,0.00,5866.85
+2026-10-08,151,1000,Cash,Spruce Software,IE,Card payment 151,0.00,269.81,5597.04
+2026-10-09,153,1000,Cash,Cedar Cycles,BE,Payment for invoice 152,1407.43,0.00,7004.47
+2026-10-09,155,1000,Cash,Rowan Property Lettings,FR,Card payment 155,0.00,2545.05,4459.42
+2026-10-10,157,1000,Cash,Dogwood Design,GB,Payment for invoice 156,3683.67,0.00,8143.09
+2026-10-10,159,1000,Cash,Spruce Software,IE,Card payment 159,0.00,4821.29,3321.80
+2026-10-11,161,1000,Cash,Elm Electrics,ES,Payment for invoice 160,1059.91,0.00,4381.71
+2026-10-11,163,1000,Cash,Rowan Property Lettings,FR,Card payment 163,0.00,2197.53,2184.18
+2026-10-12,165,1000,Cash,Fir Furniture,IT,Payment for invoice 164,3335.15,0.00,5519.33
+2026-10-12,167,1000,Cash,Spruce Software,IE,Card payment 167,0.00,4473.77,1045.56
+2026-10-13,169,1000,Cash,Gum Garden Centre,unknown,Payment for invoice 168,711.39,0.00,1756.95
+2026-10-13,171,1000,Cash,Rowan Property Lettings,FR,Card payment 171,0.00,1849.01,-92.06
+2026-10-14,173,1000,Cash,Hazel Hotels,AT,Payment for invoice 172,2987.63,0.00,2895.57
+2026-10-14,175,1000,Cash,Spruce Software,IE,Card payment 175,0.00,4125.25,-1229.68
+2026-10-15,177,1000,Cash,Ivy Interiors,SE,Payment for invoice 176,363.87,0.00,-865.81
+2026-10-15,179,1000,Cash,Rowan Property Lettings,FR,Card payment 179,0.00,1501.49,-2367.30
+2026-10-16,181,1000,Cash,Juniper Joinery,DK,Payment for invoice 180,2639.11,0.00,271.81
+2026-10-17,183,1000,Cash,Spruce Software,IE,Card payment 183,0.00,3777.73,-3505.92
+2026-10-17,185,1000,Cash,Kauri Kitchens,NL,Payment for invoice 184,4915.35,0.00,1409.43
+2026-10-18,187,1000,Cash,Rowan Property Lettings,FR,Card payment 187,0.00,1153.97,255.46
+2026-10-18,189,1000,Cash,Larch Lighting,NO,Payment for invoice 188,2291.59,0.00,2547.05
+2026-10-19,191,1000,Cash,Spruce Software,IE,Card payment 191,0.00,3429.21,-882.16
+2026-10-19,193,1000,Cash,Alder Bakery,FR,Payment for invoice 192,4567.83,0.00,3685.67
+2026-10-20,195,1000,Cash,Rowan Property Lettings,FR,Card payment 195,0.00,805.45,2880.22
+2026-10-20,197,1000,Cash,Birch Books,PT,Payment for invoice 196,1943.07,0.00,4823.29
+2026-10-21,199,1000,Cash,Spruce Software,IE,Card payment 199,0.00,3081.69,1741.60
+2026-10-21,201,1000,Cash,Cedar Cycles,BE,Payment for invoice 200,4219.31,0.00,5960.91
+2026-10-22,203,1000,Cash,Rowan Property Lettings,FR,Card payment 203,0.00,457.93,5502.98
+2026-10-22,205,1000,Cash,Dogwood Design,GB,Payment for invoice 204,1595.55,0.00,7098.53
+2026-10-23,207,1000,Cash,Spruce Software,IE,Card payment 207,0.00,2733.17,4365.36
+2026-10-23,209,1000,Cash,Elm Electrics,ES,Payment for invoice 208,3871.79,0.00,8237.15
+2026-10-24,211,1000,Cash,Rowan Property Lettings,FR,Card payment 211,0.00,109.41,8127.74
+2026-10-24,213,1000,Cash,Fir Furniture,IT,Payment for invoice 212,1247.03,0.00,9374.77
+2026-10-25,215,1000,Cash,Spruce Software,IE,Card payment 215,0.00,2385.65,6989.12
+2026-10-25,217,1000,Cash,Gum Garden Centre,unknown,Payment for invoice 216,3523.27,0.00,10512.39
+2026-10-26,219,1000,Cash,Rowan Property Lettings,FR,Card payment 219,0.00,4661.89,5850.50
+2026-10-26,221,1000,Cash,Hazel Hotels,AT,Payment for invoice 220,899.51,0.00,6750.01
+2026-10-27,223,1000,Cash,Spruce Software,IE,Card payment 223,0.00,2037.13,4712.88
+2026-10-27,225,1000,Cash,Ivy Interiors,SE,Payment for invoice 224,3175.75,0.00,7888.63
+2026-10-28,227,1000,Cash,Rowan Property Lettings,FR,Card payment 227,0.00,4313.37,3575.26
+2026-10-28,229,1000,Cash,Juniper Joinery,DK,Payment for invoice 228,551.99,0.00,4127.25
+2026-10-29,231,1000,Cash,Spruce Software,IE,Card payment 231,0.00,1689.61,2437.64
+2026-10-29,233,1000,Cash,Kauri Kitchens,NL,Payment for invoice 232,2827.23,0.00,5264.87
+2026-10-30,235,1000,Cash,Rowan Property Lettings,FR,Card payment 235,0.00,3965.85,1299.02
+2026-10-30,237,1000,Cash,Larch Lighting,NO,Payment for invoice 236,203.47,0.00,1502.49
+2026-10-31,239,1000,Cash,Spruce Software,IE,Card payment 239,0.00,1341.09,161.40
+2026-10-31,241,1000,Cash,Alder Bakery,FR,Payment for invoice 240,2479.71,0.00,2641.11
+2026-10-01,120,1100,Accounts receivable,Gum Garden Centre,unknown,Invoice 120,4680.20,0.00,4680.20
+2026-10-01,121,1100,Accounts receivable,Gum Garden Centre,unknown,Payment for invoice 120,0.00,2799.51,1880.69
+2026-10-02,124,1100,Accounts receivable,Hazel Hotels,AT,Invoice 124,2056.44,0.00,3937.13
+2026-10-02,125,1100,Accounts receivable,Hazel Hotels,AT,Payment for invoice 124,0.00,175.75,3761.38
+2026-10-03,128,1100,Accounts receivable,Ivy Interiors,SE,Invoice 128,4332.68,0.00,8094.06
+2026-10-03,129,1100,Accounts receivable,Ivy Interiors,SE,Payment for invoice 128,0.00,2451.99,5642.07
+2026-10-04,132,1100,Accounts receivable,Juniper Joinery,DK,Invoice 132,1708.92,0.00,7350.99
+2026-10-04,133,1100,Accounts receivable,Juniper Joinery,DK,Payment for invoice 132,0.00,4727.23,2623.76
+2026-10-05,136,1100,Accounts receivable,Kauri Kitchens,NL,Invoice 136,3984.16,0.00,6607.92
+2026-10-05,137,1100,Accounts receivable,Kauri Kitchens,NL,Payment for invoice 136,0.00,2103.47,4504.45
+2026-10-06,140,1100,Accounts receivable,Larch Lighting,NO,Invoice 140,1360.40,0.00,5864.85
+2026-10-06,141,1100,Accounts receivable,Larch Lighting,NO,Payment for invoice 140,0.00,4379.71,1485.14
+2026-10-07,144,1100,Accounts receivable,Alder Bakery,FR,Invoice 144,3636.64,0.00,5121.78
+2026-10-07,145,1100,Accounts receivable,Alder Bakery,FR,Payment for invoice 144,0.00,1755.95,3365.83
+2026-10-08,148,1100,Accounts receivable,Birch Books,PT,Invoice 148,1012.88,0.00,4378.71
+2026-10-08,149,1100,Accounts receivable,Birch Books,PT,Payment for invoice 148,0.00,4031.19,347.52
+2026-10-09,152,1100,Accounts receivable,Cedar Cycles,BE,Invoice 152,3288.12,0.00,3635.64
+2026-10-09,153,1100,Accounts receivable,Cedar Cycles,BE,Payment for invoice 152,0.00,1407.43,2228.21
+2026-10-10,156,1100,Accounts receivable,Dogwood Design,GB,Invoice 156,664.36,0.00,2892.57
+2026-10-10,157,1100,Accounts receivable,Dogwood Design,GB,Payment for invoice 156,0.00,3683.67,-791.10
+2026-10-11,160,1100,Accounts receivable,Elm Electrics,ES,Invoice 160,2940.60,0.00,2149.50
+2026-10-11,161,1100,Accounts receivable,Elm Electrics,ES,Payment for invoice 160,0.00,1059.91,1089.59
+2026-10-12,164,1100,Accounts receivable,Fir Furniture,IT,Invoice 164,316.84,0.00,1406.43
+2026-10-12,165,1100,Accounts receivable,Fir Furniture,IT,Payment for invoice 164,0.00,3335.15,-1928.72
+2026-10-13,168,1100,Accounts receivable,Gum Garden Centre,unknown,Invoice 168,2592.08,0.00,663.36
+2026-10-13,169,1100,Accounts receivable,Gum Garden Centre,unknown,Payment for invoice 168,0.00,711.39,-48.03
+2026-10-14,172,1100,Accounts receivable,Hazel Hotels,AT,Invoice 172,4868.32,0.00,4820.29
+2026-10-14,173,1100,Accounts receivable,Hazel Hotels,AT,Payment for invoice 172,0.00,2987.63,1832.66
+2026-10-15,176,1100,Accounts receivable,Ivy Interiors,SE,Invoice 176,2244.56,0.00,4077.22
+2026-10-15,177,1100,Accounts receivable,Ivy Interiors,SE,Payment for invoice 176,0.00,363.87,3713.35
+2026-10-16,180,1100,Accounts receivable,Juniper Joinery,DK,Invoice 180,4520.80,0.00,8234.15
+2026-10-16,181,1100,Accounts receivable,Juniper Joinery,DK,Payment for invoice 180,0.00,2639.11,5595.04
+2026-10-17,184,1100,Accounts receivable,Kauri Kitchens,NL,Invoice 184,1896.04,0.00,7491.08
+2026-10-17,185,1100,Accounts receivable,Kauri Kitchens,NL,Payment for invoice 184,0.00,4915.35,2575.73
+2026-10-18,188,1100,Accounts receivable,Larch Lighting,NO,Invoice 188,4172.28,0.00,6748.01
+2026-10-18,189,1100,Accounts receivable,Larch Lighting,NO,Payment for invoice 188,0.00,2291.59,4456.42
+2026-10-19,192,1100,Accounts receivable,Alder Bakery,FR,Invoice 192,1548.52,0.00,6004.94
+2026-10-19,193,1100,Accounts receivable,Alder Bakery,FR,Payment for invoice 192,0.00,4567.83,1437.11
+2026-10-20,196,1100,Accounts receivable,Birch Books,PT,Invoice 196,3824.76,0.00,5261.87
+2026-10-20,197,1100,Accounts receivable,Birch Books,PT,Payment for invoice 196,0.00,1943.07,3318.80
+2026-10-21,200,1100,Accounts receivable,Cedar Cycles,BE,Invoice 200,1200.00,0.00,4518.80
+2026-10-21,201,1100,Accounts receivable,Cedar Cycles,BE,Payment for invoice 200,0.00,4219.31,299.49
+2026-10-22,204,1100,Accounts receivable,Dogwood Design,GB,Invoice 204,3476.24,0.00,3775.73
+2026-10-22,205,1100,Accounts receivable,Dogwood Design,GB,Payment for invoice 204,0.00,1595.55,2180.18
+2026-10-23,208,1100,Accounts receivable,Elm Electrics,ES,Invoice 208,852.48,0.00,3032.66
+2026-10-23,209,1100,Accounts receivable,Elm Electrics,ES,Payment for invoice 208,0.00,3871.79,-839.13
+2026-10-24,212,1100,Accounts receivable,Fir Furniture,IT,Invoice 212,3128.72,0.00,2289.59
+2026-10-24,213,1100,Accounts receivable,Fir Furniture,IT,Payment for invoice 212,0.00,1247.03,1042.56
+2026-10-25,216,1100,Accounts receivable,Gum Garden Centre,unknown,Invoice 216,504.96,0.00,1547.52
+2026-10-25,217,1100,Accounts receivable,Gum Garden Centre,unknown,Payment for invoice 216,0.00,3523.27,-1975.75
+2026-10-26,220,1100,Accounts receivable,Hazel Hotels,AT,Invoice 220,2780.20,0.00,804.45
+2026-10-26,221,1100,Accounts receivable,Hazel Hotels,AT,Payment for invoice 220,0.00,899.51,-95.06
+2026-10-27,224,1100,Accounts receivable,Ivy Interiors,SE,Invoice 224,156.44,0.00,61.38
+2026-10-27,225,1100,Accounts receivable,Ivy Interiors,SE,Payment for invoice 224,0.00,3175.75,-3114.37
+2026-10-28,228,1100,Accounts receivable,Juniper Joinery,DK,Invoice 228,2432.68,0.00,-681.69
+2026-10-28,229,1100,Accounts receivable,Juniper Joinery,DK,Payment for invoice 228,0.00,551.99,-1233.68
+2026-10-29,232,1100,Accounts receivable,Kauri Kitchens,NL,Invoice 232,4708.92,0.00,3475.24
+2026-10-29,233,1100,Accounts receivable,Kauri Kitchens,NL,Payment for invoice 232,0.00,2827.23,648.01
+2026-10-30,236,1100,Accounts receivable,Larch Lighting,NO,Invoice 236,2084.16,0.00,2732.17
+2026-10-30,237,1100,Accounts receivable,Larch Lighting,NO,Payment for invoice 236,0.00,203.47,2528.70
+2026-10-31,240,1100,Accounts receivable,Alder Bakery,FR,Invoice 240,4360.40,0.00,6889.10
+2026-10-31,241,1100,Accounts receivable,Alder Bakery,FR,Payment for invoice 240,0.00,2479.71,4409.39
+2026-10-01,122,2000,Accounts payable,Maple Materials,FR,Supplier bill 122,0.00,918.82,-918.82
+2026-10-02,126,2000,Accounts payable,Nutmeg Notions,ES,Supplier bill 126,0.00,3194.06,-4112.88
+2026-10-03,130,2000,Accounts payable,Oak Office Supply,GB,Supplier bill 130,0.00,570.30,-4683.18
+2026-10-04,134,2000,Accounts payable,Pine Packaging,unknown,Supplier bill 134,0.00,2846.54,-7529.72
+2026-10-05,138,2000,Accounts payable,Quince Quarries,IT,Supplier bill 138,0.00,222.78,-7752.50
+2026-10-06,142,2000,Accounts payable,Maple Materials,FR,Supplier bill 142,0.00,2498.02,-10250.52
+2026-10-07,146,2000,Accounts payable,Nutmeg Notions,ES,Supplier bill 146,0.00,4774.26,-15024.78
+2026-10-08,150,2000,Accounts payable,Oak Office Supply,GB,Supplier bill 150,0.00,2150.50,-17175.28
+2026-10-09,154,2000,Accounts payable,Pine Packaging,unknown,Supplier bill 154,0.00,4426.74,-21602.02
+2026-10-10,158,2000,Accounts payable,Quince Quarries,IT,Supplier bill 158,0.00,1802.98,-23405.00
+2026-10-11,162,2000,Accounts payable,Maple Materials,FR,Supplier bill 162,0.00,4078.22,-27483.22
+2026-10-12,166,2000,Accounts payable,Nutmeg Notions,ES,Supplier bill 166,0.00,1454.46,-28937.68
+2026-10-13,170,2000,Accounts payable,Oak Office Supply,GB,Supplier bill 170,0.00,3730.70,-32668.38
+2026-10-14,174,2000,Accounts payable,Pine Packaging,unknown,Supplier bill 174,0.00,1106.94,-33775.32
+2026-10-15,178,2000,Accounts payable,Quince Quarries,IT,Supplier bill 178,0.00,3382.18,-37157.50
+2026-10-16,182,2000,Accounts payable,Maple Materials,FR,Supplier bill 182,0.00,758.42,-37915.92
+2026-10-17,186,2000,Accounts payable,Nutmeg Notions,ES,Supplier bill 186,0.00,3034.66,-40950.58
+2026-10-18,190,2000,Accounts payable,Oak Office Supply,GB,Supplier bill 190,0.00,410.90,-41361.48
+2026-10-19,194,2000,Accounts payable,Pine Packaging,unknown,Supplier bill 194,0.00,2686.14,-44047.62
+2026-10-20,198,2000,Accounts payable,Quince Quarries,IT,Supplier bill 198,0.00,4962.38,-49010.00
+2026-10-21,202,2000,Accounts payable,Maple Materials,FR,Supplier bill 202,0.00,2338.62,-51348.62
+2026-10-22,206,2000,Accounts payable,Nutmeg Notions,ES,Supplier bill 206,0.00,4614.86,-55963.48
+2026-10-23,210,2000,Accounts payable,Oak Office Supply,GB,Supplier bill 210,0.00,1990.10,-57953.58
+2026-10-24,214,2000,Accounts payable,Pine Packaging,unknown,Supplier bill 214,0.00,4266.34,-62219.92
+2026-10-25,218,2000,Accounts payable,Quince Quarries,IT,Supplier bill 218,0.00,1642.58,-63862.50
+2026-10-26,222,2000,Accounts payable,Maple Materials,FR,Supplier bill 222,0.00,3918.82,-67781.32
+2026-10-27,226,2000,Accounts payable,Nutmeg Notions,ES,Supplier bill 226,0.00,1294.06,-69075.38
+2026-10-28,230,2000,Accounts payable,Oak Office Supply,GB,Supplier bill 230,0.00,3570.30,-72645.68
+2026-10-29,234,2000,Accounts payable,Pine Packaging,unknown,Supplier bill 234,0.00,946.54,-73592.22
+2026-10-30,238,2000,Accounts payable,Quince Quarries,IT,Supplier bill 238,0.00,3222.78,-76815.00
+2026-10-31,242,2000,Accounts payable,Maple Materials,FR,Supplier bill 242,0.00,598.02,-77413.02
+2026-10-01,120,4000,Sales,Gum Garden Centre,unknown,Invoice 120,0.00,4680.20,-4680.20
+2026-10-02,124,4000,Sales,Hazel Hotels,AT,Invoice 124,0.00,2056.44,-6736.64
+2026-10-03,128,4000,Sales,Ivy Interiors,SE,Invoice 128,0.00,4332.68,-11069.32
+2026-10-04,132,4000,Sales,Juniper Joinery,DK,Invoice 132,0.00,1708.92,-12778.24
+2026-10-05,136,4000,Sales,Kauri Kitchens,NL,Invoice 136,0.00,3984.16,-16762.40
+2026-10-06,140,4000,Sales,Larch Lighting,NO,Invoice 140,0.00,1360.40,-18122.80
+2026-10-07,144,4000,Sales,Alder Bakery,FR,Invoice 144,0.00,3636.64,-21759.44
+2026-10-08,148,4000,Sales,Birch Books,PT,Invoice 148,0.00,1012.88,-22772.32
+2026-10-09,152,4000,Sales,Cedar Cycles,BE,Invoice 152,0.00,3288.12,-26060.44
+2026-10-10,156,4000,Sales,Dogwood Design,GB,Invoice 156,0.00,664.36,-26724.80
+2026-10-11,160,4000,Sales,Elm Electrics,ES,Invoice 160,0.00,2940.60,-29665.40
+2026-10-12,164,4000,Sales,Fir Furniture,IT,Invoice 164,0.00,316.84,-29982.24
+2026-10-13,168,4000,Sales,Gum Garden Centre,unknown,Invoice 168,0.00,2592.08,-32574.32
+2026-10-14,172,4000,Sales,Hazel Hotels,AT,Invoice 172,0.00,4868.32,-37442.64
+2026-10-15,176,4000,Sales,Ivy Interiors,SE,Invoice 176,0.00,2244.56,-39687.20
+2026-10-16,180,4000,Sales,Juniper Joinery,DK,Invoice 180,0.00,4520.80,-44208.00
+2026-10-17,184,4000,Sales,Kauri Kitchens,NL,Invoice 184,0.00,1896.04,-46104.04
+2026-10-18,188,4000,Sales,Larch Lighting,NO,Invoice 188,0.00,4172.28,-50276.32
+2026-10-19,192,4000,Sales,Alder Bakery,FR,Invoice 192,0.00,1548.52,-51824.84
+2026-10-20,196,4000,Sales,Birch Books,PT,Invoice 196,0.00,3824.76,-55649.60
+2026-10-21,200,4000,Sales,Cedar Cycles,BE,Invoice 200,0.00,1200.00,-56849.60
+2026-10-22,204,4000,Sales,Dogwood Design,GB,Invoice 204,0.00,3476.24,-60325.84
+2026-10-23,208,4000,Sales,Elm Electrics,ES,Invoice 208,0.00,852.48,-61178.32
+2026-10-24,212,4000,Sales,Fir Furniture,IT,Invoice 212,0.00,3128.72,-64307.04
+2026-10-25,216,4000,Sales,Gum Garden Centre,unknown,Invoice 216,0.00,504.96,-64812.00
+2026-10-26,220,4000,Sales,Hazel Hotels,AT,Invoice 220,0.00,2780.20,-67592.20
+2026-10-27,224,4000,Sales,Ivy Interiors,SE,Invoice 224,0.00,156.44,-67748.64
+2026-10-28,228,4000,Sales,Juniper Joinery,DK,Invoice 228,0.00,2432.68,-70181.32
+2026-10-29,232,4000,Sales,Kauri Kitchens,NL,Invoice 232,0.00,4708.92,-74890.24
+2026-10-30,236,4000,Sales,Larch Lighting,NO,Invoice 236,0.00,2084.16,-76974.40
+2026-10-31,240,4000,Sales,Alder Bakery,FR,Invoice 240,0.00,4360.40,-81334.80
+2026-10-01,122,5000,Cost of sales,Maple Materials,FR,Supplier bill 122,918.82,0.00,918.82
+2026-10-02,126,5000,Cost of sales,Nutmeg Notions,ES,Supplier bill 126,3194.06,0.00,4112.88
+2026-10-03,130,5000,Cost of sales,Oak Office Supply,GB,Supplier bill 130,570.30,0.00,4683.18
+2026-10-04,134,5000,Cost of sales,Pine Packaging,unknown,Supplier bill 134,2846.54,0.00,7529.72
+2026-10-05,138,5000,Cost of sales,Quince Quarries,IT,Supplier bill 138,222.78,0.00,7752.50
+2026-10-06,142,5000,Cost of sales,Maple Materials,FR,Supplier bill 142,2498.02,0.00,10250.52
+2026-10-07,146,5000,Cost of sales,Nutmeg Notions,ES,Supplier bill 146,4774.26,0.00,15024.78
+2026-10-08,150,5000,Cost of sales,Oak Office Supply,GB,Supplier bill 150,2150.50,0.00,17175.28
+2026-10-09,154,5000,Cost of sales,Pine Packaging,unknown,Supplier bill 154,4426.74,0.00,21602.02
+2026-10-10,158,5000,Cost of sales,Quince Quarries,IT,Supplier bill 158,1802.98,0.00,23405.00
+2026-10-11,162,5000,Cost of sales,Maple Materials,FR,Supplier bill 162,4078.22,0.00,27483.22
+2026-10-12,166,5000,Cost of sales,Nutmeg Notions,ES,Supplier bill 166,1454.46,0.00,28937.68
+2026-10-13,170,5000,Cost of sales,Oak Office Supply,GB,Supplier bill 170,3730.70,0.00,32668.38
+2026-10-14,174,5000,Cost of sales,Pine Packaging,unknown,Supplier bill 174,1106.94,0.00,33775.32
+2026-10-15,178,5000,Cost of sales,Quince Quarries,IT,Supplier bill 178,3382.18,0.00,37157.50
+2026-10-16,182,5000,Cost of sales,Maple Materials,FR,Supplier bill 182,758.42,0.00,37915.92
+2026-10-17,186,5000,Cost of sales,Nutmeg Notions,ES,Supplier bill 186,3034.66,0.00,40950.58
+2026-10-18,190,5000,Cost of sales,Oak Office Supply,GB,Supplier bill 190,410.90,0.00,41361.48
+2026-10-19,194,5000,Cost of sales,Pine Packaging,unknown,Supplier bill 194,2686.14,0.00,44047.62
+2026-10-20,198,5000,Cost of sales,Quince Quarries,IT,Supplier bill 198,4962.38,0.00,49010.00
+2026-10-21,202,5000,Cost of sales,Maple Materials,FR,Supplier bill 202,2338.62,0.00,51348.62
+2026-10-22,206,5000,Cost of sales,Nutmeg Notions,ES,Supplier bill 206,4614.86,0.00,55963.48
+2026-10-23,210,5000,Cost of sales,Oak Office Supply,GB,Supplier bill 210,1990.10,0.00,57953.58
+2026-10-24,214,5000,Cost of sales,Pine Packaging,unknown,Supplier bill 214,4266.34,0.00,62219.92
+2026-10-25,218,5000,Cost of sales,Quince Quarries,IT,Supplier bill 218,1642.58,0.00,63862.50
+2026-10-26,222,5000,Cost of sales,Maple Materials,FR,Supplier bill 222,3918.82,0.00,67781.32
+2026-10-27,226,5000,Cost of sales,Nutmeg Notions,ES,Supplier bill 226,1294.06,0.00,69075.38
+2026-10-28,230,5000,Cost of sales,Oak Office Supply,GB,Supplier bill 230,3570.30,0.00,72645.68
+2026-10-29,234,5000,Cost of sales,Pine Packaging,unknown,Supplier bill 234,946.54,0.00,73592.22
+2026-10-30,238,5000,Cost of sales,Quince Quarries,IT,Supplier bill 238,3222.78,0.00,76815.00
+2026-10-31,242,5000,Cost of sales,Maple Materials,FR,Supplier bill 242,598.02,0.00,77413.02
+2026-10-01,123,6100,Rent,Rowan Property Lettings,FR,Card payment 123,3937.13,0.00,3937.13
+2026-10-03,131,6100,Rent,Rowan Property Lettings,FR,Card payment 131,3589.61,0.00,7526.74
+2026-10-05,139,6100,Rent,Rowan Property Lettings,FR,Card payment 139,3241.09,0.00,10767.83
+2026-10-07,147,6100,Rent,Rowan Property Lettings,FR,Card payment 147,2893.57,0.00,13661.40
+2026-10-09,155,6100,Rent,Rowan Property Lettings,FR,Card payment 155,2545.05,0.00,16206.45
+2026-10-11,163,6100,Rent,Rowan Property Lettings,FR,Card payment 163,2197.53,0.00,18403.98
+2026-10-13,171,6100,Rent,Rowan Property Lettings,FR,Card payment 171,1849.01,0.00,20252.99
+2026-10-15,179,6100,Rent,Rowan Property Lettings,FR,Card payment 179,1501.49,0.00,21754.48
+2026-10-18,187,6100,Rent,Rowan Property Lettings,FR,Card payment 187,1153.97,0.00,22908.45
+2026-10-20,195,6100,Rent,Rowan Property Lettings,FR,Card payment 195,805.45,0.00,23713.90
+2026-10-22,203,6100,Rent,Rowan Property Lettings,FR,Card payment 203,457.93,0.00,24171.83
+2026-10-24,211,6100,Rent,Rowan Property Lettings,FR,Card payment 211,109.41,0.00,24281.24
+2026-10-26,219,6100,Rent,Rowan Property Lettings,FR,Card payment 219,4661.89,0.00,28943.13
+2026-10-28,227,6100,Rent,Rowan Property Lettings,FR,Card payment 227,4313.37,0.00,33256.50
+2026-10-30,235,6100,Rent,Rowan Property Lettings,FR,Card payment 235,3965.85,0.00,37222.35
+2026-10-02,127,6200,Software,Spruce Software,IE,Card payment 127,1313.37,0.00,1313.37
+2026-10-04,135,6200,Software,Spruce Software,IE,Card payment 135,965.85,0.00,2279.22
+2026-10-06,143,6200,Software,Spruce Software,IE,Card payment 143,617.33,0.00,2896.55
+2026-10-08,151,6200,Software,Spruce Software,IE,Card payment 151,269.81,0.00,3166.36
+2026-10-10,159,6200,Software,Spruce Software,IE,Card payment 159,4821.29,0.00,7987.65
+2026-10-12,167,6200,Software,Spruce Software,IE,Card payment 167,4473.77,0.00,12461.42
+2026-10-14,175,6200,Software,Spruce Software,IE,Card payment 175,4125.25,0.00,16586.67
+2026-10-17,183,6200,Software,Spruce Software,IE,Card payment 183,3777.73,0.00,20364.40
+2026-10-19,191,6200,Software,Spruce Software,IE,Card payment 191,3429.21,0.00,23793.61
+2026-10-21,199,6200,Software,Spruce Software,IE,Card payment 199,3081.69,0.00,26875.30
+2026-10-23,207,6200,Software,Spruce Software,IE,Card payment 207,2733.17,0.00,29608.47
+2026-10-25,215,6200,Software,Spruce Software,IE,Card payment 215,2385.65,0.00,31994.12
+2026-10-27,223,6200,Software,Spruce Software,IE,Card payment 223,2037.13,0.00,34031.25
+2026-10-29,231,6200,Software,Spruce Software,IE,Card payment 231,1689.61,0.00,35720.86
+2026-10-31,239,6200,Software,Spruce Software,IE,Card payment 239,1341.09,0.00,37061.95
