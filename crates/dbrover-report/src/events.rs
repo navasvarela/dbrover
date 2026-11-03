@@ -24,6 +24,9 @@ pub enum RunEvent {
         rows: u64,
         bytes: u64,
         elapsed_ms: u64,
+        /// For a source whose lookup runs in batches, the one it is reading.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        batch: Option<Batch>,
     },
     /// A source returned its last row, and was loaded into DuckDB if the report combines.
     SourceDone {
@@ -40,6 +43,9 @@ pub enum RunEvent {
         /// One sentence each, such as a column too precise for DuckDB's decimals.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         warnings: Vec<String>,
+        /// How many statements a source with a lookup sent, one a batch of its values.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        batches: Option<u64>,
     },
     /// A DuckDB file was attached for the combine step to read in place.
     SourceAttached {
@@ -83,6 +89,9 @@ pub struct SourceStart {
     /// Its data source's name.
     pub data_source: String,
     pub attached: bool,
+    /// The source whose values its lookup reads, which it waits for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waits_for: Option<String>,
 }
 
 /// A column of a source's table in DuckDB, and the type it was given.
@@ -91,6 +100,16 @@ pub struct LoadedColumn {
     pub name: String,
     /// As DuckDB names it, as `DECIMAL(38,18)`.
     pub type_name: String,
+    /// Whether the report file declares the column's type, rather than the run typing it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub declared: bool,
+}
+
+/// Which of a lookup's batches a source is reading, counted from 1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Batch {
+    pub number: u64,
+    pub of: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

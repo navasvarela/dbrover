@@ -113,6 +113,7 @@ pub async fn run<O: SourceOpener>(
     folders: RunFolders<'_>,
     events: &mut dyn FnMut(RunEvent),
 ) -> Result<RunSummary, RunFailure> {
+    refuse_until_rp3d(plan)?;
     let _staging = Staging::make(folders)?;
     let outputs = Outputs {
         plan,
@@ -144,6 +145,35 @@ pub async fn run<O: SourceOpener>(
             combining.run(events).await
         }
     }
+}
+
+/// Fails a plan that needs a lookup, declared columns or a source without SQL, which RP3d
+/// runs; the file reads and plans already, so its problems show in the tab.
+fn refuse_until_rp3d(plan: &Plan) -> Result<(), RunFailure> {
+    let sources: Vec<&QuerySource> = match &plan.logic {
+        Logic::Direct(source) => vec![source],
+        Logic::Combine(combined) => combined.rounds().into_iter().flatten().collect(),
+    };
+    for source in sources {
+        let waits = if source.lookup.is_some() {
+            Some("a lookup")
+        } else if source.columns.is_some() {
+            Some("declared columns")
+        } else if source.language.dialect().is_none() {
+            Some(source.language.display_name())
+        } else {
+            None
+        };
+        if let Some(feature) = waits {
+            return Err(RunFailure::new(
+                Step::Source {
+                    id: source.id.clone(),
+                },
+                format!("a source with {feature} runs once RP3d is built"),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// What the outputs are written from.
@@ -184,6 +214,7 @@ impl Feed<'_> {
                 elapsed_ms: millis(elapsed),
                 table: Vec::new(),
                 warnings: Vec::new(),
+                batches: None,
             },
             Self::Combine => RunEvent::CombineDone {
                 rows: read.rows,
@@ -260,6 +291,7 @@ impl Outputs<'_> {
                     rows: read.rows,
                     bytes: read.bytes,
                     elapsed_ms: millis(opened.elapsed()),
+                    batch: None,
                 });
             }
         };

@@ -10,6 +10,8 @@ use dbrover_export::{
     FieldSeparator, Preset, SheetName,
 };
 
+use dbrover_language::QueryLanguage;
+
 use super::*;
 
 /// The trial balance in `docs/reporting.md`'s RP1 section.
@@ -348,8 +350,9 @@ fn names_every_problem_with_its_place() {
         ),
         (
             one_source("", "SELECT 1", output)
-                .replace("id = \"s\"\n", "id = \"s\"\nlookup = { from = \"t\" }\n"),
-            "source \"s\": a lookup reads by the keys an earlier source found, which comes with RP3",
+                .replace("id = \"s\"\n", "id = \"s\"\nkeys = \"t\"\n"),
+            "source \"s\": \"keys\" is not part of a source, which has id, data_source, query, \
+             lookup, columns, attach, max_rows, max_bytes and timeout",
         ),
         (
             one_source("", "SELECT 1", output)
@@ -530,7 +533,10 @@ fn plans_the_trial_balance_with_its_preset_and_the_same_columns() {
         panic!("{:?}", plan.logic);
     };
     assert_eq!(source.data_source, ledger);
-    assert_eq!(source.dialect, dbrover_sql::Dialect::Sqlite);
+    assert_eq!(
+        source.language,
+        QueryLanguage::Sql(dbrover_sql::Dialect::Sqlite)
+    );
     let [excel, csv] = plan.outputs.as_slice() else {
         panic!("{:?}", plan.outputs);
     };
@@ -728,7 +734,10 @@ fn reads_and_plans_the_valuation() {
     else {
         panic!("{:?}", combined.sources);
     };
-    assert_eq!(tx.dialect, dbrover_sql::Dialect::Postgres);
+    assert_eq!(
+        tx.language,
+        QueryLanguage::Sql(dbrover_sql::Dialect::Postgres)
+    );
     assert_eq!(prices.path, PathBuf::from("/tmp/prices.duckdb"));
     assert_eq!(
         plan.params
@@ -744,11 +753,13 @@ fn reads_and_plans_the_valuation() {
                 id: "tx".to_owned(),
                 data_source: "ledger-postgres".to_owned(),
                 attached: false,
+                waits_for: None,
             },
             SourceStart {
                 id: "prices".to_owned(),
                 data_source: "prices-duckdb".to_owned(),
                 attached: true,
+                waits_for: None,
             },
         ]
     );

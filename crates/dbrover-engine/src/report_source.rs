@@ -78,7 +78,13 @@ impl ReportSource {
         access: SourceAccess<'_>,
     ) -> Result<Self, SourceError> {
         let started = Instant::now();
-        let dialect = source.dialect;
+        // The run refuses a source in another language until it can send one (RP3d).
+        let Some(dialect) = source.language.dialect() else {
+            return Err(SourceError::new(format!(
+                "a source in {} isn't sent yet",
+                source.language.display_name()
+            )));
+        };
         let checked = dbrover_sql::inline(&source.query, dialect, values)
             .map_err(|missing| SourceError::new(missing.to_string()))?;
         read_only::check(&checked.sql, QueryLanguage::Sql(dialect)).map_err(|refusal| {

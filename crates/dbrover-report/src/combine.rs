@@ -138,6 +138,7 @@ impl<O: SourceOpener> Combining<'_, O> {
             .map(|(name, column_type)| LoadedColumn {
                 name: name.to_owned(),
                 type_name: column_type.to_string(),
+                declared: false,
             })
             .collect();
         loader
@@ -152,6 +153,7 @@ impl<O: SourceOpener> Combining<'_, O> {
             elapsed_ms: millis(loading.opened.elapsed()),
             table,
             warnings,
+            batches: None,
         });
         Ok(())
     }
@@ -249,6 +251,7 @@ impl Loading<'_> {
                     rows: read.rows,
                     bytes: read.bytes,
                     elapsed_ms: millis(self.opened.elapsed()),
+                    batch: None,
                 });
             }
         }

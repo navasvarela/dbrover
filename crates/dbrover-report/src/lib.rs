@@ -26,7 +26,7 @@ mod run;
 mod typing;
 
 pub use events::{
-    LimitHit, LoadedColumn, Preview, RunEvent, RunFailure, SourceStart, Step, WrittenFile,
+    Batch, LimitHit, LoadedColumn, Preview, RunEvent, RunFailure, SourceStart, Step, WrittenFile,
 };
 pub use file_name::FileName;
 pub use limits::{
@@ -35,11 +35,14 @@ pub use limits::{
     DEFAULT_SOURCE_TIMEOUT, OutputLimits, SourceLimits,
 };
 pub use plan::{
-    AttachedSource, Combined, Logic, OutputFormat, Plan, PlannedCombine, PlannedOutput,
-    PlannedSource, QuerySource, RunValues, TypedValues,
+    AttachedSource, Combined, Logic, OutputFormat, Plan, PlannedCombine, PlannedLookup,
+    PlannedOutput, PlannedSource, QuerySource, RunValues, TypedValues,
 };
 pub use read::read_report;
-pub use report::{Combine, Output, OutputColumns, OutputWriter, Param, Report, Source, SourceRead};
+pub use report::{
+    Combine, Lookup, Output, OutputColumns, OutputWriter, Param, Report, Source, SourceColumn,
+    SourceRead,
+};
 pub use request::RunRequest;
 pub use run::{
     PREVIEW_ROWS, RunFolders, RunSummary, SourceError, SourceOpener, SourceReader, grouped, run,
@@ -49,5 +52,7 @@ pub use run::{
 mod combine_tests;
 #[cfg(test)]
 mod run_tests;
+#[cfg(test)]
+mod source_tests;
 #[cfg(test)]
 mod tests;

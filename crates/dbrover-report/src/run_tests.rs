@@ -354,6 +354,7 @@ fn events_are_json_lines_the_app_reads_back() {
                 id: "balances".to_owned(),
                 data_source: "ledger".to_owned(),
                 attached: false,
+                waits_for: Some("tx".to_owned()),
             }],
             combine: false,
         },
@@ -362,6 +363,7 @@ fn events_are_json_lines_the_app_reads_back() {
             rows: 10,
             bytes: 100,
             elapsed_ms: 1000,
+            batch: Some(Batch { number: 2, of: 7 }),
         },
         RunEvent::SourceDone {
             id: "tx".to_owned(),
@@ -372,8 +374,10 @@ fn events_are_json_lines_the_app_reads_back() {
             table: vec![LoadedColumn {
                 name: "quantity".to_owned(),
                 type_name: "DECIMAL(38,18)".to_owned(),
+                declared: true,
             }],
             warnings: Vec::new(),
+            batches: Some(7),
         },
         RunEvent::SourceAttached {
             id: "prices".to_owned(),

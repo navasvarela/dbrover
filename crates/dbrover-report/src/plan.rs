@@ -2,6 +2,7 @@
 //! checked, so that a run needs nothing but its parameters' values.
 
 use std::collections::BTreeMap;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -14,8 +15,8 @@ use dbrover_language::QueryLanguage;
 use dbrover_sql::{Dialect, ParameterValues, StatementKind};
 
 use crate::{
-    CombineLimits, FileName, Output, OutputColumns, OutputLimits, OutputWriter, Param, Report,
-    Source, SourceLimits, SourceRead, SourceStart,
+    CombineLimits, FileName, Lookup, Output, OutputColumns, OutputLimits, OutputWriter, Param,
+    Report, Source, SourceColumn, SourceLimits, SourceRead, SourceStart,
 };
 
 /// A report ready to run.
@@ -49,6 +50,34 @@ pub struct Combined {
     pub combine: PlannedCombine,
 }
 
+impl Combined {
+    /// The sources with a query, in the rounds they load in (`docs/reporting.md`,
+    /// "Lookups"): the first holds every source without a lookup, and each later one the
+    /// sources whose lookup reads a source of the round before it. A lookup only reads a
+    /// source above it, so each source's round is known once the ones above it are.
+    pub fn rounds(&self) -> Vec<Vec<&QuerySource>> {
+        let mut round_of: Vec<(&str, usize)> = Vec::new();
+        let mut rounds: Vec<Vec<&QuerySource>> = Vec::new();
+        for source in &self.sources {
+            let PlannedSource::Query(source) = source else {
+                continue;
+            };
+            let round = source.lookup.as_ref().map_or(0, |lookup| {
+                round_of
+                    .iter()
+                    .find(|(id, _)| id.eq_ignore_ascii_case(&lookup.from))
+                    .map_or(0, |(_, round)| round + 1)
+            });
+            round_of.push((&source.id, round));
+            if rounds.len() <= round {
+                rounds.resize_with(round + 1, Vec::new);
+            }
+            rounds[round].push(source);
+        }
+        rounds
+    }
+}
+
 /// A source with its data source found.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlannedSource {
@@ -77,10 +106,24 @@ impl PlannedSource {
 pub struct QuerySource {
     pub id: String,
     pub data_source: DataSource,
-    /// The data source's SQL dialect, which its query and parameters are read in.
-    pub dialect: Dialect,
+    /// The data source's language, which its query and parameters are read in.
+    pub language: QueryLanguage,
     pub query: String,
     pub limits: SourceLimits,
+    pub lookup: Option<PlannedLookup>,
+    /// The columns its table has, when the file declares them; otherwise the result's. Always
+    /// declared for a language without a SQL dialect.
+    pub columns: Option<Vec<SourceColumn>>,
+}
+
+/// A lookup, with the most values a statement of its source takes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedLookup {
+    /// The source above whose loaded table the values are read from.
+    pub from: String,
+    pub column: String,
+    pub parameter: String,
+    pub batch_size: NonZeroUsize,
 }
 
 /// A DuckDB file the combine step reads in place.
@@ -232,12 +275,19 @@ impl Plan {
             id: source.id().to_owned(),
             data_source: source.data_source().name.clone(),
             attached: matches!(source, PlannedSource::Attached(_)),
+            waits_for: match source {
+                PlannedSource::Query(source) => {
+                    source.lookup.as_ref().map(|lookup| lookup.from.clone())
+                }
+                PlannedSource::Attached(_) => None,
+            },
         };
         match &self.logic {
             Logic::Direct(source) => vec![SourceStart {
                 id: source.id.clone(),
                 data_source: source.data_source.name.clone(),
                 attached: false,
+                waits_for: None,
             }],
             Logic::Combine(combined) => combined.sources.iter().map(start).collect(),
         }
@@ -300,34 +350,98 @@ impl Plan {
 fn plan_source(source: &Source, data_sources: &[DataSource]) -> Result<PlannedSource, String> {
     let data_source = find_data_source(&source.data_source, data_sources)?;
     match &source.read {
-        SourceRead::Query { query, limits } => {
-            plan_query(&source.id, data_source, query, *limits).map(PlannedSource::Query)
-        }
+        SourceRead::Query {
+            query,
+            limits,
+            lookup,
+            columns,
+        } => plan_query(
+            &source.id,
+            data_source,
+            QueryRead {
+                query,
+                limits: *limits,
+                lookup: lookup.as_ref(),
+                columns: columns.as_ref(),
+            },
+        )
+        .map(PlannedSource::Query),
         SourceRead::Attach => attach(&source.id, data_source).map(PlannedSource::Attached),
     }
+}
+
+/// What the file says of a source with a query.
+struct QueryRead<'a> {
+    query: &'a str,
+    limits: SourceLimits,
+    lookup: Option<&'a Lookup>,
+    columns: Option<&'a Vec<SourceColumn>>,
 }
 
 fn plan_query(
     id: &str,
     data_source: &DataSource,
-    query: &str,
-    limits: SourceLimits,
+    read: QueryRead<'_>,
 ) -> Result<QuerySource, String> {
     let driver = data_source.config.driver();
-    let dialect = QueryLanguage::from(driver).dialect().ok_or_else(|| {
-        format!(
-            "{:?} is a {} data source, which a report reads once RP3 declares the columns \
-             its results have; until then a source is on a SQL data source",
+    let language = QueryLanguage::from(driver);
+    if language.dialect().is_none() && read.columns.is_none() {
+        return Err(format!(
+            "{:?} is a {} data source, whose results have no fixed columns; declare the columns \
+             the source makes, as columns = [{{ name = \"symbol\", type = \"text\" }}]",
             data_source.name,
             driver.display_name()
-        )
-    })?;
+        ));
+    }
+    let lookup = read
+        .lookup
+        .map(|lookup| plan_lookup(lookup, language, read.query))
+        .transpose()?;
     Ok(QuerySource {
         id: id.to_owned(),
         data_source: data_source.clone(),
-        dialect,
-        query: query.to_owned(),
-        limits,
+        language,
+        query: read.query.to_owned(),
+        limits: read.limits,
+        lookup,
+        columns: read.columns.cloned(),
+    })
+}
+
+/// `lookup` for a query in `language`: the query uses its parameter, and its batches are no
+/// larger than a statement of the language takes.
+fn plan_lookup(
+    lookup: &Lookup,
+    language: QueryLanguage,
+    query: &str,
+) -> Result<PlannedLookup, String> {
+    let used = language
+        .parameters(query)
+        .iter()
+        .any(|parameter| parameter.name == lookup.parameter);
+    if !used {
+        return Err(format!(
+            "lookup: the query doesn't use :{}, which the lookup's values are bound to; read \
+             by them, as WHERE {} IN :{}",
+            lookup.parameter, lookup.column, lookup.parameter
+        ));
+    }
+    let most = language.max_list_values();
+    let batch_size = match lookup.batch_size {
+        Some(size) if size > most => {
+            return Err(format!(
+                "lookup: batch_size is {size}, more than the {most} values a {} statement takes",
+                language.display_name()
+            ));
+        }
+        Some(size) => size,
+        None => most,
+    };
+    Ok(PlannedLookup {
+        from: lookup.from.clone(),
+        column: lookup.column.clone(),
+        parameter: lookup.parameter.clone(),
+        batch_size,
     })
 }
 
@@ -403,25 +517,34 @@ fn starts_as_query(query: &str) -> bool {
         .is_some_and(|word| QUERY_WORDS.contains(&word.to_ascii_lowercase().as_str()))
 }
 
-/// Each query the run sends, with the dialect it is read in, sources first.
-fn queries<'a>(
-    sources: &'a [PlannedSource],
-    combine: Option<&'a PlannedCombine>,
-) -> Vec<(String, &'a str, Dialect)> {
+/// A query the run sends: where it is, its text and language, and the parameter its lookup
+/// binds, which isn't one of the report's.
+struct Sent<'a> {
+    label: String,
+    query: &'a str,
+    language: QueryLanguage,
+    lookup: Option<&'a str>,
+}
+
+/// Each query the run sends, sources first.
+fn queries<'a>(sources: &'a [PlannedSource], combine: Option<&'a PlannedCombine>) -> Vec<Sent<'a>> {
     let sources = sources.iter().filter_map(|source| match source {
-        PlannedSource::Query(source) => Some((
-            format!("source {:?}", source.id),
-            source.query.as_str(),
-            source.dialect,
-        )),
+        PlannedSource::Query(source) => Some(Sent {
+            label: format!("source {:?}", source.id),
+            query: source.query.as_str(),
+            language: source.language,
+            lookup: source
+                .lookup
+                .as_ref()
+                .map(|lookup| lookup.parameter.as_str()),
+        }),
         PlannedSource::Attached(_) => None,
     });
-    let combine = combine.map(|combine| {
-        (
-            "[combine]".to_owned(),
-            combine.query.as_str(),
-            Dialect::DuckDb,
-        )
+    let combine = combine.map(|combine| Sent {
+        label: "[combine]".to_owned(),
+        query: combine.query.as_str(),
+        language: QueryLanguage::Sql(Dialect::DuckDb),
+        lookup: None,
     });
     sources.chain(combine).collect()
 }
@@ -474,13 +597,20 @@ fn find_data_source<'a>(
 /// each `:name` the report doesn't declare.
 fn ordered_params(
     params: &[Param],
-    queries: &[(String, &str, Dialect)],
+    queries: &[Sent<'_>],
     problems: &mut Vec<String>,
 ) -> Vec<Param> {
     let mut ordered: Vec<Param> = Vec::new();
-    for (label, query, dialect) in queries {
-        for name in dbrover_sql::parameter_names(query, *dialect) {
-            if ordered.iter().any(|param| param.name == name) {
+    for sent in queries {
+        let label = &sent.label;
+        let mut names: Vec<String> = Vec::new();
+        for parameter in sent.language.parameters(sent.query) {
+            if !names.contains(&parameter.name) {
+                names.push(parameter.name);
+            }
+        }
+        for name in names {
+            if ordered.iter().any(|param| param.name == name) || sent.lookup == Some(&name) {
                 continue;
             }
             match params.iter().find(|param| param.name == name) {
