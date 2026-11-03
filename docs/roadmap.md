@@ -1788,8 +1788,27 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   Elasticsearch and Redis sources beyond their parameters and literals, which no example
   reads. Left for later: `if_invalid` on a source's columns, several lookups on one source, and
   a program step, which the cost basis turned out not to need.
-- **RP4 — Metrics:** each run's steps in the history, runs compared side by side, and hints
-  about the step that dominates.
+- **RP4 — Metrics** (started 2026-11-03, after RP3): each run's steps kept in the history,
+  the last runs compared side by side in the report's tab with the step that dominates marked,
+  hints for a source that reads far more than the report writes and a combine step that
+  spills, and a Settings page for the limits' defaults. Planned in
+  [Reports](reporting.md#rp4--metrics). In layers, one PR each:
+  - **RP4a — Plan:** RP4's layers, decisions and risks, and this entry. Runs go in a
+    `report_runs` table of `history.sqlite`, written by the app when a run ends, the newest 20
+    of each report kept; DuckDB's peaks come from its profiler.
+  - **RP4b — What a run measures:** DuckDB's peak memory and spill after the combine step, and
+    each output's time, in the worker's events.
+  - **RP4c — Run history:** the `report_runs` table, the engine's commands for it, and each run
+    recorded when it ends.
+  - **RP4d — Runs side by side:** the tab's **Runs** section, the step that dominates, the two
+    hints, and clearing a report's runs.
+  - **RP4e — Settings › Reports:** the limits' defaults and the runs kept, in `settings.toml`'s
+    `[reports]`, sent to the worker with each run.
+  - **RP4f — Manual:** the chapter's new sections, and the demo note.
+
+  **Exit:** a report run twice shows both runs side by side with each step's time, the step
+  that dominates marked, and the spill hint on a combine step past its memory limit; the
+  limits' defaults change in Settings.
 - **RP5 — PRQL:** the combine step in PRQL, compiled to DuckDB SQL by `prqlc`.
 - **RP6 — The command line:** `dbrover report run`, for cron and CI.
 - **RP7 — Manual,** with the example reports.
