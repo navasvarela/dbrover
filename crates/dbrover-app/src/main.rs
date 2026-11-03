@@ -54,6 +54,7 @@ mod project_dialog;
 mod relaunch;
 mod renderer;
 mod repaint;
+mod report_command;
 mod report_worker;
 mod reports;
 mod rollback_dialog;
@@ -100,7 +101,7 @@ const DEFAULT_WINDOW_SIZE: [f32; 2] = [1440.0, 900.0];
 fn main() -> anyhow::Result<()> {
     // Before anything else: `--version` must work without a display, a home directory or a
     // config folder, because the release workflow smoke-tests packaged builds with it; and
-    // `mcp` and `report-worker` must not open a window.
+    // `mcp`, `report` and `report-worker` must not open a window.
     let request = version::CliRequest::parse(std::env::args().skip(1));
     if request.answer() {
         return Ok(());
@@ -110,6 +111,9 @@ fn main() -> anyhow::Result<()> {
             project,
             config_dir,
         } => return mcp::run(&project, config_dir.as_deref()),
+        version::CliRequest::Report(request) => {
+            std::process::exit(report_command::main(request));
+        }
         version::CliRequest::ReportWorker { config_dir } => {
             std::process::exit(report_worker::run(config_dir.as_deref()));
         }

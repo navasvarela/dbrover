@@ -1,0 +1,300 @@
+//! What `dbrover report run` prints for a person, or for cron's mail: a line on standard error
+//! as the run starts and as each step ends, and each file written on standard output, its full
+//! path a line, so a script can pipe them on (`docs/reporting.md`, "What it prints").
+
+use std::io::Write;
+
+use dbrover_core::ByteCount;
+use dbrover_report::{LimitHit, RunEvent, RunFailure, TypedValues, WrittenFile, grouped};
+
+/// Excel's rows a sheet: a limit of Excel's, with no default in Settings to point at.
+const EXCEL_ROWS_KEY: &str = "continue_on_new_sheet";
+
+/// Writes the lines for each event of a run.
+pub struct HumanLines<O: Write, E: Write> {
+    out: O,
+    err: E,
+    values: TypedValues,
+}
+
+impl<O: Write, E: Write> HumanLines<O, E> {
+    /// `values` are the parameters the run was given, named in its first line.
+    pub fn new(out: O, err: E, values: TypedValues) -> Self {
+        Self { out, err, values }
+    }
+
+    pub fn event(&mut self, event: &RunEvent) {
+        match event {
+            RunEvent::Started { report, .. } => {
+                let line = started(report, &self.values);
+                self.error_line(&line);
+            }
+            RunEvent::SourceDone {
+                id,
+                rows,
+                bytes,
+                elapsed_ms,
+                warnings,
+                batches,
+                ..
+            } => {
+                let batches = match batches {
+                    Some(1) => ", 1 batch".to_owned(),
+                    Some(batches) => format!(", {batches} batches"),
+                    None => String::new(),
+                };
+                let line = format!(
+                    "Source {id}: {}{batches}",
+                    amounts(*rows, *bytes, *elapsed_ms)
+                );
+                self.error_line(&line);
+                self.warnings(&format!("source {id}"), warnings);
+            }
+            RunEvent::SourceAttached { id, .. } => {
+                self.error_line(&format!("Source {id}: attached, read in place"));
+            }
+            RunEvent::CombineDone {
+                rows,
+                bytes,
+                elapsed_ms,
+                ..
+            } => {
+                let line = format!("Combine: {}", amounts(*rows, *bytes, *elapsed_ms));
+                self.error_line(&line);
+            }
+            RunEvent::OutputWritten(file) => self.written(file),
+            RunEvent::Finished { elapsed_ms } => {
+                self.error_line(&format!("Finished in {}.", seconds(*elapsed_ms)));
+            }
+            RunEvent::Failed(failure) => {
+                for line in failed(failure) {
+                    self.error_line(&line);
+                }
+            }
+            RunEvent::Cancelled => self.error_line("Cancelled. No file was written."),
+            RunEvent::Progress { .. } | RunEvent::Preview(_) => {}
+        }
+    }
+
+    /// Problems found before the run could start, such as a parameter missing.
+    pub fn problems(&mut self, heading: &str, problems: &[String]) {
+        self.error_line(heading);
+        for problem in problems {
+            self.error_line(&format!("  {problem}"));
+        }
+    }
+
+    fn written(&mut self, file: &WrittenFile) {
+        let path = file.path.display().to_string();
+        // Standard output is the files' list a script reads; an error writing it (a pipe
+        // closed by `head`, say) isn't the run's failure, which the exit code says.
+        let _ = writeln!(self.out, "{path}").and_then(|()| self.out.flush());
+        self.warnings(&path, &file.warnings);
+    }
+
+    fn warnings(&mut self, about: &str, warnings: &[String]) {
+        for warning in warnings {
+            self.error_line(&format!("Warning, {about}: {warning}"));
+        }
+    }
+
+    fn error_line(&mut self, line: &str) {
+        // As for standard output: nothing is left to tell if standard error is gone.
+        let _ = writeln!(self.err, "{line}");
+    }
+}
+
+/// `Sales by category (since = 2026-10-01, until = 2026-11-01)`.
+fn started(report: &str, values: &TypedValues) -> String {
+    if values.is_empty() {
+        return report.to_owned();
+    }
+    let values: Vec<String> = values
+        .iter()
+        .map(|(name, value)| format!("{name} = {value}"))
+        .collect();
+    format!("{report} ({})", values.join(", "))
+}
+
+/// The failure, and for a limit, where to raise it, as the report's tab says it.
+fn failed(failure: &RunFailure) -> Vec<String> {
+    let mut lines = vec![format!("Failed in {}: {}", failure.step, failure.message)];
+    if let Some(limit) = &failure.limit {
+        lines.push(raise(limit));
+    }
+    lines
+}
+
+fn raise(limit: &LimitHit) -> String {
+    let LimitHit {
+        key,
+        value,
+        raise_in,
+    } = limit;
+    let in_file = format!(
+        "It stopped at {key} = {value}. To allow more, raise {key} in {raise_in} of the report's file"
+    );
+    if key == EXCEL_ROWS_KEY {
+        return format!("{in_file}.");
+    }
+    format!("{in_file}, or its default for every report in Settings › Reports.")
+}
+
+/// `1,250 rows, 61.4 KB in 0.1 s`.
+fn amounts(rows: u64, bytes: u64, elapsed_ms: u64) -> String {
+    format!(
+        "{} rows, {} in {}",
+        grouped(rows),
+        ByteCount(bytes),
+        seconds(elapsed_ms)
+    )
+}
+
+/// `1.2 s`, as the report's tab writes a time.
+fn seconds(ms: u64) -> String {
+    format!("{:.1} s", ms as f64 / 1000.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use dbrover_report::Step;
+
+    use super::*;
+
+    fn lines(values: &[(&str, &str)], events: &[RunEvent]) -> (String, String) {
+        let values = values
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect();
+        let mut human = HumanLines::new(Vec::new(), Vec::new(), values);
+        for event in events {
+            human.event(event);
+        }
+        let HumanLines { out, err, .. } = human;
+        (
+            String::from_utf8(out).unwrap(),
+            String::from_utf8(err).unwrap(),
+        )
+    }
+
+    #[test]
+    fn tells_a_finished_run_and_lists_its_files() {
+        let events = [
+            RunEvent::Started {
+                report: "Sales by category".to_owned(),
+                sources: Vec::new(),
+                combine: true,
+            },
+            RunEvent::Progress {
+                step: Step::Combine,
+                rows: 3,
+                bytes: 30,
+                elapsed_ms: 1_000,
+                batch: None,
+            },
+            RunEvent::SourceDone {
+                id: "lines".to_owned(),
+                rows: 1_250,
+                bytes: 61_400,
+                first_row_ms: Some(1),
+                elapsed_ms: 120,
+                table: Vec::new(),
+                warnings: vec!["amount has more digits than DuckDB keeps".to_owned()],
+                batches: Some(3),
+            },
+            RunEvent::SourceAttached {
+                id: "prices".to_owned(),
+                path: PathBuf::from("prices.duckdb"),
+            },
+            RunEvent::CombineDone {
+                rows: 27,
+                bytes: 2_000,
+                first_row_ms: Some(1),
+                elapsed_ms: 40,
+                peak_memory: None,
+                peak_temp_size: None,
+            },
+            RunEvent::OutputWritten(WrittenFile {
+                path: PathBuf::from("/out/sales-2026-10.xlsx"),
+                rows: 27,
+                size: 9_000,
+                elapsed_ms: 3,
+                warnings: vec!["2 cells of Amount written as text".to_owned()],
+            }),
+            RunEvent::OutputWritten(WrittenFile {
+                path: PathBuf::from("/out/sales-2026-10.csv"),
+                rows: 27,
+                size: 1_500,
+                elapsed_ms: 1,
+                warnings: Vec::new(),
+            }),
+            RunEvent::Finished { elapsed_ms: 420 },
+        ];
+        let (out, err) = lines(&[("since", "2026-10-01"), ("until", "2026-11-01")], &events);
+        assert_eq!(out, "/out/sales-2026-10.xlsx\n/out/sales-2026-10.csv\n");
+        assert_eq!(
+            err,
+            "Sales by category (since = 2026-10-01, until = 2026-11-01)\n\
+             Source lines: 1,250 rows, 61.4 KB in 0.1 s, 3 batches\n\
+             Warning, source lines: amount has more digits than DuckDB keeps\n\
+             Source prices: attached, read in place\n\
+             Combine: 27 rows, 2.0 KB in 0.0 s\n\
+             Warning, /out/sales-2026-10.xlsx: 2 cells of Amount written as text\n\
+             Finished in 0.4 s.\n"
+        );
+    }
+
+    #[test]
+    fn tells_where_to_raise_the_limit_a_run_stopped_at() {
+        let limit = |key: &str| {
+            RunEvent::Failed(RunFailure::at_limit(
+                Step::Source {
+                    id: "lines".to_owned(),
+                },
+                "it returned more than 10 rows",
+                LimitHit {
+                    key: key.to_owned(),
+                    value: "10 rows".to_owned(),
+                    raise_in: "the [[source]] \"lines\"".to_owned(),
+                },
+            ))
+        };
+        let cases = [
+            (
+                RunEvent::Failed(RunFailure::new(Step::Report, "since needs a value")),
+                "Failed in the report: since needs a value\n",
+            ),
+            (
+                limit("max_rows"),
+                "Failed in source \"lines\": it returned more than 10 rows\n\
+                 It stopped at max_rows = 10 rows. To allow more, raise max_rows in the \
+                 [[source]] \"lines\" of the report's file, or its default for every report in \
+                 Settings › Reports.\n",
+            ),
+            (
+                limit(EXCEL_ROWS_KEY),
+                "Failed in source \"lines\": it returned more than 10 rows\n\
+                 It stopped at continue_on_new_sheet = 10 rows. To allow more, raise \
+                 continue_on_new_sheet in the [[source]] \"lines\" of the report's file.\n",
+            ),
+            (RunEvent::Cancelled, "Cancelled. No file was written.\n"),
+        ];
+        for (event, expected) in cases {
+            let (out, err) = lines(&[], &[event]);
+            assert_eq!(out, "");
+            assert_eq!(err, expected);
+        }
+    }
+
+    #[test]
+    fn names_a_report_without_parameters_alone() {
+        let started = RunEvent::Started {
+            report: "Stock".to_owned(),
+            sources: Vec::new(),
+            combine: false,
+        };
+        assert_eq!(lines(&[], &[started]).1, "Stock\n");
+    }
+}

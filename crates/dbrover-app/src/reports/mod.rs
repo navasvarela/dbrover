@@ -681,7 +681,7 @@ impl Reports {
 
 /// A staging folder's name no other run of this app, or of another DbRover, has: hidden, and
 /// named after the process and the time, which is all one run needs to be told apart.
-fn staging_name() -> String {
+pub fn staging_name() -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_nanos());
