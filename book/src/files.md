@@ -29,6 +29,7 @@ settings folder can also be one you choose; see [Choosing the settings folder](#
 | `app.ron` (data folder) | The window's size and position, the panel layout, the theme you picked, the recent `.sql` files and which file each console tab shows. |
 | `logs/dbrover.YYYY-MM-DD.log` (data folder) | One log file per day. The last seven are kept. |
 | `logs/dbrover-mcp.YYYY-MM-DD.log` (data folder) | The same for `dbrover mcp`, the server AI assistants use. |
+| `logs/dbrover-report.YYYY-MM-DD.log` (data folder) | The same for `dbrover report run`, which runs a report from the command line (see [From the command line](reports.md#from-the-command-line)). |
 
 Passwords are not in any of these files: they are in your system's keychain, under the service
 name `dbrover`. See [Data sources](data-sources.md#passwords-and-the-keychain).

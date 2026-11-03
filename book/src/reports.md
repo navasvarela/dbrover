@@ -517,7 +517,162 @@ The worker can't ask for a password either. A data source whose password you typ
 can't be a report's source until you save the password, or use a password command or a cloud
 sign-in (see [Password from a command](data-sources.md#password-from-a-command)).
 
+## From the command line
+
+`dbrover report run` runs a report without opening DbRover's window, so cron, a scheduled task
+or a CI job can run it each month with new values. It runs in the same worker as a run from
+the report's tab, under the same [limits](#limits), and exits with a code that says how it
+ended.
+
+```bash
+dbrover report run sales-by-category \
+  --param since=2026-10-01 --param until=2026-11-01 \
+  --output-dir ~/reports/2026-10
+```
+
+`dbrover` is the program DbRover installs: `/Applications/DbRover.app/Contents/MacOS/dbrover`
+on a Mac, `/usr/bin/dbrover` from the `.deb`, the AppImage itself, and
+`%LOCALAPPDATA%\DbRover\dbrover.exe` on Windows. Cron and scheduled tasks don't read your shell's
+`PATH`, so write its full path there.
+
+| Argument | What it does |
+| --- | --- |
+| `<report>` | A report's name, as **Reports** lists it, from the `reports` folder; or the path to a report file anywhere, such as `examples/reports/sales-by-category.toml`. A name ending in `.toml` or with a `/` in it is a path. |
+| `--param <name>=<value>`, `-p` | A parameter's value, once for each, as the report's tab takes it: a date as `2026-10-01`, a timestamp as `"2026-10-01 12:00"`. A parameter missing, of the wrong type, or one the report doesn't take stops the command before anything runs. |
+| `--output-dir <folder>`, `-o` | Where the files go, made if it doesn't exist. Without it, the current folder. |
+| `--json` | The run's events on standard output, a JSON object a line (see below). |
+| `--config-dir <folder>` | The settings folder to use, as for the app (see [Choosing the settings folder](files.md#choosing-the-settings-folder)). Without it, the one DbRover uses. |
+
+The report's data sources are the settings folder's, by the names the report gives them, and
+the limits' defaults are Settings › Reports'. A source connects read-only, as in the app.
+
+### What it prints
+
+Standard error tells the run as it goes, and standard output lists each file written, its full
+path a line, so a script can pass them on:
+
+```text
+Sales by category (since = 2026-10-01, until = 2026-11-01)
+Source lines: 246 rows, 6.5 KB in 0.0 s
+Combine: 13 rows, 509 bytes in 0.0 s
+/home/me/reports/2026-10/sales-by-category-2026-10.xlsx
+/home/me/reports/2026-10/sales-by-category-2026-10.csv
+Finished in 0.0 s.
+```
+
+With `--json`, standard output is the run's events instead, as the report's tab reads them:
+`started`, `progress` about once a second, `source_done`, `combine_done`, `preview`,
+`output_written` for each file, and last `finished`, `failed` or `cancelled`. `jq` picks out what
+a script needs:
+
+```bash
+dbrover report run sales-by-category -p since=2026-10-01 -p until=2026-11-01 --json \
+  | jq -r 'select(.event == "output_written") | .path'
+```
+
+The command's log, and the worker's, go to `logs/dbrover-report.YYYY-MM-DD.log` in the data
+folder (see [Where DbRover keeps its files](files.md)).
+
+### Exit codes
+
+| Code | The run |
+| --- | --- |
+| 0 | ran and wrote its files |
+| 1 | failed otherwise: the combine query, an output that couldn't be written, or the worker |
+| 2 | didn't start: the command line is wrong |
+| 3 | didn't start: the report file isn't found or has a problem, a data source it names doesn't exist, a parameter is missing, unknown or of the wrong type, or the settings folder can't be used |
+| 4 | failed in a source: connecting to its data source, or its query |
+| 5 | stopped at a limit, such as `max_rows`; the message names the key to raise |
+| 6 | was stopped: its own time limit (`timeout` in `[report]`), Ctrl-C, or SIGTERM |
+
+Ctrl-C, or the SIGTERM that cron, `timeout` and CI runners send to stop a job, cancels the run as
+**Cancel** does: the worker stops, and the output folder is left as it was.
+
+### Runs in the app
+
+A run of a report in the `reports` folder is kept with the app's runs, so its tab lists it
+under [Runs](#runs) beside your own. A report file elsewhere, such as one in a repository's
+checkout, isn't kept.
+
+### Passwords
+
+Nobody is there to type a password, so a source's data source needs one of:
+
+- **A saved password,** in the keychain. On a Mac, cron reads the login keychain while you are
+  logged in. A Linux server without a desktop usually has no Secret Service to keep it in.
+- **A password command** that DbRover trusts (see
+  [Password from a command](data-sources.md#password-from-a-command)). Connecting to the data
+  source once in the app trusts it. On a machine without the app, trust it by adding its
+  command to `trusted_commands.toml` in the data folder, with the data source's `id` from
+  `data_sources.toml`:
+
+  ```toml
+  [[command]]
+  data_source = "3a4f8c2e-9b1d-4e6f-8a7c-5d2e1f0b9c11"
+  command = ["printenv", "WAREHOUSE_PASSWORD"]
+  ```
+
+- **A cloud sign-in** already on the machine (see [Cloud sign-in and costs](cloud.md)). DbRover
+  never opens a browser for one: when it has expired, the run fails with the cloud's message,
+  and `aws sso login`, `gcloud auth application-default login` or `az login` signs in again.
+
+### Every month, with cron
+
+This line in `crontab -e` runs the sales report at 6:00 on the first of each month, for the
+month before, on Linux (`date -d` is GNU's; macOS's `date` writes it `-v-1m`). Cron needs `%`
+written as `\%`:
+
+```text
+0 6 1 * * /usr/bin/dbrover report run sales-by-category --param since=$(date -d 'last month' +\%Y-\%m-01) --param until=$(date +\%Y-\%m-01) --output-dir /srv/reports >> /srv/reports/sales.log 2>&1
+```
+
+Cron mails what a job prints when the machine sends mail; `>> … 2>&1` keeps it in a file
+instead, each run ending with `Finished in …`, the failure, or `Cancelled`.
+
+### In CI
+
+A CI job has no settings folder of its own, so it writes one with the data sources its reports
+need. This GitHub Actions job runs the example `sales-by-category.toml` on a SQLite shop made by
+`shop.sql`, from a checkout of DbRover's repository, and keeps the files it writes:
+
+```yaml
+jobs:
+  sales:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install DbRover
+        run: |
+          gh release download --repo navasvarela/dbrover --pattern 'dbrover_*_amd64.deb'
+          sudo apt-get install -y ./dbrover_*_amd64.deb
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Run the sales report
+        run: |
+          sqlite3 shop.db < examples/reports/shop.sql
+          mkdir -p dbrover-settings
+          cat > dbrover-settings/data_sources.toml <<EOF
+          [[data_source]]
+          id = "0b9d3d1e-5f2a-4c56-9a8e-2d7f4b1c6e01"
+          name = "shop"
+          driver = "sqlite"
+          path = "$PWD/shop.db"
+          EOF
+          dbrover report run examples/reports/sales-by-category.toml \
+            --config-dir "$PWD/dbrover-settings" --output-dir out \
+            --param since=2026-10-01 --param until=2026-11-01
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sales-by-category
+          path: out/
+```
+
+A step fails when the command's exit code isn't 0, so a report that hits a limit or can't
+reach its database fails the job. `--config-dir` takes a full path, hence `$PWD`; a data
+source's `id` is any UUID, as `uuidgen` makes one. A data source
+on a server takes its password from a command, such as `printenv` of a CI secret, trusted as
+under [Passwords](#passwords).
+
 ## What's next
 
-Reports are being built in steps. Coming next: the PRQL language for the combine step, and running
-a report from the command line.
+Reports are being built in steps. Coming next: the PRQL language for the combine step.
