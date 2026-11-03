@@ -1,6 +1,7 @@
 # Cloud and big data
 
-Status: **C0 built** (2026-11-02); C1 to C6 planned, not scheduled. Proposed on
+Status: **C0 built** (2026-11-02); **C1 started** (2026-11-03); C2 to C6 planned, not
+scheduled. Proposed on
 2026-10-27; the order and the decisions below are confirmed as each milestone starts. The
 providers' priority was set on 2026-10-28: AWS, then Google Cloud, then Azure. On 2026-11-01
 DynamoDB was moved ahead of the track, as the NoSQL track's [N5](nosql.md#n5--dynamodb), with
@@ -234,15 +235,136 @@ before release, as N5's IAM Identity Center check was.
 
 ### C1 — Managed databases
 
-- Try each managed service in [Which services](#which-services-and-in-what-order), item 1, in
-  the providers' order, and fix what its catalog or defaults do differently (Redshift's system
-  tables, Azure SQL's gateway redirect, Neon's and Supabase's poolers, ClickHouse Cloud's TLS).
-- Synapse and Fabric through the SQL Server driver: their warehouses support only part of
-  T-SQL's catalog views and DDL, so the explorer and the object helpers check what each
-  supports, and Fabric connects only with an Entra ID token.
-- The data source dialog offers each as a preset: the right driver, port, TLS mode and sign-in.
-- **Exit:** each service on the list connects, browses and runs the conformance suite where an
-  account is available; a short page in the manual per provider.
+Started on 2026-11-03, after C0. Every service in
+[Which services](#which-services-and-in-what-order), item 1, through a driver DbRover already
+has: the work is in what each service's catalog, defaults and sign-in do differently, and in
+presets that fill the data source dialog with them.
+
+What differs, service by service, as their documentation describes it (none of it tried
+against the services while planning):
+
+| Service | Driver | Port | TLS | Sign-in | What differs |
+| --- | --- | --- | --- | --- | --- |
+| Amazon RDS and Aurora, PostgreSQL | PostgreSQL | 5432 | `require` | password, AWS IAM | Certificates from Amazon RDS's own authority, so `verify-full` needs its bundle. |
+| Amazon RDS and Aurora, MySQL | MySQL | 3306 | `require` | password, AWS IAM | The same authority; IAM needs TLS (C0d). |
+| Amazon Redshift, provisioned and Serverless | PostgreSQL | 5439 | `verify-full` | password | PostgreSQL 8.0's protocol with a catalog of its own: no sequences, indexes or triggers in `pg_class`, external (Spectrum) tables and late-binding views outside it, the `svv_all_*` views covering all of them, `SHOW TABLE` for a table's DDL, and no arrays as parameters. |
+| Cloud SQL for PostgreSQL and MySQL | PostgreSQL, MySQL | 5432, 3306 | `require` | password, Google Cloud | A certificate per instance, signed by the instance's own authority and naming no host, so `verify-full` needs the Auth Proxy or its `server-ca.pem`. |
+| Cloud SQL for SQL Server | SQL Server | 1433 | `require` | password | No IAM sign-in for SQL Server. |
+| Azure Database for PostgreSQL and MySQL (flexible server) | PostgreSQL, MySQL | 5432, 3306 | `verify-full` | password, Entra ID | Public authorities; the user is the plain name, since single server's `user@server` is retired. |
+| Azure SQL Database | SQL Server | 1433 | `verify-full` | password, Entra ID | Inside Azure the gateway redirects the login to the database's node (ports 11000 to 11999), which the driver already follows once on a direct route. |
+| Azure Synapse, dedicated and serverless SQL pools | SQL Server | 1433 | `verify-full` | password, Entra ID | Part of T-SQL's catalog views and DDL: no foreign keys, check constraints, triggers, sequences or synonyms, and no reading another database's catalog in a dedicated pool. |
+| Microsoft Fabric, warehouse and SQL analytics endpoint | SQL Server | 1433 | `verify-full` | Entra ID only | As Synapse, and no indexes; the SQL analytics endpoint's tables are read-only. |
+| Neon | PostgreSQL | 5432 | `verify-full` | password | A host with `-pooler` is PgBouncer in transaction mode; the endpoint is found from TLS's server name, which DbRover always sends. |
+| Supabase | PostgreSQL | 5432 | `require` | password | The pooler (Supavisor) keeps a session on 5432 and is in transaction mode on 6543, and its user is `postgres.<project>`; the certificate is from Supabase's own authority. |
+| ClickHouse Cloud | ClickHouse | 8443 | `verify-full` | password | HTTPS only, with public authorities; user `default`; an idle service wakes on the first request, which can take many seconds. |
+
+Two fixes the list asked for are smaller than the plan feared: Azure SQL's gateway redirect is
+already followed by the SQL Server driver (one redirect, on a direct route; a tunnel says it
+can't reach the node), and ClickHouse Cloud's TLS is HTTPS on its own port, which the
+ClickHouse driver and its TLS test server already cover. C1 gives both their presets and their
+manual pages, and nothing more.
+
+#### Recognising a service
+
+The driver, not the data source's settings, decides what a server is: PostgreSQL's
+`version()` names Redshift, and SQL Server's `SERVERPROPERTY('EngineEdition')` tells Azure SQL
+(5), a Synapse dedicated pool (6), and a Synapse serverless pool or Fabric (11), told apart by
+Fabric's host name. A data source that reaches the service through an SSH tunnel, a private
+endpoint or a host name of its own is recognised all the same. The connection's `ServerInfo`
+carries what was found, so the explorer and the object helpers read it as they read the
+engine's capabilities. Presets only fill in the dialog; nothing names the service in
+`data_sources.toml`. A pooler can't be recognised (it passes the server's own answers on), so
+the PostgreSQL driver is made to work behind one whether or not there is one (C1c).
+
+#### Testing without an account
+
+No layer uses a cloud account, reads the machine's cloud sign-ins (`~/.aws`,
+`~/.config/gcloud`, the Azure CLI's caches) or signs in anywhere. Each difference is tried on
+the closest local stand-in, and the plan and the demo note say which it was:
+
+- **Poolers:** PgBouncer in transaction mode with prepared statements off, in front of the
+  PostgreSQL test server, stands in for Neon's and Supabase's poolers. Supavisor isn't
+  PgBouncer, so Supabase's own pooler is tried by hand.
+- **Redshift:** its catalog code runs against PostgreSQL with stand-in `svv_*` views made from
+  `information_schema`, in a schema of the test database, so the queries and the tree are
+  tried; `SHOW TABLE` and the real views' columns are checked against Redshift's documentation
+  and tried by hand.
+- **Synapse and Fabric:** the narrowed catalog and helpers run on the SQL Server test server
+  with the service forced, which shows their queries are T-SQL that only reads the views each
+  warehouse has; recognising them is tested on `SERVERPROPERTY` values from Microsoft's
+  documentation.
+- **Presets:** a table test per service (driver, port, TLS, sign-ins, the host names it
+  recognises), and a check that each preset makes a data source that saves and reads back.
+- **ClickHouse Cloud's TLS:** the existing ClickHouse TLS test server, with the preset's
+  `verify-full` and the test authority.
+
+What only a real account shows is the C1 demo note's list for the user: each service connects,
+browses and runs the conformance suite (`dbrover-core::conformance`).
+
+#### Layers
+
+Each layer is one pull request in a stack, useful and tested on its own, with no cloud account.
+
+- **C1a — Plan:** this section, C1's rows in [Decisions](#decisions) and [Risks](#risks), and
+  the roadmap's entry in layers.
+- **C1b — Managed services:** a `ManagedService` table in `dbrover-core`, one row per service
+  above, in the providers' order: its driver, port, TLS mode, the sign-ins it takes and the
+  host names that recognise it (`*.rds.amazonaws.com`, `*.redshift-serverless.amazonaws.com`,
+  `*.database.windows.net`, `*-pooler.*.neon.tech`, `*.clickhouse.cloud`, …). Applying a
+  service to a data source's settings sets those, and keeps the host, user and database the
+  user typed. `ServerInfo` gains the service a connection found itself on, `None` for a plain
+  engine.
+  **Exit:** a table test per service; a host name of each pattern is recognised and others
+  aren't; each service's settings save to and read from `data_sources.toml`.
+- **C1c — PostgreSQL behind a transaction pooler:** the driver's own queries (the explorer,
+  table descriptions, roles) become unnamed statements, sent with their types in one round
+  trip (tokio-postgres's `query_typed`), so no prepared statement outlives the transaction a
+  pooler gives the connection, and each is one round trip instead of two. Checking a
+  console's statement becomes `PREPARE` and `DEALLOCATE` in one message, so both run on the
+  same server connection. Nothing is saved to say a pooler is there: the driver behaves the
+  same with or without one. Read-only data sources work as before, since their guard is a
+  read-only transaction (W11) and not a setting of the session. A `pgbouncer` test server
+  joins `docker-compose.yml` in transaction mode with prepared statements off.
+  **Exit:** through PgBouncer, two connections browse the catalog, describe tables and check
+  statements in turn on the same server connection without "prepared statement does not
+  exist" or "already exists"; a read-only console still refuses writes; the conformance suite
+  passes through it.
+- **C1d — Redshift:** the PostgreSQL driver recognises Redshift from `version()` and browses it
+  through `svv_redshift_databases`, `svv_all_schemas`, `svv_all_tables` and
+  `svv_all_columns`: databases, schemas, then tables (local and external) and views with their
+  columns. Definitions come from `SHOW TABLE` and `SHOW VIEW`; searching the server (C0g)
+  uses `svv_all_tables`. Materialized views, functions and procedures, and the object
+  helpers' Redshift DDL, wait for someone to need them; the explorer offers no helper on
+  Redshift rather than PostgreSQL's.
+  **Exit:** the Redshift catalog walks a test database with stand-in `svv_*` views, and every
+  node it lists is one its level lists again (the conformance walk); `version()` strings from
+  Redshift's documentation are recognised and PostgreSQL's aren't.
+- **C1e — Synapse and Fabric:** the SQL Server driver recognises them (`EngineEdition` and the
+  host), lists only the folders each has (no sequences, synonyms or triggers; no indexes on
+  Fabric), leaves out the constraint kinds each lacks, and reads only the connected database's
+  catalog where another's can't be read (a dedicated pool). The object helpers' capabilities
+  are narrowed for them: no foreign keys or checks on Synapse, no indexes on Fabric, foreign
+  keys `NOT ENFORCED` on Fabric. Fabric's preset signs in only with Entra ID, and the dialog
+  refuses a password for a Fabric host.
+  **Exit:** recognition from each `EngineEdition` and host; on the SQL Server test server with
+  each warehouse forced, the explorer walks the narrowed tree with no query failing; the
+  narrowed capabilities hide the helpers each lacks.
+- **C1f — Presets in the data source dialog:** **New data source** gains a **Cloud service**
+  submenu, by provider (AWS, Google Cloud, Azure, then the others), opening the dialog with
+  the service's settings; the dialog's **Service** row shows the service its host is
+  recognised as, and choosing one there applies it. A hint under the host says what the service expects (`verify-full` needs RDS's
+  bundle, Supabase's user is `postgres.<project>`).
+  **Exit:** a kittest opens each service from the menu and sees its driver, port, TLS and
+  sign-in in the form; typing a Neon pooler host shows Neon; saving writes them.
+- **C1g — Manual and demo note:** a page per provider in the Data sources part (Amazon Web
+  Services, Google Cloud, Microsoft Azure, and Neon, Supabase and ClickHouse Cloud), each
+  saying what DbRover does differently there and what wasn't tried, and the C1 demo note in
+  the roadmap.
+
+**Exit:** each service on the list connects, browses and runs the conformance suite where an
+account is available; a short page in the manual per provider. C1 can only show this with
+stand-ins (each layer's exit); trying the services with real accounts is left to the user
+before release, as C0's sign-ins were.
 
 ### C2 — Object storage and table formats (DuckDB)
 
@@ -309,6 +431,18 @@ C0's own decisions, taken on 2026-11-02 when it started; each can be overturned 
 | Jobs | **One `JobService` interface and one `JobCursor`**, polling with a growing pause (0.1 s doubling to 2 s), rather than each warehouse driver writing its own loop. | C3 to C6 implement four calls each; the engine and the console see an ordinary cursor and a progress handle. |
 | Searching a catalog | **A search on the server, a hundred matches at most, shown apart from the tree** under **Found on the server**, rather than expanding the tree to each match. | Nothing loads that wasn't asked for; a match is usable at once without loading its parents' levels. |
 
+C1's own decisions, taken on 2026-11-03 when it started; each can be overturned in review.
+
+| Question | Chosen | Consequence |
+| --- | --- | --- |
+| How a service is recognised | **By the driver, from what the server says** (`version()`, `SERVERPROPERTY('EngineEdition')`), with the host name only to tell Fabric from a Synapse serverless pool. Presets fill in the dialog and are not saved. | A tunnel, a private endpoint or a custom host name changes nothing; the dialog shows the service from the host, and an unrecognised host is just its engine. |
+| Poolers | **Unnamed statements for everything the driver asks, always,** rather than a setting that says a pooler is there. | One code path whether or not a pooler is there, and one round trip fewer per catalog query; nothing for the user to get wrong. A user's own `SET` still lands on whichever server connection the pooler picks, as with any client, and the manual says so. |
+| Redshift's catalog | **The `svv_all_*` views,** not `pg_catalog`. | External tables and late-binding views show up; Redshift's materialized views, functions and object helpers come later. |
+| Redshift's sign-in | **A password in C1.** C0d's RDS token doesn't sign in to Redshift, which hands out temporary credentials through its own API (`GetClusterCredentials`, Serverless's `GetCredentials`) instead; that needs a signed request to Redshift and is left for later. | Redshift users with IAM users only can use W9's password command meanwhile, or wait for that follow-up. |
+| Synapse and Fabric | **The SQL Server driver, narrowed by a capability table** per warehouse from Microsoft's documentation, rather than a driver of their own. | The same TDS, sign-in and grid; a view or DDL form the table wrongly allows fails with the server's own message. |
+| TLS in presets | **`verify-full` where the service's certificate chains to a public authority** (Azure, Redshift, Neon, ClickHouse Cloud), **`require` where it is the provider's own** (RDS, Cloud SQL, Supabase), with the CA file to download named in the manual. | Presets connect on the first try; checking the server's name on RDS, Cloud SQL and Supabase is one file away. |
+| Testing | **Stand-ins only** (PgBouncer, views imitating Redshift's, SQL Server with a warehouse forced), and a list of live checks in the demo note. | CI needs no account; what only the services show waits for the user's own accounts. |
+
 ## Risks
 
 - **Surprise bills.** A missed automatic query on a large table costs the user money. Every
@@ -327,3 +461,15 @@ C0's own decisions, taken on 2026-11-02 when it started; each can be overturned 
   only the real services can show (RDS's and Cloud SQL's IAM users, Azure Database's Entra
   sign-in, MySQL's cleartext plugin over TLS for RDS) is listed in C0's demo note for the user
   to try before release.
+- **Stand-ins that differ from the service.** PgBouncer isn't Supavisor, PostgreSQL views
+  aren't Redshift's, and SQL Server with a warehouse forced isn't Synapse or Fabric. Each
+  stand-in shows DbRover's own queries are well formed and avoid what the service lacks; only
+  the services show the rest, and C1's demo note lists each one to try.
+- **Catalog differences documented wrongly or changing.** Synapse's and Fabric's supported
+  views and DDL change often (Fabric is young). The capability table is one place to correct,
+  and anything it wrongly allows fails with the warehouse's own error rather than silently.
+- **Session state behind a transaction pooler.** A console's `SET`, temporary table or
+  `LISTEN` lasts only for its transaction's server connection, and the next statement may get
+  another. DbRover sets nothing of its own on the session; the manual's Neon and Supabase
+  pages say to use the session port (Supabase's 5432, Neon's host without `-pooler`) for work
+  that needs it.
