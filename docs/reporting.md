@@ -286,7 +286,8 @@ After W8, which this builds on. One GitHub stack per milestone:
   for the limits' defaults. In layers RP4a to RP4f, [below](#rp4--metrics).
 - **RP5 — PRQL:** `prql` in `[combine]`, with the compiled SQL shown.
 - **RP6 — The command line:** `dbrover report run <file> --param since=…`, for cron and CI,
-  with the worker's guardrails and an exit code per outcome.
+  with the worker's guardrails and an exit code per outcome. In layers RP6a to RP6f,
+  [below](#rp6--the-command-line).
 - **RP7 — Manual,** with the examples.
 
 ## RP1 — One source, one file
@@ -1229,6 +1230,219 @@ Taken on 2026-11-03 when RP4 started; each can be overturned in review.
   silence it yet.
 - **A synced settings folder.** H4's warning about a synced `history.sqlite` holds for runs: two
   machines running one report each keep their own runs.
+
+## RP6 — The command line
+
+Started on 2026-11-03, after RP4. RP6 runs a report without the app's window, so cron, a
+scheduled task or a CI job can run it with new values and act on how it ended:
+
+```sh
+dbrover report run sales-by-category --param since=2026-10-01 --param until=2026-11-01 \
+  --output-dir /srv/reports/2026-10
+```
+
+The report file, the worker and its guardrails stay as RP1 to RP4 built them. What is new is
+the command around the worker: finding the report and what it names with no window to ask in,
+printing what happens, an exit code per outcome, stopping on a signal, and keeping the run in
+the history so the app shows it.
+
+### The command
+
+```text
+dbrover report run <report> [--param <name>=<value>]… [--output-dir <folder>] [--json]
+                            [--config-dir <folder>]
+```
+
+- **`<report>`** is a report's name in the settings folder's `reports/`, as the explorer lists
+  it (`sales-by-category`), or the path to a report file anywhere (`./sales-by-category.toml`,
+  `examples/reports/sales-by-category.toml`). A name ending in `.toml` or holding a folder
+  separator is a path; anything else is a name.
+- **`--param <name>=<value>`**, once per parameter, in the form the report's tab takes (a date
+  as `2026-10-01`, a timestamp as `2026-10-01 12:00`). Everything after the first `=` is the
+  value. A parameter given twice, or without `=`, is a mistake in the command line; one
+  missing, of the wrong type, or one the report doesn't take is the report's. Either stops the
+  command before anything runs.
+- **`--output-dir <folder>`** (`-o`): where the files go, made if it doesn't exist. Without it,
+  the current folder, as other command-line tools write theirs; a cron job sets it.
+- **`--json`**: the worker's events on standard output instead of the human lines (below).
+- **`--config-dir <folder>`**, or `DBROVER_CONFIG_DIR`: the settings folder to read, as for the
+  app and `dbrover mcp`. Without either, the one the app uses, including a folder chosen in
+  Settings › Files.
+
+Arguments it doesn't know are refused, as `dbrover mcp`'s are: a cron line is typed by hand, and
+a typo should fail loudly. `dbrover report run --help` prints the usage.
+
+### What it reads
+
+From the settings folder, as the worker does: the report (by name), `data_sources.toml`, whose
+data sources the report names by name or id, `exports.toml`'s presets, and `settings.toml`'s
+`[reports]`, the limits' defaults, which the app sends in the request and the command reads
+itself. Projects play no part: reports are in one folder for every project (RP1's decisions).
+
+Passwords come as the worker gets them, and nobody is asked:
+
+- **Saved in the keychain:** macOS's keychain, Windows' Credential Manager, or a Secret Service
+  on Linux. A cron job on macOS reads the login keychain while that user is logged in; a
+  headless Linux server usually has no Secret Service, and needs a password command.
+- **A password command** that the data folder's `trusted_commands.toml` trusts, as the app
+  records it the first time the command runs. On a machine without the app, the manual shows
+  the file's entry to write by hand.
+- **A cloud sign-in** already on the machine: AWS's credentials and profiles, Google's
+  application default credentials, or `az`'s sign-in. DbRover never opens a browser for one;
+  a sign-in that has expired fails the run with the provider's message, and signing in again is
+  done with the cloud's own command (`aws sso login`, `gcloud auth application-default login`,
+  `az login`).
+
+Every source connects read-only, as in the app's runs (W11's mode, the statement checked to only
+read, the cost guard refusing what it would ask about).
+
+### Running it
+
+The command reads and plans the report itself, with the settings folder's data sources and
+`[reports]`, and checks the values: a problem there exits with 3 before a process starts or a
+data source is opened. It then starts `dbrover report-worker` from its own executable, as the
+app does, through the same `WorkerRun`: one request on the worker's standard input, events back
+as JSON Lines. So a run from the command line has every guardrail a run from the app has: the
+sources' caps and timeouts, DuckDB's limits, the outputs' sizes, a lower priority, Linux's
+`RLIMIT_DATA` and `RLIMIT_CPU`, and the run's time limit, past which the worker is killed and its
+staging folder removed. Files are written in a staging folder inside the output folder and put
+in place only when every one is complete; a run that fails or is stopped leaves the folder as
+it was.
+
+**Ctrl-C** and **SIGTERM** (what cron, systemd and CI runners send to stop a job) cancel the
+run: the worker is killed, its staging folder removed, and the command exits with 6. On Unix,
+a Ctrl-C in a terminal reaches the worker too, which may die before the command kills it; a
+signal received before the run ended makes the run cancelled, whatever the worker said last.
+
+The app's "one run at a time" holds within one app. The command doesn't wait for the app or for
+another command: each run has its own staging folder, and the history takes writes from several
+processes (W4's busy timeout).
+
+### What it prints
+
+By default, for a person reading a terminal or cron's mail:
+
+- **Standard error:** a line as the run starts, a line as each source and the combine step
+  finish (rows, bytes, time), each warning, and the end: the total time, or the error with the
+  limit to raise, as the report's tab says it.
+- **Standard output:** each file written, a line each, as its full path, so a script can pipe
+  them on (`| xargs -I{} cp {} …`).
+
+```text
+$ dbrover report run sales-by-category --param since=2026-10-01 --param until=2026-11-01
+Sales by category: since = 2026-10-01, until = 2026-11-01
+Source lines: 1,250 rows, 61 KB in 0.1 s
+Combine: 27 rows in 0.0 s
+/home/me/sales-by-category-2026-10.xlsx
+/home/me/sales-by-category-2026-10.csv
+Finished in 0.4 s.
+```
+
+Progress lines aren't printed once a second, to keep a cron mail short; RP6 leaves a live line
+for a terminal for later.
+
+With **`--json`**, standard output is the worker's events, a line each, as the worker wrote them
+(`started`, `progress`, `source_done`, `combine_done`, `preview`, `output_written`, then
+`finished`, `failed` or `cancelled`), the same types the app reads, and standard error is empty
+unless the command line is wrong. A CI step can read them with `jq`.
+
+The command's own log, and the worker's, go to `logs/report.YYYY-MM-DD.log` in the data folder,
+never to the terminal.
+
+### Exit codes
+
+| Code | Outcome | The run ends with |
+| --- | --- | --- |
+| 0 | The report ran and wrote its files. | `finished` |
+| 1 | It failed otherwise: the combine query's error, an output that couldn't be written, the worker stopping without saying why. | `failed`, in the combine step, an output or the worker |
+| 2 | The command line is wrong: an unknown option, no report named, `--param` without `=` or given twice. | — |
+| 3 | The run couldn't start: the report file isn't found or has problems, a data source it names isn't found, a parameter is missing, unknown or of the wrong type, or the settings folder can't be used. | `failed` in the report step |
+| 4 | A source failed: connecting to its data source (a password, the network, a sign-in) or its query (the database's error, a statement that doesn't only read, the cost guard). | `failed` in a source, no limit |
+| 5 | A guardrail stopped a step: `max_rows`, `max_bytes`, a source's or the combine step's `timeout`, `memory_limit`, `max_temp_size`, `max_size`, Excel's rows. | `failed` with the limit, in a step |
+| 6 | The run was stopped from outside: its own time limit (`[report] timeout`), Ctrl-C or SIGTERM. | `failed` in the worker with the limit, or `cancelled` |
+
+A step's limit (5) is told from the run's (6) by where the run ended: the worker stops itself at
+a step's limit and says which, while the run's time limit is enforced by killing the worker.
+
+### Run history
+
+A run of a report in the settings folder's `reports/` is kept in `history.sqlite` as the app
+keeps its runs: the same row, with the same steps, the newest `runs_kept` of the report kept. The
+report's tab shows it among the others when it next lists the runs. A report file elsewhere (in
+a repository's checkout, run by CI) isn't kept: the app couldn't list it, and a run under a
+report of the same name in `reports/` would mix two files' runs. A history that can't be written
+is a warning on standard error; the run's exit code stays its own.
+
+### Windows
+
+`dbrover.exe` is built as a console program, which is why `dbrover --version` prints in the
+release workflow's smoke test and `dbrover mcp` serves over standard input and output. So the
+command prints, and returns its exit code, in PowerShell, `cmd.exe`, Task Scheduler and CI, as on
+macOS and Linux, with nothing added. The worker it starts has no console of its own
+(`CREATE_NO_WINDOW`), so a Ctrl-C reaches only the command, which stops the worker.
+
+### Layers
+
+Each layer is one pull request in a stack, useful and tested on its own, with synthetic data
+only.
+
+- **RP6a — Plan:** this section, RP6's decisions and risks, and the roadmap's entry in layers.
+- **RP6b — Running a report:** `dbrover report run`: its arguments, finding the report, the
+  settings folder's data sources, presets and `[reports]`, the values checked, the run in the
+  worker through `WorkerRun`, the human lines and the exit codes.
+  **Exit:** table tests of the arguments and of the exit code for each way a run ends; on the
+  real binary with a SQLite shop made from `examples/reports/shop.sql`, `sales-by-category`
+  writes both files into `--output-dir`, its CSV file matching the checked-in one, and prints
+  their paths; a missing or unknown parameter and an unknown data source exit with 3, a source's
+  error with 4, `max_rows` with 5 and the run's time limit with 6, each leaving no file.
+- **RP6c — Stopping:** Ctrl-C and SIGTERM cancel the run.
+  **Exit:** on Unix, the real binary sent SIGTERM during a slow source exits with 6 and leaves
+  neither a file nor a staging folder.
+- **RP6d — JSON:** `--json`.
+  **Exit:** the lines on standard output read back as the worker's events, ending with
+  `finished`, or `failed` with the same exit code as without `--json`.
+- **RP6e — Run history:** the command keeps a run of a report in `reports/` as the app does.
+  **Exit:** a run by name, a failing run and a cancelled one are each read back from
+  `history.sqlite` with their outcome and steps; a file outside `reports/` adds nothing.
+- **RP6f — Manual and demo note:** a section of the **Reports** chapter on the command line,
+  with a cron line and a CI step that run the examples, and RP6's demo note.
+
+**Exit:** from a terminal, `dbrover report run` writes a report's files with its guardrails, and
+its exit code says how it ended; the app's tab lists the run beside its own.
+
+### RP6's decisions
+
+Taken on 2026-11-03 when RP6 started; each can be overturned in review.
+
+| Question | Chosen | Consequence |
+| --- | --- | --- |
+| A command of its own, or the app's binary | **`dbrover report run`,** a subcommand of the one binary, as `dbrover mcp`. | Nothing more to install or package, and the worker that runs is the binary's own. `report` is the word for its subcommands, so `dbrover report list` can come later. |
+| In the worker, or in the command's own process | **In the worker,** through the app's `WorkerRun`. | One way to run a report: the guardrails, the killing at the time limit and the staging folder's removal are the app's, tested once. A second process per run is the cost. |
+| Naming the report | **A name in `reports/`, or a path,** told apart by `.toml` or a folder separator. | The app's reports run by the names the explorer shows; a repository's report runs from its checkout, with a throwaway settings folder for its data sources. |
+| Checking before the worker | **The command reads and plans the report,** as the tab does. | A wrong parameter or data source exits with 3 without starting a process; the command knows the run's time limit for the watchdog. The worker reads the file again, so it runs what is saved. |
+| Unknown parameters | **Refused,** as the command line's typos are. | `--param sinse=…` fails rather than running a report whose `since` is missing for another reason. |
+| The limits' defaults | **`settings.toml`'s `[reports]`,** read by the command and sent in the request, as the app sends them. | A run from cron and one from the tab run under the same limits. |
+| Where files go | **`--output-dir`, else the current folder.** | As other command-line tools; the app's Downloads default is a desktop's. |
+| Passwords and sign-ins | **The worker's: saved, a trusted password command, a cloud sign-in on the machine;** never a prompt or a browser. | A data source whose password is typed each session can't run from cron; a headless Linux server needs a password command, trusted in `trusted_commands.toml`. |
+| What it prints | **Steps on standard error, files' paths on standard output;** `--json` for the worker's events. | Cron mails a few lines; a script gets the paths; CI gets events it can parse, of the types the app reads, with no format of the command's own to keep. |
+| Exit codes | **0 to 6, one per outcome** (the table above). | A cron wrapper or a CI step tells "raise a limit" (5) from "the database is down" (4) from "fix the file" (3). Not `timeout(1)`'s 124 or the shell's 130, which name one cause each, where 6 covers every stop from outside. |
+| Signals | **Ctrl-C and SIGTERM cancel,** and a signal before the end makes the run cancelled. | The output folder is left as it was; the exit code doesn't depend on whether the worker or the command saw the signal first. |
+| Run history | **Kept for reports in `reports/`,** the app's rows; nothing marks a run as the command's. | The tab shows cron's runs with no schema change. Telling them from the app's waits until someone needs it. |
+| Logs | **The data folder's `logs/report.*.log`.** | The terminal shows only the run; a failure's details are where the app's are. |
+| Windows | **Nothing added:** `dbrover.exe` is a console program. | `--version`, `mcp` and `report run` print and return codes there as elsewhere. If the app is ever built as a windowed program, the command line needs a console attached first. |
+
+### RP6's risks
+
+- **A command killed outright** (SIGKILL, a CI runner's hard stop) can't kill its worker,
+  which runs on until it ends or reaches Linux's `RLIMIT_CPU`; its staging folder stays in the
+  output folder. Killing the process group stops both.
+- **Keychains away from a desktop.** A Linux server without a Secret Service, or a macOS user
+  logged out, can't read saved passwords; the error names the data source, and the manual points
+  at password commands.
+- **Two writers of one output folder.** Two runs of a report with the same values, from cron
+  and the app, write the same files; the one that finishes last wins, each file whole.
+- **A report outside `reports/`** is never in the history, so its runs can't be compared in the
+  app; CI keeps its own logs.
 
 ## Decisions
 
