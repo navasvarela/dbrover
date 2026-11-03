@@ -7,6 +7,8 @@ use std::io::Write;
 use dbrover_core::ByteCount;
 use dbrover_report::{LimitHit, RunEvent, RunFailure, TypedValues, WrittenFile, grouped};
 
+use super::printer::Printer;
+
 /// Excel's rows a sheet: a limit of Excel's, with no default in Settings to point at.
 const EXCEL_ROWS_KEY: &str = "continue_on_new_sheet";
 
@@ -17,13 +19,8 @@ pub struct HumanLines<O: Write, E: Write> {
     values: TypedValues,
 }
 
-impl<O: Write, E: Write> HumanLines<O, E> {
-    /// `values` are the parameters the run was given, named in its first line.
-    pub fn new(out: O, err: E, values: TypedValues) -> Self {
-        Self { out, err, values }
-    }
-
-    pub fn event(&mut self, event: &RunEvent) {
+impl<O: Write, E: Write> Printer for HumanLines<O, E> {
+    fn event(&mut self, event: &RunEvent) {
         match event {
             RunEvent::Started { report, .. } => {
                 let line = started(report, &self.values);
@@ -76,12 +73,18 @@ impl<O: Write, E: Write> HumanLines<O, E> {
         }
     }
 
-    /// Problems found before the run could start, such as a parameter missing.
-    pub fn problems(&mut self, heading: &str, problems: &[String]) {
+    fn not_started(&mut self, heading: &str, problems: &[String]) {
         self.error_line(heading);
         for problem in problems {
             self.error_line(&format!("  {problem}"));
         }
+    }
+}
+
+impl<O: Write, E: Write> HumanLines<O, E> {
+    /// `values` are the parameters the run was given, named in its first line.
+    pub fn new(out: O, err: E, values: TypedValues) -> Self {
+        Self { out, err, values }
     }
 
     fn written(&mut self, file: &WrittenFile) {
