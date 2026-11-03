@@ -239,6 +239,14 @@ const SCENES: &[Scene] = &[
         needs: &[],
     },
     Scene {
+        name: "cloud-service-data-source-dialog",
+        data_sources: FixtureSources::Shop,
+        play: cloud_service_data_source_dialog,
+        keeps_pointer: false,
+        region: whole_window,
+        needs: &[],
+    },
+    Scene {
         name: "dynamodb-data-source-dialog",
         data_sources: FixtureSources::Shop,
         play: dynamodb_data_source_dialog,
@@ -971,6 +979,29 @@ fn dynamodb_data_source_dialog(harness: &mut Harness<'static, DbRoverApp>, _: &F
     retype(harness, "Name", "orders (AWS)");
     retype(harness, "Profile", "analytics");
     retype(harness, "Region", "eu-west-1");
+}
+
+/// A Fabric warehouse from **New data source › Microsoft Azure** (C1f): its preset, the Entra ID
+/// sign-in it takes, and what the Service row says about it.
+fn cloud_service_data_source_dialog(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    harness
+        .get_all_by_label("New data source")
+        .next()
+        .unwrap()
+        .click();
+    harness.run();
+    harness.get_by_label_contains("Microsoft Azure").click();
+    step_until_visible(harness, "Microsoft Fabric");
+    harness.get_by_label("Microsoft Fabric").click();
+    step_until_visible(harness, "New SQL Server data source");
+    retype(harness, "Name", "sales warehouse");
+    retype(
+        harness,
+        "Host",
+        "abc123xyz.datawarehouse.fabric.microsoft.com",
+    );
+    retype(harness, "Database", "sales");
+    retype(harness, "User", "analyst@contoso.com");
 }
 
 fn open_new_data_source_dialog(harness: &mut Harness<'static, DbRoverApp>, driver: &str) {

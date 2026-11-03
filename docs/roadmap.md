@@ -490,7 +490,7 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
     **Google Cloud** after `gcloud auth application-default login`, and on Azure Database for
     PostgreSQL and Azure SQL with **Microsoft Entra ID** after `az login`.
 
-- **C1 — Managed databases** (started 2026-11-03, after C0): RDS, Aurora and Redshift; Cloud
+- **C1 — Managed databases** (built, in seven layers, 2026-11-03, after C0): RDS, Aurora and Redshift; Cloud
   SQL; Azure SQL, Azure Database, and Synapse's and Fabric's SQL endpoints; and Neon, Supabase
   and ClickHouse Cloud, through the drivers DbRover has, with presets in the data source
   dialog. Planned in [Cloud and big data](cloud-data.md#c1--managed-databases). In layers, one
@@ -503,8 +503,8 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
   - **C1d — Redshift:** recognised from `version()`, and browsed through its `svv_all_*` views.
   - **C1e — Synapse and Fabric:** recognised from `SERVERPROPERTY('EngineEdition')`, with the
     explorer and the object helpers narrowed to what each warehouse supports.
-  - **C1f — Presets in the data source dialog:** **New data source › Cloud service**, and a
-    **Service** row that recognises the host.
+  - **C1f — Presets in the data source dialog:** a submenu per cloud in **New data source**,
+    and a **Service** row for a data source on a service.
   - **C1g — Manual:** a page per provider, and the demo note.
 
   Nothing is tried against a real cloud account while building C1: each difference is tried
@@ -514,6 +514,31 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
   **Exit:** each service on the list connects, browses and runs the conformance suite where an
   account is available (by hand, with the user's accounts); a short page in the manual per
   provider.
+
+  **C1 demo note:** the parts that need no cloud account first.
+  - *Presets:* **New data source › Microsoft Azure › Microsoft Fabric** opens a SQL Server
+    dialog on port 1433 with TLS `verify-full`, **Sign in with** **Microsoft Entra ID**, a
+    **Service** row and the line *Signs in only with Microsoft Entra ID*; switching **Sign in
+    with** to a password and saving says *This service signs in only with Microsoft Entra ID*.
+    On a new PostgreSQL data source, typing `ep-x-123-pooler.eu-central-1.aws.neon.tech` as
+    the host brings up **Service: Neon**.
+  - *Behind a pooler:* run `docker compose up -d --wait pgbouncer`, add a **PostgreSQL** data
+    source on `localhost:56432` (user, password and database `dbrover`), and two consoles: the
+    explorer browses down to columns and **Show definition** works, and a console's statement
+    is checked as it is typed, on PgBouncer in transaction mode with prepared statements off.
+  - *Synapse, Fabric and Redshift* can't be shown without their services: their trees were
+    tried only in the driver tests, on SQL Server with each warehouse forced and on PostgreSQL
+    with views imitating Redshift's.
+  - *By hand, with real accounts* (not tried while building C1), each listed at the end of its
+    manual page: RDS and Aurora PostgreSQL and MySQL (password and AWS IAM, `require` then
+    `verify-full` with RDS's bundle); Redshift provisioned and Serverless (browse, an external
+    table, **Show definition**, search); Cloud SQL for PostgreSQL, MySQL and SQL Server
+    (directly and through the Auth Proxy); Azure Database for PostgreSQL and MySQL (password
+    and Entra ID); Azure SQL from outside Azure and from an Azure VM (the gateway redirect);
+    Synapse dedicated and serverless pools; a Fabric warehouse and SQL analytics endpoint;
+    Neon's pooled and direct hosts; Supabase's session pooler, transaction pooler and direct
+    host; and ClickHouse Cloud, woken from idle. Each should connect, browse and run the
+    conformance suite.
 - **C2 — Object storage:** Parquet, CSV and JSON in S3, Google Cloud Storage and Azure Blob
   Storage, Iceberg and Delta tables, and MotherDuck, all through DuckDB.
 - **C3 — Athena and Trino**, over AWS's Athena API and then Trino's HTTP protocol.

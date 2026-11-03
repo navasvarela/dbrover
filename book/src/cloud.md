@@ -2,7 +2,8 @@
 
 Databases in the cloud bring three things a database on your own machine doesn't: you sign in
 with a cloud account rather than a password, some engines bill for what a query reads, and a
-catalog can be too large to walk. This chapter covers what DbRover does about each.
+catalog can be too large to walk. This chapter covers what DbRover does about each; each
+managed service's own settings are in [Managed databases in the cloud](cloud-services.md).
 
 ## Signing in with a cloud account
 
