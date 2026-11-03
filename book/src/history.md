@@ -6,8 +6,10 @@ what an AI assistant runs through [`dbrover mcp`](mcp.md). Each is kept with its
 time, duration, row count and outcome, and with where it came from. Only the statements are
 kept, never the rows they returned.
 
-Open it with **History** in a console's toolbar. It lists the console's data source's
-statements, newest first.
+Open it with **History** in a console's toolbar. It opens in a tab, *History of* the data source,
+beside the consoles, listing that data source's statements, newest first. Drag the tab beside a
+console to keep both in view. Each data source has its own history tab, and it is still there
+the next time DbRover starts.
 
 ![The history, with a grid edit's details](images/history-audit.png)
 
@@ -29,7 +31,9 @@ those; hover it for the assistant's name.
 
 ![Statements an assistant ran, beside the console's](images/history-mcp.png)
 
-**Insert** (or a double-click) puts a statement into the console, on a line of its own.
+**Insert** (or a double-click) puts a statement into the console you opened the history from,
+on a line of its own, and brings that console to the front. Once that console is closed, or
+after DbRover restarts, it goes into a new console of the data source.
 
 ## What a statement did
 

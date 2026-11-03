@@ -114,10 +114,11 @@ Right-click a table in the explorer and choose **Import CSV…**, then pick the 
    column, a date that isn't `YYYY-MM-DD`, an empty value for a column that can't be `NULL`.
    They are only warnings: the database decides.
 
-**Import** then reads the whole file and inserts it in batches of 500 rows, all in one
-transaction. The dialog counts the rows as they go in. If the database refuses a row, the whole
-import is rolled back, nothing is imported, and the dialog names the line of the file:
-*Line 703: duplicate key value violates unique constraint*. On DuckDB it names the lines of the
+**Import** then closes the dialog, reads the whole file and inserts it in batches of 500 rows,
+all in one transaction. The status bar counts the rows as they go in, and you can go on working
+meanwhile. If the database refuses a row, the whole import is rolled back, nothing is imported,
+and the status bar names the line of the file: *Line 703: duplicate key value violates unique
+constraint*. On DuckDB it names the lines of the
 batch that failed instead. Empty values are imported as `NULL`; everything else is sent as text
 for the database to convert to the column's type, as when you type into a cell.
 

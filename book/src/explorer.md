@@ -266,7 +266,7 @@ Right-click an object for what you can do with it:
 | **Diagram with related tables** | Tables, on engines with foreign keys | Opens a diagram of the table and every table its keys join. |
 | **Import CSV…** | Tables | Asks for a CSV file and imports it into the table; see [Importing a CSV file](table-data.md#importing-a-csv-file). |
 | **Copy name** | Objects inside a schema | Copies the name to use in SQL: schema-qualified for tables, views, sequences, indexes and functions (`main."Order Items"`), bare for columns, constraints and triggers. Quoted where needed. |
-| **Show definition** | Objects whose source the database keeps (see below) | Opens the source in a window. |
+| **Show definition** | Objects whose source the database keeps (see below) | Opens the source in a tab. |
 | **Refresh** | Anything with children | Reloads the node's children and collapses everything below it. |
 | **Copy DDL** | Tables, views, materialized views | Copies the statement that creates it; see [Copy DDL](objects.md#copy-ddl). |
 
@@ -280,8 +280,10 @@ Delete and so on) is described in [Data sources](data-sources.md#editing-connect
 
 ## Definitions
 
-**Show definition** opens a window with the object's SQL, which you can select and copy with
-the **Copy** button.
+**Show definition** opens a tab with the object's SQL, coloured as a console colours it, which
+you can select and copy with **Copy**. **Open in console** puts it in a new console, to change it
+and run it there (`CREATE OR REPLACE …`). Several definitions can be open at once, side by side;
+they close when DbRover quits, since loading one needs a connection.
 
 ![The definition of a view](images/definition.png)
 

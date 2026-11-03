@@ -114,8 +114,9 @@ tables.
 Right-click a table or view in the explorer and choose **Export data…**. The same dialog opens,
 for every row of it; once DbRover has read the table's columns, the preview shows them, and the
 SQL formats write to that table (**SQL UPDATE** by its primary key). **Export…** asks where to
-save the file, and the dialog stays open to count the rows as they are written, with **Cancel
-export**, then says where they went. The rows are read with `SELECT *` on the explorer's
+save the file and closes the dialog: the status bar counts the rows as they are written
+(*Exporting orders… 125000 rows*), with **Cancel**, then says where they went until you click
+it. You can go on working meanwhile. The rows are read with `SELECT *` on the explorer's
 connection, a page at a time, so a table of any size never has to fit in memory. It reads only,
 so it works on a read-only data source too, and it is recorded in the history.
 
