@@ -8,7 +8,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use dbrover_report::{
-    LimitHit, Preview, RunEvent, RunFailure, RunRequest, SourceStart, Step, WrittenFile,
+    LimitHit, LoadedColumn, Preview, RunEvent, RunFailure, RunRequest, SourceStart, Step,
+    WrittenFile,
 };
 use dbrover_store::ReportFiles;
 use egui_kittest::kittest::NodeT;
@@ -39,6 +40,31 @@ columns = [
 format = "csv"
 file = "trial-balance-{since:%Y-%m}.csv"
 columns = "same"
+"##;
+
+/// The trial balance from two sources, combined in DuckDB.
+const COMBINED: &str = r##"
+[report]
+name = "Trial balance"
+description = "Debits and credits per account."
+params = { since = "date", until = "date" }
+
+[[source]]
+id = "entries"
+data_source = "shop"
+query = "SELECT account, amount FROM entries WHERE booked_on >= :since AND booked_on < :until"
+
+[[source]]
+id = "accounts"
+data_source = "shop"
+query = "SELECT DISTINCT account FROM entries"
+
+[combine]
+query = "SELECT account, SUM(amount) AS balance FROM entries JOIN accounts USING (account) GROUP BY account"
+
+[[output]]
+format = "csv"
+file = "trial-balance-{since:%Y-%m}.csv"
 "##;
 
 /// Takes each request, and answers it with the script's events, then nothing.
@@ -198,6 +224,114 @@ fn runs_a_report_from_its_tab_and_shows_its_files_and_preview() {
     harness.get_by_label("Preview: All 2 rows, as the source returned them");
     harness.get_by_label("150.375");
     harness.get_by_label("NULL");
+}
+
+/// The start of a run of `COMBINED`, both sources loaded.
+fn combined_start() -> Vec<RunEvent> {
+    let source = |id: &str| SourceStart {
+        id: id.to_owned(),
+        data_source: "shop".to_owned(),
+        attached: false,
+    };
+    let loaded = |id: &str, rows, table: Vec<(&str, &str)>| RunEvent::SourceDone {
+        id: id.to_owned(),
+        rows,
+        bytes: rows * 20,
+        first_row_ms: Some(3),
+        elapsed_ms: 40,
+        table: table
+            .into_iter()
+            .map(|(name, type_name)| LoadedColumn {
+                name: name.to_owned(),
+                type_name: type_name.to_owned(),
+            })
+            .collect(),
+        warnings: Vec::new(),
+    };
+    vec![
+        RunEvent::Started {
+            report: "Trial balance".to_owned(),
+            sources: vec![source("entries"), source("accounts")],
+            combine: true,
+        },
+        loaded(
+            "entries",
+            3,
+            vec![("account", "VARCHAR"), ("amount", "DECIMAL(6,3)")],
+        ),
+        loaded("accounts", 2, vec![("account", "VARCHAR")]),
+    ]
+}
+
+#[test]
+fn shows_each_source_and_the_combine_step_of_a_combined_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("out");
+    let mut script = combined_start();
+    script.extend([
+        RunEvent::CombineDone {
+            rows: 2,
+            bytes: 40,
+            first_row_ms: Some(1),
+            elapsed_ms: 15,
+        },
+        RunEvent::Preview(Preview {
+            columns: vec!["account".to_owned(), "balance".to_owned()],
+            rows: vec![vec![Some("1000".to_owned()), Some("150.375".to_owned())]],
+            more: true,
+        }),
+        RunEvent::OutputWritten(WrittenFile {
+            path: out.join("trial-balance-2026-10.csv"),
+            rows: 2,
+            size: 48,
+            warnings: Vec::new(),
+        }),
+        RunEvent::Finished { elapsed_ms: 1_200 },
+    ]);
+    let mut harness = start_with_reports(dir.path(), COMBINED, StandIn::new(script));
+
+    open_and_fill(&mut harness, "2026-10-01");
+    harness.get_by_label("Run").click();
+    step_until_visible(&mut harness, "Finished in 1.2 s: 2 rows combined.");
+    harness.get_by_label("Source entries");
+    harness.get_by_label("Source accounts");
+    harness.get_by_label("Combine");
+    harness.get_by_label("3 rows, 60 bytes · 0.0 s");
+    harness.get_by_label("2 columns in DuckDB").click();
+    harness.run();
+    harness.get_by_label("DECIMAL(6,3)");
+    // Once in the line of the files the report writes, and once as the file written.
+    assert_eq!(
+        harness
+            .get_all_by_label("trial-balance-2026-10.csv")
+            .count(),
+        2
+    );
+    harness.get_by_label("Preview: The first 1 rows, as the combine step returned them");
+}
+
+#[test]
+fn marks_the_combine_step_a_run_failed_at() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut script = combined_start();
+    script.push(RunEvent::Failed(RunFailure::at_limit(
+        Step::Combine,
+        "DuckDB ran past 2 GiB, its memory_limit, and stopped",
+        LimitHit {
+            key: "memory_limit".to_owned(),
+            value: "2 GiB".to_owned(),
+            raise_in: "[combine]".to_owned(),
+        },
+    )));
+    let mut harness = start_with_reports(dir.path(), COMBINED, StandIn::new(script));
+
+    open_and_fill(&mut harness, "2026-10-01");
+    harness.get_by_label("Run").click();
+    step_until_visible(&mut harness, "Failed at the combine step.");
+    harness.get_by_label("failed");
+    harness.get_by_label_contains(
+        "To allow more, raise memory_limit in [combine] of the report's file.",
+    );
 }
 
 #[test]

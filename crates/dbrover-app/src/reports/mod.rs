@@ -1,4 +1,4 @@
-//! Reports in the app (`docs/reporting.md`, RP1f): the files in `reports/`, read for the
+//! Reports in the app (`docs/reporting.md`, RP1f and RP2e): the files in `reports/`, read for the
 //! explorer's **Reports**; each report's tab, with its parameters, output folder and last run;
 //! and the one run that may be going, in its worker.
 //!
@@ -17,8 +17,8 @@ use dbrover_core::DataSource;
 use dbrover_engine::{Command, Event, ReportText};
 use dbrover_export::CustomFormat;
 use dbrover_report::{
-    Plan, Preview, Report, RunEvent, RunFailure, RunRequest, Step, TypedValues, WrittenFile,
-    read_report,
+    LoadedColumn, Plan, Preview, Report, RunEvent, RunFailure, RunRequest, SourceStart, Step,
+    TypedValues, WrittenFile, read_report,
 };
 use dbrover_store::{ReportFiles, ReportName};
 
@@ -123,12 +123,44 @@ pub struct ReportState {
 /// One run, as its events have told it so far.
 pub struct RunRecord {
     pub started: Instant,
+    /// Each source as the run's start listed them, then the combine step if there is one.
+    pub steps: Vec<StepRecord>,
+    /// The rows the outputs were given: the source's, or the combine step's.
     pub rows: u64,
-    pub bytes: u64,
-    pub source_done: bool,
     pub preview: Option<Preview>,
     pub files: Vec<WrittenFile>,
     pub end: Option<RunEnd>,
+}
+
+/// A source or the combine step, as far as the run has gone.
+pub struct StepRecord {
+    pub step: Step,
+    /// The data source a source reads; `None` for the combine step.
+    pub data_source: Option<String>,
+    pub attached: bool,
+    pub state: StepState,
+    /// A loaded source's table in DuckDB, its columns and their types.
+    pub table: Vec<LoadedColumn>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepState {
+    Waiting,
+    /// What it has returned so far.
+    Running {
+        rows: u64,
+        bytes: u64,
+        elapsed_ms: u64,
+    },
+    Done {
+        rows: u64,
+        bytes: u64,
+        elapsed_ms: u64,
+    },
+    /// An attached DuckDB file, ready for the combine step.
+    Attached,
+    Failed,
 }
 
 pub enum RunEnd {
@@ -141,30 +173,129 @@ impl RunRecord {
     fn new() -> Self {
         Self {
             started: Instant::now(),
+            steps: Vec::new(),
             rows: 0,
-            bytes: 0,
-            source_done: false,
             preview: None,
             files: Vec::new(),
             end: None,
         }
     }
 
+    /// Whether a combine step makes the rows the outputs write.
+    pub fn combines(&self) -> bool {
+        self.steps.iter().any(|step| step.step == Step::Combine)
+    }
+
+    fn step_mut(&mut self, step: &Step) -> Option<&mut StepRecord> {
+        self.steps.iter_mut().find(|record| record.step == *step)
+    }
+
     fn apply(&mut self, event: RunEvent) {
         match event {
-            RunEvent::Started { .. } => {}
-            RunEvent::Progress { rows, bytes, .. } => (self.rows, self.bytes) = (rows, bytes),
-            RunEvent::SourceDone { rows, bytes, .. }
-            | RunEvent::CombineDone { rows, bytes, .. } => {
-                (self.rows, self.bytes, self.source_done) = (rows, bytes, true);
+            RunEvent::Started {
+                sources, combine, ..
+            } => {
+                self.steps = sources.into_iter().map(StepRecord::source).collect();
+                if combine {
+                    self.steps.push(StepRecord::new(Step::Combine, None, false));
+                }
             }
-            RunEvent::SourceAttached { .. } => {}
+            RunEvent::Progress {
+                step,
+                rows,
+                bytes,
+                elapsed_ms,
+            } => {
+                if let Some(record) = self.step_mut(&step) {
+                    record.state = StepState::Running {
+                        rows,
+                        bytes,
+                        elapsed_ms,
+                    };
+                }
+            }
+            RunEvent::SourceDone {
+                id,
+                rows,
+                bytes,
+                elapsed_ms,
+                table,
+                warnings,
+                ..
+            } => {
+                if !self.combines() {
+                    self.rows = rows;
+                }
+                if let Some(record) = self.step_mut(&Step::Source { id }) {
+                    record.state = StepState::Done {
+                        rows,
+                        bytes,
+                        elapsed_ms,
+                    };
+                    record.table = table;
+                    record.warnings = warnings;
+                }
+            }
+            RunEvent::SourceAttached { id, .. } => {
+                if let Some(record) = self.step_mut(&Step::Source { id }) {
+                    record.state = StepState::Attached;
+                }
+            }
+            RunEvent::CombineDone {
+                rows,
+                bytes,
+                elapsed_ms,
+                ..
+            } => {
+                self.rows = rows;
+                if let Some(record) = self.step_mut(&Step::Combine) {
+                    record.state = StepState::Done {
+                        rows,
+                        bytes,
+                        elapsed_ms,
+                    };
+                }
+            }
             RunEvent::Preview(preview) => self.preview = Some(preview),
             RunEvent::OutputWritten(file) => self.files.push(file),
             RunEvent::Finished { elapsed_ms } => self.end = Some(RunEnd::Finished { elapsed_ms }),
-            RunEvent::Failed(failure) => self.end = Some(RunEnd::Failed(failure)),
+            RunEvent::Failed(failure) => {
+                if let Some(record) = self.step_mut(&failure.step) {
+                    record.state = StepState::Failed;
+                }
+                self.end = Some(RunEnd::Failed(failure));
+            }
             RunEvent::Cancelled => self.end = Some(RunEnd::Cancelled),
         }
+    }
+}
+
+impl StepRecord {
+    fn new(step: Step, data_source: Option<String>, attached: bool) -> Self {
+        Self {
+            step,
+            data_source,
+            attached,
+            state: StepState::Waiting,
+            table: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    fn source(source: SourceStart) -> Self {
+        Self::new(
+            Step::Source { id: source.id },
+            Some(source.data_source),
+            source.attached,
+        )
+    }
+
+    /// Whether the step has nothing more to do.
+    pub fn is_over(&self) -> bool {
+        matches!(
+            self.state,
+            StepState::Done { .. } | StepState::Attached | StepState::Failed
+        )
     }
 }
 
@@ -399,5 +530,71 @@ mod tests {
         for (path, url) in cases {
             assert_eq!(file_url(Path::new(path)), url, "{path}");
         }
+    }
+
+    #[test]
+    fn follows_each_step_of_a_combined_run() {
+        let source = |id: &str, attached| SourceStart {
+            id: id.to_owned(),
+            data_source: "ledger".to_owned(),
+            attached,
+        };
+        let mut record = RunRecord::new();
+        record.apply(RunEvent::Started {
+            report: "Valuation".to_owned(),
+            sources: vec![source("tx", false), source("prices", true)],
+            combine: true,
+        });
+        let states = |record: &RunRecord| -> Vec<StepState> {
+            record.steps.iter().map(|step| step.state).collect()
+        };
+        assert_eq!(states(&record), [StepState::Waiting; 3]);
+        assert!(record.combines());
+
+        record.apply(RunEvent::SourceAttached {
+            id: "prices".to_owned(),
+            path: PathBuf::from("/tmp/prices.duckdb"),
+        });
+        record.apply(RunEvent::Progress {
+            step: Step::Source {
+                id: "tx".to_owned(),
+            },
+            rows: 1_000,
+            bytes: 20_000,
+            elapsed_ms: 1_000,
+        });
+        assert_eq!(
+            states(&record),
+            [
+                StepState::Running {
+                    rows: 1_000,
+                    bytes: 20_000,
+                    elapsed_ms: 1_000
+                },
+                StepState::Attached,
+                StepState::Waiting
+            ]
+        );
+        record.apply(RunEvent::SourceDone {
+            id: "tx".to_owned(),
+            rows: 1_500,
+            bytes: 30_000,
+            first_row_ms: Some(10),
+            elapsed_ms: 1_200,
+            table: vec![LoadedColumn {
+                name: "quantity".to_owned(),
+                type_name: "DECIMAL(21,18)".to_owned(),
+            }],
+            warnings: vec!["a warning".to_owned()],
+        });
+        assert_eq!(record.rows, 0, "a loaded source's rows aren't the outputs'");
+        assert_eq!(record.steps[0].table.len(), 1);
+        assert_eq!(record.steps[0].warnings, ["a warning"]);
+        record.apply(RunEvent::Failed(RunFailure::new(
+            Step::Combine,
+            "no memory",
+        )));
+        assert_eq!(record.steps[2].state, StepState::Failed);
+        assert!(matches!(record.end, Some(RunEnd::Failed(_))));
     }
 }
