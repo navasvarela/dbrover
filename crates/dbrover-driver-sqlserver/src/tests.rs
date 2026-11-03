@@ -496,6 +496,81 @@ async fn walks_the_catalog_and_shows_definitions() {
     Box::new(connection).close().await.unwrap();
 }
 
+/// The narrowed catalog of each warehouse (C1e), on SQL Server with the warehouse forced: every
+/// level it lists is a query SQL Server runs, and none reads a folder the warehouse lacks.
+/// This shows the queries are T-SQL over views each warehouse has, not that the warehouses
+/// answer them alike.
+#[tokio::test]
+async fn walks_each_warehouses_part_of_the_catalog() {
+    use dbrover_core::ManagedService;
+
+    let _shared = SHARED_DATABASE.lock().await;
+    let Some(server) = test_server() else { return };
+    let mut connection = server.connect().await;
+    for statement in FIXTURE {
+        run(&mut connection, statement).await;
+    }
+    let database = CatalogPath::root().child(NodeKind::Database, &server.config.server.database);
+    let schema = database.child(NodeKind::Schema, "dbo");
+    let orders = folder(&schema, FolderKind::Tables).child(NodeKind::Table, "dbrover_orders");
+
+    for (service, schema_folders, table_folders, constraints, only_its_own_database) in [
+        (
+            ManagedService::SynapseDedicated,
+            &["tables", "views", "functions", "procedures"][..],
+            &["columns", "indexes", "constraints"][..],
+            &["PK__dbrover_"][..],
+            true,
+        ),
+        (
+            ManagedService::SynapseServerless,
+            &["tables", "views", "functions", "procedures"],
+            &["columns"],
+            &[],
+            false,
+        ),
+        (
+            ManagedService::Fabric,
+            &["tables", "views", "functions", "procedures"],
+            &["columns", "constraints"],
+            &["PK__dbrover_"],
+            false,
+        ),
+    ] {
+        connection.catalog = warehouse::support(Some(service));
+        let nodes = conformance::walk_catalog(&mut connection, 6).await;
+        conformance::check_invalid_path(&mut connection).await;
+
+        let listed_databases = labels_under(&nodes, &CatalogPath::root());
+        assert_eq!(
+            !listed_databases.contains(&"master"),
+            only_its_own_database,
+            "{service}: {listed_databases:?}"
+        );
+        assert!(
+            listed_databases.contains(&server.config.server.database.as_str()),
+            "{service}: {listed_databases:?}"
+        );
+        assert_eq!(labels_under(&nodes, &schema), schema_folders, "{service}");
+        assert_eq!(labels_under(&nodes, &orders), table_folders, "{service}");
+        let listed = labels_under(&nodes, &folder(&orders, FolderKind::Constraints));
+        assert_eq!(listed.len(), constraints.len(), "{service}: {listed:?}");
+        for (listed, prefix) in listed.iter().zip(constraints) {
+            assert!(listed.starts_with(prefix), "{service}: {listed}");
+        }
+        let view = folder(&schema, FolderKind::Views).child(NodeKind::View, "dbrover_big_orders");
+        assert_eq!(
+            labels_under(&nodes, &view),
+            ["columns"],
+            "{service}: no indexed views"
+        );
+        let definition = connection.definition(&view).await.unwrap();
+        assert!(definition.contains("CREATE VIEW"), "{service}");
+    }
+
+    Box::new(connection).close().await.unwrap();
+}
+
 /// SQL Server makes a self-signed certificate when it is given none, so every mode but
 /// `verify-full` connects, and `encrypt_option` says whether the session is encrypted.
 /// Connecting with TLS also proves ring was installed as rustls's process-wide provider.

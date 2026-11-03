@@ -365,6 +365,51 @@ const SQL_SERVER: Capabilities = Capabilities {
     users: UserModel::Unsupported,
 };
 
+/// A Synapse dedicated SQL pool's part of SQL Server's DDL (C1e), from Microsoft's
+/// documentation: no foreign keys, and primary keys and unique constraints only `NOT ENFORCED`,
+/// which the helpers don't write, so they write neither; DDL can't run in a user's
+/// transaction; tables can be renamed and take new columns.
+const SYNAPSE_DEDICATED: Capabilities = Capabilities {
+    transactional_ddl: false,
+    unique_keys: false,
+    foreign_keys: false,
+    referential_actions: &[],
+    table_changes: &[
+        TableChange::RenameTable,
+        TableChange::AddColumn,
+        TableChange::DropColumn,
+    ],
+    ..SQL_SERVER
+};
+
+/// A Fabric warehouse's part of SQL Server's DDL (C1e), from Microsoft's documentation: no
+/// indexes, keys only `NOT ENFORCED` (left to the console, as on Synapse), and its own set of
+/// types, without `nvarchar`, `datetime`, `money` or `tinyint`. Its SQL analytics endpoint
+/// refuses every table change with its own message.
+const FABRIC: Capabilities = Capabilities {
+    indexes: false,
+    common_types: &[
+        "int",
+        "bigint",
+        "smallint",
+        "bit",
+        "decimal(12, 2)",
+        "float",
+        "real",
+        "varchar(255)",
+        "varchar(max)",
+        "char(1)",
+        "date",
+        "datetime2(6)",
+        "time(6)",
+        "uniqueidentifier",
+        "varbinary(max)",
+    ],
+    renames_views: false,
+    schema_owner: false,
+    ..SYNAPSE_DEDICATED
+};
+
 /// DuckDB's foreign keys only refuse: it has no `ON DELETE` or `ON UPDATE` actions. Its
 /// `ALTER TABLE` can't add or drop constraints, nor change the primary key.
 const DUCKDB: Capabilities = Capabilities {
@@ -542,16 +587,21 @@ impl Dialect {
     }
 
     /// What the object helpers may write on a server of this dialect that said it is
-    /// `service` (C1, `docs/cloud-data.md`): the dialect's own capabilities, or `None` where
-    /// the helpers write no DDL. Redshift is reached through PostgreSQL's driver, but most of
-    /// PostgreSQL's DDL (identity columns, foreign key actions, indexes) is not Redshift's,
-    /// and the helpers don't write Redshift's own yet.
+    /// `service` (C1, `docs/cloud-data.md`): the dialect's own capabilities, a warehouse's part
+    /// of them, or `None` where the helpers write no DDL.
+    ///
+    /// Redshift is reached through PostgreSQL's driver, but most of PostgreSQL's DDL (identity
+    /// columns, foreign key actions, indexes) is not Redshift's, and the helpers don't write
+    /// Redshift's own yet. A Synapse serverless pool creates no tables, only external tables
+    /// over files, which the helpers don't write either.
     pub fn capabilities_on(self, service: Option<ManagedService>) -> Option<&'static Capabilities> {
         if !self.writes_ddl() {
             return None;
         }
         match service {
-            Some(ManagedService::Redshift) => None,
+            Some(ManagedService::Redshift | ManagedService::SynapseServerless) => None,
+            Some(ManagedService::SynapseDedicated) => Some(&SYNAPSE_DEDICATED),
+            Some(ManagedService::Fabric) => Some(&FABRIC),
             _ => Some(self.capabilities()),
         }
     }
@@ -586,6 +636,29 @@ mod tests {
             );
         }
         assert_eq!(Dialect::Cassandra.capabilities_on(None), None);
+    }
+
+    #[test]
+    fn warehouses_lose_what_they_lack() {
+        let on = |service| Dialect::SqlServer.capabilities_on(Some(service));
+        assert_eq!(on(ManagedService::SynapseServerless), None);
+        for service in [ManagedService::SynapseDedicated, ManagedService::Fabric] {
+            let capabilities = on(service).unwrap();
+            assert!(
+                !capabilities.foreign_keys && !capabilities.unique_keys,
+                "{service}"
+            );
+            assert!(capabilities.referential_actions.is_empty(), "{service}");
+            assert!(!capabilities.transactional_ddl, "{service}");
+            assert!(
+                !capabilities.changes_in_place(TableChange::AddConstraint),
+                "{service}"
+            );
+        }
+        assert!(on(ManagedService::SynapseDedicated).unwrap().indexes);
+        let fabric = on(ManagedService::Fabric).unwrap();
+        assert!(!fabric.indexes);
+        assert!(!fabric.common_types.contains(&"nvarchar(255)"));
     }
 
     #[test]

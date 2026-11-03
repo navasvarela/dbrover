@@ -12,6 +12,7 @@ mod execution;
 mod table;
 mod tls;
 mod values;
+mod warehouse;
 
 use std::sync::Arc;
 
@@ -73,10 +74,13 @@ pub async fn connect(
         .into_results()
         .await
         .map_err(connect_error)?;
-    let server_info = server_info(&mut client).await.map_err(connect_error)?;
+    let server_info = server_info(&mut client, &config.server.host)
+        .await
+        .map_err(connect_error)?;
     Ok(SqlServerConnection {
         client: Arc::new(Mutex::new(client)),
         cancel: Arc::new(execution::CancelSlot::default()),
+        catalog: warehouse::support(server_info.service),
         server_info,
         statistics_xml: false,
     })
@@ -145,12 +149,14 @@ async fn tcp_connect(address: &str) -> Result<TcpStream, DriverError> {
 }
 
 /// `SERVERPROPERTY('ProductVersion')` is `16.0.4305.5` on SQL Server 2022; Azure SQL reports
-/// itself as edition `SQL Azure`.
-async fn server_info(client: &mut SqlClient) -> tiberius::Result<ServerInfo> {
+/// itself as edition `SQL Azure`. `EngineEdition` and the host name tell Synapse's pools and
+/// Fabric apart (C1e).
+async fn server_info(client: &mut SqlClient, host: &str) -> tiberius::Result<ServerInfo> {
     let row = client
         .simple_query(
             "SELECT CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(128)), \
-             CAST(SERVERPROPERTY('Edition') AS nvarchar(128))",
+             CAST(SERVERPROPERTY('Edition') AS nvarchar(128)), \
+             CAST(SERVERPROPERTY('EngineEdition') AS int)",
         )
         .await?
         .into_row()
@@ -161,12 +167,14 @@ async fn server_info(client: &mut SqlClient) -> tiberius::Result<ServerInfo> {
             .unwrap_or_default()
             .to_owned()
     };
-    let product = if text(1) == "SQL Azure" {
-        "Azure SQL"
-    } else {
-        "SQL Server"
+    let engine_edition = row.as_ref().and_then(|row| column::<i32>(row, 2));
+    let service = warehouse::service_of(engine_edition, host);
+    let product = match service {
+        Some(service) => service.display_name(),
+        None if text(1) == "SQL Azure" => "Azure SQL",
+        None => "SQL Server",
     };
-    Ok(ServerInfo::new(product, text(0)))
+    Ok(ServerInfo::new(product, text(0)).on_service(service))
 }
 
 /// Column `index` of `row`, or `None` if it is `NULL` or not a `T`. Never
@@ -202,6 +210,8 @@ pub struct SqlServerConnection {
     client: Arc<Mutex<SqlClient>>,
     cancel: Arc<execution::CancelSlot>,
     server_info: ServerInfo,
+    /// What the server's catalog has: all of SQL Server's, or a warehouse's part of it (C1e).
+    catalog: &'static warehouse::CatalogSupport,
     /// Whether the session's `STATISTICS XML` is on, as the last statement that switched it
     /// left it: each statement's reply then ends with its actual plan, which is what the
     /// statement answers with (Explain analyse, W10).
@@ -248,11 +258,11 @@ impl Connection for SqlServerConnection {
     }
 
     async fn children(&mut self, path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError> {
-        catalog::children(&mut *self.client().await?, path).await
+        catalog::children(&mut *self.client().await?, path, self.catalog).await
     }
 
     async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError> {
-        catalog::definition(&mut *self.client().await?, path).await
+        catalog::definition(&mut *self.client().await?, path, self.catalog).await
     }
 
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError> {
