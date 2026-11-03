@@ -1,9 +1,15 @@
-Account,Name,Kind,Debit,Credit,Balance
-1000,Cash,asset,76925.41,74284.30,2641.11
-1100,Accounts receivable,asset,81334.80,76925.41,4409.39
-2000,Accounts payable,liability,0.00,77413.02,-77413.02
-3000,Owner's equity,equity,0.00,0.00,0.00
-4000,Sales,income,0.00,81334.80,-81334.80
-5000,Cost of sales,expense,77413.02,0.00,77413.02
-6100,Rent,expense,37222.35,0.00,37222.35
-6200,Software,expense,37061.95,0.00,37061.95
+Kind,Account,Name,Debit,Credit,Balance
+asset,1000,Cash,76925.41,74284.30,2641.11
+asset,1100,Accounts receivable,81334.80,76925.41,4409.39
+Total asset,,,158260.21,151209.71,7050.50
+liability,2000,Accounts payable,0.00,77413.02,-77413.02
+Total liability,,,0.00,77413.02,-77413.02
+equity,3000,Owner's equity,0.00,0.00,0.00
+Total equity,,,0.00,0.00,0.00
+income,4000,Sales,0.00,81334.80,-81334.80
+Total income,,,0.00,81334.80,-81334.80
+expense,5000,Cost of sales,77413.02,0.00,77413.02
+expense,6100,Rent,37222.35,0.00,37222.35
+expense,6200,Software,37061.95,0.00,37061.95
+Total expense,,,151697.32,0.00,151697.32
+Total,,,309957.53,309957.53,0.00
