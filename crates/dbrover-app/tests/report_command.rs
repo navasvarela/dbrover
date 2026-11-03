@@ -53,6 +53,8 @@ fn prints_its_usage_when_asked() {
 /// ignores when it looks up the user's folders, and the tests must not use the real one's.
 #[cfg(unix)]
 mod runs {
+    use dbrover_store::{HistoryFile, ReportName, ReportRun, RunOutcome, StepMetrics};
+
     use super::*;
 
     const OCTOBER: [&str; 4] = ["-p", "since=2026-10-01", "-p", "until=2026-11-01"];
@@ -64,6 +66,16 @@ mod runs {
     }
 
     impl Settings {
+        /// `report`'s runs in the settings folder's history, newest first.
+        fn runs(&self, report: &str) -> Vec<ReportRun> {
+            let name = ReportName::new(report).unwrap();
+            HistoryFile::new(self.config().join("history.sqlite"))
+                .open()
+                .unwrap()
+                .runs(&name, 10)
+                .unwrap()
+        }
+
         fn new() -> Self {
             let settings = Self {
                 home: tempfile::tempdir().unwrap(),
@@ -393,6 +405,9 @@ mod runs {
             stderr.read_to_string(&mut rest).unwrap();
             assert_eq!(status.code(), Some(6), "SIG{signal}: {rest}");
             assert_eq!(rest, "Cancelled. No file was written.\n", "SIG{signal}");
+            let runs = settings.runs("products");
+            assert_eq!(runs.len(), 1, "SIG{signal}");
+            assert_eq!(runs[0].outcome, RunOutcome::Cancelled, "SIG{signal}");
             assert_eq!(
                 files_in(&settings.out()),
                 Vec::<String>::new(),
@@ -450,5 +465,55 @@ mod runs {
                 _ => panic!("{args:?} ended with {last:?}"),
             }
         }
+    }
+
+    /// A run of a report in `reports/` is kept as the app keeps its runs, whichever way it
+    /// ends; one that couldn't start, or of a file elsewhere, isn't.
+    #[test]
+    fn keeps_a_run_of_a_report_in_the_reports_folder() {
+        let settings = Settings::new();
+        let products = one_source("", "query = \"SELECT * FROM products\"\nmax_rows = 2");
+        settings.write_report("products", &products);
+
+        let finished = settings.run(&[&["sales-by-category"][..], &OCTOBER].concat());
+        assert_eq!(finished.status.code(), Some(0), "{}", describe(&finished));
+        let runs = settings.runs("sales-by-category");
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].outcome, RunOutcome::Finished);
+        assert_eq!(
+            runs[0].params.get("since").map(String::as_str),
+            Some("2026-10-01")
+        );
+        let steps: Vec<&str> = runs[0]
+            .steps
+            .iter()
+            .map(|step| match step {
+                StepMetrics::Source(_) => "source",
+                StepMetrics::Attached { .. } => "attached",
+                StepMetrics::Combine(_) => "combine",
+                StepMetrics::Output(_) => "output",
+            })
+            .collect();
+        assert_eq!(steps, ["source", "combine", "output", "output"]);
+
+        let failed = settings.run(&["products"]);
+        assert_eq!(failed.status.code(), Some(5), "{}", describe(&failed));
+        let runs = settings.runs("products");
+        assert_eq!(runs.len(), 1);
+        assert!(
+            matches!(&runs[0].outcome, RunOutcome::Failed(error) if error.message.contains("max_rows"))
+        );
+
+        let not_started = settings.run(&["sales-by-category", "-p", "since=2026-10-01"]);
+        assert_eq!(
+            not_started.status.code(),
+            Some(3),
+            "{}",
+            describe(&not_started)
+        );
+        let elsewhere = examples().join("sales-by-category.toml");
+        let elsewhere = settings.run(&[&[elsewhere.to_str().unwrap()][..], &OCTOBER].concat());
+        assert_eq!(elsewhere.status.code(), Some(0), "{}", describe(&elsewhere));
+        assert_eq!(settings.runs("sales-by-category").len(), 1);
     }
 }

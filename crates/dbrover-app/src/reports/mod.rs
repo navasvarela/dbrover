@@ -241,7 +241,8 @@ pub enum RunEnd {
 }
 
 impl RunRecord {
-    fn new(params: TypedValues) -> Self {
+    /// A run starting now with `params`.
+    pub fn new(params: TypedValues) -> Self {
         Self {
             started: Instant::now(),
             started_at: Timestamp::now(),
@@ -353,7 +354,8 @@ impl RunRecord {
         self.steps.iter_mut().find(|record| record.step == *step)
     }
 
-    fn apply(&mut self, event: RunEvent) {
+    /// Takes in the run's next event.
+    pub fn apply(&mut self, event: RunEvent) {
         self.measure(&event);
         match event {
             RunEvent::Started {
