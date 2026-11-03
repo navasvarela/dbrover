@@ -6,13 +6,14 @@ changes the colours. They sit next to `keymap.toml` (see
 [Where DbRover keeps its files](files.md)), and none of them exists until you write it.
 
 They are read when DbRover starts. After editing one, click **Reload** on
-**Settings › Custom actions** (**View → Custom actions…** opens it), or in the window the status
-bar opens for `snippets.toml` or `theme.toml`: that reads all three again, and `exports.toml`,
-which adds export formats of your own (see [Your own export formats](export-formats.md)).
+**Settings › Custom actions** (**View → Custom actions…** opens it), or **Reload snippets.toml**
+on **Settings › Editor** or **Reload theme.toml** on **Settings › Appearance**: each reads all
+three again, and `exports.toml`, which adds export formats of your own (see
+[Your own export formats](export-formats.md)).
 
 A mistake costs only the entry it is in: an action, snippet or colour that can't be used is
 skipped, and the status bar shows **actions.toml: N problems** (or **snippets.toml**,
-**theme.toml**). Click it to see each problem. A file that isn't valid TOML adds nothing, and
+**theme.toml**). Click it to see each problem, on the file's Settings page. A file that isn't valid TOML adds nothing, and
 says on which line it went wrong.
 
 ## Actions
@@ -142,8 +143,8 @@ output = "console"
   with the column names. Only the grid has a selection, so an action with `stdin` applies only
   to `grid.selection`. Leave it out, or write `none`, and stdin is empty.
 - **`output`** says where what the program writes goes:
-  - `viewer`, the default: a window like the cell viewer's, with JSON and XML laid out for
-    reading, and **Copy**;
+  - `viewer`, the default: a window with JSON and XML laid out for reading, as the grid's value
+    panel does, and **Copy** and **Close** at its foot;
   - `console`: a new console on the same data source, for a program that writes SQL, to read
     and run yourself;
   - `log`: the log console, a line an entry, with what it wrote to stderr as warnings;

@@ -477,7 +477,11 @@ doesn't, yet).
   it one. On macOS they are in the Edit menu too. **Copy row** quotes values with tabs or line
   breaks, as **Copy selection** does, so they paste into the right cells.
 - **Viewing a long value.** Double-click a cell, or select it and press Space, to see the whole
-  value in a window. XML is shown indented; **Copy** copies it as stored.
+  value in the value panel beside the grid; **Value** in the grid's toolbar opens and shuts it.
+  While it is open it follows the selection, so the arrow keys or a click move it to the next
+  value; drag its edge to make it wider. XML is shown indented; **Copy** copies it as stored.
+
+  ![The value panel, showing a JSON column as a tree](images/value-panel.png)
 - **JSON as a tree.** A JSON object or array opens as a tree: a PostgreSQL `json` or `jsonb`,
   MySQL `JSON`, DuckDB or ClickHouse `JSON` column, or JSON text in SQLite. Each field and item
   is on a line with its type; click an object or array to unfold or fold it. Right-click a line
@@ -580,8 +584,9 @@ them (`t` for a PostgreSQL boolean, `{1,2}` for an array).
 ## History
 
 Every statement a console runs is recorded with its time, duration, row count and outcome.
-**History** in the toolbar lists the data source's statements, newest first; type to search
-them, and click **Insert** (or double-click) to put one into the console on a line of its own.
+**History** in the toolbar opens the data source's history in a tab beside the consoles, newest
+statements first; type to search them, and click **Insert** (or double-click) to put one into
+the console on a line of its own.
 [The query history](history.md) covers the rest: statements from the grid, the explorer and AI
 assistants, a grid edit's old values, searching every data source, exporting, and how long
 statements are kept.
