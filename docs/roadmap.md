@@ -490,9 +490,30 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
     **Google Cloud** after `gcloud auth application-default login`, and on Azure Database for
     PostgreSQL and Azure SQL with **Microsoft Entra ID** after `az login`.
 
-- **C1 — Managed databases:** RDS, Aurora and Redshift; Cloud SQL; Azure SQL, Azure Database,
-  and Synapse's and Fabric's SQL endpoints; and Neon, Supabase and ClickHouse Cloud, through the
-  drivers DbRover has, with presets in the data source dialog.
+- **C1 — Managed databases** (started 2026-11-03, after C0): RDS, Aurora and Redshift; Cloud
+  SQL; Azure SQL, Azure Database, and Synapse's and Fabric's SQL endpoints; and Neon, Supabase
+  and ClickHouse Cloud, through the drivers DbRover has, with presets in the data source
+  dialog. Planned in [Cloud and big data](cloud-data.md#c1--managed-databases). In layers, one
+  PR each:
+  - **C1a — Plan:** C1's layers, decisions and risks, and this entry.
+  - **C1b — Managed services:** one table of every service's driver, port, TLS mode, sign-ins
+    and host names, and the service a connection finds itself on.
+  - **C1c — PostgreSQL behind a transaction pooler:** the driver's own queries as unnamed
+    statements, for Neon's and Supabase's poolers, tried behind PgBouncer.
+  - **C1d — Redshift:** recognised from `version()`, and browsed through its `svv_all_*` views.
+  - **C1e — Synapse and Fabric:** recognised from `SERVERPROPERTY('EngineEdition')`, with the
+    explorer and the object helpers narrowed to what each warehouse supports.
+  - **C1f — Presets in the data source dialog:** **New data source › Cloud service**, and a
+    **Service** row that recognises the host.
+  - **C1g — Manual:** a page per provider, and the demo note.
+
+  Nothing is tried against a real cloud account while building C1: each difference is tried
+  on a local stand-in (PgBouncer, views imitating Redshift's, SQL Server with a warehouse
+  forced), and the live checks are listed in the demo note.
+
+  **Exit:** each service on the list connects, browses and runs the conformance suite where an
+  account is available (by hand, with the user's accounts); a short page in the manual per
+  provider.
 - **C2 — Object storage:** Parquet, CSV and JSON in S3, Google Cloud Storage and Azure Blob
   Storage, Iceberg and Delta tables, and MotherDuck, all through DuckDB.
 - **C3 — Athena and Trino**, over AWS's Athena API and then Trino's HTTP protocol.
