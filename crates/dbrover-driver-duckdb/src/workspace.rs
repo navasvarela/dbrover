@@ -213,6 +213,37 @@ impl Workspace {
         })
     }
 
+    /// The distinct values of `column` in the loaded table `table`, without `NULL`, as text,
+    /// in the column's own order: a lookup's values (`docs/reporting.md`, "Lookups").
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError`] if the table or the column doesn't exist, or DuckDB runs out of memory.
+    pub async fn distinct_values(
+        &self,
+        table: &str,
+        column: &str,
+    ) -> Result<Vec<String>, DriverError> {
+        let column = identifier(column);
+        let sql = format!(
+            "SELECT CAST({column} AS VARCHAR) FROM (SELECT DISTINCT {column} FROM main.{} \
+             WHERE {column} IS NOT NULL) ORDER BY {column}",
+            identifier(table)
+        );
+        self.connection
+            .run_blocking(move |connection| {
+                let mut statement = connection
+                    .prepare(&sql)
+                    .map_err(|error| statement_error(error, &sql))?;
+                let values = statement
+                    .query_map([], |row| row.get::<_, String>(0))
+                    .and_then(Iterator::collect)
+                    .map_err(|error| statement_error(error, &sql))?;
+                Ok(values)
+            })
+            .await
+    }
+
     /// Cuts the database off from everything outside it, files and extensions included, and
     /// freezes its settings, so the query that runs next reads only what was loaded and
     /// attached, within the limits it was opened with.

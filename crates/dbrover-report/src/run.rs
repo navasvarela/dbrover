@@ -14,13 +14,15 @@ use std::future::Future;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use dbrover_core::Row;
+use dbrover_core::{ResultShape, Row};
 use dbrover_export::{
     CompletedFile, EXCEL_MAX_ROWS, ExportColumn, ExportWriter, OutputSchema, RowConverter,
 };
 
 use dbrover_sql::ParameterValues;
 
+use crate::declared::Shaped;
+use crate::statement::Statements;
 use crate::{
     LimitHit, Logic, Plan, PlannedOutput, Preview, QuerySource, RunEvent, RunFailure, RunValues,
     Step, WrittenFile,
@@ -36,18 +38,36 @@ pub(crate) const PROGRESS_EVERY: Duration = Duration::from_secs(1);
 pub trait SourceOpener {
     type Reader: SourceReader;
 
-    /// Connects to `source`'s data source and starts its query with `parameters`.
+    /// Connects to the statement's data source and starts it.
     fn open(
         &self,
-        source: &QuerySource,
-        parameters: &ParameterValues,
+        statement: &SourceStatement<'_>,
     ) -> impl Future<Output = Result<Self::Reader, SourceError>>;
+}
+
+/// One statement a source sends: its whole query, or one batch of its lookup.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceStatement<'a> {
+    pub source: &'a QuerySource,
+    /// The query as sent: a lookup's values written into it, and in a language without SQL,
+    /// every parameter too.
+    pub query: String,
+    /// The values for the parameters left in `query`, which a SQL driver binds; empty for a
+    /// language without SQL.
+    pub parameters: ParameterValues,
+    /// When the source's `timeout` runs out, counted from its first statement.
+    pub deadline: Instant,
 }
 
 /// A source's rows, read a page at a time.
 pub trait SourceReader {
     /// The result's columns.
     fn columns(&self) -> &[ExportColumn];
+
+    /// Whether its rows are rows, or documents of one cell each (ADR 0006).
+    fn shape(&self) -> ResultShape {
+        ResultShape::Rows
+    }
 
     /// The next page of rows, or `None` once every row has been read.
     fn next_page(&mut self) -> impl Future<Output = Result<Option<Vec<Row>>, SourceError>>;
@@ -113,7 +133,6 @@ pub async fn run<O: SourceOpener>(
     folders: RunFolders<'_>,
     events: &mut dyn FnMut(RunEvent),
 ) -> Result<RunSummary, RunFailure> {
-    refuse_until_rp3d(plan)?;
     let _staging = Staging::make(folders)?;
     let outputs = Outputs {
         plan,
@@ -123,14 +142,13 @@ pub async fn run<O: SourceOpener>(
     match &plan.logic {
         Logic::Direct(source) => {
             let opened = Instant::now();
-            let mut reader = opener
-                .open(source, &values.parameters)
+            let step = || Step::Source {
+                id: source.id.clone(),
+            };
+            let statement = Statements::new(plan, values, source).whole(opened);
+            let mut reader = Shaped::open(opener, &statement)
                 .await
-                .map_err(|error| {
-                    error.at(Step::Source {
-                        id: source.id.clone(),
-                    })
-                })?;
+                .map_err(|error| error.at(step()))?;
             let feed = Feed::Source(source);
             let written = outputs.write(&mut reader, &feed, opened, events).await;
             reader.close().await;
@@ -145,35 +163,6 @@ pub async fn run<O: SourceOpener>(
             combining.run(events).await
         }
     }
-}
-
-/// Fails a plan that needs a lookup, declared columns or a source without SQL, which RP3d
-/// runs; the file reads and plans already, so its problems show in the tab.
-fn refuse_until_rp3d(plan: &Plan) -> Result<(), RunFailure> {
-    let sources: Vec<&QuerySource> = match &plan.logic {
-        Logic::Direct(source) => vec![source],
-        Logic::Combine(combined) => combined.rounds().into_iter().flatten().collect(),
-    };
-    for source in sources {
-        let waits = if source.lookup.is_some() {
-            Some("a lookup")
-        } else if source.columns.is_some() {
-            Some("declared columns")
-        } else if source.language.dialect().is_none() {
-            Some(source.language.display_name())
-        } else {
-            None
-        };
-        if let Some(feature) = waits {
-            return Err(RunFailure::new(
-                Step::Source {
-                    id: source.id.clone(),
-                },
-                format!("a source with {feature} runs once RP3d is built"),
-            ));
-        }
-    }
-    Ok(())
 }
 
 /// What the outputs are written from.
