@@ -446,7 +446,7 @@ impl DbRoverApp {
         self.state.apply(event);
         let (open, command) = self.reports.apply(event);
         if let Some(name) = open {
-            workspace::open_report_tab(&mut self.dock, name);
+            self.open_report_tab(name);
         }
         self.send_if(command);
         match event {
@@ -1096,7 +1096,7 @@ impl DbRoverApp {
 
     fn handle_report_action(&mut self, action: ReportAction, ctx: &egui::Context) {
         match action {
-            ReportAction::Open(name) => workspace::open_report_tab(&mut self.dock, name),
+            ReportAction::Open(name) => self.open_report_tab(name),
             ReportAction::New => {
                 let first = self
                     .state
@@ -1126,6 +1126,12 @@ impl DbRoverApp {
             }
             ReportAction::OpenPath(path) => reports::open_path(ctx, &path),
         }
+    }
+
+    /// Opens a report's tab, and asks the history for its runs.
+    fn open_report_tab(&mut self, name: dbrover_store::ReportName) {
+        self.send(Reports::list_runs(&name));
+        workspace::open_report_tab(&mut self.dock, name);
     }
 
     /// Starts the report in its worker, if it plans against the data sources as they are, and
@@ -2647,7 +2653,8 @@ impl eframe::App for DbRoverApp {
         }
         self.maximize_window_once(ctx);
         self.drain_engine_events();
-        self.reports.poll();
+        let record = self.reports.poll();
+        self.send_if(record);
         if let Some(text) = self.copied_by_program.take() {
             ctx.copy_text(text);
         }

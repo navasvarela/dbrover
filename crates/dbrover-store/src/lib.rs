@@ -38,9 +38,10 @@ pub use diagrams::{
     InvalidDiagramName, PlacedTable, SavedDiagram,
 };
 pub use history::{
-    History, HistoryEntry, HistoryError, HistoryExportError, HistoryFile, HistoryOutcome,
-    HistoryQuery, HistorySource, HistorySourceKind, NamedCell, ReplacedCell, RowChange,
-    RowChangeKind, redact_secrets,
+    CombineMetrics, DEFAULT_RUNS_KEPT, History, HistoryEntry, HistoryError, HistoryExportError,
+    HistoryFile, HistoryOutcome, HistoryQuery, HistorySource, HistorySourceKind, NamedCell,
+    OutputMetrics, ReplacedCell, ReportRun, RowChange, RowChangeKind, RunError, RunOutcome,
+    SourceMetrics, StepMetrics, redact_secrets,
 };
 pub use keymap::{KeymapBindings, KeymapError, KeymapFile};
 pub use paths::{APP_NAME, AppPaths, PREVIOUS_APP_NAME};

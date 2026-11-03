@@ -1,6 +1,7 @@
-//! Reports in the app (`docs/reporting.md`, RP1f and RP2e): the files in `reports/`, read for the
-//! explorer's **Reports**; each report's tab, with its parameters, output folder and last run;
-//! and the one run that may be going, in its worker.
+//! Reports in the app (`docs/reporting.md`, RP1f, RP2e and RP4): the files in `reports/`, read
+//! for the explorer's **Reports**; each report's tab, with its parameters, output folder, last
+//! run and the runs the history keeps; and the one run that may be going, in its worker, kept
+//! in the history once it ends.
 //!
 //! The app reads and plans a report itself to show what is wrong and to check values as they
 //! are typed, but never runs one: the worker reads the file again and runs it, so what runs is
@@ -11,7 +12,7 @@ mod tab;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use dbrover_core::DataSource;
 use dbrover_engine::{Command, Event, ReportText};
@@ -20,7 +21,11 @@ use dbrover_report::{
     Batch, LoadedColumn, Plan, Preview, Report, RunEvent, RunFailure, RunRequest, SourceStart,
     Step, TypedValues, WrittenFile, read_report,
 };
-use dbrover_store::{ReportFiles, ReportName};
+use dbrover_store::{
+    CombineMetrics, DEFAULT_RUNS_KEPT, OutputMetrics, ReportFiles, ReportName, ReportRun, RunError,
+    RunOutcome, SourceMetrics, StepMetrics,
+};
+use jiff::Timestamp;
 
 pub use launcher::{ProcessLauncher, ReportLauncher, RunningReport};
 pub use tab::{ReportView, show};
@@ -28,6 +33,9 @@ pub use tab::{ReportView, show};
 /// What a new report starts as: a commented trial balance on the first data source, written
 /// as the user will write their own.
 const NEW_REPORT: &str = include_str!("new_report.toml");
+
+/// How many of a report's runs its tab asks the history for: as many as fit side by side.
+pub const RUNS_LISTED: usize = 5;
 
 /// What the user asked of the Reports, in the explorer or a report's tab.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +69,8 @@ pub struct Reports {
     running: Option<Running>,
     /// A report just created, whose tab opens once the listing has it.
     to_open: Option<ReportName>,
+    /// Each report's newest runs, as the history last listed them.
+    runs: BTreeMap<ReportName, Result<Vec<ReportRun>, String>>,
 }
 
 #[derive(Default)]
@@ -123,6 +133,10 @@ pub struct ReportState {
 /// One run, as its events have told it so far.
 pub struct RunRecord {
     pub started: Instant,
+    /// When it started, for the history.
+    pub started_at: Timestamp,
+    /// The parameters' values it was started with.
+    pub params: TypedValues,
     /// Each source as the run's start listed them, then the combine step if there is one.
     pub steps: Vec<StepRecord>,
     /// The rows the outputs were given: the source's, or the combine step's.
@@ -130,6 +144,8 @@ pub struct RunRecord {
     pub preview: Option<Preview>,
     pub files: Vec<WrittenFile>,
     pub end: Option<RunEnd>,
+    /// What each step that finished measured, in the order they finished.
+    pub measured: Vec<StepMetrics>,
 }
 
 /// A source or the combine step, as far as the run has gone.
@@ -174,15 +190,107 @@ pub enum RunEnd {
 }
 
 impl RunRecord {
-    fn new() -> Self {
+    fn new(params: TypedValues) -> Self {
         Self {
             started: Instant::now(),
+            started_at: Timestamp::now(),
+            params,
             steps: Vec::new(),
             rows: 0,
             preview: None,
             files: Vec::new(),
             end: None,
+            measured: Vec::new(),
         }
+    }
+
+    /// The run as the history keeps it, once it has ended.
+    pub fn to_report_run(&self, report: &ReportName) -> Option<ReportRun> {
+        let (elapsed, outcome) = match self.end.as_ref()? {
+            RunEnd::Finished { elapsed_ms } => {
+                (Duration::from_millis(*elapsed_ms), RunOutcome::Finished)
+            }
+            RunEnd::Failed(failure) => (
+                self.started.elapsed(),
+                RunOutcome::Failed(RunError {
+                    step: failure.step.to_string(),
+                    message: failure.message.clone(),
+                }),
+            ),
+            RunEnd::Cancelled => (self.started.elapsed(), RunOutcome::Cancelled),
+        };
+        Some(ReportRun {
+            report: report.clone(),
+            started_at: self.started_at,
+            elapsed,
+            outcome,
+            params: self.params.clone(),
+            steps: self.measured.clone(),
+        })
+    }
+
+    /// The data source of the source `id`, as the run's start named it.
+    fn data_source_of(&self, id: &str) -> String {
+        self.steps
+            .iter()
+            .find(|record| matches!(&record.step, Step::Source { id: step } if step == id))
+            .and_then(|record| record.data_source.clone())
+            .unwrap_or_default()
+    }
+
+    /// Keeps what a step measured, from the event that says it is done.
+    fn measure(&mut self, event: &RunEvent) {
+        let measured = match event {
+            RunEvent::SourceDone {
+                id,
+                rows,
+                bytes,
+                first_row_ms,
+                elapsed_ms,
+                batches,
+                ..
+            } => StepMetrics::Source(SourceMetrics {
+                id: id.clone(),
+                data_source: self.data_source_of(id),
+                rows: *rows,
+                bytes: *bytes,
+                first_row_ms: *first_row_ms,
+                elapsed_ms: *elapsed_ms,
+                batches: *batches,
+            }),
+            RunEvent::SourceAttached { id, .. } => StepMetrics::Attached {
+                id: id.clone(),
+                data_source: self.data_source_of(id),
+            },
+            RunEvent::CombineDone {
+                rows,
+                bytes,
+                first_row_ms,
+                elapsed_ms,
+                peak_memory,
+                peak_temp_size,
+            } => StepMetrics::Combine(CombineMetrics {
+                rows: *rows,
+                bytes: *bytes,
+                first_row_ms: *first_row_ms,
+                elapsed_ms: *elapsed_ms,
+                peak_memory: *peak_memory,
+                peak_temp_size: *peak_temp_size,
+            }),
+            RunEvent::OutputWritten(file) => StepMetrics::Output(OutputMetrics {
+                // The outputs' files are put in place in the report's order.
+                number: self.files.len() + 1,
+                file: file.path.file_name().map_or_else(
+                    || file.path.display().to_string(),
+                    |name| name.to_string_lossy().into_owned(),
+                ),
+                rows: file.rows,
+                size: file.size,
+                elapsed_ms: file.elapsed_ms,
+            }),
+            _ => return,
+        };
+        self.measured.push(measured);
     }
 
     /// Whether a combine step makes the rows the outputs write.
@@ -195,6 +303,7 @@ impl RunRecord {
     }
 
     fn apply(&mut self, event: RunEvent) {
+        self.measure(&event);
         match event {
             RunEvent::Started {
                 sources, combine, ..
@@ -373,6 +482,13 @@ impl Reports {
                 tracing::error!("could not create a report: {error}");
                 (None, None)
             }
+            Event::ReportRunsFound { report, result } => {
+                if let Err(error) = result {
+                    tracing::warn!("could not read the runs of {report}: {error}");
+                }
+                self.runs.insert(report.clone(), result.clone());
+                (None, None)
+            }
             _ => (None, None),
         }
     }
@@ -437,18 +553,19 @@ impl Reports {
         ) else {
             return;
         };
+        let values = self
+            .state(name)
+            .map(|state| state.values.clone())
+            .unwrap_or_default();
         let request = RunRequest {
             report: listed.path.clone(),
-            values: self
-                .state(name)
-                .map(|state| state.values.clone())
-                .unwrap_or_default(),
+            values: values.clone(),
             staging: folder.join(staging_name()),
             folder,
             memory_limit: None,
         };
         let started = setup.launcher.start(&request, plan.timeout, Box::new(wake));
-        let mut record = RunRecord::new();
+        let mut record = RunRecord::new(values);
         match started {
             Ok(run) => {
                 self.running = Some(Running {
@@ -472,25 +589,33 @@ impl Reports {
         }
     }
 
-    /// Takes in what the running report's worker said since the last frame.
-    pub fn poll(&mut self) {
-        let Some(running) = &mut self.running else {
-            return;
-        };
+    /// Takes in what the running report's worker said since the last frame. Returns the
+    /// command that keeps the run in the history, once it has ended.
+    pub fn poll(&mut self) -> Option<Command> {
+        let running = self.running.as_mut()?;
         let mut events = Vec::new();
         while let Some(event) = running.run.try_next() {
             events.push(event);
         }
         let report = running.report.clone();
-        let mut ended = false;
-        if let Some(record) = self.state_mut(&report).last_run.as_mut() {
-            for event in events {
-                record.apply(event);
-            }
-            ended = record.end.is_some();
+        let record = self.state_mut(&report).last_run.as_mut()?;
+        for event in events {
+            record.apply(event);
         }
-        if ended {
-            self.running = None;
+        let run = record.to_report_run(&report)?;
+        self.running = None;
+        Some(Command::RecordReportRun {
+            run: Box::new(run),
+            kept: DEFAULT_RUNS_KEPT,
+            listed: RUNS_LISTED,
+        })
+    }
+
+    /// The command that asks the history for `name`'s newest runs.
+    pub fn list_runs(name: &ReportName) -> Command {
+        Command::ListReportRuns {
+            report: name.clone(),
+            listed: RUNS_LISTED,
         }
     }
 }
@@ -545,6 +670,90 @@ mod tests {
         }
     }
 
+    /// A run of one source and one output, ended by `end`, as the history keeps it.
+    #[test]
+    fn keeps_a_run_however_it_ends() {
+        let failure = RunFailure::new(Step::Combine, "no memory");
+        let cases = [
+            (
+                RunEvent::Finished { elapsed_ms: 1_200 },
+                RunOutcome::Finished,
+                Some(Duration::from_millis(1_200)),
+            ),
+            (
+                RunEvent::Failed(failure),
+                RunOutcome::Failed(RunError {
+                    step: "the combine step".to_owned(),
+                    message: "no memory".to_owned(),
+                }),
+                None,
+            ),
+            (RunEvent::Cancelled, RunOutcome::Cancelled, None),
+        ];
+        let report = ReportName::new("trial-balance").unwrap();
+        for (end, outcome, elapsed) in cases {
+            let params: TypedValues = [("since".to_owned(), "2026-10-01".to_owned())].into();
+            let mut record = RunRecord::new(params.clone());
+            record.apply(RunEvent::Started {
+                report: "Trial balance".to_owned(),
+                sources: vec![SourceStart {
+                    id: "balances".to_owned(),
+                    data_source: "ledger".to_owned(),
+                    attached: false,
+                    waits_for: None,
+                }],
+                combine: false,
+            });
+            record.apply(RunEvent::SourceDone {
+                id: "balances".to_owned(),
+                rows: 20,
+                bytes: 400,
+                first_row_ms: Some(3),
+                elapsed_ms: 50,
+                table: Vec::new(),
+                warnings: Vec::new(),
+                batches: None,
+            });
+            record.apply(RunEvent::OutputWritten(WrittenFile {
+                path: PathBuf::from("/out/tb-2026-10.csv"),
+                rows: 20,
+                size: 512,
+                elapsed_ms: 2,
+                warnings: Vec::new(),
+            }));
+            assert!(record.to_report_run(&report).is_none(), "still running");
+            record.apply(end);
+
+            let run = record.to_report_run(&report).unwrap();
+            assert_eq!(run.outcome, outcome);
+            if let Some(elapsed) = elapsed {
+                assert_eq!(run.elapsed, elapsed);
+            }
+            assert_eq!(run.params, params);
+            assert_eq!(
+                run.steps,
+                [
+                    StepMetrics::Source(SourceMetrics {
+                        id: "balances".to_owned(),
+                        data_source: "ledger".to_owned(),
+                        rows: 20,
+                        bytes: 400,
+                        first_row_ms: Some(3),
+                        elapsed_ms: 50,
+                        batches: None,
+                    }),
+                    StepMetrics::Output(OutputMetrics {
+                        number: 1,
+                        file: "tb-2026-10.csv".to_owned(),
+                        rows: 20,
+                        size: 512,
+                        elapsed_ms: 2,
+                    }),
+                ]
+            );
+        }
+    }
+
     #[test]
     fn follows_each_step_of_a_combined_run() {
         let source = |id: &str, attached| SourceStart {
@@ -553,7 +762,7 @@ mod tests {
             attached,
             waits_for: None,
         };
-        let mut record = RunRecord::new();
+        let mut record = RunRecord::new(TypedValues::new());
         record.apply(RunEvent::Started {
             report: "Valuation".to_owned(),
             sources: vec![source("tx", false), source("prices", true)],

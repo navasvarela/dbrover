@@ -177,6 +177,7 @@ impl AppState {
             | Event::CustomFileLoaded { .. }
             | Event::ReportsListed(_)
             | Event::ReportCreated(_)
+            | Event::ReportRunsFound { .. }
             | Event::TrustedCommandsLoaded(_)
             | Event::ProgramFinished { .. }
             | Event::SettingsLoaded { .. }

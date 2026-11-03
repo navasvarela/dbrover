@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -13,8 +14,8 @@ use dbrover_sql::{ExistingTable, ParameterValues};
 use dbrover_store::{
     ActionId, ConsoleKey, CustomFile, CustomFileKind, DiagramFile, DiagramKey, HistoryEntry,
     HistoryQuery, ImportPlan, ImportPreview, KeymapBindings, McpOverrides, McpPermissions, Project,
-    Projects, ReportFiles, ReportName, RowChange, SavedConsole, SavedDiagram, Secret, Separator,
-    Settings, SqlFileContents, TrustedCommand, TrustedCommands,
+    Projects, ReportFiles, ReportName, ReportRun, RowChange, SavedConsole, SavedDiagram, Secret,
+    Separator, Settings, SqlFileContents, TrustedCommand, TrustedCommands,
 };
 
 use crate::{
@@ -403,6 +404,21 @@ pub enum Command {
         spec: ExportSpec,
         names: HashMap<DataSourceId, String>,
     },
+    /// Keeps a report's run in the history, with the newest `kept` runs of its report.
+    /// Answered by [`Event::ReportRunsFound`] with the report's newest runs, this one first.
+    RecordReportRun {
+        run: Box<ReportRun>,
+        kept: NonZeroU32,
+        /// How many runs the answer lists.
+        listed: usize,
+    },
+    /// Looks up a report's newest runs. Answered by [`Event::ReportRunsFound`].
+    ListReportRuns {
+        report: ReportName,
+        listed: usize,
+    },
+    /// Deletes every run of a report. Answered by [`Event::ReportRunsFound`], with none.
+    ClearReportRuns(ReportName),
     /// Asks the release feed for the newest published release. Answered by
     /// [`Event::LatestRelease`].
     CheckForUpdates,
@@ -663,6 +679,12 @@ pub enum Event {
     HistoryExported {
         path: PathBuf,
         result: Result<usize, String>,
+    },
+    /// A report's newest runs, newest first, after [`Command::RecordReportRun`],
+    /// [`Command::ListReportRuns`] or [`Command::ClearReportRuns`].
+    ReportRunsFound {
+        report: ReportName,
+        result: Result<Vec<ReportRun>, String>,
     },
     SessionChanged {
         id: DataSourceId,

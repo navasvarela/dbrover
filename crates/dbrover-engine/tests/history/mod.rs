@@ -1,10 +1,13 @@
 //! The history as an audit trail, through the engine on SQLite: where each statement came
-//! from, a grid edit's change, no secrets in the file, and retention.
+//! from, a grid edit's change, no secrets in the file, retention, and report runs.
 
 use dbrover_core::TableName;
 use dbrover_engine::RowsImport;
 use dbrover_export::ExportSpec;
-use dbrover_store::{HistoryEntry, HistorySource, NamedCell, RowChange, RowChangeKind, Separator};
+use dbrover_store::{
+    HistoryEntry, HistorySource, NamedCell, ReportName, ReportRun, RowChange, RowChangeKind,
+    RunOutcome as ReportRunOutcome, Separator,
+};
 
 use super::*;
 
@@ -281,4 +284,57 @@ fn exports_a_search_to_a_file() {
         "{text}"
     );
     engine.shut_down();
+}
+
+/// The answer to a command about a report's runs.
+fn runs_found(engine: &mut TestEngine, command: Command) -> Vec<ReportRun> {
+    engine.send(command);
+    match next_answer(engine) {
+        Event::ReportRunsFound {
+            result: Ok(runs), ..
+        } => runs,
+        other => panic!("expected the report's runs, got {other:?}"),
+    }
+}
+
+#[test]
+fn keeps_a_reports_newest_runs_and_clears_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut engine, _) = engine_with_sqlite(dir.path());
+    let report = ReportName::new("trial-balance").unwrap();
+    let run = |second: i64, outcome: ReportRunOutcome| ReportRun {
+        report: report.clone(),
+        started_at: jiff::Timestamp::from_second(second).unwrap(),
+        elapsed: std::time::Duration::from_millis(1_500),
+        outcome,
+        params: [("since".to_owned(), "2026-10-01".to_owned())]
+            .into_iter()
+            .collect(),
+        steps: Vec::new(),
+    };
+    let record = |run: ReportRun| Command::RecordReportRun {
+        run: Box::new(run),
+        kept: std::num::NonZeroU32::new(2).unwrap(),
+        listed: 5,
+    };
+    runs_found(&mut engine, record(run(10, ReportRunOutcome::Finished)));
+    runs_found(&mut engine, record(run(20, ReportRunOutcome::Cancelled)));
+    let runs = runs_found(&mut engine, record(run(30, ReportRunOutcome::Finished)));
+    assert_eq!(
+        runs,
+        [
+            run(30, ReportRunOutcome::Finished),
+            run(20, ReportRunOutcome::Cancelled)
+        ]
+    );
+
+    let listed = runs_found(
+        &mut engine,
+        Command::ListReportRuns {
+            report: report.clone(),
+            listed: 1,
+        },
+    );
+    assert_eq!(listed, [run(30, ReportRunOutcome::Finished)]);
+    assert!(runs_found(&mut engine, Command::ClearReportRuns(report.clone())).is_empty());
 }

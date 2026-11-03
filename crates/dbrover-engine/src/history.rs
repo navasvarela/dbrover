@@ -2,11 +2,15 @@
 //! up in order, so a search sent after a run has finished sees that run's statements.
 
 use std::collections::HashMap;
+use std::num::NonZeroU32;
 use std::path::PathBuf;
 
 use dbrover_core::{DataSourceId, describe_error};
 use dbrover_export::ExportSpec;
-use dbrover_store::{History, HistoryEntry, HistoryFile, HistoryQuery, HistorySettings};
+use dbrover_store::{
+    History, HistoryEntry, HistoryError, HistoryFile, HistoryQuery, HistorySettings, ReportName,
+    ReportRun,
+};
 use jiff::Timestamp;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
@@ -23,6 +27,21 @@ enum HistoryRequest {
     Search(HistoryQuery),
     Prune(HistorySettings),
     Export(HistoryExport),
+    Runs {
+        report: ReportName,
+        change: RunsChange,
+        listed: usize,
+    },
+}
+
+/// What to do to a report's runs before listing them.
+enum RunsChange {
+    None,
+    Record {
+        run: Box<ReportRun>,
+        kept: NonZeroU32,
+    },
+    Clear,
 }
 
 /// A search to write to a file, as [`crate::Command::ExportHistory`] asks.
@@ -61,6 +80,37 @@ impl HistoryLog {
     /// it sees every statement recorded before it, and statements recorded meanwhile wait.
     pub(crate) fn export(&self, export: HistoryExport) {
         self.send(HistoryRequest::Export(export));
+    }
+
+    /// Keeps `run`, then answers with its report's newest `listed` runs, by
+    /// [`Event::ReportRunsFound`].
+    pub(crate) fn record_run(&self, run: ReportRun, kept: NonZeroU32, listed: usize) {
+        self.send(HistoryRequest::Runs {
+            report: run.report.clone(),
+            change: RunsChange::Record {
+                run: Box::new(run),
+                kept,
+            },
+            listed,
+        });
+    }
+
+    /// Answered by [`Event::ReportRunsFound`].
+    pub(crate) fn list_runs(&self, report: ReportName, listed: usize) {
+        self.send(HistoryRequest::Runs {
+            report,
+            change: RunsChange::None,
+            listed,
+        });
+    }
+
+    /// Deletes every run of `report`, then answers with none, by [`Event::ReportRunsFound`].
+    pub(crate) fn clear_runs(&self, report: ReportName) {
+        self.send(HistoryRequest::Runs {
+            report,
+            change: RunsChange::Clear,
+            listed: 0,
+        });
     }
 
     /// Deletes what `retention` no longer keeps. Logged, not reported: nobody is waiting.
@@ -117,6 +167,18 @@ fn serve(file: &HistoryFile, mut requests: UnboundedReceiver<HistoryRequest>, ev
                     prune(history, &retention);
                 }
             }
+            HistoryRequest::Runs {
+                report,
+                change,
+                listed,
+            } => {
+                let result = match &history {
+                    Ok(history) => runs(history, &report, change, listed)
+                        .map_err(|error| describe_error(&error)),
+                    Err(error) => Err(error.clone()),
+                };
+                events.send(Event::ReportRunsFound { report, result });
+            }
         }
     }
 }
@@ -129,6 +191,23 @@ fn record(history: &History, entry: &HistoryEntry) {
             describe_error(&error)
         );
     }
+}
+
+/// Makes `change` to `report`'s runs, then reads its newest `listed`.
+fn runs(
+    history: &History,
+    report: &ReportName,
+    change: RunsChange,
+    listed: usize,
+) -> Result<Vec<ReportRun>, HistoryError> {
+    match change {
+        RunsChange::None => {}
+        RunsChange::Record { run, kept } => history.record_run(&run, kept)?,
+        RunsChange::Clear => {
+            history.clear_runs(report)?;
+        }
+    }
+    history.runs(report, listed)
 }
 
 fn prune(history: &History, retention: &HistorySettings) {

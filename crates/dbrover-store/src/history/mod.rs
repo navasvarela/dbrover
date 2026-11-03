@@ -16,12 +16,17 @@ use rusqlite::params;
 pub use change::{NamedCell, ReplacedCell, RowChange, RowChangeKind};
 pub use export::HistoryExportError;
 pub use redact::redact_secrets;
+pub use runs::{
+    CombineMetrics, DEFAULT_RUNS_KEPT, OutputMetrics, ReportRun, RunError, RunOutcome,
+    SourceMetrics, StepMetrics,
+};
 pub use source::{HistorySource, HistorySourceKind};
 
 mod change;
 mod export;
 mod redact;
 mod retention;
+mod runs;
 mod schema;
 mod source;
 
@@ -89,6 +94,8 @@ pub enum HistoryError {
     },
     #[error("the query history database failed")]
     Database(#[from] rusqlite::Error),
+    #[error("could not write a report run as JSON")]
+    Encode(#[source] serde_json::Error),
 }
 
 /// Where the history database lives; [`HistoryFile::open`] opens it.
@@ -814,7 +821,7 @@ mod tests {
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .unwrap();
-            assert_eq!((mode.as_str(), version), ("wal", 2));
+            assert_eq!((mode.as_str(), version), ("wal", 3));
         }
     }
 
@@ -825,7 +832,7 @@ mod tests {
         drop(file.open().unwrap());
         let newer = rusqlite::Connection::open(file.path()).unwrap();
         newer
-            .execute_batch("ALTER TABLE history ADD COLUMN later TEXT; PRAGMA user_version = 3;")
+            .execute_batch("ALTER TABLE history ADD COLUMN later TEXT; PRAGMA user_version = 4;")
             .unwrap();
 
         let history = file.open().unwrap();
@@ -838,7 +845,7 @@ mod tests {
         let version: i32 = newer
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
     }
 
     /// The guard against secrets in the history: statements carrying one in every form
