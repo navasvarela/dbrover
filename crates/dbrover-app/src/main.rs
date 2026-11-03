@@ -15,7 +15,7 @@ mod custom_files;
 mod data_source_dialog;
 mod data_source_form;
 mod database_brand;
-mod definition_window;
+mod definition_tab;
 mod delete_dialog;
 mod diagram;
 mod dialog;
