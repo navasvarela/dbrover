@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -44,7 +45,7 @@ use crate::export_sources_dialog::{ExportAction, ExportSourcesDialog};
 use crate::file_picker;
 use crate::folder_notice::FolderNotice;
 use crate::folder_switch::{FolderInUse, FolderRequest, FolderSwitch, PendingSwitch, SwitchAction};
-use crate::history_window::{HistoryAction, HistoryWindow};
+use crate::history_tab::{HistoryAction, HistoryTabs};
 use crate::host_key_prompt::{HostKeyAction, HostKeyPrompt};
 use crate::import_dialog::{ImportAction, ImportDialog};
 use crate::keymap::{self, Keymap};
@@ -129,7 +130,7 @@ pub struct DbRoverApp {
     /// Text to put on the clipboard on the next frame, from an engine event.
     clipboard: Option<String>,
     definition_window: Option<DefinitionWindow>,
-    history_window: Option<HistoryWindow>,
+    history: HistoryTabs,
     rollback_confirmation: Option<RollbackConfirmation>,
     password_prompt: Option<PasswordPrompt>,
     host_key_prompt: Option<HostKeyPrompt>,
@@ -259,7 +260,7 @@ impl DbRoverApp {
             copying_ddl: None,
             clipboard: None,
             definition_window: None,
-            history_window: None,
+            history: HistoryTabs::default(),
             rollback_confirmation: None,
             password_prompt: None,
             host_key_prompt: None,
@@ -483,16 +484,8 @@ impl DbRoverApp {
         if let Some(window) = &mut self.definition_window {
             window.apply(event);
         }
-        if let Some(window) = &mut self.history_window {
-            window.apply(event);
-        }
-        // The run's statements are recorded by now; show them.
-        if matches!(event, Event::RunFinished { .. })
-            && let Some(window) = &mut self.history_window
-        {
-            let search = window.search_command();
-            self.send(search);
-        }
+        let searches = self.history.apply(event);
+        self.send_all(searches);
         self.apply_to_password_prompt(event);
         self.apply_to_host_key_prompt(event);
         self.apply_to_password_command_prompt(event);
@@ -532,6 +525,13 @@ impl DbRoverApp {
         }
         if matches!(event, Event::DiagramsLoaded(_)) {
             self.restore_diagram_tabs();
+        }
+        if matches!(event, Event::DataSourcesLoaded(_)) {
+            self.restore_history_tabs();
+        }
+        if let Event::DataSourceDeleted(id) = event {
+            self.history.close(*id);
+            workspace::close_history_tab(&mut self.dock, *id);
         }
         if matches!(event, Event::ConsolesLoaded(_)) {
             self.restore_console_tabs();
@@ -1848,45 +1848,84 @@ impl DbRoverApp {
     }
 
     fn open_history(&mut self, console: ConsoleKey) {
-        let Some(entry) = self.state.data_source(console.data_source) else {
-            return;
-        };
-        let names = self
-            .state
+        let data_source = console.data_source;
+        let search = self
+            .history
+            .open(data_source, Some(console), self.data_source_names());
+        self.send_if(search);
+        workspace::open_history_tab(&mut self.dock, data_source);
+    }
+
+    /// Every data source's name, for a history search of them all.
+    fn data_source_names(&self) -> HashMap<DataSourceId, String> {
+        self.state
             .data_sources
             .entries()
             .iter()
             .map(|entry| (entry.data_source.id, entry.data_source.name.clone()))
-            .collect();
-        let (window, search) = HistoryWindow::open(console, entry.data_source.name.clone(), names);
-        self.history_window = Some(window);
-        self.send(search);
+            .collect()
     }
 
-    fn show_history_window(&mut self, ctx: &egui::Context) {
-        let Some(action) = self
-            .history_window
-            .as_mut()
-            .and_then(|window| window.show(ctx))
-        else {
-            return;
-        };
+    /// Reopens the history tabs the saved layout holds, now that the data sources are read.
+    fn restore_history_tabs(&mut self) {
+        let names = self.data_source_names();
+        let mut searches = Vec::new();
+        let Self {
+            dock,
+            history,
+            state,
+            ..
+        } = self;
+        workspace::restore_history(dock, |data_source| {
+            if state.data_source(data_source).is_none() {
+                return false;
+            }
+            searches.extend(history.open(data_source, None, names.clone()));
+            true
+        });
+        self.send_all(searches);
+    }
+
+    fn handle_history_action(&mut self, data_source: DataSourceId, action: HistoryAction) {
         match action {
             HistoryAction::Search(query) => self.send(Command::SearchHistory(query)),
-            HistoryAction::Insert { console, sql } => {
-                self.consoles.insert_statement(&console, &sql);
-            }
+            HistoryAction::Insert(sql) => self.insert_from_history(data_source, &sql),
             HistoryAction::Export(spec) => {
                 let file = spec.format().map(FileType::of);
                 if let Some(path) = file.and_then(|file| (self.pick_export_path)(&file, "history"))
-                    && let Some(window) = &mut self.history_window
+                    && let Some(tab) = self.history.get_mut(data_source)
                 {
-                    let command = window.export(path, spec);
+                    let command = tab.export(path, spec);
                     self.send(command);
                 }
             }
-            HistoryAction::Close => self.history_window = None,
         }
+    }
+
+    /// Puts `sql` into the console the history tab was opened from, or, once that console is
+    /// closed or after a restart, into a new console of the data source, and shows it.
+    fn insert_from_history(&mut self, data_source: DataSourceId, sql: &str) {
+        let Some(tab) = self.history.get_mut(data_source) else {
+            return;
+        };
+        let open = tab
+            .console()
+            .filter(|console| self.consoles.get_mut(console).is_some())
+            .cloned();
+        let console = match open {
+            Some(console) => console,
+            None => {
+                let Some(entry) = self.state.data_source(data_source) else {
+                    return;
+                };
+                let console = self.consoles.open(&entry.data_source, String::new());
+                workspace::open_console_tab(&mut self.dock, console.clone());
+                tab.set_console(console.clone());
+                console
+            }
+        };
+        self.consoles.insert_statement(&console, sql);
+        workspace::focus_console_tab(&mut self.dock, &console);
     }
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
@@ -2609,6 +2648,7 @@ impl eframe::App for DbRoverApp {
         let mut settings_actions = Vec::new();
         let mut diagram_actions = Vec::new();
         let mut report_actions = Vec::new();
+        let mut history_actions = Vec::new();
         let report_sources: Vec<dbrover_core::DataSource> = self
             .state
             .data_sources
@@ -2658,6 +2698,8 @@ impl eframe::App for DbRoverApp {
                     reports: &mut self.reports,
                     report_sources: &report_sources,
                     report_actions: &mut report_actions,
+                    history: &mut self.history,
+                    history_actions: &mut history_actions,
                 },
             );
         if let Some(text) = self.clipboard.take() {
@@ -2674,6 +2716,9 @@ impl eframe::App for DbRoverApp {
         }
         for action in diagram_actions {
             self.handle_diagram_action(action);
+        }
+        for (data_source, action) in history_actions {
+            self.handle_history_action(data_source, action);
         }
         for (console, action) in console_actions {
             match action {
@@ -2733,7 +2778,6 @@ impl eframe::App for DbRoverApp {
         {
             self.definition_window = None;
         }
-        self.show_history_window(&ctx);
         self.show_custom_file_window(&ctx);
         let commands = self.command_runs.show(&ctx);
         self.send_all(commands);

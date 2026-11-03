@@ -5,7 +5,7 @@ use dbrover_store::HistorySourceKind;
 use egui::{ComboBox, Ui};
 use jiff::{SignedDuration, Timestamp};
 
-/// Whose statements the window lists.
+/// Whose statements the tab lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Scope {
     /// The console's data source.
@@ -23,7 +23,7 @@ impl Scope {
     }
 }
 
-/// How far back the window looks.
+/// How far back the tab looks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Period {
     AnyTime,

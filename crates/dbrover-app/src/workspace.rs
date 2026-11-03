@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use dbrover_core::DataSource;
-use dbrover_core::SourceColor;
+use dbrover_core::{DataSourceId, SourceColor};
 use dbrover_store::{
     ConsoleKey, CustomAction, DiagramKey, McpPermissions, Project, ReportName, Snippet,
 };
@@ -28,6 +28,7 @@ use crate::diagram::{DiagramAction, Diagrams};
 use crate::explorer::{self, ExplorerAction, ExplorerOptions};
 use crate::folder_switch::FolderInUse;
 use crate::fonts;
+use crate::history_tab::{HistoryAction, HistoryTabs};
 use crate::icons::{self, Icon, Role};
 use crate::keymap::Keymap;
 use crate::log_console::LogConsole;
@@ -71,6 +72,9 @@ pub enum Tab {
     Diagram(DiagramKey),
     /// A report, by its file in `reports/`.
     Report(ReportName),
+    /// A data source's query history. Restored at start-up once the data sources are read;
+    /// see [`restore_history`].
+    History(DataSourceId),
 }
 
 /// The consoles whose tabs the layout holds, so they can be reopened at start-up.
@@ -142,8 +146,38 @@ pub fn restore_diagrams(layout: &mut DockState<Tab>, mut reopen: impl FnMut(&Dia
     }
 }
 
-/// Brings the Settings tab to the front, opening it beside the consoles the first time, as an
-/// editor opens its settings.
+/// Brings a data source's history tab to the front, opening it next to the consoles if it
+/// isn't open.
+pub fn open_history_tab(layout: &mut DockState<Tab>, data_source: DataSourceId) {
+    let tab = Tab::History(data_source);
+    if !focus_tab(layout, &tab) {
+        open_in_main_area(layout, tab);
+    }
+}
+
+pub fn close_history_tab(layout: &mut DockState<Tab>, data_source: DataSourceId) {
+    if let Some(path) = layout.find_tab(&Tab::History(data_source)) {
+        layout.remove_tab(path);
+    }
+}
+
+/// Drops the history tabs `reopen` can't reopen (their data source is gone), so a restored
+/// layout never shows an empty tab.
+pub fn restore_history(layout: &mut DockState<Tab>, mut reopen: impl FnMut(DataSourceId) -> bool) {
+    let data_sources: Vec<DataSourceId> = layout
+        .iter_all_tabs()
+        .filter_map(|(_, tab)| match tab {
+            Tab::History(data_source) => Some(*data_source),
+            _ => None,
+        })
+        .collect();
+    for data_source in data_sources {
+        if !reopen(data_source) {
+            close_history_tab(layout, data_source);
+        }
+    }
+}
+
 /// Opens a report's tab beside the consoles, or brings it to the front.
 pub fn open_report_tab(layout: &mut DockState<Tab>, name: ReportName) {
     let tab = Tab::Report(name);
@@ -152,6 +186,8 @@ pub fn open_report_tab(layout: &mut DockState<Tab>, name: ReportName) {
     }
 }
 
+/// Brings the Settings tab to the front, opening it beside the consoles the first time, as an
+/// editor opens its settings.
 pub fn open_settings_tab(layout: &mut DockState<Tab>) {
     if !focus_tab(layout, &Tab::Settings) {
         open_in_main_area(layout, Tab::Settings);
@@ -165,7 +201,12 @@ fn open_in_main_area(layout: &mut DockState<Tab>, tab: Tab) {
     let in_main_area = |tab: &Tab| {
         matches!(
             tab,
-            Tab::QueryConsole(_) | Tab::Welcome | Tab::Settings | Tab::Diagram(_) | Tab::Report(_)
+            Tab::QueryConsole(_)
+                | Tab::Welcome
+                | Tab::Settings
+                | Tab::Diagram(_)
+                | Tab::Report(_)
+                | Tab::History(_)
         )
     };
     match tree.find_tab_from(in_main_area) {
@@ -248,6 +289,9 @@ pub struct Panels<'a> {
     pub report_sources: &'a [DataSource],
     /// What the user asked of the report tabs this frame.
     pub report_actions: &'a mut Vec<ReportAction>,
+    pub history: &'a mut HistoryTabs,
+    /// What the user asked of the history tabs this frame, by their data source.
+    pub history_actions: &'a mut Vec<(DataSourceId, HistoryAction)>,
 }
 
 impl TabViewer for Panels<'_> {
@@ -306,6 +350,25 @@ impl TabViewer for Panels<'_> {
                         role: Role::Primary,
                     },
                     &title,
+                    FontId::proportional(TAB_TITLE_SIZE),
+                )
+            }
+            Tab::History(data_source) => {
+                let name = self
+                    .data_sources
+                    .entries()
+                    .iter()
+                    .find(|entry| entry.data_source.id == *data_source)
+                    .map_or("a removed data source", |entry| {
+                        entry.data_source.name.as_str()
+                    });
+                tab_title(
+                    palette,
+                    Icon {
+                        glyph: icons::CLOCK_COUNTER_CLOCKWISE,
+                        role: Role::Primary,
+                    },
+                    &format!("History of {name}"),
                     FontId::proportional(TAB_TITLE_SIZE),
                 )
             }
@@ -387,6 +450,17 @@ impl TabViewer for Panels<'_> {
                 },
                 self.report_actions,
             ),
+            Tab::History(data_source) => match self.history.get_mut(*data_source) {
+                Some(history) => {
+                    let action = history.show(ui);
+                    self.history_actions
+                        .extend(action.map(|action| (*data_source, action)));
+                }
+                // Restored from the saved layout, waiting for the data sources to be read.
+                None => {
+                    ui.weak("Loading…");
+                }
+            },
             Tab::QueryConsole(key) => match self.consoles.get_mut(key) {
                 Some(query_console) => {
                     let data_source = query_console.data_source();
@@ -449,7 +523,12 @@ impl TabViewer for Panels<'_> {
     fn is_closeable(&self, tab: &Tab) -> bool {
         matches!(
             tab,
-            Tab::Welcome | Tab::QueryConsole(_) | Tab::Settings | Tab::Diagram(_) | Tab::Report(_)
+            Tab::Welcome
+                | Tab::QueryConsole(_)
+                | Tab::Settings
+                | Tab::Diagram(_)
+                | Tab::Report(_)
+                | Tab::History(_)
         )
     }
 
@@ -461,6 +540,10 @@ impl TabViewer for Panels<'_> {
             }
             Tab::Diagram(key) => {
                 self.diagrams.close(key);
+                OnCloseResponse::Close
+            }
+            Tab::History(data_source) => {
+                self.history.close(*data_source);
                 OnCloseResponse::Close
             }
             _ => OnCloseResponse::Close,
