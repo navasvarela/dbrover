@@ -24,6 +24,7 @@ use crate::console::{
 use crate::consoles::SavedConsoles;
 use crate::custom_actions::{SubjectKind, SubjectOn};
 use crate::custom_files::CustomFiles;
+use crate::definition_tab::{DefinitionAction, DefinitionId, DefinitionTabs};
 use crate::diagram::{DiagramAction, Diagrams};
 use crate::explorer::{self, ExplorerAction, ExplorerOptions};
 use crate::folder_switch::FolderInUse;
@@ -75,6 +76,8 @@ pub enum Tab {
     /// A data source's query history. Restored at start-up once the data sources are read;
     /// see [`restore_history`].
     History(DataSourceId),
+    /// A catalog object's definition. Not restored; see [`forget_definitions`].
+    Definition(DefinitionId),
 }
 
 /// The consoles whose tabs the layout holds, so they can be reopened at start-up.
@@ -178,6 +181,34 @@ pub fn restore_history(layout: &mut DockState<Tab>, mut reopen: impl FnMut(DataS
     }
 }
 
+/// Brings a definition's tab to the front, opening it next to the consoles if it isn't open.
+pub fn open_definition_tab(layout: &mut DockState<Tab>, id: DefinitionId) {
+    let tab = Tab::Definition(id);
+    if !focus_tab(layout, &tab) {
+        open_in_main_area(layout, tab);
+    }
+}
+
+pub fn close_definition_tab(layout: &mut DockState<Tab>, id: DefinitionId) {
+    if let Some(path) = layout.find_tab(&Tab::Definition(id)) {
+        layout.remove_tab(path);
+    }
+}
+
+/// Drops a saved layout's definition tabs, whose keys mean nothing to this run.
+pub fn forget_definitions(layout: &mut DockState<Tab>) {
+    let ids: Vec<DefinitionId> = layout
+        .iter_all_tabs()
+        .filter_map(|(_, tab)| match tab {
+            Tab::Definition(id) => Some(*id),
+            _ => None,
+        })
+        .collect();
+    for id in ids {
+        close_definition_tab(layout, id);
+    }
+}
+
 /// Opens a report's tab beside the consoles, or brings it to the front.
 pub fn open_report_tab(layout: &mut DockState<Tab>, name: ReportName) {
     let tab = Tab::Report(name);
@@ -207,6 +238,7 @@ fn open_in_main_area(layout: &mut DockState<Tab>, tab: Tab) {
                 | Tab::Diagram(_)
                 | Tab::Report(_)
                 | Tab::History(_)
+                | Tab::Definition(_)
         )
     };
     match tree.find_tab_from(in_main_area) {
@@ -292,6 +324,9 @@ pub struct Panels<'a> {
     pub history: &'a mut HistoryTabs,
     /// What the user asked of the history tabs this frame, by their data source.
     pub history_actions: &'a mut Vec<(DataSourceId, HistoryAction)>,
+    pub definitions: &'a mut DefinitionTabs,
+    /// What the user asked of the definition tabs this frame.
+    pub definition_actions: &'a mut Vec<DefinitionAction>,
 }
 
 impl TabViewer for Panels<'_> {
@@ -372,6 +407,15 @@ impl TabViewer for Panels<'_> {
                     FontId::proportional(TAB_TITLE_SIZE),
                 )
             }
+            Tab::Definition(id) => tab_title(
+                palette,
+                Icon {
+                    glyph: icons::CODE,
+                    role: Role::Primary,
+                },
+                self.definitions.title(*id).unwrap_or("Definition"),
+                FontId::proportional(TAB_TITLE_SIZE),
+            ),
             Tab::QueryConsole(key) => {
                 let title = self
                     .consoles
@@ -461,6 +505,9 @@ impl TabViewer for Panels<'_> {
                     ui.weak("Loading…");
                 }
             },
+            Tab::Definition(id) => self
+                .definition_actions
+                .extend(self.definitions.show(ui, *id)),
             Tab::QueryConsole(key) => match self.consoles.get_mut(key) {
                 Some(query_console) => {
                     let data_source = query_console.data_source();
@@ -529,6 +576,7 @@ impl TabViewer for Panels<'_> {
                 | Tab::Diagram(_)
                 | Tab::Report(_)
                 | Tab::History(_)
+                | Tab::Definition(_)
         )
     }
 
@@ -544,6 +592,10 @@ impl TabViewer for Panels<'_> {
             }
             Tab::History(data_source) => {
                 self.history.close(*data_source);
+                OnCloseResponse::Close
+            }
+            Tab::Definition(id) => {
+                self.definitions.close(*id);
                 OnCloseResponse::Close
             }
             _ => OnCloseResponse::Close,

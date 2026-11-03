@@ -31,7 +31,7 @@ use crate::custom_exports;
 use crate::custom_files::{self, CustomFiles, FileWindowAction};
 use crate::data_source_dialog::{DataSourceDialog, DialogAction};
 use crate::data_source_form::McpPasswordChange;
-use crate::definition_window::DefinitionWindow;
+use crate::definition_tab::{DefinitionAction, DefinitionTabs, OpenedDefinition};
 use crate::delete_dialog::{DeleteChoice, DeleteConfirmation};
 use crate::diagram::{
     Diagram, DiagramAction, DiagramDialog, DiagramDialogAction, Diagrams, Growth,
@@ -129,7 +129,7 @@ pub struct DbRoverApp {
     copying_ddl: Option<(DataSourceId, CatalogPath)>,
     /// Text to put on the clipboard on the next frame, from an engine event.
     clipboard: Option<String>,
-    definition_window: Option<DefinitionWindow>,
+    definitions: DefinitionTabs,
     history: HistoryTabs,
     rollback_confirmation: Option<RollbackConfirmation>,
     password_prompt: Option<PasswordPrompt>,
@@ -226,7 +226,8 @@ impl DbRoverApp {
         // No saved layout means a first launch (or a layout version change): maximize the
         // window rather than keep the small default size.
         let maximize_window = saved_layout.is_none();
-        let dock = saved_layout.unwrap_or_else(workspace::default_layout);
+        let mut dock = saved_layout.unwrap_or_else(workspace::default_layout);
+        workspace::forget_definitions(&mut dock);
         let export_choices = cc
             .storage
             .and_then(|storage| eframe::get_value(storage, export_dialog::STORAGE_KEY))
@@ -259,7 +260,7 @@ impl DbRoverApp {
             object_dialog: None,
             copying_ddl: None,
             clipboard: None,
-            definition_window: None,
+            definitions: DefinitionTabs::default(),
             history: HistoryTabs::default(),
             rollback_confirmation: None,
             password_prompt: None,
@@ -481,9 +482,7 @@ impl DbRoverApp {
             Some(Finished::Copy(text)) => self.copied_by_program = Some(text),
             None => {}
         }
-        if let Some(window) = &mut self.definition_window {
-            window.apply(event);
-        }
+        self.definitions.apply(event);
         let searches = self.history.apply(event);
         self.send_all(searches);
         self.apply_to_password_prompt(event);
@@ -532,6 +531,10 @@ impl DbRoverApp {
         if let Event::DataSourceDeleted(id) = event {
             self.history.close(*id);
             workspace::close_history_tab(&mut self.dock, *id);
+            for definition in self.definitions.of(*id) {
+                self.definitions.close(definition);
+                workspace::close_definition_tab(&mut self.dock, definition);
+            }
         }
         if matches!(event, Event::ConsolesLoaded(_)) {
             self.restore_console_tabs();
@@ -1273,8 +1276,7 @@ impl DbRoverApp {
                 self.load_children_if(needs_loading, id, path);
             }
             ExplorerAction::ShowDefinition { id, path, title } => {
-                self.definition_window = Some(DefinitionWindow::new(id, path.clone(), title));
-                self.send(Command::LoadDefinition { id, path });
+                self.show_definition(id, path, title);
             }
             ExplorerAction::NewConsole(id) => {
                 if let Some(entry) = self.state.data_source(id) {
@@ -1854,6 +1856,41 @@ impl DbRoverApp {
             .open(data_source, Some(console), self.data_source_names());
         self.send_if(search);
         workspace::open_history_tab(&mut self.dock, data_source);
+    }
+
+    /// Brings the definition of `path` to the front, opening a tab and loading it the first
+    /// time.
+    fn show_definition(&mut self, data_source: DataSourceId, path: CatalogPath, title: String) {
+        if let Some(open) = self.definitions.find(data_source, &path) {
+            workspace::open_definition_tab(&mut self.dock, open);
+            return;
+        }
+        let Some(entry) = self.state.data_source(data_source) else {
+            return;
+        };
+        let language = QueryLanguage::from(entry.data_source.config.driver());
+        let tab = self.definitions.open(OpenedDefinition {
+            data_source,
+            path: path.clone(),
+            title,
+            language,
+        });
+        workspace::open_definition_tab(&mut self.dock, tab);
+        self.send(Command::LoadDefinition {
+            id: data_source,
+            path,
+        });
+    }
+
+    fn handle_definition_action(&mut self, action: DefinitionAction) {
+        match action {
+            DefinitionAction::OpenInConsole { data_source, text } => {
+                if let Some(entry) = self.state.data_source(data_source) {
+                    let console = self.consoles.open(&entry.data_source, text);
+                    workspace::open_console_tab(&mut self.dock, console);
+                }
+            }
+        }
     }
 
     /// Every data source's name, for a history search of them all.
@@ -2649,6 +2686,7 @@ impl eframe::App for DbRoverApp {
         let mut diagram_actions = Vec::new();
         let mut report_actions = Vec::new();
         let mut history_actions = Vec::new();
+        let mut definition_actions = Vec::new();
         let report_sources: Vec<dbrover_core::DataSource> = self
             .state
             .data_sources
@@ -2700,6 +2738,8 @@ impl eframe::App for DbRoverApp {
                     report_actions: &mut report_actions,
                     history: &mut self.history,
                     history_actions: &mut history_actions,
+                    definitions: &mut self.definitions,
+                    definition_actions: &mut definition_actions,
                 },
             );
         if let Some(text) = self.clipboard.take() {
@@ -2719,6 +2759,9 @@ impl eframe::App for DbRoverApp {
         }
         for (data_source, action) in history_actions {
             self.handle_history_action(data_source, action);
+        }
+        for action in definition_actions {
+            self.handle_definition_action(action);
         }
         for (console, action) in console_actions {
             match action {
@@ -2771,13 +2814,6 @@ impl eframe::App for DbRoverApp {
         self.show_import_dialog(&ctx);
         self.show_csv_import(&ctx);
         self.show_diagram_dialog(&ctx);
-        if self
-            .definition_window
-            .as_ref()
-            .is_some_and(|window| !window.show(&ctx))
-        {
-            self.definition_window = None;
-        }
         self.show_custom_file_window(&ctx);
         let commands = self.command_runs.show(&ctx);
         self.send_all(commands);
@@ -2832,6 +2868,7 @@ mod tests {
     mod charts;
     mod commands;
     mod customisation;
+    mod definitions;
     mod diagrams;
     mod exports;
     mod files;
