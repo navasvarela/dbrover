@@ -160,14 +160,8 @@ impl Flavour {
 /// `VERSION()` is `8.4.3` on MySQL and `11.4.4-MariaDB-…` on MariaDB.
 fn server_info(version: String) -> ServerInfo {
     match version.split_once("-MariaDB") {
-        Some((number, _)) => ServerInfo {
-            product: MARIADB.to_owned(),
-            version: number.to_owned(),
-        },
-        None => ServerInfo {
-            product: "MySQL".to_owned(),
-            version,
-        },
+        Some((number, _)) => ServerInfo::new(MARIADB, number.to_owned()),
+        None => ServerInfo::new("MySQL", version),
     }
 }
 

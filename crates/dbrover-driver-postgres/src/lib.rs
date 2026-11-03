@@ -62,10 +62,7 @@ pub async fn connect(
         server,
         primary,
         others: HashMap::new(),
-        server_info: ServerInfo {
-            product: PRODUCT.to_owned(),
-            version,
-        },
+        server_info: ServerInfo::new(PRODUCT, version),
     })
 }
 

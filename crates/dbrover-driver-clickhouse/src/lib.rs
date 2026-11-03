@@ -95,10 +95,7 @@ pub async fn connect(
     Ok(ClickHouseConnection {
         session,
         cancel: Arc::new(execution::ClickHouseCancel::new(base)),
-        server_info: ServerInfo {
-            product: "ClickHouse".to_owned(),
-            version,
-        },
+        server_info: ServerInfo::new("ClickHouse", version),
     })
 }
 

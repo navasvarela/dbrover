@@ -84,10 +84,7 @@ pub async fn connect(
     Ok(SearchConnection {
         client,
         flavor,
-        server_info: ServerInfo {
-            product: flavor.product().to_owned(),
-            version,
-        },
+        server_info: ServerInfo::new(flavor.product(), version),
         running: Arc::new(Running::default()),
     })
 }

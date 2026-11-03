@@ -166,10 +166,7 @@ async fn server_info(client: &mut SqlClient) -> tiberius::Result<ServerInfo> {
     } else {
         "SQL Server"
     };
-    Ok(ServerInfo {
-        product: product.to_owned(),
-        version: text(0),
-    })
+    Ok(ServerInfo::new(product, text(0)))
 }
 
 /// Column `index` of `row`, or `None` if it is `NULL` or not a `T`. Never

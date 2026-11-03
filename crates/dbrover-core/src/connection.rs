@@ -6,8 +6,9 @@ use async_trait::async_trait;
 
 use crate::{
     CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, Cell, ChildrenPage,
-    ChildrenQuery, CostEstimate, DriverError, ProgressHandle, RelationName, ResultCursor,
-    RoleDescription, TableConstraints, TableDescription, TableName, TransactionStatus,
+    ChildrenQuery, CostEstimate, DriverError, ManagedService, ProgressHandle, RelationName,
+    ResultCursor, RoleDescription, TableConstraints, TableDescription, TableName,
+    TransactionStatus,
 };
 
 /// What a server reported about itself when the connection was opened.
@@ -16,6 +17,24 @@ pub struct ServerInfo {
     /// e.g. "PostgreSQL" or "SQLite".
     pub product: String,
     pub version: String,
+    /// The managed service the server said it is, where its catalog or DDL differs from its
+    /// engine's (Redshift, Synapse, Fabric; C1). `None` for the engine itself, and for
+    /// services that behave as it does.
+    pub service: Option<ManagedService>,
+}
+
+impl ServerInfo {
+    pub fn new(product: impl Into<String>, version: impl Into<String>) -> Self {
+        Self {
+            product: product.into(),
+            version: version.into(),
+            service: None,
+        }
+    }
+
+    pub fn on_service(self, service: Option<ManagedService>) -> Self {
+        Self { service, ..self }
+    }
 }
 
 impl fmt::Display for ServerInfo {

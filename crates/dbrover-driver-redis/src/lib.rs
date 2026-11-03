@@ -102,10 +102,7 @@ fn server_info(info: &str) -> ServerInfo {
     } else {
         ("Redis", field("redis_version"))
     };
-    ServerInfo {
-        product: product.to_owned(),
-        version: version.unwrap_or_else(|| "unknown".to_owned()),
-    }
+    ServerInfo::new(product, version.unwrap_or_else(|| "unknown".to_owned()))
 }
 
 /// What it takes to open a session: kept to open another after a cancel that had to stop

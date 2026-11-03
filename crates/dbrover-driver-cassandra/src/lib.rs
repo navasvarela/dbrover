@@ -124,22 +124,19 @@ async fn server_info(session: &Session) -> Result<ServerInfo, DriverError> {
     )
     .await;
     if let Ok(Some(version)) = scylla {
-        return Ok(ServerInfo {
-            product: execution::SCYLLADB.to_owned(),
-            version: version
+        return Ok(ServerInfo::new(
+            execution::SCYLLADB,
+            version
                 .split_once('-')
                 .map_or(version.as_str(), |(release, _build)| release)
                 .to_owned(),
-        });
+        ));
     }
     let version = execution::single_text(session, "SELECT release_version FROM system.local")
         .await
         .map_err(errors::connect)?
         .unwrap_or_default();
-    Ok(ServerInfo {
-        product: "Apache Cassandra".to_owned(),
-        version,
-    })
+    Ok(ServerInfo::new("Apache Cassandra", version))
 }
 
 /// A session with a Cassandra or ScyllaDB cluster.

@@ -62,10 +62,7 @@ pub async fn connect(
     Ok(MongoConnection {
         client,
         database: config.server.database.clone(),
-        server_info: ServerInfo {
-            product: "MongoDB".to_owned(),
-            version,
-        },
+        server_info: ServerInfo::new("MongoDB", version),
         running: Arc::new(Running::default()),
     })
 }

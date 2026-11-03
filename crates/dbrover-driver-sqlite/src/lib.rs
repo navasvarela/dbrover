@@ -43,10 +43,7 @@ pub async fn connect(config: &SqliteConfig) -> Result<SqliteConnection, DriverEr
             connection.get_interrupt_handle(),
         )),
         connection: Arc::new(Mutex::new(connection)),
-        server_info: ServerInfo {
-            product: PRODUCT.to_owned(),
-            version,
-        },
+        server_info: ServerInfo::new(PRODUCT, version),
     })
 }
 

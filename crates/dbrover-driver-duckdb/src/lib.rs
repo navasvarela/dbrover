@@ -51,10 +51,7 @@ pub async fn connect(config: &DuckDbConfig) -> Result<DuckDbConnection, DriverEr
         cancel: Arc::new(execution::DuckDbCancel::new(connection.interrupt_handle())),
         connection: Arc::new(Mutex::new(connection)),
         _database: shared,
-        server_info: ServerInfo {
-            product: PRODUCT.to_owned(),
-            version,
-        },
+        server_info: ServerInfo::new(PRODUCT, version),
     })
 }
 

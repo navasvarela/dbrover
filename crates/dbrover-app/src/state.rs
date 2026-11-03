@@ -392,10 +392,7 @@ mod tests {
         let mut state = AppState::default();
         let mut renamed = data_source("old");
         state.apply(&Event::DataSourcesLoaded(vec![renamed.clone()]));
-        let connected = SessionState::Connected(ServerInfo {
-            product: "SQLite".to_owned(),
-            version: "3.50.0".to_owned(),
-        });
+        let connected = SessionState::Connected(ServerInfo::new("SQLite", "3.50.0".to_owned()));
         state.apply(&Event::SessionChanged {
             id: renamed.id,
             state: connected.clone(),
