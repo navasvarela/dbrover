@@ -8,7 +8,9 @@
 
 use dbrover_core::ValueKind;
 use dbrover_driver_duckdb::DuckDbType;
-use dbrover_export::ExportColumn;
+use dbrover_export::{ColumnType, ExportColumn};
+
+use crate::SourceColumn;
 
 /// The most digits a `BIGINT` holds for any value: 19 fit some of them, but not all.
 const BIGINT_DIGITS: u8 = 18;
@@ -170,21 +172,31 @@ fn has_offset(time: &str) -> bool {
 /// The types of a source's columns, worked out a page at a time as it loads.
 pub(crate) struct ColumnTyper {
     columns: Vec<(ExportColumn, Seen)>,
+    /// Each column's declared type, when the source declares its columns.
+    declared: Option<Vec<ColumnType>>,
 }
 
 impl ColumnTyper {
-    pub(crate) fn new(columns: &[ExportColumn]) -> Self {
+    /// For `columns`, typed by `declared` when the source declares them, in the same order.
+    pub(crate) fn new(columns: &[ExportColumn], declared: Option<&[SourceColumn]>) -> Self {
         Self {
             columns: columns
                 .iter()
                 .map(|column| (column.clone(), Seen::Nothing))
                 .collect(),
+            declared: declared
+                .map(|declared| declared.iter().map(|column| column.column_type).collect()),
         }
     }
 
     /// The columns' names, in their order.
     pub(crate) fn names(&self) -> impl Iterator<Item = &str> {
         self.columns.iter().map(|(column, _)| column.name.as_str())
+    }
+
+    /// Whether the file declares the columns' types.
+    pub(crate) fn is_declared(&self) -> bool {
+        self.declared.is_some()
     }
 
     pub(crate) fn see(&mut self, page: &[dbrover_core::Row]) {
@@ -204,8 +216,13 @@ impl ColumnTyper {
         let types = self
             .columns
             .iter()
-            .map(|(column, seen)| {
-                let chosen = column_type(column, *seen);
+            .enumerate()
+            .map(|(index, (column, seen))| {
+                let declared = self.declared.as_ref().and_then(|types| types.get(index));
+                let chosen = match declared {
+                    Some(declared) => declared_type(*declared, *seen),
+                    None => column_type(column, *seen),
+                };
                 if chosen == DuckDbType::Varchar && *seen == Seen::TooPrecise {
                     warnings.push(format!(
                         "column {:?} has numbers of more than {MAX_DIGITS} digits, more than \
@@ -251,6 +268,33 @@ fn column_type(column: &ExportColumn, seen: Seen) -> DuckDbType {
     }
 }
 
+/// The DuckDB type of a declared column (`docs/reporting.md`, "Declared columns"). A
+/// `decimal` without its precision is typed by its values, which were checked to be numbers.
+fn declared_type(declared: ColumnType, seen: Seen) -> DuckDbType {
+    match declared {
+        ColumnType::Text => DuckDbType::Varchar,
+        ColumnType::Integer => DuckDbType::BigInt,
+        ColumnType::Decimal(Some(spec)) => DuckDbType::Decimal {
+            precision: spec.precision(),
+            scale: spec.scale(),
+        },
+        ColumnType::Decimal(None) => match seen {
+            Seen::Integer { digits } => DuckDbType::Decimal {
+                precision: digits,
+                scale: 0,
+            },
+            Seen::Nothing => DuckDbType::Decimal {
+                precision: MAX_DIGITS,
+                scale: 0,
+            },
+            other => other.duckdb_type(),
+        },
+        ColumnType::Boolean => DuckDbType::Boolean,
+        ColumnType::Date => DuckDbType::Date,
+        ColumnType::Timestamp => DuckDbType::Timestamp,
+    }
+}
+
 /// `decimal(18, 2)` or `numeric(38,18)` as a `DECIMAL` DuckDB holds; `None` for a decimal
 /// without its precision, or with more digits than DuckDB holds.
 fn declared_decimal(type_name: Option<&str>) -> Option<DuckDbType> {
@@ -273,7 +317,7 @@ mod tests {
             kind,
             excel_format: None,
         };
-        let mut typer = ColumnTyper::new(std::slice::from_ref(&column));
+        let mut typer = ColumnTyper::new(std::slice::from_ref(&column), None);
         let rows: Vec<dbrover_core::Row> = values
             .iter()
             .map(|value| vec![value.map(str::to_owned)])
@@ -390,7 +434,7 @@ mod tests {
             kind: ValueKind::Undeclared,
             ..column
         };
-        let mut typer = ColumnTyper::new(&[undeclared]);
+        let mut typer = ColumnTyper::new(&[undeclared], None);
         typer.see(&[
             vec![Some("123456789012345678901.123456789012345678".to_owned())],
             vec![Some("1".to_owned())],

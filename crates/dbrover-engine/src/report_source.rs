@@ -1,8 +1,9 @@
-//! A report's source on a real data source (`docs/reporting.md`, RP1d): its query checked to
-//! only read, run in the engine's read-only mode with its parameters bound, refused if the
-//! cost guard would ask, and read a page at a time until its timeout.
+//! A report's source on a real data source (`docs/reporting.md`, RP1d and RP3d): its query
+//! checked to only read, run in the engine's read-only mode with its parameters bound, refused
+//! if the cost guard would ask, and read a page at a time until the source's deadline. A query
+//! in a language without SQL arrives with its parameters already written in.
 //!
-//! Opening a source:
+//! Opening a source's statement:
 //! 1. bind the parameters, and check the statement as it will run (values as literals);
 //! 2. connect as `dbrover mcp` does, with nobody to ask for a password, the connection itself
 //!    read-only where the engine has such a mode;
@@ -14,12 +15,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dbrover_core::{
-    CancelHandle, Connection, CostGuard, ReadPace, ResultCursor, Row, describe_error,
+    CancelHandle, Connection, CostGuard, ReadPace, ResultCursor, ResultShape, Row, describe_error,
 };
 use dbrover_export::ExportColumn;
-use dbrover_language::QueryLanguage;
-use dbrover_report::{LimitHit, QuerySource, SourceError, SourceOpener, SourceReader};
-use dbrover_sql::ParameterValues;
+use dbrover_report::{LimitHit, SourceError, SourceOpener, SourceReader, SourceStatement};
+use dbrover_sql::Prepared;
 use dbrover_store::SecretStore;
 
 use crate::read_only::{self, Guard, ReadOnlyMode, Storage};
@@ -44,12 +44,8 @@ pub struct SourceAccess<'a> {
 impl SourceOpener for SourceAccess<'_> {
     type Reader = ReportSource;
 
-    async fn open(
-        &self,
-        source: &QuerySource,
-        parameters: &ParameterValues,
-    ) -> Result<ReportSource, SourceError> {
-        ReportSource::open(source, parameters, *self).await
+    async fn open(&self, statement: &SourceStatement<'_>) -> Result<ReportSource, SourceError> {
+        ReportSource::open(statement, *self).await
     }
 }
 
@@ -58,6 +54,7 @@ pub struct ReportSource {
     connection: Box<dyn Connection>,
     cursor: Option<Box<dyn ResultCursor>>,
     columns: Vec<ExportColumn>,
+    shape: ResultShape,
     mode: Option<ReadOnlyMode>,
     cancel: Arc<dyn CancelHandle>,
     deadline: Instant,
@@ -66,35 +63,25 @@ pub struct ReportSource {
 }
 
 impl ReportSource {
-    /// Connects to the source's data source and starts its query with `values`.
+    /// Connects to the statement's data source and starts it.
     ///
     /// # Errors
     ///
     /// [`SourceError`] saying why: a statement that doesn't only read, a connection that
     /// fails, the cost guard, or the database's own error.
     pub async fn open(
-        source: &QuerySource,
-        values: &ParameterValues,
+        statement: &SourceStatement<'_>,
         access: SourceAccess<'_>,
     ) -> Result<Self, SourceError> {
-        let started = Instant::now();
-        // The run refuses a source in another language until it can send one (RP3d).
-        let Some(dialect) = source.language.dialect() else {
-            return Err(SourceError::new(format!(
-                "a source in {} isn't sent yet",
-                source.language.display_name()
-            )));
-        };
-        let checked = dbrover_sql::inline(&source.query, dialect, values)
-            .map_err(|missing| SourceError::new(missing.to_string()))?;
-        read_only::check(&checked.sql, QueryLanguage::Sql(dialect)).map_err(|refusal| {
+        let source = statement.source;
+        let language = source.language;
+        let (checked, prepared) = prepare(statement)?;
+        read_only::check(&checked, language).map_err(|refusal| {
             SourceError::new(format!(
                 "{}; a report's source only reads, so it isn't sent",
                 refusal.reason()
             ))
         })?;
-        let prepared = dbrover_sql::bind(&source.query, dialect, values)
-            .map_err(|missing| SourceError::new(missing.to_string()))?;
 
         let data_source = read_only::connection_config(source.data_source.clone());
         let config = &data_source.config;
@@ -128,7 +115,7 @@ impl ReportSource {
                     .await
                     .map_err(|error| SourceError::new(describe_error(&error)))?;
             }
-            check_cost(connection.as_mut(), config.cost_guard(), &checked.sql).await?;
+            check_cost(connection.as_mut(), config.cost_guard(), &checked).await?;
             if prepared.values.is_empty() {
                 connection.execute(&prepared.sql).await
             } else {
@@ -138,7 +125,7 @@ impl ReportSource {
             }
             .map_err(|error| SourceError::new(describe_error(&error)))
         };
-        let deadline = started + source.limits.timeout;
+        let deadline = statement.deadline;
         let cursor = match watch(opened, deadline, &cancel, &source.id, source.limits.timeout).await
         {
             Ok(cursor) => cursor,
@@ -150,12 +137,14 @@ impl ReportSource {
         let columns = cursor
             .columns()
             .iter()
-            .map(|column| ExportColumn::new(column, dialect))
+            .map(|column| ExportColumn::typed_by(column, language.dialect()))
             .collect();
+        let shape = cursor.shape();
         Ok(Self {
             connection,
             cursor: Some(cursor),
             columns,
+            shape,
             mode,
             cancel,
             deadline,
@@ -165,9 +154,30 @@ impl ReportSource {
     }
 }
 
+/// The statement as checked, every value written in, and as sent: in SQL, with its values
+/// bound where the driver binds them.
+fn prepare(statement: &SourceStatement<'_>) -> Result<(String, Prepared), SourceError> {
+    let Some(dialect) = statement.source.language.dialect() else {
+        return Ok((
+            statement.query.clone(),
+            Prepared::unchanged(&statement.query),
+        ));
+    };
+    let values = &statement.parameters;
+    let checked = dbrover_sql::inline(&statement.query, dialect, values)
+        .map_err(|missing| SourceError::new(missing.to_string()))?;
+    let prepared = dbrover_sql::bind(&statement.query, dialect, values)
+        .map_err(|missing| SourceError::new(missing.to_string()))?;
+    Ok((checked.sql, prepared))
+}
+
 impl SourceReader for ReportSource {
     fn columns(&self) -> &[ExportColumn] {
         &self.columns
+    }
+
+    fn shape(&self) -> ResultShape {
+        self.shape
     }
 
     async fn next_page(&mut self) -> Result<Option<Vec<Row>>, SourceError> {

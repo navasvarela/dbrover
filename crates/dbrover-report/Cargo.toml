@@ -12,6 +12,8 @@ publish.workspace = true
 dbrover-core.workspace = true
 # The run's own DuckDB, which sources load into and the combine step runs in.
 dbrover-driver-duckdb.workspace = true
+# Reads a document source's items, to take its declared columns from them.
+dbrover-document.workspace = true
 dbrover-export.workspace = true
 dbrover-language.workspace = true
 dbrover-sql.workspace = true

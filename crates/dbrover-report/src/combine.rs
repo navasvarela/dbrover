@@ -1,8 +1,9 @@
 //! A run with a combine step (`docs/reporting.md`, "RP2 — Several sources"):
 //!
 //! 1. open the run's DuckDB, with its temporary folder in the run's staging folder;
-//! 2. attach each DuckDB file, and load every other source at the same time, each under its
-//!    caps, typing its columns once its last row is in;
+//! 2. attach each DuckDB file, and load every other source in rounds, the sources of a round
+//!    at the same time, each under its caps, a batch of its lookup's values at a time, typing
+//!    its columns once its last row is in;
 //! 3. lock the database down, and run the combine query under its timeout, its rows going to
 //!    the outputs as a source's do without a combine step.
 
@@ -11,16 +12,20 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dbrover_core::{CancelHandle, Connection, DriverError, ResultCursor, Row, describe_error};
-use dbrover_driver_duckdb::{TableLoader, Workspace, WorkspaceLimit, WorkspaceLimits};
+use dbrover_driver_duckdb::{DuckDbType, TableLoader, Workspace, WorkspaceLimit, WorkspaceLimits};
 use dbrover_export::ExportColumn;
+use dbrover_language::Literal;
 use dbrover_sql::Dialect;
 use futures_util::future::try_join_all;
 
+use crate::declared::Shaped;
 use crate::run::{Count, Feed, Outputs, PROGRESS_EVERY, millis};
+use crate::statement::{Statements, lookup_literal};
 use crate::typing::ColumnTyper;
 use crate::{
-    AttachedSource, CombineLimits, Combined, LimitHit, LoadedColumn, PlannedSource, QuerySource,
-    RunEvent, RunFailure, RunSummary, RunValues, SourceError, SourceOpener, SourceReader, Step,
+    AttachedSource, Batch, CombineLimits, Combined, LimitHit, LoadedColumn, PlannedLookup,
+    PlannedSource, QuerySource, RunEvent, RunFailure, RunSummary, RunValues, SourceError,
+    SourceOpener, SourceReader, SourceStatement, Step,
 };
 
 /// Rows asked of the combine query at a time, as a source's are.
@@ -77,17 +82,14 @@ impl<O: SourceOpener> Combining<'_, O> {
                 });
             }
         }
-        {
+        let mut loaded: Vec<LoadedTable> = Vec::new();
+        for round in self.combined.rounds() {
             let events = RefCell::new(&mut *events);
-            let loads = self
-                .combined
-                .sources
-                .iter()
-                .filter_map(|source| match source {
-                    PlannedSource::Query(source) => Some(self.load(source, workspace, &events)),
-                    PlannedSource::Attached(_) => None,
-                });
-            try_join_all(loads).await?;
+            let loads = round
+                .into_iter()
+                .map(|source| self.load(source, workspace, &loaded, &events));
+            let tables = try_join_all(loads).await?;
+            loaded.extend(tables);
         }
         workspace
             .lock()
@@ -107,56 +109,109 @@ impl<O: SourceOpener> Combining<'_, O> {
         written
     }
 
-    /// Reads `source` into its table under its caps, then types its columns.
+    /// Reads `source` into its table under its caps, a batch of its lookup's values at a
+    /// time if it has one, then types its columns.
     async fn load(
         &self,
         source: &QuerySource,
         workspace: &Workspace,
+        loaded: &[LoadedTable],
         events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
-    ) -> Result<(), RunFailure> {
-        let loading = Loading {
+    ) -> Result<LoadedTable, RunFailure> {
+        let opened = Instant::now();
+        let mut loading = Loading {
             source,
             limits: self.limits(),
-            opened: Instant::now(),
+            opened,
+            table: None,
+            read: Count::default(),
         };
-        let mut reader = self
-            .opener
-            .open(source, &self.outputs.values.parameters)
-            .await
-            .map_err(|error| error.at(loading.step()))?;
-        let filled = loading.fill(&mut reader, workspace, events).await;
-        reader.close().await;
-        let Filled {
-            loader,
-            typer,
-            read,
-        } = filled?;
-        let (types, warnings) = typer.types();
-        let table = typer
-            .names()
-            .zip(&types)
-            .map(|(name, column_type)| LoadedColumn {
-                name: name.to_owned(),
-                type_name: column_type.to_string(),
-                declared: false,
-            })
-            .collect();
-        loader
-            .finish(&types)
-            .await
-            .map_err(|error| loading.duckdb_failure(&error))?;
-        (events.borrow_mut())(RunEvent::SourceDone {
-            id: source.id.clone(),
-            rows: read.rows,
-            bytes: read.bytes,
-            first_row_ms: read.first_row.map(millis),
-            elapsed_ms: millis(loading.opened.elapsed()),
-            table,
-            warnings,
-            batches: None,
-        });
-        Ok(())
+        let statements = Statements::new(self.outputs.plan, self.outputs.values, source);
+        let deadline = opened + source.limits.timeout;
+        let batches = match &source.lookup {
+            None => {
+                let statement = statements.whole(opened);
+                loading
+                    .fill(self.opener, &statement, workspace, None, events)
+                    .await?;
+                None
+            }
+            Some(lookup) => {
+                let values = lookup_values(lookup, workspace, loaded)
+                    .await
+                    .map_err(|error| error.at(loading.step()))?;
+                let batches: Vec<&[Literal]> = values.chunks(lookup.batch_size.get()).collect();
+                let of = batches.len() as u64;
+                for (index, batch) in batches.into_iter().enumerate() {
+                    let statement = statements.batch(batch, deadline);
+                    let batch = Batch {
+                        number: index as u64 + 1,
+                        of,
+                    };
+                    loading
+                        .fill(self.opener, &statement, workspace, Some(batch), events)
+                        .await?;
+                }
+                if of == 0 {
+                    loading
+                        .load_nothing(&statements, deadline, self.opener, workspace, events)
+                        .await?;
+                }
+                Some(of)
+            }
+        };
+        loading.finish(batches, events).await
     }
+}
+
+/// A loaded source's table, for the lookups of the rounds after it: its name, and each
+/// column's name and type.
+struct LoadedTable {
+    id: String,
+    columns: Vec<(String, DuckDbType)>,
+}
+
+/// The distinct values of `lookup`'s column, in the table of the source it reads, as
+/// literals of the column's type.
+async fn lookup_values(
+    lookup: &PlannedLookup,
+    workspace: &Workspace,
+    loaded: &[LoadedTable],
+) -> Result<Vec<Literal>, SourceError> {
+    let table = loaded
+        .iter()
+        .find(|table| table.id.eq_ignore_ascii_case(&lookup.from))
+        .ok_or_else(|| {
+            SourceError::new(format!(
+                "lookup: {:?} wasn't loaded before this source",
+                lookup.from
+            ))
+        })?;
+    let (name, column_type) = table
+        .columns
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(&lookup.column))
+        .ok_or_else(|| {
+            let names: Vec<&str> = table
+                .columns
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect();
+            SourceError::new(format!(
+                "lookup: {:?} has no column {:?}; it has {}",
+                lookup.from,
+                lookup.column,
+                names.join(", ")
+            ))
+        })?;
+    let values = workspace
+        .distinct_values(&table.id, name)
+        .await
+        .map_err(|error| SourceError::new(describe_error(&error)))?;
+    Ok(values
+        .into_iter()
+        .map(|value| lookup_literal(*column_type, value))
+        .collect())
 }
 
 async fn attach(workspace: &Workspace, source: &AttachedSource) -> Result<(), RunFailure> {
@@ -183,11 +238,10 @@ async fn attach(workspace: &Workspace, source: &AttachedSource) -> Result<(), Ru
     })
 }
 
-/// A source whose rows are all in its table, as text.
-struct Filled {
+/// A source's table being loaded, as text, and the types its values say.
+struct Table {
     loader: TableLoader,
     typer: ColumnTyper,
-    read: Count,
 }
 
 /// A source being loaded into its table.
@@ -196,6 +250,10 @@ struct Loading<'a> {
     limits: &'a CombineLimits,
     /// When the source started to be opened, for the time to its first row.
     opened: Instant,
+    /// Made when the first statement's columns are known.
+    table: Option<Table>,
+    /// What every statement has returned so far, which the source's caps hold.
+    read: Count,
 }
 
 impl Loading<'_> {
@@ -209,24 +267,32 @@ impl Loading<'_> {
         duckdb_failure(error, self.limits).at(self.step())
     }
 
-    /// Appends `reader`'s rows to a new table, a page at a time, watching the source's caps.
-    async fn fill<R: SourceReader>(
-        &self,
+    /// Runs `statement` and appends its rows to the table, a page at a time, watching the
+    /// source's caps. `batch` is which of the lookup's batches it reads.
+    async fn fill<O: SourceOpener>(
+        &mut self,
+        opener: &O,
+        statement: &SourceStatement<'_>,
+        workspace: &Workspace,
+        batch: Option<Batch>,
+        events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
+    ) -> Result<(), RunFailure> {
+        let mut reader = Shaped::open(opener, statement)
+            .await
+            .map_err(|error| error.at(self.step()))?;
+        let filled = self.fill_from(&mut reader, workspace, batch, events).await;
+        reader.close().await;
+        filled
+    }
+
+    async fn fill_from<R: SourceReader>(
+        &mut self,
         reader: &mut R,
         workspace: &Workspace,
+        batch: Option<Batch>,
         events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
-    ) -> Result<Filled, RunFailure> {
-        let names: Vec<String> = reader
-            .columns()
-            .iter()
-            .map(|column| column.name.clone())
-            .collect();
-        let mut loader = workspace
-            .loader(&self.source.id, &names)
-            .await
-            .map_err(|error| self.duckdb_failure(&error))?;
-        let mut typer = ColumnTyper::new(reader.columns());
-        let mut read = Count::default();
+    ) -> Result<(), RunFailure> {
+        let mut table = self.take_table(reader.columns(), workspace, batch).await?;
         let mut last_progress = Instant::now();
         while let Some(page) = reader
             .next_page()
@@ -236,29 +302,137 @@ impl Loading<'_> {
             if page.is_empty() {
                 continue;
             }
-            read.first_row.get_or_insert_with(|| self.opened.elapsed());
-            read.add(&page);
-            read.check(self.source)?;
-            typer.see(&page);
-            loader
-                .append(page)
-                .await
-                .map_err(|error| self.duckdb_failure(&error))?;
+            self.read
+                .first_row
+                .get_or_insert_with(|| self.opened.elapsed());
+            self.read.add(&page);
+            self.read.check(self.source)?;
+            table.typer.see(&page);
+            if let Err(error) = table.loader.append(page).await {
+                return Err(self.duckdb_failure(&error));
+            }
             if last_progress.elapsed() >= PROGRESS_EVERY {
                 last_progress = Instant::now();
                 (events.borrow_mut())(RunEvent::Progress {
                     step: self.step(),
-                    rows: read.rows,
-                    bytes: read.bytes,
+                    rows: self.read.rows,
+                    bytes: self.read.bytes,
                     elapsed_ms: millis(self.opened.elapsed()),
-                    batch: None,
+                    batch,
                 });
             }
         }
-        Ok(Filled {
-            loader,
-            typer,
-            read,
+        self.table = Some(table);
+        Ok(())
+    }
+
+    /// The table for `columns`: made for the first statement, whose columns a later batch's
+    /// must be. The caller puts it back once its rows are in.
+    async fn take_table(
+        &mut self,
+        columns: &[ExportColumn],
+        workspace: &Workspace,
+        batch: Option<Batch>,
+    ) -> Result<Table, RunFailure> {
+        let names: Vec<String> = columns.iter().map(|column| column.name.clone()).collect();
+        if let Some(table) = self.table.take() {
+            let first: Vec<&str> = table.typer.names().collect();
+            if first == names {
+                return Ok(table);
+            }
+            let number = batch.map_or(1, |batch| batch.number);
+            return Err(RunFailure::new(
+                self.step(),
+                format!(
+                    "batch {number} returned the columns {}, unlike the first batch's {}",
+                    names.join(", "),
+                    first.join(", ")
+                ),
+            ));
+        }
+        let loader = workspace
+            .loader(&self.source.id, &names)
+            .await
+            .map_err(|error| self.duckdb_failure(&error))?;
+        let typer = ColumnTyper::new(columns, self.source.columns.as_deref());
+        Ok(Table { loader, typer })
+    }
+
+    /// For a lookup that found no value: a source with declared columns sends nothing and
+    /// gets an empty table of them; one without runs once with a list of one `NULL`, which
+    /// matches nothing, for its result's columns.
+    async fn load_nothing<O: SourceOpener>(
+        &mut self,
+        statements: &Statements<'_>,
+        deadline: Instant,
+        opener: &O,
+        workspace: &Workspace,
+        events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
+    ) -> Result<(), RunFailure> {
+        match &self.source.columns {
+            Some(declared) => {
+                let columns: Vec<ExportColumn> = declared
+                    .iter()
+                    .map(|column| ExportColumn {
+                        name: column.name.clone(),
+                        type_name: None,
+                        kind: column.column_type.kind(),
+                        excel_format: None,
+                    })
+                    .collect();
+                let table = self.take_table(&columns, workspace, None).await?;
+                self.table = Some(table);
+                Ok(())
+            }
+            None => {
+                let statement = statements.batch(&[Literal::Null], deadline);
+                self.fill(opener, &statement, workspace, None, events).await
+            }
+        }
+    }
+
+    /// Types the table's columns, makes it, and says so; `batches` is how many statements
+    /// a lookup sent.
+    async fn finish(
+        self,
+        batches: Option<u64>,
+        events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
+    ) -> Result<LoadedTable, RunFailure> {
+        let step = self.step();
+        let Some(Table { loader, typer }) = self.table else {
+            return Err(RunFailure::new(step, "the source sent no statement"));
+        };
+        let (types, warnings) = typer.types();
+        let declared = typer.is_declared();
+        let columns: Vec<(String, DuckDbType)> = typer
+            .names()
+            .map(str::to_owned)
+            .zip(types.iter().copied())
+            .collect();
+        loader
+            .finish(&types)
+            .await
+            .map_err(|error| duckdb_failure(&error, self.limits).at(step))?;
+        (events.borrow_mut())(RunEvent::SourceDone {
+            id: self.source.id.clone(),
+            rows: self.read.rows,
+            bytes: self.read.bytes,
+            first_row_ms: self.read.first_row.map(millis),
+            elapsed_ms: millis(self.opened.elapsed()),
+            table: columns
+                .iter()
+                .map(|(name, column_type)| LoadedColumn {
+                    name: name.clone(),
+                    type_name: column_type.to_string(),
+                    declared,
+                })
+                .collect(),
+            warnings,
+            batches,
+        });
+        Ok(LoadedTable {
+            id: self.source.id.clone(),
+            columns,
         })
     }
 }

@@ -15,6 +15,7 @@
 //! [`SourceOpener`] and streams their rows ([`SourceReader`]) into the output files.
 
 mod combine;
+mod declared;
 mod events;
 mod file_name;
 mod limits;
@@ -23,6 +24,7 @@ mod read;
 mod report;
 mod request;
 mod run;
+mod statement;
 mod typing;
 
 pub use events::{
@@ -45,11 +47,14 @@ pub use report::{
 };
 pub use request::RunRequest;
 pub use run::{
-    PREVIEW_ROWS, RunFolders, RunSummary, SourceError, SourceOpener, SourceReader, grouped, run,
+    PREVIEW_ROWS, RunFolders, RunSummary, SourceError, SourceOpener, SourceReader, SourceStatement,
+    grouped, run,
 };
 
 #[cfg(test)]
 mod combine_tests;
+#[cfg(test)]
+mod lookup_tests;
 #[cfg(test)]
 mod run_tests;
 #[cfg(test)]

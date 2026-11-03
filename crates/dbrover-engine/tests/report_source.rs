@@ -16,7 +16,8 @@ use common::{MemorySecrets, postgres_test_server, sqlite_data_source};
 use dbrover_core::{ConnectionConfig, DataSource, DataSourceId, SafetyLevel};
 use dbrover_engine::{PasswordCommands, ProcessRunner, ReportSource, SourceAccess, Tunnels};
 use dbrover_report::{
-    Logic, Plan, RunFolders, RunValues, SourceError, SourceOpener, read_report, run,
+    Logic, Plan, RunFolders, RunValues, SourceError, SourceOpener, SourceStatement, read_report,
+    run,
 };
 use dbrover_store::{Secret, SecretStore, TrustedCommands};
 
@@ -130,7 +131,13 @@ async fn open(
     let Logic::Direct(source) = &plan.logic else {
         panic!("{:?} has a combine step", plan.name);
     };
-    access.get().open(source, &values.parameters).await
+    let statement = SourceStatement {
+        source,
+        query: source.query.clone(),
+        parameters: values.parameters.clone(),
+        deadline: Instant::now() + source.limits.timeout,
+    };
+    access.get().open(&statement).await
 }
 
 #[tokio::test]

@@ -35,10 +35,12 @@ impl SourceReader for MemoryReader {
     async fn close(self) {}
 }
 
-/// Hands over the reader of each source by its id, once.
+/// Hands over the readers of each source by its id, one a statement, in order, and keeps the
+/// statements it was sent.
 #[derive(Default)]
 pub(crate) struct MemoryOpener {
     readers: RefCell<Vec<(String, MemoryReader)>>,
+    pub(crate) sent: RefCell<Vec<(String, String)>>,
 }
 
 impl MemoryOpener {
@@ -54,6 +56,7 @@ impl MemoryOpener {
                     .map(|(id, reader)| (id.to_owned(), reader))
                     .collect(),
             ),
+            sent: RefCell::default(),
         }
     }
 }
@@ -61,11 +64,11 @@ impl MemoryOpener {
 impl SourceOpener for MemoryOpener {
     type Reader = MemoryReader;
 
-    async fn open(
-        &self,
-        source: &QuerySource,
-        _parameters: &dbrover_sql::ParameterValues,
-    ) -> Result<MemoryReader, SourceError> {
+    async fn open(&self, statement: &SourceStatement<'_>) -> Result<MemoryReader, SourceError> {
+        let source = statement.source;
+        self.sent
+            .borrow_mut()
+            .push((source.id.clone(), statement.query.clone()));
         let mut readers = self.readers.borrow_mut();
         let found = readers.iter().position(|(id, _)| *id == source.id);
         found

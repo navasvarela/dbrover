@@ -122,6 +122,38 @@ async fn loads_text_into_typed_columns_with_every_digit() {
 }
 
 #[tokio::test]
+async fn reads_a_columns_distinct_values_in_order() {
+    let folder = tempfile::tempdir().unwrap();
+    let workspace = Workspace::open(&roomy(folder.path())).await.unwrap();
+    let columns = ["asset", "amount"].map(str::to_owned);
+    let mut loader = workspace.loader("tx", &columns).await.unwrap();
+    loader
+        .append(vec![
+            cells(&["eth", "10"]),
+            cells(&["btc", "9"]),
+            vec![None, Some("100".to_owned())],
+            cells(&["eth", "9"]),
+        ])
+        .await
+        .unwrap();
+    loader
+        .finish(&[DuckDbType::Varchar, DuckDbType::BigInt])
+        .await
+        .unwrap();
+    assert_eq!(
+        workspace.distinct_values("tx", "asset").await.unwrap(),
+        ["btc", "eth"]
+    );
+    assert_eq!(
+        workspace.distinct_values("tx", "amount").await.unwrap(),
+        ["9", "10", "100"],
+        "numbers in their order, not the text's"
+    );
+    assert!(workspace.distinct_values("tx", "missing").await.is_err());
+    workspace.close().await;
+}
+
+#[tokio::test]
 async fn names_the_value_that_does_not_fit_its_type() {
     let folder = tempfile::tempdir().unwrap();
     let workspace = Workspace::open(&roomy(folder.path())).await.unwrap();
