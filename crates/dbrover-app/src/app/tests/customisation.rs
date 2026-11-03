@@ -162,8 +162,13 @@ fn theme_toml_recolours_each_theme_and_lists_what_it_makes_unreadable() {
     harness.get_by_label("1 colour for the light theme, 1 colour for the dark one");
 
     std::fs::write(&theme, "[light]\nprimary = \"#0a6a5e\"\n").unwrap();
-    harness.get_by_label("Reload").click();
-    step_until_visible(&mut harness, "No problems.");
+    harness.get_by_label("Reload theme.toml").click();
+    step_until(&mut harness, "the theme's problems gone", |harness| {
+        harness
+            .query_by_label_contains("dark: weak text on panel is ")
+            .is_none()
+    });
+
     assert_eq!(
         focus(&harness, egui::Theme::Light),
         egui::Color32::from_rgb(0x0a, 0x6a, 0x5e)
