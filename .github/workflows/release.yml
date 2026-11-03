@@ -2,17 +2,25 @@ name: Release
 
 # Builds the downloadable packages. See docs/releasing.md.
 #
-# - A tag `vX.Y.Z` on main: checks the tag against the version and that its commit is on main
-#   (which only takes commits whose CI passed), builds and smoke-tests every package, and creates
-#   a *draft* GitHub release for a person to publish.
-# - Run by hand (Actions > Release > Run workflow): the same builds as a dry run, kept as
-#   workflow artifacts, with no release.
+# - Run by hand on main with `release` ticked (Actions > Release > Run workflow, or
+#   `gh workflow run release.yml -f release=true`): checks that `v<version>` doesn't exist yet,
+#   builds and smoke-tests every package, and creates a *draft* GitHub release of main's commit
+#   for a person to publish. Publishing the draft creates the tag.
+# - Run by hand without `release`: the same builds as a dry run, kept as workflow artifacts.
 # - A pull request that touches packaging: the builds and smoke tests only, so a broken package
 #   fails the PR rather than the release.
+#
+# Why not a tag push: a run saves its Rust cache under its own ref, and a run can only restore
+# caches from its own ref or from main. A run on tag v0.25.0 saved caches no later tag could
+# read, so every release compiled every dependency from scratch (about 25 minutes on Windows).
+# A release run on main saves under main, and the next release restores it.
 on:
-  push:
-    tags: ["v*.*.*"]
   workflow_dispatch:
+    inputs:
+      release:
+        description: Draft a GitHub release (main only)
+        type: boolean
+        default: false
   pull_request:
     paths:
       - .github/workflows/release.yml
@@ -26,7 +34,7 @@ permissions:
   contents: read
 
 # A pull request's packaging dry run is superseded by its next push, so the older one is
-# cancelled. Tag and manual runs each get a group of their own and always finish.
+# cancelled. Manual runs each get a group of their own and always finish.
 concurrency:
   group: release-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -58,32 +66,26 @@ jobs:
           version=$(cargo metadata --format-version 1 --no-deps \
             | jq -r '.packages[] | select(.name == "dbrover-app") | .version')
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$version" ]]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match the workspace version $version"
+      # No CI here. main only takes pull requests whose required checks (fmt, book, and check on
+      # all three systems) passed, so every commit on main has been through CI. Running it again
+      # took three runners and 15-30 minutes. This only makes sure a release comes from main and
+      # that its version hasn't been released already.
+      - name: A release is new and from main
+        if: inputs.release
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [[ "$GITHUB_REF" != refs/heads/main ]]; then
+            echo "::error::Releases are drafted from main only; this run is on $GITHUB_REF_NAME."
             exit 1
           fi
-
-  # No CI here. main only takes pull requests whose required checks (fmt, book, and check on all
-  # three systems) passed, so every commit on main has been through CI. Running it again took
-  # three runners and 15-30 minutes. This only makes sure the tag is on main.
-  on-main:
-    if: github.ref_type == 'tag'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-      - name: The tagged commit is on main
-        run: |
-          git fetch --quiet origin main
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::$GITHUB_REF_NAME points at a commit that isn't on main. Tag the release pull request's merge commit."
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null; then
+            echo "::error::v$VERSION is already released. Merge a build: release pull request that bumps the version first."
             exit 1
           fi
 
   macos:
-    needs: [version, on-main]
-    if: ${{ !cancelled() && needs.version.result == 'success' && needs.on-main.result != 'failure' }}
+    needs: version
     runs-on: macos-latest
     env:
       VERSION: ${{ needs.version.outputs.version }}
@@ -92,7 +94,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
+      # Only main saves, so the next release restores this one's dependencies; see the top.
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-packager@${{ env.CARGO_PACKAGER_VERSION }}
@@ -163,8 +168,7 @@ jobs:
           if-no-files-found: error
 
   linux:
-    needs: [version, on-main]
-    if: ${{ !cancelled() && needs.version.result == 'success' && needs.on-main.result != 'failure' }}
+    needs: version
     # The oldest supported runner: binaries need the glibc they were built against or newer,
     # so building here keeps the AppImage running on older distributions.
     runs-on: ubuntu-22.04
@@ -175,7 +179,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      # Only main saves, so the next release restores this one's dependencies; see the top.
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-packager@${{ env.CARGO_PACKAGER_VERSION }}
@@ -220,8 +227,7 @@ jobs:
           if-no-files-found: error
 
   windows:
-    needs: [version, on-main]
-    if: ${{ !cancelled() && needs.version.result == 'success' && needs.on-main.result != 'failure' }}
+    needs: version
     runs-on: windows-2022
     env:
       VERSION: ${{ needs.version.outputs.version }}
@@ -231,7 +237,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      # Only main saves, so the next release restores this one's dependencies; see the top.
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-packager@${{ env.CARGO_PACKAGER_VERSION }}
@@ -308,13 +317,14 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: github.ref_type == 'tag'
+    if: inputs.release
     needs: [version, macos, linux, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      TAG: v${{ needs.version.outputs.version }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v5
@@ -336,12 +346,12 @@ jobs:
       - name: Update manifest
         working-directory: dist
         run: |
-          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
           mac="dbrover-$VERSION-macos-universal.app.tar.gz"
           linux="dbrover-$VERSION-x86_64.AppImage"
           jq -n \
             --arg version "$VERSION" \
-            --arg notes "https://github.com/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME" \
+            --arg notes "https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG" \
             --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg mac_url "$base/$mac" --rawfile mac_sig "$mac.sig" \
             --arg linux_url "$base/$linux" --rawfile linux_sig "$linux.sig" \
@@ -366,10 +376,12 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: sha256sum -- * | tee SHA256SUMS
+      # The tag doesn't exist yet: a draft keeps its target commit, and publishing it creates
+      # the tag there.
       - name: Draft the release
         run: |
           generated=$(gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
-            -f tag_name="$GITHUB_REF_NAME" --jq .body)
+            -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" --jq .body)
           { cat packaging/release-notes.md; echo; echo "$generated"; } > notes.md
-          gh release create "$GITHUB_REF_NAME" dist/* --draft \
+          gh release create "$TAG" dist/* --draft --target "$GITHUB_SHA" \
             --title "DbRover $VERSION" --notes-file notes.md

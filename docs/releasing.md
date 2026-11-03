@@ -51,11 +51,12 @@ since the previous release. ARM Linux and ARM Windows wait until someone asks.
 
 ## Pipeline
 
-Pushing a tag `vX.Y.Z` on `main` runs `.github/workflows/release.yml`:
+Running **Actions › Release** on `main` with **release** ticked runs
+`.github/workflows/release.yml`:
 
 ```mermaid
 flowchart LR
-    T[tag vX.Y.Z] --> V[verify: tag = version,<br/>commit is on main]
+    T[run on main,<br/>release ticked] --> V[verify: on main,<br/>vX.Y.Z not released yet]
     V --> M[macOS: build arm64 + x86_64,<br/>lipo, .app, .dmg]
     V --> L[Linux: build on Ubuntu 22.04,<br/>AppImage + .deb]
     V --> W[Windows: build,<br/>NSIS installer]
@@ -65,13 +66,14 @@ flowchart LR
     L --> K
     S2 --> K
     K --> R[draft GitHub release:<br/>artifacts, SHA256SUMS, notes]
-    R --> P[human publishes]
+    R --> P[human publishes,<br/>which tags vX.Y.Z]
     P --> H[bump the Homebrew cask,<br/>PR to winget-pkgs]
 ```
 
-1. **Verify.** The tag must match the workspace version in `Cargo.toml`, and its commit must be
-   on main. CI isn't run again: main only takes pull requests whose required checks passed, with
-   every database server, so the commit has already been through it.
+1. **Verify.** The run must be on main, and the tag `v` plus the workspace version in
+   `Cargo.toml` must not exist yet. CI isn't run again: main only takes pull requests whose
+   required checks passed, with every database server, so the commit has already been through
+   it.
 2. **Build.**
    - **macOS** on an Apple-silicon runner: `aarch64-apple-darwin` and `x86_64-apple-darwin`
      binaries, joined into a universal binary with `lipo`. One download, no "which Mac do I
@@ -220,24 +222,34 @@ To upgrade DuckDB:
 - While in 0.x, a breaking change to a saved file (the `!` commits in `CONTRIBUTING.md`) bumps
   the minor version and is called out first in the release notes; anything else bumps the patch.
 - Releasing is done by a person: bump the version in a `build: release 0.x.y` PR, which also
-  updates `CHANGELOG.md` from `git-cliff`, merge it, then tag the merge commit.
+  updates `CHANGELOG.md` from `git-cliff`, merge it, then run the release on main.
 
 ## Cutting a release
 
 1. Merge a `build: release 0.x.y` pull request that bumps `version` in the workspace
    `Cargo.toml` (and, from R2, updates `CHANGELOG.md`).
-2. Tag the merge commit and push the tag:
+2. Right after it merges, run the release on main, from **Actions › Release › Run workflow**
+   with **release** ticked, or:
 
    ```bash
-   git tag -a v0.x.y -m "dbrover 0.x.y" && git push origin v0.x.y
+   gh workflow run release.yml --ref main -f release=true
    ```
 
-3. Watch **Actions › Release**. It refuses a tag that doesn't match the version, and builds
-   nothing if the tagged commit isn't on main.
-4. Open the draft on the releases page, check the assets and notes, and publish it.
+   It builds main as it is when the run starts, so start it before anything else merges.
+3. Watch **Actions › Release**. It builds nothing if the run isn't on main or if the version
+   has been released already.
+4. Open the draft on the releases page, check the assets and notes, and publish it. Publishing
+   creates the tag `v0.x.y` on the commit the run built. If a run fails after drafting, delete
+   that draft before running again.
+
+Releases run on main rather than on a pushed tag for the Rust cache. A run restores caches only
+from its own ref or from main, so a tag's run could never use the previous release's compiled
+dependencies and built everything from scratch (Windows took about 25 minutes). A run on main
+saves its cache under main, and the next release restores it.
 
 To try the packaging without releasing, run **Actions › Release › Run workflow** on any
-branch. It builds and smoke-tests everything and keeps the packages as workflow artifacts.
+branch with **release** left unticked. It builds and smoke-tests everything and keeps the
+packages as workflow artifacts.
 Pull requests that change packaging do the same automatically.
 
 The Windows installer is attached while the repository variable `WINDOWS_RELEASES` is `true`
