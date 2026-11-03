@@ -9,7 +9,7 @@ mod subject;
 use std::path::PathBuf;
 
 use dbrover_core::{Cell, ResultShape, Row, ValueKind};
-use dbrover_engine::{Event, Exporter, RunId};
+use dbrover_engine::Event;
 use dbrover_export::{
     CSV_FOR_EXCEL, CsvOptions, CustomFormat, CustomFormatId, CustomFormatKind, ExportChoice,
     ExportColumn, ExportContext, ExportFormat, ExportOptions, ExportSpec, RowSource, SourceTable,
@@ -23,7 +23,6 @@ use egui::{
 use serde::{Deserialize, Serialize};
 
 use self::options::{OptionTexts, options_ui};
-use self::subject::TableProgress;
 pub use self::subject::{ExportSubject, TableTarget};
 use crate::command_runs::{CommandRuns, ProgramFacts, command_text, program_facts, timeout_text};
 use crate::console::ExportedRows;
@@ -121,8 +120,6 @@ pub enum ExportDialogAction {
         file: FileType,
         trust: Option<TrustedCommand>,
     },
-    /// Stop the table's export.
-    Cancel(RunId),
     Close,
 }
 
@@ -135,7 +132,6 @@ pub struct ExportDialog {
     /// The table an `INSERT` goes to when the rows' own isn't known.
     table: TableInput,
     texts: OptionTexts,
-    progress: TableProgress,
     /// The formats from `exports.toml`, offered after the built-in ones.
     custom: Vec<CustomFormat>,
     /// A program the user is asked about before it first runs, with what to export once
@@ -190,7 +186,6 @@ impl ExportDialog {
             choices: remembered.clone(),
             preview,
             table: TableInput::default(),
-            progress: TableProgress::Choosing,
             custom: custom.to_vec(),
             asking: None,
         }
@@ -205,38 +200,20 @@ impl ExportDialog {
         self.rows
     }
 
-    /// A table's export has started: the dialog shows how it goes until it ends.
-    pub fn table_export_started(&mut self, run: RunId, path: PathBuf) {
-        self.progress = TableProgress::Exporting { run, path, rows: 0 };
-    }
-
-    /// Takes in a table's description and its export's progress.
+    /// Takes in a table's description.
     pub fn apply(&mut self, event: &Event) {
         let ExportSubject::Table(target) = &self.subject else {
             return;
         };
-        let ours = |exporter: &Exporter| *exporter == Exporter::DataSource(target.data_source);
-        match event {
-            Event::TableDescribed {
-                data_source,
-                table,
-                result: Ok(Some(description)),
-            } if *data_source == target.data_source && *table == target.relation => {
-                self.preview = target.described(description);
-            }
-            Event::ExportProgress { exporter, rows } if ours(exporter) => {
-                if let TableProgress::Exporting { rows: written, .. } = &mut self.progress {
-                    *written = *rows;
-                }
-            }
-            Event::ExportFinished {
-                exporter,
-                path,
-                result,
-            } if ours(exporter) && matches!(self.progress, TableProgress::Exporting { .. }) => {
-                self.progress = TableProgress::finished(path, result);
-            }
-            _ => {}
+        if let Event::TableDescribed {
+            data_source,
+            table,
+            result: Ok(Some(description)),
+        } = event
+            && *data_source == target.data_source
+            && *table == target.relation
+        {
+            self.preview = target.described(description);
         }
     }
 
@@ -323,30 +300,25 @@ impl ExportDialog {
     /// The rows, the format, its options and the preview. Returns the format and options
     /// chosen, or what is wrong with them.
     fn body(&mut self, ui: &mut Ui) -> Result<ExportSpec, String> {
-        let choosing = self.progress == TableProgress::Choosing;
-        form::section(ui, "Format", |ui| {
-            ui.add_enabled_ui(choosing, |ui| self.format_choice(ui));
-        });
+        form::section(ui, "Format", |ui| self.format_choice(ui));
         let format = self.format();
         let asks_for_table = format == Some(ExportFormat::SqlInsert)
             && self.preview.source.table.is_none()
             && self.can_name_table();
         form::section(ui, "Options", |ui| {
-            ui.add_enabled_ui(choosing, |ui| {
-                form::card(ui, |rows| {
-                    match self.chosen_custom().cloned() {
-                        Some(custom) => custom_options(rows, &custom),
-                        None => options_ui(
-                            rows,
-                            self.choices.format,
-                            &mut self.choices.options,
-                            &mut self.texts,
-                        ),
-                    }
-                    if asks_for_table {
-                        self.table.show(rows);
-                    }
-                });
+            form::card(ui, |rows| {
+                match self.chosen_custom().cloned() {
+                    Some(custom) => custom_options(rows, &custom),
+                    None => options_ui(
+                        rows,
+                        self.choices.format,
+                        &mut self.choices.options,
+                        &mut self.texts,
+                    ),
+                }
+                if asks_for_table {
+                    self.table.show(rows);
+                }
             });
         });
         let spec = self.spec();
@@ -354,17 +326,13 @@ impl ExportDialog {
         spec
     }
 
-    /// Export… and Cancel while choosing, the problem with the options if any; then how a
-    /// table's export goes.
+    /// Export… and Cancel, and the problem with the options if any.
     fn actions(
         &mut self,
         ui: &mut Ui,
         spec: Result<ExportSpec, String>,
         runs: &CommandRuns,
     ) -> Option<ExportDialogAction> {
-        if self.progress != TableProgress::Choosing {
-            return self.progress_row(ui);
-        }
         let clicked = form::primary_button(ui, "Export…", spec.is_ok())
             .on_hover_text("Choose where to save the file")
             .clicked();
@@ -413,28 +381,6 @@ impl ExportDialog {
                 "Every row the statement returns, written as they arrive".to_owned()
             }
             ExportSubject::Table(_) => "Every row, read a page at a time".to_owned(),
-        }
-    }
-
-    /// A table's export under way, with Cancel, or how it ended, with Close.
-    fn progress_row(&self, ui: &mut Ui) -> Option<ExportDialogAction> {
-        let palette = Palette::for_visuals(ui.visuals());
-        match &self.progress {
-            TableProgress::Exporting { run, rows, .. } => {
-                let cancel = ui.button("Cancel export").clicked();
-                ui.spinner();
-                ui.label(format!("Exporting… {rows} rows"));
-                cancel.then_some(ExportDialogAction::Cancel(*run))
-            }
-            TableProgress::Done(result) => {
-                let close = form::primary_button(ui, "Close", true).clicked();
-                match result {
-                    Ok(done) => ui.label(done.as_str()),
-                    Err(error) => ui.colored_label(palette.error, error.as_str()),
-                };
-                close.then_some(ExportDialogAction::Close)
-            }
-            TableProgress::Choosing => None,
         }
     }
 

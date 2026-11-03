@@ -454,7 +454,8 @@ fn copies_the_selected_cells_in_other_formats() {
 }
 
 /// Export data… on a table writes every row on the explorer's connection; the dialog shows the
-/// table's columns once described, and how the export went.
+/// table's columns once described, and closes once the export starts, which the status bar
+/// follows.
 #[test]
 fn exports_a_table_from_the_explorer() {
     let dir = tempfile::tempdir().unwrap();
@@ -480,14 +481,12 @@ fn exports_a_table_from_the_explorer() {
     step_until_visible(&mut harness, "id,customer");
 
     confirm_export(&mut harness);
+    assert!(harness.state().export_dialog.is_none());
     step_until_visible(&mut harness, "Exported 2 rows");
     assert_eq!(
         std::fs::read_to_string(&export_path).unwrap(),
         "id,customer\r\n1,a\r\n2,\r\n"
     );
-    harness.get_by_label("Close").click();
-    harness.run();
-    assert!(harness.state().export_dialog.is_none());
 }
 
 /// Run to file (⌥⌘↵) asks for the format and file, then the statement's parameters, and writes
@@ -590,6 +589,8 @@ fn imports_a_csv_file_matching_its_columns_by_name() {
     harness.get_by_label_contains("Line 3, qty: \u{201c}lots\u{201d} isn't a whole number");
 
     harness.get_by_label("Import").click();
+    harness.run();
+    assert!(harness.query_by_label("Import into main.orders").is_none());
     step_until_visible(&mut harness, "Imported 2 rows into main.orders");
     let connection = rusqlite::Connection::open(dir.path().join("shop.db")).unwrap();
     let imported: Vec<(i64, String, String)> = connection
@@ -606,15 +607,10 @@ fn imports_a_csv_file_matching_its_columns_by_name() {
             (3, "cy, jr".to_owned(), "none".to_owned())
         ]
     );
-    // The dialog grew by the status line, and is centred again before Close can be clicked.
-    harness.run();
-    harness.get_by_label("Close").click();
-    harness.run();
-    assert!(harness.query_by_label("Import into main.orders").is_none());
 }
 
 /// A careful data source asks first; a row the database refuses rolls everything back, and
-/// the dialog names its line.
+/// the status bar names its line.
 #[test]
 fn a_failed_import_names_its_line_and_imports_nothing() {
     let dir = tempfile::tempdir().unwrap();
@@ -629,7 +625,7 @@ fn a_failed_import_names_its_line_and_imports_nothing() {
     harness.get_by_label("Import").click();
 
     step_until_visible(&mut harness, "Line 3: UNIQUE constraint failed: orders.id");
-    harness.get_by_label_contains("Nothing was imported.");
+    harness.get_by_label_contains("Nothing was imported into main.orders.");
     let count: i64 = rusqlite::Connection::open(dir.path().join("shop.db"))
         .unwrap()
         .query_row("SELECT count(*) FROM orders", [], |row| row.get(0))

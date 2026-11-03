@@ -2,6 +2,7 @@
 
 mod about_dialog;
 mod app;
+mod background_runs;
 mod brand;
 mod catalog_tree;
 mod command_runs;

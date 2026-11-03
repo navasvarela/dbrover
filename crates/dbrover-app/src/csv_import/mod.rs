@@ -10,7 +10,7 @@ use dbrover_core::{
     CatalogPath, DataSource, DataSourceId, Identifier, NodeKind, RelationName, SafetyLevel,
     TableDescription,
 };
-use dbrover_engine::{Command, Event, ImportFailure, RowsImport};
+use dbrover_engine::{Command, Event, RowsImport};
 use dbrover_language::QueryLanguage;
 use dbrover_sql::Dialect;
 use dbrover_store::Separator;
@@ -35,8 +35,13 @@ const SEPARATORS: [(Separator, &str); 3] = [
 pub enum CsvImportAction {
     /// Pick another file.
     ChooseFile,
-    /// Import into the data source's table, as [`Command::ImportRows`].
-    Import(DataSourceId, RowsImport),
+    /// Import into the data source's table, as [`Command::ImportRows`]. The dialog closes,
+    /// and the status bar shows the import, by `table`'s name.
+    Import {
+        data_source: DataSourceId,
+        import: RowsImport,
+        table: String,
+    },
     Close,
 }
 
@@ -51,10 +56,6 @@ enum State {
     Choosing,
     /// A careful data source asks before importing.
     Confirming,
-    Importing {
-        rows: u64,
-    },
-    Done(Result<u64, ImportFailure>),
 }
 
 /// Where the rows go, and what the data source allows.
@@ -154,21 +155,6 @@ impl CsvImportDialog {
                 };
                 self.reread();
             }
-            Event::ImportProgress { data_source, rows }
-                if *data_source == self.target.data_source =>
-            {
-                if let State::Importing { rows: imported } = &mut self.state {
-                    *imported = *rows;
-                }
-            }
-            Event::RowsImported {
-                data_source,
-                result,
-            } if *data_source == self.target.data_source
-                && matches!(self.state, State::Importing { .. }) =>
-            {
-                self.state = State::Done(result.clone());
-            }
             _ => {}
         }
     }
@@ -176,7 +162,7 @@ impl CsvImportDialog {
     pub fn show(&mut self, ctx: &egui::Context) -> Option<CsvImportAction> {
         let id = Id::new("csv_import");
         let modal = dialog::modal(ctx, id, DialogSize::Large).show(ctx, |ui| self.contents(ui));
-        if modal.should_close() && !matches!(self.state, State::Importing { .. }) {
+        if modal.should_close() {
             return Some(CsvImportAction::Close);
         }
         modal.inner
@@ -275,26 +261,6 @@ impl CsvImportDialog {
                     ),
                 );
             }
-            State::Importing { rows } => {
-                ui.label(format!("Importing… {rows} rows"));
-            }
-            State::Done(Ok(rows)) => widgets::status(
-                ui,
-                icons::CHECK_CIRCLE,
-                palette.success,
-                &format!("Imported {rows} rows into {}", self.target.title),
-            ),
-            State::Done(Err(failure)) => {
-                let place = match failure.lines {
-                    Some((first, last)) if first == last => format!("Line {first}: "),
-                    Some((first, last)) => format!("Lines {first}\u{2013}{last}: "),
-                    None => String::new(),
-                };
-                ui.colored_label(
-                    palette.error,
-                    format!("{place}{}. Nothing was imported.", failure.message),
-                );
-            }
         }
     }
 
@@ -341,21 +307,16 @@ impl CsvImportDialog {
         let (import_clicked, close_clicked) = form::footer(ui, |ui| {
             let can_import = import.is_ok();
             let import_button = match self.state {
-                State::Choosing => Some(form::primary_button(ui, "Import", can_import)),
+                State::Choosing => form::primary_button(ui, "Import", can_import),
                 // The careful data source's question: importing changes it.
-                State::Confirming => Some(form::danger_button(ui, "Import", can_import)),
-                State::Importing { .. } | State::Done(_) => None,
+                State::Confirming => form::danger_button(ui, "Import", can_import),
             };
-            let import_clicked = import_button.is_some_and(|button| {
-                button
-                    .on_disabled_hover_text(import.as_ref().err().cloned().unwrap_or_default())
-                    .clicked()
-            });
+            let import_clicked = import_button
+                .on_disabled_hover_text(import.as_ref().err().cloned().unwrap_or_default())
+                .clicked();
             let close = match self.state {
                 State::Choosing => ui.button("Cancel"),
                 State::Confirming => ui.button("Back"),
-                State::Importing { .. } => ui.add_enabled(false, Button::new("Close")),
-                State::Done(_) => form::primary_button(ui, "Close", true),
             };
             (import_clicked, close.clicked())
         });
@@ -371,8 +332,11 @@ impl CsvImportDialog {
             self.state = State::Confirming;
             return None;
         }
-        self.state = State::Importing { rows: 0 };
-        Some(CsvImportAction::Import(self.target.data_source, import))
+        Some(CsvImportAction::Import {
+            data_source: self.target.data_source,
+            import,
+            table: self.target.title.clone(),
+        })
     }
 }
 
