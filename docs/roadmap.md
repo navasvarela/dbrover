@@ -1882,8 +1882,8 @@ layers, one PR each:
 rolling back an open transaction, the window has no separate title bar, and text is in the
 system font with the user's accent colour; Windows and Linux look and behave as before.
 
-**Demo note:** built; the native parts are still to be tried by eye on a Mac (see
-[As built](macos-look.md#as-built)). What to try: on a Mac, the menu bar at the top of the screen has **DbRover** (About,
+**Demo note:** done; the native parts were tried by eye on a Mac with the released app on
+2026-11-03 (see [As built](macos-look.md#as-built)). What to try: on a Mac, the menu bar at the top of the screen has **DbRover** (About,
 Check for updates…, Settings… ⌘,, Services, Hide, Quit ⌘Q), File, Edit, View, Code, Window and
 Help (**DbRover manual**); there is no egui menu in the window. Open a console, type, and
 **Edit → Undo** should undo in the editor; select cells and **Edit → Copy** copies them as TSV. In

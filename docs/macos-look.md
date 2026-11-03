@@ -172,7 +172,8 @@ rendered with the bundled fonts.
   strings, keywords and comments below WCAG AA for most of macOS's accents, so the fill takes at
   most that much and fades further until every text colour on it passes; a test also keeps it
   visibly different from the field.
-- **Not tried by eye yet:** the session that built this had no screen-recording or
-  accessibility access, so the native menu bar, the window buttons over the strip, and dragging
-  and zooming were not seen running; the app started and installed the menu without errors, and
-  the fonts and accent colour were checked in an image rendered with them.
+- **Tried by eye on 2026-11-03,** with the released app on a Mac. The session that built this
+  had no screen-recording or accessibility access, so until then the native menu bar, the window
+  buttons over the strip, and dragging and zooming had not been seen running: only that the app
+  started and installed the menu without errors, and the fonts and accent colour in an image
+  rendered with them.
