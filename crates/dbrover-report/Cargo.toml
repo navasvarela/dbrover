@@ -10,19 +10,23 @@ publish.workspace = true
 
 [dependencies]
 dbrover-core.workspace = true
+# The run's own DuckDB, which sources load into and the combine step runs in.
+dbrover-driver-duckdb.workspace = true
 dbrover-export.workspace = true
 dbrover-language.workspace = true
 dbrover-sql.workspace = true
+futures-util.workspace = true
 jiff.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 toml.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 calamine.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
-tokio.workspace = true
 
 [lints]
 workspace = true

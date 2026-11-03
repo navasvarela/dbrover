@@ -5,7 +5,8 @@
 //!
 //! Windows gets its lower priority from the app, which starts the worker below normal
 //! (`dbrover_engine::WorkerRun`). macOS doesn't enforce memory limits on a process reliably,
-//! so there, as on Windows, the source's and outputs' caps bound a run.
+//! so there, as on Windows, the source's and outputs' caps and the run's DuckDB's
+//! `memory_limit` bound a run.
 
 use std::time::Duration;
 
@@ -40,17 +41,18 @@ pub fn limit_memory(limit: Option<u64>) {
     let _ = limit;
 }
 
-/// Caps the processor time the worker can use at the run's time limit: a backstop for a
-/// run whose threads keep the processor busy past it, which the app's own timeout also ends.
-pub fn limit_processor_time(timeout: Duration) {
+/// Caps the processor time the worker can use at `limit`, the run's time limit on each of
+/// its threads ([`dbrover_report::Plan::processor_time`]): a backstop for a run whose threads
+/// keep the processor busy past it, which the app's own timeout also ends.
+pub fn limit_processor_time(limit: Duration) {
     #[cfg(target_os = "linux")]
     set_soft_limit(
         rustix::process::Resource::Cpu,
-        timeout.as_secs().max(1),
+        limit.as_secs().max(1),
         "processor time",
     );
     #[cfg(not(target_os = "linux"))]
-    let _ = timeout;
+    let _ = limit;
 }
 
 /// Lowers the soft limit of `resource` to `value`, keeping the hard limit, so nothing the

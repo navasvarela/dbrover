@@ -40,7 +40,7 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
             limits::limit_memory(request.memory_limit);
             let paths = settings_paths(config_dir)?;
             let (plan, values) = prepare(&paths, &request)?;
-            limits::limit_processor_time(plan.timeout);
+            limits::limit_processor_time(plan.processor_time());
             out.send(&RunEvent::Started {
                 report: plan.name.clone(),
                 sources: plan.source_starts(),

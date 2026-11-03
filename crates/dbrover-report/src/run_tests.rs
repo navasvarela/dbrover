@@ -14,10 +14,10 @@ use dbrover_export::ExportColumn;
 use super::*;
 
 /// Pages of rows handed over one at a time, then perhaps an error.
-struct MemoryReader {
-    columns: Vec<ExportColumn>,
-    pages: VecDeque<Vec<Row>>,
-    then: Option<SourceError>,
+pub(crate) struct MemoryReader {
+    pub(crate) columns: Vec<ExportColumn>,
+    pub(crate) pages: VecDeque<Vec<Row>>,
+    pub(crate) then: Option<SourceError>,
 }
 
 impl SourceReader for MemoryReader {
@@ -37,14 +37,23 @@ impl SourceReader for MemoryReader {
 
 /// Hands over the reader of each source by its id, once.
 #[derive(Default)]
-struct MemoryOpener {
+pub(crate) struct MemoryOpener {
     readers: RefCell<Vec<(String, MemoryReader)>>,
 }
 
 impl MemoryOpener {
     fn with(id: &str, reader: MemoryReader) -> Self {
+        Self::of(vec![(id, reader)])
+    }
+
+    pub(crate) fn of(readers: Vec<(&str, MemoryReader)>) -> Self {
         Self {
-            readers: RefCell::new(vec![(id.to_owned(), reader)]),
+            readers: RefCell::new(
+                readers
+                    .into_iter()
+                    .map(|(id, reader)| (id.to_owned(), reader))
+                    .collect(),
+            ),
         }
     }
 }
@@ -65,7 +74,7 @@ impl SourceOpener for MemoryOpener {
     }
 }
 
-fn column(name: &str) -> ExportColumn {
+pub(crate) fn column(name: &str) -> ExportColumn {
     ExportColumn {
         name: name.to_owned(),
         type_name: None,
@@ -152,7 +161,7 @@ async fn run_into(
 }
 
 /// The names of the files in `folder`.
-fn files_in(folder: &Path) -> Vec<String> {
+pub(crate) fn files_in(folder: &Path) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(folder)
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
