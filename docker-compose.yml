@@ -385,6 +385,35 @@ services:
       timeout: 5s
       retries: 30
 
+  # PgBouncer in transaction mode in front of the postgres service, standing in for Neon's and
+  # Supabase's poolers (C1c): two server connections used in turn and protocol-level prepared
+  # statements off, so a statement prepared by name on one server connection isn't there when
+  # the next message reaches the other, as on a pooler that doesn't track them. A 7 MB image
+  # that starts in about a second.
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.24.1-p1
+    environment:
+      DB_HOST: postgres
+      DB_USER: dbrover
+      DB_PASSWORD: dbrover
+      DB_NAME: dbrover
+      AUTH_TYPE: scram-sha-256
+      POOL_MODE: transaction
+      DEFAULT_POOL_SIZE: "2"
+      MIN_POOL_SIZE: "2"
+      SERVER_ROUND_ROBIN: "1"
+      MAX_PREPARED_STATEMENTS: "0"
+    ports:
+      - "56432:5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 5432"]
+      interval: 1s
+      timeout: 5s
+      retries: 30
+
   # OpenSSH on Alpine (docker/ssh), for the SSH tunnel tests: signs in `dbrover` with the test
   # keys there or its password, and forwards only to the postgres service. Built from a few
   # lines rather than pulled, so it stays a 10 MB image with fixed host and client keys.

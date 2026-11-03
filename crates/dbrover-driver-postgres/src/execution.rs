@@ -68,10 +68,22 @@ pub(crate) async fn transaction_status(client: &Client) -> Result<TransactionSta
     })
 }
 
-/// Prepares `sql` as an unnamed statement (Parse and Describe in the extended protocol), which
-/// parses and analyses it but runs nothing; dropping it closes it on the server.
+/// What a statement is checked with: `PREPARE` parses and analyses it but runs nothing, and
+/// `DEALLOCATE`, in the same message, forgets it.
+const CHECK_PREFIX: &str = "PREPARE dbrover_check AS ";
+const CHECK_SUFFIX: &str = "\n;\nDEALLOCATE dbrover_check";
+
+/// Checks `sql` with `PREPARE` and `DEALLOCATE` in one simple-protocol message (C1c).
+///
+/// Why not the protocol's own Parse (`Client::prepare`): it leaves a named statement on the
+/// server until a later Close, and behind a pooler in transaction mode that Close may reach
+/// another server connection. One message runs as one implicit transaction, which a pooler
+/// keeps on one server connection, and a `PREPARE` that fails rolls the message back, so
+/// nothing is left either way. Only data queries and changes are checked
+/// (`dbrover_sql::is_checkable`), which are what `PREPARE` takes.
 pub(crate) async fn validate(client: &Client, sql: &str) -> Result<Option<Rejection>, DriverError> {
-    let error = match client.prepare(sql).await {
+    let check = format!("{CHECK_PREFIX}{sql}{CHECK_SUFFIX}");
+    let error = match client.simple_query(&check).await {
         Ok(_) => return Ok(None),
         Err(error) => error,
     };
@@ -96,7 +108,7 @@ pub(crate) async fn validate(client: &Client, sql: &str) -> Result<Option<Reject
     };
     Ok(Some(Rejection {
         message: db_error.message().to_owned(),
-        position: error_position(sql, &error),
+        position: check_position(sql, &error),
         kind,
     }))
 }
@@ -114,6 +126,19 @@ fn statement_error(sql: &str, error: tokio_postgres::Error) -> DriverError {
         position,
         sqlstate,
     }
+}
+
+/// Where in `sql` an error in its check (`CHECK_PREFIX`, `sql`, `CHECK_SUFFIX`) is: the
+/// server counts from the start of the prefix. `None` for a position outside `sql`.
+fn check_position(sql: &str, error: &tokio_postgres::Error) -> Option<usize> {
+    let ErrorPosition::Original(characters) = error.as_db_error()?.position()? else {
+        return None;
+    };
+    let index = usize::try_from(*characters)
+        .ok()?
+        .checked_sub(1)?
+        .checked_sub(CHECK_PREFIX.chars().count())?;
+    sql.char_indices().nth(index).map(|(byte, _)| byte)
 }
 
 /// Converts PostgreSQL's 1-based character position into a byte offset into `sql`.

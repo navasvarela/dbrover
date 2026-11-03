@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 use dbrover_core::{
     CatalogNode, CatalogPath, DriverError, NodeKind, RoleAttribute, RoleDescription,
 };
+use tokio_postgres::types::Type;
 use tokio_postgres::{Client, Row};
 
 use crate::connection_error;
@@ -40,7 +41,7 @@ pub(crate) async fn list(
          FROM pg_roles r ORDER BY r.rolname"
     );
     client
-        .query(&sql, &[])
+        .query_typed(&sql, &[])
         .await
         .map_err(connection_error)?
         .iter()
@@ -112,9 +113,11 @@ pub(crate) async fn describe(
         privileges = dependencies("a"),
     );
     let row = client
-        .query_opt(&sql, &[&role])
+        .query_typed(&sql, &[(&role, Type::TEXT)])
         .await
         .map_err(connection_error)?
+        .into_iter()
+        .next()
         .ok_or_else(invalid)?;
     let mut attributes = BTreeSet::new();
     for (column, (attribute, _)) in ATTRIBUTE_COLUMNS.into_iter().enumerate() {

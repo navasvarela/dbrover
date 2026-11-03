@@ -6,6 +6,7 @@ use dbrover_core::{
     TableDescription, TableName, UniqueConstraint,
 };
 use tokio_postgres::Client;
+use tokio_postgres::types::Type;
 
 use crate::connection_error;
 
@@ -21,11 +22,11 @@ pub(crate) async fn describe_table(
 ) -> Result<Option<TableDescription>, DriverError> {
     let written = table.to_sql(Quoting::STANDARD);
     let found = client
-        .query(
+        .query_typed(
             "SELECT n.nspname, c.relname, c.relkind::text \
              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
              WHERE c.oid = to_regclass($1)",
-            &[&written],
+            &[(&written, Type::TEXT)],
         )
         .await
         .map_err(connection_error)?;
@@ -37,7 +38,7 @@ pub(crate) async fn describe_table(
         return Ok(None);
     }
     let columns = client
-        .query(
+        .query_typed(
             "SELECT a.attname, array_position(i.indkey::int2[], a.attnum), \
              format_type(a.atttypid, a.atttypmod), NOT a.attnotnull, \
              pg_get_expr(d.adbin, d.adrelid), a.attidentity::text, s.seqstart, s.seqincrement \
@@ -48,7 +49,7 @@ pub(crate) async fn describe_table(
                AND s.seqrelid = pg_get_serial_sequence($1, a.attname)::regclass \
              WHERE a.attrelid = to_regclass($1) AND a.attnum > 0 AND NOT a.attisdropped \
              ORDER BY a.attnum",
-            &[&written],
+            &[(&written, Type::TEXT)],
         )
         .await
         .map_err(connection_error)?;
@@ -119,7 +120,7 @@ fn identity(column: &tokio_postgres::Row) -> Result<Option<Identity>, DriverErro
 /// table already lists, and is left out.
 async fn foreign_keys(client: &Client, written: &str) -> Result<Vec<ForeignKey>, DriverError> {
     let rows = client
-        .query(
+        .query_typed(
             "SELECT tn.nspname, t.relname, \
              ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY k(attnum, i) \
                JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum \
@@ -138,7 +139,7 @@ async fn foreign_keys(client: &Client, written: &str) -> Result<Vec<ForeignKey>,
              AND NOT EXISTS (SELECT 1 FROM pg_constraint p \
                WHERE p.oid = c.conparentid AND p.conrelid = c.conrelid) \
              ORDER BY c.conname",
-            &[&written],
+            &[(&written, Type::TEXT)],
         )
         .await
         .map_err(connection_error)?;
@@ -173,7 +174,7 @@ pub(crate) async fn describe_constraints(
         Quoting::STANDARD.identifier(&table.name)
     );
     let rows = client
-        .query(
+        .query_typed(
             "SELECT c.conname::text, c.contype::text, \
              ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY k(attnum, i) \
                JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum \
@@ -188,7 +189,7 @@ pub(crate) async fn describe_constraints(
              LEFT JOIN pg_namespace rn ON rn.oid = r.relnamespace \
              WHERE c.conrelid = to_regclass($1) AND c.contype IN ('p', 'u', 'f', 'c') \
              ORDER BY c.conname",
-            &[&written],
+            &[(&written, Type::TEXT)],
         )
         .await
         .map_err(connection_error)?;
