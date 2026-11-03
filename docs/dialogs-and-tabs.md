@@ -1,6 +1,7 @@
 # Dialogs and tabs
 
-Status: **planned** (2026-11-03; the open questions answered the same day). This is the design of D8 in the
+Status: **built** (2026-11-03; the open questions answered the same day). Where the build
+departed from the first plan, this page says what was built. This is the design of D8 in the
 [roadmap](roadmap.md#d8--one-style-for-dialogs-and-tabs-for-what-stays-open).
 
 D7 gave dialogs a window's margin and buttons by role, but each dialog still lays itself out:
@@ -91,8 +92,10 @@ Every modal is built from the same four parts, so a new dialog can't come out di
    that destroy something tint the badge with the error colour (`Header::danger`). About keeps
    its centred logo instead of a badge: it is the one dialog that is about DbRover itself.
 3. **The body** in `form.rs`'s parts: `form::section` and `form::card` for fields, so fields
-   have an outline and a card behind them in both themes. The data source dialog and the object
-   dialog move to cards.
+   have an outline and a card behind them in both themes. The data source dialog's rows sit in
+   one card, still a grid so the labels line up, and scroll when the window is too short; a
+   captioned card per group made the PostgreSQL dialog too tall for a 900-point window. The
+   object dialog's fields and its confirmation share a card, and its SQL has one of its own.
 4. **A footer.** `form::footer` at the bottom of every modal: a line, then the actions right to
    left, the primary one in the corner. An action set apart from the ones that finish the
    dialog sits at the footer's left (`form::footer_with_leading`): one that throws work away,
@@ -142,9 +145,9 @@ saved layout can bring it back.
 filters and the "every data source" scope stay as they are. Its state lives on `DbRoverApp`
 beside the reports' and diagrams', keyed the same way.
 
-- **Insert** puts a statement into the console the history was opened from while that console
-  is open, otherwise into the data source's most recently focused console, otherwise into a new
-  one. The tab doesn't need to remember the console across a restart.
+- **Insert** puts a statement into the console the history was last opened from while that
+  console is open, otherwise into a new console of the data source, which the tab then keeps,
+  and brings it to the front. The tab doesn't need to remember the console across a restart.
 - **Restore:** at start-up `workspace::restore_history` keeps the tabs whose data source still
   exists and sends their search again; the history is in DbRover's own store, so this needs no
   connection. A tab whose data source was deleted is dropped, and deleting a data source closes
@@ -152,10 +155,10 @@ beside the reports' and diagrams', keyed the same way.
 
 ### Definition as a tab
 
-`Tab::Definition(DefinitionKey)`, the data source and the object's catalog path, titled with the
-object's name. The text is read-only in the console's code editor, with its syntax colours;
-the footer offers **Copy** and **Open in console**, which puts the text into a
-new console to edit and run (`CREATE OR REPLACE …`).
+`Tab::Definition(DefinitionId)`, titled with the object's name. The text is read-only, coloured
+as a console colours it; a toolbar above it offers **Open in console**, which puts the text
+into a new console to edit and run (`CREATE OR REPLACE …`), and **Copy**. Asking for a
+definition already open brings its tab to the front.
 
 Why a tab rather than opening the text read-only in a console: a console is a file in the
 project folder, so every definition looked at would leave a file behind or need a kind of
@@ -164,35 +167,37 @@ console that isn't saved, and a read-only console would show a Run button that c
 
 Not restored: loading a definition needs a live connection, and reconnecting every data source
 with an open definition at start-up could ask for passwords before the user did anything.
-Definition tabs are left out of the layout when it is saved, so they never need a key that
-survives a restart, and reopening one is **Show definition** in the explorer again.
+A `DefinitionId` is a number handed out while the app runs, so it needs no serialisable catalog
+path; `workspace::forget_definitions` drops a saved layout's definition tabs as it loads, and
+reopening one is **Show definition** in the explorer again.
 
 ### The config files' problems in Settings
 
 The status bar's link for `snippets.toml` opens the Editor page and the one for `theme.toml` the
 Appearance page, each with a section for its file: where it was read from, what it adds, its
-problems and **Reload**, in the same `source_line` and `problems` parts the Keymap, Custom
-actions and Exports pages use. The window and `CustomFiles::window` go.
+problems and **Reload theme.toml** (or snippets.toml: Appearance has a Reload of its own for
+the settings file), in the same `source_line` and `problems` parts the Keymap, Custom actions
+and Exports pages use. `Page::of_file` maps each file to its page in one place. The window and
+`CustomFiles::window` go.
 
 ### The cell viewer as a side panel
 
 The cell viewer becomes a panel on the right of the console's results, beside the grid, as
 DataGrip's value editor is. It shows the selected cell and follows the selection, so moving
-through a column of JSON reads each value in turn. The grid's toolbar has a toggle for it, and
-**View value** on a cell opens it. It keeps today's views: JSON as a tree or as text, XML
+through a column of JSON reads each value in turn. The grid toolbar's **Value** switch opens and
+shuts it, **View value** (or Space) on a cell opens it on that cell, and ✕ shuts it. It keeps today's views: JSON as a tree or as text, XML
 indented, `NULL` in italics, and **Copy**. Each console remembers whether its panel is open while
-DbRover runs, and the panel's width is a splitter, like the one between the editor and the
-results.
+DbRover runs, and the panel's edge drags to resize it.
 
 ### Export and CSV import run outside their dialog
 
-Both dialogs stay modal while they are filled in: the format, the options, the preview. Once
-**Export** or **Import** is clicked the dialog closes and the run goes on in the background, with
-its progress and **Cancel** in the status bar, where update notices and config-file problems
-already show. When it ends, the status bar says how many rows went where, with a link to reveal
-the file for an export, for a few seconds and in the log console for good; a failure stays in the
-status bar until clicked. Several runs at once show as one entry that counts them, and a click
-lists each with its own **Cancel**.
+A console's exports already closed their dialog and reported in the console; the two that held
+the app were **Export data…** on a table and **Import CSV…**. Both dialogs stay modal while they
+are filled in: the format, the options, the preview. Once **Export** or **Import** is clicked
+the dialog closes and the run goes on in the background, shown in the status bar as running
+programs are: each run with its row count, **Cancel** for an export (an import is one
+transaction the engine can't stop part way), and how the last one ended, until clicked. A
+failed import still names its line.
 
 ### The object dialog and program output stay windows
 
@@ -218,10 +223,10 @@ One pull request each, stacked:
 1. **D8a — Plan:** this page and the roadmap entry.
 2. **D8b — The dialog kit:** `DialogSize` and the list heights, `form::Header` (with
    `Header::danger`) and `form::footer` (with its leading side) in every modal, and the roles
-   corrected everywhere. The floating windows that stay get the footer and open below the menu
-   bar.
-3. **D8c — Cards for the data source and object dialogs:** their fields in `form::section` and
-   `form::card`, so they read like the Settings tab and the export dialog.
+   corrected everywhere. The floating windows that stay get the footer and open at the right
+   of the app's window, below its bars.
+3. **D8c — Cards for the data source and object dialogs:** their fields in a `form::card`, so
+   they read like the Settings tab and the export dialog.
 4. **D8d — History as a tab,** keyed by data source and restored after a restart.
 5. **D8e — Definitions as tabs,** with **Open in console**.
 6. **D8f — The config files' problems in Settings,** and the window removed.
@@ -253,7 +258,8 @@ on a database: history comes from a temporary store, and a definition tab is fed
   global history tab.
 - **Definition tabs aren't restored,** because restoring would connect at start-up.
 - **Runs report in the status bar, not in a tab or a window:** a run needs a glance and a
-  Cancel, not a place of its own.
+  Cancel, not a place of its own. Each shows inline and its outcome stays until clicked, as a
+  program's does, rather than fading after a few seconds as first planned.
 
 ## Risks
 
@@ -269,7 +275,7 @@ on a database: history comes from a temporary store, and a definition tab is fed
 
 ## Demo note
 
-Planned. What to try once built: open three dialogs of different kinds (Delete… on a data
+Built. What to try: open three dialogs of different kinds (Delete… on a data
 source, the data source dialog, Export…): each has the same header with an icon, the same footer
 with one filled button in the corner, and Delete is red with a red badge. Close a console with
 unsaved changes, and **Don't save** sits apart at the left in red text. Open the history from a

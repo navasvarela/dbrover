@@ -2081,7 +2081,7 @@ definition float over the console they belong beside. The design is in
   bar, and the object dialog and program output stay windows.
 - **D8b — The dialog kit:** four dialog sizes as a parameter of `widgets::dialog`, the form
   header and footer in every modal, one primary or danger action in each, and the floating
-  windows that stay with the same footer, opening below the menu bar.
+  windows that stay with the same footer, opening at the right of the app's window.
 - **D8c — Cards for the data source and object dialogs,** so their fields have an outline and a
   card in both themes.
 - **D8d — History as a tab,** one per data source, restored after a restart.
@@ -2098,4 +2098,4 @@ definition float over the console they belong beside. The design is in
 the history and definitions are dock tabs, the cell viewer is a panel, no export blocks the app,
 and no config file's problems open a window.
 
-**Demo note:** planned; the design page's demo note says what to try once built.
+**Demo note:** built; the design page's demo note says what to try.
