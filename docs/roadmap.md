@@ -1863,7 +1863,7 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   picture of **Runs** in the manual, and MCP clients running reports, which RP4's numbers may now
   inform.
 - **RP5 — PRQL:** the combine step in PRQL, compiled to DuckDB SQL by `prqlc`.
-- **RP6 — The command line** (in six layers, 2026-11-03, after RP4): `dbrover report run`, for
+- **RP6 — The command line** (built, in six layers, 2026-11-03, after RP4): `dbrover report run`, for
   cron, scheduled tasks and CI: a report by its name in `reports/` or by its path, its
   parameters as `--param name=value`, its files in `--output-dir`, run in the worker with every
   guardrail the app's runs have, and an exit code per outcome. Planned in
@@ -1874,8 +1874,8 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
     its parameters, a source, a step's guardrail, and stopped from outside.
   - **RP6b — Running a report:** the subcommand, its arguments, the settings folder's data
     sources and `[reports]`, the human lines and the exit codes.
-  - **RP6c — Stopping:** Ctrl-C and SIGTERM cancel the run and leave the output folder as it
-    was.
+  - **RP6c — Stopping:** Ctrl-C, SIGTERM and SIGHUP cancel the run and leave the output folder
+    as it was; on Unix the worker has a process group of its own.
   - **RP6d — JSON:** `--json` prints the worker's events.
   - **RP6e — Run history:** a run of a report in `reports/` kept as the app keeps its runs.
   - **RP6f — Manual:** the chapter's section on the command line, with a cron line and a CI
@@ -1883,6 +1883,57 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
 
   **Exit:** from a terminal, `dbrover report run` writes a report's files with its guardrails,
   and its exit code says how it ended; the app's tab lists the run beside its own.
+
+  **Demo note:** built in #437, #438 and #440 to #442, and RP6f. To try it: make the SQLite
+  **shop** from `examples/reports/shop.sql` and copy `sales-by-category.toml` into the reports
+  folder, as the manual's "Your first report" says, then in a terminal (on a Mac):
+
+  ```bash
+  /Applications/DbRover.app/Contents/MacOS/dbrover report run sales-by-category \
+    --param since=2026-10-01 --param until=2026-11-01 --output-dir ~/Desktop/sales
+  echo $?
+  ```
+
+  Standard error says **Sales by category (since = 2026-10-01, until = 2026-11-01)**, **Source
+  lines: 246 rows** and **Combine: 13 rows**; standard output lists the two files' paths; the
+  code is 0, and the report's tab lists the run under **Runs** when it next opens. Leave out
+  `--param until=…`: "until needs a value", code 3. Add `--json | jq -r 'select(.event ==
+  "output_written") | .path'` for the paths from the events. Add `max_rows = 10` to the source:
+  "It stopped at max_rows = 10 rows…", code 5. Add this report as `slow-count.toml`, run it and
+  press Ctrl-C: "Cancelled. No file was written.", code 6, and the output folder as it was.
+
+  ```toml
+  [report]
+  name = "Slow count"
+
+  [[source]]
+  id = "count"
+  data_source = "shop"
+  query = "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 1000000000) SELECT max(x) AS x FROM n"
+
+  [[output]]
+  format = "csv"
+  file = "slow-count.csv"
+  ```
+
+  The manual's CI step runs the example from a checkout with a settings folder of its own.
+
+  Checked: each layer's tests (the arguments, the human lines and the exit code for each way a
+  run ends, in tables; on the real binary with the examples' SQLite shop, `sales-by-category` by
+  name and by path matching its checked-in CSV file, a parameter missing, unknown or of the wrong
+  type, a data source that doesn't exist, a failing query, `max_rows` and the run's time limit,
+  each with its code and no file left; SIGINT to the process group, SIGTERM and SIGHUP each
+  cancelling with no worker left; `--json`'s lines read back as events; finished, failed and
+  cancelled runs read back from `history.sqlite`, and none for a run that couldn't start or a
+  file outside `reports/`); by hand, each step of this note, Ctrl-C sent to the command's
+  process group as a terminal sends it; the manual's CI step's shell, against a local build; a
+  PostgreSQL data source whose password command was trusted by hand in `trusted_commands.toml`,
+  refused with code 4 before and run after. Not tried here: the command on Windows beyond CI
+  (only the command-line cases run there; the runs are Unix-only tests, as the worker's, because
+  they move `HOME`); the CI step on a GitHub runner with the `.deb`; a cloud sign-in, or the
+  macOS keychain, from cron. Left for later: a live progress line in a terminal, `dbrover report
+  list`, marking a run in the history as the command's, and a worker that dies with a command
+  killed outright (Linux's parent-death signal).
 - **RP7 — Manual,** with the example reports.
 
 ## Design and documentation track
