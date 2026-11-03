@@ -10,7 +10,7 @@ use crate::version::parse_config_dir;
 
 pub const USAGE: &str = "\
 Usage: dbrover report run <report> [--param <name>=<value>]… [--output-dir <folder>]
-                          [--config-dir <folder>]
+                          [--json] [--config-dir <folder>]
 
 Runs a report without opening a window, for cron, a scheduled task or a CI job, under the
 limits a run from the app has, and exits with a code that says how it ended.
@@ -23,11 +23,13 @@ in .toml or holding a folder separator is a path.
                                2026-10-01, a timestamp as \"2026-10-01 12:00\". Once each.
   -o, --output-dir <folder>    Where the files go, made if it doesn't exist. The current
                                folder without it.
+      --json                   Writes the run's events to standard output as JSON Lines,
+                               one object a line, the last saying how the run ended.
       --config-dir <folder>    The settings folder whose data sources, export formats and
                                report limits the run uses, as for the app.
 
-Standard error tells the run's steps as they end; standard output lists the files written,
-their full paths a line each.
+Without --json, standard error tells the run's steps as they end, and standard output lists
+the files written, their full paths a line each.
 
 Exit codes:
   0  the report ran and wrote its files
@@ -56,7 +58,18 @@ pub struct RunArgs {
     pub values: TypedValues,
     /// `None` for the current folder.
     pub output_dir: Option<PathBuf>,
+    pub style: OutputStyle,
     pub config_dir: Option<PathBuf>,
+}
+
+/// What the command prints as the run goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OutputStyle {
+    /// Lines for a person, or cron's mail: steps on standard error, files on standard output.
+    #[default]
+    Human,
+    /// The worker's events as JSON Lines on standard output, for a script or a CI step.
+    JsonLines,
 }
 
 /// Which report to run.
@@ -105,6 +118,7 @@ impl RunArgs {
         let mut report = None;
         let mut values = TypedValues::new();
         let mut output_dir = None;
+        let mut style = OutputStyle::Human;
         let mut config_dir = None;
         while let Some(arg) = args.next() {
             if let Some(folder) = parse_config_dir(&arg, &mut args) {
@@ -124,6 +138,7 @@ impl RunArgs {
             }
             match arg.as_str() {
                 "--help" | "-h" => return Ok(None),
+                "--json" => style = OutputStyle::JsonLines,
                 option if option.starts_with('-') => {
                     return Err(format!("unknown argument {option:?}"));
                 }
@@ -138,6 +153,7 @@ impl RunArgs {
             report,
             values,
             output_dir,
+            style,
             config_dir,
         }))
     }
@@ -196,6 +212,7 @@ mod tests {
                 .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
                 .collect(),
             output_dir: None,
+            style: OutputStyle::Human,
             config_dir: None,
         })
     }
@@ -253,6 +270,7 @@ mod tests {
                     report: named("sales"),
                     values: TypedValues::new(),
                     output_dir: Some("/srv/out".into()),
+                    style: OutputStyle::Human,
                     config_dir: Some("/srv/dbrover".into()),
                 }),
             ),
@@ -262,8 +280,23 @@ mod tests {
                     report: named("sales"),
                     values: TypedValues::new(),
                     output_dir: Some("out".into()),
+                    style: OutputStyle::Human,
                     config_dir: None,
                 }),
+            ),
+            (
+                &["run", "sales", "--json"],
+                Request::Run(RunArgs {
+                    report: named("sales"),
+                    values: TypedValues::new(),
+                    output_dir: None,
+                    style: OutputStyle::JsonLines,
+                    config_dir: None,
+                }),
+            ),
+            (
+                &["run", "sales", "--json=yes"],
+                invalid("unknown argument \"--json=yes\""),
             ),
             (&["run", "sales", "--help"], Request::Help),
             (&["--help"], Request::Help),

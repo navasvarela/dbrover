@@ -10,9 +10,10 @@
 mod args;
 mod human;
 mod outcome;
+mod printer;
 mod stopping;
 
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -24,8 +25,8 @@ use tracing_appender::non_blocking::WorkerGuard;
 pub use args::Request;
 
 use self::args::{ReportArg, RunArgs, USAGE};
-use self::human::HumanLines;
 use self::outcome::Outcome;
+use self::printer::Printer;
 use self::stopping::Stopping;
 use crate::reports::{self, ProcessLauncher};
 use crate::{report_worker, telemetry, version};
@@ -52,15 +53,11 @@ struct Prepared {
 }
 
 fn run(args: &RunArgs) -> Outcome {
-    let mut human = HumanLines::new(
-        io::stdout().lock(),
-        io::stderr().lock(),
-        args.values.clone(),
-    );
+    let mut printer = printer::for_style(args.style, &args.values);
     let paths = match report_worker::settings_paths(args.config_dir.as_deref()) {
         Ok(paths) => paths,
         Err(failure) => {
-            human.problems("The settings folder can't be used:", &[failure.message]);
+            printer.not_started("The settings folder can't be used:", &[failure.message]);
             return Outcome::Report;
         }
     };
@@ -73,7 +70,7 @@ fn run(args: &RunArgs) -> Outcome {
     let prepared = match prepare(&paths, &report, args) {
         Ok(prepared) => prepared,
         Err(problems) => {
-            human.problems(&format!("{} can't run:", report.display()), &problems);
+            printer.not_started(&format!("{} can't run:", report.display()), &problems);
             return Outcome::Report;
         }
     };
@@ -82,12 +79,12 @@ fn run(args: &RunArgs) -> Outcome {
         Err(error) => {
             let failure =
                 RunFailure::new(Step::Worker, format!("could not start the worker: {error}"));
-            human.event(&RunEvent::Failed(failure));
+            printer.event(&RunEvent::Failed(failure));
             return Outcome::Failed;
         }
     };
     stopping.started(run.stopper());
-    let outcome = follow(&run, &mut human);
+    let outcome = follow(&run, printer.as_mut());
     tracing::info!("{} ended: {outcome:?}", report.display());
     outcome
 }
@@ -199,15 +196,15 @@ fn in_own_process_group(command: &mut Command) {
 }
 
 /// Prints each of the run's events, and returns how the run ended.
-fn follow(run: &WorkerRun, human: &mut HumanLines<impl Write, impl Write>) -> Outcome {
+fn follow(run: &WorkerRun, printer: &mut dyn Printer) -> Outcome {
     while let Some(event) = run.wait_next() {
-        human.event(&event);
+        printer.event(&event);
         if let Some(outcome) = Outcome::of_end(&event) {
             return outcome;
         }
     }
     // `WorkerRun` always ends a run with an event of its own; this is a bug, not a run's end.
     let failure = RunFailure::new(Step::Worker, "the run's events stopped before it ended");
-    human.event(&RunEvent::Failed(failure));
+    printer.event(&RunEvent::Failed(failure));
     Outcome::Failed
 }

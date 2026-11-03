@@ -68,24 +68,25 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
     }
 }
 
-/// Writes events, a line each, flushed at once so the app sees each as it happens.
-struct Events<W: Write> {
+/// Writes events, a line each, flushed at once so the app sees each as it happens; also
+/// `dbrover report run --json`'s output.
+pub(crate) struct Events<W: Write> {
     out: W,
 }
 
 impl<W: Write> Events<W> {
-    fn new(out: W) -> Self {
+    pub(crate) fn new(out: W) -> Self {
         Self { out }
     }
 
-    fn send(&mut self, event: &RunEvent) {
+    pub(crate) fn send(&mut self, event: &RunEvent) {
         let written = serde_json::to_string(event)
             .map_err(io::Error::other)
             .and_then(|line| writeln!(self.out, "{line}"))
             .and_then(|()| self.out.flush());
         if let Err(error) = written {
-            // The app has gone, or closed the pipe: nobody is left to tell.
-            tracing::warn!("could not send the app an event: {error}");
+            // The reader has gone, or closed the pipe: nobody is left to tell.
+            tracing::warn!("could not write an event: {error}");
         }
     }
 }

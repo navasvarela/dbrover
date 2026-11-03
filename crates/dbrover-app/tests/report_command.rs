@@ -400,4 +400,55 @@ mod runs {
             );
         }
     }
+
+    /// With `--json`, standard output is the worker's events, which read back as the app reads
+    /// them, ending with how the run ended, under the exit code it has without `--json`.
+    #[test]
+    fn prints_the_runs_events_as_json_lines() {
+        use dbrover_report::{RunEvent, Step};
+
+        let products = one_source("", "query = \"SELECT * FROM products\"\nmax_rows = 2");
+        let cases: [(Vec<&str>, i32); 3] = [
+            ([&["sales-by-category", "--json"][..], &OCTOBER].concat(), 0),
+            (
+                vec!["sales-by-category", "--json", "-p", "since=2026-10-01"],
+                3,
+            ),
+            (vec!["products", "--json"], 5),
+        ];
+        for (args, code) in cases {
+            let settings = Settings::new();
+            settings.write_report("products", &products);
+            let output = settings.run(&args);
+            assert_eq!(output.status.code(), Some(code), "{}", describe(&output));
+            assert!(output.stderr.is_empty(), "{}", describe(&output));
+            let events: Vec<RunEvent> = String::from_utf8(output.stdout)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            let last = events.last().unwrap();
+            assert!(last.ends_run(), "{args:?}: {events:#?}");
+            match (code, last) {
+                (0, RunEvent::Finished { .. }) => {
+                    let written = events
+                        .iter()
+                        .filter(|event| matches!(event, RunEvent::OutputWritten(_)))
+                        .count();
+                    assert_eq!(written, 2);
+                    assert!(matches!(events.first(), Some(RunEvent::Started { .. })));
+                }
+                (3, RunEvent::Failed(failure)) => {
+                    assert_eq!(events.len(), 1);
+                    assert_eq!(failure.step, Step::Report);
+                    assert!(failure.message.contains("until needs a value"));
+                }
+                (5, RunEvent::Failed(failure)) => {
+                    let key = failure.limit.as_ref().map(|limit| limit.key.as_str());
+                    assert_eq!(key, Some("max_rows"));
+                }
+                _ => panic!("{args:?} ended with {last:?}"),
+            }
+        }
+    }
 }
