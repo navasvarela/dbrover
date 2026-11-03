@@ -28,7 +28,7 @@ use crate::consoles::Consoles;
 use crate::csv_import::{CsvImportAction, CsvImportDialog};
 use crate::custom_actions::{self, Subject, SubjectKind, SubjectOn};
 use crate::custom_exports;
-use crate::custom_files::{self, CustomFiles, FileWindowAction};
+use crate::custom_files::CustomFiles;
 use crate::data_source_dialog::{DataSourceDialog, DialogAction};
 use crate::data_source_form::McpPasswordChange;
 use crate::definition_tab::{DefinitionAction, DefinitionTabs, OpenedDefinition};
@@ -2590,7 +2590,7 @@ impl DbRoverApp {
         }
     }
 
-    /// A link per config file with problems, opening the window that lists them.
+    /// A link per config file with problems, opening the Settings page that lists them.
     fn problem_links(&mut self, ui: &mut egui::Ui, color: egui::Color32) {
         let keymap = self.keymap.problems().len();
         if keymap > 0 && widgets::problems_link(ui, "keymap.toml", keymap, color).clicked() {
@@ -2599,22 +2599,8 @@ impl DbRoverApp {
         for kind in CustomFileKind::ALL {
             let count = self.custom_files.problems(kind).len();
             if count > 0 && widgets::problems_link(ui, kind.file_name(), count, color).clicked() {
-                match kind {
-                    CustomFileKind::Actions => self.open_settings_page(Page::Actions),
-                    CustomFileKind::Exports => self.open_settings_page(Page::Exports),
-                    CustomFileKind::Snippets | CustomFileKind::Theme => {
-                        self.custom_files.window = Some(kind);
-                    }
-                }
+                self.open_settings_page(Page::of_file(kind));
             }
-        }
-    }
-
-    fn show_custom_file_window(&mut self, ctx: &egui::Context) {
-        match custom_files::show(ctx, &self.custom_files) {
-            Some(FileWindowAction::Reload) => self.send(Command::ReloadCustomFiles),
-            Some(FileWindowAction::Close) => self.custom_files.window = None,
-            None => {}
         }
     }
 }
@@ -2814,7 +2800,6 @@ impl eframe::App for DbRoverApp {
         self.show_import_dialog(&ctx);
         self.show_csv_import(&ctx);
         self.show_diagram_dialog(&ctx);
-        self.show_custom_file_window(&ctx);
         let commands = self.command_runs.show(&ctx);
         self.send_all(commands);
         self.show_about(&ctx);

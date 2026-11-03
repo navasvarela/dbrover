@@ -1,18 +1,14 @@
 //! What `actions.toml`, `snippets.toml`, `theme.toml` and `exports.toml` hold, as the engine
-//! last read them, and the window that lists a file's problems. See `docs/hackability.md`.
+//! last read them. The Settings tab lists each file's problems. See `docs/hackability.md`.
 
 use std::path::{Path, PathBuf};
 
+use crate::theme::Palettes;
 use dbrover_engine::Event;
 use dbrover_export::CustomFormat;
 use dbrover_store::{
     Checked, CustomAction, CustomFile, CustomFileKind, Snippet, ThemeOverrides, ThemeToken,
 };
-use egui::{ScrollArea, Window};
-
-use crate::theme::Palettes;
-
-const WINDOW_SIZE: [f32; 2] = [560.0, 280.0];
 
 /// What **Reload** reads, for its tooltip wherever it is.
 pub const RELOAD_HINT: &str = "Read actions.toml, snippets.toml, theme.toml and exports.toml again";
@@ -25,8 +21,6 @@ pub struct CustomFiles {
     exports: Loaded<Vec<CustomFormat>>,
     /// The palettes `theme.toml` makes.
     palettes: Palettes,
-    /// The file whose problems window is open.
-    pub window: Option<CustomFileKind>,
 }
 
 /// A file as last read: until the engine first reports it, empty and with no path.
@@ -126,73 +120,15 @@ fn count(n: usize, noun: &str) -> String {
     }
 }
 
-/// Every colour token's name, for the theme window's hint.
-fn token_names() -> String {
-    ThemeToken::ALL
-        .into_iter()
-        .map(ThemeToken::name)
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-pub enum FileWindowAction {
-    Reload,
-    Close,
-}
-
-/// Draws the problems window of the file in [`CustomFiles::window`], if one is open.
-pub fn show(ctx: &egui::Context, files: &CustomFiles) -> Option<FileWindowAction> {
-    let kind = files.window?;
-    let mut open = true;
-    let action = Window::new(kind.file_name())
-        .id(egui::Id::new(("custom_file_window", kind.file_name())))
-        .open(&mut open)
-        .default_size(WINDOW_SIZE)
-        .show(ctx, |ui| contents(ui, files, kind))
-        .and_then(|response| response.inner.flatten());
-    if open {
-        action
-    } else {
-        Some(FileWindowAction::Close)
-    }
-}
-
-fn contents(
-    ui: &mut egui::Ui,
-    files: &CustomFiles,
-    kind: CustomFileKind,
-) -> Option<FileWindowAction> {
-    let reload = header(ui, files.path(kind), &files.summary(kind));
-    if kind == CustomFileKind::Theme {
-        ui.weak(format!("Colours: {}", token_names()));
-    }
-    ui.separator();
-    ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-        problems(ui, files.problems(kind));
-    });
-    reload.then_some(FileWindowAction::Reload)
-}
-
-/// The file's path, what it adds, and a Reload button, which this returns whether was clicked.
-fn header(ui: &mut egui::Ui, path: Option<&Path>, summary: &str) -> bool {
-    let mut reload = false;
-    ui.horizontal(|ui| {
-        if let Some(path) = path {
-            ui.weak(path.display().to_string());
+/// What `kind`'s file may name that its summary doesn't say: for `theme.toml`, every colour
+/// token, shown beside its problems.
+pub fn reference(kind: CustomFileKind) -> Option<String> {
+    match kind {
+        CustomFileKind::Theme => {
+            let tokens: Vec<&str> = ThemeToken::ALL.into_iter().map(ThemeToken::name).collect();
+            Some(format!("Colours: {}", tokens.join(", ")))
         }
-        reload = ui.button("Reload").on_hover_text(RELOAD_HINT).clicked();
-    });
-    ui.label(summary);
-    reload
-}
-
-/// What couldn't be used, or that there is nothing wrong.
-fn problems(ui: &mut egui::Ui, problems: &[String]) {
-    if problems.is_empty() {
-        ui.weak("No problems.");
-    }
-    for problem in problems {
-        ui.colored_label(ui.visuals().error_fg_color, problem);
+        CustomFileKind::Actions | CustomFileKind::Snippets | CustomFileKind::Exports => None,
     }
 }
 

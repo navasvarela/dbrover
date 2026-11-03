@@ -17,7 +17,7 @@ use std::path::Path;
 
 use dbrover_core::{DataSource, ProjectId};
 use dbrover_engine::Event;
-use dbrover_store::{McpOverrides, McpPermissions, Project, Settings};
+use dbrover_store::{CustomFileKind, McpOverrides, McpPermissions, Project, Settings};
 use egui::{
     Button, CentralPanel, Color32, Frame, Margin, Panel, RichText, ScrollArea, TextEdit,
     ThemePreference, Ui, WidgetInfo, WidgetType, vec2,
@@ -28,7 +28,7 @@ use self::project_page::{ProjectDrafts, ProjectView};
 use self::search::Found;
 use self::setting::{Category, Setting};
 use crate::command_runs::CommandRuns;
-use crate::custom_files::CustomFiles;
+use crate::custom_files::{self, CustomFiles, RELOAD_HINT};
 use crate::folder_switch::{FolderInUse, FolderRequest};
 use crate::form;
 use crate::icons;
@@ -118,6 +118,16 @@ impl Default for Page {
 }
 
 impl Page {
+    /// The page that lists `kind`'s file and what it got wrong, which a problems link opens.
+    pub fn of_file(kind: CustomFileKind) -> Self {
+        match kind {
+            CustomFileKind::Actions => Self::Actions,
+            CustomFileKind::Exports => Self::Exports,
+            CustomFileKind::Snippets => Self::Settings(Category::Editor),
+            CustomFileKind::Theme => Self::Settings(Category::Appearance),
+        }
+    }
+
     /// The pages above the projects, in the sidebar's order.
     fn listed() -> impl Iterator<Item = Self> {
         Category::ALL.into_iter().map(Self::Settings).chain([
@@ -313,6 +323,7 @@ impl SettingsTab {
         page_title(ui, self.page.title(), self.page.summary());
         match self.page {
             Page::Settings(category) => {
+                let custom_files = view.custom_files;
                 let settings: Vec<Found<'_>> = Setting::all()
                     .into_iter()
                     .filter(|setting| setting.category() == category)
@@ -322,6 +333,12 @@ impl SettingsTab {
                 let _ = settings_page(ui, &settings, view, actions, |found| {
                     found.section().to_owned()
                 });
+                let files = CustomFileKind::ALL
+                    .into_iter()
+                    .filter(|kind| Page::of_file(*kind) == self.page);
+                for kind in files {
+                    file_section(ui, custom_files, kind, actions);
+                }
             }
             Page::Keymap => {
                 let shortcuts = keymap_page::shortcuts(
@@ -508,6 +525,31 @@ fn problems(ui: &mut Ui, problems: &[String]) {
     if !problems.is_empty() {
         ui.add_space(8.0);
     }
+}
+
+/// A file that adds to a page of settings, as `theme.toml` adds colours to Appearance: where
+/// it was read from, what it adds, what it got wrong, and Reload.
+fn file_section(
+    ui: &mut Ui,
+    files: &CustomFiles,
+    kind: CustomFileKind,
+    actions: &mut Vec<SettingsAction>,
+) {
+    form::section(ui, kind.file_name(), |ui| {
+        source_line(ui, files.path(kind), |ui| {
+            // Named after its file: the page's own settings file has a Reload of its own.
+            let reload = ui.link(format!("Reload {}", kind.file_name()));
+            if reload.on_hover_text(RELOAD_HINT).clicked() {
+                actions.push(SettingsAction::ReloadCustomFiles);
+            }
+        });
+        form::description_label(ui, &files.summary(kind));
+        if let Some(reference) = custom_files::reference(kind) {
+            form::description_label(ui, &reference);
+        }
+        ui.add_space(8.0);
+        problems(ui, files.problems(kind));
+    });
 }
 
 /// The page's file, said by `about`, and `add_links` to act on it, such as Reload.
