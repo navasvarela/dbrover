@@ -166,6 +166,7 @@ fn finished_run(folder: &Path) -> Vec<RunEvent> {
                 id: "balances".to_owned(),
                 data_source: "shop".to_owned(),
                 attached: false,
+                waits_for: None,
             }],
             combine: false,
         },
@@ -177,6 +178,7 @@ fn finished_run(folder: &Path) -> Vec<RunEvent> {
             elapsed_ms: 5,
             table: Vec::new(),
             warnings: Vec::new(),
+            batches: None,
         },
         RunEvent::Preview(Preview {
             columns: vec!["account".to_owned(), "balance".to_owned()],
@@ -232,6 +234,7 @@ fn combined_start() -> Vec<RunEvent> {
         id: id.to_owned(),
         data_source: "shop".to_owned(),
         attached: false,
+        waits_for: None,
     };
     let loaded = |id: &str, rows, table: Vec<(&str, &str)>| RunEvent::SourceDone {
         id: id.to_owned(),
@@ -244,9 +247,11 @@ fn combined_start() -> Vec<RunEvent> {
             .map(|(name, type_name)| LoadedColumn {
                 name: name.to_owned(),
                 type_name: type_name.to_owned(),
+                declared: false,
             })
             .collect(),
         warnings: Vec::new(),
+        batches: None,
     };
     vec![
         RunEvent::Started {
@@ -384,6 +389,7 @@ fn cancel_stops_the_running_report() {
             id: "balances".to_owned(),
             data_source: "shop".to_owned(),
             attached: false,
+            waits_for: None,
         }],
         combine: false,
     }]);

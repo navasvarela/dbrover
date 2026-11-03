@@ -8,24 +8,16 @@ use std::time::Duration;
 
 use dbrover_export::{ColumnType, CustomFormatId, ExportFormat, IfInvalid, Preset, SchemaColumn};
 
+use dbrover_driver_duckdb::DuckDbType;
+
 use crate::{
-    ByteSize, Combine, CombineLimits, DEFAULT_RUN_TIMEOUT, FileName, Output, OutputColumns,
-    OutputLimits, OutputWriter, Param, Report, Source, SourceLimits, SourceRead,
+    ByteSize, Combine, CombineLimits, DEFAULT_RUN_TIMEOUT, FileName, Lookup, Output, OutputColumns,
+    OutputLimits, OutputWriter, Param, Report, Source, SourceColumn, SourceLimits, SourceRead,
 };
 
 /// Keys of later milestones, and what each waits for, so a file written for one says why it
 /// can't run yet rather than running something else.
 const LATER_REPORT_KEYS: [(&str, &str); 1] = [("prql", "PRQL comes with RP5")];
-const LATER_SOURCE_KEYS: [(&str, &str); 2] = [
-    (
-        "lookup",
-        "a lookup reads by the keys an earlier source found, which comes with RP3",
-    ),
-    (
-        "columns",
-        "a source's declared columns come with RP3, for document data sources",
-    ),
-];
 const LATER_COMBINE_KEYS: [(&str, &str); 1] = [("prql", "PRQL in [combine] comes with RP5")];
 
 /// Names DuckDB gives its own catalogs and schemas, which a source's table or attached
@@ -87,6 +79,7 @@ pub fn read_report(text: &str) -> Result<Report, Vec<String>> {
             Vec::new()
         }
     };
+    check_lookups(&sources, &params, &mut problems);
     let combine = match combine {
         Ok(Some(combine)) => read_combine(combine, &mut problems),
         Ok(None) => None,
@@ -288,17 +281,14 @@ fn read_source(table: toml::Table, problems: &mut Vec<String>) -> Option<Source>
     let max_rows = fields.count("max_rows");
     let max_bytes = fields.byte_size("max_bytes");
     let timeout = fields.duration("timeout");
-    for (key, later) in LATER_SOURCE_KEYS {
-        if fields.take(key).is_some() {
-            found.push(later.to_owned());
-        }
-    }
+    let lookup = fields.take("lookup").map(read_lookup).transpose();
+    let columns = fields.take("columns").map(read_source_columns).transpose();
     found.extend(fields.unknown(
         "a source",
-        "id, data_source, query, attach, max_rows, max_bytes and timeout",
+        "id, data_source, query, lookup, columns, attach, max_rows, max_bytes and timeout",
     ));
-    let read = match (attach, query, max_rows, max_bytes, timeout) {
-        (Ok(Some(true)), query, max_rows, max_bytes, timeout) => {
+    let read = match (attach, query, max_rows, max_bytes, timeout, lookup, columns) {
+        (Ok(Some(true)), query, max_rows, max_bytes, timeout, lookup, columns) => {
             if !matches!(query, Ok(None)) {
                 found.push(
                     "an attached source has no query: the [combine] query reads its tables in \
@@ -319,9 +309,21 @@ fn read_source(table: toml::Table, problems: &mut Vec<String>) -> Option<Source>
                     ));
                 }
             }
+            let query_keys = [
+                ("lookup", lookup.map(|value| value.is_some())),
+                ("columns", columns.map(|value| value.is_some())),
+            ];
+            for (key, set) in query_keys {
+                if !matches!(set, Ok(false)) {
+                    found.push(format!(
+                        "{key} is for a source's query, and an attached source has none; \
+                         [combine] reads its tables as they are"
+                    ));
+                }
+            }
             Ok(SourceRead::Attach)
         }
-        (Ok(_), Ok(query), Ok(max_rows), Ok(max_bytes), Ok(timeout)) => {
+        (Ok(_), Ok(query), Ok(max_rows), Ok(max_bytes), Ok(timeout), Ok(lookup), Ok(columns)) => {
             let defaults = SourceLimits::default();
             query
                 .filter(|query| !query.trim().is_empty())
@@ -332,6 +334,8 @@ fn read_source(table: toml::Table, problems: &mut Vec<String>) -> Option<Source>
                         max_bytes: max_bytes.unwrap_or(defaults.max_bytes),
                         timeout: timeout.unwrap_or(defaults.timeout),
                     },
+                    lookup,
+                    columns,
                 })
                 .ok_or_else(|| {
                     vec![
@@ -339,13 +343,15 @@ fn read_source(table: toml::Table, problems: &mut Vec<String>) -> Option<Source>
                     ]
                 })
         }
-        (attach, query, max_rows, max_bytes, timeout) => {
+        (attach, query, max_rows, max_bytes, timeout, lookup, columns) => {
             let mut errors = Vec::new();
             errors.extend(attach.err());
             errors.extend(query.err());
             errors.extend(max_rows.err());
             errors.extend(max_bytes.err());
             errors.extend(timeout.err());
+            errors.extend(lookup.err().into_iter().flatten());
+            errors.extend(columns.err().into_iter().flatten());
             Err(errors)
         }
     };
@@ -369,6 +375,235 @@ fn read_source(table: toml::Table, problems: &mut Vec<String>) -> Option<Source>
             .map(|problem| format!("{label}: {problem}")),
     );
     source
+}
+
+/// `lookup = { from = "tx", column = "asset_id", as = "asset_ids" }`.
+fn read_lookup(value: toml::Value) -> Result<Lookup, Vec<String>> {
+    let toml::Value::Table(table) = value else {
+        return Err(vec![
+            "lookup is a table, as lookup = { from = \"tx\", column = \"asset_id\", as = \
+             \"asset_ids\" }"
+                .to_owned(),
+        ]);
+    };
+    let mut fields = Fields::new(table);
+    let mut named = |key: &str, example: &str| {
+        fields.string(key).and_then(|text| {
+            text.filter(|text| !text.trim().is_empty())
+                .ok_or_else(|| format!("lookup needs {key}, {example}"))
+        })
+    };
+    let from = named("from", "the earlier source it reads, as from = \"tx\"");
+    let column = named(
+        "column",
+        "the column of that source whose values it reads, as column = \"asset_id\"",
+    );
+    let parameter = named(
+        "as",
+        "the parameter its query reads them as, as as = \"asset_ids\" for :asset_ids",
+    )
+    .and_then(|name| {
+        if is_param_name(&name) {
+            Ok(name)
+        } else {
+            Err(format!(
+                "lookup: {name:?} can't be a parameter's name, which is letters, digits and _, \
+                 starting with a letter"
+            ))
+        }
+    });
+    let batch_size = fields.count("batch_size").map(|size| {
+        size.and_then(|size| usize::try_from(size).ok())
+            .and_then(NonZeroUsize::new)
+    });
+    let mut problems: Vec<String> = fields
+        .unknown("a lookup", "from, column, as and batch_size")
+        .into_iter()
+        .map(|problem| format!("lookup: {problem}"))
+        .collect();
+    match (from, column, parameter, batch_size) {
+        (Ok(from), Ok(column), Ok(parameter), Ok(batch_size)) if problems.is_empty() => {
+            Ok(Lookup {
+                from,
+                column,
+                parameter,
+                batch_size,
+            })
+        }
+        (from, column, parameter, batch_size) => {
+            problems.extend(from.err());
+            problems.extend(column.err());
+            problems.extend(parameter.err());
+            problems.extend(batch_size.err().map(|problem| format!("lookup: {problem}")));
+            Err(problems)
+        }
+    }
+}
+
+/// A source's `columns`: a list of `{ name, from, type, default }`.
+fn read_source_columns(value: toml::Value) -> Result<Vec<SourceColumn>, Vec<String>> {
+    let toml::Value::Array(items) = value else {
+        return Err(vec![
+            "columns is a list of the columns the source makes, as [{ name = \"symbol\", type \
+             = \"text\" }]"
+                .to_owned(),
+        ]);
+    };
+    if items.is_empty() {
+        return Err(vec!["columns lists at least one column".to_owned()]);
+    }
+    let mut problems = Vec::new();
+    let mut read: Vec<SourceColumn> = Vec::new();
+    for (index, item) in items.into_iter().enumerate() {
+        let toml::Value::Table(table) = item else {
+            problems.push(format!(
+                "column {}: each column is a table, as {{ name = \"symbol\", type = \"text\" }}",
+                index + 1
+            ));
+            continue;
+        };
+        match read_source_column(table) {
+            Ok(column)
+                if read
+                    .iter()
+                    .any(|kept| kept.name.eq_ignore_ascii_case(&column.name)) =>
+            {
+                problems.push(format!(
+                    "column {:?}: another column already has this name; each names a column of \
+                     the source's table, so each is different",
+                    column.name
+                ));
+            }
+            Ok(column) => read.push(column),
+            Err((label, problem)) => {
+                let label = label.unwrap_or_else(|| format!("{}", index + 1));
+                problems.push(format!("column {label}: {problem}"));
+            }
+        }
+    }
+    if problems.is_empty() {
+        Ok(read)
+    } else {
+        Err(problems)
+    }
+}
+
+/// One declared column, or its label (its name, quoted) and the first problem it has.
+fn read_source_column(table: toml::Table) -> Result<SourceColumn, (Option<String>, String)> {
+    let mut fields = Fields::new(table);
+    let name = fields.string("name").map_err(|problem| (None, problem))?;
+    let label = name.as_ref().map(|name| format!("{name:?}"));
+    let fail = |problem: String| (label.clone(), problem);
+    let name = name.filter(|name| !name.trim().is_empty()).ok_or_else(|| {
+        fail("needs a name, the column it makes in the source's table".to_owned())
+    })?;
+    let from = fields
+        .string("from")
+        .map_err(fail)?
+        .filter(|from| !from.is_empty())
+        .unwrap_or_else(|| name.clone());
+    let column_type = fields
+        .string("type")
+        .map_err(fail)?
+        .map(|type_name| type_name.parse::<ColumnType>())
+        .transpose()
+        .map_err(|error| fail(error.to_string()))?
+        .unwrap_or(ColumnType::Text);
+    if let ColumnType::Decimal(Some(spec)) = column_type
+        && spec.precision() > DuckDbType::MAX_DECIMAL_DIGITS
+    {
+        return Err(fail(format!(
+            "a source's decimal has at most {} digits, as DuckDB's DECIMAL holds",
+            DuckDbType::MAX_DECIMAL_DIGITS
+        )));
+    }
+    let default = match fields.take("default") {
+        None => None,
+        Some(toml::Value::String(text)) => Some(text),
+        Some(toml::Value::Integer(number)) => Some(number.to_string()),
+        Some(toml::Value::Float(number)) => Some(number.to_string()),
+        Some(toml::Value::Boolean(flag)) => Some(flag.to_string()),
+        Some(other) => {
+            return Err(fail(format!(
+                "default must be a value of the column's type, not a {}",
+                other.type_str()
+            )));
+        }
+    }
+    .map(|default| {
+        column_type
+            .plain_form(&default)
+            .map_err(|reason| fail(format!("default: {default:?} {reason}")))
+    })
+    .transpose()?;
+    if let Some(problem) = fields
+        .unknown("a source's column", "name, from, type and default")
+        .into_iter()
+        .next()
+    {
+        return Err(fail(problem));
+    }
+    Ok(SourceColumn {
+        name,
+        from,
+        column_type,
+        default,
+    })
+}
+
+/// What only the whole list of sources shows about their lookups: each reads a source above
+/// it that has a query, and its parameter isn't one of the report's.
+fn check_lookups(
+    sources: &[Source],
+    params: &BTreeMap<&str, ColumnType>,
+    problems: &mut Vec<String>,
+) {
+    for (index, source) in sources.iter().enumerate() {
+        let SourceRead::Query {
+            lookup: Some(lookup),
+            ..
+        } = &source.read
+        else {
+            continue;
+        };
+        let label = format!("source {:?}", source.id);
+        if params.contains_key(lookup.parameter.as_str()) {
+            problems.push(format!(
+                "{label}: lookup: :{} is one of [report] params; a lookup's values need a name \
+                 of their own",
+                lookup.parameter
+            ));
+        }
+        let above = sources[..index]
+            .iter()
+            .find(|earlier| earlier.id.eq_ignore_ascii_case(&lookup.from));
+        let problem = match above {
+            Some(earlier) if earlier.read == SourceRead::Attach => Some(format!(
+                "{label}: lookup: {:?} is attached, and a lookup reads a loaded source's \
+                 table; join the attached tables in [combine] instead",
+                lookup.from
+            )),
+            Some(_) => None,
+            None if lookup.from.eq_ignore_ascii_case(&source.id) => Some(format!(
+                "{label}: lookup: a source can't look up its own values"
+            )),
+            None if sources
+                .iter()
+                .any(|later| later.id.eq_ignore_ascii_case(&lookup.from)) =>
+            {
+                Some(format!(
+                    "{label}: lookup: {:?} is below this source; a lookup reads a source above \
+                     it in the file, which runs first",
+                    lookup.from
+                ))
+            }
+            None => Some(format!(
+                "{label}: lookup: there is no source {:?} to read from",
+                lookup.from
+            )),
+        };
+        problems.extend(problem);
+    }
 }
 
 /// Whether `id` can name a source's table in DuckDB, unquoted.

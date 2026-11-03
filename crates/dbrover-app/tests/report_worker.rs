@@ -298,6 +298,7 @@ fn runs_a_report_and_reports_each_step() {
                 id: "balances".to_owned(),
                 data_source: "ledger".to_owned(),
                 attached: false,
+                waits_for: None,
             }],
             combine: false,
         }

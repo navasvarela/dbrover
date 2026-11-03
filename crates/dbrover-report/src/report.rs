@@ -1,5 +1,6 @@
 //! A report file as read, before anything it names is looked up.
 
+use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use dbrover_export::{ColumnType, CustomFormatId, Preset, SchemaColumn};
@@ -44,9 +45,41 @@ pub struct Source {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceRead {
     /// Its query's rows, under its limits.
-    Query { query: String, limits: SourceLimits },
+    Query {
+        query: String,
+        limits: SourceLimits,
+        /// The earlier source whose values its query reads by.
+        lookup: Option<Lookup>,
+        /// The columns its table has, when the file declares them; otherwise the result's.
+        columns: Option<Vec<SourceColumn>>,
+    },
     /// A DuckDB file, attached read-only for the combine step to read in place.
     Attach,
+}
+
+/// A parameter bound to the distinct values of an earlier source's column
+/// (`docs/reporting.md`, "Lookups").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Lookup {
+    /// The source whose loaded table the values are read from.
+    pub from: String,
+    pub column: String,
+    /// The parameter the query uses for the values, `asset_ids` for `:asset_ids`.
+    pub parameter: String,
+    /// At most this many values a statement, when the file lowers the engine's own.
+    pub batch_size: Option<NonZeroUsize>,
+}
+
+/// A column a source declares: its table's column `name`, where its value is, its type, and
+/// the value a missing or `null` one gets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceColumn {
+    pub name: String,
+    /// A result's column by name, or a document's field by its path (`metadata.chain`).
+    pub from: String,
+    pub column_type: ColumnType,
+    /// In the type's plain form, as checked when the file was read.
+    pub default: Option<String>,
 }
 
 /// The combine step: a DuckDB query over the sources, and the limits of the DuckDB it runs in.

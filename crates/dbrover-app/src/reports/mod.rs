@@ -205,6 +205,7 @@ impl RunRecord {
                 rows,
                 bytes,
                 elapsed_ms,
+                ..
             } => {
                 if let Some(record) = self.step_mut(&step) {
                     record.state = StepState::Running {
@@ -538,6 +539,7 @@ mod tests {
             id: id.to_owned(),
             data_source: "ledger".to_owned(),
             attached,
+            waits_for: None,
         };
         let mut record = RunRecord::new();
         record.apply(RunEvent::Started {
@@ -562,6 +564,7 @@ mod tests {
             rows: 1_000,
             bytes: 20_000,
             elapsed_ms: 1_000,
+            batch: None,
         });
         assert_eq!(
             states(&record),
@@ -584,8 +587,10 @@ mod tests {
             table: vec![LoadedColumn {
                 name: "quantity".to_owned(),
                 type_name: "DECIMAL(21,18)".to_owned(),
+                declared: false,
             }],
             warnings: vec!["a warning".to_owned()],
+            batches: None,
         });
         assert_eq!(record.rows, 0, "a loaded source's rows aren't the outputs'");
         assert_eq!(record.steps[0].table.len(), 1);
