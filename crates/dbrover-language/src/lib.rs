@@ -13,6 +13,7 @@
 
 mod documents;
 pub mod mongo;
+mod parameters;
 pub mod partiql;
 pub mod redis;
 pub mod search;
@@ -28,6 +29,7 @@ pub use dbrover_sql::{
     Analysis, ExplainDepth, NamedSchemas, StatementKind, Token, TokenKind, Unclassified,
 };
 pub use documents::{DocumentEdit, DocumentView};
+pub use parameters::Literal;
 
 /// How the grid's edits of rows are applied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

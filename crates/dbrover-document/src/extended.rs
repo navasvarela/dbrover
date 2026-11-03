@@ -112,6 +112,21 @@ fn count(n: usize, open: &str, noun: &str, close: &str) -> String {
     format!("{open}{n} {noun}{plural}{close}")
 }
 
+/// A scalar's value as plain text, `None` for `null`, an object or an array: see
+/// [`Value::plain`].
+pub(crate) fn plain(value: &Value, syntax: Syntax) -> Option<String> {
+    if syntax == Syntax::ExtendedJson
+        && let Some(special) = special(value)
+    {
+        return special.plain();
+    }
+    match value {
+        Value::Bool(flag) => Some(flag.to_string()),
+        Value::Number(text) | Value::String(text) => Some(text.clone()),
+        Value::Null | Value::Array(_) | Value::Object(_) => None,
+    }
+}
+
 /// One BSON value written as an object, its parts borrowed from it.
 #[derive(Debug, PartialEq, Eq)]
 enum Special<'a> {
@@ -275,6 +290,31 @@ impl Special<'_> {
             Self::Set(SetKind::String, _) => ValueType::StringSet,
             Self::Set(SetKind::Number, _) => ValueType::NumberSet,
             Self::Set(SetKind::Binary, _) => ValueType::BinarySet,
+        }
+    }
+
+    /// The value itself, for a value that is one number, string, id or time: a number's
+    /// digits, an id's hex, a date in ISO 8601 and UTC. `None` for the others, which have no
+    /// plain form.
+    fn plain(&self) -> Option<String> {
+        match self {
+            Self::ObjectId(text)
+            | Self::DateText(text)
+            | Self::Int32(text)
+            | Self::Int64(text)
+            | Self::Double(text)
+            | Self::Decimal128(text)
+            | Self::Symbol(text) => Some((*text).to_owned()),
+            Self::DateMillis(millis) => iso_date(*millis),
+            Self::Binary { .. } => self.uuid(),
+            Self::Timestamp { .. }
+            | Self::RegularExpression { .. }
+            | Self::MinKey
+            | Self::MaxKey
+            | Self::Code(_)
+            | Self::Undefined
+            | Self::DbPointer { .. }
+            | Self::Set(..) => None,
         }
     }
 
