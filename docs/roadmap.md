@@ -1734,8 +1734,23 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   declaring a source's column types (RP3's declared columns), a Job Object on Windows, a
   Settings page for the limits' defaults (RP4), and stopping a slow source's statement on the
   server when another source fails first (its connection is dropped instead).
-- **RP3 — Lookups and documents:** a source read by the keys an earlier source found, in
-  batches, and declared columns for DynamoDB, MongoDB, Elasticsearch and Redis sources.
+- **RP3 — Lookups and documents** (started 2026-11-03, after RP2): a source read by the keys
+  an earlier source found, in batches, and declared columns for DynamoDB, MongoDB,
+  Elasticsearch and Redis sources. Planned in
+  [Reports](reporting.md#rp3--lookups-and-documents). In layers, one PR each:
+  - **RP3a — Plan:** RP3's layers, decisions and risks, and this entry. A lookup's values go
+    into the statement as literals of its language, in batches of at most 100 (PartiQL, CQL)
+    or 1,000; sources without SQL declare their columns.
+  - **RP3b — Parameters in every language:** `:name` parameters, literals and lists in each
+    query language, and Extended JSON's values read as plain values.
+  - **RP3c — The report file:** `lookup` and a source's `columns` read and planned, sources on
+    every engine, and the rounds sources run in.
+  - **RP3d — Running lookups and documents:** declared columns from rows and documents, a
+    lookup's batches under the source's limits, and sources in any language in the engine.
+  - **RP3e — The tab:** a source waiting for another, and its batches.
+  - **RP3f — The four reports:** the trial balance, general ledger, valuation and cost basis
+    under `examples/reports/`, their data's scripts, and their checked-in files compared.
+  - **RP3g — Manual:** the chapter's new sections, and the demo note.
 
   **Exit of the first iteration:** four reports in the shape of accounting software's run on
   synthetic data and match their checked-in output: a trial balance with subtotals, a general

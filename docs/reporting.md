@@ -128,10 +128,10 @@ every guard the data source already has: its SSH tunnel, its password command, r
 (W11) and the cost guard (N5). Its rows stream into a DuckDB table named after its `id`.
 
 - **Lookups.** `lookup` binds a parameter to the distinct values of an earlier source's column,
-  so a later source reads by key instead of scanning: `IN :ids` on DynamoDB becomes batched
-  reads, `= ANY(:ids)` on PostgreSQL an array parameter. Sources run in the order their lookups
-  need; the others run at the same time. A lookup with more values than the engine takes in one
-  statement is split into batches.
+  so a later source reads by key instead of scanning: `IN :ids` on DynamoDB becomes reads by
+  key, and on PostgreSQL a list of the values (see [Lookups](#lookups)). Sources run in the
+  order their lookups need; the others run at the same time. A lookup with more values than
+  the engine takes in one statement is split into batches.
 - **Declared columns.** DynamoDB, MongoDB, Elasticsearch and Redis return documents, so their
   sources declare the columns they produce: a name, a type and an optional default, with
   nested fields by path (`metadata.chain`), as N0b's flattening already reads them. Fields not
@@ -280,7 +280,8 @@ After W8, which this builds on. One GitHub stack per milestone:
   sources, exact decimals end to end. In layers RP2a to RP2f,
   [below](#rp2--several-sources).
 - **RP3 — Lookups and documents:** lookups with batching, declared columns for document
-  sources. The first iteration's exit: the four accounting reports above run and match.
+  sources. The first iteration's exit: the four accounting reports above run and match. In
+  layers RP3a to RP3g, [below](#rp3--lookups-and-documents).
 - **RP4 — Metrics:** the run history, the comparison of runs, and the hints.
 - **RP5 — PRQL:** `prql` in `[combine]`, with the compiled SQL shown.
 - **RP6 — The command line:** `dbrover report run <file> --param since=…`, for cron and CI,
@@ -767,6 +768,270 @@ Taken on 2026-11-02 when RP2 started; each can be overturned in review.
   up to `max_temp_size`.
 - **A file open for writing.** A DuckDB data source the app has open for writing can't be
   attached by the worker; the run's error says to make it read-only or disconnect it.
+
+## RP3 — Lookups and documents
+
+Started on 2026-11-03, after RP2. RP3 lets a source read by the keys an earlier source found,
+and lets a source be on an engine that returns documents, by declaring the columns it makes.
+With both, the four reports of [Testing with real reports](#testing-with-real-reports) run on
+the examples' synthetic data, and the first iteration is done. The combine step, outputs,
+parameters and the worker stay as RP1 and RP2 built them.
+
+### The report file in RP3
+
+The valuation of the design's example, with the assets' metadata in DynamoDB, read by the keys
+the period's transactions use:
+
+```toml
+[report]
+name = "Valuation"
+params = { since = "timestamp", until = "timestamp" }
+
+# PostgreSQL: the period's transactions. amount is in the asset's smallest unit.
+[[source]]
+id = "tx"
+data_source = "ledger-postgres"
+query = """
+SELECT id, wallet, asset_id, amount, executed_at
+FROM valuation.transactions
+WHERE executed_at >= :since AND executed_at < :until
+"""
+columns = [
+  { name = "id",          type = "integer" },
+  { name = "wallet",      type = "text" },
+  { name = "asset_id",    type = "text" },
+  { name = "amount",      type = "decimal(38,0)" },
+  { name = "executed_at", type = "timestamp" },
+]
+
+# DynamoDB: the assets those transactions use, read by key, never scanned.
+[[source]]
+id = "assets"
+data_source = "assets-dynamodb"
+lookup = { from = "tx", column = "asset_id", as = "asset_ids" }
+query = "SELECT asset_id, symbol, unit, metadata FROM valuation_assets WHERE asset_id IN :asset_ids"
+columns = [
+  { name = "asset_id", type = "text" },
+  { name = "symbol",   type = "text" },
+  { name = "unit",     type = "decimal(38,18)" },
+  { name = "chain",    from = "metadata.chain", type = "text", default = "unknown" },
+]
+
+[[source]]
+id = "prices"
+data_source = "prices-duckdb"
+attach = true
+
+[combine]
+query = """
+SELECT tx.executed_at, tx.wallet, assets.symbol, assets.chain,
+       tx.amount * assets.unit AS quantity, p.price_usd,
+       tx.amount * assets.unit * p.price_usd AS value_usd
+FROM tx
+JOIN assets USING (asset_id)
+ASOF JOIN prices.hourly_prices p
+  ON p.asset = assets.symbol AND p.hour <= tx.executed_at
+ORDER BY tx.executed_at, tx.id
+"""
+```
+
+What RP3 reads, beyond RP2:
+
+- **`lookup = { from, column, as, batch_size }`** on a source: `from` names a source listed
+  before it, which is loaded (not attached); `column` is one of that source's columns; `as` is
+  the name the query uses as `:asset_ids`, which can't be one of `params`. `batch_size`, at
+  most the engine's own (see [Lookups](#lookups)), lowers how many values one statement
+  takes. One lookup a source.
+- **A source's `columns`:** a list of `{ name, from, type, default }`. `name` is the column in
+  the source's table; `from` is where its value is, `name` by default: a result's column, or a
+  document's field by its path (`metadata.chain`, `lines[0].sku`); `type` is one of the output
+  types (`text`, `integer`, `decimal`, `decimal(p,s)`, `boolean`, `date`, `timestamp`), `text`
+  when left out; `default` is the value a missing or `null` field gets, checked against the
+  type when the file is read.
+- **Sources on every engine.** A source on an engine without a SQL dialect (DynamoDB, MongoDB,
+  Elasticsearch, OpenSearch, Redis) declares its `columns`, since its rows are documents or
+  replies with no fixed columns; its query is in the engine's own language, with the report's
+  `:name` parameters. A source on a SQL engine may declare them, to fix its types.
+- **Still later:** `prql` (RP5) and two outputs in one file, each a problem naming its
+  milestone, as before.
+
+### Lookups
+
+A lookup binds its parameter to the distinct values of the earlier source's column, without
+`NULL`, in their order, once that source is loaded. Each value goes into the statement as a
+literal of the source's language, typed by its column in DuckDB: a number unquoted, anything
+else quoted. The list is written where `:asset_ids` is, as that language writes a list:
+
+| Language | A query reads | `:ids` becomes |
+| --- | --- | --- |
+| SQL, every dialect | `WHERE id IN :ids` | `('a', 'b', 7)` |
+| PartiQL (DynamoDB) | `WHERE pk IN :ids` | `['a', 'b', 7]` |
+| MongoDB's shell | `db.assets.find({_id: {$in: :ids}})` | `["a", "b", 7]` |
+| Elasticsearch's requests | `{"terms": {"id": :ids}}` | `["a", "b", 7]` |
+| Redis's commands | `MGET :ids` | `"a" "b" "7"` |
+
+The report's own parameters go into a statement as they did: bound where a SQL engine's driver
+binds, and for the other languages written in as literals of their type, as the lookup's are (a
+date in MongoDB's shell is `ISODate("2026-10-01T00:00:00Z")`).
+
+**Order.** A source with a lookup runs once the source it reads from is loaded. Sources run in
+rounds: the first holds every source without a lookup, and each later round the sources whose
+lookup reads from the round before; a round's sources load at the same time, as RP2's do. A
+lookup can only name a source above it in the file, so the rounds always end.
+
+**Batches.** A lookup with more values than one statement takes runs its query once per batch,
+the values in order, and every batch's rows go into the source's one table. The most values a
+statement takes, per language:
+
+| Language | Values a statement | Why |
+| --- | --- | --- |
+| PartiQL (DynamoDB) | 100 | DynamoDB refuses an `IN` of more: "The IN operator is provided with too many operands". |
+| CQL (Cassandra, ScyllaDB) | 100 | ScyllaDB's default `max_partition_key_restrictions_per_query`, and Cassandra's guardrail warns past it. |
+| Every other language | 1,000 | Statements stay well under ClickHouse's 256 KiB `max_query_size` and SQL Server's limits on a long `IN` list, and a MongoDB or Elasticsearch request stays small. |
+
+`batch_size` lowers it, for an engine that bills per value read or a server set to take fewer.
+
+**No values.** When the earlier source returned no value, a source with declared columns sends
+nothing and its table is made empty with those columns; a SQL source without them runs once
+with the list `(NULL)`, which matches no row, so its table has the query's columns.
+
+### Declared columns
+
+A source's declared columns are what its table has, in their order, and nothing else: a field
+not declared is dropped. Each value is checked against its type and written in the type's plain
+form, as an output's declared column is (RP1b), then loaded; the table's types are the declared
+ones, not the values', so a column keeps its type from one run to the next:
+
+| `type` | DuckDB's type |
+| --- | --- |
+| `text` | `VARCHAR`; an object or array is written as its JSON |
+| `integer` | `BIGINT`, so at most 18 digits |
+| `decimal` | `DECIMAL(p,s)` from the values, as RP2 types an undeclared one |
+| `decimal(p,s)` | `DECIMAL(p,s)`, rounded half away from zero; `p` at most 38 |
+| `boolean` | `BOOLEAN` |
+| `date` | `DATE` |
+| `timestamp` | `TIMESTAMP`; a time with an offset is converted to UTC |
+
+- **Rows** (a SQL engine, Redis's replies of rows) give each declared column the result's
+  column named by its `from`; a name the result doesn't have fails the run, listing the ones
+  it has.
+- **Documents** give it the field at its `from` path. Extended JSON's values are read as their
+  value: `{"$numberLong": "7"}` is `7`, `{"$numberDecimal": "0.1"}` is `0.1`, an `ObjectId` its
+  hex, and a `Date` its time in UTC, `2026-10-01 12:00:00`. DynamoDB's numbers keep their
+  digits.
+- **A value that doesn't fit** its type fails the run, naming the source, the column, the item
+  (its number in the source, and its `_id` when it has one) and the value. A missing field or
+  `null` gets the column's `default`, or `NULL`.
+
+### Guardrails in RP3
+
+By layer, as in [Guardrails](#guardrails), what changes from RP2:
+
+1. **Sources:** a source's `max_rows`, `max_bytes` and `timeout` hold for the whole source,
+   every batch included: the caps count rows and bytes across batches, and the timeout runs
+   from the first batch's start. A document source's bytes are its documents' text, as they
+   arrive, before columns are taken from them. Every statement is checked to only read and
+   asked of the cost guard as RP1's are; on DynamoDB, a lookup on the partition key reads by
+   key and the cost guard lets it through, while a lookup on another attribute is a scan,
+   which a guarded data source refuses.
+2. **Combine:** as in RP2. A lookup's values are read from the loaded table in the run's
+   DuckDB, under its `memory_limit`.
+3. **Outputs, the process, one run at a time:** as in RP2.
+
+### Progress in RP3
+
+`started` names, for each source with a lookup, the source it waits for. `progress` on a
+batched source says which batch of how many it is reading, and its `source_done` how many
+batches it ran. The report's tab shows a source that waits as *waiting for tx*, and a batched
+one's line as *batch 2 of 7*.
+
+### Layers
+
+Each layer is one pull request in a stack, useful and tested on its own, with synthetic data
+only.
+
+- **RP3a — Plan:** this section, RP3's decisions and risks, and the roadmap's entry in layers.
+- **RP3b — Parameters in every language:** in `dbrover-language`, `:name` parameters found in
+  each language's commands, literals and lists written as each language reads them, and the
+  most values a statement takes; in `dbrover-document`, a path read from its text and a scalar's
+  plain value (Extended JSON's numbers, ids and dates).
+  **Exit:** unit tests, per language, of the parameters found (not inside strings, comments or
+  `asset:id`-like keys), each literal and list, and a statement with parameters replaced; of
+  paths read back from their text; and of each Extended JSON scalar's value.
+- **RP3c — The report file:** `lookup` and a source's `columns` read and planned with their
+  problems; sources on every engine, a source's query in its language; the rounds; the events'
+  new fields. A run whose plan needs lookups or declared columns fails, saying RP3d brings them.
+  **Exit:** the valuation above reads and plans into two rounds; each new problem (a lookup
+  from a later, unknown or attached source, an `as` that is a parameter or that the query
+  doesn't use, a `batch_size` over the engine's, a document source without `columns`, a
+  `default` that doesn't fit its type, two declared columns of one name) is reported with its
+  entry; RP1's and RP2's examples plan and run as before.
+- **RP3d — Running lookups and documents:** in `dbrover-report`, declared columns taken from
+  rows and documents, a lookup's values read from DuckDB, its batches under the source's caps
+  and timeout, the rounds; in `dbrover-engine`, a source in any language, and its result's
+  shape.
+  **Exit:** with readers in memory, a lookup of 2,500 values runs three batches of at most
+  1,000 into one table, an empty lookup sends nothing, caps and the timeout count across
+  batches, and a value that doesn't fit names its item; on DynamoDB Local, a lookup on the
+  partition key reads by key under the cost guard, and one on another attribute is refused;
+  on the MongoDB test server, a lookup with nested fields, defaults and `NumberLong`s loads
+  its declared columns.
+- **RP3e — The tab:** a source waiting for another, its batches, and its declared columns
+  marked as declared.
+  **Exit:** a kittest with a worker stand-in shows a lookup waiting, then its batches, then
+  done.
+- **RP3f — The four reports:** under `examples/reports/`, the trial balance with subtotals per
+  kind of account (`GROUPING SETS`), the general ledger with each entry's counterparty from
+  MongoDB and its running balance, the valuation above, and cost basis with realised gains by
+  FIFO lot; the scripts that make their synthetic data in SQLite, PostgreSQL, DynamoDB, MongoDB
+  and DuckDB; their October 2026 CSV files checked in, and a test that runs each in the worker's
+  code and compares.
+  **Exit:** the four match their checked-in files, and the cost basis also matches a FIFO worked
+  out row by row outside SQL; the general ledger, on a ledger of 1,100,000 entries, writes every
+  row to CSV and goes on to a second Excel sheet, with each account's closing balance equal to
+  its sum (a test marked slow, run with `--ignored`).
+- **RP3g — Manual and demo note:** the **Reports** chapter's sections on lookups, document
+  sources and declared columns, and the four reports; RP3's demo note.
+
+**Exit:** the first iteration's: the four accounting reports run from their files, each in the
+worker under its guardrails, on synthetic data in SQLite, PostgreSQL, DynamoDB, MongoDB and
+DuckDB, and write what their checked-in files say.
+
+### RP3's decisions
+
+Taken on 2026-11-03 when RP3 started; each can be overturned in review.
+
+| Question | Chosen | Consequence |
+| --- | --- | --- |
+| How a lookup's values reach the engine | **Written into the statement as literals,** a list as the language writes one, rather than bound. | One way for every engine, whether its driver binds or not, and the read-only check and the cost guard see the statement that runs. PostgreSQL's `= ANY(:ids)` with an array parameter, which the design first mentioned, isn't offered: a lookup is `IN :ids` there as everywhere. Quoting is the language's own, as W6's literals are. |
+| A literal's type | **The earlier column's type in DuckDB:** numbers unquoted, everything else quoted. | A MongoDB `_id` that is a number matches a number; a key stored as text must be loaded as text, which a declared `text` column makes sure of. |
+| How many lookups a source has | **One,** reading one column. | Two lists would batch as their product. A key of two columns is looked up by one and filtered in `[combine]`. |
+| What a lookup reads from | **A source above it, loaded, not attached.** | The order is the file's, so there is never a cycle. An attached file's tables are read in `[combine]`, where a join does what a lookup would. |
+| Running sources in order | **Rounds:** each round's sources at the same time, a round once the one before it is loaded. | Simple to show and to reason about; a source in round two waits for every source of round one, not only its own, which costs time only when round one's sources take very different times. |
+| The most values a statement | **Constants per language:** 100 for PartiQL and CQL, 1,000 otherwise; `batch_size` lowers it. | No engine is asked more than it takes by default; raising them waits until a report needs it. |
+| Caps and timeout across batches | **For the whole source.** | A source's limits mean what they say however many batches it needs; the engine's watchdog is given the source's deadline, not one per statement. |
+| Sources without a SQL dialect | **Declare their columns,** and only declared fields are kept. | A table has the same columns on every run, whatever fields the period's documents happen to have; nothing is guessed from the first page. |
+| Declared types | **The output types**, mapped to DuckDB's (`integer` is `BIGINT`). | One vocabulary for a report's types; a `decimal(p,s)` past 38 digits is a problem in the file, since DuckDB holds 38. |
+| A value that doesn't fit | **Fails the run,** naming the item. | As the design says. `if_invalid`, which outputs have, waits until a source needs it. |
+| Cost basis | **In SQL,** with no program step: each lot and each disposal is a range of the asset's running quantity, and FIFO matches the ranges that overlap. | The design expected this report to need a program step; window functions and a join do it, exactly, in decimals. A program step waits for a report that needs one. |
+| The general ledger past a million rows | **A test marked slow** (`--ignored`), on a ledger the test makes, besides the October example's checked-in file. | CI time is a budget; a million rows through a debug build takes minutes. The test is run by hand before a release, as Excel's whole-sheet test is. |
+| The examples' DynamoDB table and MongoDB collection | **Fixed names** (`valuation_assets`, `counterparties`), made by scripts beside the reports: PartiQL `INSERT`s after an `aws dynamodb create-table`, and a MongoDB shell script. | The report files run as they are in the manual and in the test, which makes them afresh. |
+
+### RP3's risks
+
+- **DynamoDB's `IN` limit.** DynamoDB's documentation doesn't state how many values an `IN`
+  takes; 100 is what DynamoDB Local accepts, refusing 101. If AWS refuses fewer, `batch_size`
+  lowers it until the constant changes.
+- **Long statements.** A thousand long keys make a statement of hundreds of kilobytes, near
+  ClickHouse's `max_query_size`; the error is the engine's, and `batch_size` is the fix.
+- **A lookup's values in memory.** The distinct values are read into the worker before the
+  batches run. The earlier source's `max_rows` bounds how many there can be.
+- **Number or text keys.** A key loaded as a number looks up numbers. An earlier source whose
+  ids are digits in a text column of a driver that reports no types, such as PostgreSQL's, is
+  inferred a number by RP2's typing; declaring it `text` keeps it text.
+- **Tests that need servers.** The valuation, cost basis and general ledger need the
+  PostgreSQL, DynamoDB and MongoDB test servers, which CI starts on Linux only; on macOS and
+  Windows only the trial balance, on SQLite, runs end to end.
 
 ## Decisions
 
