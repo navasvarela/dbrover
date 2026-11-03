@@ -29,7 +29,7 @@ mod folder_switch;
 mod fonts;
 mod form;
 mod hazard_dialog;
-mod history_window;
+mod history_tab;
 mod host_key_prompt;
 mod icons;
 mod import_dialog;

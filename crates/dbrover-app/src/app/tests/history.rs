@@ -236,3 +236,49 @@ fn exports_the_search_to_a_file() {
     assert_eq!(exported[0]["sql"], "SELECT * FROM main.orders");
     assert_eq!(exported[0]["data_source"], "shop");
 }
+
+#[test]
+fn a_saved_history_tab_comes_back_and_inserts_into_a_new_console() {
+    let dir = tempfile::tempdir().unwrap();
+    let shop = save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+    record(
+        dir.path(),
+        shop.id,
+        &[("SELECT 'remembered'", HistorySource::Console)],
+    );
+    let removed = dbrover_core::DataSourceId::generate();
+    let (_layer, feed) = log_console::pipeline();
+    let config = engine_config(dir.path());
+    // As if the saved layout held the shop's history and that of a data source since removed.
+    let mut harness = harness_at_default_size().build_eframe(|cc| {
+        let mut app = DbRoverApp::new(cc, feed, config).unwrap();
+        workspace::open_history_tab(&mut app.dock, shop.id);
+        workspace::open_history_tab(&mut app.dock, removed);
+        app
+    });
+
+    step_until(&mut harness, "the history reloading", |harness| {
+        harness.query_by_label("Insert").is_some()
+    });
+    let restored: Vec<Tab> = harness
+        .state()
+        .dock
+        .iter_all_tabs()
+        .map(|(_, tab)| tab.clone())
+        .filter(|tab| matches!(tab, Tab::History(_)))
+        .collect();
+    assert_eq!(restored, [Tab::History(shop.id)]);
+
+    // The console it was opened from is gone with the restart, so a new one takes it.
+    harness.get_by_label("Insert").click();
+    step_until(&mut harness, "a console with the statement", |harness| {
+        harness
+            .query_by(|node| {
+                node.role() == Role::MultilineTextInput
+                    && node
+                        .value()
+                        .is_some_and(|text| text.contains("SELECT 'remembered'"))
+            })
+            .is_some()
+    });
+}

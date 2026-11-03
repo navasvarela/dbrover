@@ -1,9 +1,9 @@
-//! The query history, opened from a console to put a past statement back into it: the
-//! console's data source or every one, searchable and filtered by where statements came from
-//! and when. Each statement is marked with where it came from: a console, the grid, an object
-//! helper, an import, an export, or an MCP client.
+//! The query history, a tab per data source opened from its consoles, to put a past statement
+//! back into one: the data source's statements or every one's, searchable and filtered by
+//! where statements came from and when. Each statement is marked with where it came from: a
+//! console, the grid, an object helper, an import, an export, or an MCP client.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
 use dbrover_core::DataSourceId;
@@ -12,7 +12,7 @@ use dbrover_export::{CsvOptions, ExportSpec};
 use dbrover_store::{
     ConsoleKey, HistoryEntry, HistoryOutcome, HistoryQuery, HistorySource, HistorySourceKind,
 };
-use egui::{Label, RichText, ScrollArea, TextEdit, Ui, Window};
+use egui::{Label, RichText, ScrollArea, TextEdit, Ui};
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 
@@ -23,17 +23,66 @@ use filters::{Period, Scope, kind_filter, period_filter, scope_filter};
 mod detail;
 mod filters;
 
-const DEFAULT_SIZE: [f32; 2] = [720.0, 520.0];
-/// The share of the window's height the list keeps while an entry's details show below it.
+/// The share of the tab's height the list keeps while an entry's details show below it.
 const LIST_SHARE: f32 = 0.45;
 const TIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 /// How an entry of a data source no longer saved is named.
 const REMOVED_DATA_SOURCE: &str = "Removed data source";
 
-pub struct HistoryWindow {
-    /// The console that statements are inserted into.
-    console: ConsoleKey,
-    data_source_name: String,
+/// Every history tab, by its data source, which is also the tab's key in the dock.
+#[derive(Default)]
+pub struct HistoryTabs {
+    tabs: BTreeMap<DataSourceId, HistoryTab>,
+}
+
+impl HistoryTabs {
+    /// Opens `data_source`'s tab, or points the open one at `console`. Returns the first
+    /// search to send for a new tab. `names` names the data sources, for a search of them all.
+    pub fn open(
+        &mut self,
+        data_source: DataSourceId,
+        console: Option<ConsoleKey>,
+        names: HashMap<DataSourceId, String>,
+    ) -> Option<Command> {
+        if let Some(tab) = self.tabs.get_mut(&data_source) {
+            tab.console = console.or(tab.console.take());
+            return None;
+        }
+        let (tab, search) = HistoryTab::new(data_source, console, names);
+        self.tabs.insert(data_source, tab);
+        Some(search)
+    }
+
+    pub fn close(&mut self, data_source: DataSourceId) {
+        self.tabs.remove(&data_source);
+    }
+
+    pub fn get_mut(&mut self, data_source: DataSourceId) -> Option<&mut HistoryTab> {
+        self.tabs.get_mut(&data_source)
+    }
+
+    /// Takes in an engine event. Returns the searches to run again: after a run, every tab's,
+    /// since the run's statements are recorded by then.
+    pub fn apply(&mut self, event: &Event) -> Vec<Command> {
+        for tab in self.tabs.values_mut() {
+            tab.apply(event);
+        }
+        if matches!(event, Event::RunFinished { .. }) {
+            self.tabs
+                .values_mut()
+                .map(HistoryTab::search_command)
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+pub struct HistoryTab {
+    data_source: DataSourceId,
+    /// The console statements go into: the one the tab was last opened from, until that
+    /// console closes. Not kept across a restart.
+    console: Option<ConsoleKey>,
     /// Every data source's name, for the entries of a search of them all.
     names: HashMap<DataSourceId, String>,
     scope: Scope,
@@ -41,7 +90,7 @@ pub struct HistoryWindow {
     /// Only statements from there; `None` for all.
     kind: Option<HistorySourceKind>,
     period: Period,
-    /// The search last sent: an answer to any other is one the window has moved on from.
+    /// The search last sent: an answer to any other is one the tab has moved on from.
     /// Kept rather than rebuilt from the filters, since a period's start moves with the clock.
     sent: HistoryQuery,
     /// The answer to the latest search; `None` while it is pending.
@@ -61,32 +110,27 @@ enum ExportStatus {
     },
 }
 
-/// What the user did in the window this frame.
+/// What the user did in the tab this frame.
 pub enum HistoryAction {
     /// The search changed or needs refreshing; run this one.
     Search(HistoryQuery),
-    /// Put this statement into the window's console.
-    Insert {
-        console: ConsoleKey,
-        sql: String,
-    },
+    /// Put this statement into a console of the tab's data source.
+    Insert(String),
     /// Export the current search, every match of it, in this format, to a file to ask for.
     Export(ExportSpec),
-    Close,
 }
 
-impl HistoryWindow {
-    /// Opens the window for `console`, with the search for every recent statement to send.
-    /// `names` names the data sources, for a search of them all.
-    pub fn open(
-        console: ConsoleKey,
-        data_source_name: String,
+impl HistoryTab {
+    /// The tab for `data_source`, with the search for every recent statement to send.
+    fn new(
+        data_source: DataSourceId,
+        console: Option<ConsoleKey>,
         names: HashMap<DataSourceId, String>,
     ) -> (Self, Command) {
-        let mut window = Self {
-            sent: HistoryQuery::all(console.data_source),
+        let mut tab = Self {
+            sent: HistoryQuery::all(data_source),
+            data_source,
             console,
-            data_source_name,
             names,
             scope: Scope::ThisDataSource,
             search: String::new(),
@@ -96,12 +140,21 @@ impl HistoryWindow {
             selected: None,
             export: ExportStatus::None,
         };
-        let search = window.search_command();
-        (window, search)
+        let search = tab.search_command();
+        (tab, search)
     }
 
     pub fn data_source(&self) -> DataSourceId {
-        self.console.data_source
+        self.data_source
+    }
+
+    /// The console a statement goes into, if the tab has one.
+    pub fn console(&self) -> Option<&ConsoleKey> {
+        self.console.as_ref()
+    }
+
+    pub fn set_console(&mut self, console: ConsoleKey) {
+        self.console = Some(console);
     }
 
     fn query(&self, now: Timestamp) -> HistoryQuery {
@@ -119,7 +172,7 @@ impl HistoryWindow {
 
     /// The search for the current filters, to rerun when new statements may have been
     /// recorded.
-    pub fn search_command(&mut self) -> Command {
+    fn search_command(&mut self) -> Command {
         Command::SearchHistory(self.next_search())
     }
 
@@ -129,7 +182,7 @@ impl HistoryWindow {
         self.sent.clone()
     }
 
-    /// Exports what the window lists, without its limit, to `path`.
+    /// Exports what the tab lists, without its limit, to `path`.
     pub fn export(&mut self, path: PathBuf, spec: ExportSpec) -> Command {
         self.export = ExportStatus::Writing(path.clone());
         Command::ExportHistory {
@@ -140,7 +193,7 @@ impl HistoryWindow {
         }
     }
 
-    pub fn apply(&mut self, event: &Event) {
+    fn apply(&mut self, event: &Event) {
         match event {
             Event::HistoryFound { query, result } if *query == self.sent => {
                 self.results = Some(result.clone());
@@ -156,22 +209,7 @@ impl HistoryWindow {
         }
     }
 
-    pub fn show(&mut self, ctx: &egui::Context) -> Option<HistoryAction> {
-        let mut open = true;
-        let action = Window::new(format!("History of {}", self.data_source_name))
-            .id(egui::Id::new("history_window"))
-            .open(&mut open)
-            .default_size(DEFAULT_SIZE)
-            .show(ctx, |ui| self.contents(ui))
-            .and_then(|response| response.inner.flatten());
-        if open {
-            action
-        } else {
-            Some(HistoryAction::Close)
-        }
-    }
-
-    fn contents(&mut self, ui: &mut Ui) -> Option<HistoryAction> {
+    pub fn show(&mut self, ui: &mut Ui) -> Option<HistoryAction> {
         let searched = ui
             .horizontal(|ui| {
                 let filtered = scope_filter(ui, &mut self.scope)
@@ -235,12 +273,7 @@ impl HistoryWindow {
             .id_salt("history_detail")
             .show(ui, |ui| detail::show(ui, selected))
             .inner;
-        listed.or(
-            detailed.map(|detail::DetailAction::Insert(sql)| HistoryAction::Insert {
-                console: self.console.clone(),
-                sql,
-            }),
-        )
+        listed.or(detailed.map(|detail::DetailAction::Insert(sql)| HistoryAction::Insert(sql)))
     }
 
     fn export_status(&self, ui: &mut Ui) {
@@ -305,10 +338,7 @@ impl HistoryWindow {
                     };
                     match row.show(ui, &time_zone) {
                         Some(RowClick::Insert) => {
-                            chosen = Some(HistoryAction::Insert {
-                                console: self.console.clone(),
-                                sql: entry.sql.clone(),
-                            });
+                            chosen = Some(HistoryAction::Insert(entry.sql.clone()));
                         }
                         Some(RowClick::Select) => clicked = Some(entry.clone()),
                         None => {}
