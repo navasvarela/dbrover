@@ -1,4 +1,4 @@
-use dbrover_core::{DataSource, DataSourceId, ProjectId, SourceColor};
+use dbrover_core::{DataSource, DataSourceId, ManagedService, ProjectId, SourceColor};
 use dbrover_engine::{Event, SessionState};
 use dbrover_store::{McpPermissions, Project};
 
@@ -103,6 +103,15 @@ impl DataSourceEntry {
             data_source,
             session: SessionState::Disconnected,
             catalog: CatalogTree::default(),
+        }
+    }
+
+    /// The managed service the connected server said it is (C1), whose catalog or DDL differs
+    /// from its engine's.
+    pub fn service(&self) -> Option<ManagedService> {
+        match &self.session {
+            SessionState::Connected(server) => server.service,
+            _ => None,
         }
     }
 
