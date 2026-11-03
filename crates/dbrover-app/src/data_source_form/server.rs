@@ -6,7 +6,8 @@
 use std::path::PathBuf;
 
 use dbrover_core::{
-    AzureTool, CloudProvider, CloudSignIn, PasswordCommand, ServerConfig, TlsMode, has_placeholder,
+    AzureTool, CloudProvider, CloudSignIn, ManagedService, PasswordCommand, ServerConfig, TlsMode,
+    has_placeholder,
 };
 
 use super::{FormError, SshFields, parse_port, required};
@@ -141,6 +142,9 @@ pub struct ServerFields {
     pub ca_file: String,
     pub ssh: SshFields,
     pub defaults: ServerDefaults,
+    /// The managed service last chosen in the form (C1f), which names the service while the
+    /// host doesn't name another.
+    pub chosen_service: Option<ManagedService>,
 }
 
 impl ServerFields {
@@ -159,6 +163,7 @@ impl ServerFields {
             ca_file: String::new(),
             ssh: SshFields::default(),
             defaults,
+            chosen_service: None,
         }
     }
 
@@ -214,6 +219,7 @@ impl ServerFields {
             ca_file,
             ssh: SshFields::from_config(config.ssh.as_ref()),
             defaults,
+            chosen_service: None,
         }
     }
 

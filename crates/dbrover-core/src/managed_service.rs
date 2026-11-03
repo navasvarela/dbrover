@@ -405,7 +405,7 @@ impl ServiceVendor {
             Self::Aws => "Amazon Web Services",
             Self::GoogleCloud => "Google Cloud",
             Self::Azure => "Microsoft Azure",
-            Self::Independent => "Other clouds",
+            Self::Independent => "Other cloud services",
         }
     }
 

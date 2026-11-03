@@ -4,8 +4,8 @@ use std::path::Path;
 
 use dbrover_core::{
     AzureTool, CloudProvider, DataSource, DataSourceId, DriverKind, DynamoDbSignIn,
-    ElasticsearchAuth, MongoConfig, SafetyLevel, ScanGuard, ServerInfo, SourceColor, expand,
-    expand_path, has_placeholder,
+    ElasticsearchAuth, ManagedService, MongoConfig, SafetyLevel, ScanGuard, ServerInfo,
+    SourceColor, expand, expand_path, has_placeholder,
 };
 use dbrover_engine::read_only::{self, Guard};
 use dbrover_engine::{DatabaseFile, Event, PasswordUpdate, ProcessEnvironment};
@@ -76,6 +76,14 @@ impl DataSourceDialog {
             is_new: true,
             form: DataSourceForm::new(driver),
             status: Status::Editing,
+        }
+    }
+
+    /// A new data source of a managed service (C1f), its preset filled in.
+    pub fn create_for_service(service: ManagedService) -> Self {
+        Self {
+            form: DataSourceForm::for_service(service),
+            ..Self::create(service.driver())
         }
     }
 
@@ -176,6 +184,7 @@ impl DataSourceDialog {
             color_picker(ui, &mut self.form.color);
             ui.end_row();
             safety_rows(ui, &mut self.form);
+            service_rows(ui, &mut self.form);
             let created = self.connection_rows(ui);
             // Only where `dbrover mcp` can serve the engine; elsewhere it would never be used.
             match read_only::guard(self.form.driver(), self.form.storage()) {
@@ -343,12 +352,104 @@ impl DataSourceDialog {
     }
 }
 
+/// What the form calls a server that is none of the managed services.
+const NO_SERVICE: &str = "Self-hosted or other";
+
+/// The managed service the data source is on (C1f): the one its host names, or the one chosen
+/// from its cloud's submenu of **New data source**. Choosing another fills in its port, TLS mode and
+/// sign-in. Then what DbRover can't fill in for it, in a line of its own.
+///
+/// Only for a data source on a service: a plain server's dialog keeps its height, which a
+/// 900-point window only just holds for PostgreSQL.
+fn service_rows(ui: &mut Ui, form: &mut DataSourceForm) {
+    let Some(current) = form.service() else {
+        return;
+    };
+    let current = Some(current);
+    let label = ui.label("Service");
+    let mut chosen = current;
+    egui::ComboBox::from_id_salt("data_source_service")
+        .selected_text(current.map_or(NO_SERVICE, ManagedService::display_name))
+        .width(FIELD_WIDTH)
+        .show_ui(ui, |ui| {
+            ui.selectable_value(&mut chosen, None, NO_SERVICE);
+            for service in form.services() {
+                ui.selectable_value(&mut chosen, Some(service), service.display_name());
+            }
+        })
+        .response
+        .labelled_by(label.id);
+    ui.end_row();
+    if chosen != current {
+        match chosen {
+            Some(service) => form.apply_service(service),
+            None => form.forget_service(),
+        }
+    }
+    if let Some(note) = form.service().map(service_note) {
+        let palette = &Palette::for_visuals(ui.visuals());
+        ui.label("");
+        ui.add(
+            egui::Label::new(RichText::new(note).small().color(palette.text_weak))
+                .wrap_mode(egui::TextWrapMode::Wrap),
+        );
+        ui.end_row();
+    }
+}
+
+/// What a service expects that its preset can't fill in, shown under the Service row.
+fn service_note(service: ManagedService) -> &'static str {
+    match service {
+        ManagedService::RdsPostgres | ManagedService::RdsMysql => {
+            "verify-full needs Amazon RDS's certificate bundle as the CA file. AWS IAM needs \
+             IAM database authentication on the instance."
+        }
+        ManagedService::Redshift => {
+            "Signs in with a database user's password; Redshift's IAM sign-in isn't built yet. \
+             Tables open read-only."
+        }
+        ManagedService::CloudSqlPostgres
+        | ManagedService::CloudSqlMysql
+        | ManagedService::CloudSqlSqlServer => {
+            "The instance's IP address, or localhost through the Cloud SQL Auth Proxy. \
+             verify-full needs the instance's server-ca.pem."
+        }
+        ManagedService::AzurePostgres | ManagedService::AzureMysql => {
+            "Microsoft Entra ID needs an Entra administrator set on the server."
+        }
+        ManagedService::AzureSql => {
+            "Inside Azure, the gateway redirects to ports 11000 to 11999, which must be open."
+        }
+        ManagedService::SynapseDedicated => {
+            "Only the connected pool's database is listed. No foreign keys or checks."
+        }
+        ManagedService::SynapseServerless => {
+            "External tables and views over files; the helpers don't write their DDL."
+        }
+        ManagedService::Fabric => {
+            "Signs in only with Microsoft Entra ID. The database is the warehouse or lakehouse."
+        }
+        ManagedService::Neon => {
+            "A host with -pooler goes through Neon's pooler, which keeps no session between \
+             transactions."
+        }
+        ManagedService::Supabase => {
+            "The pooler's user is postgres.<project>; port 6543 keeps no session between \
+             transactions. verify-full needs Supabase's certificate."
+        }
+        ManagedService::ClickHouseCloud => {
+            "An idle service wakes on the first connection, which can take many seconds."
+        }
+    }
+}
+
 /// The rows every network engine shares: where the server is, whom to connect as, and how to
 /// encrypt. An engine's own rows go before or after them.
 fn server_rows(ui: &mut Ui, fields: &mut ServerFields, password_hint: &str) {
     let defaults = fields.defaults;
     let default_port = fields.default_port().to_string();
-    setting_row(ui, "Host", &mut fields.host, defaults.host, Resolve::Text);
+    let host_hint = fields.host_hint();
+    setting_row(ui, "Host", &mut fields.host, host_hint, Resolve::Text);
     setting_row(ui, "Port", &mut fields.port, &default_port, Resolve::Text);
     if defaults.database_field != DatabaseField::Absent {
         setting_row(

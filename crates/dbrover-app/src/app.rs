@@ -1249,6 +1249,9 @@ impl DbRoverApp {
             ExplorerAction::New(driver) => {
                 self.data_source_dialog = Some(DataSourceDialog::create(driver));
             }
+            ExplorerAction::NewService(service) => {
+                self.data_source_dialog = Some(DataSourceDialog::create_for_service(service));
+            }
             ExplorerAction::Edit(id) => {
                 if let Some(entry) = self.state.data_source(id) {
                     self.data_source_dialog = Some(DataSourceDialog::edit(&entry.data_source));
@@ -3074,6 +3077,68 @@ mod tests {
             .unwrap();
         assert_eq!(saved.len(), 1);
         assert_eq!(saved[0].name, "chinook.db");
+    }
+
+    /// A managed service from **New data source › Microsoft Azure** (C1f): its engine's dialog
+    /// with the service's port, TLS mode and sign-in, the host typed naming the service.
+    #[test]
+    fn adds_a_cloud_service_data_source_from_its_preset() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "No data sources yet.");
+
+        harness
+            .get_all_by_label("New data source")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label_contains("Microsoft Azure").hover();
+        step_until_visible(&mut harness, "Microsoft Fabric");
+        harness.get_by_label("Microsoft Fabric").click();
+        harness.run();
+        harness.get_by_label_contains("New SQL Server data source");
+        harness.get_by_label_contains("Signs in only with Microsoft Entra ID");
+        for (field, text) in [
+            ("Host", "abc123.datawarehouse.fabric.microsoft.com"),
+            ("Database", "sales"),
+            ("User", "analyst@contoso.com"),
+        ] {
+            harness
+                .get_by_role_and_label(Role::TextInput, field)
+                .focus();
+            harness.run();
+            harness
+                .get_by_role_and_label(Role::TextInput, field)
+                .type_text(text);
+            harness.run();
+        }
+        harness.get_by_label("Save").click();
+
+        step_until_visible(
+            &mut harness,
+            "Expand sales@abc123.datawarehouse.fabric.microsoft.com",
+        );
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        let [saved] = saved.as_slice() else {
+            panic!("expected one data source, got {saved:?}");
+        };
+        let dbrover_core::ConnectionConfig::SqlServer(config) = &saved.config else {
+            panic!("expected a SQL Server data source, got {saved:?}");
+        };
+        let server = &config.server;
+        assert_eq!(server.port, 1433.into());
+        assert_eq!(
+            server.tls,
+            dbrover_core::TlsMode::VerifyFull { ca_file: None }
+        );
+        assert!(matches!(
+            server.cloud_sign_in,
+            Some(dbrover_core::CloudSignIn::Entra { .. })
+        ));
     }
 
     #[test]

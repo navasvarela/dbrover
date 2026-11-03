@@ -6,12 +6,14 @@ mod dynamodb;
 mod elasticsearch;
 mod mongo;
 mod server;
+mod service;
 mod ssh;
 
 use dbrover_core::{
-    ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind, DuckDbConfig,
-    DuckDbDatabase, McpLogin, MysqlConfig, Password, Port, PostgresConfig, ProjectId, RedisConfig,
-    SafetyLevel, SourceColor, SqlServerConfig, SqliteConfig, TemplateError, has_placeholder,
+    ClickHouseConfig, CloudProvider, ConnectionConfig, DataSource, DataSourceId, DriverKind,
+    DuckDbConfig, DuckDbDatabase, McpLogin, MysqlConfig, Password, Port, PostgresConfig, ProjectId,
+    RedisConfig, SafetyLevel, SourceColor, SqlServerConfig, SqliteConfig, TemplateError,
+    has_placeholder,
 };
 use dbrover_engine::PasswordUpdate;
 use dbrover_engine::read_only::Storage;
@@ -119,6 +121,8 @@ pub enum FormError {
     PasswordCommand(TemplateError),
     #[error("Statement timeout must be a whole number of seconds, or empty.")]
     InvalidStatementTimeout,
+    #[error("This service signs in only with {0}.")]
+    CloudSignInRequired(CloudProvider),
 }
 
 /// Text as the user typed it. Converted to a [`DataSource`] only on Test or Save.
@@ -411,6 +415,7 @@ impl DataSourceForm {
 
     pub fn to_data_source(&self, id: DataSourceId) -> Result<DataSource, FormError> {
         let config = self.fields.to_config()?;
+        self.check_service()?;
         let name = match self.name.trim() {
             "" => config.default_name(),
             name => name.to_owned(),

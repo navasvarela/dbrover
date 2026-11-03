@@ -4,7 +4,8 @@
 use std::collections::BTreeSet;
 
 use dbrover_core::{
-    CatalogNode, CatalogPath, DataSourceId, DriverKind, FolderKind, NodeKind, ProjectId, Quoting,
+    CatalogNode, CatalogPath, DataSourceId, DriverKind, FolderKind, ManagedService, NodeKind,
+    ProjectId, Quoting, ServiceVendor,
 };
 use dbrover_engine::SessionState;
 use dbrover_language::QueryLanguage;
@@ -32,6 +33,8 @@ const SOURCE_ROW_TINT: f32 = 0.16;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExplorerAction {
     New(DriverKind),
+    /// A new data source of a managed service, its preset filled in (C1f).
+    NewService(ManagedService),
     Edit(DataSourceId),
     Delete(DataSourceId),
     Connect(DataSourceId),
@@ -473,6 +476,32 @@ pub fn new_data_source_menu(ui: &mut Ui, actions: &mut Vec<ExplorerAction>) {
         );
         if response.clicked() {
             actions.push(ExplorerAction::New(driver));
+        }
+    }
+    ui.separator();
+    for vendor in ServiceVendor::ALL {
+        widgets::menu_button(ui, vendor.display_name(), |ui| {
+            cloud_service_items(ui, vendor, actions);
+        });
+    }
+}
+
+/// The managed services that run in `vendor`'s cloud (C1f), each with its engine's icon. A
+/// submenu per cloud rather than one for them all: fifteen services and their headings made a
+/// submenu taller than a laptop's window.
+fn cloud_service_items(ui: &mut Ui, vendor: ServiceVendor, actions: &mut Vec<ExplorerAction>) {
+    let palette = &Palette::for_visuals(ui.visuals());
+    let logo_size = ui.text_style_height(&TextStyle::Button);
+    for service in vendor.services() {
+        let logo = icons::driver_logo_sized(service.driver(), palette, logo_size);
+        let response = widgets::name(
+            ui.add(egui::Button::image_and_text(logo, service.display_name())),
+            WidgetType::Button,
+            service.display_name(),
+            true,
+        );
+        if response.clicked() {
+            actions.push(ExplorerAction::NewService(service));
         }
     }
 }
