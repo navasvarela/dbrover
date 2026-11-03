@@ -697,3 +697,44 @@ fn opens_a_json_value_as_a_tree_and_copies_a_path() {
         Some(r#"{"items":[{"sku":"a-1","qty":2},{"sku":"b-2","qty":1.10}],"gift":true}"#)
     );
 }
+
+/// The value panel (D8g) opens from the grid's toolbar, follows the selected cell, and closes.
+#[test]
+fn the_value_panel_follows_the_selected_cell() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(
+        dir.path(),
+        r#"CREATE TABLE orders (id INTEGER PRIMARY KEY, note TEXT);
+           INSERT INTO orders VALUES (1, 'first note'), (2, 'second note');"#,
+    );
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    open_orders(&mut harness, "2 rows");
+
+    harness.get_by_label("Value").click();
+    harness.run();
+    harness.get_by_label("Select a cell to see its whole value here.");
+
+    // The panel's text field, not the grid's cell, which holds the same text.
+    let shown = |harness: &Harness<'_, DbRoverApp>, text: &str| {
+        let in_panel = egui_kittest::kittest::By::new().predicate(move |node| {
+            node.role() == Role::MultilineTextInput && node.value().as_deref() == Some(text)
+        });
+        harness.query_all(in_panel).next().is_some()
+    };
+    harness.get_by_label("first note").click();
+    harness.run();
+    harness.get_by_label("Value of note");
+    assert!(shown(&harness, "first note"));
+    harness.get_by_label("second note").click();
+    harness.run();
+    assert!(
+        shown(&harness, "second note"),
+        "the panel follows the selection"
+    );
+    assert!(!shown(&harness, "first note"));
+
+    harness.get_by_label("Close the value panel").click();
+    harness.run();
+    assert!(harness.query_by_label("Value of note").is_none());
+}

@@ -1,29 +1,80 @@
-//! A window showing one cell's whole value, for text too long for the grid. JSON objects and
-//! arrays show as a tree, or as text pretty-printed, and XML (SQL Server's plans and `FOR XML`
-//! results) is indented.
+//! The value panel beside a console's results, showing the selected cell's whole value, for
+//! text too long for the grid. It follows the grid's selection. JSON objects and arrays show
+//! as a tree, or as text pretty-printed, and XML (SQL Server's plans and `FOR XML` results) is
+//! indented.
 
 use dbrover_document::Value;
-use egui::{Id, RichText, ScrollArea, TextEdit, Window};
+use egui::{Id, RichText, ScrollArea, TextEdit};
 
-use super::{QueryConsole, ViewedCell};
+use super::{CellAt, ViewedCell};
+use crate::icons;
 use crate::json_tree::JsonTree;
+use crate::widgets::IconButton;
 
-const DEFAULT_SIZE: [f32; 2] = [520.0, 360.0];
+/// The value panel: shut, or open on the cell it shows, if any yet.
+#[derive(Default)]
+pub enum ValuePanel {
+    #[default]
+    Closed,
+    Open(Option<ViewedCell>),
+}
 
-/// Draws the console's cell viewer, if one is open, and closes it when the user does.
-pub fn show(ctx: &egui::Context, console: &mut QueryConsole) {
-    let console_id = console.id.0;
-    let Some(viewed) = &mut console.viewed_cell else {
+impl ValuePanel {
+    pub fn is_open(&self) -> bool {
+        matches!(self, Self::Open(_))
+    }
+
+    /// The grid toolbar's switch: opens the panel empty, until a cell is selected, or shuts it.
+    pub fn toggle(&mut self) {
+        *self = match self {
+            Self::Closed => Self::Open(None),
+            Self::Open(_) => Self::Closed,
+        };
+    }
+
+    /// Shows `cell`, opening the panel if it is shut.
+    pub fn view(&mut self, cell: ViewedCell) {
+        *self = Self::Open(Some(cell));
+    }
+
+    /// Whether the open panel should show the cell at `at`, the grid's selection, instead of
+    /// the one it shows.
+    pub fn follows_to(&self, at: CellAt) -> bool {
+        match self {
+            Self::Closed => false,
+            Self::Open(shown) => shown.as_ref().is_none_or(|shown| shown.at != at),
+        }
+    }
+}
+
+/// Draws the open panel's contents: the cell's column and **Close**, then its value.
+pub fn show(ui: &mut egui::Ui, panel: &mut ValuePanel, console: u64) {
+    let ValuePanel::Open(shown) = panel else {
         return;
     };
-    let mut open = true;
-    Window::new(format!("Value of {}", viewed.column))
-        .id(Id::new(("cell_viewer", console_id)))
-        .open(&mut open)
-        .default_size(DEFAULT_SIZE)
-        .show(ctx, |ui| contents(ui, viewed, console_id));
-    if !open {
-        console.viewed_cell = None;
+    let title = shown.as_ref().map_or_else(
+        || "Value".to_owned(),
+        |viewed| format!("Value of {}", viewed.column),
+    );
+    let close = ui
+        .horizontal(|ui| {
+            ui.strong(title);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                IconButton::new(icons::X, "Close the value panel")
+                    .show(ui)
+                    .clicked()
+            })
+            .inner
+        })
+        .inner;
+    match shown {
+        Some(viewed) => contents(ui, viewed, console),
+        None => {
+            ui.weak("Select a cell to see its whole value here.");
+        }
+    }
+    if close {
+        *panel = ValuePanel::Closed;
     }
 }
 

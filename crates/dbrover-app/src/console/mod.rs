@@ -50,6 +50,7 @@ use dbrover_sql::{Dialect, FormatOptions, ParameterValues, format_ranges};
 use dbrover_store::{ConsoleKey, Snippet, SnippetBody, SqlFileContents};
 
 use edit::{EditTarget, Editability};
+use grid::CellPos;
 
 use crate::custom_actions::{GridCells, GridTable};
 use crate::picture::PictureFormat;
@@ -212,7 +213,7 @@ pub struct QueryConsole {
     /// Where each shown problem's squiggle was drawn last frame (with its index), for hovering.
     problem_rects: Vec<(egui::Rect, usize)>,
     /// The cell shown in full in the cell viewer window.
-    viewed_cell: Option<ViewedCell>,
+    value_panel: cell_viewer::ValuePanel,
     /// The completion list, while it is open.
     completion: Option<Completion>,
     /// The fields of the snippet just inserted, while Tab moves through them.
@@ -542,8 +543,18 @@ struct Completion {
 /// The one column of an export that writes documents whole, which no format writes out.
 const DOCUMENT_COLUMN: &str = "document";
 
-/// A copy of one cell, so the viewer stays open while new rows arrive or a new run starts.
+/// Where a viewed cell came from: a run's statement, and the cell in its grid as shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CellAt {
+    pub run: RunId,
+    /// The statement's place in the run.
+    pub statement: usize,
+    pub cell: CellPos,
+}
+
+/// A copy of one cell, so the value panel keeps it while new rows arrive or a new run starts.
 pub struct ViewedCell {
+    at: CellAt,
     column: String,
     value: Cell,
     /// The value read as JSON, when it is an object or an array, for the tree.
@@ -555,9 +566,10 @@ pub struct ViewedCell {
 }
 
 impl ViewedCell {
-    fn new(column: String, value: Cell, syntax: dbrover_document::Syntax) -> Self {
+    fn new(at: CellAt, column: String, value: Cell, syntax: dbrover_document::Syntax) -> Self {
         let tree = value.as_deref().and_then(cell_viewer::json_tree);
         Self {
+            at,
             column,
             value,
             tree,
@@ -595,7 +607,7 @@ impl QueryConsole {
             format_error: None,
             problems: problems::Problems::new(Instant::now()),
             problem_rects: Vec::new(),
-            viewed_cell: None,
+            value_panel: cell_viewer::ValuePanel::default(),
             completion: None,
             accepted_completion: None,
             snippet_fields: None,
