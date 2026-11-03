@@ -16,7 +16,8 @@ use std::time::Instant;
 use dbrover_core::describe_error;
 use dbrover_engine::{PasswordCommands, ProcessRunner, SourceAccess, Tunnels};
 use dbrover_report::{
-    Logic, Plan, RunEvent, RunFailure, RunFolders, RunRequest, RunValues, Step, read_report,
+    LimitDefaults, Logic, Plan, RunEvent, RunFailure, RunFolders, RunRequest, RunValues, Step,
+    read_report,
 };
 use dbrover_store::{AppPaths, CustomFile, CustomFileKind, DataSourceFile, os_keychain};
 
@@ -98,7 +99,9 @@ fn read_request() -> Result<RunRequest, String> {
     serde_json::from_str(&line).map_err(|error| format!("the request isn't one: {error}"))
 }
 
-fn settings_paths(config_dir: Option<&Path>) -> Result<AppPaths, RunFailure> {
+/// The settings folder `config_dir` names, else the one the app uses, as `dbrover report run`
+/// finds it too.
+pub(crate) fn settings_paths(config_dir: Option<&Path>) -> Result<AppPaths, RunFailure> {
     let fail = |message: String| RunFailure::new(Step::Worker, message);
     let default = AppPaths::discover().ok_or_else(|| {
         fail("the system reports no home folder, so DbRover can't find its files".to_owned())
@@ -115,24 +118,35 @@ fn settings_paths(config_dir: Option<&Path>) -> Result<AppPaths, RunFailure> {
 /// values checked.
 fn prepare(paths: &AppPaths, request: &RunRequest) -> Result<(Plan, RunValues), RunFailure> {
     let fail = |problems: Vec<String>| RunFailure::new(Step::Report, problems.join("\n"));
-    let text = std::fs::read_to_string(&request.report).map_err(|error| {
-        fail(vec![format!(
-            "could not read {}: {error}",
-            request.report.display()
-        )])
-    })?;
-    let report = read_report(&text).map_err(fail)?;
+    let plan = plan(paths, &request.report, &request.defaults).map_err(fail)?;
+    let values = plan.values(&request.values).map_err(fail)?;
+    Ok((plan, values))
+}
+
+/// The report file at `report` read and planned against the settings folder's data sources
+/// and presets, under `defaults` where it sets no limit of its own.
+///
+/// # Errors
+///
+/// Every problem found, a sentence each: the file can't be read, has problems, or names what
+/// the settings folder doesn't have.
+pub(crate) fn plan(
+    paths: &AppPaths,
+    report: &Path,
+    defaults: &LimitDefaults,
+) -> Result<Plan, Vec<String>> {
+    let text = std::fs::read_to_string(report)
+        .map_err(|error| vec![format!("could not read {}: {error}", report.display())])?;
+    let report = read_report(&text)?;
     let data_sources = DataSourceFile::new(paths.data_sources_file())
         .load()
-        .map_err(|error| fail(vec![describe_error(&error)]))?;
+        .map_err(|error| vec![describe_error(&error)])?;
     let presets = match paths.custom_files().read(CustomFileKind::Exports) {
         CustomFile::Exports(checked) => checked.value,
         // `read` answers with the kind it was asked for.
         _ => Vec::new(),
     };
-    let plan = Plan::new(report, &data_sources, &presets, &request.defaults).map_err(fail)?;
-    let values = plan.values(&request.values).map_err(fail)?;
-    Ok((plan, values))
+    Plan::new(report, &data_sources, &presets, defaults)
 }
 
 fn run_report(

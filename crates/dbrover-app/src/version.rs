@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 use dbrover_store::CONFIG_DIR_FLAG;
 
+use crate::report_command;
+
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Set by `build.rs`: the commit the binary was built from, or "unknown".
 pub const COMMIT: &str = env!("DBROVER_COMMIT");
@@ -16,9 +18,14 @@ pub fn describe() -> String {
 /// The subcommand the app starts a report's worker with.
 pub const REPORT_WORKER: &str = "report-worker";
 
+/// The subcommand that runs a report from the command line (`docs/reporting.md`, RP6).
+pub const REPORT: &str = "report";
+
 const USAGE: &str = "\
 Usage: dbrover [--config-dir <folder>] [--version | --help] [FILE.sql …]
        dbrover mcp --project <slug> [--config-dir <folder>]
+       dbrover report run <report> [--param <name>=<value>]… [--output-dir <folder>]
+                          [--config-dir <folder>]
        dbrover report-worker [--config-dir <folder>]
 
 Starts the DbRover desktop app, opening each FILE.sql given in a console. With --version (-V),
@@ -27,6 +34,9 @@ prints the version and exits.
 `dbrover mcp --project <slug>` runs an MCP server for the project with that slug, read-only,
 over standard input and output, without opening a window. An MCP client starts it; see
 \"Connecting an AI assistant\" in the manual.
+
+`dbrover report run` runs a report from the command line, for cron and CI, and exits with a
+code that says how it ended; `dbrover report run --help` says more.
 
 `dbrover report-worker` runs one report for the app, in a process of its own: it reads the
 request from standard input and writes the run's progress to standard output as JSON Lines.
@@ -46,6 +56,8 @@ pub enum CliRequest {
         project: String,
         config_dir: Option<PathBuf>,
     },
+    /// Run a report from the command line, headless.
+    Report(report_command::Request),
     /// Run one report for the app, headless.
     ReportWorker {
         config_dir: Option<PathBuf>,
@@ -69,6 +81,9 @@ impl CliRequest {
         }
         if args.peek().is_some_and(|first| first == REPORT_WORKER) {
             return Self::parse_report_worker(args.skip(1));
+        }
+        if args.peek().is_some_and(|first| first == REPORT) {
+            return Self::Report(report_command::Request::parse(args.skip(1)));
         }
         let mut help = false;
         let mut files = Vec::new();
@@ -153,7 +168,11 @@ impl CliRequest {
         match self {
             Self::Version => println!("{}", describe()),
             Self::Help => println!("{}\n\n{USAGE}", describe()),
-            Self::Mcp { .. } | Self::ReportWorker { .. } | Self::Invalid(_) | Self::Run { .. } => {
+            Self::Mcp { .. }
+            | Self::Report(_)
+            | Self::ReportWorker { .. }
+            | Self::Invalid(_)
+            | Self::Run { .. } => {
                 return false;
             }
         }
@@ -167,7 +186,7 @@ impl CliRequest {
 
 /// The folder `--config-dir <folder>` or `--config-dir=<folder>` names, if `arg` is the flag,
 /// taking the folder from `rest` in the first form. It is checked later, with the variable.
-fn parse_config_dir(
+pub(crate) fn parse_config_dir(
     arg: &str,
     rest: &mut impl Iterator<Item = String>,
 ) -> Option<Result<PathBuf, String>> {

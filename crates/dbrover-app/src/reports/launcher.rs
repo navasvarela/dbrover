@@ -40,6 +40,18 @@ pub struct ProcessLauncher {
     pub settings_folder: PathBuf,
 }
 
+impl ProcessLauncher {
+    /// `dbrover report-worker` on the settings folder, ready for [`WorkerRun::start`].
+    pub fn command(&self) -> Command {
+        let mut command = Command::new(&self.executable);
+        command
+            .arg(REPORT_WORKER)
+            .arg(dbrover_store::CONFIG_DIR_FLAG)
+            .arg(&self.settings_folder);
+        command
+    }
+}
+
 impl ReportLauncher for ProcessLauncher {
     fn start(
         &self,
@@ -47,12 +59,7 @@ impl ReportLauncher for ProcessLauncher {
         timeout: Duration,
         wake: Box<dyn Fn() + Send + Sync>,
     ) -> io::Result<Box<dyn RunningReport>> {
-        let mut command = Command::new(&self.executable);
-        command
-            .arg(REPORT_WORKER)
-            .arg(dbrover_store::CONFIG_DIR_FLAG)
-            .arg(&self.settings_folder);
-        let run = WorkerRun::start(command, request, timeout, wake)?;
+        let run = WorkerRun::start(self.command(), request, timeout, wake)?;
         Ok(Box::new(Worker(run)))
     }
 }

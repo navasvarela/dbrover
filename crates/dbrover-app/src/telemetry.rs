@@ -19,6 +19,8 @@ const MAX_LOG_FILES: usize = 7;
 const APP_LOG_PREFIX: &str = "dbrover";
 /// Its own files, so a server running beside the app never interleaves lines with it.
 const MCP_LOG_PREFIX: &str = "dbrover-mcp";
+/// `dbrover report run`'s, for the same reason.
+pub const REPORT_LOG_PREFIX: &str = "dbrover-report";
 
 pub struct Telemetry {
     pub log_feed: LogFeed,
@@ -106,6 +108,33 @@ pub fn init_stderr() -> anyhow::Result<()> {
         .context("could not install the tracing subscriber")?;
     log_panics();
     Ok(())
+}
+
+/// Installs the global `tracing` subscriber for a command whose standard output and error are
+/// its own output, as `dbrover report run`'s: everything goes to daily `prefix` files beside
+/// the app's, and nothing to the terminal.
+///
+/// Returns the guard that flushes the file log, which must live until the command ends.
+///
+/// # Errors
+///
+/// If the log folder can't be used, or a subscriber is already installed.
+pub fn init_file(logs_dir: &Path, prefix: &str) -> anyhow::Result<WorkerGuard> {
+    // Made first: tracing-appender prints its own complaint to standard error about a folder
+    // that doesn't exist yet, which on a new machine is the command's first run.
+    std::fs::create_dir_all(logs_dir)
+        .with_context(|| format!("could not make the log folder {}", logs_dir.display()))?;
+    let (writer, guard) = open_log_files(logs_dir, prefix)?;
+    let file_layer = fmt::layer()
+        .with_writer(writer)
+        .with_ansi(false)
+        .with_filter(targets());
+    tracing_subscriber::registry()
+        .with(file_layer)
+        .try_init()
+        .context("could not install the tracing subscriber")?;
+    log_panics();
+    Ok(guard)
 }
 
 /// Logs every panic as an error, then lets the default hook print it as before.

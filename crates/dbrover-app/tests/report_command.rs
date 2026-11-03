@@ -1,0 +1,343 @@
+//! `dbrover report run` as cron or a CI job runs it: the real binary, on a settings folder with
+//! the examples' SQLite shop as the data source `shop`. The run itself is tested in
+//! dbrover-report, dbrover-engine and the worker's tests; this checks the command around it:
+//! its arguments, what it prints, the files it leaves and the exit code for each outcome.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+use std::process::Command;
+
+const BINARY: &str = env!("CARGO_BIN_EXE_dbrover");
+
+/// The command line's own mistakes: nothing is read, so this runs on every platform, Windows'
+/// console included.
+#[test]
+fn refuses_a_command_line_it_does_not_understand() {
+    let cases: [(&[&str], &str); 4] = [
+        (&["report"], "dbrover report needs a command: run"),
+        (&["report", "run"], "dbrover report run needs a report"),
+        (
+            &["report", "run", "sales", "--parm", "since=2026-10-01"],
+            "unknown argument \"--parm\"",
+        ),
+        (
+            &["report", "run", "sales", "-p", "since"],
+            "needs the form <name>=<value>",
+        ),
+    ];
+    for (args, problem) in cases {
+        let output = Command::new(BINARY).args(args).output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(2), "{args:?}: {stderr}");
+        assert!(stderr.contains(problem), "{args:?}: {stderr}");
+        assert!(stderr.contains("Exit codes:"), "{args:?}: {stderr}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+    }
+}
+
+#[test]
+fn prints_its_usage_when_asked() {
+    let output = Command::new(BINARY)
+        .args(["report", "run", "--help"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Usage: dbrover report run <report>"),
+        "{stdout}"
+    );
+}
+
+/// Unix only, as the worker's tests: the home folder is moved by setting `HOME`, which Windows
+/// ignores when it looks up the user's folders, and the tests must not use the real one's.
+#[cfg(unix)]
+mod runs {
+    use std::path::{Path, PathBuf};
+    use std::process::Output;
+
+    use super::*;
+
+    const OCTOBER: [&str; 4] = ["-p", "since=2026-10-01", "-p", "until=2026-11-01"];
+
+    /// A home folder, its settings folder with the examples' shop as the data source `shop`,
+    /// and `sales-by-category.toml` in its reports.
+    struct Settings {
+        home: tempfile::TempDir,
+    }
+
+    impl Settings {
+        fn new() -> Self {
+            let settings = Self {
+                home: tempfile::tempdir().unwrap(),
+            };
+            let database = settings.home.path().join("shop.db");
+            let script = std::fs::read_to_string(examples().join("shop.sql")).unwrap();
+            rusqlite::Connection::open(&database)
+                .unwrap()
+                .execute_batch(&script)
+                .unwrap();
+            std::fs::create_dir_all(settings.config()).unwrap();
+            let data_sources = format!(
+                "[[data_source]]\nid = \"6f1c1a3e-6a43-4b8e-9d55-0d6c2b7e1a01\"\nname = \"shop\"\n\
+                 driver = \"sqlite\"\npath = {:?}\n",
+                database.display().to_string()
+            );
+            std::fs::write(settings.config().join("data_sources.toml"), data_sources).unwrap();
+            let sales = std::fs::read_to_string(examples().join("sales-by-category.toml")).unwrap();
+            settings.write_report("sales-by-category", &sales);
+            settings
+        }
+
+        fn config(&self) -> PathBuf {
+            self.home.path().join("settings")
+        }
+
+        fn out(&self) -> PathBuf {
+            self.home.path().join("out")
+        }
+
+        fn write_report(&self, name: &str, text: &str) {
+            let path = self.config().join("reports").join(format!("{name}.toml"));
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, text).unwrap();
+        }
+
+        /// `dbrover report run` on this settings folder, from the home folder.
+        fn command(&self, args: &[&str]) -> Command {
+            let mut command = Command::new(BINARY);
+            command
+                .arg("report")
+                .arg("run")
+                .args(args)
+                .arg("--config-dir")
+                .arg(self.config())
+                .current_dir(self.home.path())
+                .env("HOME", self.home.path())
+                .env_remove("XDG_CONFIG_HOME")
+                .env_remove("XDG_DATA_HOME")
+                .env_remove("DBROVER_CONFIG_DIR");
+            command
+        }
+
+        /// Runs the command with its files going to `out`.
+        fn run(&self, args: &[&str]) -> Output {
+            let out = self.out().display().to_string();
+            let args: Vec<&str> = args.iter().copied().chain(["-o", &out]).collect();
+            self.command(&args).output().unwrap()
+        }
+    }
+
+    fn examples() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/reports")
+    }
+
+    fn files_in(folder: &Path) -> Vec<String> {
+        let Ok(entries) = std::fs::read_dir(folder) else {
+            return Vec::new();
+        };
+        let mut names: Vec<String> = entries
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn describe(output: &Output) -> String {
+        format!(
+            "exit {:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    }
+
+    /// Whether `file` in `out` is the one checked in under the examples' `expected/`.
+    fn assert_matches_expected(out: &Path, file: &str) {
+        let written = std::fs::read_to_string(out.join(file)).unwrap();
+        let expected = std::fs::read_to_string(examples().join("expected").join(file)).unwrap();
+        // Git may have checked the file out with the platform's line endings; the writer's
+        // are CSV's own, CRLF.
+        let expected = expected.replace("\r\n", "\n").replace('\n', "\r\n");
+        assert!(
+            written == expected,
+            "{file} differs from the checked-in one"
+        );
+    }
+
+    #[test]
+    fn runs_a_report_by_name_and_lists_its_files() {
+        let settings = Settings::new();
+        let output = settings.run(&[&["sales-by-category"][..], &OCTOBER].concat());
+        assert_eq!(output.status.code(), Some(0), "{}", describe(&output));
+        assert_eq!(
+            files_in(&settings.out()),
+            [
+                "sales-by-category-2026-10.csv",
+                "sales-by-category-2026-10.xlsx"
+            ]
+        );
+        assert_matches_expected(&settings.out(), "sales-by-category-2026-10.csv");
+        let listed: Vec<PathBuf> = String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(PathBuf::from)
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                settings.out().join("sales-by-category-2026-10.xlsx"),
+                settings.out().join("sales-by-category-2026-10.csv"),
+            ]
+        );
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        let lines: Vec<&str> = stderr.lines().collect();
+        assert_eq!(
+            lines.first(),
+            Some(&"Sales by category (since = 2026-10-01, until = 2026-11-01)"),
+            "{stderr}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("Source lines: 246 rows"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("Combine: 13 rows"))
+        );
+        assert!(
+            lines.last().unwrap().starts_with("Finished in "),
+            "{stderr}"
+        );
+    }
+
+    /// A report file outside the settings folder, given by its path, into the current folder.
+    #[test]
+    fn runs_a_report_file_by_its_path_into_the_current_folder() {
+        let settings = Settings::new();
+        std::fs::create_dir_all(settings.out()).unwrap();
+        let report = examples().join("sales-by-category.toml");
+        let report = report.to_str().unwrap();
+        let output = settings
+            .command(&[&[report][..], &OCTOBER].concat())
+            .current_dir(settings.out())
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(0), "{}", describe(&output));
+        assert_matches_expected(&settings.out(), "sales-by-category-2026-10.csv");
+    }
+
+    /// One row of products, for the reports below.
+    fn one_source(report: &str, source: &str) -> String {
+        format!(
+            "[report]\nname = \"Products\"\n{report}\n\n[[source]]\nid = \"products\"\n\
+             data_source = \"shop\"\n{source}\n\n[[output]]\nformat = \"csv\"\n\
+             file = \"products.csv\"\n"
+        )
+    }
+
+    /// A source that counts for a long time before returning its one row.
+    const SLOW_QUERY: &str = "query = \"\"\"\nWITH RECURSIVE n(x) AS \
+        (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 5000000000) SELECT max(x) FROM n\n\"\"\"";
+
+    /// Each way a run can end, its exit code and what it says, and that nothing is left in
+    /// the output folder but a finished run's files.
+    #[test]
+    fn exits_with_a_code_for_each_outcome() {
+        struct Case {
+            what: &'static str,
+            report: String,
+            args: Vec<&'static str>,
+            code: i32,
+            says: &'static str,
+        }
+        let sales = |params: &[&'static str]| {
+            let mut args = vec!["sales-by-category"];
+            args.extend_from_slice(params);
+            args
+        };
+        let cases = [
+            Case {
+                what: "a parameter missing",
+                report: String::new(),
+                args: sales(&["-p", "since=2026-10-01"]),
+                code: 3,
+                says: "until needs a value",
+            },
+            Case {
+                what: "a parameter the report doesn't take",
+                report: String::new(),
+                args: sales(&[&OCTOBER[..], &["-p", "sinse=2026-10-01"]].concat()),
+                code: 3,
+                says: "the report takes no parameter \"sinse\"; it takes since, until",
+            },
+            Case {
+                what: "a value of the wrong type",
+                report: String::new(),
+                args: sales(&["-p", "since=October", "-p", "until=2026-11-01"]),
+                code: 3,
+                says: "since: \"October\"",
+            },
+            Case {
+                what: "no such report",
+                report: String::new(),
+                args: vec!["sales"],
+                code: 3,
+                says: "sales.toml",
+            },
+            Case {
+                what: "a data source that doesn't exist",
+                report: one_source("", "query = \"SELECT 1\"")
+                    .replace("data_source = \"shop\"", "data_source = \"nowhere\""),
+                args: vec!["products"],
+                code: 3,
+                says: "nowhere",
+            },
+            Case {
+                what: "a source's query failing",
+                report: one_source("", "query = \"SELECT * FROM no_such_table\""),
+                args: vec!["products"],
+                code: 4,
+                says: "no_such_table",
+            },
+            Case {
+                what: "a source returning more than its max_rows",
+                report: one_source("", "query = \"SELECT * FROM products\"\nmax_rows = 2"),
+                args: vec!["products"],
+                code: 5,
+                says: "To allow more, raise max_rows in the [[source]] \"products\"",
+            },
+            Case {
+                what: "the run passing its time limit",
+                report: one_source("timeout = \"2s\"", SLOW_QUERY),
+                args: vec!["products"],
+                code: 6,
+                says: "time limit of 2s",
+            },
+        ];
+        for case in cases {
+            let settings = Settings::new();
+            if !case.report.is_empty() {
+                settings.write_report("products", &case.report);
+            }
+            let output = settings.run(&case.args);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(
+                output.status.code(),
+                Some(case.code),
+                "{}: {}",
+                case.what,
+                describe(&output)
+            );
+            assert!(stderr.contains(case.says), "{}: {stderr}", case.what);
+            assert!(output.stdout.is_empty(), "{}", case.what);
+            assert_eq!(
+                files_in(&settings.out()),
+                Vec::<String>::new(),
+                "{}",
+                case.what
+            );
+        }
+    }
+}

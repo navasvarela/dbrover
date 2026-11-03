@@ -142,6 +142,12 @@ impl WorkerRun {
         self.events.recv_timeout(wait).ok()
     }
 
+    /// The next event, waiting for it as long as the run lasts; `None` once the event that
+    /// ends the run has been taken.
+    pub fn wait_next(&self) -> Option<RunEvent> {
+        self.events.recv().ok()
+    }
+
     /// Stops the worker. The run ends with [`RunEvent::Cancelled`] unless it had ended.
     pub fn cancel(&self) {
         let _ = self.stop.compare_exchange(
