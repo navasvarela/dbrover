@@ -7,7 +7,9 @@
 //! are typed, but never runs one: the worker reads the file again and runs it, so what runs is
 //! what is saved.
 
+mod insights;
 mod launcher;
+mod runs_table;
 mod tab;
 
 use std::collections::BTreeMap;
@@ -50,6 +52,8 @@ pub enum ReportAction {
     ChooseFolder(ReportName),
     /// Opens a file or folder with the system's own app.
     OpenPath(PathBuf),
+    /// Deletes every run of the report the history keeps.
+    ClearRuns(ReportName),
 }
 
 /// Where reports are kept and how they run: given by `main`, and by tests that use them.
@@ -128,6 +132,8 @@ pub struct ReportState {
     /// `None` until one is chosen: the default folder.
     pub folder: Option<PathBuf>,
     pub last_run: Option<RunRecord>,
+    /// Whether **Clear history** is asking to be sure.
+    pub confirm_clear: bool,
 }
 
 /// One run, as its events have told it so far.
@@ -609,6 +615,11 @@ impl Reports {
             kept: DEFAULT_RUNS_KEPT,
             listed: RUNS_LISTED,
         })
+    }
+
+    /// `name`'s newest runs as the history last listed them, newest first; `None` until it has.
+    pub fn runs(&self, name: &ReportName) -> Option<&Result<Vec<ReportRun>, String>> {
+        self.runs.get(name)
     }
 
     /// The command that asks the history for `name`'s newest runs.

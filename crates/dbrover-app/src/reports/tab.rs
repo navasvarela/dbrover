@@ -10,7 +10,7 @@ use dbrover_report::{Batch, LimitHit, Plan, Preview, Step, WrittenFile, grouped}
 use dbrover_store::ReportName;
 use egui::{CollapsingHeader, Grid, RichText, ScrollArea, TextEdit, Ui, vec2};
 
-use super::{ReportAction, Reports, RunEnd, RunRecord, StepRecord, StepState};
+use super::{ReportAction, Reports, RunEnd, RunRecord, StepRecord, StepState, runs_table};
 use crate::form;
 use crate::icons;
 use crate::theme::Palette;
@@ -93,6 +93,7 @@ fn report(
         Err(problems) => {
             problems_box(ui, &palette, &problems);
             last_run(ui, reports, name, actions);
+            runs_table::show(ui, reports, name, actions);
             return;
         }
     };
@@ -117,6 +118,7 @@ fn report(
     }
     ui.separator();
     last_run(ui, reports, name, actions);
+    runs_table::show(ui, reports, name, actions);
 }
 
 fn problems_box(ui: &mut Ui, palette: &Palette, problems: &[String]) {

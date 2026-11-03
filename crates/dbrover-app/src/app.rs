@@ -1125,6 +1125,7 @@ impl DbRoverApp {
                 }
             }
             ReportAction::OpenPath(path) => reports::open_path(ctx, &path),
+            ReportAction::ClearRuns(name) => self.send(Command::ClearReportRuns(name)),
         }
     }
 

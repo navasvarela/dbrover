@@ -134,6 +134,15 @@ fn start_with_reports(dir: &Path, report: &str, launcher: StandIn) -> Harness<'s
     harness
 }
 
+/// Asserts a widget is labelled `label`, once or more: a step's name and how it ended show in
+/// the last run and again in the runs the history keeps, once those are listed.
+fn shows(harness: &Harness<'_, DbRoverApp>, label: &str) {
+    assert!(
+        harness.query_all_by_label(label).next().is_some(),
+        "{label:?} isn't shown"
+    );
+}
+
 /// Opens the report from the explorer and fills in October 2026.
 fn open_and_fill(harness: &mut Harness<'_, DbRoverApp>, since: &str) {
     harness.get_by_label("Trial balance").click();
@@ -333,9 +342,9 @@ fn shows_each_source_and_the_combine_step_of_a_combined_run() {
     open_and_fill(&mut harness, "2026-10-01");
     harness.get_by_label("Run").click();
     step_until_visible(&mut harness, "Finished in 1.2 s: 2 rows combined.");
-    harness.get_by_label("Source entries");
-    harness.get_by_label("Source accounts");
-    harness.get_by_label("Combine");
+    for step in ["Source entries", "Source accounts", "Combine"] {
+        shows(&harness, step);
+    }
     harness.get_by_label("3 rows, 60 bytes · 0.0 s");
     harness.get_by_label("2 columns in DuckDB").click();
     harness.run();
@@ -495,7 +504,7 @@ fn marks_the_combine_step_a_run_failed_at() {
     open_and_fill(&mut harness, "2026-10-01");
     harness.get_by_label("Run").click();
     step_until_visible(&mut harness, "Failed at the combine step.");
-    harness.get_by_label("failed");
+    shows(&harness, "failed");
     harness.get_by_label_contains(
         "To allow more, raise memory_limit in [combine] of the report's file.",
     );
@@ -595,4 +604,63 @@ fn new_report_writes_a_starter_file_and_opens_it() {
     let written: PathBuf = dir.path().join("reports/report.toml");
     let text = std::fs::read_to_string(&written).unwrap();
     assert!(text.contains("data_source = \"shop\""), "{text}");
+}
+
+/// A run of `COMBINED` whose combine step takes most of its second and spills.
+fn spilling_run(out: &Path) -> Vec<RunEvent> {
+    let mut script = combined_start();
+    script.extend([
+        RunEvent::CombineDone {
+            rows: 2,
+            bytes: 40,
+            first_row_ms: Some(800),
+            elapsed_ms: 903,
+            peak_memory: Some(2 << 30),
+            peak_temp_size: Some(3_200_000_000),
+        },
+        RunEvent::OutputWritten(WrittenFile {
+            path: out.join("trial-balance-2026-10.csv"),
+            rows: 2,
+            size: 48,
+            elapsed_ms: 3,
+            warnings: Vec::new(),
+        }),
+        RunEvent::Finished { elapsed_ms: 1_000 },
+    ]);
+    script
+}
+
+#[test]
+fn shows_the_runs_side_by_side_with_the_step_that_dominates_and_the_hints() {
+    let dir = tempfile::tempdir().unwrap();
+    let launcher = StandIn::new(spilling_run(&dir.path().join("out")));
+    let mut harness = start_with_reports(dir.path(), COMBINED, launcher);
+    open_and_fill(&mut harness, "2026-10-01");
+    step_until_visible(&mut harness, "No run yet.");
+
+    let finished_runs =
+        |harness: &Harness<'_, DbRoverApp>| harness.query_all_by_label("finished").count();
+    for run in 1..=2 {
+        harness.get_by_label("Run").click();
+        step_until(&mut harness, &format!("run {run} listed"), |harness| {
+            finished_runs(harness) == run
+        });
+    }
+    assert_eq!(
+        harness.query_all_by_label("Source entries").count(),
+        2,
+        "in the last run, and as a row of the runs"
+    );
+    harness.get_by_label("Output 1");
+    assert_eq!(harness.query_all_by_label("0.9 s · 2 rows").count(), 2);
+    harness.get_by_label("Combine takes the most time in every run listed: 90% of the newest.");
+    harness.get_by_label_contains("Combine spilled 3.2 GB to disk, past its memory_limit.");
+
+    harness.get_by_label("Clear history").click();
+    harness.run();
+    harness.get_by_label("Delete").click();
+    step_until_visible(&mut harness, "No run yet.");
+    let history = HistoryFile::new(dir.path().join("history.sqlite"));
+    let report = ReportName::new("trial-balance").unwrap();
+    assert!(history.open().unwrap().runs(&report, 5).unwrap().is_empty());
 }
