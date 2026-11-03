@@ -12,7 +12,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dbrover_core::{CancelHandle, Connection, DriverError, ResultCursor, Row, describe_error};
-use dbrover_driver_duckdb::{DuckDbType, TableLoader, Workspace, WorkspaceLimit, WorkspaceLimits};
+use dbrover_driver_duckdb::{
+    DuckDbType, TableLoader, Workspace, WorkspaceLimit, WorkspaceLimits, WorkspacePeaks,
+};
 use dbrover_export::ExportColumn;
 use dbrover_language::Literal;
 use dbrover_sql::Dialect;
@@ -101,12 +103,28 @@ impl<O: SourceOpener> Combining<'_, O> {
         let mut reader = CombineReader::start(workspace, query, self.outputs.values, self.limits())
             .await
             .map_err(|error| error.at(Step::Combine))?;
-        let written = self
+        let streamed = self
             .outputs
-            .write(&mut reader, &Feed::Combine, started, events)
+            .stream(&mut reader, &Feed::Combine, started, events)
             .await;
         reader.close().await;
-        written
+        let streamed = streamed?;
+        let peaks = workspace.peaks().await.unwrap_or_else(|error| {
+            tracing::warn!(
+                "could not read the run's DuckDB's peaks: {}",
+                describe_error(&error)
+            );
+            WorkspacePeaks::default()
+        });
+        events(RunEvent::CombineDone {
+            rows: streamed.read.rows,
+            bytes: streamed.read.bytes,
+            first_row_ms: streamed.read.first_row.map(millis),
+            elapsed_ms: millis(started.elapsed()),
+            peak_memory: peaks.memory,
+            peak_temp_size: peaks.temp_size,
+        });
+        streamed.finish(events)
     }
 
     /// Reads `source` into its table under its caps, a batch of its lookup's values at a

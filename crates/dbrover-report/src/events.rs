@@ -59,6 +59,14 @@ pub enum RunEvent {
         /// From starting the query to its first row; `None` when it returned none.
         first_row_ms: Option<u64>,
         elapsed_ms: u64,
+        /// The most memory the run's DuckDB held at once, loading the sources included, which
+        /// `memory_limit` bounds; `None` when DuckDB didn't say.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        peak_memory: Option<u64>,
+        /// The most the run's DuckDB held spilled to disk at once, which `max_temp_size`
+        /// bounds; `None` when DuckDB didn't say.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        peak_temp_size: Option<u64>,
     },
     /// The first rows the outputs were given.
     Preview(Preview),
@@ -126,6 +134,10 @@ pub struct WrittenFile {
     pub rows: u64,
     /// The file's size on disk.
     pub size: u64,
+    /// The time spent in its writer: converting its rows, writing and completing the file.
+    /// Rows are written as they come, so this overlaps the time of the step they come from.
+    #[serde(default)]
+    pub elapsed_ms: u64,
     /// One sentence each, such as cells Excel could only hold as text.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
@@ -202,4 +214,45 @@ pub struct LimitHit {
     pub value: String,
     /// Where the key goes, as `the [[source]] "balances"`.
     pub raise_in: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A worker and an app of one build always agree, but RP6's command line may read events a
+    /// run of an older DbRover wrote.
+    #[test]
+    fn reads_events_from_before_the_metrics() {
+        let cases = [
+            (
+                r#"{"event":"combine_done","rows":3,"bytes":30,"first_row_ms":1,"elapsed_ms":5}"#,
+                RunEvent::CombineDone {
+                    rows: 3,
+                    bytes: 30,
+                    first_row_ms: Some(1),
+                    elapsed_ms: 5,
+                    peak_memory: None,
+                    peak_temp_size: None,
+                },
+            ),
+            (
+                r#"{"event":"output_written","path":"tb.csv","rows":3,"size":40}"#,
+                RunEvent::OutputWritten(WrittenFile {
+                    path: PathBuf::from("tb.csv"),
+                    rows: 3,
+                    size: 40,
+                    elapsed_ms: 0,
+                    warnings: Vec::new(),
+                }),
+            ),
+        ];
+        for (line, event) in cases {
+            assert_eq!(
+                serde_json::from_str::<RunEvent>(line).unwrap(),
+                event,
+                "{line}"
+            );
+        }
+    }
 }

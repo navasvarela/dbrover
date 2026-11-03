@@ -25,7 +25,9 @@ use dbrover_core::{
 use duckdb::AccessMode;
 
 pub use parquet::{ParquetCompression, ParquetWriter};
-pub use workspace::{DuckDbType, TableLoader, Workspace, WorkspaceLimit, WorkspaceLimits};
+pub use workspace::{
+    DuckDbType, TableLoader, Workspace, WorkspaceLimit, WorkspaceLimits, WorkspacePeaks,
+};
 
 const PRODUCT: &str = "DuckDB";
 
