@@ -338,4 +338,66 @@ mod runs {
             );
         }
     }
+
+    /// What a terminal's Ctrl-C, cron's or a CI runner's stop, and a closed terminal send:
+    /// each cancels the run, leaves the output folder as it was, and exits with 6. The
+    /// interrupt goes to the command's whole process group, as a terminal sends it.
+    #[test]
+    fn a_stop_signal_cancels_the_run() {
+        use std::io::{BufRead, BufReader, Read};
+        use std::os::unix::process::CommandExt as _;
+        use std::process::Stdio;
+        use std::time::{Duration, Instant};
+
+        /// Far longer than a cancelled run takes to end; a run that isn't cancelled counts
+        /// for minutes.
+        const EXIT_WAIT: Duration = Duration::from_secs(60);
+
+        let cases = [("INT", true), ("TERM", false), ("HUP", false)];
+        for (signal, to_group) in cases {
+            let settings = Settings::new();
+            settings.write_report("products", &one_source("", SLOW_QUERY));
+            let out = settings.out().display().to_string();
+            let mut child = settings
+                .command(&["products", "-o", &out])
+                .process_group(0)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let mut stderr = BufReader::new(child.stderr.take().unwrap());
+            let mut started = String::new();
+            stderr.read_line(&mut started).unwrap();
+            assert_eq!(started, "Products\n", "{signal}");
+
+            let pid = child.id().to_string();
+            let target = if to_group { format!("-{pid}") } else { pid };
+            let sent = Command::new("kill")
+                .args([&format!("-{signal}"), "--", &target])
+                .status()
+                .unwrap();
+            assert!(sent.success(), "{signal}");
+
+            let deadline = Instant::now() + EXIT_WAIT;
+            let status = loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    break status;
+                }
+                if Instant::now() > deadline {
+                    child.kill().unwrap();
+                    panic!("SIG{signal} didn't stop the run within {EXIT_WAIT:?}");
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            };
+            let mut rest = String::new();
+            stderr.read_to_string(&mut rest).unwrap();
+            assert_eq!(status.code(), Some(6), "SIG{signal}: {rest}");
+            assert_eq!(rest, "Cancelled. No file was written.\n", "SIG{signal}");
+            assert_eq!(
+                files_in(&settings.out()),
+                Vec::<String>::new(),
+                "SIG{signal}"
+            );
+        }
+    }
 }

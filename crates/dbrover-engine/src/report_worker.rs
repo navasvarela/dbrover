@@ -150,6 +150,28 @@ impl WorkerRun {
 
     /// Stops the worker. The run ends with [`RunEvent::Cancelled`] unless it had ended.
     pub fn cancel(&self) {
+        self.stopper().cancel();
+    }
+
+    /// What stops the run from another thread, such as one waiting for a signal.
+    pub fn stopper(&self) -> RunStopper {
+        RunStopper {
+            child: Arc::clone(&self.child),
+            stop: Arc::clone(&self.stop),
+        }
+    }
+}
+
+/// Cancels a [`WorkerRun`] from any thread, as [`WorkerRun::cancel`] does.
+#[derive(Clone)]
+pub struct RunStopper {
+    child: Arc<Mutex<Child>>,
+    stop: Arc<AtomicU8>,
+}
+
+impl RunStopper {
+    /// Stops the worker. The run ends with [`RunEvent::Cancelled`] unless it had ended.
+    pub fn cancel(&self) {
         let _ = self.stop.compare_exchange(
             Stop::No as u8,
             Stop::Cancelled as u8,
