@@ -26,10 +26,13 @@ programs), v0.23.0 (signing in with Google Cloud and Microsoft Entra ID accounts
 PostgreSQL, MySQL and SQL Server signed into with a cloud account, cost guards on every data
 source, a progress line while statements run, and search across a whole catalog), v0.24.0
 (reports: a report file with parameters, run in a worker process with its limits, written to
-CSV and Excel with a declared schema) and v0.25.0 (reports with several sources combined in
+CSV and Excel with a declared schema), v0.25.0 (reports with several sources combined in
 DuckDB, lookups and document sources, the accounting reports as examples, dialogs in one
 style, the query history and definitions as tabs, a value panel beside the grid, and exports
-and imports that run on in the status bar).
+and imports that run on in the status bar) and v0.26.0 (each report run's steps kept in the
+history, runs side by side with hints, Settings › Reports, `dbrover report run` on the command
+line, and managed databases as presets in the data source dialog: RDS, Aurora, Redshift, Cloud
+SQL, Azure SQL, Synapse, Fabric, Neon, Supabase and ClickHouse Cloud).
 R3's update notice is built, ahead of R2 (see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
