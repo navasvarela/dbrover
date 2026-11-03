@@ -15,7 +15,7 @@ mod write;
 
 pub use extended::ValueType;
 pub use flatten::{ColumnsChange, Document, FieldCell, Flattened, MAX_COLUMNS, UNREADABLE_COLUMN};
-pub use path::{Path, Step};
+pub use path::{Path, PathError, Step};
 pub use read::{MAX_DEPTH, ParseError};
 
 /// A JSON value, as written.
@@ -98,6 +98,30 @@ impl Value {
         }
     }
 
+    /// The value at `path` inside this one: a field of an object, an item of an array.
+    pub fn at(&self, path: &Path) -> Option<&Value> {
+        path.steps()
+            .iter()
+            .try_fold(self, |value, step| match (value, step) {
+                (Self::Object(fields), Step::Field(name)) => fields
+                    .iter()
+                    .find(|(field, _)| field == name)
+                    .map(|(_, value)| value),
+                (Self::Array(items), Step::Index(index)) => items.get(*index),
+                _ => None,
+            })
+    }
+
+    /// The value itself, as plain text, when it is a scalar: a string without its quotes, a
+    /// number's digits as written, `true` or `false`. Read as [`Syntax::ExtendedJson`], one of
+    /// its special values is too: `{"$numberLong": "7"}` is `7`, an object id its hex, a UUID
+    /// its usual form and a date its time in ISO 8601 and UTC, `2026-10-01T12:00:00.000Z`.
+    /// `None` for `null`, an object, an array, and a special value with no plain form (a
+    /// regular expression, a timestamp, a set).
+    pub fn plain(&self, syntax: Syntax) -> Option<String> {
+        extended::plain(self, syntax)
+    }
+
     /// What copying the value gives: a scalar as shown, so an object id pastes into the shell
     /// as `ObjectId("…")`; an object or array as compact JSON.
     pub fn copied(&self, syntax: Syntax) -> String {
@@ -166,5 +190,60 @@ mod tests {
             Value::parse(r#""plain""#).unwrap().copied(Syntax::Json),
             "plain"
         );
+    }
+
+    #[test]
+    fn finds_a_value_by_its_path() {
+        let order = Value::parse(ORDER).unwrap();
+        let at = |path: &str| order.at(&path.parse().unwrap()).cloned();
+        assert_eq!(at("items[0].sku"), Some(Value::String("a-1".to_owned())));
+        assert_eq!(at("note"), Some(Value::Null));
+        assert_eq!(at("items[1].sku"), None);
+        assert_eq!(at("total.x"), None);
+        assert_eq!(at("missing"), None);
+    }
+
+    #[test]
+    fn reads_a_scalar_as_its_plain_value() {
+        let cases = [
+            (r#""text""#, Some("text")),
+            ("12.50", Some("12.50")),
+            ("true", Some("true")),
+            ("null", None),
+            ("[1]", None),
+            (r#"{"a": 1}"#, None),
+            (
+                r#"{"$oid": "5f1d7f0e2b5c3a0001a1b2c3"}"#,
+                Some("5f1d7f0e2b5c3a0001a1b2c3"),
+            ),
+            (r#"{"$numberLong": "7"}"#, Some("7")),
+            (r#"{"$numberInt": "-3"}"#, Some("-3")),
+            (r#"{"$numberDouble": "1.5"}"#, Some("1.5")),
+            (r#"{"$numberDecimal": "0.10"}"#, Some("0.10")),
+            (
+                r#"{"$date": {"$numberLong": "1790856000000"}}"#,
+                Some("2026-10-01T12:00:00.000Z"),
+            ),
+            (
+                r#"{"$date": "2026-10-01T12:00:00Z"}"#,
+                Some("2026-10-01T12:00:00Z"),
+            ),
+            (
+                r#"{"$binary": {"base64": "AAECAwQFBgcICQoLDA0ODw==", "subType": "04"}}"#,
+                Some("00010203-0405-0607-0809-0a0b0c0d0e0f"),
+            ),
+            (r#"{"$timestamp": {"t": 1, "i": 2}}"#, None),
+            (r#"{"$stringSet": ["a"]}"#, None),
+        ];
+        for (text, expected) in cases {
+            let value = Value::parse(text).unwrap();
+            assert_eq!(
+                value.plain(Syntax::ExtendedJson).as_deref(),
+                expected,
+                "{text}"
+            );
+        }
+        let id = Value::parse(r#"{"$oid": "5f1d"}"#).unwrap();
+        assert_eq!(id.plain(Syntax::Json), None);
     }
 }
