@@ -1,9 +1,8 @@
-//! The example reports in `examples/reports/`, the first iteration's four accounting reports
-//! (`docs/reporting.md`, RP3f), run on the data their scripts make: the SQLite ledger of
-//! `ledger.sql` and, on the test servers, the MongoDB counterparties of
-//! `ledger-counterparties.js`, the PostgreSQL transactions of `valuation-postgres.sql`, the
-//! DynamoDB assets of `valuation-assets.partiql` and the DuckDB prices of
-//! `valuation-prices.sql`. Their CSV files are compared with the ones checked in beside them,
+//! The example reports in `examples/reports/`, the first iteration's four reports
+//! (`docs/reporting.md`, RP3f), run on the data their scripts make: the SQLite shop of
+//! `shop.sql` and, on the test servers, the MongoDB customers of `shop-customers.js`, the
+//! PostgreSQL energy flows of `energy-postgres.sql`, the DynamoDB batteries of
+//! `energy-batteries.partiql` and the DuckDB prices of `energy-prices.sql`. Their CSV files are compared with the ones checked in beside them,
 //! so the manual's examples keep working. Set `DBROVER_UPDATE_EXPECTED=1` to write the
 //! checked-in files from this run instead, after a change that is meant to change them.
 
@@ -49,16 +48,16 @@ fn data_source(name: &str, config: ConnectionConfig) -> DataSource {
     }
 }
 
-/// The data source `ledger`, a SQLite file in `folder` made by `ledger.sql`.
-fn ledger(folder: &Path) -> DataSource {
-    let path = folder.join("ledger.db");
-    let script = std::fs::read_to_string(examples().join("ledger.sql")).unwrap();
+/// The data source `shop`, a SQLite file in `folder` made by `shop.sql`.
+fn shop(folder: &Path) -> DataSource {
+    let path = folder.join("shop.db");
+    let script = std::fs::read_to_string(examples().join("shop.sql")).unwrap();
     rusqlite::Connection::open(&path)
         .unwrap()
         .execute_batch(&script)
         .unwrap();
     DataSource {
-        name: "ledger".to_owned(),
+        name: "shop".to_owned(),
         ..sqlite_data_source(path)
     }
 }
@@ -147,56 +146,61 @@ fn compare(out: &Path, file: &str) {
 }
 
 #[tokio::test]
-async fn the_trial_balance_example_matches_its_checked_in_file() {
+async fn the_sales_by_category_example_matches_its_checked_in_file() {
     let folder = tempfile::tempdir().unwrap();
-    let ledger = ledger(folder.path());
+    let shop = shop(folder.path());
     run_example(
-        "trial-balance",
+        "sales-by-category",
         OCTOBER,
-        &[ledger],
+        &[shop],
         Arc::new(MemorySecrets::default()),
         folder.path(),
     )
     .await;
-    compare(folder.path(), "trial-balance-2026-10.csv");
-    assert!(folder.path().join("trial-balance-2026-10.xlsx").is_file());
+    compare(folder.path(), "sales-by-category-2026-10.csv");
+    assert!(
+        folder
+            .path()
+            .join("sales-by-category-2026-10.xlsx")
+            .is_file()
+    );
 }
 
-/// The data source `crm`, on the MongoDB test server, with the counterparties of
-/// `ledger-counterparties.js`, and its password saved in `secrets`.
+/// The data source `crm`, on the MongoDB test server, with the customers of
+/// `shop-customers.js`, and its password saved in `secrets`.
 async fn crm(secrets: &MemorySecrets) -> Option<DataSource> {
     let (config, password) = mongo_test_server("dbrover_report_examples")?;
     let mut mongo = dbrover_driver_mongodb::connect(&config, Some(&password), Route::Direct)
         .await
         .unwrap();
-    run_script(&mut mongo, "ledger-counterparties.js", QueryLanguage::Mongo).await;
+    run_script(&mut mongo, "shop-customers.js", QueryLanguage::Mongo).await;
     let crm = data_source("crm", ConnectionConfig::Mongo(config));
     secrets.set(crm.id, Secret::Database, &password).unwrap();
     Some(crm)
 }
 
-/// Needs the MongoDB test server, where it replaces the collection `counterparties`.
+/// Needs the MongoDB test server, where it replaces the collection `customers`.
 #[tokio::test]
-async fn the_general_ledger_example_matches_its_checked_in_file() {
+async fn the_order_history_example_matches_its_checked_in_file() {
     let secrets = Arc::new(MemorySecrets::default());
     let Some(crm) = crm(&secrets).await else {
         return;
     };
     let folder = tempfile::tempdir().unwrap();
-    let ledger = ledger(folder.path());
+    let shop = shop(folder.path());
     run_example(
-        "general-ledger",
+        "order-history",
         OCTOBER,
-        &[ledger, crm],
+        &[shop, crm],
         secrets,
         folder.path(),
     )
     .await;
-    compare(folder.path(), "general-ledger-2026-10.csv");
-    assert!(folder.path().join("general-ledger-2026-10.xlsx").is_file());
+    compare(folder.path(), "order-history-2026-10.csv");
+    assert!(folder.path().join("order-history-2026-10.xlsx").is_file());
 }
 
-/// The data source `prices-duckdb`: a DuckDB file in `folder` made by `valuation-prices.sql`,
+/// The data source `prices-duckdb`: a DuckDB file in `folder` made by `energy-prices.sql`,
 /// read-only, as the example says to set it.
 async fn prices(folder: &Path) -> DataSource {
     let path = folder.join("prices.duckdb");
@@ -211,7 +215,7 @@ async fn prices(folder: &Path) -> DataSource {
     .unwrap();
     run_script(
         &mut file,
-        "valuation-prices.sql",
+        "energy-prices.sql",
         QueryLanguage::Sql(Dialect::DuckDb),
     )
     .await;
@@ -227,9 +231,9 @@ async fn prices(folder: &Path) -> DataSource {
     )
 }
 
-/// The table `valuation_assets` on DynamoDB Local, made afresh as `valuation-assets.partiql`
+/// The table `energy_batteries` on DynamoDB Local, made afresh as `energy-batteries.partiql`
 /// says, with its items.
-async fn assets(config: DynamoDbConfig) -> DataSource {
+async fn batteries(config: DynamoDbConfig) -> DataSource {
     use aws_sdk_dynamodb::types::{
         AttributeDefinition, BillingMode, KeySchemaElement, KeyType, ScalarAttributeType,
     };
@@ -242,23 +246,23 @@ async fn assets(config: DynamoDbConfig) -> DataSource {
     // Left by an earlier run, or absent: either way it is made again below.
     let _ = client
         .delete_table()
-        .table_name("valuation_assets")
+        .table_name("energy_batteries")
         .send()
         .await;
     client
         .create_table()
-        .table_name("valuation_assets")
+        .table_name("energy_batteries")
         .billing_mode(BillingMode::PayPerRequest)
         .key_schema(
             KeySchemaElement::builder()
-                .attribute_name("asset_id")
+                .attribute_name("battery_id")
                 .key_type(KeyType::Hash)
                 .build()
                 .unwrap(),
         )
         .attribute_definitions(
             AttributeDefinition::builder()
-                .attribute_name("asset_id")
+                .attribute_name("battery_id")
                 .attribute_type(ScalarAttributeType::S)
                 .build()
                 .unwrap(),
@@ -269,18 +273,18 @@ async fn assets(config: DynamoDbConfig) -> DataSource {
     let mut dynamo = dbrover_driver_dynamodb::connect(&config).await.unwrap();
     run_script(
         &mut dynamo,
-        "valuation-assets.partiql",
+        "energy-batteries.partiql",
         QueryLanguage::PartiQl,
     )
     .await;
-    data_source("assets-dynamodb", ConnectionConfig::DynamoDb(config))
+    data_source("batteries-dynamodb", ConnectionConfig::DynamoDb(config))
 }
 
-/// Needs the PostgreSQL test server, where it replaces the schema `valuation`, and DynamoDB
-/// Local, where it replaces the table `valuation_assets`, as the examples' scripts do. The
-/// valuation and the cost basis share them, so they run in one test, one after the other.
+/// Needs the PostgreSQL test server, where it replaces the schema `energy`, and DynamoDB
+/// Local, where it replaces the table `energy_batteries`, as the examples' scripts do. The
+/// battery flows and cycles share them, so they run in one test, one after the other.
 #[tokio::test]
-async fn the_valuation_and_cost_basis_examples_match_their_checked_in_files() {
+async fn the_battery_flows_and_cycles_examples_match_their_checked_in_files() {
     let (Some(server), Some(dynamodb)) = (postgres_test_server(), dynamodb_test_config()) else {
         return;
     };
@@ -291,63 +295,67 @@ async fn the_valuation_and_cost_basis_examples_match_their_checked_in_files() {
             .unwrap();
     run_script(
         &mut admin,
-        "valuation-postgres.sql",
+        "energy-postgres.sql",
         QueryLanguage::Sql(Dialect::Postgres),
     )
     .await;
-    let ledger = data_source(
-        "ledger-postgres",
+    let energy = data_source(
+        "energy-postgres",
         ConnectionConfig::Postgres(server.config.clone()),
     );
     let secrets = Arc::new(MemorySecrets::default());
     secrets
-        .set(ledger.id, Secret::Database, &server.password)
+        .set(energy.id, Secret::Database, &server.password)
         .unwrap();
-    let data_sources = [ledger, assets(dynamodb).await, prices(folder.path()).await];
+    let data_sources = [
+        energy,
+        batteries(dynamodb).await,
+        prices(folder.path()).await,
+    ];
 
     run_example(
-        "valuation",
+        "battery-flows",
         OCTOBER_TIMES,
         &data_sources,
         secrets.clone(),
         folder.path(),
     )
     .await;
-    compare(folder.path(), "valuation-2026-10.csv");
-    assert!(folder.path().join("valuation-2026-10.xlsx").is_file());
+    compare(folder.path(), "battery-flows-2026-10.csv");
+    assert!(folder.path().join("battery-flows-2026-10.xlsx").is_file());
 
     run_example(
-        "cost-basis",
+        "battery-cycles",
         OCTOBER_TIMES,
         &data_sources,
         secrets.clone(),
         folder.path(),
     )
     .await;
-    compare(folder.path(), "cost-basis-2026-10.csv");
-    assert!(folder.path().join("cost-basis-2026-10.xlsx").is_file());
+    compare(folder.path(), "battery-cycles-2026-10.csv");
+    assert!(folder.path().join("battery-cycles-2026-10.xlsx").is_file());
 
-    // Every transaction valued, from the first: what FIFO is worked out from, by hand.
+    // Every flow priced, from the first: what FIFO is worked out from, by hand.
     let history = folder.path().join("history");
     std::fs::create_dir(&history).unwrap();
     run_example(
-        "valuation",
+        "battery-flows",
         ("2026-09-01 00:00", "2026-12-01 00:00"),
         &data_sources,
         secrets,
         &history,
     )
     .await;
-    let valued = std::fs::read_to_string(history.join("valuation-2026-09.csv")).unwrap();
-    let report = std::fs::read_to_string(folder.path().join("cost-basis-2026-10.csv")).unwrap();
+    let flows = std::fs::read_to_string(history.join("battery-flows-2026-09.csv")).unwrap();
+    let report = std::fs::read_to_string(folder.path().join("battery-cycles-2026-10.csv")).unwrap();
     assert_eq!(
-        cost_basis_rows(&report),
-        fifo(&valued, OCTOBER_TIMES),
-        "the cost basis report differs from FIFO worked out row by row"
+        cycle_rows(&report),
+        fifo(&flows, OCTOBER_TIMES),
+        "the battery cycles report differs from FIFO worked out row by row"
     );
 }
 
-/// Places a quantity is kept to, a price, and their product.
+/// Places an energy is kept to, a price, and their product.
 const QUANTITY_SCALE: u32 = 18;
 const PRICE_SCALE: u32 = 8;
 const PRODUCT_SCALE: u32 = QUANTITY_SCALE + PRICE_SCALE;
@@ -365,12 +373,12 @@ fn fixed(text: &str, scale: u32) -> i128 {
     if negative { -value } else { value }
 }
 
-/// A disposal's use of one lot: when, which asset, the lot's time, the quantity and both prices
-/// in their scales, and the cost, proceeds and gain at the product's.
+/// A discharge's draw on one charge: when, which battery, the charge's time, the energy and both
+/// prices in their scales, and the charge cost, discharge value and difference at the product's.
 type Match = (String, String, String, i128, i128, i128, i128, i128, i128);
 
-/// The cost basis CSV's rows, as numbers in their scales.
-fn cost_basis_rows(csv: &str) -> Vec<Match> {
+/// The battery cycles CSV's rows, as numbers in their scales.
+fn cycle_rows(csv: &str) -> Vec<Match> {
     csv.lines()
         .skip(1)
         .map(|line| {
@@ -390,55 +398,55 @@ fn cost_basis_rows(csv: &str) -> Vec<Match> {
         .collect()
 }
 
-/// FIFO worked out one transaction at a time from the valuation's rows (time, wallet, asset,
-/// chain, quantity, price, value), keeping the matches of disposals in `period`: each asset's
-/// lots in a queue, and each disposal taking from the front until it is used up.
-fn fifo(valuation: &str, period: (&str, &str)) -> Vec<Match> {
-    struct Lot {
-        acquired_at: String,
+/// FIFO worked out one flow at a time from the battery flows' rows (time, battery, site, energy,
+/// price, value), keeping the matches of discharges in `period`: each battery's charges in a
+/// queue, and each discharge drawing from the front until it is used up.
+fn fifo(flows: &str, period: (&str, &str)) -> Vec<Match> {
+    struct Charge {
+        charged_at: String,
         left: i128,
         price: i128,
     }
-    let mut lots: BTreeMap<String, VecDeque<Lot>> = BTreeMap::new();
+    let mut charges: BTreeMap<String, VecDeque<Charge>> = BTreeMap::new();
     let mut matches = Vec::new();
-    for line in valuation.lines().skip(1) {
+    for line in flows.lines().skip(1) {
         let cells: Vec<&str> = line.split(',').collect();
-        let (at, asset) = (cells[0].to_owned(), cells[2].to_owned());
-        let quantity = fixed(cells[4], QUANTITY_SCALE);
-        let price = fixed(cells[5], PRICE_SCALE);
-        let queue = lots.entry(asset.clone()).or_default();
-        if quantity > 0 {
-            queue.push_back(Lot {
-                acquired_at: at,
-                left: quantity,
+        let (at, battery) = (cells[0].to_owned(), cells[1].to_owned());
+        let energy = fixed(cells[3], QUANTITY_SCALE);
+        let price = fixed(cells[4], PRICE_SCALE);
+        let queue = charges.entry(battery.clone()).or_default();
+        if energy > 0 {
+            queue.push_back(Charge {
+                charged_at: at,
+                left: energy,
                 price,
             });
             continue;
         }
-        let mut to_use = -quantity;
-        while to_use > 0 {
-            let lot = queue
+        let mut to_draw = -energy;
+        while to_draw > 0 {
+            let charge = queue
                 .front_mut()
-                .expect("a disposal never exceeds the holding");
-            let used = lot.left.min(to_use);
-            lot.left -= used;
-            to_use -= used;
+                .expect("a discharge never exceeds the battery's charge");
+            let drawn = charge.left.min(to_draw);
+            charge.left -= drawn;
+            to_draw -= drawn;
             let in_period = at.as_str() >= period.0 && at.as_str() < period.1;
             if in_period {
-                let (cost, proceeds) = (used * lot.price, used * price);
+                let (cost, value) = (drawn * charge.price, drawn * price);
                 matches.push((
                     at.clone(),
-                    asset.clone(),
-                    lot.acquired_at.clone(),
-                    used,
-                    lot.price,
+                    battery.clone(),
+                    charge.charged_at.clone(),
+                    drawn,
+                    charge.price,
                     price,
                     cost,
-                    proceeds,
-                    proceeds - cost,
+                    value,
+                    value - cost,
                 ));
             }
-            if lot.left == 0 {
+            if charge.left == 0 {
                 queue.pop_front();
             }
         }
@@ -446,86 +454,86 @@ fn fifo(valuation: &str, period: (&str, &str)) -> Vec<Match> {
     matches
 }
 
-/// The general ledger past an Excel sheet: 1,100,000 entries in October, every one written to
-/// CSV, the workbook going on to a second sheet, and each account's last running balance its
-/// sum. Needs the MongoDB test server for the counterparties. Slow: a debug build takes
+/// The order history past an Excel sheet: 1,100,000 order lines in October, every one written
+/// to CSV, the workbook going on to a second sheet, and each customer's last running total
+/// their sum. Needs the MongoDB test server for the customers. Slow: a debug build takes
 /// minutes, so it is run by hand before a release.
 #[tokio::test]
 #[ignore = "slow: writes 1,100,000 rows to CSV and Excel; run with --ignored"]
-async fn the_general_ledger_writes_past_a_million_rows() {
-    const ENTRIES: u64 = 1_100_000;
+async fn the_order_history_writes_past_a_million_rows() {
+    const LINES: i64 = 1_100_000;
     let secrets = Arc::new(MemorySecrets::default());
     let Some(crm) = crm(&secrets).await else {
         return;
     };
     let folder = tempfile::tempdir().unwrap();
-    let ledger = ledger(folder.path());
-    let ConnectionConfig::Sqlite(config) = &ledger.config else {
-        unreachable!("ledger() makes a SQLite data source");
+    let shop = shop(folder.path());
+    let ConnectionConfig::Sqlite(config) = &shop.config else {
+        unreachable!("shop() makes a SQLite data source");
     };
     let database = rusqlite::Connection::open(&config.path).unwrap();
-    // Pairs of lines on the October days, each in whole cents, so SQLite sums them exactly.
+    let october_lines = || -> i64 {
+        database
+            .query_row(
+                "SELECT count(*) FROM order_lines WHERE ordered_on >= '2026-10-01' \
+                 AND ordered_on < '2026-11-01'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+    };
+    // Lines on the October days, each in whole cents, so SQLite sums them exactly.
     database
         .execute_batch(&format!(
             "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {})
-             INSERT INTO entries (journal, account_id, booked_on, memo, debit, credit,
-                                  counterparty_id)
-             SELECT 1000 + i / 2, CASE i % 2 WHEN 0 THEN 2 ELSE 5 END,
-                    date('2026-10-01', '+' || (i % 31) || ' days'), 'Bulk ' || i,
-                    CASE i % 2 WHEN 0 THEN (i % 9973) / 100.0 ELSE 0 END,
-                    CASE i % 2 WHEN 1 THEN ((i - 1) % 9973) / 100.0 ELSE 0 END,
-                    printf('cust-%02d', i % 12 + 1)
+             INSERT INTO order_lines (order_no, product_id, ordered_on, customer_id, quantity,
+                                      amount)
+             SELECT 100000 + i / 2, i % 7 + 1,
+                    date('2026-10-01', '+' || (i % 31) || ' days'), printf('cust-%02d', i % 12 + 1),
+                    1, (i % 9973) / 100.0
              FROM n",
-            ENTRIES - 186
+            LINES - october_lines()
         ))
         .unwrap();
-    let in_october: i64 = database
-        .query_row(
-            "SELECT count(*) FROM entries WHERE booked_on >= '2026-10-01' \
-             AND booked_on < '2026-11-01'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    let in_october = u64::try_from(in_october).unwrap();
+    let in_october = u64::try_from(october_lines()).unwrap();
     assert!(in_october > 1_048_576, "{in_october}");
     let mut sums = database
         .prepare(
-            "SELECT a.code, SUM(CAST(round(e.debit * 100) AS INTEGER) \
-                            - CAST(round(e.credit * 100) AS INTEGER)) \
-             FROM entries e JOIN accounts a ON a.id = e.account_id \
-             WHERE e.booked_on >= '2026-10-01' AND e.booked_on < '2026-11-01' GROUP BY a.code",
+            "SELECT customer_id, SUM(CAST(round(amount * 100) AS INTEGER)) \
+             FROM order_lines \
+             WHERE ordered_on >= '2026-10-01' AND ordered_on < '2026-11-01' \
+             GROUP BY customer_id",
         )
         .unwrap();
     let expected: BTreeMap<String, i128> = sums
         .query_map([], |row| Ok((row.get(0)?, row.get::<_, i64>(1)?)))
         .unwrap()
         .map(|row| {
-            let (code, cents) = row.unwrap();
-            (code, i128::from(cents))
+            let (customer, cents) = row.unwrap();
+            (customer, i128::from(cents))
         })
         .collect();
 
     run_example(
-        "general-ledger",
+        "order-history",
         OCTOBER,
-        &[ledger, crm],
+        &[shop, crm],
         secrets,
         folder.path(),
     )
     .await;
-    let csv = std::fs::read_to_string(folder.path().join("general-ledger-2026-10.csv")).unwrap();
+    let csv = std::fs::read_to_string(folder.path().join("order-history-2026-10.csv")).unwrap();
     let mut last: BTreeMap<String, i128> = BTreeMap::new();
     let mut rows = 0_u64;
     for line in csv.lines().skip(1) {
         rows += 1;
         let cells: Vec<&str> = line.split(',').collect();
-        let balance = cells.last().unwrap();
-        last.insert(cells[2].to_owned(), fixed(balance, 2));
+        let total = cells.last().unwrap();
+        last.insert(cells[2].to_owned(), fixed(total, 2));
     }
     assert_eq!(rows, in_october);
     assert_eq!(last, expected);
     let book: calamine::Xlsx<_> =
-        calamine::open_workbook(folder.path().join("general-ledger-2026-10.xlsx")).unwrap();
-    assert_eq!(book.sheet_names(), ["General ledger", "General ledger 2"]);
+        calamine::open_workbook(folder.path().join("order-history-2026-10.xlsx")).unwrap();
+    assert_eq!(book.sheet_names(), ["Order history", "Order history 2"]);
 }

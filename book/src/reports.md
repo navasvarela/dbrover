@@ -1,7 +1,7 @@
 # Reports
 
-A report is a query you run again and again with new values, such as a trial balance for each
-month, and the files it writes each time, with the columns, names, types and number formats
+A report is a query you run again and again with new values, such as each month's sales by
+category, and the files it writes each time, with the columns, names, types and number formats
 you chose once. It lives in a file of its own, runs in a process of its own, and stops at
 limits you can see, so a report that reads too much never takes DbRover or your machine with
 it.
@@ -14,60 +14,59 @@ such as DynamoDB or MongoDB, by declaring the columns it makes.
 
 The examples in the repository's
 [`examples/reports`](https://github.com/navasvarela/dbrover/tree/main/examples/reports) folder
-run on a made-up ledger:
+run on made-up data:
 
-1. Add a SQLite data source named **ledger**, with a new file (see
+1. Add a SQLite data source named **shop**, with a new file (see
    [Data sources](data-sources.md)).
-2. Open [`ledger.sql`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/ledger.sql)
-   in its console (**File → Open…**) and run it all. It makes a chart of accounts and three
-   months of journal entries.
+2. Open [`shop.sql`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/shop.sql)
+   in its console (**File → Open…**) and run it all. It makes a bike shop's products and three
+   months of order lines.
 3. Right-click **Reports** at the bottom of the explorer and choose **Open the reports folder**.
-   Copy `trial-balance.toml` into it, then choose **Reload**.
-4. Click **Trial balance**. Its tab opens.
+   Copy `sales-by-category.toml` into it, then choose **Reload**.
+4. Click **Sales by category**. Its tab opens.
 5. Type `2026-10-01` for **since** and `2026-11-01` for **until**, and click **Run**.
 
-The tab shows the run as it goes, then the two files it wrote, `trial-balance-2026-10.xlsx` and
-`trial-balance-2026-10.csv`, in your Downloads folder. Click one to open it: each account's
-debits, credits and balance, a subtotal for each kind of account, and a total whose debits and
-credits are both 309,957.53. Under the files, a preview shows the rows the report wrote.
+The tab shows the run as it goes, then the two files it wrote, `sales-by-category-2026-10.xlsx`
+and `sales-by-category-2026-10.csv`, in your Downloads folder. Click one to open it: each
+product's units, sales, returns and net amount, a subtotal for each category, and a total of
+68,435.76. Under the files, a preview shows the rows the report wrote.
 
 ### The four examples
 
-The examples are the shapes of reports that accounting software makes, on made-up data. Each
-shows something of its own:
+Each example shows a kind of report of its own:
 
 | Report | Reads | Shows |
 | --- | --- | --- |
-| [`trial-balance.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/trial-balance.toml) | SQLite | Subtotals with `GROUPING SETS`, and amounts rounded to the cent as they load. |
-| [`general-ledger.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/general-ledger.toml) | SQLite and MongoDB | Each entry's counterparty, read from MongoDB by the ids the entries name, and a running balance per account with a window function. |
-| [`valuation.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/valuation.toml) | PostgreSQL, DynamoDB and DuckDB | Each transaction valued at its asset's price in the hour it ran, with every digit. |
-| [`cost-basis.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/cost-basis.toml) | PostgreSQL, DynamoDB and DuckDB | Each disposal matched against the lots it used up, first in, first out, with its cost, proceeds and gain. |
+| [`sales-by-category.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/sales-by-category.toml) | SQLite | Grouping with a subtotal for each group and a total, with `GROUPING SETS`, and amounts rounded to the cent as they load. |
+| [`order-history.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/order-history.toml) | SQLite and MongoDB | Every order line of a period with its customer, read from MongoDB by the ids the lines name, and each customer's running total with a window function. Past an Excel sheet's million rows, it goes on in a new sheet. |
+| [`battery-flows.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/battery-flows.toml) | PostgreSQL, DynamoDB and DuckDB | Three sources joined: each battery's charges and discharges priced at the hour's energy price with `ASOF JOIN`, keeping every digit. |
+| [`battery-cycles.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/battery-cycles.toml) | PostgreSQL, DynamoDB and DuckDB | State carried across rows: each discharge matched against the charges it drew from, first in, first out, with the price at each end. |
 
 Their data comes from scripts beside them, each run in the console of the data source the
 report names:
 
-- **ledger** (SQLite): [`ledger.sql`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/ledger.sql),
+- **shop** (SQLite): [`shop.sql`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/shop.sql),
   as above.
 - **crm** (MongoDB, on a database you can write to):
-  [`ledger-counterparties.js`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/ledger-counterparties.js),
-  the ledger's customers, suppliers and vendors.
-- **ledger-postgres** (PostgreSQL, on a server you can write a schema to):
-  [`valuation-postgres.sql`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/valuation-postgres.sql),
-  300 made-up trades of BTC, ETH and SOL in the schema `valuation`, each amount in the asset's
-  smallest unit.
-- **assets-dynamodb** (DynamoDB):
-  [`valuation-assets.partiql`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/valuation-assets.partiql),
-  each asset's symbol, unit and chain. PartiQL can't make a table, so make `valuation_assets`
-  first, keyed by `asset_id`, as the script's first lines say.
+  [`shop-customers.js`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/shop-customers.js),
+  the shop's customers, with their names and addresses.
+- **energy-postgres** (PostgreSQL, on a server you can write a schema to):
+  [`energy-postgres.sql`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/energy-postgres.sql),
+  300 charges and discharges of three batteries in the schema `energy`, each amount in the
+  smallest unit the battery's meter records.
+- **batteries-dynamodb** (DynamoDB):
+  [`energy-batteries.partiql`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/energy-batteries.partiql),
+  each battery's name, meter unit, price zone and site. PartiQL can't make a table, so make
+  `energy_batteries` first, keyed by `battery_id`, as the script's first lines say.
 - **prices-duckdb** (DuckDB, with a new file):
-  [`valuation-prices.sql`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/valuation-prices.sql),
-  three months of hourly prices. Then edit the data source and tick **Read-only**, so a report
-  can read the file while DbRover has it open (see [Several sources](#several-sources)).
+  [`energy-prices.sql`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/energy-prices.sql),
+  three months of hourly energy prices. Then edit the data source and tick **Read-only**, so a
+  report can read the file while DbRover has it open (see [Several sources](#several-sources)).
 
 Copy the reports into the reports folder, **Reload**, and run each for October 2026: `2026-10-01`
-and `2026-11-01` for the ledger's two, `2026-10-01 00:00` and `2026-11-01 00:00` for the other
-two. The valuation's tab shows **Source tx** loading, **Source assets** *waiting for tx*, then
-reading the three assets the month's transactions use, **Source prices** attached, then
+and `2026-11-01` for the two on SQLite, `2026-10-01 00:00` and `2026-11-01 00:00` for the other
+two. `battery-flows.toml`'s tab shows **Source flows** loading, **Source batteries** *waiting for
+flows*, then reading the three batteries the month's flows name, **Source prices** attached, then
 **Combine**. Its CSV file keeps every digit of each value, 26 decimal places, while the Excel
 file rounds each to the cent.
 
@@ -126,14 +125,14 @@ An output's rows are written as they come, so its time is part of the step its r
 that step's time doesn't count the outputs', and a slow writer shows as its output.
 
 The step that took the longest share of each run is in the accent colour. When it is the same
-step in every finished run listed, a line under the table names it, as *Source entries takes the
+step in every finished run listed, a line under the table names it, as *Source lines takes the
 most time in every run listed: 80% of the newest.* That is the step to look at first. Sources
 of one round run at the same time, so their shares can add up to more than the whole run.
 
 Under it, hints from the newest finished run say what to try:
 
 - **A source that reads far more than the report writes**, at least 10,000 rows and ten times
-  as many as the outputs write: *Source entries read 1,100,000 rows for 40 written. If the
+  as many as the outputs write: *Source lines read 1,100,000 rows for 40 written. If the
   combine step drops most of them, filter them in the source's query, where its database can
   use an index.* A report that adds rows up reads more than it writes on purpose; the hint is
   worth a look when the combine step filters or joins most of them away.
@@ -152,44 +151,46 @@ touch them.
 ## A report file
 
 A report is a TOML file, with one `[report]`, one or more `[[source]]`s, a `[combine]` when
-there are several, and one or more `[[output]]`s. The simplest reads one source; this trial
-balance, without the example's subtotals, does:
+there are several, and one or more `[[output]]`s. The simplest reads one source, as this one
+does, on a shop's orders:
 
 ```toml
 [report]
-name = "Trial balance"
-description = "Debits, credits and the balance of each account in a period."
+name = "Sales by product"
+description = "Each product's orders, units and amount in a period."
 params = { since = "date", until = "date" }
 
 [[source]]
-id = "balances"
-data_source = "ledger"
+id = "sales"
+data_source = "shop"
 query = """
-SELECT a.code AS account, a.name AS account_name,
-       SUM(e.debit) AS debit, SUM(e.credit) AS credit,
-       SUM(e.debit) - SUM(e.credit) AS balance
-FROM entries e JOIN accounts a ON a.id = e.account_id
-WHERE e.booked_on >= :since AND e.booked_on < :until
-GROUP BY a.code, a.name
-ORDER BY a.code
+SELECT p.sku, p.name AS product,
+       COUNT(DISTINCT o.id) AS orders, SUM(l.quantity) AS units,
+       SUM(l.quantity * l.unit_price) AS amount
+FROM order_lines l
+JOIN orders o ON o.id = l.order_id
+JOIN products p ON p.id = l.product_id
+WHERE o.placed_on >= :since AND o.placed_on < :until
+GROUP BY p.sku, p.name
+ORDER BY p.sku
 """
 max_rows = 100000
 
 [[output]]
 format = "xlsx"
-file = "trial-balance-{since:%Y-%m}.xlsx"
-sheet_name = "Trial balance"
+file = "sales-{since:%Y-%m}.xlsx"
+sheet_name = "Sales"
 columns = [
-  { name = "Account", from = "account" },
-  { name = "Name",    from = "account_name" },
-  { name = "Debit",   from = "debit",   type = "decimal(18,2)", format = "#,##0.00" },
-  { name = "Credit",  from = "credit",  type = "decimal(18,2)", format = "#,##0.00" },
-  { name = "Balance", from = "balance", type = "decimal(18,2)", format = "#,##0.00;[Red]-#,##0.00" },
+  { name = "SKU",     from = "sku" },
+  { name = "Product", from = "product" },
+  { name = "Orders",  from = "orders", type = "integer" },
+  { name = "Units",   from = "units",  type = "integer" },
+  { name = "Amount",  from = "amount", type = "decimal(18,2)", format = "#,##0.00;[Red]-#,##0.00" },
 ]
 
 [[output]]
 format = "csv"
-file = "trial-balance-{since:%Y-%m}.csv"
+file = "sales-{since:%Y-%m}.csv"
 columns = "same"
 ```
 
@@ -214,7 +215,7 @@ and `T` works in place of the space).
 | `data_source` | The data source it reads, by its name in the explorer. When two share a name, use the data source's id instead (in `data_sources.toml`). Needed. |
 | `query` | One statement that only reads, in the data source's own SQL. Needed, unless `attach = true`. |
 | `attach` | `true` for a DuckDB file that `[combine]` reads in place, without a query. See [Several sources](#several-sources). |
-| `lookup` | Reads by the values an earlier source found, as `{ from = "tx", column = "asset_id", as = "asset_ids" }`. See [Lookups](#lookups). |
+| `lookup` | Reads by the values an earlier source found, as `{ from = "flows", column = "battery_id", as = "battery_ids" }`. See [Lookups](#lookups). |
 | `columns` | The columns it makes, each with a type. Needed for a document database. See [Declared columns](#declared-columns). |
 | `max_rows` | The most rows it may return, all its lookup's batches together. 1,000,000 unless you say. |
 | `max_bytes` | The most data it may return, as `"500 MB"` or `"4 GiB"`. 1 GiB unless you say. |
@@ -283,26 +284,27 @@ needed:
 | `timestamp` | a date and time | `2026-10-01 12:00:00`, with its fraction | a date and time, to the millisecond |
 
 Decimals are rounded on their digits, half away from zero (`2.345` to `2.35`, `-2.345` to
-`-2.35`), as your database and Excel's `ROUND` do, never through a floating-point number: an
-18-decimal token amount keeps every digit. Excel's numbers hold 15 digits, so a cell with more
+`-2.35`), as your database and Excel's `ROUND` do, never through a floating-point number: a
+value with 18 decimal places keeps every digit. Excel's numbers hold 15 digits, so a cell with more
 is written as text, and the run says so for its column: give the column a type that rounds,
 such as `decimal(38,2)`, to keep its cells numbers.
 
 A value that doesn't fit stops the run with the output, the column, the row and the value, as
-`row 2, column "Debit": "n/a" isn't a decimal number`.
+`row 2, column "Amount": "n/a" isn't a decimal number`.
 
 ## Several sources
 
-The valuation reads a PostgreSQL table and a DuckDB file, and joins them:
+This report, a simpler form of `battery-flows.toml`, reads a PostgreSQL table and a DuckDB
+file, and joins each row to the latest price before it:
 
 ```toml
 [[source]]
-id = "tx"
-data_source = "ledger-postgres"
+id = "flows"
+data_source = "energy-postgres"
 query = """
-SELECT id, wallet, asset, quantity, executed_at
-FROM valuation.transactions
-WHERE executed_at >= :since AND executed_at < :until
+SELECT id, battery, zone, energy_kwh, metered_at
+FROM energy.flows
+WHERE metered_at >= :since AND metered_at < :until
 """
 
 [[source]]
@@ -312,18 +314,18 @@ attach = true
 
 [combine]
 query = """
-SELECT tx.executed_at, tx.wallet, tx.asset, tx.quantity, p.price_usd,
-       tx.quantity * p.price_usd AS value_usd
-FROM tx
+SELECT flows.metered_at, flows.battery, flows.energy_kwh, p.price_eur,
+       flows.energy_kwh * p.price_eur AS value_eur
+FROM flows
 ASOF JOIN prices.hourly_prices p
-  ON p.asset = tx.asset AND p.hour <= tx.executed_at
-ORDER BY tx.executed_at, tx.id
+  ON p.zone = flows.zone AND p.hour <= flows.metered_at
+ORDER BY flows.metered_at, flows.id
 """
 ```
 
 Each run has a DuckDB database of its own, in memory. Every source with a query runs through
 DbRover's own connection to its data source, read-only and under its limits, as a single source
-does, and its rows are loaded into a table named after its `id`: `tx` above. Sources load at
+does, and its rows are loaded into a table named after its `id`: `flows` above. Sources load at
 the same time. A DuckDB file with `attach = true` isn't copied: it is attached, read-only, as a
 database named after its `id`, so `prices.hourly_prices` reads its table in place and DuckDB
 reads only what the query needs. The `[combine]` query then runs over them, with all of
@@ -331,8 +333,8 @@ DuckDB's SQL: joins of every kind, `ASOF JOIN` for "the latest price at or befor
 window functions, `GROUP BY GROUPING SETS` for subtotals, `PIVOT`.
 
 The combine query reads nothing else: no file on your disk, no extension from the internet, no
-setting of DuckDB's. A report with one source and no `[combine]` runs without DuckDB, as in the
-trial balance.
+setting of DuckDB's. A report with one source and no `[combine]` runs without DuckDB, as the
+one under [A report file](#a-report-file) does.
 
 A DuckDB file can be read by one program while another has it open for writing only if neither
 writes. Tick **Read-only** on a DuckDB data source that a report attaches, or disconnect it
@@ -357,7 +359,7 @@ warns about its column; cast it in the combine query to what it should be.
 ### Exact numbers in DuckDB
 
 DuckDB keeps decimals exact through `+`, `-`, `*`, `SUM`, `ROUND` and comparisons: a product's
-places are the sum of its factors', up to 38 digits in all, which is why the valuation's
+places are the sum of its factors', up to 38 digits in all, which is why `battery-flows.toml`'s
 values have 26. Two things give a floating-point `DOUBLE` instead, which keeps about 15
 digits:
 
@@ -365,31 +367,31 @@ digits:
   than `amount / 100`), or cast the result: `CAST(a / b AS DECIMAL(38,18))`.
 - **`power()`**, `sqrt()`, `ln()` and the like.
 
-The outputs then round each value once, as their column's type says: the valuation's Excel file
+The outputs then round each value once, as their column's type says: `battery-flows.toml`'s Excel file
 writes values as `decimal(38,2)`, and its CSV file every digit.
 
 ## Lookups
 
 A source can read by the values an earlier source found, rather than reading everything and
-leaving the combine step to throw most of it away. The valuation reads, from DynamoDB, only the
-assets the month's transactions use:
+leaving the combine step to throw most of it away. `battery-flows.toml` reads, from DynamoDB,
+only the batteries the month's flows name:
 
 ```toml
 [[source]]
-id = "assets"
-data_source = "assets-dynamodb"
-lookup = { from = "tx", column = "asset_id", as = "asset_ids" }
-query = 'SELECT asset_id, "symbol", unit, metadata FROM valuation_assets WHERE asset_id IN :asset_ids'
+id = "batteries"
+data_source = "batteries-dynamodb"
+lookup = { from = "flows", column = "battery_id", as = "battery_ids" }
+query = 'SELECT battery_id, name, unit, "zone", metadata FROM energy_batteries WHERE battery_id IN :battery_ids'
 ```
 
-`lookup` takes the distinct values of the column `asset_id` of the source `tx`, once `tx` has
-loaded, and puts them where the query says `:asset_ids`, as a list in the query's language:
+`lookup` takes the distinct values of the column `battery_id` of the source `flows`, once
+`flows` has loaded, and puts them where the query says `:battery_ids`, as a list in the query's language:
 
 | Language | The query reads | `:ids` becomes |
 | --- | --- | --- |
 | SQL | `WHERE id IN :ids` | `('a', 'b', 7)` |
 | PartiQL (DynamoDB) | `WHERE pk IN :ids` | `['a', 'b', 7]` |
-| MongoDB | `db.assets.find({_id: {$in: :ids}})` | `["a", "b", 7]` |
+| MongoDB | `db.customers.find({_id: {$in: :ids}})` | `["a", "b", 7]` |
 | Elasticsearch, OpenSearch | `{"terms": {"id": :ids}}` | `["a", "b", 7]` |
 | Redis | `MGET :ids` | `a b 7` |
 
@@ -412,8 +414,8 @@ which matches nothing.
 
 On DynamoDB, a lookup on the table's partition key reads each item by its key. One on any other
 attribute would scan the table, which the data source's cost guard refuses (see
-[Cost guards](cloud.md#cost-guards)). PartiQL keeps some words for itself, `symbol` and `value`
-among them: quote an attribute with such a name, as `"symbol"`.
+[Cost guards](cloud.md#cost-guards)). PartiQL keeps some words for itself, `value` and `zone`
+among them: quote an attribute with such a name, as `"zone"`.
 
 ## Declared columns
 
@@ -422,10 +424,11 @@ declares the columns it makes:
 
 ```toml
 columns = [
-  { name = "asset_id", type = "text" },
-  { name = "symbol",   type = "text" },
-  { name = "unit",     type = "decimal(38,18)" },
-  { name = "chain",    from = "metadata.chain", type = "text", default = "unknown" },
+  { name = "battery_id", type = "text" },
+  { name = "name",       type = "text" },
+  { name = "unit",       type = "decimal(38,18)" },
+  { name = "zone",       type = "text" },
+  { name = "site",       from = "metadata.site", type = "text", default = "unknown" },
 ]
 ```
 
@@ -433,7 +436,7 @@ Each column is `{ name, from, type, default }`, of which only `name` is needed:
 
 - `name`: the column in the source's table, which `[combine]` reads.
 - `from`: where its value is, the same as `name` unless you say: a field of a document by its
-  path, as `metadata.chain` or `lines[0].sku`, or for a source that returns rows, the query's
+  path, as `metadata.site` or `lines[0].sku`, or for a source that returns rows, the query's
   column.
 - `type`: one of the output types (see [Columns](#columns)), `text` unless you say. Its type in
   DuckDB follows: `integer` is a `BIGINT`, `decimal(38,18)` a `DECIMAL(38,18)`, `timestamp` a
@@ -446,7 +449,7 @@ is `0.1`, an `ObjectId` its hex digits, and a date its time in UTC. A time with 
 converted to UTC; an object or an array goes into a `text` column as its JSON.
 
 A value that doesn't fit its type stops the run with the source, the item and the value, as
-`item 2 (_id "cp-7"): column "orders": "many" isn't a whole number`.
+`item 2 (_id "cust-07"): column "orders": "many" isn't a whole number`.
 
 A source on a SQL database may declare its columns too, to fix their types rather than let
 DuckDB's typing guess from the values: the examples declare SQLite's amounts `decimal(18,2)`, so
@@ -500,7 +503,7 @@ what keeps a large combine step from filling your machine's memory: lower it on 
 machine, raise it for a report that combines millions of rows.
 
 A run stopped by a limit names it, its value and where to raise it, as "It stopped at max_rows =
-1,000,000 rows. To allow more, raise max_rows in the `[[source]]` "balances" of the report's
+1,000,000 rows. To allow more, raise max_rows in the `[[source]]` "sales" of the report's
 file.", with a link to **Settings › Reports**, where its default for every report is. Before
 raising one, ask whether the query should read less: the hints under [Runs](#runs) point at a
 source that returns far more rows than the report writes.

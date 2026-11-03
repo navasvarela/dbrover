@@ -1,0 +1,246 @@
+Date,Order,Customer,Name,Country,SKU,Product,Quantity,Amount,Running total
+2026-10-01,120,cust-01,Alder Bakery,FR,C-200,Gloves,4,116.36,116.36
+2026-10-01,120,cust-01,Alder Bakery,FR,C-200,Gloves,-4,-116.36,0.00
+2026-10-04,132,cust-01,Alder Bakery,FR,A-100,Lights,4,158.12,158.12
+2026-10-04,132,cust-01,Alder Bakery,FR,C-100,Rain jacket,1,89.84,247.96
+2026-10-07,144,cust-01,Alder Bakery,FR,B-100,City bike,1,649.97,897.93
+2026-10-07,144,cust-01,Alder Bakery,FR,C-200,Gloves,1,29.28,927.21
+2026-10-10,156,cust-01,Alder Bakery,FR,B-200,Road bike,1,1290.41,2217.62
+2026-10-10,156,cust-01,Alder Bakery,FR,A-100,Lights,1,39.72,2257.34
+2026-10-13,168,cust-01,Alder Bakery,FR,P-100,Chain,4,99.40,2356.74
+2026-10-13,168,cust-01,Alder Bakery,FR,B-100,City bike,1,649.16,3005.90
+2026-10-16,180,cust-01,Alder Bakery,FR,P-200,Brake pads,4,73.16,3079.06
+2026-10-16,180,cust-01,Alder Bakery,FR,P-200,Brake pads,-4,-73.16,3005.90
+2026-10-19,192,cust-01,Alder Bakery,FR,C-100,Rain jacket,4,358.92,3364.82
+2026-10-19,192,cust-01,Alder Bakery,FR,P-100,Chain,1,24.04,3388.86
+2026-10-22,204,cust-01,Alder Bakery,FR,C-200,Gloves,4,116.68,3505.54
+2026-10-22,204,cust-01,Alder Bakery,FR,P-200,Brake pads,1,18.48,3524.02
+2026-10-25,216,cust-01,Alder Bakery,FR,A-100,Lights,4,158.44,3682.46
+2026-10-25,216,cust-01,Alder Bakery,FR,C-100,Rain jacket,1,89.92,3772.38
+2026-10-28,228,cust-01,Alder Bakery,FR,B-100,City bike,1,649.05,4421.43
+2026-10-28,228,cust-01,Alder Bakery,FR,C-200,Gloves,1,29.36,4450.79
+2026-10-31,240,cust-01,Alder Bakery,FR,B-200,Road bike,1,1290.49,5741.28
+2026-10-31,240,cust-01,Alder Bakery,FR,B-200,Road bike,-1,-1290.49,4450.79
+2026-10-01,121,cust-02,Birch Books,PT,B-200,Road bike,1,1290.71,1290.71
+2026-10-01,121,cust-02,Birch Books,PT,A-100,Lights,3,117.06,1407.77
+2026-10-04,133,cust-02,Birch Books,PT,P-100,Chain,2,48.30,1456.07
+2026-10-04,133,cust-02,Birch Books,PT,B-100,City bike,1,649.46,2105.53
+2026-10-07,145,cust-02,Birch Books,PT,P-200,Brake pads,2,37.18,2142.71
+2026-10-07,145,cust-02,Birch Books,PT,P-200,Brake pads,-2,-37.18,2105.53
+2026-10-10,157,cust-02,Birch Books,PT,C-100,Rain jacket,2,178.06,2283.59
+2026-10-10,157,cust-02,Birch Books,PT,P-100,Chain,3,73.02,2356.61
+2026-10-13,169,cust-02,Birch Books,PT,C-200,Gloves,2,58.94,2415.55
+2026-10-13,169,cust-02,Birch Books,PT,P-200,Brake pads,3,56.34,2471.89
+2026-10-16,181,cust-02,Birch Books,PT,A-100,Lights,2,79.82,2551.71
+2026-10-16,181,cust-02,Birch Books,PT,C-100,Rain jacket,3,267.66,2819.37
+2026-10-19,193,cust-02,Birch Books,PT,B-100,City bike,1,649.35,3468.72
+2026-10-19,193,cust-02,Birch Books,PT,C-200,Gloves,3,88.98,3557.70
+2026-10-22,205,cust-02,Birch Books,PT,B-200,Road bike,1,1290.79,4848.49
+2026-10-22,205,cust-02,Birch Books,PT,B-200,Road bike,-1,-1290.79,3557.70
+2026-10-25,217,cust-02,Birch Books,PT,P-100,Chain,2,48.46,3606.16
+2026-10-25,217,cust-02,Birch Books,PT,B-100,City bike,1,649.54,4255.70
+2026-10-28,229,cust-02,Birch Books,PT,P-200,Brake pads,2,37.34,4293.04
+2026-10-28,229,cust-02,Birch Books,PT,B-200,Road bike,1,1290.98,5584.02
+2026-10-31,241,cust-02,Birch Books,PT,C-100,Rain jacket,2,178.22,5762.24
+2026-10-31,241,cust-02,Birch Books,PT,P-100,Chain,3,73.26,5835.50
+2026-10-01,122,cust-03,Cedar Cycles,BE,C-100,Rain jacket,4,357.32,357.32
+2026-10-01,122,cust-03,Cedar Cycles,BE,P-100,Chain,1,24.64,381.96
+2026-10-04,134,cust-03,Cedar Cycles,BE,C-200,Gloves,4,119.08,501.04
+2026-10-04,134,cust-03,Cedar Cycles,BE,P-200,Brake pads,1,18.08,519.12
+2026-10-07,146,cust-03,Cedar Cycles,BE,A-100,Lights,4,156.84,675.96
+2026-10-07,146,cust-03,Cedar Cycles,BE,C-100,Rain jacket,1,89.52,765.48
+2026-10-10,158,cust-03,Cedar Cycles,BE,B-100,City bike,1,649.65,1415.13
+2026-10-10,158,cust-03,Cedar Cycles,BE,C-200,Gloves,1,29.96,1445.09
+2026-10-13,170,cust-03,Cedar Cycles,BE,B-200,Road bike,1,1290.09,2735.18
+2026-10-13,170,cust-03,Cedar Cycles,BE,B-200,Road bike,-1,-1290.09,1445.09
+2026-10-16,182,cust-03,Cedar Cycles,BE,P-100,Chain,4,98.12,1543.21
+2026-10-16,182,cust-03,Cedar Cycles,BE,B-100,City bike,1,649.84,2193.05
+2026-10-19,194,cust-03,Cedar Cycles,BE,P-200,Brake pads,4,75.88,2268.93
+2026-10-19,194,cust-03,Cedar Cycles,BE,B-200,Road bike,1,1290.28,3559.21
+2026-10-22,206,cust-03,Cedar Cycles,BE,C-100,Rain jacket,4,357.64,3916.85
+2026-10-22,206,cust-03,Cedar Cycles,BE,P-100,Chain,1,24.72,3941.57
+2026-10-25,218,cust-03,Cedar Cycles,BE,C-200,Gloves,4,119.40,4060.97
+2026-10-25,218,cust-03,Cedar Cycles,BE,P-200,Brake pads,1,18.16,4079.13
+2026-10-28,230,cust-03,Cedar Cycles,BE,A-100,Lights,4,157.16,4236.29
+2026-10-29,230,cust-03,Cedar Cycles,BE,A-100,Lights,-4,-157.16,4079.13
+2026-10-31,242,cust-03,Cedar Cycles,BE,B-100,City bike,1,649.73,4728.86
+2026-10-01,123,cust-04,Dogwood Design,GB,B-100,City bike,1,649.95,649.95
+2026-10-01,123,cust-04,Dogwood Design,GB,C-200,Gloves,3,87.78,737.73
+2026-10-04,135,cust-04,Dogwood Design,GB,B-200,Road bike,1,1290.39,2028.12
+2026-10-04,135,cust-04,Dogwood Design,GB,B-200,Road bike,-1,-1290.39,737.73
+2026-10-07,147,cust-04,Dogwood Design,GB,P-100,Chain,2,49.66,787.39
+2026-10-08,147,cust-04,Dogwood Design,GB,B-100,City bike,1,649.14,1436.53
+2026-10-10,159,cust-04,Dogwood Design,GB,P-200,Brake pads,2,36.54,1473.07
+2026-10-11,159,cust-04,Dogwood Design,GB,B-200,Road bike,1,1290.58,2763.65
+2026-10-13,171,cust-04,Dogwood Design,GB,C-100,Rain jacket,2,179.42,2943.07
+2026-10-14,171,cust-04,Dogwood Design,GB,P-100,Chain,3,72.06,3015.13
+2026-10-17,183,cust-04,Dogwood Design,GB,C-200,Gloves,2,58.30,3073.43
+2026-10-17,183,cust-04,Dogwood Design,GB,P-200,Brake pads,3,55.38,3128.81
+2026-10-20,195,cust-04,Dogwood Design,GB,A-100,Lights,2,79.18,3207.99
+2026-10-20,195,cust-04,Dogwood Design,GB,A-100,Lights,-2,-79.18,3128.81
+2026-10-23,207,cust-04,Dogwood Design,GB,B-100,City bike,1,649.03,3777.84
+2026-10-23,207,cust-04,Dogwood Design,GB,C-200,Gloves,3,88.02,3865.86
+2026-10-26,219,cust-04,Dogwood Design,GB,B-200,Road bike,1,1290.47,5156.33
+2026-10-26,219,cust-04,Dogwood Design,GB,A-100,Lights,3,119.34,5275.67
+2026-10-29,231,cust-04,Dogwood Design,GB,P-100,Chain,2,49.82,5325.49
+2026-10-29,231,cust-04,Dogwood Design,GB,B-100,City bike,1,649.22,5974.71
+2026-10-02,124,cust-05,Elm Electrics,ES,P-200,Brake pads,4,74.28,74.28
+2026-10-02,124,cust-05,Elm Electrics,ES,B-200,Road bike,1,1290.88,1365.16
+2026-10-05,136,cust-05,Elm Electrics,ES,C-100,Rain jacket,4,356.04,1721.20
+2026-10-05,136,cust-05,Elm Electrics,ES,P-100,Chain,1,24.32,1745.52
+2026-10-08,148,cust-05,Elm Electrics,ES,C-200,Gloves,4,117.80,1863.32
+2026-10-08,148,cust-05,Elm Electrics,ES,P-200,Brake pads,1,18.76,1882.08
+2026-10-11,160,cust-05,Elm Electrics,ES,A-100,Lights,4,159.56,2041.64
+2026-10-11,160,cust-05,Elm Electrics,ES,A-100,Lights,-4,-159.56,1882.08
+2026-10-14,172,cust-05,Elm Electrics,ES,B-100,City bike,1,649.33,2531.41
+2026-10-14,172,cust-05,Elm Electrics,ES,C-200,Gloves,1,29.64,2561.05
+2026-10-17,184,cust-05,Elm Electrics,ES,B-200,Road bike,1,1290.77,3851.82
+2026-10-17,184,cust-05,Elm Electrics,ES,A-100,Lights,1,39.08,3890.90
+2026-10-20,196,cust-05,Elm Electrics,ES,P-100,Chain,4,96.84,3987.74
+2026-10-20,196,cust-05,Elm Electrics,ES,B-100,City bike,1,649.52,4637.26
+2026-10-23,208,cust-05,Elm Electrics,ES,P-200,Brake pads,4,74.60,4711.86
+2026-10-23,208,cust-05,Elm Electrics,ES,B-200,Road bike,1,1290.96,6002.82
+2026-10-26,220,cust-05,Elm Electrics,ES,C-100,Rain jacket,4,356.36,6359.18
+2026-10-26,220,cust-05,Elm Electrics,ES,C-100,Rain jacket,-4,-356.36,6002.82
+2026-10-29,232,cust-05,Elm Electrics,ES,C-200,Gloves,4,118.12,6120.94
+2026-10-29,232,cust-05,Elm Electrics,ES,P-200,Brake pads,1,18.84,6139.78
+2026-10-02,125,cust-06,Fir Furniture,IT,A-100,Lights,2,78.38,78.38
+2026-10-02,125,cust-06,Fir Furniture,IT,A-100,Lights,-2,-78.38,0.00
+2026-10-05,137,cust-06,Fir Furniture,IT,B-100,City bike,1,649.63,649.63
+2026-10-05,137,cust-06,Fir Furniture,IT,C-200,Gloves,3,89.82,739.45
+2026-10-08,149,cust-06,Fir Furniture,IT,B-200,Road bike,1,1290.07,2029.52
+2026-10-08,149,cust-06,Fir Furniture,IT,A-100,Lights,3,118.14,2147.66
+2026-10-11,161,cust-06,Fir Furniture,IT,P-100,Chain,2,49.02,2196.68
+2026-10-11,161,cust-06,Fir Furniture,IT,B-100,City bike,1,649.82,2846.50
+2026-10-14,173,cust-06,Fir Furniture,IT,P-200,Brake pads,2,37.90,2884.40
+2026-10-14,173,cust-06,Fir Furniture,IT,B-200,Road bike,1,1290.26,4174.66
+2026-10-17,185,cust-06,Fir Furniture,IT,C-100,Rain jacket,2,178.78,4353.44
+2026-10-17,185,cust-06,Fir Furniture,IT,C-100,Rain jacket,-2,-178.78,4174.66
+2026-10-20,197,cust-06,Fir Furniture,IT,C-200,Gloves,2,59.66,4234.32
+2026-10-20,197,cust-06,Fir Furniture,IT,P-200,Brake pads,3,54.42,4288.74
+2026-10-23,209,cust-06,Fir Furniture,IT,A-100,Lights,2,78.54,4367.28
+2026-10-23,209,cust-06,Fir Furniture,IT,C-100,Rain jacket,3,268.74,4636.02
+2026-10-26,221,cust-06,Fir Furniture,IT,B-100,City bike,1,649.71,5285.73
+2026-10-26,221,cust-06,Fir Furniture,IT,C-200,Gloves,3,87.06,5372.79
+2026-10-29,233,cust-06,Fir Furniture,IT,B-200,Road bike,1,1290.15,6662.94
+2026-10-29,233,cust-06,Fir Furniture,IT,A-100,Lights,3,118.38,6781.32
+2026-10-02,126,cust-07,Gum Garden Centre,unknown,P-100,Chain,4,99.24,99.24
+2026-10-02,126,cust-07,Gum Garden Centre,unknown,B-100,City bike,1,649.12,748.36
+2026-10-05,138,cust-07,Gum Garden Centre,unknown,P-200,Brake pads,4,73.00,821.36
+2026-10-05,138,cust-07,Gum Garden Centre,unknown,B-200,Road bike,1,1290.56,2111.92
+2026-10-08,150,cust-07,Gum Garden Centre,unknown,C-100,Rain jacket,4,358.76,2470.68
+2026-10-08,150,cust-07,Gum Garden Centre,unknown,C-100,Rain jacket,-4,-358.76,2111.92
+2026-10-11,162,cust-07,Gum Garden Centre,unknown,C-200,Gloves,4,116.52,2228.44
+2026-10-11,162,cust-07,Gum Garden Centre,unknown,P-200,Brake pads,1,18.44,2246.88
+2026-10-14,174,cust-07,Gum Garden Centre,unknown,A-100,Lights,4,158.28,2405.16
+2026-10-14,174,cust-07,Gum Garden Centre,unknown,C-100,Rain jacket,1,89.88,2495.04
+2026-10-17,186,cust-07,Gum Garden Centre,unknown,B-100,City bike,1,649.01,3144.05
+2026-10-17,186,cust-07,Gum Garden Centre,unknown,C-200,Gloves,1,29.32,3173.37
+2026-10-20,198,cust-07,Gum Garden Centre,unknown,B-200,Road bike,1,1290.45,4463.82
+2026-10-20,198,cust-07,Gum Garden Centre,unknown,A-100,Lights,1,39.76,4503.58
+2026-10-23,210,cust-07,Gum Garden Centre,unknown,P-100,Chain,4,99.56,4603.14
+2026-10-23,210,cust-07,Gum Garden Centre,unknown,P-100,Chain,-4,-99.56,4503.58
+2026-10-26,222,cust-07,Gum Garden Centre,unknown,P-200,Brake pads,4,73.32,4576.90
+2026-10-26,222,cust-07,Gum Garden Centre,unknown,B-200,Road bike,1,1290.64,5867.54
+2026-10-29,234,cust-07,Gum Garden Centre,unknown,C-100,Rain jacket,4,359.08,6226.62
+2026-10-30,234,cust-07,Gum Garden Centre,unknown,P-100,Chain,1,24.08,6250.70
+2026-10-02,127,cust-08,Hazel Hotels,AT,C-200,Gloves,2,58.86,58.86
+2026-10-02,127,cust-08,Hazel Hotels,AT,P-200,Brake pads,3,56.22,115.08
+2026-10-05,139,cust-08,Hazel Hotels,AT,A-100,Lights,2,79.74,194.82
+2026-10-06,139,cust-08,Hazel Hotels,AT,C-100,Rain jacket,3,267.54,462.36
+2026-10-08,151,cust-08,Hazel Hotels,AT,B-100,City bike,1,649.31,1111.67
+2026-10-09,151,cust-08,Hazel Hotels,AT,C-200,Gloves,3,88.86,1200.53
+2026-10-11,163,cust-08,Hazel Hotels,AT,B-200,Road bike,1,1290.75,2491.28
+2026-10-12,163,cust-08,Hazel Hotels,AT,A-100,Lights,3,117.18,2608.46
+2026-10-14,175,cust-08,Hazel Hotels,AT,P-100,Chain,2,48.38,2656.84
+2026-10-15,175,cust-08,Hazel Hotels,AT,P-100,Chain,-2,-48.38,2608.46
+2026-10-18,187,cust-08,Hazel Hotels,AT,P-200,Brake pads,2,37.26,2645.72
+2026-10-18,187,cust-08,Hazel Hotels,AT,B-200,Road bike,1,1290.94,3936.66
+2026-10-21,199,cust-08,Hazel Hotels,AT,C-100,Rain jacket,2,178.14,4114.80
+2026-10-21,199,cust-08,Hazel Hotels,AT,P-100,Chain,3,73.14,4187.94
+2026-10-24,211,cust-08,Hazel Hotels,AT,C-200,Gloves,2,59.02,4246.96
+2026-10-24,211,cust-08,Hazel Hotels,AT,P-200,Brake pads,3,56.46,4303.42
+2026-10-27,223,cust-08,Hazel Hotels,AT,A-100,Lights,2,79.90,4383.32
+2026-10-27,223,cust-08,Hazel Hotels,AT,C-100,Rain jacket,3,267.78,4651.10
+2026-10-30,235,cust-08,Hazel Hotels,AT,B-100,City bike,1,649.39,5300.49
+2026-10-30,235,cust-08,Hazel Hotels,AT,B-100,City bike,-1,-649.39,4651.10
+2026-10-03,128,cust-09,Ivy Interiors,SE,B-200,Road bike,1,1290.05,1290.05
+2026-10-03,128,cust-09,Ivy Interiors,SE,A-100,Lights,1,39.36,1329.41
+2026-10-06,140,cust-09,Ivy Interiors,SE,P-100,Chain,4,97.96,1427.37
+2026-10-06,140,cust-09,Ivy Interiors,SE,P-100,Chain,-4,-97.96,1329.41
+2026-10-09,152,cust-09,Ivy Interiors,SE,P-200,Brake pads,4,75.72,1405.13
+2026-10-09,152,cust-09,Ivy Interiors,SE,B-200,Road bike,1,1290.24,2695.37
+2026-10-12,164,cust-09,Ivy Interiors,SE,C-100,Rain jacket,4,357.48,3052.85
+2026-10-12,164,cust-09,Ivy Interiors,SE,P-100,Chain,1,24.68,3077.53
+2026-10-15,176,cust-09,Ivy Interiors,SE,C-200,Gloves,4,119.24,3196.77
+2026-10-15,176,cust-09,Ivy Interiors,SE,P-200,Brake pads,1,18.12,3214.89
+2026-10-18,188,cust-09,Ivy Interiors,SE,A-100,Lights,4,157.00,3371.89
+2026-10-18,188,cust-09,Ivy Interiors,SE,C-100,Rain jacket,1,89.56,3461.45
+2026-10-21,200,cust-09,Ivy Interiors,SE,B-100,City bike,1,649.69,4111.14
+2026-10-21,200,cust-09,Ivy Interiors,SE,B-100,City bike,-1,-649.69,3461.45
+2026-10-24,212,cust-09,Ivy Interiors,SE,B-200,Road bike,1,1290.13,4751.58
+2026-10-24,212,cust-09,Ivy Interiors,SE,A-100,Lights,1,39.44,4791.02
+2026-10-27,224,cust-09,Ivy Interiors,SE,P-100,Chain,4,98.28,4889.30
+2026-10-27,224,cust-09,Ivy Interiors,SE,B-100,City bike,1,649.88,5539.18
+2026-10-30,236,cust-09,Ivy Interiors,SE,P-200,Brake pads,4,72.04,5611.22
+2026-10-30,236,cust-09,Ivy Interiors,SE,B-200,Road bike,1,1290.32,6901.54
+2026-10-03,129,cust-10,Juniper Joinery,DK,C-100,Rain jacket,2,179.34,179.34
+2026-10-03,129,cust-10,Juniper Joinery,DK,P-100,Chain,3,74.94,254.28
+2026-10-06,141,cust-10,Juniper Joinery,DK,C-200,Gloves,2,58.22,312.50
+2026-10-06,141,cust-10,Juniper Joinery,DK,P-200,Brake pads,3,55.26,367.76
+2026-10-09,153,cust-10,Juniper Joinery,DK,A-100,Lights,2,79.10,446.86
+2026-10-09,153,cust-10,Juniper Joinery,DK,C-100,Rain jacket,3,269.58,716.44
+2026-10-12,165,cust-10,Juniper Joinery,DK,B-100,City bike,1,649.99,1366.43
+2026-10-12,165,cust-10,Juniper Joinery,DK,B-100,City bike,-1,-649.99,716.44
+2026-10-15,177,cust-10,Juniper Joinery,DK,B-200,Road bike,1,1290.43,2006.87
+2026-10-15,177,cust-10,Juniper Joinery,DK,A-100,Lights,3,119.22,2126.09
+2026-10-18,189,cust-10,Juniper Joinery,DK,P-100,Chain,2,49.74,2175.83
+2026-10-18,189,cust-10,Juniper Joinery,DK,B-100,City bike,1,649.18,2825.01
+2026-10-21,201,cust-10,Juniper Joinery,DK,P-200,Brake pads,2,36.62,2861.63
+2026-10-21,201,cust-10,Juniper Joinery,DK,B-200,Road bike,1,1290.62,4152.25
+2026-10-24,213,cust-10,Juniper Joinery,DK,C-100,Rain jacket,2,179.50,4331.75
+2026-10-24,213,cust-10,Juniper Joinery,DK,P-100,Chain,3,72.18,4403.93
+2026-10-27,225,cust-10,Juniper Joinery,DK,C-200,Gloves,2,58.38,4462.31
+2026-10-27,225,cust-10,Juniper Joinery,DK,C-200,Gloves,-2,-58.38,4403.93
+2026-10-30,237,cust-10,Juniper Joinery,DK,A-100,Lights,2,79.26,4483.19
+2026-10-30,237,cust-10,Juniper Joinery,DK,C-100,Rain jacket,3,269.82,4753.01
+2026-10-03,130,cust-11,Kauri Kitchens,NL,B-100,City bike,1,649.29,649.29
+2026-10-03,130,cust-11,Kauri Kitchens,NL,B-100,City bike,-1,-649.29,0.00
+2026-10-06,142,cust-11,Kauri Kitchens,NL,B-200,Road bike,1,1290.73,1290.73
+2026-10-06,142,cust-11,Kauri Kitchens,NL,A-100,Lights,1,39.04,1329.77
+2026-10-09,154,cust-11,Kauri Kitchens,NL,P-100,Chain,4,96.68,1426.45
+2026-10-09,154,cust-11,Kauri Kitchens,NL,B-100,City bike,1,649.48,2075.93
+2026-10-12,166,cust-11,Kauri Kitchens,NL,P-200,Brake pads,4,74.44,2150.37
+2026-10-12,166,cust-11,Kauri Kitchens,NL,B-200,Road bike,1,1290.92,3441.29
+2026-10-15,178,cust-11,Kauri Kitchens,NL,C-100,Rain jacket,4,356.20,3797.49
+2026-10-15,178,cust-11,Kauri Kitchens,NL,P-100,Chain,1,24.36,3821.85
+2026-10-18,190,cust-11,Kauri Kitchens,NL,C-200,Gloves,4,117.96,3939.81
+2026-10-18,190,cust-11,Kauri Kitchens,NL,C-200,Gloves,-4,-117.96,3821.85
+2026-10-21,202,cust-11,Kauri Kitchens,NL,A-100,Lights,4,159.72,3981.57
+2026-10-21,202,cust-11,Kauri Kitchens,NL,C-100,Rain jacket,1,89.24,4070.81
+2026-10-24,214,cust-11,Kauri Kitchens,NL,B-100,City bike,1,649.37,4720.18
+2026-10-24,214,cust-11,Kauri Kitchens,NL,C-200,Gloves,1,29.68,4749.86
+2026-10-27,226,cust-11,Kauri Kitchens,NL,B-200,Road bike,1,1290.81,6040.67
+2026-10-28,226,cust-11,Kauri Kitchens,NL,A-100,Lights,1,39.12,6079.79
+2026-10-30,238,cust-11,Kauri Kitchens,NL,P-100,Chain,4,97.00,6176.79
+2026-10-31,238,cust-11,Kauri Kitchens,NL,B-100,City bike,1,649.56,6826.35
+2026-10-03,131,cust-12,Larch Lighting,unknown,P-200,Brake pads,2,37.82,37.82
+2026-10-03,131,cust-12,Larch Lighting,unknown,B-200,Road bike,1,1290.22,1328.04
+2026-10-06,143,cust-12,Larch Lighting,unknown,C-100,Rain jacket,2,178.70,1506.74
+2026-10-07,143,cust-12,Larch Lighting,unknown,P-100,Chain,3,73.98,1580.72
+2026-10-09,155,cust-12,Larch Lighting,unknown,C-200,Gloves,2,59.58,1640.30
+2026-10-10,155,cust-12,Larch Lighting,unknown,C-200,Gloves,-2,-59.58,1580.72
+2026-10-12,167,cust-12,Larch Lighting,unknown,A-100,Lights,2,78.46,1659.18
+2026-10-13,167,cust-12,Larch Lighting,unknown,C-100,Rain jacket,3,268.62,1927.80
+2026-10-15,179,cust-12,Larch Lighting,unknown,B-100,City bike,1,649.67,2577.47
+2026-10-16,179,cust-12,Larch Lighting,unknown,C-200,Gloves,3,89.94,2667.41
+2026-10-19,191,cust-12,Larch Lighting,unknown,B-200,Road bike,1,1290.11,3957.52
+2026-10-19,191,cust-12,Larch Lighting,unknown,A-100,Lights,3,118.26,4075.78
+2026-10-22,203,cust-12,Larch Lighting,unknown,P-100,Chain,2,49.10,4124.88
+2026-10-22,203,cust-12,Larch Lighting,unknown,B-100,City bike,1,649.86,4774.74
+2026-10-25,215,cust-12,Larch Lighting,unknown,P-200,Brake pads,2,37.98,4812.72
+2026-10-25,215,cust-12,Larch Lighting,unknown,P-200,Brake pads,-2,-37.98,4774.74
+2026-10-28,227,cust-12,Larch Lighting,unknown,C-100,Rain jacket,2,178.86,4953.60
+2026-10-28,227,cust-12,Larch Lighting,unknown,P-100,Chain,3,74.22,5027.82
+2026-10-31,239,cust-12,Larch Lighting,unknown,C-200,Gloves,2,59.74,5087.56
+2026-10-31,239,cust-12,Larch Lighting,unknown,P-200,Brake pads,3,54.54,5142.10

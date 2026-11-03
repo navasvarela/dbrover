@@ -1,0 +1,65 @@
+# Sales by category: each product's units, sales and returns in a period, with a subtotal for
+# each category and a total, to Excel and CSV. Runs on the "shop" data source that shop.sql
+# makes.
+
+[report]
+name = "Sales by category"
+description = "Each product's units, sales and returns in a period, with a subtotal for each category."
+# The period: from :since, up to but not including :until.
+params = { since = "date", until = "date" }
+
+# Every product, with each of its order lines in the period: a product without one comes once,
+# with no amounts, so it still shows. The amounts are declared, so each is rounded to the cent
+# as it loads and summed exactly in DuckDB.
+[[source]]
+id = "lines"
+data_source = "shop"
+query = """
+SELECT p.category, p.sku, p.name AS product, l.quantity, l.amount
+FROM products p
+LEFT JOIN order_lines l
+  ON l.product_id = p.id AND l.ordered_on >= :since AND l.ordered_on < :until
+"""
+columns = [
+  { name = "category", type = "text" },
+  { name = "sku",      type = "text" },
+  { name = "product",  type = "text" },
+  { name = "quantity", type = "integer" },
+  { name = "amount",   type = "decimal(18,2)" },
+]
+
+# GROUPING SETS makes, in one pass, a row per product, a subtotal per category, and the total.
+# The label is a column of its own, so ORDER BY reads the source's category, not the label.
+[combine]
+query = """
+SELECT CASE WHEN GROUPING(category) = 1 THEN 'Total'
+            WHEN GROUPING(sku) = 1 THEN 'Total ' || category
+            ELSE category END AS label,
+       sku, product,
+       COALESCE(SUM(quantity), 0) AS units,
+       COALESCE(SUM(amount) FILTER (WHERE amount > 0), 0) AS sold,
+       COALESCE(-SUM(amount) FILTER (WHERE amount < 0), 0) AS returned,
+       COALESCE(SUM(amount), 0) AS net
+FROM lines
+GROUP BY GROUPING SETS ((category, sku, product), (category), ())
+ORDER BY GROUPING(category), category, GROUPING(sku), sku
+"""
+
+[[output]]
+format = "xlsx"
+file = "sales-by-category-{since:%Y-%m}.xlsx"
+sheet_name = "Sales by category"
+columns = [
+  { name = "Category", from = "label" },
+  { name = "SKU",      from = "sku",      type = "text" },
+  { name = "Product",  from = "product" },
+  { name = "Units",    from = "units",    type = "integer" },
+  { name = "Sold",     from = "sold",     type = "decimal(18,2)", format = "#,##0.00" },
+  { name = "Returned", from = "returned", type = "decimal(18,2)", format = "#,##0.00" },
+  { name = "Net",      from = "net",      type = "decimal(18,2)", format = "#,##0.00;[Red]-#,##0.00" },
+]
+
+[[output]]
+format = "csv"
+file = "sales-by-category-{since:%Y-%m}.csv"
+columns = "same"

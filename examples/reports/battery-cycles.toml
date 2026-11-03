@@ -1,0 +1,127 @@
+# Battery cycles: each discharge in a period matched against the charges it drew from, first in,
+# first out, with the price when each was charged and when it was discharged, to Excel and CSV.
+# Reads the same three data sources as battery-flows.toml: the flows in PostgreSQL, the
+# batteries in DynamoDB and the hourly prices in a DuckDB file.
+
+[report]
+name = "Battery cycles"
+description = "Each discharge matched against the charges it drew from, first in, first out."
+# The period whose discharges are reported: from :since, up to but not including :until.
+params = { since = "timestamp", until = "timestamp" }
+
+# PostgreSQL: every flow before the period's end, not only the period's: a discharge in
+# October may draw on a charge from September.
+[[source]]
+id = "flows"
+data_source = "energy-postgres"
+query = """
+SELECT id, battery_id, amount, metered_at
+FROM energy.flows
+WHERE metered_at < :until
+"""
+columns = [
+  { name = "id",         type = "integer" },
+  { name = "battery_id", type = "text" },
+  { name = "amount",     type = "decimal(38,0)" },
+  { name = "metered_at", type = "timestamp" },
+]
+
+# DynamoDB: the batteries those flows name, read by key, as in battery-flows.toml.
+[[source]]
+id = "batteries"
+data_source = "batteries-dynamodb"
+lookup = { from = "flows", column = "battery_id", as = "battery_ids" }
+query = 'SELECT battery_id, name, unit, "zone" FROM energy_batteries WHERE battery_id IN :battery_ids'
+columns = [
+  { name = "battery_id", type = "text" },
+  { name = "name",       type = "text" },
+  { name = "unit",       type = "decimal(38,18)" },
+  { name = "zone",       type = "text" },
+]
+
+[[source]]
+id = "prices"
+data_source = "prices-duckdb"
+attach = true
+
+# First in, first out without a loop. Each charge of a battery is a range of the battery's
+# running charged energy, from what was charged before it to that plus its own. Each discharge
+# is a range of the battery's running discharged energy in the same way. First in, first out
+# means a discharge draws on the charges whose ranges overlap its own, by as much as they
+# overlap, which a join on the overlap finds. That holds as long as a battery's charge never
+# goes below zero, as in the examples' data. Every quantity and price is a decimal, so every
+# product is exact.
+[combine]
+query = """
+WITH metered AS (
+  SELECT flows.id, flows.metered_at, batteries.name, flows.amount * batteries.unit AS energy_kwh,
+         p.price_eur
+  FROM flows
+  JOIN batteries USING (battery_id)
+  ASOF JOIN prices.hourly_prices p
+    ON p.zone = batteries.zone AND p.hour <= flows.metered_at
+),
+charges AS (
+  SELECT name, metered_at AS charged_at, price_eur AS charge_price,
+         SUM(energy_kwh) OVER running - energy_kwh AS starts_at,
+         SUM(energy_kwh) OVER running AS ends_at
+  FROM metered
+  WHERE energy_kwh > 0
+  WINDOW running AS (PARTITION BY name ORDER BY metered_at, id ROWS UNBOUNDED PRECEDING)
+),
+discharges AS (
+  SELECT id, name, metered_at AS discharged_at, price_eur AS discharge_price,
+         SUM(-energy_kwh) OVER running + energy_kwh AS starts_at,
+         SUM(-energy_kwh) OVER running AS ends_at
+  FROM metered
+  WHERE energy_kwh < 0
+  WINDOW running AS (PARTITION BY name ORDER BY metered_at, id ROWS UNBOUNDED PRECEDING)
+),
+matched AS (
+  SELECT d.discharged_at, d.id, d.name, c.charged_at, c.charge_price, d.discharge_price,
+         LEAST(c.ends_at, d.ends_at) - GREATEST(c.starts_at, d.starts_at) AS energy_kwh
+  FROM discharges d
+  JOIN charges c
+    ON c.name = d.name AND c.starts_at < d.ends_at AND d.starts_at < c.ends_at
+  WHERE d.discharged_at >= :since AND d.discharged_at < :until
+)
+SELECT discharged_at, name, charged_at, energy_kwh, charge_price, discharge_price,
+       energy_kwh * charge_price AS charge_cost,
+       energy_kwh * discharge_price AS discharge_value,
+       energy_kwh * discharge_price - energy_kwh * charge_price AS difference
+FROM matched
+ORDER BY discharged_at, id, charged_at
+"""
+memory_limit = "1 GiB"
+
+[[output]]
+format = "xlsx"
+file = "battery-cycles-{since:%Y-%m}.xlsx"
+sheet_name = "Battery cycles"
+columns = [
+  { name = "Discharged",               from = "discharged_at",   type = "timestamp", format = "yyyy-mm-dd hh:mm" },
+  { name = "Battery",                  from = "name" },
+  { name = "Charged",                  from = "charged_at",      type = "timestamp", format = "yyyy-mm-dd hh:mm" },
+  { name = "Energy (kWh)",             from = "energy_kwh",      type = "decimal(38,9)", format = "#,##0.000######" },
+  { name = "Charge price (EUR/kWh)",   from = "charge_price",    type = "decimal(38,8)", format = "0.00######" },
+  { name = "Discharge price (EUR/kWh)", from = "discharge_price", type = "decimal(38,8)", format = "0.00######" },
+  { name = "Charge cost (EUR)",        from = "charge_cost",     type = "decimal(38,2)", format = "#,##0.00" },
+  { name = "Discharge value (EUR)",    from = "discharge_value", type = "decimal(38,2)", format = "#,##0.00" },
+  { name = "Difference (EUR)",         from = "difference",      type = "decimal(38,2)", format = "#,##0.00;[Red]-#,##0.00" },
+]
+
+# The CSV file keeps every digit, to check against.
+[[output]]
+format = "csv"
+file = "battery-cycles-{since:%Y-%m}.csv"
+columns = [
+  { name = "Discharged",               from = "discharged_at",   type = "timestamp" },
+  { name = "Battery",                  from = "name" },
+  { name = "Charged",                  from = "charged_at",      type = "timestamp" },
+  { name = "Energy (kWh)",             from = "energy_kwh",      type = "decimal" },
+  { name = "Charge price (EUR/kWh)",   from = "charge_price",    type = "decimal" },
+  { name = "Discharge price (EUR/kWh)", from = "discharge_price", type = "decimal" },
+  { name = "Charge cost (EUR)",        from = "charge_cost",     type = "decimal" },
+  { name = "Discharge value (EUR)",    from = "discharge_value", type = "decimal" },
+  { name = "Difference (EUR)",         from = "difference",      type = "decimal" },
+]
