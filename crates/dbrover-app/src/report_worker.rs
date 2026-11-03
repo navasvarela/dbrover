@@ -14,9 +14,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use dbrover_core::describe_error;
-use dbrover_engine::{PasswordCommands, ProcessRunner, ReportSource, SourceAccess, Tunnels};
+use dbrover_engine::{PasswordCommands, ProcessRunner, SourceAccess, Tunnels};
 use dbrover_report::{
-    Plan, RunEvent, RunFailure, RunFolders, RunRequest, RunValues, Step, read_report,
+    Logic, Plan, RunEvent, RunFailure, RunFolders, RunRequest, RunValues, Step, read_report,
 };
 use dbrover_store::{AppPaths, CustomFile, CustomFileKind, DataSourceFile, os_keychain};
 
@@ -43,8 +43,8 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
             limits::limit_processor_time(plan.timeout);
             out.send(&RunEvent::Started {
                 report: plan.name.clone(),
-                source: plan.source.id.clone(),
-                data_source: plan.source.data_source.name.clone(),
+                sources: plan.source_starts(),
+                combine: matches!(plan.logic, Logic::Combine(_)),
             });
             let folders = RunFolders {
                 folder: &request.folder,
@@ -164,23 +164,11 @@ fn run_report(
             tunnels: &tunnels,
             commands: &commands,
         };
-        let source_step = || Step::Source {
-            id: plan.source.id.clone(),
-        };
-        let opened = Instant::now();
-        let mut source = ReportSource::open(&plan.source, &values.parameters, access)
-            .await
-            .map_err(|error| RunFailure {
-                step: source_step(),
-                message: error.message,
-                limit: error.limit,
-            })?;
-        let ran = dbrover_report::run(plan, values, &mut source, folders, opened, &mut |event| {
+        dbrover_report::run(plan, values, &access, folders, &mut |event| {
             out.send(&event);
         })
-        .await;
-        source.close().await;
-        ran.map(drop)
+        .await
+        .map(drop)
     })
 }
 

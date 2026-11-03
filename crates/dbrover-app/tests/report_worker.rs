@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use dbrover_core::{ConnectionConfig, DataSource, DataSourceId, SafetyLevel, SqliteConfig};
 use dbrover_engine::WorkerRun;
-use dbrover_report::{RunEvent, RunRequest, Step};
+use dbrover_report::{RunEvent, RunRequest, SourceStart, Step};
 use dbrover_store::DataSourceFile;
 
 const BINARY: &str = env!("CARGO_BIN_EXE_dbrover");
@@ -174,6 +174,8 @@ fn kind(event: &RunEvent) -> &'static str {
         RunEvent::Started { .. } => "started",
         RunEvent::Progress { .. } => "progress",
         RunEvent::SourceDone { .. } => "source done",
+        RunEvent::SourceAttached { .. } => "attached",
+        RunEvent::CombineDone { .. } => "combine done",
         RunEvent::Preview(_) => "preview",
         RunEvent::OutputWritten(_) => "written",
         RunEvent::Finished { .. } => "finished",
@@ -228,8 +230,12 @@ fn runs_a_report_and_reports_each_step() {
         events[0],
         RunEvent::Started {
             report: "Trial balance".to_owned(),
-            source: "balances".to_owned(),
-            data_source: "ledger".to_owned(),
+            sources: vec![SourceStart {
+                id: "balances".to_owned(),
+                data_source: "ledger".to_owned(),
+                attached: false,
+            }],
+            combine: false,
         }
     );
     assert_eq!(

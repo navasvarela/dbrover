@@ -154,9 +154,11 @@ impl RunRecord {
         match event {
             RunEvent::Started { .. } => {}
             RunEvent::Progress { rows, bytes, .. } => (self.rows, self.bytes) = (rows, bytes),
-            RunEvent::SourceDone { rows, bytes, .. } => {
+            RunEvent::SourceDone { rows, bytes, .. }
+            | RunEvent::CombineDone { rows, bytes, .. } => {
                 (self.rows, self.bytes, self.source_done) = (rows, bytes, true);
             }
+            RunEvent::SourceAttached { .. } => {}
             RunEvent::Preview(preview) => self.preview = Some(preview),
             RunEvent::OutputWritten(file) => self.files.push(file),
             RunEvent::Finished { elapsed_ms } => self.end = Some(RunEnd::Finished { elapsed_ms }),

@@ -1,10 +1,12 @@
-//! The limits a run stops at, and their defaults (`docs/reporting.md`, "Guardrails in RP1").
+//! The limits a run stops at, and their defaults (`docs/reporting.md`, "Guardrails in RP1"
+//! and "Guardrails in RP2").
 //!
 //! The defaults are generous for a report a person runs from the app, and small enough that a
 //! source without a filter stops long before it fills a laptop's memory or disk. A report
 //! changes them in its file; RP4's metrics will say whether they should move.
 
 use std::fmt;
+use std::num::NonZeroUsize;
 use std::time::Duration;
 
 /// The most rows a source returns. A general ledger past a million rows sets its own.
@@ -17,6 +19,14 @@ pub const DEFAULT_SOURCE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub const DEFAULT_MAX_SIZE: ByteSize = ByteSize(1 << 30);
 /// How long a whole run may take before the app stops the worker.
 pub const DEFAULT_RUN_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+
+/// How long the combine step's query may run.
+pub const DEFAULT_COMBINE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// The memory the run's DuckDB holds before it spills to disk: room for joins and sorts of a
+/// few million rows, and a fraction of a laptop's memory.
+pub const DEFAULT_MEMORY_LIMIT: ByteSize = ByteSize(2 << 30);
+/// What the run's DuckDB may spill to disk, past which the combine step fails.
+pub const DEFAULT_MAX_TEMP_SIZE: ByteSize = ByteSize(10 << 30);
 
 /// A source's limits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +42,42 @@ impl Default for SourceLimits {
             max_rows: DEFAULT_MAX_ROWS,
             max_bytes: DEFAULT_MAX_BYTES,
             timeout: DEFAULT_SOURCE_TIMEOUT,
+        }
+    }
+}
+
+/// The limits of the run's DuckDB, which the sources load into and the combine step runs in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CombineLimits {
+    pub timeout: Duration,
+    pub memory_limit: ByteSize,
+    /// `None` for half the processor's cores, which leaves the app and the rest of the machine
+    /// room while a report runs.
+    pub threads: Option<NonZeroUsize>,
+    pub max_temp_size: ByteSize,
+}
+
+impl CombineLimits {
+    /// The threads DuckDB runs on: those set, or half the processor's cores.
+    pub fn threads(&self) -> usize {
+        self.threads.map_or_else(
+            || {
+                std::thread::available_parallelism()
+                    .map_or(1, |cores| cores.get() / 2)
+                    .max(1)
+            },
+            NonZeroUsize::get,
+        )
+    }
+}
+
+impl Default for CombineLimits {
+    fn default() -> Self {
+        Self {
+            timeout: DEFAULT_COMBINE_TIMEOUT,
+            memory_limit: DEFAULT_MEMORY_LIMIT,
+            threads: None,
+            max_temp_size: DEFAULT_MAX_TEMP_SIZE,
         }
     }
 }

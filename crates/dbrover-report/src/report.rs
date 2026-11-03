@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use dbrover_export::{ColumnType, CustomFormatId, Preset, SchemaColumn};
 
-use crate::{FileName, OutputLimits, SourceLimits};
+use crate::{CombineLimits, FileName, OutputLimits, SourceLimits};
 
 /// A report file, checked on its own.
 #[derive(Debug, Clone, PartialEq)]
@@ -15,8 +15,10 @@ pub struct Report {
     pub params: Vec<Param>,
     /// How long the whole run may take before the app stops it.
     pub timeout: Duration,
-    /// The one source RP1 reads; RP2 makes this a list.
-    pub source: Source,
+    /// As the file lists them: one without `combine`, one or more with it.
+    pub sources: Vec<Source>,
+    /// The query that combines the sources' tables into the rows the outputs write.
+    pub combine: Option<Combine>,
     pub outputs: Vec<Output>,
 }
 
@@ -27,15 +29,31 @@ pub struct Param {
     pub param_type: ColumnType,
 }
 
-/// A query on one data source.
+/// What a report reads from one data source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Source {
-    /// What the run's progress and errors call it.
+    /// What the run's progress and errors call it, and the name of its table, or of its
+    /// attached database, in the combine step.
     pub id: String,
     /// A data source's name, or its id when two share the name.
     pub data_source: String,
+    pub read: SourceRead,
+}
+
+/// How a source is read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SourceRead {
+    /// Its query's rows, under its limits.
+    Query { query: String, limits: SourceLimits },
+    /// A DuckDB file, attached read-only for the combine step to read in place.
+    Attach,
+}
+
+/// The combine step: a DuckDB query over the sources, and the limits of the DuckDB it runs in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Combine {
     pub query: String,
-    pub limits: SourceLimits,
+    pub limits: CombineLimits,
 }
 
 /// A file a run writes.

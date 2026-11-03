@@ -1,20 +1,21 @@
-//! A report against what it names: its data source and `exports.toml`'s presets, found and
+//! A report against what it names: its data sources and `exports.toml`'s presets, found and
 //! checked, so that a run needs nothing but its parameters' values.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::time::Duration;
 
-use dbrover_core::DataSource;
+use dbrover_core::{ConnectionConfig, DataSource, DuckDbDatabase};
 use dbrover_export::{
     CellTarget, ColumnType, CsvOptions, CustomFormat, CustomFormatKind, ExportFormat, ExportSpec,
     SchemaColumn, XlsxOptions,
 };
 use dbrover_language::QueryLanguage;
-use dbrover_sql::{Dialect, ParameterValues};
+use dbrover_sql::{Dialect, ParameterValues, StatementKind};
 
 use crate::{
-    FileName, Output, OutputColumns, OutputLimits, OutputWriter, Param, Report, Source,
-    SourceLimits,
+    CombineLimits, FileName, Output, OutputColumns, OutputLimits, OutputWriter, Param, Report,
+    Source, SourceLimits, SourceRead, SourceStart,
 };
 
 /// A report ready to run.
@@ -22,23 +23,79 @@ use crate::{
 pub struct Plan {
     pub name: String,
     pub description: Option<String>,
-    /// In the order the query first uses them, then those only file names use, as the file
-    /// lists them: the order the tab asks for them in.
+    /// In the order the queries first use them, sources first, then those only file names
+    /// use, as the file lists them: the order the tab asks for them in.
     pub params: Vec<Param>,
     pub timeout: Duration,
-    pub source: PlannedSource,
+    pub logic: Logic,
     pub outputs: Vec<PlannedOutput>,
 }
 
-/// The source, with its data source found.
+/// Where the rows the outputs write come from.
 #[derive(Debug, Clone, PartialEq)]
-pub struct PlannedSource {
+pub enum Logic {
+    /// One source's rows, as it returns them, without DuckDB. Boxed: a data source's settings
+    /// are large beside a list of sources.
+    Direct(Box<QuerySource>),
+    /// The combine step's rows, over every source loaded or attached.
+    Combine(Combined),
+}
+
+/// The sources a combine step reads, and the step.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Combined {
+    /// As the file lists them.
+    pub sources: Vec<PlannedSource>,
+    pub combine: PlannedCombine,
+}
+
+/// A source with its data source found.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PlannedSource {
+    Query(QuerySource),
+    Attached(AttachedSource),
+}
+
+impl PlannedSource {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Query(source) => &source.id,
+            Self::Attached(source) => &source.id,
+        }
+    }
+
+    pub fn data_source(&self) -> &DataSource {
+        match self {
+            Self::Query(source) => &source.data_source,
+            Self::Attached(source) => &source.data_source,
+        }
+    }
+}
+
+/// A source whose query's rows the run reads.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QuerySource {
     pub id: String,
     pub data_source: DataSource,
     /// The data source's SQL dialect, which its query and parameters are read in.
     pub dialect: Dialect,
     pub query: String,
     pub limits: SourceLimits,
+}
+
+/// A DuckDB file the combine step reads in place.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AttachedSource {
+    pub id: String,
+    pub data_source: DataSource,
+    pub path: PathBuf,
+}
+
+/// The combine step's query, in DuckDB's SQL, and the limits of the DuckDB it runs in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedCombine {
+    pub query: String,
+    pub limits: CombineLimits,
 }
 
 /// An output, with its preset found and its columns known.
@@ -105,24 +162,73 @@ impl Plan {
         presets: &[CustomFormat],
     ) -> Result<Self, Vec<String>> {
         let mut problems = Vec::new();
-        let source = plan_source(&report.source, data_sources).map_err(|problem| {
-            problems.push(format!("source {:?}: {problem}", report.source.id));
+        let sources: Vec<PlannedSource> = report
+            .sources
+            .iter()
+            .filter_map(|source| {
+                plan_source(source, data_sources)
+                    .map_err(|problem| {
+                        problems.push(format!("source {:?}: {problem}", source.id));
+                    })
+                    .ok()
+            })
+            .collect();
+        let combine = report.combine.map(|combine| {
+            if let Err(problem) = check_combine(&combine.query) {
+                problems.push(format!("[combine]: {problem}"));
+            }
+            PlannedCombine {
+                query: combine.query,
+                limits: combine.limits,
+            }
         });
         let outputs = plan_outputs(&report.outputs, presets, &mut problems);
-        let params = match &source {
-            Ok(source) => ordered_params(&report.params, source, &mut problems),
-            Err(()) => report.params.clone(),
+        let params = if sources.len() == report.sources.len() {
+            ordered_params(
+                &report.params,
+                &queries(&sources, combine.as_ref()),
+                &mut problems,
+            )
+        } else {
+            report.params.clone()
         };
-        match source {
-            Ok(source) if problems.is_empty() => Ok(Self {
-                name: report.name,
-                description: report.description,
-                params,
-                timeout: report.timeout,
-                source,
-                outputs,
+        let logic = match (combine, <[PlannedSource; 1]>::try_from(sources)) {
+            (Some(combine), sources) => Logic::Combine(Combined {
+                sources: sources.map_or_else(|sources| sources, Vec::from),
+                combine,
             }),
-            _ => Err(problems),
+            (None, Ok([PlannedSource::Query(source)])) => Logic::Direct(Box::new(source)),
+            // Reading the file found what makes these two cases, a source left unplanned
+            // above, or an attached source without [combine], and listed it.
+            (None, _) => return Err(problems),
+        };
+        if !problems.is_empty() {
+            return Err(problems);
+        }
+        Ok(Self {
+            name: report.name,
+            description: report.description,
+            params,
+            timeout: report.timeout,
+            logic,
+            outputs,
+        })
+    }
+
+    /// Each source, as the run's start lists them.
+    pub fn source_starts(&self) -> Vec<SourceStart> {
+        let start = |source: &PlannedSource| SourceStart {
+            id: source.id().to_owned(),
+            data_source: source.data_source().name.clone(),
+            attached: matches!(source, PlannedSource::Attached(_)),
+        };
+        match &self.logic {
+            Logic::Direct(source) => vec![SourceStart {
+                id: source.id.clone(),
+                data_source: source.data_source.name.clone(),
+                attached: false,
+            }],
+            Logic::Combine(combined) => combined.sources.iter().map(start).collect(),
         }
     }
 
@@ -182,6 +288,20 @@ impl Plan {
 
 fn plan_source(source: &Source, data_sources: &[DataSource]) -> Result<PlannedSource, String> {
     let data_source = find_data_source(&source.data_source, data_sources)?;
+    match &source.read {
+        SourceRead::Query { query, limits } => {
+            plan_query(&source.id, data_source, query, *limits).map(PlannedSource::Query)
+        }
+        SourceRead::Attach => attach(&source.id, data_source).map(PlannedSource::Attached),
+    }
+}
+
+fn plan_query(
+    id: &str,
+    data_source: &DataSource,
+    query: &str,
+    limits: SourceLimits,
+) -> Result<QuerySource, String> {
     let driver = data_source.config.driver();
     let dialect = QueryLanguage::from(driver).dialect().ok_or_else(|| {
         format!(
@@ -191,13 +311,108 @@ fn plan_source(source: &Source, data_sources: &[DataSource]) -> Result<PlannedSo
             driver.display_name()
         )
     })?;
-    Ok(PlannedSource {
-        id: source.id.clone(),
+    Ok(QuerySource {
+        id: id.to_owned(),
         data_source: data_source.clone(),
         dialect,
-        query: source.query.clone(),
-        limits: source.limits,
+        query: query.to_owned(),
+        limits,
     })
+}
+
+/// The file an attached source reads, which must be a DuckDB file.
+fn attach(id: &str, data_source: &DataSource) -> Result<AttachedSource, String> {
+    let path = match &data_source.config {
+        ConnectionConfig::DuckDb(config) => match &config.database {
+            DuckDbDatabase::File { path, .. } => path.clone(),
+            DuckDbDatabase::InMemory => {
+                return Err(format!(
+                    "{:?} is a DuckDB database in memory, which has nothing to attach; attach \
+                     a DuckDB file, or give the source a query",
+                    data_source.name
+                ));
+            }
+        },
+        other => {
+            return Err(format!(
+                "attach = true reads a DuckDB file in place, and {:?} is a {} data source; \
+                 give the source a query instead",
+                data_source.name,
+                other.driver().display_name()
+            ));
+        }
+    };
+    Ok(AttachedSource {
+        id: id.to_owned(),
+        data_source: data_source.clone(),
+        path,
+    })
+}
+
+/// First words of a statement that reads, in DuckDB.
+const QUERY_WORDS: [&str; 8] = [
+    "from",
+    "pivot",
+    "select",
+    "summarize",
+    "table",
+    "unpivot",
+    "values",
+    "with",
+];
+
+/// Whether the combine query is one statement that only reads.
+fn check_combine(query: &str) -> Result<(), String> {
+    let statements = dbrover_sql::split_statements(query, Dialect::DuckDb).len();
+    if statements != 1 {
+        return Err(format!(
+            "the query holds {statements} statements; the combine step is one query that only \
+             reads"
+        ));
+    }
+    match QueryLanguage::Sql(Dialect::DuckDb).classify(query) {
+        Ok(StatementKind::Read) => Ok(()),
+        Ok(kind) => Err(format!(
+            "the query {}; the combine step only reads the sources' tables",
+            kind.description()
+        )),
+        // The parser behind `classify` doesn't read all of DuckDB's SQL (`ASOF JOIN … ON`, for
+        // one), so a query it can't parse only has to start as one. The run's DuckDB is the
+        // guard that holds: locked down, with its attached files read-only, it refuses what
+        // such a query might try beyond reading.
+        Err(_) if starts_as_query(query) => Ok(()),
+        Err(unclassified) => Err(format!(
+            "{unclassified}; the combine step is one query that only reads"
+        )),
+    }
+}
+
+fn starts_as_query(query: &str) -> bool {
+    dbrover_sql::first_word(query, Dialect::DuckDb)
+        .is_some_and(|word| QUERY_WORDS.contains(&word.to_ascii_lowercase().as_str()))
+}
+
+/// Each query the run sends, with the dialect it is read in, sources first.
+fn queries<'a>(
+    sources: &'a [PlannedSource],
+    combine: Option<&'a PlannedCombine>,
+) -> Vec<(String, &'a str, Dialect)> {
+    let sources = sources.iter().filter_map(|source| match source {
+        PlannedSource::Query(source) => Some((
+            format!("source {:?}", source.id),
+            source.query.as_str(),
+            source.dialect,
+        )),
+        PlannedSource::Attached(_) => None,
+    });
+    let combine = combine.map(|combine| {
+        (
+            "[combine]".to_owned(),
+            combine.query.as_str(),
+            Dialect::DuckDb,
+        )
+    });
+    sources.chain(combine).collect()
 }
 
 /// The data source `wanted` names: by name if one has it, else by id.
@@ -244,31 +459,34 @@ fn find_data_source<'a>(
         })
 }
 
-/// The parameters in the order the query first uses them, then the rest, with a problem for
+/// The parameters in the order the queries first use them, then the rest, with a problem for
 /// each `:name` the report doesn't declare.
 fn ordered_params(
     params: &[Param],
-    source: &PlannedSource,
+    queries: &[(String, &str, Dialect)],
     problems: &mut Vec<String>,
 ) -> Vec<Param> {
-    let used = dbrover_sql::parameter_names(&source.query, source.dialect);
     let mut ordered: Vec<Param> = Vec::new();
-    for name in &used {
-        match params.iter().find(|param| &param.name == name) {
-            Some(param) => ordered.push(param.clone()),
-            None => problems.push(format!(
-                "source {:?}: the query uses :{name}, which [report] params doesn't declare; \
-                 add {name} = \"text\" (or its type) to params",
-                source.id
-            )),
+    for (label, query, dialect) in queries {
+        for name in dbrover_sql::parameter_names(query, *dialect) {
+            if ordered.iter().any(|param| param.name == name) {
+                continue;
+            }
+            match params.iter().find(|param| param.name == name) {
+                Some(param) => ordered.push(param.clone()),
+                None => problems.push(format!(
+                    "{label}: the query uses :{name}, which [report] params doesn't declare; \
+                     add {name} = \"text\" (or its type) to params"
+                )),
+            }
         }
     }
-    ordered.extend(
-        params
-            .iter()
-            .filter(|param| !used.contains(&param.name))
-            .cloned(),
-    );
+    let unused: Vec<Param> = params
+        .iter()
+        .filter(|param| !ordered.iter().any(|used| used.name == param.name))
+        .cloned()
+        .collect();
+    ordered.extend(unused);
     ordered
 }
 

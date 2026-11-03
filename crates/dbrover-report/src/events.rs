@@ -1,6 +1,6 @@
 //! What a run reports as it goes: the events the worker writes as JSON Lines and the app
-//! reads (`docs/reporting.md`, "The worker in RP1"). Shared by both sides, so they can't
-//! disagree on a field.
+//! reads (`docs/reporting.md`, "The worker in RP1" and "Progress in RP2"). Shared by both
+//! sides, so they can't disagree on a field.
 
 use std::path::PathBuf;
 
@@ -10,27 +10,51 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum RunEvent {
-    /// The report was read and planned, and its source is being opened.
+    /// The report was read and planned, and its sources are being opened.
     Started {
         report: String,
-        source: String,
-        data_source: String,
+        /// As the file lists them.
+        sources: Vec<SourceStart>,
+        /// Whether a combine step makes the rows the outputs write.
+        combine: bool,
     },
-    /// What the source has returned so far, about once a second.
+    /// What a step has returned so far, about once a second.
     Progress {
+        step: Step,
         rows: u64,
         bytes: u64,
         elapsed_ms: u64,
     },
-    /// The source returned its last row.
+    /// A source returned its last row, and was loaded into DuckDB if the report combines.
     SourceDone {
+        id: String,
         rows: u64,
         bytes: u64,
         /// From opening the source to its first row; `None` when it returned none.
         first_row_ms: Option<u64>,
         elapsed_ms: u64,
+        /// The table it was loaded as, for the combine step; empty when the report writes
+        /// its rows as they come.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        table: Vec<LoadedColumn>,
+        /// One sentence each, such as a column too precise for DuckDB's decimals.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        warnings: Vec<String>,
     },
-    /// The first rows, as the source returned them.
+    /// A DuckDB file was attached for the combine step to read in place.
+    SourceAttached {
+        id: String,
+        path: PathBuf,
+    },
+    /// The combine step returned its last row, written to every output.
+    CombineDone {
+        rows: u64,
+        bytes: u64,
+        /// From starting the query to its first row; `None` when it returned none.
+        first_row_ms: Option<u64>,
+        elapsed_ms: u64,
+    },
+    /// The first rows the outputs were given.
     Preview(Preview),
     /// A file put in place.
     OutputWritten(WrittenFile),
@@ -52,11 +76,28 @@ impl RunEvent {
     }
 }
 
+/// A source as a run starts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceStart {
+    pub id: String,
+    /// Its data source's name.
+    pub data_source: String,
+    pub attached: bool,
+}
+
+/// A column of a source's table in DuckDB, and the type it was given.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LoadedColumn {
+    pub name: String,
+    /// As DuckDB names it, as `DECIMAL(38,18)`.
+    pub type_name: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Preview {
     pub columns: Vec<String>,
     pub rows: Vec<Vec<Option<String>>>,
-    /// Whether the source returned more rows than these.
+    /// Whether the outputs were given more rows than these.
     pub more: bool,
 }
 
@@ -110,6 +151,8 @@ pub enum Step {
     Source {
         id: String,
     },
+    /// The combine step's query, and the DuckDB it runs in.
+    Combine,
     Output {
         /// Counted from 1, as the report's problems count them.
         number: usize,
@@ -124,6 +167,7 @@ impl std::fmt::Display for Step {
         match self {
             Self::Report => f.write_str("the report"),
             Self::Source { id } => write!(f, "source {id:?}"),
+            Self::Combine => f.write_str("the combine step"),
             Self::Output { number, file } => write!(f, "output {number} ({file})"),
             Self::Worker => f.write_str("the worker"),
         }

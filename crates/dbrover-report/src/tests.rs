@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use dbrover_core::{
-    ConnectionConfig, DataSource, DataSourceId, RedisConfig, SafetyLevel, ServerConfig,
-    SqliteConfig, TlsMode,
+    ConnectionConfig, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase, PostgresConfig,
+    RedisConfig, SafetyLevel, ServerConfig, SqliteConfig, TlsMode,
 };
 use dbrover_export::{
     ColumnType, CustomFormat, CustomFormatId, CustomFormatKind, DecimalSpec, ExportFormat,
@@ -66,23 +66,108 @@ fn sqlite(name: &str) -> DataSource {
     }
 }
 
+fn server(port: u16, database: &str) -> ServerConfig {
+    ServerConfig {
+        host: "localhost".to_owned(),
+        port: port.into(),
+        database: database.to_owned(),
+        user: String::new(),
+        tls: TlsMode::Disable,
+        ssh: None,
+        password_command: None,
+        cloud_sign_in: None,
+    }
+}
+
 fn redis(name: &str) -> DataSource {
     DataSource {
         config: ConnectionConfig::Redis(RedisConfig {
-            server: ServerConfig {
-                host: "localhost".to_owned(),
-                port: 6379.into(),
-                database: "0".to_owned(),
-                user: String::new(),
-                tls: TlsMode::Disable,
-                ssh: None,
-                password_command: None,
-                cloud_sign_in: None,
-            },
+            server: server(6379, "0"),
             separator: ":".to_owned(),
         }),
         ..sqlite(name)
     }
+}
+
+fn postgres(name: &str) -> DataSource {
+    DataSource {
+        config: ConnectionConfig::Postgres(PostgresConfig {
+            server: server(5432, "ledger"),
+        }),
+        ..sqlite(name)
+    }
+}
+
+fn duckdb(name: &str, database: DuckDbDatabase) -> DataSource {
+    DataSource {
+        config: ConnectionConfig::DuckDb(DuckDbConfig { database }),
+        ..sqlite(name)
+    }
+}
+
+fn prices_file() -> DuckDbDatabase {
+    DuckDbDatabase::File {
+        path: PathBuf::from("/tmp/prices.duckdb"),
+        read_only: true,
+    }
+}
+
+/// The valuation in `docs/reporting.md`'s RP2 section.
+const VALUATION: &str = r##"
+[report]
+name = "Valuation"
+description = "Each transaction valued at its asset's price in the hour it ran."
+params = { since = "timestamp", until = "timestamp" }
+
+[[source]]
+id = "tx"
+data_source = "ledger-postgres"
+query = """
+SELECT id, wallet, asset, quantity, executed_at
+FROM valuation.transactions
+WHERE executed_at >= :since AND executed_at < :until
+"""
+
+[[source]]
+id = "prices"
+data_source = "prices-duckdb"
+attach = true
+
+[combine]
+query = """
+SELECT tx.executed_at, tx.wallet, tx.asset, tx.quantity, p.price_usd,
+       tx.quantity * p.price_usd AS value_usd
+FROM tx
+ASOF JOIN prices.hourly_prices p
+  ON p.asset = tx.asset AND p.hour <= tx.executed_at
+ORDER BY tx.executed_at, tx.id
+"""
+memory_limit = "1 GiB"
+
+[[output]]
+format = "xlsx"
+file = "valuation-{since:%Y-%m}.xlsx"
+sheet_name = "Valuation"
+columns = [
+  { name = "Executed (UTC)", from = "executed_at", type = "timestamp", format = "yyyy-mm-dd hh:mm" },
+  { name = "Wallet",         from = "wallet" },
+  { name = "Asset",          from = "asset" },
+  { name = "Quantity",       from = "quantity",  type = "decimal(38,18)" },
+  { name = "Price (USD)",    from = "price_usd", type = "decimal(38,8)", format = "#,##0.00######" },
+  { name = "Value (USD)",    from = "value_usd", type = "decimal(38,2)", format = "#,##0.00" },
+]
+
+[[output]]
+format = "csv"
+file = "valuation-{since:%Y-%m}.csv"
+columns = "same"
+"##;
+
+fn valuation_sources() -> [DataSource; 2] {
+    [
+        postgres("ledger-postgres"),
+        duckdb("prices-duckdb", prices_file()),
+    ]
 }
 
 fn preset(id: &str, format: ExportFormat, options: &str) -> CustomFormat {
@@ -134,15 +219,22 @@ fn reads_the_trial_balance() {
             .collect::<Vec<_>>(),
         [("since", ColumnType::Date), ("until", ColumnType::Date)]
     );
-    assert_eq!(report.source.id, "balances");
-    assert_eq!(report.source.data_source, "ledger");
+    let [source] = report.sources.as_slice() else {
+        panic!("{:?}", report.sources);
+    };
+    assert_eq!(source.id, "balances");
+    assert_eq!(source.data_source, "ledger");
+    let SourceRead::Query { limits, .. } = &source.read else {
+        panic!("{:?}", source.read);
+    };
     assert_eq!(
-        report.source.limits,
+        *limits,
         SourceLimits {
             max_rows: 100_000,
             ..SourceLimits::default()
         }
     );
+    assert_eq!(report.combine, None);
     let [excel, csv] = report.outputs.as_slice() else {
         panic!("{:?}", report.outputs);
     };
@@ -202,8 +294,11 @@ fn reads_limits_and_defaults() {
     )
     .unwrap();
     assert_eq!(report.timeout, Duration::from_secs(3600));
+    let SourceRead::Query { limits, .. } = &report.sources[0].read else {
+        panic!("{:?}", report.sources);
+    };
     assert_eq!(
-        report.source.limits,
+        *limits,
         SourceLimits {
             max_rows: 5_000_000,
             max_bytes: ByteSize(4 << 30),
@@ -241,22 +336,15 @@ fn names_every_problem_with_its_place() {
         ),
         (
             format!(
-                "{}\n[combine]\nquery = \"SELECT 1\"",
-                one_source("", "SELECT 1", output)
-            ),
-            "[combine] combines several sources in DuckDB, which comes with RP2",
-        ),
-        (
-            format!(
                 "{}\n[[source]]\nid = \"t\"\ndata_source = \"x\"\nquery = \"SELECT 2\"",
                 one_source("", "SELECT 1", output)
             ),
-            "the file has 2 [[source]] tables; a report reads one until RP2",
+            "the file has 2 [[source]] tables; several sources are combined by a [combine] \
+             query",
         ),
         (
-            one_source("", "SELECT 1", output)
-                .replace("id = \"s\"\n", "id = \"s\"\nattach = true\n"),
-            "source \"s\": attaching a DuckDB data source to the combine step comes with RP2",
+            one_source("", "", output).replace("query = \"\"\n", "attach = true\n"),
+            "source \"s\": an attached source is read in place by a [combine] query",
         ),
         (
             one_source("", "SELECT 1", output)
@@ -438,8 +526,11 @@ fn plans_the_trial_balance_with_its_preset_and_the_same_columns() {
         &presets(),
     )
     .unwrap();
-    assert_eq!(plan.source.data_source, ledger);
-    assert_eq!(plan.source.dialect, dbrover_sql::Dialect::Sqlite);
+    let Logic::Direct(source) = &plan.logic else {
+        panic!("{:?}", plan.logic);
+    };
+    assert_eq!(source.data_source, ledger);
+    assert_eq!(source.dialect, dbrover_sql::Dialect::Sqlite);
     let [excel, csv] = plan.outputs.as_slice() else {
         panic!("{:?}", plan.outputs);
     };
@@ -461,14 +552,17 @@ fn finds_the_data_source_by_name_or_by_id() {
             "format = \"csv\"\nfile = \"x.csv\"",
         ))
         .map(|mut report| {
-            report.source.data_source = data_source.to_owned();
+            report.sources[0].data_source = data_source.to_owned();
             report
         })
         .unwrap()
     };
     let twins = [sqlite("ledger"), sqlite("ledger")];
     let by_id = Plan::new(report(&twins[1].id.to_string()), &twins, &[]).unwrap();
-    assert_eq!(by_id.source.data_source.id, twins[1].id);
+    let Logic::Direct(source) = &by_id.logic else {
+        panic!("{:?}", by_id.logic);
+    };
+    assert_eq!(source.data_source.id, twins[1].id);
 
     let ambiguous = Plan::new(report("ledger"), &twins, &[]).unwrap_err();
     assert!(
@@ -604,5 +698,231 @@ fn refuses_values_that_make_two_outputs_one_file() {
     assert_eq!(
         plan.values(&same).unwrap_err(),
         ["output 2: another output already writes \"x.csv\" with these values"]
+    );
+}
+
+#[test]
+fn reads_and_plans_the_valuation() {
+    let report = read_report(VALUATION).unwrap();
+    let ids: Vec<(&str, bool)> = report
+        .sources
+        .iter()
+        .map(|source| (source.id.as_str(), source.read == SourceRead::Attach))
+        .collect();
+    assert_eq!(ids, [("tx", false), ("prices", true)]);
+    let combine = report.combine.clone().unwrap();
+    assert!(combine.query.contains("ASOF JOIN"));
+    assert_eq!(
+        combine.limits,
+        CombineLimits {
+            memory_limit: ByteSize(1 << 30),
+            ..CombineLimits::default()
+        }
+    );
+
+    let plan = Plan::new(report, &valuation_sources(), &[]).unwrap();
+    let Logic::Combine(combined) = &plan.logic else {
+        panic!("{:?}", plan.logic);
+    };
+    let [PlannedSource::Query(tx), PlannedSource::Attached(prices)] = combined.sources.as_slice()
+    else {
+        panic!("{:?}", combined.sources);
+    };
+    assert_eq!(tx.dialect, dbrover_sql::Dialect::Postgres);
+    assert_eq!(prices.path, PathBuf::from("/tmp/prices.duckdb"));
+    assert_eq!(
+        plan.params
+            .iter()
+            .map(|param| param.name.as_str())
+            .collect::<Vec<_>>(),
+        ["since", "until"]
+    );
+    assert_eq!(
+        plan.source_starts(),
+        [
+            SourceStart {
+                id: "tx".to_owned(),
+                data_source: "ledger-postgres".to_owned(),
+                attached: false,
+            },
+            SourceStart {
+                id: "prices".to_owned(),
+                data_source: "prices-duckdb".to_owned(),
+                attached: true,
+            },
+        ]
+    );
+}
+
+#[test]
+fn reads_the_combine_steps_limits() {
+    let text = VALUATION.replace(
+        "memory_limit = \"1 GiB\"",
+        "memory_limit = \"512 MiB\"\nthreads = 3\ntimeout = \"2m\"\nmax_temp_size = \"20 GB\"",
+    );
+    let limits = read_report(&text).unwrap().combine.unwrap().limits;
+    assert_eq!(
+        limits,
+        CombineLimits {
+            timeout: Duration::from_secs(120),
+            memory_limit: ByteSize(512 << 20),
+            threads: std::num::NonZeroUsize::new(3),
+            max_temp_size: ByteSize(20_000_000_000),
+        }
+    );
+    assert_eq!(limits.threads(), 3);
+    assert!(CombineLimits::default().threads() >= 1);
+}
+
+/// Each problem RP2's keys can have, and the sentence that names it.
+#[test]
+fn names_every_problem_with_several_sources() {
+    let cases: Vec<(String, &str)> = vec![
+        (
+            VALUATION.replace("id = \"tx\"", "id = \"my tx\""),
+            "source \"my tx\": an id names the source's table in [combine], so it is letters, \
+             digits and _, starting with a letter",
+        ),
+        (
+            VALUATION.replace("id = \"prices\"", "id = \"Memory\""),
+            "source \"Memory\": \"Memory\" is a name DuckDB keeps for itself",
+        ),
+        (
+            VALUATION.replace("id = \"prices\"", "id = \"TX\""),
+            "source \"TX\": another source already has this id",
+        ),
+        (
+            VALUATION.replace("attach = true", "attach = true\nquery = \"SELECT 1\""),
+            "source \"prices\": an attached source has no query",
+        ),
+        (
+            VALUATION.replace("attach = true", "attach = true\nmax_rows = 10"),
+            "source \"prices\": max_rows bounds what a source's query copies",
+        ),
+        (
+            VALUATION.replace("attach = true", "attach = \"yes\""),
+            "source \"prices\": attach must be true or false",
+        ),
+        (
+            VALUATION.replace("attach = true", "attach = false"),
+            "source \"prices\": needs a query, or attach = true to read a DuckDB file in place",
+        ),
+        (
+            VALUATION.replace(
+                "[combine]\nquery = \"\"\"",
+                "[combine]\nprql = \"from tx\"\nquery = \"\"\"",
+            ),
+            "[combine]: PRQL in [combine] comes with RP5",
+        ),
+        (
+            VALUATION.replace("memory_limit = \"1 GiB\"", "threads = 0"),
+            "[combine]: threads must be a whole number greater than zero",
+        ),
+        (
+            VALUATION.replace("memory_limit = \"1 GiB\"", "memory = \"1 GiB\""),
+            "[combine]: \"memory\" is not part of [combine], which has query, timeout, \
+             memory_limit, threads and max_temp_size",
+        ),
+        (
+            VALUATION.replace("[combine]\nquery = \"\"\"", "[combine]\nsql = \"\"\""),
+            "[combine]: needs a query, the DuckDB SQL that combines the sources' tables",
+        ),
+    ];
+    for (text, expected) in cases {
+        let found = problems(&text);
+        assert!(
+            found.iter().any(|problem| problem.starts_with(expected)),
+            "expected {expected:?} among {found:#?}"
+        );
+    }
+}
+
+#[test]
+fn plans_attached_sources_only_on_duckdb_files_and_a_combine_that_only_reads() {
+    let report = || read_report(VALUATION).unwrap();
+    let [ledger, _] = valuation_sources();
+    let on_postgres =
+        Plan::new(report(), &[ledger.clone(), postgres("prices-duckdb")], &[]).unwrap_err();
+    assert_eq!(
+        on_postgres,
+        [
+            "source \"prices\": attach = true reads a DuckDB file in place, and \
+             \"prices-duckdb\" is a PostgreSQL data source; give the source a query instead"
+        ]
+    );
+    let in_memory = Plan::new(
+        report(),
+        &[
+            ledger.clone(),
+            duckdb("prices-duckdb", DuckDbDatabase::InMemory),
+        ],
+        &[],
+    )
+    .unwrap_err();
+    assert!(
+        in_memory[0]
+            .starts_with("source \"prices\": \"prices-duckdb\" is a DuckDB database in memory"),
+        "{in_memory:?}"
+    );
+
+    let writes = VALUATION
+        .replace(
+            "SELECT tx.executed_at",
+            "INSERT INTO prices.hourly_prices SELECT tx.executed_at",
+        )
+        .replace("ASOF JOIN", "JOIN");
+    let refused = Plan::new(read_report(&writes).unwrap(), &valuation_sources(), &[]).unwrap_err();
+    assert_eq!(
+        refused,
+        ["[combine]: the query changes data; the combine step only reads the sources' tables"]
+    );
+    let two = VALUATION.replace("ORDER BY tx.executed_at, tx.id", "ORDER BY 1; SELECT 2");
+    let refused = Plan::new(read_report(&two).unwrap(), &valuation_sources(), &[]).unwrap_err();
+    assert_eq!(
+        refused,
+        ["[combine]: the query holds 2 statements; the combine step is one query that only reads"]
+    );
+    let unparsed = VALUATION.replace("SELECT tx.executed_at", "COPY tx.executed_at");
+    let refused =
+        Plan::new(read_report(&unparsed).unwrap(), &valuation_sources(), &[]).unwrap_err();
+    assert!(
+        refused[0].ends_with("; the combine step is one query that only reads"),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn orders_parameters_across_the_sources_and_the_combine_step() {
+    let text = VALUATION
+        .replace(
+            "params = { since = \"timestamp\", until = \"timestamp\" }",
+            "params = { wallet = \"text\", until = \"timestamp\", since = \"timestamp\", \
+             note = \"text\" }",
+        )
+        .replace(
+            "ORDER BY tx.executed_at, tx.id",
+            "WHERE tx.wallet = :wallet OR :wallet = ''\nORDER BY tx.executed_at, tx.id",
+        );
+    let plan = Plan::new(read_report(&text).unwrap(), &valuation_sources(), &[]).unwrap();
+    assert_eq!(
+        plan.params
+            .iter()
+            .map(|param| param.name.as_str())
+            .collect::<Vec<_>>(),
+        ["since", "until", "wallet", "note"]
+    );
+
+    let undeclared = VALUATION.replace(
+        "ORDER BY tx.executed_at, tx.id",
+        "WHERE tx.asset = :asset\nORDER BY tx.executed_at, tx.id",
+    );
+    let problems =
+        Plan::new(read_report(&undeclared).unwrap(), &valuation_sources(), &[]).unwrap_err();
+    assert_eq!(
+        problems,
+        [
+            "[combine]: the query uses :asset, which [report] params doesn't declare; add asset = \
+          \"text\" (or its type) to params"
+        ]
     );
 }

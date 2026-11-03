@@ -7,7 +7,9 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use dbrover_report::{LimitHit, Preview, RunEvent, RunFailure, RunRequest, Step, WrittenFile};
+use dbrover_report::{
+    LimitHit, Preview, RunEvent, RunFailure, RunRequest, SourceStart, Step, WrittenFile,
+};
 use dbrover_store::ReportFiles;
 use egui_kittest::kittest::NodeT;
 
@@ -134,14 +136,21 @@ fn finished_run(folder: &Path) -> Vec<RunEvent> {
     vec![
         RunEvent::Started {
             report: "Trial balance".to_owned(),
-            source: "balances".to_owned(),
-            data_source: "shop".to_owned(),
+            sources: vec![SourceStart {
+                id: "balances".to_owned(),
+                data_source: "shop".to_owned(),
+                attached: false,
+            }],
+            combine: false,
         },
         RunEvent::SourceDone {
+            id: "balances".to_owned(),
             rows: 2,
             bytes: 30,
             first_row_ms: Some(4),
             elapsed_ms: 5,
+            table: Vec::new(),
+            warnings: Vec::new(),
         },
         RunEvent::Preview(Preview {
             columns: vec!["account".to_owned(), "balance".to_owned()],
@@ -237,8 +246,12 @@ fn cancel_stops_the_running_report() {
     let dir = tempfile::tempdir().unwrap();
     let launcher = StandIn::new(vec![RunEvent::Started {
         report: "Trial balance".to_owned(),
-        source: "balances".to_owned(),
-        data_source: "shop".to_owned(),
+        sources: vec![SourceStart {
+            id: "balances".to_owned(),
+            data_source: "shop".to_owned(),
+            attached: false,
+        }],
+        combine: false,
     }]);
     let mut harness = start_with_reports(dir.path(), TRIAL_BALANCE, launcher);
 
