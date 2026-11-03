@@ -54,10 +54,7 @@ impl Console {
             engine,
             data_source: id,
             dialect,
-            server: ServerInfo {
-                product: String::new(),
-                version: String::new(),
-            },
+            server: ServerInfo::new(String::new(), String::new()),
             next_run: 0,
             _dir: dir,
         };

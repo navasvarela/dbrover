@@ -14,6 +14,7 @@ mod data_source;
 mod error;
 mod execution;
 mod job;
+mod managed_service;
 mod mongo_uri;
 mod password;
 mod password_command;
@@ -48,6 +49,10 @@ pub use execution::{
     CancelHandle, Cell, ColumnInfo, ResultCursor, ResultShape, Row, TransactionStatus, ValueKind,
 };
 pub use job::{JobId, JobPage, JobProgress, JobService, JobState, Jobs, ProgressHandle};
+pub use managed_service::{
+    ManagedService, ServiceAddress, ServiceEngine, ServicePreset, ServiceSignIn, ServiceTls,
+    ServiceVendor,
+};
 pub use mongo_uri::MongoUri;
 pub use password::Password;
 pub use password_command::PasswordCommand;

@@ -834,10 +834,7 @@ mod tests {
 
     #[test]
     fn asks_for_a_plan_to_draw_where_dbrover_reads_the_format() {
-        let server = |product: &str, version: &str| ServerInfo {
-            product: product.to_owned(),
-            version: version.to_owned(),
-        };
+        let server = |product: &str, version: &str| ServerInfo::new(product, version.to_owned());
         let mysql_84 = server("MySQL", "8.4.13");
         let mysql_80 = server("MySQL", "8.0.40");
         let mariadb = server("MariaDB", "11.4.13");
@@ -917,10 +914,7 @@ mod tests {
 
     #[test]
     fn explains_as_tree_on_mysql_8_only() {
-        let server = |product: &str, version: &str| ServerInfo {
-            product: product.to_owned(),
-            version: version.to_owned(),
-        };
+        let server = |product: &str, version: &str| ServerInfo::new(product, version.to_owned());
         let cases = [
             (Some(server("MySQL", "8.4.3")), "EXPLAIN FORMAT=TREE "),
             (Some(server("MySQL", "8.0.16")), "EXPLAIN FORMAT=TREE "),

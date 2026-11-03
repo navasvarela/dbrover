@@ -63,10 +63,7 @@ pub async fn connect(config: &DynamoDbConfig) -> Result<DynamoConnection, Driver
     };
     Ok(DynamoConnection {
         client,
-        server_info: ServerInfo {
-            product: PRODUCT.to_owned(),
-            version,
-        },
+        server_info: ServerInfo::new(PRODUCT, version),
         running: Arc::new(Running::default()),
         keys: KeyCache::default(),
         bound: PageBound::DEFAULT,

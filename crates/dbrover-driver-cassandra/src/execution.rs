@@ -344,10 +344,7 @@ mod tests {
     fn timeouts(seconds: u32, product: &str) -> Timeouts {
         Timeouts::new(
             NonZeroU32::new(seconds),
-            &ServerInfo {
-                product: product.to_owned(),
-                version: "1".to_owned(),
-            },
+            &ServerInfo::new(product, "1".to_owned()),
         )
     }
 
