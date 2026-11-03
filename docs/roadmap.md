@@ -2076,9 +2076,9 @@ popups only because the dock once held nothing but consoles: the history and an 
 definition float over the console they belong beside. The design is in
 [Dialogs and tabs](dialogs-and-tabs.md). In layers, one PR each:
 
-- **D8a — Plan:** this section and the design page, with four open questions for the user: the
-  cell viewer as a side panel or a tab, export and CSV import out of their modal while they
-  run, the object dialog as a tab, and where program output goes.
+- **D8a — Plan:** this section and the design page. Its four open questions were answered on
+  2026-11-03: the cell viewer becomes a side panel, export and CSV import runs move to the status
+  bar, and the object dialog and program output stay windows.
 - **D8b — The dialog kit:** four dialog sizes as a parameter of `widgets::dialog`, the form
   header and footer in every modal, one primary or danger action in each, and the floating
   windows that stay with the same footer, opening below the menu bar.
@@ -2089,9 +2089,13 @@ definition float over the console they belong beside. The design is in
   a connection.
 - **D8f — The config files' problems in Settings:** `snippets.toml` on the Editor page and
   `theme.toml` on the Appearance page, like the keymap, custom actions and exports already are.
-- **D8g — Manual,** pictures and text.
+- **D8g — The cell viewer as a side panel** in the console, following the selected cell.
+- **D8h — Export and CSV import run in the background,** with their progress and Cancel in the
+  status bar.
+- **D8i — Manual,** pictures and text.
 
 **Exit:** every modal has the same header, footer and sizes, every destructive action is red,
-the history and definitions are dock tabs, and no config file's problems open a window.
+the history and definitions are dock tabs, the cell viewer is a panel, no export blocks the app,
+and no config file's problems open a window.
 
 **Demo note:** planned; the design page's demo note says what to try once built.

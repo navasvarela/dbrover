@@ -1,6 +1,6 @@
 # Dialogs and tabs
 
-Status: **planned** (2026-11-03). This is the design of D8 in the
+Status: **planned** (2026-11-03; the open questions answered the same day). This is the design of D8 in the
 [roadmap](roadmap.md#d8--one-style-for-dialogs-and-tabs-for-what-stays-open).
 
 D7 gave dialogs a window's margin and buttons by role, but each dialog still lays itself out:
@@ -121,10 +121,10 @@ saved layout can bring it back.
 | History | a tab per data source, restored after a restart | people keep it open while writing statements; it hides the console it inserts into |
 | Definition | a tab per object, not restored | read beside a console; several at once are useful, and a window holds one |
 | Snippets and theme file problems | sections of the Settings tab's Editor and Appearance pages | the other config files' problems are already Settings pages (Keymap, Custom actions, Exports) |
-| Cell viewer | open question | see below |
-| Export rows, CSV import | open question | see below |
-| Object dialog | open question | see below |
-| Program output and failure | open question | see below |
+| Cell viewer | a side panel in the console | tied to the grid's selected cell, which a tab would lose |
+| Export rows, CSV import | stay modal while being filled in; the run moves to the status bar | a long run no longer blocks the app, and a short form doesn't become a tab |
+| Object dialog | stays a floating window, restyled | a short task that ends; non-modal already, so the explorer stays usable |
+| Program output and failure | stay floating windows, restyled | read once and closed |
 | Every other modal | stays modal | a question or a short form that must be answered before going on |
 
 ### History as a tab
@@ -165,36 +165,42 @@ Appearance page, each with a section for its file: where it was read from, what 
 problems and **Reload**, in the same `source_line` and `problems` parts the Keymap, Custom
 actions and Exports pages use. The window and `CustomFiles::window` go.
 
-## Open questions
+### The cell viewer as a side panel
 
-These are for the user to decide before the layers that touch them. Each has a leaning.
+The cell viewer becomes a panel on the right of the console's results, beside the grid, as
+DataGrip's value editor is. It shows the selected cell and follows the selection, so moving
+through a column of JSON reads each value in turn. The grid's toolbar has a toggle for it, and
+**View value** on a cell opens it. It keeps today's views: JSON as a tree or as text, XML
+indented, `NULL` in italics, and **Copy**. Each console remembers whether its panel is open while
+DbRover runs, and the panel's width is a splitter, like the one between the editor and the
+results.
 
-1. **The cell viewer: side panel or tab?** Today a window per console, opened from a cell.
-   - *A side panel in the console*, beside the grid, that follows the selected cell, as
-     DataGrip's value editor does. Stays tied to its grid; no window to move away.
-   - *A tab*, which can sit beside the console in a split, but loses the link to the selected
-     cell and needs a key for a value that only exists in memory.
-   - *Leaning: side panel*, opened and closed from the grid's toolbar.
-2. **Export and CSV import as non-blocking tabs?** Both are modal, and stay open while they
-   run, so a long export blocks the whole app behind it.
-   - *Tabs*: room for the preview, and other work goes on, but a tab for a five-second form.
-   - *The form stays a modal; the run moves out of it*: once **Export** is clicked the dialog
-     closes and the progress, with **Cancel**, shows in the status bar, with the result in the
-     log console.
-   - *Leaning: the second.* It removes the blocking without turning a short form into a tab.
-3. **The object dialog as a tab?** Today a floating, non-modal window: fill a form, review the
-   statements, execute.
-   - *A tab*: room for a table with many columns, and several at once, but not restorable
-     without saving half-filled forms.
-   - *Keep the window*, restyled with cards and the footer.
-   - *Leaning: keep the window*; it is a short task that ends, and staying non-modal already
-     lets people look at the explorer while filling it.
-4. **Program output windows?** Custom actions that run a program show its output or failure in
-   a window per run.
-   - *Keep the windows*, with the footer's **Copy** and **Close**.
-   - *Into the log console*, where other runs are reported, with a link to the full output.
-   - *A tab per run*, not restored.
-   - *Leaning: keep the windows*; output is read once and closed.
+### Export and CSV import run outside their dialog
+
+Both dialogs stay modal while they are filled in: the format, the options, the preview. Once
+**Export** or **Import** is clicked the dialog closes and the run goes on in the background, with
+its progress and **Cancel** in the status bar, where update notices and config-file problems
+already show. When it ends, the status bar says how many rows went where, with a link to reveal
+the file for an export, for a few seconds and in the log console for good; a failure stays in the
+status bar until clicked. Several runs at once show as one entry that counts them, and a click
+lists each with its own **Cancel**.
+
+### The object dialog and program output stay windows
+
+Both stay floating, non-modal windows, restyled: the object dialog's fields in cards, its
+**Execute** red when the statements drop or truncate, and both with the footer's **Copy** and
+**Close** in place of buttons over the text.
+
+## Answers to the open questions
+
+The plan asked four questions; the user took each leaning on 2026-11-03:
+
+1. **The cell viewer** becomes a side panel in the console, not a tab.
+2. **Export and CSV import** keep their modal form, and their runs move to the status bar,
+   rather than becoming tabs.
+3. **The object dialog** stays a floating window, restyled, rather than a tab.
+4. **Program output** stays in floating windows with the footer's **Copy** and **Close**, rather
+   than in the log console or a tab per run.
 
 ## In layers
 
@@ -210,13 +216,15 @@ One pull request each, stacked:
 4. **D8d — History as a tab,** keyed by data source and restored after a restart.
 5. **D8e — Definitions as tabs,** with **Open in console**.
 6. **D8f — The config files' problems in Settings,** and the window removed.
-7. **D8g — Manual:** the pictures and text of what changed.
-
-Answers to the open questions that change something become layers after D8f, before the manual.
+7. **D8g — The cell viewer as a side panel** in the console.
+8. **D8h — Export and CSV import run in the background,** with their progress in the status bar.
+9. **D8i — Manual:** the pictures and text of what changed.
 
 Tests are kittest tests in the style of the existing ones: each changed dialog keeps the test
 that finds its title and clicks its actions; each new tab gets one test that opens it, one that
-saves and restores the layout, and one that it closes when its data source goes. No test waits
+saves and restores the layout, and one that it closes when its data source goes. The cell
+viewer's panel gets a test that it follows the selection, and the background runs one that the
+dialog closes while the export goes on and the status bar reports it. No test waits
 on a database: history comes from a temporary store, and a definition tab is fed its
 `DefinitionLoaded` event directly.
 
@@ -234,6 +242,8 @@ on a database: history comes from a temporary store, and a definition tab is fed
   by default; the "every data source" scope stays a filter inside it, so there is no separate
   global history tab.
 - **Definition tabs aren't restored,** because restoring would connect at start-up.
+- **Runs report in the status bar, not in a tab or a window:** a run needs a glance and a
+  Cancel, not a place of its own.
 
 ## Risks
 
@@ -245,7 +255,7 @@ on a database: history comes from a temporary store, and a definition tab is fed
   rule for `Tab`, and only matters when downgrading.
 - **Tests that find a window by its title** change when it becomes a tab; they move to the tab's
   title, which kittest finds the same way.
-- **Every manual picture of a dialog changes.** They are rendered again once, in D8g.
+- **Every manual picture of a dialog changes.** They are rendered again once, in D8i.
 
 ## Demo note
 
@@ -256,4 +266,6 @@ console, dock it beside the console, double-click a statement and it lands in th
 quit, start again, and the history tab is back. **Show definition** on two views in the
 explorer, and their definitions open as tabs to put side by side; **Open in console** on one
 puts its text in a new console. Break `theme.toml`, and the status bar's link opens the
-Appearance page with the problem listed.
+Appearance page with the problem listed. Click a JSON cell with the value panel open, and move
+down the column with the arrow keys: the panel follows. Export a large table, and the dialog
+closes while the status bar counts rows; keep working, and **Cancel** it from there.
