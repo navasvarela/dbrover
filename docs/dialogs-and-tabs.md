@@ -70,8 +70,9 @@ Five things stand out:
 
 Every modal is built from the same four parts, so a new dialog can't come out different:
 
-1. **A size.** `widgets::dialog` takes a `DialogSize` and sets the width itself; no dialog sets
-   its own width again.
+1. **A size.** `dialog::modal`, which replaces `widgets::dialog`, takes a `DialogSize` and sets
+   the width itself; no dialog sets its own width again. `dialog::window` does the same for
+   floating windows.
 
    | `DialogSize` | Width | For |
    | --- | --- | --- |
@@ -80,8 +81,9 @@ Every modal is built from the same four parts, so a new dialog can't come out di
    | `Wide` | 560 | a list or a preview: import and export of data sources, export rows, open a file, the data source dialog |
    | `Large` | 680 | a big form: CSV import, the object dialog |
 
-   Lists and previews inside a dialog take one of two heights, `LIST_HEIGHT` (280) or
-   `TALL_LIST_HEIGHT` (380), from the same place. The widths are today's, rounded into four
+   A dialog's list or preview takes one of two heights, `LIST_HEIGHT` (280) or
+   `TALL_LIST_HEIGHT` (380), from the same place. CSV import, which stacks two short lists,
+   keeps its own. The widths are today's, rounded into four
    steps; `Form` grows from 460 to 480 so the data source dialog's 280-point fields and their
    labels fit a card.
 2. **A header.** `form::Header` at the top of every modal: an icon in a tinted badge, the title,
@@ -92,23 +94,30 @@ Every modal is built from the same four parts, so a new dialog can't come out di
    have an outline and a card behind them in both themes. The data source dialog and the object
    dialog move to cards.
 4. **A footer.** `form::footer` at the bottom of every modal: a line, then the actions right to
-   left, the primary one in the corner. An action that throws away work, such as **Don't
-   save**, sits at the footer's left, apart from the others (`form::footer` gets a leading
-   side for it), as macOS places it.
+   left, the primary one in the corner. An action set apart from the ones that finish the
+   dialog sits at the footer's left (`form::footer_with_leading`): one that throws work away,
+   such as **Don't save**, as macOS places it, or one that checks rather than finishes, such as
+   the data source dialog's **Test connection**.
 
 And the roles, which D7 introduced, applied without exception:
 
 - **Primary** (`form::primary_button`): the one action the dialog is for. Every dialog has
   exactly one, including a notice whose only action is **OK** or **Close**.
 - **Danger** (`form::danger_button`): an action that destroys something or runs what DbRover
-  warned about: Delete, Drop, Roll back, Run anyway, Don't save, the object dialog's
-  **Execute** when the statement drops or truncates, and the careful-source **Run**. A danger
-  action replaces the primary; a dialog has one or the other.
+  warned about: Delete, Drop, Roll back, Run anyway, the object dialog's **Execute** when the
+  statement drops or truncates, the careful-source **Run**, and CSV import's **Import** on a
+  careful data source. A danger action replaces the primary; a dialog has one or the other.
+- **Discard** (`form::discard_button`): an action that throws work away beside a primary one,
+  **Don't save** beside **Save**: outlined like a secondary button, with red text, so the
+  dialog still has one filled button.
 - **Secondary** (`ui.button`): everything else, Cancel included.
 
 Floating windows that stay popups keep egui's title bar, which is how they are moved, and get
 the same footer and roles: **Copy** and **Close** at the bottom instead of a Copy button over
-the text. They open centred below the menu bar rather than at (16, 16), over it, a D7 follow-up.
+the text, in `dialog::window_footer`, pinned to the window's bottom edge. They open at the right
+of the app's window, below its bars, rather than at (16, 16), over the menu bar, a D7
+follow-up: they are read beside the work, so they cover the end of the editor's lines rather
+than the middle of the grid.
 
 ## Popups and tabs
 
@@ -230,12 +239,13 @@ on a database: history comes from a temporary store, and a definition tab is fed
 
 ## Decisions
 
-- **Size is a parameter of `widgets::dialog`,** not a constant per file: a width outside the
+- **Size is a parameter of `dialog::modal`,** not a constant per file: a width outside the
   four can't be written by accident, and changing a step changes every dialog of that kind.
 - **One action per dialog is filled,** primary or danger, never both. Two filled buttons side by
   side make neither stand out.
-- **Don't save is danger, at the footer's left.** It throws away edits, so it gets the colour of
-  other destructive actions, and its place keeps it away from **Save** under a habitual click.
+- **Don't save is red text, at the footer's left.** It throws away edits, so it takes the error
+  colour, but outlined rather than filled, so it doesn't compete with **Save**; its place keeps
+  it away from **Save** under a habitual click.
 - **Floating windows keep egui's title bar;** a badge header under a title bar would name the
   window twice.
 - **History is per data source,** as it is opened from a console and filtered to its data source
@@ -261,7 +271,8 @@ on a database: history comes from a temporary store, and a definition tab is fed
 
 Planned. What to try once built: open three dialogs of different kinds (Delete… on a data
 source, the data source dialog, Export…): each has the same header with an icon, the same footer
-with one filled button in the corner, and Delete is red with a red badge. Open the history from a
+with one filled button in the corner, and Delete is red with a red badge. Close a console with
+unsaved changes, and **Don't save** sits apart at the left in red text. Open the history from a
 console, dock it beside the console, double-click a statement and it lands in the console;
 quit, start again, and the history tab is back. **Show definition** on two views in the
 explorer, and their definitions open as tabs to put side by side; **Open in console** on one
