@@ -1863,7 +1863,26 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   picture of **Runs** in the manual, and MCP clients running reports, which RP4's numbers may now
   inform.
 - **RP5 — PRQL:** the combine step in PRQL, compiled to DuckDB SQL by `prqlc`.
-- **RP6 — The command line:** `dbrover report run`, for cron and CI.
+- **RP6 — The command line** (in six layers, 2026-11-03, after RP4): `dbrover report run`, for
+  cron, scheduled tasks and CI: a report by its name in `reports/` or by its path, its
+  parameters as `--param name=value`, its files in `--output-dir`, run in the worker with every
+  guardrail the app's runs have, and an exit code per outcome. Planned in
+  [Reports](reporting.md#rp6--the-command-line). In layers, one PR each:
+  - **RP6a — Plan:** RP6's layers, decisions and risks, and this entry. The command reads and
+    plans the report itself, then runs it in `dbrover report-worker` through the app's
+    `WorkerRun`; exit codes 0 to 6: finished, failed otherwise, the command line, the report or
+    its parameters, a source, a step's guardrail, and stopped from outside.
+  - **RP6b — Running a report:** the subcommand, its arguments, the settings folder's data
+    sources and `[reports]`, the human lines and the exit codes.
+  - **RP6c — Stopping:** Ctrl-C and SIGTERM cancel the run and leave the output folder as it
+    was.
+  - **RP6d — JSON:** `--json` prints the worker's events.
+  - **RP6e — Run history:** a run of a report in `reports/` kept as the app keeps its runs.
+  - **RP6f — Manual:** the chapter's section on the command line, with a cron line and a CI
+    step, and the demo note.
+
+  **Exit:** from a terminal, `dbrover report run` writes a report's files with its guardrails,
+  and its exit code says how it ended; the app's tab lists the run beside its own.
 - **RP7 — Manual,** with the example reports.
 
 ## Design and documentation track
