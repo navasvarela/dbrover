@@ -8,25 +8,27 @@
 //! code per outcome ([`Outcome`]).
 
 mod args;
+mod history;
 mod human;
 mod outcome;
 mod printer;
 mod stopping;
 
 use std::io;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use dbrover_engine::WorkerRun;
-use dbrover_report::{LimitDefaults, Plan, RunEvent, RunFailure, RunRequest, Step, TypedValues};
-use dbrover_store::{AppPaths, SettingsFile};
+use dbrover_report::{Plan, RunEvent, RunFailure, RunRequest, Step, TypedValues};
+use dbrover_store::{AppPaths, ReportSettings, SettingsFile};
 use tracing_appender::non_blocking::WorkerGuard;
 
 pub use args::Request;
 
 use self::args::{ReportArg, RunArgs, USAGE};
+use self::history::RunHistory;
 use self::outcome::Outcome;
-use self::printer::Printer;
 use self::stopping::Stopping;
 use crate::reports::{self, ProcessLauncher};
 use crate::{report_worker, telemetry, version};
@@ -46,10 +48,12 @@ pub fn main(request: Request) -> i32 {
     }
 }
 
-/// A run ready to start: the report planned, and the worker's request.
+/// A run ready to start: the report planned, the worker's request, and how many of the
+/// report's runs the history keeps.
 struct Prepared {
     plan: Plan,
     request: RunRequest,
+    runs_kept: NonZeroU32,
 }
 
 fn run(args: &RunArgs) -> Outcome {
@@ -74,19 +78,27 @@ fn run(args: &RunArgs) -> Outcome {
             return Outcome::Report;
         }
     };
-    let run = match start_worker(&paths, &prepared) {
-        Ok(run) => run,
-        Err(error) => {
-            let failure =
-                RunFailure::new(Step::Worker, format!("could not start the worker: {error}"));
-            printer.event(&RunEvent::Failed(failure));
-            return Outcome::Failed;
+    let mut history = RunHistory::start(&paths, &report, args.values.clone(), prepared.runs_kept);
+    let outcome = run_worker(&paths, &prepared, &stopping, &mut |event| {
+        printer.event(event);
+        if let Some(history) = &mut history {
+            history.event(event);
         }
-    };
-    stopping.started(run.stopper());
-    let outcome = follow(&run, printer.as_mut());
+    });
     tracing::info!("{} ended: {outcome:?}", report.display());
+    if let Some(history) = history {
+        keep(history);
+    }
     outcome
+}
+
+/// Writes the run in the history. One that can't be written is a warning on standard error,
+/// in either output style: the run itself ran, and its exit code says how.
+fn keep(history: RunHistory) {
+    if let Err(problem) = history.keep() {
+        tracing::warn!("the run isn't kept in the history: {problem}");
+        eprintln!("The run isn't kept in the history: {problem}");
+    }
 }
 
 fn start_logging(paths: &AppPaths) -> Option<WorkerGuard> {
@@ -106,7 +118,8 @@ fn report_path(paths: &AppPaths, report: &ReportArg) -> PathBuf {
 /// Reads and plans the report under the settings folder's limits, and checks the values as
 /// the worker will, so that what is wrong is said before anything starts.
 fn prepare(paths: &AppPaths, report: &Path, args: &RunArgs) -> Result<Prepared, Vec<String>> {
-    let defaults = limit_defaults(paths)?;
+    let settings = report_settings(paths)?;
+    let defaults = reports::limit_defaults(&settings);
     let plan = report_worker::plan(paths, report, &defaults)?;
     let mut problems = unknown_parameters(&plan, &args.values);
     if let Err(more) = plan.values(&args.values) {
@@ -127,16 +140,20 @@ fn prepare(paths: &AppPaths, report: &Path, args: &RunArgs) -> Result<Prepared, 
         defaults,
         memory_limit: None,
     };
-    Ok(Prepared { plan, request })
+    Ok(Prepared {
+        plan,
+        request,
+        runs_kept: reports::runs_kept(&settings),
+    })
 }
 
-/// The limits' defaults as Settings › Reports keeps them in `settings.toml`, as the app sends
-/// them with each run.
-fn limit_defaults(paths: &AppPaths) -> Result<LimitDefaults, Vec<String>> {
-    let settings = SettingsFile::new(paths.settings_file())
+/// Settings › Reports as `settings.toml` keeps it: the limits' defaults, which the app sends
+/// with each run, and the runs kept.
+fn report_settings(paths: &AppPaths) -> Result<ReportSettings, Vec<String>> {
+    SettingsFile::new(paths.settings_file())
         .load()
-        .map_err(|error| vec![dbrover_core::describe_error(&error)])?;
-    Ok(reports::limit_defaults(&settings.reports))
+        .map(|settings| settings.reports)
+        .map_err(|error| vec![dbrover_core::describe_error(&error)])
 }
 
 /// A sentence for each value given for a parameter the report doesn't take: a typo there
@@ -195,16 +212,31 @@ fn in_own_process_group(command: &mut Command) {
     let _ = command;
 }
 
-/// Prints each of the run's events, and returns how the run ended.
-fn follow(run: &WorkerRun, printer: &mut dyn Printer) -> Outcome {
+/// Starts the worker, hands `on_event` each of the run's events, and returns how it ended.
+fn run_worker(
+    paths: &AppPaths,
+    prepared: &Prepared,
+    stopping: &Stopping,
+    on_event: &mut dyn FnMut(&RunEvent),
+) -> Outcome {
+    let run = match start_worker(paths, prepared) {
+        Ok(run) => run,
+        Err(error) => {
+            let failure =
+                RunFailure::new(Step::Worker, format!("could not start the worker: {error}"));
+            on_event(&RunEvent::Failed(failure));
+            return Outcome::Failed;
+        }
+    };
+    stopping.started(run.stopper());
     while let Some(event) = run.wait_next() {
-        printer.event(&event);
+        on_event(&event);
         if let Some(outcome) = Outcome::of_end(&event) {
             return outcome;
         }
     }
     // `WorkerRun` always ends a run with an event of its own; this is a bug, not a run's end.
     let failure = RunFailure::new(Step::Worker, "the run's events stopped before it ended");
-    printer.event(&RunEvent::Failed(failure));
+    on_event(&RunEvent::Failed(failure));
     Outcome::Failed
 }
