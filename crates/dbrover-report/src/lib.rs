@@ -32,9 +32,10 @@ pub use events::{
 };
 pub use file_name::FileName;
 pub use limits::{
-    ByteSize, CombineLimits, DEFAULT_COMBINE_TIMEOUT, DEFAULT_MAX_BYTES, DEFAULT_MAX_ROWS,
-    DEFAULT_MAX_SIZE, DEFAULT_MAX_TEMP_SIZE, DEFAULT_MEMORY_LIMIT, DEFAULT_RUN_TIMEOUT,
-    DEFAULT_SOURCE_TIMEOUT, OutputLimits, SourceLimits,
+    ByteSize, CombineLimits, CombineLimitsSet, DEFAULT_COMBINE_TIMEOUT, DEFAULT_MAX_BYTES,
+    DEFAULT_MAX_ROWS, DEFAULT_MAX_SIZE, DEFAULT_MAX_TEMP_SIZE, DEFAULT_MEMORY_LIMIT,
+    DEFAULT_RUN_TIMEOUT, DEFAULT_SOURCE_TIMEOUT, LimitDefaults, OutputLimits, OutputLimitsSet,
+    SourceLimits, SourceLimitsSet,
 };
 pub use plan::{
     AttachedSource, Combined, Logic, OutputFormat, Plan, PlannedCombine, PlannedLookup,

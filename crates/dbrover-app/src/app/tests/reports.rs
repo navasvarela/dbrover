@@ -549,6 +549,54 @@ fn shows_a_failed_run_and_the_limit_it_hit() {
     harness.get_by_label_contains(
         "To allow more, raise max_rows in the [[source]] \"balances\" of the report's file.",
     );
+    harness.get_by_label("Settings › Reports").click();
+    step_until_visible(&mut harness, "Rows a source may return");
+}
+
+/// A default changed in Settings › Reports is saved to `settings.toml`, and the next run's
+/// request carries it to the worker.
+#[test]
+fn sends_the_defaults_settings_sets_with_each_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let launcher = StandIn::new(finished_run(&dir.path().join("out")));
+    let requests = Arc::clone(&launcher.requests);
+    let mut harness = start_with_reports(dir.path(), TRIAL_BALANCE, launcher);
+
+    harness.get_by_label("View").click();
+    harness.run();
+    harness.get_by_label_contains("Settings…").click();
+    harness.run();
+    harness
+        .get_by_role_and_label(Role::Button, "Reports")
+        .click();
+    harness.run();
+    harness
+        .get_by(|node| {
+            node.role() == Role::ComboBox && node.value().as_deref() == Some("default: 2 GiB")
+        })
+        .click();
+    harness.run();
+    harness.get_by_label("4 GiB").click();
+    step_until(&mut harness, "the settings file", |_| {
+        std::fs::read_to_string(dir.path().join("settings.toml"))
+            .is_ok_and(|text| text.contains("[reports]\nmemory_limit = \"4 GiB\""))
+    });
+
+    open_and_fill(&mut harness, "2026-10-01");
+    harness.get_by_label("Run").click();
+    step_until_visible(&mut harness, "Finished in 1.2 s");
+    let requests = requests.lock().unwrap();
+    let [request] = requests.as_slice() else {
+        panic!("{requests:?}");
+    };
+    assert_eq!(
+        request.defaults.combine.memory_limit,
+        dbrover_report::ByteSize(4 << 30)
+    );
+    assert_eq!(
+        request.defaults.source,
+        dbrover_report::SourceLimits::default()
+    );
 }
 
 #[test]

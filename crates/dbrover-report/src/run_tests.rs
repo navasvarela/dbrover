@@ -117,7 +117,7 @@ fn plan(source_limits: &str, outputs: &str) -> Plan {
             read_only: false,
         }),
     };
-    Plan::new(report, &[ledger], &[]).unwrap()
+    Plan::new(report, &[ledger], &[], &LimitDefaults::default()).unwrap()
 }
 
 const BOTH: &str = r##"

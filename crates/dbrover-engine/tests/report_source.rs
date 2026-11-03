@@ -16,8 +16,8 @@ use common::{MemorySecrets, postgres_test_server, sqlite_data_source};
 use dbrover_core::{ConnectionConfig, DataSource, DataSourceId, SafetyLevel};
 use dbrover_engine::{PasswordCommands, ProcessRunner, ReportSource, SourceAccess, Tunnels};
 use dbrover_report::{
-    Logic, Plan, RunFolders, RunValues, SourceError, SourceOpener, SourceStatement, read_report,
-    run,
+    LimitDefaults, Logic, Plan, RunFolders, RunValues, SourceError, SourceOpener, SourceStatement,
+    read_report, run,
 };
 use dbrover_store::{Secret, SecretStore, TrustedCommands};
 
@@ -85,6 +85,7 @@ fn plan(text: &str, data_source: &DataSource) -> Plan {
         read_report(text).unwrap(),
         std::slice::from_ref(data_source),
         &[],
+        &LimitDefaults::default(),
     )
     .unwrap()
 }

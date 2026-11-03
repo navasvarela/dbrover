@@ -11,8 +11,8 @@ use dbrover_export::{ColumnType, CustomFormatId, ExportFormat, IfInvalid, Preset
 use dbrover_driver_duckdb::DuckDbType;
 
 use crate::{
-    ByteSize, Combine, CombineLimits, DEFAULT_RUN_TIMEOUT, FileName, Lookup, Output, OutputColumns,
-    OutputLimits, OutputWriter, Param, Report, Source, SourceColumn, SourceLimits, SourceRead,
+    ByteSize, Combine, CombineLimitsSet, FileName, Lookup, Output, OutputColumns, OutputLimitsSet,
+    OutputWriter, Param, Report, Source, SourceColumn, SourceLimitsSet, SourceRead,
 };
 
 /// Keys of later milestones, and what each waits for, so a file written for one says why it
@@ -131,7 +131,7 @@ struct Header {
     name: String,
     description: Option<String>,
     params: Vec<Param>,
-    timeout: Duration,
+    timeout: Option<Duration>,
 }
 
 fn read_header(table: toml::Table, problems: &mut Vec<String>) -> Option<Header> {
@@ -157,7 +157,7 @@ fn read_header(table: toml::Table, problems: &mut Vec<String>) -> Option<Header>
             name,
             description: description.filter(|text| !text.trim().is_empty()),
             params,
-            timeout: timeout.unwrap_or(DEFAULT_RUN_TIMEOUT),
+            timeout,
         }),
         (name, description, params, timeout) => {
             found.extend(name.err());
@@ -324,15 +324,14 @@ fn read_source(table: toml::Table, problems: &mut Vec<String>) -> Option<Source>
             Ok(SourceRead::Attach)
         }
         (Ok(_), Ok(query), Ok(max_rows), Ok(max_bytes), Ok(timeout), Ok(lookup), Ok(columns)) => {
-            let defaults = SourceLimits::default();
             query
                 .filter(|query| !query.trim().is_empty())
                 .map(|query| SourceRead::Query {
                     query,
-                    limits: SourceLimits {
-                        max_rows: max_rows.unwrap_or(defaults.max_rows),
-                        max_bytes: max_bytes.unwrap_or(defaults.max_bytes),
-                        timeout: timeout.unwrap_or(defaults.timeout),
+                    limits: SourceLimitsSet {
+                        max_rows,
+                        max_bytes,
+                        timeout,
                     },
                     lookup,
                     columns,
@@ -653,16 +652,15 @@ fn read_combine(table: toml::Table, problems: &mut Vec<String>) -> Option<Combin
     ));
     let combine = match (query, timeout, memory_limit, threads, max_temp_size) {
         (Ok(query), Ok(timeout), Ok(memory_limit), Ok(threads), Ok(max_temp_size)) => {
-            let defaults = CombineLimits::default();
             Some(Combine {
                 query,
-                limits: CombineLimits {
-                    timeout: timeout.unwrap_or(defaults.timeout),
-                    memory_limit: memory_limit.unwrap_or(defaults.memory_limit),
+                limits: CombineLimitsSet {
+                    timeout,
+                    memory_limit,
                     threads: threads
                         .and_then(|threads| usize::try_from(threads).ok())
                         .and_then(NonZeroUsize::new),
-                    max_temp_size: max_temp_size.unwrap_or(defaults.max_temp_size),
+                    max_temp_size,
                 },
             })
         }
@@ -798,9 +796,7 @@ fn read_output(
                 writer,
                 file,
                 columns,
-                limits: OutputLimits {
-                    max_size: max_size.unwrap_or(OutputLimits::default().max_size),
-                },
+                limits: OutputLimitsSet { max_size },
                 continue_on_new_sheet,
             })
         }

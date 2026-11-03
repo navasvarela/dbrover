@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use dbrover_core::{ConnectionConfig, DataSource, DataSourceId, SafetyLevel, SqliteConfig};
 use dbrover_engine::WorkerRun;
-use dbrover_report::{RunEvent, RunRequest, SourceStart, Step};
+use dbrover_report::{LimitDefaults, RunEvent, RunRequest, SourceLimits, SourceStart, Step};
 use dbrover_store::DataSourceFile;
 
 const BINARY: &str = env!("CARGO_BIN_EXE_dbrover");
@@ -99,6 +99,7 @@ impl Settings {
                 .collect(),
             folder: self.out(),
             staging: self.out().join(".run"),
+            defaults: LimitDefaults::default(),
             memory_limit: None,
         }
     }
@@ -337,6 +338,32 @@ fn says_what_is_wrong_with_the_report_or_its_values() {
         failure.message,
         "until: \"next month\" isn't a date, as 2026-10-01"
     );
+}
+
+/// Settings › Reports' defaults, sent with the request, bound a source whose file sets no
+/// limit of its own.
+#[test]
+fn runs_under_the_defaults_the_request_sends() {
+    let settings = Settings::new();
+    let report = settings.config().join("reports/trial-balance.toml");
+    let mut request = settings.request(&report);
+    request.defaults.source = SourceLimits {
+        max_rows: 1,
+        ..SourceLimits::default()
+    };
+    let events = all_events(&settings.start(&request, Duration::from_secs(120)));
+    let Some(RunEvent::Failed(failure)) = events.last() else {
+        panic!("{events:#?}");
+    };
+    let limit = failure
+        .limit
+        .as_ref()
+        .unwrap_or_else(|| panic!("{failure}"));
+    assert_eq!(
+        (limit.key.as_str(), limit.value.as_str()),
+        ("max_rows", "1 rows")
+    );
+    assert!(files_in(&settings.out()).is_empty());
 }
 
 #[test]

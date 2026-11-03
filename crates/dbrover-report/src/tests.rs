@@ -212,7 +212,7 @@ fn reads_the_trial_balance() {
         report.description.as_deref(),
         Some("Debits, credits and the balance of each account in a period.")
     );
-    assert_eq!(report.timeout, DEFAULT_RUN_TIMEOUT);
+    assert_eq!(report.timeout, None);
     assert_eq!(
         report
             .params
@@ -231,9 +231,9 @@ fn reads_the_trial_balance() {
     };
     assert_eq!(
         *limits,
-        SourceLimits {
-            max_rows: 100_000,
-            ..SourceLimits::default()
+        SourceLimitsSet {
+            max_rows: Some(100_000),
+            ..SourceLimitsSet::default()
         }
     );
     assert_eq!(report.combine, None);
@@ -295,21 +295,24 @@ fn reads_limits_and_defaults() {
         "#,
     )
     .unwrap();
-    assert_eq!(report.timeout, Duration::from_secs(3600));
+    assert_eq!(report.timeout, Some(Duration::from_secs(3600)));
     let SourceRead::Query { limits, .. } = &report.sources[0].read else {
         panic!("{:?}", report.sources);
     };
     assert_eq!(
         *limits,
-        SourceLimits {
-            max_rows: 5_000_000,
-            max_bytes: ByteSize(4 << 30),
-            timeout: Duration::from_secs(45 * 60),
+        SourceLimitsSet {
+            max_rows: Some(5_000_000),
+            max_bytes: Some(ByteSize(4 << 30)),
+            timeout: Some(Duration::from_secs(45 * 60)),
         }
     );
-    assert_eq!(report.outputs[0].limits.max_size, ByteSize(2_000_000_000));
+    assert_eq!(
+        report.outputs[0].limits.max_size,
+        Some(ByteSize(2_000_000_000))
+    );
     assert_eq!(report.outputs[0].columns, OutputColumns::All);
-    assert_eq!(report.outputs[1].limits, OutputLimits::default());
+    assert_eq!(report.outputs[1].limits, OutputLimitsSet::default());
     assert!(report.outputs[1].continue_on_new_sheet);
 }
 
@@ -527,6 +530,7 @@ fn plans_the_trial_balance_with_its_preset_and_the_same_columns() {
         read_report(TRIAL_BALANCE).unwrap(),
         &[sqlite("other"), ledger.clone()],
         &presets(),
+        &LimitDefaults::default(),
     )
     .unwrap();
     let Logic::Direct(source) = &plan.logic else {
@@ -564,26 +568,44 @@ fn finds_the_data_source_by_name_or_by_id() {
         .unwrap()
     };
     let twins = [sqlite("ledger"), sqlite("ledger")];
-    let by_id = Plan::new(report(&twins[1].id.to_string()), &twins, &[]).unwrap();
+    let by_id = Plan::new(
+        report(&twins[1].id.to_string()),
+        &twins,
+        &[],
+        &LimitDefaults::default(),
+    )
+    .unwrap();
     let Logic::Direct(source) = &by_id.logic else {
         panic!("{:?}", by_id.logic);
     };
     assert_eq!(source.data_source.id, twins[1].id);
 
-    let ambiguous = Plan::new(report("ledger"), &twins, &[]).unwrap_err();
+    let ambiguous =
+        Plan::new(report("ledger"), &twins, &[], &LimitDefaults::default()).unwrap_err();
     assert!(
         ambiguous[0].starts_with(
             "source \"s\": 2 data sources are named \"ledger\"; name one by its id instead: "
         ),
         "{ambiguous:?}"
     );
-    let missing =
-        Plan::new(report("books"), &[sqlite("ledger"), sqlite("audit")], &[]).unwrap_err();
+    let missing = Plan::new(
+        report("books"),
+        &[sqlite("ledger"), sqlite("audit")],
+        &[],
+        &LimitDefaults::default(),
+    )
+    .unwrap_err();
     assert_eq!(
         missing,
         ["source \"s\": there is no data source \"books\"; there are audit, ledger"]
     );
-    let documents = Plan::new(report("cache"), &[redis("cache")], &[]).unwrap_err();
+    let documents = Plan::new(
+        report("cache"),
+        &[redis("cache")],
+        &[],
+        &LimitDefaults::default(),
+    )
+    .unwrap_err();
     assert!(
         documents[0].starts_with("source \"s\": \"cache\" is a Redis"),
         "{documents:?}"
@@ -598,6 +620,7 @@ fn checks_presets_against_exports_toml() {
         report("preset = \"tabs\"\nfile = \"x.csv\""),
         &ledger,
         &presets(),
+        &LimitDefaults::default(),
     )
     .unwrap_err();
     assert!(missing[0].starts_with("output 1: exports.toml has no export with the id \"tabs\""));
@@ -606,6 +629,7 @@ fn checks_presets_against_exports_toml() {
         report("preset = \"notes\"\nfile = \"x.md\""),
         &ledger,
         &markdown,
+        &LimitDefaults::default(),
     )
     .unwrap_err();
     assert_eq!(
@@ -616,6 +640,7 @@ fn checks_presets_against_exports_toml() {
         report("preset = \"semicolon-csv\"\nfile = \"x.csv\"\ncontinue_on_new_sheet = true"),
         &ledger,
         &presets(),
+        &LimitDefaults::default(),
     )
     .unwrap_err();
     assert_eq!(
@@ -632,7 +657,7 @@ fn orders_parameters_as_the_query_uses_them_and_refuses_undeclared_ones() {
         "format = \"csv\"\nfile = \"{account}.csv\"",
     ))
     .unwrap();
-    let plan = Plan::new(report, &[sqlite("ledger")], &[]).unwrap();
+    let plan = Plan::new(report, &[sqlite("ledger")], &[], &LimitDefaults::default()).unwrap();
     assert_eq!(
         plan.params
             .iter()
@@ -648,7 +673,13 @@ fn orders_parameters_as_the_query_uses_them_and_refuses_undeclared_ones() {
     ))
     .unwrap();
     assert_eq!(
-        Plan::new(undeclared, &[sqlite("ledger")], &[]).unwrap_err(),
+        Plan::new(
+            undeclared,
+            &[sqlite("ledger")],
+            &[],
+            &LimitDefaults::default()
+        )
+        .unwrap_err(),
         [
             "source \"s\": the query uses :until, which [report] params doesn't declare; add \
              until = \"text\" (or its type) to params"
@@ -662,6 +693,7 @@ fn checks_values_and_names_the_files() {
         read_report(TRIAL_BALANCE).unwrap(),
         &[sqlite("ledger")],
         &presets(),
+        &LimitDefaults::default(),
     )
     .unwrap();
     let typed = |since: &str, until: &str| -> TypedValues {
@@ -696,7 +728,7 @@ fn refuses_values_that_make_two_outputs_one_file() {
         "format = \"csv\"\nfile = \"{a}.csv\"\n[[output]]\nformat = \"csv\"\nfile = \"{b}.csv\"",
     ))
     .unwrap();
-    let plan = Plan::new(report, &[sqlite("ledger")], &[]).unwrap();
+    let plan = Plan::new(report, &[sqlite("ledger")], &[], &LimitDefaults::default()).unwrap();
     let same: TypedValues = [("a", "x"), ("b", "x")]
         .into_iter()
         .map(|(name, value)| (name.to_owned(), value.to_owned()))
@@ -720,13 +752,13 @@ fn reads_and_plans_the_valuation() {
     assert!(combine.query.contains("ASOF JOIN"));
     assert_eq!(
         combine.limits,
-        CombineLimits {
-            memory_limit: ByteSize(1 << 30),
-            ..CombineLimits::default()
+        CombineLimitsSet {
+            memory_limit: Some(ByteSize(1 << 30)),
+            ..CombineLimitsSet::default()
         }
     );
 
-    let plan = Plan::new(report, &valuation_sources(), &[]).unwrap();
+    let plan = Plan::new(report, &valuation_sources(), &[], &LimitDefaults::default()).unwrap();
     let Logic::Combine(combined) = &plan.logic else {
         panic!("{:?}", plan.logic);
     };
@@ -774,15 +806,61 @@ fn reads_the_combine_steps_limits() {
     let limits = read_report(&text).unwrap().combine.unwrap().limits;
     assert_eq!(
         limits,
-        CombineLimits {
-            timeout: Duration::from_secs(120),
-            memory_limit: ByteSize(512 << 20),
+        CombineLimitsSet {
+            timeout: Some(Duration::from_secs(120)),
+            memory_limit: Some(ByteSize(512 << 20)),
             threads: std::num::NonZeroUsize::new(3),
-            max_temp_size: ByteSize(20_000_000_000),
+            max_temp_size: Some(ByteSize(20_000_000_000)),
         }
     );
-    assert_eq!(limits.threads(), 3);
+    assert_eq!(limits.or(CombineLimits::default()).threads(), 3);
     assert!(CombineLimits::default().threads() >= 1);
+}
+
+/// What a report's file sets wins, key by key; what it leaves out comes from the defaults,
+/// which Settings › Reports may have changed.
+#[test]
+fn takes_the_limits_a_file_leaves_out_from_the_defaults() {
+    let defaults = LimitDefaults {
+        source: SourceLimits {
+            max_rows: 10,
+            max_bytes: ByteSize(1 << 20),
+            timeout: Duration::from_secs(60),
+        },
+        combine: CombineLimits {
+            timeout: Duration::from_secs(30),
+            memory_limit: ByteSize(256 << 20),
+            threads: std::num::NonZeroUsize::new(2),
+            max_temp_size: ByteSize(1 << 30),
+        },
+        output: OutputLimits {
+            max_size: ByteSize(5 << 20),
+        },
+        run_timeout: Duration::from_secs(90),
+    };
+    let report = read_report(VALUATION).unwrap();
+    let plan = Plan::new(report, &valuation_sources(), &[], &defaults).unwrap();
+    assert_eq!(plan.timeout, Duration::from_secs(90));
+    let Logic::Combine(combined) = &plan.logic else {
+        panic!("{:?}", plan.logic);
+    };
+    let PlannedSource::Query(tx) = &combined.sources[0] else {
+        panic!("{:?}", combined.sources);
+    };
+    assert_eq!(tx.limits, defaults.source);
+    assert_eq!(
+        combined.combine.limits,
+        CombineLimits {
+            memory_limit: ByteSize(1 << 30),
+            ..defaults.combine
+        },
+        "the file's memory_limit wins"
+    );
+    assert!(
+        plan.outputs
+            .iter()
+            .all(|output| output.limits == defaults.output)
+    );
 }
 
 /// Each problem RP2's keys can have, and the sentence that names it.
@@ -852,8 +930,13 @@ fn names_every_problem_with_several_sources() {
 fn plans_attached_sources_only_on_duckdb_files_and_a_combine_that_only_reads() {
     let report = || read_report(VALUATION).unwrap();
     let [ledger, _] = valuation_sources();
-    let on_postgres =
-        Plan::new(report(), &[ledger.clone(), postgres("prices-duckdb")], &[]).unwrap_err();
+    let on_postgres = Plan::new(
+        report(),
+        &[ledger.clone(), postgres("prices-duckdb")],
+        &[],
+        &LimitDefaults::default(),
+    )
+    .unwrap_err();
     assert_eq!(
         on_postgres,
         [
@@ -868,6 +951,7 @@ fn plans_attached_sources_only_on_duckdb_files_and_a_combine_that_only_reads() {
             duckdb("prices-duckdb", DuckDbDatabase::InMemory),
         ],
         &[],
+        &LimitDefaults::default(),
     )
     .unwrap_err();
     assert!(
@@ -882,20 +966,37 @@ fn plans_attached_sources_only_on_duckdb_files_and_a_combine_that_only_reads() {
             "INSERT INTO prices.hourly_prices SELECT tx.executed_at",
         )
         .replace("ASOF JOIN", "JOIN");
-    let refused = Plan::new(read_report(&writes).unwrap(), &valuation_sources(), &[]).unwrap_err();
+    let refused = Plan::new(
+        read_report(&writes).unwrap(),
+        &valuation_sources(),
+        &[],
+        &LimitDefaults::default(),
+    )
+    .unwrap_err();
     assert_eq!(
         refused,
         ["[combine]: the query changes data; the combine step only reads the sources' tables"]
     );
     let two = VALUATION.replace("ORDER BY tx.executed_at, tx.id", "ORDER BY 1; SELECT 2");
-    let refused = Plan::new(read_report(&two).unwrap(), &valuation_sources(), &[]).unwrap_err();
+    let refused = Plan::new(
+        read_report(&two).unwrap(),
+        &valuation_sources(),
+        &[],
+        &LimitDefaults::default(),
+    )
+    .unwrap_err();
     assert_eq!(
         refused,
         ["[combine]: the query holds 2 statements; the combine step is one query that only reads"]
     );
     let unparsed = VALUATION.replace("SELECT tx.executed_at", "COPY tx.executed_at");
-    let refused =
-        Plan::new(read_report(&unparsed).unwrap(), &valuation_sources(), &[]).unwrap_err();
+    let refused = Plan::new(
+        read_report(&unparsed).unwrap(),
+        &valuation_sources(),
+        &[],
+        &LimitDefaults::default(),
+    )
+    .unwrap_err();
     assert!(
         refused[0].ends_with("; the combine step is one query that only reads"),
         "{refused:?}"
@@ -914,7 +1015,13 @@ fn orders_parameters_across_the_sources_and_the_combine_step() {
             "ORDER BY tx.executed_at, tx.id",
             "WHERE tx.wallet = :wallet OR :wallet = ''\nORDER BY tx.executed_at, tx.id",
         );
-    let plan = Plan::new(read_report(&text).unwrap(), &valuation_sources(), &[]).unwrap();
+    let plan = Plan::new(
+        read_report(&text).unwrap(),
+        &valuation_sources(),
+        &[],
+        &LimitDefaults::default(),
+    )
+    .unwrap();
     assert_eq!(
         plan.params
             .iter()
@@ -927,8 +1034,13 @@ fn orders_parameters_across_the_sources_and_the_combine_step() {
         "ORDER BY tx.executed_at, tx.id",
         "WHERE tx.asset = :asset\nORDER BY tx.executed_at, tx.id",
     );
-    let problems =
-        Plan::new(read_report(&undeclared).unwrap(), &valuation_sources(), &[]).unwrap_err();
+    let problems = Plan::new(
+        read_report(&undeclared).unwrap(),
+        &valuation_sources(),
+        &[],
+        &LimitDefaults::default(),
+    )
+    .unwrap_err();
     assert_eq!(
         problems,
         [

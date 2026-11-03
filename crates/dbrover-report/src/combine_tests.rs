@@ -169,7 +169,13 @@ fn report(tx_limits: &str, query: &str, combine_limits: &str) -> Plan {
         .replace("{tx_limits}", tx_limits)
         .replace("{query}", query)
         .replace("{combine_limits}", combine_limits);
-    Plan::new(read_report(&text).unwrap(), &[ledger()], &[]).unwrap()
+    Plan::new(
+        read_report(&text).unwrap(),
+        &[ledger()],
+        &[],
+        &LimitDefaults::default(),
+    )
+    .unwrap()
 }
 
 fn october(plan: &Plan) -> RunValues {
@@ -291,6 +297,7 @@ async fn reads_an_attached_duckdb_file_in_place() {
         read_report(&text).unwrap(),
         &[ledger(), prices_file(&path)],
         &[],
+        &LimitDefaults::default(),
     )
     .unwrap();
     let out = folder.path().join("out");

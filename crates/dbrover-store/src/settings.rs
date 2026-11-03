@@ -2,9 +2,11 @@
 //! app's Settings window writes it; it can also be edited by hand.
 
 use std::io;
-use std::num::NonZeroU32;
+use std::num::{NonZeroU32, NonZeroU64};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
+use dbrover_core::ByteSize;
 use serde::{Deserialize, Serialize};
 
 use crate::atomic::write_atomically;
@@ -17,6 +19,7 @@ pub struct Settings {
     pub lint: LintSettings,
     pub updates: UpdateSettings,
     pub history: HistorySettings,
+    pub reports: ReportSettings,
 }
 
 /// How the SQL formatter writes statements.
@@ -85,6 +88,80 @@ pub struct HistorySettings {
     /// Only the newest this many statements of each data source stay.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_per_data_source: Option<NonZeroU32>,
+}
+
+/// The defaults of every report's limits, which a report's file overrides key by key, and how
+/// many runs of each report the history keeps (`docs/reporting.md`, "Settings › Reports").
+/// Each is `None` until changed, for DbRover's own default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ReportSettings {
+    /// The rows a source may return.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_rows: Option<NonZeroU64>,
+    /// The bytes of values a source may return.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_bytes: Option<ByteSize>,
+    /// How long a source's statements may run.
+    #[serde(skip_serializing_if = "Option::is_none", with = "written_duration")]
+    pub source_timeout: Option<Duration>,
+    /// The memory the run's DuckDB holds before it spills.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_limit: Option<ByteSize>,
+    /// What the run's DuckDB may spill to disk.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_temp_size: Option<ByteSize>,
+    /// The threads the run's DuckDB runs on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub threads: Option<NonZeroU32>,
+    /// How long the combine query may run.
+    #[serde(skip_serializing_if = "Option::is_none", with = "written_duration")]
+    pub combine_timeout: Option<Duration>,
+    /// The bytes of values an output may write.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_size: Option<ByteSize>,
+    /// How long a whole run may take.
+    #[serde(skip_serializing_if = "Option::is_none", with = "written_duration")]
+    pub run_timeout: Option<Duration>,
+    /// How many runs of each report the history keeps.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runs_kept: Option<NonZeroU32>,
+}
+
+/// A duration as a report file writes one, `"10m"` or `"1h 30m"`, so `[reports]` reads like the
+/// keys it sets defaults for. Zero is refused: no time limit means anything at zero.
+mod written_duration {
+    use std::time::Duration;
+
+    use jiff::SignedDuration;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(
+        duration: &Option<Duration>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        match duration.map(SignedDuration::try_from) {
+            Some(Ok(duration)) => serializer.collect_str(&format_args!("{duration:#}")),
+            Some(Err(error)) => Err(serde::ser::Error::custom(error)),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Duration>, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        text.parse::<SignedDuration>()
+            .ok()
+            .and_then(|duration| Duration::try_from(duration).ok())
+            .filter(|duration| !duration.is_zero())
+            .map(Some)
+            .ok_or_else(|| {
+                serde::de::Error::custom(format!(
+                    "{text:?} isn't a duration such as \"30s\" or \"10m\""
+                ))
+            })
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -196,6 +273,40 @@ mod tests {
     }
 
     #[test]
+    fn reads_the_reports_defaults_as_a_report_file_writes_them() {
+        let cases = [
+            ("", Some(ReportSettings::default())),
+            (
+                "[reports]\nmax_bytes = \"500 MB\"\nrun_timeout = \"1h 30m\"\nthreads = 4\n",
+                Some(ReportSettings {
+                    max_bytes: Some(ByteSize(500_000_000)),
+                    run_timeout: Some(Duration::from_secs(90 * 60)),
+                    threads: NonZeroU32::new(4),
+                    ..ReportSettings::default()
+                }),
+            ),
+            (
+                "[reports]\nmax_size = 1048576\n",
+                Some(ReportSettings {
+                    max_size: Some(ByteSize(1 << 20)),
+                    ..ReportSettings::default()
+                }),
+            ),
+            ("[reports]\nmax_rows = 0\n", None),
+            ("[reports]\nmemory_limit = \"0 GiB\"\n", None),
+            ("[reports]\ncombine_timeout = \"0s\"\n", None),
+            ("[reports]\nsource_timeout = \"soon\"\n", None),
+            ("[reports]\ntimeout = \"10m\"\n", None),
+        ];
+        for (text, reports) in cases {
+            let read = toml::from_str::<Settings>(text)
+                .ok()
+                .map(|settings| settings.reports);
+            assert_eq!(read, reports, "{text:?}");
+        }
+    }
+
+    #[test]
     fn saves_and_reads_back_and_rejects_unknown_settings() {
         let dir = tempfile::tempdir().unwrap();
         let file = SettingsFile::new(dir.path().join("settings.toml"));
@@ -215,10 +326,23 @@ mod tests {
                 max_age_days: NonZeroU32::new(90),
                 max_per_data_source: None,
             },
+            reports: ReportSettings {
+                max_rows: NonZeroU64::new(5_000_000),
+                memory_limit: Some(ByteSize(4 << 30)),
+                source_timeout: Some(Duration::from_secs(45 * 60)),
+                runs_kept: NonZeroU32::new(50),
+                ..ReportSettings::default()
+            },
         };
 
         file.save(&settings).unwrap();
         assert_eq!(file.load().unwrap(), settings);
+        let text = std::fs::read_to_string(file.path()).unwrap();
+        assert!(
+            text.contains("[reports]\nmax_rows = 5000000\nsource_timeout = \"45m\"\n"),
+            "{text}"
+        );
+        assert!(text.contains("memory_limit = \"4 GiB\"\n"), "{text}");
 
         std::fs::write(file.path(), "[format]\nindent = 2\n").unwrap();
         assert!(matches!(file.load(), Err(SettingsError::Parse { .. })));

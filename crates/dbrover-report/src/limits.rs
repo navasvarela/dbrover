@@ -1,13 +1,17 @@
-//! The limits a run stops at, and their defaults (`docs/reporting.md`, "Guardrails in RP1"
-//! and "Guardrails in RP2").
+//! The limits a run stops at, and their defaults (`docs/reporting.md`, "Guardrails in RP1",
+//! "Guardrails in RP2" and "Settings › Reports").
 //!
-//! The defaults are generous for a report a person runs from the app, and small enough that a
-//! source without a filter stops long before it fills a laptop's memory or disk. A report
-//! changes them in its file; RP4's metrics will say whether they should move.
+//! The constants are generous for a report a person runs from the app, and small enough that a
+//! source without a filter stops long before it fills a laptop's memory or disk. Settings ›
+//! Reports changes the defaults for every report ([`LimitDefaults`]), and a report's file
+//! changes them key by key ([`SourceLimitsSet`] and the others), which planning puts together.
 
-use std::fmt;
 use std::num::NonZeroUsize;
 use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+
+pub use dbrover_core::ByteSize;
 
 /// The most rows a source returns. A general ledger past a million rows sets its own.
 pub const DEFAULT_MAX_ROWS: u64 = 1_000_000;
@@ -28,8 +32,85 @@ pub const DEFAULT_MEMORY_LIMIT: ByteSize = ByteSize(2 << 30);
 /// What the run's DuckDB may spill to disk, past which the combine step fails.
 pub const DEFAULT_MAX_TEMP_SIZE: ByteSize = ByteSize(10 << 30);
 
+/// The limits a run uses where its report's file leaves one out: the constants above, or what
+/// Settings › Reports sets. The app sends them to the worker with each run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LimitDefaults {
+    pub source: SourceLimits,
+    pub combine: CombineLimits,
+    pub output: OutputLimits,
+    /// How long a whole run may take.
+    pub run_timeout: Duration,
+}
+
+impl Default for LimitDefaults {
+    fn default() -> Self {
+        Self {
+            source: SourceLimits::default(),
+            combine: CombineLimits::default(),
+            output: OutputLimits::default(),
+            run_timeout: DEFAULT_RUN_TIMEOUT,
+        }
+    }
+}
+
+/// A source's limits as its file sets them; `None` where it leaves one to the defaults.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SourceLimitsSet {
+    pub max_rows: Option<u64>,
+    pub max_bytes: Option<ByteSize>,
+    pub timeout: Option<Duration>,
+}
+
+impl SourceLimitsSet {
+    /// These limits, with `defaults` where none is set.
+    pub fn or(self, defaults: SourceLimits) -> SourceLimits {
+        SourceLimits {
+            max_rows: self.max_rows.unwrap_or(defaults.max_rows),
+            max_bytes: self.max_bytes.unwrap_or(defaults.max_bytes),
+            timeout: self.timeout.unwrap_or(defaults.timeout),
+        }
+    }
+}
+
+/// `[combine]`'s limits as the file sets them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CombineLimitsSet {
+    pub timeout: Option<Duration>,
+    pub memory_limit: Option<ByteSize>,
+    pub threads: Option<NonZeroUsize>,
+    pub max_temp_size: Option<ByteSize>,
+}
+
+impl CombineLimitsSet {
+    /// These limits, with `defaults` where none is set.
+    pub fn or(self, defaults: CombineLimits) -> CombineLimits {
+        CombineLimits {
+            timeout: self.timeout.unwrap_or(defaults.timeout),
+            memory_limit: self.memory_limit.unwrap_or(defaults.memory_limit),
+            threads: self.threads.or(defaults.threads),
+            max_temp_size: self.max_temp_size.unwrap_or(defaults.max_temp_size),
+        }
+    }
+}
+
+/// An output's limits as the file sets them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OutputLimitsSet {
+    pub max_size: Option<ByteSize>,
+}
+
+impl OutputLimitsSet {
+    /// These limits, with `defaults` where none is set.
+    pub fn or(self, defaults: OutputLimits) -> OutputLimits {
+        OutputLimits {
+            max_size: self.max_size.unwrap_or(defaults.max_size),
+        }
+    }
+}
+
 /// A source's limits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceLimits {
     pub max_rows: u64,
     pub max_bytes: ByteSize,
@@ -47,7 +128,7 @@ impl Default for SourceLimits {
 }
 
 /// The limits of the run's DuckDB, which the sources load into and the combine step runs in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CombineLimits {
     pub timeout: Duration,
     pub memory_limit: ByteSize,
@@ -83,7 +164,7 @@ impl Default for CombineLimits {
 }
 
 /// An output's limits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutputLimits {
     pub max_size: ByteSize,
 }
@@ -93,97 +174,5 @@ impl Default for OutputLimits {
         Self {
             max_size: DEFAULT_MAX_SIZE,
         }
-    }
-}
-
-/// A number of bytes, as a report file writes it: `"500 MB"`, `"1 GiB"`, or a number of
-/// bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ByteSize(pub u64);
-
-impl ByteSize {
-    /// The units a size can be written in, decimal and binary, as people and operating
-    /// systems write them.
-    const UNITS: [(&str, u64); 9] = [
-        ("B", 1),
-        ("KB", 1_000),
-        ("MB", 1_000_000),
-        ("GB", 1_000_000_000),
-        ("TB", 1_000_000_000_000),
-        ("KIB", 1 << 10),
-        ("MIB", 1 << 20),
-        ("GIB", 1 << 30),
-        ("TIB", 1 << 40),
-    ];
-
-    /// `"500 MB"`, `"1GiB"`, `"2 gb"`: a whole number and a unit, or a whole number alone.
-    pub fn parse(text: &str) -> Option<Self> {
-        let text = text.trim();
-        let digits_end = text
-            .find(|c: char| !c.is_ascii_digit())
-            .unwrap_or(text.len());
-        let (number, unit) = text.split_at(digits_end);
-        let number: u64 = number.parse().ok()?;
-        let unit = unit.trim().to_ascii_uppercase();
-        let multiplier = if unit.is_empty() {
-            1
-        } else {
-            Self::UNITS
-                .iter()
-                .find(|(name, _)| *name == unit)
-                .map(|(_, multiplier)| *multiplier)?
-        };
-        number.checked_mul(multiplier).map(Self)
-    }
-}
-
-/// In the largest unit it is a whole number of, as a report file would write it (`1 GiB`,
-/// `500 MB`), so an error names the limit as it was set; else in bytes.
-impl fmt::Display for ByteSize {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        const LARGEST_FIRST: [(&str, u64); 8] = [
-            ("TiB", 1 << 40),
-            ("TB", 1_000_000_000_000),
-            ("GiB", 1 << 30),
-            ("GB", 1_000_000_000),
-            ("MiB", 1 << 20),
-            ("MB", 1_000_000),
-            ("KiB", 1 << 10),
-            ("KB", 1_000),
-        ];
-        match LARGEST_FIRST
-            .iter()
-            .find(|(_, unit)| self.0 >= *unit && self.0.is_multiple_of(*unit))
-        {
-            Some((name, unit)) => write!(f, "{} {name}", self.0 / unit),
-            None => write!(f, "{} bytes", self.0),
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reads_sizes_as_people_write_them() {
-        let cases = [
-            ("500 MB", Some(500_000_000)),
-            ("1GiB", Some(1 << 30)),
-            ("2 gb", Some(2_000_000_000)),
-            ("4096", Some(4096)),
-            ("12 B", Some(12)),
-            ("1.5 GB", None),
-            ("MB", None),
-            ("-1 MB", None),
-            ("5 parsecs", None),
-            ("99999999999 TB", None),
-        ];
-        for (text, bytes) in cases {
-            assert_eq!(ByteSize::parse(text), bytes.map(ByteSize), "{text:?}");
-        }
-        assert_eq!(ByteSize(1 << 30).to_string(), "1 GiB");
-        assert_eq!(ByteSize(500_000_000).to_string(), "500 MB");
-        assert_eq!(ByteSize(1_500).to_string(), "1500 bytes");
     }
 }

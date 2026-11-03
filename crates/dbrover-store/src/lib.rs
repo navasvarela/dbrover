@@ -60,8 +60,8 @@ pub use projects::{
 pub use reports::{ReportFiles, ReportName};
 pub use secrets::{Secret, SecretError, SecretStore, os_keychain};
 pub use settings::{
-    FormatSettings, HistorySettings, KeywordCase, LintSettings, Settings, SettingsError,
-    SettingsFile, UpdateSettings,
+    FormatSettings, HistorySettings, KeywordCase, LintSettings, ReportSettings, Settings,
+    SettingsError, SettingsFile, UpdateSettings,
 };
 pub use settings_folder::{
     CONFIG_DIR_FLAG, CONFIG_DIR_VARIABLE, ChosenFolder, ChosenFolderError, ChosenFolderFile,

@@ -3,6 +3,7 @@
 //! Nothing here does I/O. Driver crates implement [`Connection`]; the engine owns the
 //! connections and the UI only ever sees the plain data types.
 
+mod byte_size;
 mod catalog;
 mod catalog_page;
 mod cloud_sign_in;
@@ -25,6 +26,7 @@ mod table;
 #[cfg(feature = "conformance")]
 pub mod conformance;
 
+pub use byte_size::ByteSize;
 pub use catalog::{CatalogNode, CatalogPath, FolderKind, KeyType, NodeKind, PathSegment};
 pub use catalog_page::{
     CATALOG_PAGE_SIZE, CATALOG_SEARCH_LIMIT, CatalogMatches, CatalogSearch, ChildrenPage,

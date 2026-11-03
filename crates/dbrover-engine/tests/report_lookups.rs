@@ -17,7 +17,9 @@ use common::{
 };
 use dbrover_core::{Connection, ConnectionConfig, DataSource, DataSourceId, Route, SafetyLevel};
 use dbrover_engine::{PasswordCommands, ProcessRunner, SourceAccess, Tunnels};
-use dbrover_report::{Plan, RunFailure, RunFolders, RunSummary, Step, read_report, run};
+use dbrover_report::{
+    LimitDefaults, Plan, RunFailure, RunFolders, RunSummary, Step, read_report, run,
+};
 use dbrover_store::{Secret, SecretStore, TrustedCommands};
 
 async fn execute(connection: &mut dyn Connection, statements: &[&str]) {
@@ -69,7 +71,13 @@ async fn run_report(
     secrets: Arc<dyn SecretStore>,
     out: &Path,
 ) -> Result<RunSummary, RunFailure> {
-    let plan = Plan::new(read_report(text).unwrap(), data_sources, &[]).unwrap();
+    let plan = Plan::new(
+        read_report(text).unwrap(),
+        data_sources,
+        &[],
+        &LimitDefaults::default(),
+    )
+    .unwrap();
     let values = plan.values(&Default::default()).unwrap();
     let tunnels = Tunnels::new(out.join("known_hosts"));
     let commands = PasswordCommands::new(TrustedCommands::default(), Arc::new(ProcessRunner));

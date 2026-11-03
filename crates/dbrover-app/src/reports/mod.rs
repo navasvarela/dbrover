@@ -13,6 +13,7 @@ mod runs_table;
 mod tab;
 
 use std::collections::BTreeMap;
+use std::num::{NonZeroU32, NonZeroUsize};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -20,12 +21,13 @@ use dbrover_core::DataSource;
 use dbrover_engine::{Command, Event, ReportText};
 use dbrover_export::CustomFormat;
 use dbrover_report::{
-    Batch, LoadedColumn, Plan, Preview, Report, RunEvent, RunFailure, RunRequest, SourceStart,
-    Step, TypedValues, WrittenFile, read_report,
+    Batch, CombineLimits, LimitDefaults, LoadedColumn, OutputLimits, Plan, Preview, Report,
+    RunEvent, RunFailure, RunRequest, SourceLimits, SourceStart, Step, TypedValues, WrittenFile,
+    read_report,
 };
 use dbrover_store::{
-    CombineMetrics, DEFAULT_RUNS_KEPT, OutputMetrics, ReportFiles, ReportName, ReportRun, RunError,
-    RunOutcome, SourceMetrics, StepMetrics,
+    CombineMetrics, DEFAULT_RUNS_KEPT, OutputMetrics, ReportFiles, ReportName, ReportRun,
+    ReportSettings, RunError, RunOutcome, SourceMetrics, StepMetrics,
 };
 use jiff::Timestamp;
 
@@ -38,6 +40,46 @@ const NEW_REPORT: &str = include_str!("new_report.toml");
 
 /// How many of a report's runs its tab asks the history for: as many as fit side by side.
 pub const RUNS_LISTED: usize = 5;
+
+/// The limits a report runs under where its file leaves one out: Settings › Reports' where it
+/// sets one, else DbRover's own.
+pub fn limit_defaults(settings: &ReportSettings) -> LimitDefaults {
+    let constants = LimitDefaults::default();
+    LimitDefaults {
+        source: SourceLimits {
+            max_rows: settings
+                .max_rows
+                .map_or(constants.source.max_rows, |rows| rows.get()),
+            max_bytes: settings.max_bytes.unwrap_or(constants.source.max_bytes),
+            timeout: settings.source_timeout.unwrap_or(constants.source.timeout),
+        },
+        combine: CombineLimits {
+            timeout: settings
+                .combine_timeout
+                .unwrap_or(constants.combine.timeout),
+            memory_limit: settings
+                .memory_limit
+                .unwrap_or(constants.combine.memory_limit),
+            threads: settings
+                .threads
+                .and_then(|threads| usize::try_from(threads.get()).ok())
+                .and_then(NonZeroUsize::new)
+                .or(constants.combine.threads),
+            max_temp_size: settings
+                .max_temp_size
+                .unwrap_or(constants.combine.max_temp_size),
+        },
+        output: OutputLimits {
+            max_size: settings.max_size.unwrap_or(constants.output.max_size),
+        },
+        run_timeout: settings.run_timeout.unwrap_or(constants.run_timeout),
+    }
+}
+
+/// How many runs of each report the history keeps.
+pub fn runs_kept(settings: &ReportSettings) -> NonZeroU32 {
+    settings.runs_kept.unwrap_or(DEFAULT_RUNS_KEPT)
+}
 
 /// What the user asked of the Reports, in the explorer or a report's tab.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +96,8 @@ pub enum ReportAction {
     OpenPath(PathBuf),
     /// Deletes every run of the report the history keeps.
     ClearRuns(ReportName),
+    /// Opens Settings › Reports, where the limits' defaults are.
+    OpenSettings,
 }
 
 /// Where reports are kept and how they run: given by `main`, and by tests that use them.
@@ -114,14 +158,15 @@ impl Listed {
         }
     }
 
-    /// The report against the data sources and presets as they are now.
+    /// The report against the data sources, presets and limits' defaults as they are now.
     pub fn plan(
         &self,
         data_sources: &[DataSource],
         presets: &[CustomFormat],
+        defaults: &LimitDefaults,
     ) -> Result<Plan, Vec<String>> {
         let report = self.read.as_ref().map_err(Clone::clone)?;
-        Plan::new(report.clone(), data_sources, presets)
+        Plan::new(report.clone(), data_sources, presets, defaults)
     }
 }
 
@@ -541,12 +586,13 @@ impl Reports {
         self.running.as_ref().map(|running| &running.report)
     }
 
-    /// Starts `name` in a worker with the values typed in its tab, unless a report is running.
-    /// `wake` asks the UI to look at the run's events.
+    /// Starts `name`, planned as `plan` under `defaults`, in a worker with the values typed in
+    /// its tab, unless a report is running. `wake` asks the UI to look at the run's events.
     pub fn start(
         &mut self,
         name: &ReportName,
         plan: &Plan,
+        defaults: LimitDefaults,
         wake: impl Fn() + Send + Sync + 'static,
     ) {
         if self.running.is_some() {
@@ -568,6 +614,7 @@ impl Reports {
             values: values.clone(),
             staging: folder.join(staging_name()),
             folder,
+            defaults,
             memory_limit: None,
         };
         let started = setup.launcher.start(&request, plan.timeout, Box::new(wake));
@@ -596,8 +643,9 @@ impl Reports {
     }
 
     /// Takes in what the running report's worker said since the last frame. Returns the
-    /// command that keeps the run in the history, once it has ended.
-    pub fn poll(&mut self) -> Option<Command> {
+    /// command that keeps the run in the history, with the newest `kept` of its report, once it
+    /// has ended.
+    pub fn poll(&mut self, kept: NonZeroU32) -> Option<Command> {
         let running = self.running.as_mut()?;
         let mut events = Vec::new();
         while let Some(event) = running.run.try_next() {
@@ -612,7 +660,7 @@ impl Reports {
         self.running = None;
         Some(Command::RecordReportRun {
             run: Box::new(run),
-            kept: DEFAULT_RUNS_KEPT,
+            kept,
             listed: RUNS_LISTED,
         })
     }
