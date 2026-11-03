@@ -8,7 +8,7 @@ use dbrover_core::{
 };
 use dbrover_engine::SessionState;
 use dbrover_language::QueryLanguage;
-use dbrover_sql::{Capabilities, Dialect, SchemaCreation, TableChange, UserModel};
+use dbrover_sql::{Capabilities, SchemaCreation, TableChange, UserModel};
 use dbrover_store::{ActionId, ActionTarget, ConsoleKey, CustomAction, DiagramKey, Project};
 use egui::{
     Color32, CornerRadius, Id, Label, Rect, Response, RichText, ScrollArea, Sense, Shape, TextEdit,
@@ -536,11 +536,7 @@ fn data_source_tree(
             catalog: &entry.catalog,
             quoting: language.quoting(),
             reads_rows: language.dialect().is_some(),
-            // The object helpers write SQL, and not CQL's DDL (`Dialect::writes_ddl`).
-            capabilities: language
-                .dialect()
-                .filter(|dialect| dialect.writes_ddl())
-                .map(Dialect::capabilities),
+            capabilities: helper_capabilities(entry),
             own_database: entry.data_source.config.database(),
             driver: entry.data_source.config.driver(),
             language,
@@ -555,6 +551,14 @@ fn data_source_tree(
             found_on_server(ui, &tree, filter, actions);
         });
     }
+}
+
+/// What the object helpers may write for `entry`: its dialect's DDL, unless it writes none
+/// (CQL's) or its server is a service whose DDL differs (C1).
+fn helper_capabilities(entry: &DataSourceEntry) -> Option<&'static Capabilities> {
+    QueryLanguage::from(entry.data_source.config.driver())
+        .dialect()?
+        .capabilities_on(entry.service())
 }
 
 fn data_source_menu(
@@ -585,11 +589,7 @@ fn data_source_menu(
     saved_diagrams_menu(ui, id, tree.saved_diagrams, actions);
     let root = CatalogPath::root();
     let mut new = Vec::new();
-    if let Some(capabilities) = QueryLanguage::from(entry.data_source.config.driver())
-        .dialect()
-        .filter(|dialect| dialect.writes_ddl())
-        .map(Dialect::capabilities)
-    {
+    if let Some(capabilities) = helper_capabilities(entry) {
         if capabilities.schema_creation == SchemaCreation::CreateDatabase {
             new.push((
                 icons::TREE_STRUCTURE,

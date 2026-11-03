@@ -4,6 +4,7 @@
 
 mod catalog;
 mod execution;
+mod redshift;
 mod roles;
 mod table;
 mod tls;
@@ -16,8 +17,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use dbrover_core::{
     CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, ChildrenPage,
-    ChildrenQuery, Connection, DriverError, NodeKind, Password, PostgresConfig, Rejection,
-    RelationName, ResultCursor, RoleDescription, Route, ServerInfo, TableConstraints,
+    ChildrenQuery, Connection, DriverError, ManagedService, NodeKind, Password, PostgresConfig,
+    Rejection, RelationName, ResultCursor, RoleDescription, Route, ServerInfo, TableConstraints,
     TableDescription, TableName, TransactionStatus,
 };
 use tokio::task::{JoinError, JoinHandle};
@@ -30,6 +31,7 @@ pub use tls::TlsSetupError;
 /// Shown in `pg_stat_activity`, so a DBA can tell DbRover's sessions apart.
 const APPLICATION_NAME: &str = "dbrover";
 const PRODUCT: &str = "PostgreSQL";
+const REDSHIFT_PRODUCT: &str = "Amazon Redshift";
 
 /// Opens a connection, encrypted as `config.server.tls` says.
 ///
@@ -54,29 +56,50 @@ pub async fn connect(
         route,
     };
     let primary = server.open(&config.server.database).await?;
-    let version = server_version(&primary.client)
+    let (version, description) = server_version(&primary.client)
         .await
         .map_err(connect_error)?;
+    let (catalog, server_info) = match redshift::redshift_version(&description) {
+        Some(redshift) => (
+            Catalog::Redshift,
+            ServerInfo::new(REDSHIFT_PRODUCT, redshift).on_service(Some(ManagedService::Redshift)),
+        ),
+        None => (Catalog::Postgres, ServerInfo::new(PRODUCT, version)),
+    };
 
     Ok(PostgresConnection {
         server,
         primary,
         others: HashMap::new(),
-        server_info: ServerInfo::new(PRODUCT, version),
+        server_info,
+        catalog,
     })
 }
 
-/// Asked with the simple protocol, which prepares nothing a pooler could lose (C1c).
-async fn server_version(client: &Client) -> Result<String, tokio_postgres::Error> {
-    let messages = client.simple_query("SHOW server_version").await?;
-    Ok(messages
-        .iter()
-        .find_map(|message| match message {
-            SimpleQueryMessage::Row(row) => row.get(0),
-            _ => None,
-        })
-        .unwrap_or_default()
-        .to_owned())
+/// The server's version number and its `version()` text, which names Redshift on Redshift
+/// (C1d). Asked with the simple protocol, which prepares nothing a pooler could lose (C1c).
+async fn server_version(client: &Client) -> Result<(String, String), tokio_postgres::Error> {
+    let messages = client
+        .simple_query("SELECT current_setting('server_version'), version()")
+        .await?;
+    let row = messages.iter().find_map(|message| match message {
+        SimpleQueryMessage::Row(row) => Some(row),
+        _ => None,
+    });
+    let column = |index| {
+        row.and_then(|row| row.get(index))
+            .unwrap_or_default()
+            .to_owned()
+    };
+    Ok((column(0), column(1)))
+}
+
+/// Whose catalog the server keeps: PostgreSQL's, or Redshift's, which lists through views of
+/// its own (C1d).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Catalog {
+    Postgres,
+    Redshift,
 }
 
 fn connect_error(error: tokio_postgres::Error) -> DriverError {
@@ -210,6 +233,7 @@ pub struct PostgresConnection {
     primary: DatabaseClient,
     others: HashMap<String, DatabaseClient>,
     server_info: ServerInfo,
+    catalog: Catalog,
 }
 
 impl PostgresConnection {
@@ -255,7 +279,11 @@ impl Connection for PostgresConnection {
             .map_err(connection_error)
     }
 
+    /// On Redshift, every database's catalog is read on the connection's own (C1d).
     async fn children(&mut self, path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError> {
+        if self.catalog == Catalog::Redshift {
+            return redshift::children(&self.primary.client, path).await;
+        }
         let client = self.client_for(path).await?;
         catalog::children(client, path).await
     }
@@ -265,6 +293,10 @@ impl Connection for PostgresConnection {
         path: &CatalogPath,
         query: &ChildrenQuery,
     ) -> Result<ChildrenPage, DriverError> {
+        if self.catalog == Catalog::Redshift {
+            let nodes = redshift::children(&self.primary.client, path).await?;
+            return Ok(ChildrenPage::whole(nodes, query));
+        }
         let client = self.client_for(path).await?;
         catalog::children_page(client, path, query).await
     }
@@ -273,10 +305,17 @@ impl Connection for PostgresConnection {
         &mut self,
         search: &CatalogSearch,
     ) -> Result<Option<CatalogMatches>, DriverError> {
-        Ok(Some(catalog::search(&self.primary.client, search).await?))
+        let client = &self.primary.client;
+        Ok(Some(match self.catalog {
+            Catalog::Postgres => catalog::search(client, search).await?,
+            Catalog::Redshift => redshift::search(client, search).await?,
+        }))
     }
 
     async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError> {
+        if self.catalog == Catalog::Redshift {
+            return redshift::definition(&self.primary.client, path).await;
+        }
         let client = self.client_for(path).await?;
         catalog::definition(client, path).await
     }
@@ -289,23 +328,38 @@ impl Connection for PostgresConnection {
 
     /// Roles belong to the server, but what the role owns is counted in the configured
     /// database, where the helpers' statements run.
+    ///
+    /// Redshift's explorer has no roles folder to describe.
     async fn describe_role(&mut self, path: &CatalogPath) -> Result<RoleDescription, DriverError> {
+        if self.catalog == Catalog::Redshift {
+            return Err(DriverError::InvalidPath(path.clone()));
+        }
         roles::describe(&self.primary.client, path).await
     }
 
     /// Always on the configured database, the one consoles run on.
+    ///
+    /// Redshift's tables aren't described: PostgreSQL's description reads `pg_sequence` and
+    /// identity columns Redshift doesn't have, so its rows open read-only until a description
+    /// of its own is written (C1d).
     async fn describe_table(
         &mut self,
         table: &RelationName,
     ) -> Result<Option<TableDescription>, DriverError> {
-        table::describe_table(&self.primary.client, table).await
+        match self.catalog {
+            Catalog::Postgres => table::describe_table(&self.primary.client, table).await,
+            Catalog::Redshift => Ok(None),
+        }
     }
 
     async fn describe_constraints(
         &mut self,
         table: &TableName,
     ) -> Result<TableConstraints, DriverError> {
-        table::describe_constraints(&self.primary.client, table).await
+        match self.catalog {
+            Catalog::Postgres => table::describe_constraints(&self.primary.client, table).await,
+            Catalog::Redshift => Ok(TableConstraints::default()),
+        }
     }
 
     async fn validate(&mut self, sql: &str) -> Result<Option<Rejection>, DriverError> {
@@ -878,6 +932,152 @@ mod tests {
             .unwrap();
         Box::new(first).close().await.unwrap();
         Box::new(second).close().await.unwrap();
+    }
+
+    /// Views with the names and columns of the Redshift system views the driver reads (C1d),
+    /// made from `information_schema` in a schema of their own, and a schema to find in them.
+    /// They stand in for Redshift's catalog, not for its data: only the queries and the tree
+    /// they make are tried here.
+    const REDSHIFT_STAND_IN: &str = "
+        DROP SCHEMA IF EXISTS dbrover_redshift_stand_in CASCADE;
+        DROP SCHEMA IF EXISTS dbrover_redshift_sales CASCADE;
+        CREATE SCHEMA dbrover_redshift_stand_in;
+        CREATE VIEW dbrover_redshift_stand_in.svv_redshift_databases AS
+            SELECT datname::text AS database_name, 'local'::text AS database_type
+            FROM pg_database WHERE datallowconn AND NOT datistemplate;
+        CREATE VIEW dbrover_redshift_stand_in.svv_all_schemas AS
+            SELECT catalog_name::text AS database_name, schema_name::text AS schema_name
+            FROM information_schema.schemata;
+        CREATE VIEW dbrover_redshift_stand_in.svv_all_tables AS
+            SELECT table_catalog::text AS database_name, table_schema::text AS schema_name,
+                table_name::text AS table_name,
+                CASE table_type WHEN 'BASE TABLE' THEN 'TABLE'
+                    WHEN 'FOREIGN' THEN 'EXTERNAL TABLE' ELSE table_type END::text AS table_type
+            FROM information_schema.tables;
+        CREATE VIEW dbrover_redshift_stand_in.svv_all_columns AS
+            SELECT table_catalog::text AS database_name, table_schema::text AS schema_name,
+                table_name::text AS table_name, column_name::text AS column_name,
+                ordinal_position::integer AS ordinal_position, data_type::text AS data_type,
+                is_nullable::text AS is_nullable
+            FROM information_schema.columns;
+        CREATE SCHEMA dbrover_redshift_sales;
+        CREATE TABLE dbrover_redshift_sales.orders (id integer NOT NULL, total numeric);
+        CREATE VIEW dbrover_redshift_sales.big_orders AS
+            SELECT id FROM dbrover_redshift_sales.orders WHERE total > 100;
+    ";
+
+    /// Redshift's tree, on PostgreSQL with [`REDSHIFT_STAND_IN`] first on the search path, as
+    /// Redshift's own views are in `pg_catalog`. Walked as the conformance walk does, without
+    /// definitions: `SHOW TABLE` is Redshift's alone.
+    #[tokio::test]
+    async fn walks_redshifts_catalog_through_its_system_views() {
+        let Some((config, password)) = test_server() else {
+            return;
+        };
+        let mut connection = connect(&config, password.as_ref(), Route::Direct)
+            .await
+            .unwrap();
+        connection
+            .primary
+            .client
+            .batch_execute(REDSHIFT_STAND_IN)
+            .await
+            .unwrap();
+        connection
+            .primary
+            .client
+            .batch_execute("SET search_path TO dbrover_redshift_stand_in, pg_catalog")
+            .await
+            .unwrap();
+        connection.catalog = Catalog::Redshift;
+
+        let mut nodes = Vec::new();
+        let mut frontier = vec![CatalogPath::root()];
+        for _ in 0..6 {
+            let mut next = Vec::new();
+            for path in frontier {
+                for node in connection.children(&path).await.unwrap() {
+                    assert_eq!(node.path.parent().as_ref(), Some(&path));
+                    if node.has_children && !node.system {
+                        next.push(node.path.clone());
+                    }
+                    nodes.push(node);
+                }
+            }
+            frontier = next;
+        }
+        conformance::check_invalid_path(&mut connection).await;
+
+        let root_labels = labels_under(&nodes, &CatalogPath::root());
+        assert!(root_labels.contains(&"postgres"), "{root_labels:?}");
+        assert!(!root_labels.contains(&"roles"), "{root_labels:?}");
+        let database =
+            CatalogPath::root().child(NodeKind::Database, config.server.database.clone());
+        let schema = database.child(NodeKind::Schema, "dbrover_redshift_sales");
+        let orders = folder(&schema, FolderKind::Tables).child(NodeKind::Table, "orders");
+        let expected: [(CatalogPath, &[&str]); 4] = [
+            (schema.clone(), &["tables", "views"]),
+            (folder(&schema, FolderKind::Tables), &["orders"]),
+            (folder(&schema, FolderKind::Views), &["big_orders"]),
+            (folder(&orders, FolderKind::Columns), &["id", "total"]),
+        ];
+        for (parent, labels) in expected {
+            assert_eq!(labels_under(&nodes, &parent), labels, "under {parent}");
+        }
+        let id = nodes
+            .iter()
+            .find(|node| node.path.parent() == Some(folder(&orders, FolderKind::Columns)))
+            .unwrap();
+        assert_eq!(id.detail.as_deref(), Some("integer, not null"));
+        let found = nodes.iter().find(|node| node.path == orders).unwrap();
+        assert!(found.has_definition, "a table of the connected database");
+        assert!(
+            nodes
+                .iter()
+                .any(|node| node.label == "pg_catalog" && node.system)
+        );
+
+        let found = connection
+            .search_catalog(&CatalogSearch::new("ORDERS"))
+            .await
+            .unwrap()
+            .unwrap();
+        // Other tests' schemas may have tables of the same names.
+        let paths: Vec<_> = found
+            .nodes
+            .iter()
+            .map(|node| node.path.clone())
+            .filter(|path| path.name_of(NodeKind::Schema) == Some("dbrover_redshift_sales"))
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                folder(&schema, FolderKind::Views).child(NodeKind::View, "big_orders"),
+                orders.clone()
+            ]
+        );
+        let table = RelationName {
+            schema: Some(dbrover_core::Identifier {
+                name: "dbrover_redshift_sales".to_owned(),
+                quoted: false,
+            }),
+            name: dbrover_core::Identifier {
+                name: "orders".to_owned(),
+                quoted: false,
+            },
+        };
+        assert_eq!(connection.describe_table(&table).await.unwrap(), None);
+
+        connection
+            .primary
+            .client
+            .batch_execute(
+                "DROP SCHEMA dbrover_redshift_stand_in CASCADE; \
+                 DROP SCHEMA dbrover_redshift_sales CASCADE",
+            )
+            .await
+            .unwrap();
+        Box::new(connection).close().await.unwrap();
     }
 
     #[tokio::test]

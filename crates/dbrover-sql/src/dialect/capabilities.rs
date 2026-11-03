@@ -2,6 +2,8 @@
 //! facts instead of checking which engine they talk to, and the DDL builder refuses what a
 //! dialect lacks.
 
+use dbrover_core::ManagedService;
+
 use super::Dialect;
 use crate::ddl::{IndexMethod, ReferentialAction};
 
@@ -538,6 +540,21 @@ impl Dialect {
     pub fn writes_ddl(self) -> bool {
         self != Self::Cassandra
     }
+
+    /// What the object helpers may write on a server of this dialect that said it is
+    /// `service` (C1, `docs/cloud-data.md`): the dialect's own capabilities, or `None` where
+    /// the helpers write no DDL. Redshift is reached through PostgreSQL's driver, but most of
+    /// PostgreSQL's DDL (identity columns, foreign key actions, indexes) is not Redshift's,
+    /// and the helpers don't write Redshift's own yet.
+    pub fn capabilities_on(self, service: Option<ManagedService>) -> Option<&'static Capabilities> {
+        if !self.writes_ddl() {
+            return None;
+        }
+        match service {
+            Some(ManagedService::Redshift) => None,
+            _ => Some(self.capabilities()),
+        }
+    }
 }
 
 impl Capabilities {
@@ -549,6 +566,27 @@ impl Capabilities {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redshift_gets_no_helpers_and_plain_services_their_engines() {
+        assert_eq!(
+            Dialect::Postgres.capabilities_on(Some(ManagedService::Redshift)),
+            None
+        );
+        for (dialect, service) in [
+            (Dialect::Postgres, None),
+            (Dialect::Postgres, Some(ManagedService::Neon)),
+            (Dialect::Mysql, Some(ManagedService::RdsMysql)),
+            (Dialect::SqlServer, Some(ManagedService::AzureSql)),
+        ] {
+            assert_eq!(
+                dialect.capabilities_on(service),
+                Some(dialect.capabilities()),
+                "{service:?}"
+            );
+        }
+        assert_eq!(Dialect::Cassandra.capabilities_on(None), None);
+    }
 
     #[test]
     fn foreign_keys_offer_no_action_first_and_only_where_they_exist() {
