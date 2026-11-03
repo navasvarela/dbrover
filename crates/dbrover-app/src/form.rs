@@ -120,13 +120,20 @@ impl<'a> Header<'a> {
                     image.paint_at(ui, inner);
                 }
             }
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 1.0;
-                ui.label(RichText::new(self.title).font(fonts::semibold(TITLE_SIZE)));
-                if let Some(subtitle) = self.subtitle {
-                    ui.label(RichText::new(subtitle).color(palette.text_weak));
+            let title = RichText::new(self.title).font(fonts::semibold(TITLE_SIZE));
+            match self.subtitle {
+                Some(subtitle) => {
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        ui.label(title);
+                        ui.label(RichText::new(subtitle).color(palette.text_weak));
+                    });
                 }
-            });
+                // Straight in the row, which centres it on the badge.
+                None => {
+                    ui.label(title);
+                }
+            }
             let rest = vec2(ui.available_width(), HEADER_BADGE_SIZE);
             ui.allocate_ui_with_layout(rest, Layout::right_to_left(Align::Center), trailing);
         });
