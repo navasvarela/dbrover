@@ -38,6 +38,7 @@ mod repository_rename_tests;
 mod session;
 mod settings;
 mod sql_files;
+mod stop_signals;
 mod transfer;
 mod tunnels;
 mod updater;
@@ -63,8 +64,9 @@ pub use protocol::{
 pub use releases::{GithubReleases, Release, ReleaseError, ReleaseFeed};
 pub use repaint::Repaint;
 pub use report_source::{ReportSource, SourceAccess};
-pub use report_worker::WorkerRun;
+pub use report_worker::{RunStopper, WorkerRun};
 pub use sql_files::WatchedFile;
+pub use stop_signals::StopSignals;
 pub use tunnels::Tunnels;
 pub use updater::{
     InstallError, InstallSupport, InstalledUpdate, PackagerInstaller, Restart, StagedInstaller,

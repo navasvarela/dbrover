@@ -35,7 +35,8 @@ jiff.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["process", "io-util"] }
+# "signal" for `dbrover report run`, which stops its run on Ctrl-C and SIGTERM (stop_signals.rs).
+tokio = { workspace = true, features = ["process", "io-util", "signal"] }
 tracing.workspace = true
 ureq.workspace = true
 

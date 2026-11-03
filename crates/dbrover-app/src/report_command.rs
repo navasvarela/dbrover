@@ -10,9 +10,11 @@
 mod args;
 mod human;
 mod outcome;
+mod stopping;
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use dbrover_engine::WorkerRun;
 use dbrover_report::{LimitDefaults, Plan, RunEvent, RunFailure, RunRequest, Step, TypedValues};
@@ -24,6 +26,7 @@ pub use args::Request;
 use self::args::{ReportArg, RunArgs, USAGE};
 use self::human::HumanLines;
 use self::outcome::Outcome;
+use self::stopping::Stopping;
 use crate::reports::{self, ProcessLauncher};
 use crate::{report_worker, telemetry, version};
 
@@ -63,6 +66,9 @@ fn run(args: &RunArgs) -> Outcome {
     };
     // Lives until the run ends, so the log file has the last of it.
     let _log = start_logging(&paths);
+    // Before the worker can start, so a stop signal from here on cancels the run rather than
+    // ending the command with a worker behind it.
+    let stopping = Stopping::listen();
     let report = report_path(&paths, &args.report);
     let prepared = match prepare(&paths, &report, args) {
         Ok(prepared) => prepared,
@@ -71,7 +77,17 @@ fn run(args: &RunArgs) -> Outcome {
             return Outcome::Report;
         }
     };
-    let outcome = run_worker(&paths, &prepared, &mut human);
+    let run = match start_worker(&paths, &prepared) {
+        Ok(run) => run,
+        Err(error) => {
+            let failure =
+                RunFailure::new(Step::Worker, format!("could not start the worker: {error}"));
+            human.event(&RunEvent::Failed(failure));
+            return Outcome::Failed;
+        }
+    };
+    stopping.started(run.stopper());
+    let outcome = follow(&run, &mut human);
     tracing::info!("{} ended: {outcome:?}", report.display());
     outcome
 }
@@ -156,33 +172,34 @@ fn absolute(path: &Path) -> PathBuf {
     std::path::absolute(path).unwrap_or_else(|_| path.to_owned())
 }
 
-/// Starts the worker on the request, prints each event, and returns how the run ended.
-fn run_worker(
-    paths: &AppPaths,
-    prepared: &Prepared,
-    human: &mut HumanLines<impl Write, impl Write>,
-) -> Outcome {
-    let started = std::env::current_exe().and_then(|executable| {
-        let launcher = ProcessLauncher {
-            executable,
-            settings_folder: paths.folders().settings.clone(),
-        };
-        WorkerRun::start(
-            launcher.command(),
-            &prepared.request,
-            prepared.plan.timeout,
-            || {},
-        )
-    });
-    let run = match started {
-        Ok(run) => run,
-        Err(error) => {
-            let failure =
-                RunFailure::new(Step::Worker, format!("could not start the worker: {error}"));
-            human.event(&RunEvent::Failed(failure));
-            return Outcome::Failed;
-        }
+/// Starts `dbrover report-worker` from this executable on the request, as the app does.
+fn start_worker(paths: &AppPaths, prepared: &Prepared) -> io::Result<WorkerRun> {
+    let launcher = ProcessLauncher {
+        executable: std::env::current_exe()?,
+        settings_folder: paths.folders().settings.clone(),
     };
+    let mut command = launcher.command();
+    in_own_process_group(&mut command);
+    WorkerRun::start(command, &prepared.request, prepared.plan.timeout, || {})
+}
+
+/// On Unix, the worker gets a process group of its own, so a Ctrl-C in the terminal reaches
+/// only the command, which cancels the run. In the command's group, the worker would die of
+/// the same SIGINT, and the run would end as a worker that stopped without saying why or as
+/// cancelled, whichever the command saw first. Windows starts the worker without a console
+/// (`CREATE_NO_WINDOW`), which keeps Ctrl-C from it already.
+fn in_own_process_group(command: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        command.process_group(0);
+    }
+    #[cfg(not(unix))]
+    let _ = command;
+}
+
+/// Prints each of the run's events, and returns how the run ended.
+fn follow(run: &WorkerRun, human: &mut HumanLines<impl Write, impl Write>) -> Outcome {
     while let Some(event) = run.wait_next() {
         human.event(&event);
         if let Some(outcome) = Outcome::of_end(&event) {
