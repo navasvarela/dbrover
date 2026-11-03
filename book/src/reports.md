@@ -106,7 +106,48 @@ with its rows and size, and the preview; or the step that failed and why. Nothin
 unless every file is: a run that fails or is cancelled leaves the folder as it was, an older
 file of the same name included.
 
-The values and the folder are remembered for each report until you quit DbRover.
+The values and the folder are remembered for each report until you quit DbRover. Under the run,
+**Runs** lists the report's last runs side by side (see [Runs](#runs)).
+
+## Runs
+
+Every run of a report is kept, finished, failed or cancelled, with what each of its steps
+measured. Under the last run, **Runs** shows the newest five side by side, a column each, newest
+first:
+
+- when the run started, how it ended (hover over *failed* for the step and the error), its
+  total time and the parameters it ran with;
+- a row for each source, the combine step and each output: its time and its rows, or for an
+  output the file's size. Hover over a cell for everything the step measured: the bytes it read,
+  how long its first row took, a lookup's batches, the combine step's peak memory and how much
+  it spilled to disk, the file's name. A step a run didn't reach shows —.
+
+An output's rows are written as they come, so its time is part of the step its rows come from;
+that step's time doesn't count the outputs', and a slow writer shows as its output.
+
+The step that took the longest share of each run is in the accent colour. When it is the same
+step in every finished run listed, a line under the table names it, as *Source entries takes the
+most time in every run listed: 80% of the newest.* That is the step to look at first. Sources
+of one round run at the same time, so their shares can add up to more than the whole run.
+
+Under it, hints from the newest finished run say what to try:
+
+- **A source that reads far more than the report writes**, at least 10,000 rows and ten times
+  as many as the outputs write: *Source entries read 1,100,000 rows for 40 written. If the
+  combine step drops most of them, filter them in the source's query, where its database can
+  use an index.* A report that adds rows up reads more than it writes on purpose; the hint is
+  worth a look when the combine step filters or joins most of them away.
+- **A combine step that spilled to disk**: *Combine spilled 3.2 GB to disk, past its
+  memory_limit. A larger memory_limit in `[combine]`, or fewer rows from the sources, keeps it in
+  memory.* A step that spills still finishes, but disk is slower than memory, and
+  `max_temp_size` stops it once it spills too much.
+
+**Clear history**, beside the heading, deletes every run of the report, after asking.
+
+Runs are kept in `history.sqlite` with the [query history](history.md), by the report's file
+name: rename the file and its runs start afresh, edit it and they carry on. Each report keeps its
+newest 20, unless **Settings › Reports** says otherwise; the query history's own limits don't
+touch them.
 
 ## A report file
 
@@ -425,6 +466,34 @@ consoles and their transactions carry on. The limits, cheapest first:
 | The run | its time | `timeout` in `[report]` |
 | The process | a lower priority; on Linux, half the machine's memory and the run's time on each processor thread | — |
 
+A limit a report's file doesn't set has a default for every report, in **Settings › Reports**:
+
+| Default | Of | DbRover's own |
+| --- | --- | --- |
+| Rows a source may return | `max_rows` | 1,000,000 rows |
+| Values a source may return | `max_bytes` | 1 GiB |
+| A source's time limit | `timeout` in `[[source]]` | 10 minutes |
+| Memory before spilling to disk | `memory_limit` | 2 GiB |
+| Spilled to disk at most | `max_temp_size` | 10 GiB |
+| Threads | `threads` | half the processor's cores |
+| The combine query's time limit | `timeout` in `[combine]` | 10 minutes |
+| Values an output may write | `max_size` | 1 GiB |
+| A whole run's time limit | `timeout` in `[report]` | 30 minutes |
+
+Each is a menu of a few values around DbRover's own. They are saved in `settings.toml`'s
+`[reports]`, written as a report file writes them, so you can set any value there by hand:
+
+```toml
+[reports]
+memory_limit = "8 GiB"
+run_timeout = "2h"
+runs_kept = 50
+```
+
+The keys there are `max_rows`, `max_bytes`, `source_timeout`, `memory_limit`, `max_temp_size`,
+`threads`, `combine_timeout`, `max_size`, `run_timeout` and `runs_kept`. A run uses the defaults
+in force when you click **Run**.
+
 DuckDB spills what doesn't fit in its `memory_limit` to a folder inside the output folder, which
 goes with the run. On macOS and Windows, which don't cap a process's memory, `memory_limit` is
 what keeps a large combine step from filling your machine's memory: lower it on a small
@@ -432,8 +501,9 @@ machine, raise it for a report that combines millions of rows.
 
 A run stopped by a limit names it, its value and where to raise it, as "It stopped at max_rows =
 1,000,000 rows. To allow more, raise max_rows in the `[[source]]` "balances" of the report's
-file." Before raising one, ask whether the query should read less: a report that returns far
-more rows than it writes is better filtered in its query.
+file.", with a link to **Settings › Reports**, where its default for every report is. Before
+raising one, ask whether the query should read less: the hints under [Runs](#runs) point at a
+source that returns far more rows than the report writes.
 
 The source always reads: a statement that would change anything is refused before it is sent,
 and it runs in the database's read-only mode, as a read-only data source's consoles do. A data
@@ -446,5 +516,5 @@ sign-in (see [Password from a command](data-sources.md#password-from-a-command))
 
 ## What's next
 
-Reports are being built in steps. Coming next: a record of every run to compare them, the PRQL
-language for the combine step, and running a report from the command line.
+Reports are being built in steps. Coming next: the PRQL language for the combine step, and running
+a report from the command line.
