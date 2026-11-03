@@ -36,6 +36,7 @@ use view::{DropView, EditView, NewView, RefreshView, RenameView, ViewAt};
 use crate::catalog_tree::CatalogTree;
 use crate::dialog::{self, DialogSize};
 use crate::explorer::Helper;
+use crate::form;
 use review::{Approval, Review, ReviewAction};
 
 /// The data source a dialog changes, and what about it decides how careful the dialog is.
@@ -287,16 +288,22 @@ impl ObjectDialog {
             target: &self.target,
             catalog,
         };
-        self.form.show(ui, &context);
         let destruction = self.form.destruction(self.target.dialect);
-        let approval = match &destruction {
-            Some(destruction) if self.confirmation.show(ui, destruction, &self.target) => {
-                Approval::Given
-            }
-            Some(_) => Approval::Awaited,
-            None => Approval::NotNeeded,
-        };
-        ui.separator();
+        // One card for the fields and the confirmation of what they destroy: a Drop has no
+        // fields, and would otherwise show an empty card.
+        let approval = form::card(ui, |rows| {
+            rows.full(|ui| {
+                self.form.show(ui, &context);
+                match &destruction {
+                    Some(destruction) if self.confirmation.show(ui, destruction, &self.target) => {
+                        Approval::Given
+                    }
+                    Some(_) => Approval::Awaited,
+                    None => Approval::NotNeeded,
+                }
+            })
+        });
+        ui.add_space(ui.spacing().item_spacing.y);
         let statements = self
             .form
             .operations()
