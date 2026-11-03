@@ -809,7 +809,7 @@ columns = [
 id = "assets"
 data_source = "assets-dynamodb"
 lookup = { from = "tx", column = "asset_id", as = "asset_ids" }
-query = "SELECT asset_id, symbol, unit, metadata FROM valuation_assets WHERE asset_id IN :asset_ids"
+query = 'SELECT asset_id, "symbol", unit, metadata FROM valuation_assets WHERE asset_id IN :asset_ids'
 columns = [
   { name = "asset_id", type = "text" },
   { name = "symbol",   type = "text" },
@@ -868,7 +868,7 @@ else quoted. The list is written where `:asset_ids` is, as that language writes 
 | PartiQL (DynamoDB) | `WHERE pk IN :ids` | `['a', 'b', 7]` |
 | MongoDB's shell | `db.assets.find({_id: {$in: :ids}})` | `["a", "b", 7]` |
 | Elasticsearch's requests | `{"terms": {"id": :ids}}` | `["a", "b", 7]` |
-| Redis's commands | `MGET :ids` | `"a" "b" "7"` |
+| Redis's commands | `MGET :ids` | `a b 7`, each quoted if it needs to be |
 
 The report's own parameters go into a statement as they did: bound where a SQL engine's driver
 binds, and for the other languages written in as literals of their type, as the lookup's are (a
@@ -929,8 +929,8 @@ By layer, as in [Guardrails](#guardrails), what changes from RP2:
 
 1. **Sources:** a source's `max_rows`, `max_bytes` and `timeout` hold for the whole source,
    every batch included: the caps count rows and bytes across batches, and the timeout runs
-   from the first batch's start. A document source's bytes are its documents' text, as they
-   arrive, before columns are taken from them. Every statement is checked to only read and
+   from the first batch's start. A source with declared columns counts the bytes of the values
+   it keeps. Every statement is checked to only read and
    asked of the cost guard as RP1's are; on DynamoDB, a lookup on the partition key reads by
    key and the cost guard lets it through, while a lookup on another attribute is a scan,
    which a guarded data source refuses.
@@ -950,15 +950,15 @@ one's line as *batch 2 of 7*.
 Each layer is one pull request in a stack, useful and tested on its own, with synthetic data
 only.
 
-- **RP3a — Plan:** this section, RP3's decisions and risks, and the roadmap's entry in layers.
-- **RP3b — Parameters in every language:** in `dbrover-language`, `:name` parameters found in
+- **RP3a — Plan** (built, #407): this section, RP3's decisions and risks, and the roadmap's entry in layers.
+- **RP3b — Parameters in every language** (built, #408): in `dbrover-language`, `:name` parameters found in
   each language's commands, literals and lists written as each language reads them, and the
   most values a statement takes; in `dbrover-document`, a path read from its text and a scalar's
   plain value (Extended JSON's numbers, ids and dates).
   **Exit:** unit tests, per language, of the parameters found (not inside strings, comments or
   `asset:id`-like keys), each literal and list, and a statement with parameters replaced; of
   paths read back from their text; and of each Extended JSON scalar's value.
-- **RP3c — The report file:** `lookup` and a source's `columns` read and planned with their
+- **RP3c — The report file** (built, #410): `lookup` and a source's `columns` read and planned with their
   problems; sources on every engine, a source's query in its language; the rounds; the events'
   new fields. A run whose plan needs lookups or declared columns fails, saying RP3d brings them.
   **Exit:** the valuation above reads and plans into two rounds; each new problem (a lookup
@@ -966,7 +966,7 @@ only.
   doesn't use, a `batch_size` over the engine's, a document source without `columns`, a
   `default` that doesn't fit its type, two declared columns of one name) is reported with its
   entry; RP1's and RP2's examples plan and run as before.
-- **RP3d — Running lookups and documents:** in `dbrover-report`, declared columns taken from
+- **RP3d — Running lookups and documents** (built, #412): in `dbrover-report`, declared columns taken from
   rows and documents, a lookup's values read from DuckDB, its batches under the source's caps
   and timeout, the rounds; in `dbrover-engine`, a source in any language, and its result's
   shape.
@@ -976,11 +976,11 @@ only.
   partition key reads by key under the cost guard, and one on another attribute is refused;
   on the MongoDB test server, a lookup with nested fields, defaults and `NumberLong`s loads
   its declared columns.
-- **RP3e — The tab:** a source waiting for another, its batches, and its declared columns
+- **RP3e — The tab** (built, #413): a source waiting for another, its batches, and its declared columns
   marked as declared.
   **Exit:** a kittest with a worker stand-in shows a lookup waiting, then its batches, then
   done.
-- **RP3f — The four reports:** under `examples/reports/`, the trial balance with subtotals per
+- **RP3f — The four reports** (built, #414): under `examples/reports/`, the trial balance with subtotals per
   kind of account (`GROUPING SETS`), the general ledger with each entry's counterparty from
   MongoDB and its running balance, the valuation above, and cost basis with realised gains by
   FIFO lot; the scripts that make their synthetic data in SQLite, PostgreSQL, DynamoDB, MongoDB
@@ -990,7 +990,7 @@ only.
   out row by row outside SQL; the general ledger, on a ledger of 1,100,000 entries, writes every
   row to CSV and goes on to a second Excel sheet, with each account's closing balance equal to
   its sum (a test marked slow, run with `--ignored`).
-- **RP3g — Manual and demo note:** the **Reports** chapter's sections on lookups, document
+- **RP3g — Manual and demo note** (built): the **Reports** chapter's sections on lookups, document
   sources and declared columns, and the four reports; RP3's demo note.
 
 **Exit:** the first iteration's: the four accounting reports run from their files, each in the
@@ -1022,6 +1022,9 @@ Taken on 2026-11-03 when RP3 started; each can be overturned in review.
 - **DynamoDB's `IN` limit.** DynamoDB's documentation doesn't state how many values an `IN`
   takes; 100 is what DynamoDB Local accepts, refusing 101. If AWS refuses fewer, `batch_size`
   lowers it until the constant changes.
+- **PartiQL's reserved words.** DynamoDB refuses a statement that names an attribute such as
+  `symbol` or `value` unquoted, with only "Statement wasn't well formed"; the manual says to
+  quote them, as the examples do.
 - **Long statements.** A thousand long keys make a statement of hundreds of kilobytes, near
   ClickHouse's `max_query_size`; the error is the engine's, and `batch_size` is the fix.
 - **A lookup's values in memory.** The distinct values are read into the worker before the
