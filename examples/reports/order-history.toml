@@ -1,0 +1,90 @@
+# Order history: every order line in a period, by customer, with the customer's name and
+# country and their running total over the period, to CSV and Excel. Reads two data sources:
+# the "shop" SQLite data source that shop.sql makes, and the "crm" MongoDB data source whose
+# customers shop-customers.js makes.
+
+[report]
+name = "Order history"
+description = "Every order line in a period, with its customer and each customer's running total."
+params = { since = "date", until = "date" }
+timeout = "1h"
+
+# SQLite: the period's order lines. Declared, so the amounts are rounded to the cent as they
+# load and the customer ids stay text.
+[[source]]
+id = "lines"
+data_source = "shop"
+query = """
+SELECT l.id, l.ordered_on, l.order_no, l.customer_id, p.sku, p.name AS product,
+       l.quantity, l.amount
+FROM order_lines l
+JOIN products p ON p.id = l.product_id
+WHERE l.ordered_on >= :since AND l.ordered_on < :until
+"""
+columns = [
+  { name = "id",          type = "integer" },
+  { name = "ordered_on",  type = "date" },
+  { name = "order_no",    type = "integer" },
+  { name = "customer_id", type = "text" },
+  { name = "sku",         type = "text" },
+  { name = "product",     type = "text" },
+  { name = "quantity",    type = "integer" },
+  { name = "amount",      type = "decimal(18,2)" },
+]
+# A year of a busy shop runs past the default million rows.
+max_rows = 5000000
+max_bytes = "4 GiB"
+timeout = "30m"
+
+# MongoDB: the customers those lines name, read by their ids rather than the whole collection.
+# batch_size is small here only to show the batches in the report's tab; MongoDB takes 1,000
+# ids a query without it. A customer with no country gets "unknown".
+[[source]]
+id = "customers"
+data_source = "crm"
+lookup = { from = "lines", column = "customer_id", as = "ids", batch_size = 10 }
+query = "db.customers.find({_id: {$in: :ids}})"
+columns = [
+  { name = "customer_id", from = "_id" },
+  { name = "customer",    from = "name" },
+  { name = "country",     from = "address.country", default = "unknown" },
+]
+
+# Each line with its customer, and the customer's running total: a window over the customer's
+# lines in order, from the period's first.
+[combine]
+query = """
+SELECT l.ordered_on, l.order_no, l.customer_id, c.customer, c.country, l.sku, l.product,
+       l.quantity, l.amount,
+       SUM(l.amount) OVER (
+         PARTITION BY l.customer_id ORDER BY l.ordered_on, l.order_no, l.id
+         ROWS UNBOUNDED PRECEDING
+       ) AS running_total
+FROM lines l
+LEFT JOIN customers c USING (customer_id)
+ORDER BY l.customer_id, l.ordered_on, l.order_no, l.id
+"""
+
+[[output]]
+format = "csv"
+file = "order-history-{since:%Y-%m}.csv"
+columns = [
+  { name = "Date",          from = "ordered_on",    type = "date", format = "yyyy-mm-dd" },
+  { name = "Order",         from = "order_no",      type = "integer" },
+  { name = "Customer",      from = "customer_id",   type = "text" },
+  { name = "Name",          from = "customer" },
+  { name = "Country",       from = "country" },
+  { name = "SKU",           from = "sku",           type = "text" },
+  { name = "Product",       from = "product" },
+  { name = "Quantity",      from = "quantity",      type = "integer" },
+  { name = "Amount",        from = "amount",        type = "decimal(18,2)", format = "#,##0.00;[Red]-#,##0.00" },
+  { name = "Running total", from = "running_total", type = "decimal(18,2)", format = "#,##0.00" },
+]
+
+[[output]]
+format = "xlsx"
+file = "order-history-{since:%Y-%m}.xlsx"
+sheet_name = "Order history"
+# Past an Excel sheet's 1,048,576 rows, go on in "Order history 2", and so on.
+continue_on_new_sheet = true
+columns = "same"

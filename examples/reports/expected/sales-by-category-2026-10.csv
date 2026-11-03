@@ -1,0 +1,14 @@
+Category,SKU,Product,Units,Sold,Returned,Net
+accessories,A-100,Lights,66,3080.60,474.28,2606.32
+accessories,A-200,Bell,0,0.00,0.00,0.00
+Total accessories,,,66,3080.60,474.28,2606.32
+bikes,B-100,City bike,28,20783.90,2598.36,18185.54
+bikes,B-200,Road bike,28,41296.20,5161.76,36134.44
+Total bikes,,,56,62080.10,7760.12,54319.98
+clothing,C-100,Rain jacket,71,7244.52,893.90,6350.62
+clothing,C-200,Gloves,69,2389.56,352.28,2037.28
+Total clothing,,,140,9634.08,1246.18,8387.90
+parts,P-100,Chain,73,2033.20,245.90,1787.30
+parts,P-200,Brake pads,72,1482.58,148.32,1334.26
+Total parts,,,145,3515.78,394.22,3121.56
+Total,,,407,78310.56,9874.80,68435.76

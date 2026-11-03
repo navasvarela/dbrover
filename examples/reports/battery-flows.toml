@@ -1,0 +1,95 @@
+# Battery flows: each charge and discharge priced at its zone's energy price in the hour it was
+# metered, to Excel and CSV. Reads three data sources and combines them in DuckDB: the flows in
+# PostgreSQL, which energy-postgres.sql makes; the batteries they name in DynamoDB, which
+# energy-batteries.partiql makes; and the hourly prices in a DuckDB file, which
+# energy-prices.sql makes.
+
+[report]
+name = "Battery flows"
+description = "Each charge and discharge priced at its zone's energy price in the hour it was metered."
+# The period: from :since, up to but not including :until.
+params = { since = "timestamp", until = "timestamp" }
+
+# PostgreSQL: the period's flows, filtered in the query, then loaded into the run's DuckDB.
+# amount is in the meter's smallest unit; declared, it loads as an exact DECIMAL.
+[[source]]
+id = "flows"
+data_source = "energy-postgres"
+query = """
+SELECT id, battery_id, amount, metered_at
+FROM energy.flows
+WHERE metered_at >= :since AND metered_at < :until
+"""
+columns = [
+  { name = "id",         type = "integer" },
+  { name = "battery_id", type = "text" },
+  { name = "amount",     type = "decimal(38,0)" },
+  { name = "metered_at", type = "timestamp" },
+]
+
+# DynamoDB: the batteries those flows name, read by key (battery_id is the table's partition
+# key), never scanned. Its items are documents, so the source declares the columns it makes;
+# "zone" is quoted because PartiQL keeps the word for itself.
+[[source]]
+id = "batteries"
+data_source = "batteries-dynamodb"
+lookup = { from = "flows", column = "battery_id", as = "battery_ids" }
+query = 'SELECT battery_id, name, unit, "zone", metadata FROM energy_batteries WHERE battery_id IN :battery_ids'
+columns = [
+  { name = "battery_id", type = "text" },
+  { name = "name",       type = "text" },
+  # The size of the meter's smallest unit in kWh: 0.000000001 for bat-3's microwatt-hours.
+  { name = "unit",       type = "decimal(38,18)" },
+  { name = "zone",       type = "text" },
+  { name = "site",       from = "metadata.site", type = "text", default = "unknown" },
+]
+
+# DuckDB: the price file, attached read-only and read in place, not copied.
+[[source]]
+id = "prices"
+data_source = "prices-duckdb"
+attach = true
+
+# DuckDB SQL over the tables "flows" and "batteries" and the attached database "prices". An
+# amount times its unit is the energy in kWh, exactly; ASOF JOIN takes, for each flow, the
+# latest price at or before it. Multiplying decimals keeps every digit; dividing would give a
+# double, so this report doesn't.
+[combine]
+query = """
+SELECT flows.metered_at, batteries.name, batteries.site,
+       flows.amount * batteries.unit AS energy_kwh, p.price_eur,
+       flows.amount * batteries.unit * p.price_eur AS value_eur
+FROM flows
+JOIN batteries USING (battery_id)
+ASOF JOIN prices.hourly_prices p
+  ON p.zone = batteries.zone AND p.hour <= flows.metered_at
+ORDER BY flows.metered_at, flows.id
+"""
+memory_limit = "1 GiB"
+
+[[output]]
+format = "xlsx"
+file = "battery-flows-{since:%Y-%m}.xlsx"
+sheet_name = "Battery flows"
+columns = [
+  { name = "Metered",           from = "metered_at", type = "timestamp", format = "yyyy-mm-dd hh:mm" },
+  { name = "Battery",           from = "name" },
+  { name = "Site",              from = "site" },
+  { name = "Energy (kWh)",      from = "energy_kwh", type = "decimal(38,9)", format = "#,##0.000######" },
+  { name = "Price (EUR/kWh)",   from = "price_eur",  type = "decimal(38,8)", format = "0.00######" },
+  { name = "Value (EUR)",       from = "value_eur",  type = "decimal(38,2)", format = "#,##0.00;[Red]-#,##0.00" },
+]
+
+# The CSV file keeps every digit DuckDB computed, 26 places for a value, to check against;
+# the Excel file above rounds values to the cent, once, as it writes them.
+[[output]]
+format = "csv"
+file = "battery-flows-{since:%Y-%m}.csv"
+columns = [
+  { name = "Metered",           from = "metered_at", type = "timestamp" },
+  { name = "Battery",           from = "name" },
+  { name = "Site",              from = "site" },
+  { name = "Energy (kWh)",      from = "energy_kwh", type = "decimal" },
+  { name = "Price (EUR/kWh)",   from = "price_eur",  type = "decimal" },
+  { name = "Value (EUR)",       from = "value_eur",  type = "decimal" },
+]
