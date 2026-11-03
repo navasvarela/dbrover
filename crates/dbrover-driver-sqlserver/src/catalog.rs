@@ -11,20 +11,27 @@
 use dbrover_core::{CatalogNode, CatalogPath, DriverError, FolderKind, NodeKind, PathSegment};
 use tiberius::ToSql;
 
+use crate::warehouse::{CatalogSupport, ConstraintKind};
 use crate::{SQL_SERVER_QUOTING, SqlClient, column, connection_error, constraint};
 
 /// A listing query's detail column when it has none: a typed `NULL`, because a bare one is an
 /// `int` that can't be read as text.
 const NO_DETAIL: &str = "CAST(NULL AS nvarchar(1))";
 
-const SCHEMA_FOLDERS: &[FolderKind] = &[
-    FolderKind::Tables,
-    FolderKind::Views,
-    FolderKind::Functions,
-    FolderKind::Procedures,
-    FolderKind::Sequences,
-    FolderKind::Synonyms,
-];
+/// A schema's folders, as far as the server has them (C1e).
+fn schema_folders(support: &CatalogSupport) -> Vec<FolderKind> {
+    [
+        (FolderKind::Tables, true),
+        (FolderKind::Views, true),
+        (FolderKind::Functions, true),
+        (FolderKind::Procedures, true),
+        (FolderKind::Sequences, support.sequences),
+        (FolderKind::Synonyms, support.synonyms),
+    ]
+    .into_iter()
+    .filter_map(|(folder, kept)| kept.then_some(folder))
+    .collect()
+}
 
 /// Which level of the tree a path points at, with the names its query needs.
 enum Level<'a> {
@@ -50,7 +57,7 @@ enum Level<'a> {
 }
 
 impl<'a> Level<'a> {
-    fn of(path: &'a CatalogPath) -> Option<Self> {
+    fn of(path: &'a CatalogPath, support: &CatalogSupport) -> Option<Self> {
         match path.segments() {
             [] => Some(Self::Databases),
             [database] if database.kind == NodeKind::Database => Some(Self::Schemas {
@@ -59,17 +66,22 @@ impl<'a> Level<'a> {
             [database, schema, rest @ ..]
                 if database.kind == NodeKind::Database && schema.kind == NodeKind::Schema =>
             {
-                Self::within_schema(&database.name, &schema.name, rest)
+                Self::within_schema(&database.name, &schema.name, rest, support)
             }
             _ => None,
         }
     }
 
-    fn within_schema(database: &'a str, schema: &'a str, rest: &'a [PathSegment]) -> Option<Self> {
+    fn within_schema(
+        database: &'a str,
+        schema: &'a str,
+        rest: &'a [PathSegment],
+        support: &CatalogSupport,
+    ) -> Option<Self> {
         match rest {
             [] => Some(Self::SchemaFolders),
             [folder] => folder_kind(folder)
-                .filter(|folder| SCHEMA_FOLDERS.contains(folder))
+                .filter(|folder| schema_folders(support).contains(folder))
                 .map(|folder| Self::SchemaObjects {
                     database,
                     schema,
@@ -80,7 +92,7 @@ impl<'a> Level<'a> {
             }),
             [folder, relation, child_folder] if is_relation_in(folder, relation) => {
                 folder_kind(child_folder)
-                    .filter(|child| relation_folders(relation.kind).contains(child))
+                    .filter(|child| relation_folders(relation.kind, support).contains(child))
                     .map(|folder| Self::RelationChildren {
                         database,
                         schema,
@@ -109,35 +121,50 @@ fn is_relation_in(folder: &PathSegment, relation: &PathSegment) -> bool {
     folder_kind(folder) == Some(expected)
 }
 
-fn relation_folders(kind: NodeKind) -> &'static [FolderKind] {
-    match kind {
-        NodeKind::Table => &[
-            FolderKind::Columns,
-            FolderKind::Indexes,
-            FolderKind::Constraints,
-            FolderKind::Triggers,
+/// A table's or view's folders, as far as the server has them: a view's indexes are an
+/// indexed view's.
+fn relation_folders(kind: NodeKind, support: &CatalogSupport) -> Vec<FolderKind> {
+    let candidates = match kind {
+        NodeKind::Table => [
+            (FolderKind::Columns, true),
+            (FolderKind::Indexes, support.indexes),
+            (FolderKind::Constraints, !support.constraints.is_empty()),
+            (FolderKind::Triggers, support.triggers),
         ],
-        NodeKind::View => &[FolderKind::Columns, FolderKind::Indexes],
-        _ => &[],
-    }
+        NodeKind::View => [
+            (FolderKind::Columns, true),
+            (FolderKind::Indexes, support.indexed_views),
+            (FolderKind::Constraints, false),
+            (FolderKind::Triggers, false),
+        ],
+        _ => return Vec::new(),
+    };
+    candidates
+        .into_iter()
+        .filter_map(|(folder, kept)| kept.then_some(folder))
+        .collect()
 }
 
 pub(crate) async fn children(
     client: &mut SqlClient,
     path: &CatalogPath,
+    support: &CatalogSupport,
 ) -> Result<Vec<CatalogNode>, DriverError> {
-    let level = Level::of(path).ok_or_else(|| DriverError::InvalidPath(path.clone()))?;
+    let level = Level::of(path, support).ok_or_else(|| DriverError::InvalidPath(path.clone()))?;
     match level {
-        Level::Databases => databases(client, path).await,
-        Level::Schemas { database } => schemas(client, path, database).await,
-        Level::SchemaFolders => Ok(folders(path, SCHEMA_FOLDERS)),
+        Level::Databases => databases(client, path, support).await,
+        Level::Schemas { database } => schemas(client, path, &catalog_of(database, support)).await,
+        Level::SchemaFolders => Ok(folders(path, &schema_folders(support))),
         Level::SchemaObjects {
             database,
             schema,
             folder,
-        } => schema_objects(client, path, database, schema, folder).await,
+        } => {
+            let catalog = catalog_of(database, support);
+            schema_objects(client, path, &catalog, schema, folder).await
+        }
         Level::RelationFolders { relation_kind } => {
-            Ok(folders(path, relation_folders(relation_kind)))
+            Ok(folders(path, &relation_folders(relation_kind, support)))
         }
         Level::RelationChildren {
             database,
@@ -145,9 +172,34 @@ pub(crate) async fn children(
             relation,
             folder,
         } => {
-            let object = three_part_name(database, schema, relation);
-            relation_children(client, path, database, &object, folder).await
+            let object = object_name(database, schema, relation, support);
+            let catalog = catalog_of(database, support);
+            relation_children(client, path, &catalog, &object, folder, support).await
         }
+    }
+}
+
+/// Where `database`'s catalog views are: `[sales].sys`, or `sys` on a server whose other
+/// databases can't be read by name, where the tree lists only the connected one.
+fn catalog_of(database: &str, support: &CatalogSupport) -> String {
+    if support.other_databases {
+        format!("{}.sys", SQL_SERVER_QUOTING.identifier(database))
+    } else {
+        "sys".to_owned()
+    }
+}
+
+/// An object's name for `OBJECT_ID`: three parts, or two where only the connected database
+/// can be read.
+fn object_name(database: &str, schema: &str, name: &str, support: &CatalogSupport) -> String {
+    if support.other_databases {
+        three_part_name(database, schema, name)
+    } else {
+        format!(
+            "{}.{}",
+            SQL_SERVER_QUOTING.identifier(schema),
+            SQL_SERVER_QUOTING.identifier(name)
+        )
     }
 }
 
@@ -234,10 +286,16 @@ fn nodes(
 async fn databases(
     client: &mut SqlClient,
     path: &CatalogPath,
+    support: &CatalogSupport,
 ) -> Result<Vec<CatalogNode>, DriverError> {
+    let which = if support.other_databases {
+        "HAS_DBACCESS(name) = 1"
+    } else {
+        "name = DB_NAME()"
+    };
     let sql = format!(
         "SELECT name, CASE WHEN database_id <= 4 THEN 1 ELSE 0 END, 0, {NO_DETAIL} \
-         FROM sys.databases WHERE state = 0 AND HAS_DBACCESS(name) = 1 ORDER BY name"
+         FROM sys.databases WHERE state = 0 AND {which} ORDER BY name"
     );
     let listed = list(client, &sql, &[]).await?;
     Ok(nodes(path, NodeKind::Database, true, listed))
@@ -249,13 +307,12 @@ async fn databases(
 async fn schemas(
     client: &mut SqlClient,
     path: &CatalogPath,
-    database: &str,
+    catalog: &str,
 ) -> Result<Vec<CatalogNode>, DriverError> {
     let sql = format!(
         "SELECT name, CASE WHEN name IN ('sys', 'INFORMATION_SCHEMA', 'guest') \
          OR schema_id >= 16384 THEN 1 ELSE 0 END, 0, {NO_DETAIL} \
-         FROM {}.sys.schemas ORDER BY name",
-        SQL_SERVER_QUOTING.identifier(database)
+         FROM {catalog}.schemas ORDER BY name"
     );
     let listed = list(client, &sql, &[]).await?;
     Ok(nodes(path, NodeKind::Schema, true, listed))
@@ -264,11 +321,10 @@ async fn schemas(
 async fn schema_objects(
     client: &mut SqlClient,
     path: &CatalogPath,
-    database: &str,
+    catalog: &str,
     schema: &str,
     folder: FolderKind,
 ) -> Result<Vec<CatalogNode>, DriverError> {
-    let catalog = format!("{}.sys", SQL_SERVER_QUOTING.identifier(database));
     let objects = |types: &str| {
         format!(
             "SELECT o.name, CASE WHEN o.is_ms_shipped = 1 THEN 1 ELSE 0 END, \
@@ -312,13 +368,13 @@ async fn schema_objects(
 async fn relation_children(
     client: &mut SqlClient,
     path: &CatalogPath,
-    database: &str,
+    catalog: &str,
     object: &str,
     folder: FolderKind,
+    support: &CatalogSupport,
 ) -> Result<Vec<CatalogNode>, DriverError> {
-    let catalog = format!("{}.sys", SQL_SERVER_QUOTING.identifier(database));
     let (kind, sql) = match folder {
-        FolderKind::Columns => (NodeKind::Column, columns_query(&catalog)),
+        FolderKind::Columns => (NodeKind::Column, columns_query(catalog)),
         // Included columns are left out: they are stored in the index, but not keys of it.
         // `type_desc` has a collation of its own, which can't be joined to names without
         // naming one.
@@ -340,17 +396,7 @@ async fn relation_children(
         ),
         FolderKind::Constraints => (
             NodeKind::Constraint,
-            format!(
-                "SELECT name, 0, 1, kind FROM (\
-                 SELECT name, CASE type WHEN 'PK' THEN 'primary key' ELSE 'unique' END AS kind \
-                 FROM {catalog}.key_constraints WHERE parent_object_id = OBJECT_ID(@P1) \
-                 UNION ALL SELECT name, 'foreign key' FROM {catalog}.foreign_keys \
-                 WHERE parent_object_id = OBJECT_ID(@P1) \
-                 UNION ALL SELECT name, 'check' FROM {catalog}.check_constraints \
-                 WHERE parent_object_id = OBJECT_ID(@P1) \
-                 UNION ALL SELECT name, 'default' FROM {catalog}.default_constraints \
-                 WHERE parent_object_id = OBJECT_ID(@P1)) constraints ORDER BY name"
-            ),
+            constraints_query(catalog, support.constraints),
         ),
         FolderKind::Triggers => (
             NodeKind::Trigger,
@@ -368,6 +414,35 @@ async fn relation_children(
     };
     let listed = list(client, &sql, &[&object]).await?;
     Ok(nodes(path, kind, false, listed))
+}
+
+/// A table's constraints of the kinds the server keeps, each with what kind it is.
+fn constraints_query(catalog: &str, kinds: &[ConstraintKind]) -> String {
+    let selects: Vec<String> = kinds
+        .iter()
+        .map(|kind| match kind {
+            ConstraintKind::Key => format!(
+                "SELECT name, CASE type WHEN 'PK' THEN 'primary key' ELSE 'unique' END AS kind \
+                 FROM {catalog}.key_constraints WHERE parent_object_id = OBJECT_ID(@P1)"
+            ),
+            ConstraintKind::Foreign => format!(
+                "SELECT name, 'foreign key' FROM {catalog}.foreign_keys \
+                 WHERE parent_object_id = OBJECT_ID(@P1)"
+            ),
+            ConstraintKind::Check => format!(
+                "SELECT name, 'check' FROM {catalog}.check_constraints \
+                 WHERE parent_object_id = OBJECT_ID(@P1)"
+            ),
+            ConstraintKind::Default => format!(
+                "SELECT name, 'default' FROM {catalog}.default_constraints \
+                 WHERE parent_object_id = OBJECT_ID(@P1)"
+            ),
+        })
+        .collect();
+    format!(
+        "SELECT name, 0, 1, kind FROM ({}) constraints ORDER BY name",
+        selects.join(" UNION ALL ")
+    )
 }
 
 /// Each column with its type as `CREATE TABLE` writes it (`nvarchar(50)`, `decimal(10, 2)`,
@@ -394,11 +469,12 @@ fn columns_query(catalog: &str) -> String {
 pub(crate) async fn definition(
     client: &mut SqlClient,
     path: &CatalogPath,
+    support: &CatalogSupport,
 ) -> Result<String, DriverError> {
     // Only paths `children` returns: the level above must be a valid one.
     let valid_parent = path
         .parent()
-        .is_some_and(|parent| Level::of(&parent).is_some());
+        .is_some_and(|parent| Level::of(&parent, support).is_some());
     let invalid = || DriverError::InvalidPath(path.clone());
     let (Some(object), Some(database), Some(schema)) = (
         path.last(),
@@ -410,8 +486,8 @@ pub(crate) async fn definition(
     if !valid_parent {
         return Err(invalid());
     }
-    let catalog = format!("{}.sys", SQL_SERVER_QUOTING.identifier(database));
-    let name = three_part_name(database, schema, &object.name);
+    let catalog = catalog_of(database, support);
+    let name = object_name(database, schema, &object.name, support);
     if object.kind == NodeKind::Constraint {
         return constraint::definition(client, &catalog, &name).await;
     }
