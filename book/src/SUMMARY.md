@@ -2,27 +2,50 @@
 
 [Introduction](introduction.md)
 
+# Getting started
+
 - [Install and first launch](install.md)
+
+# Data sources
+
 - [Data sources](data-sources.md)
-- [Moving data sources to another machine](sharing.md)
 - [Cloud sign-in and costs](cloud.md)
+- [DynamoDB](dynamodb.md)
+- [Moving data sources to another machine](sharing.md)
+
+# Browsing and changing databases
+
 - [The explorer](explorer.md)
 - [Creating and changing tables](objects.md)
 - [Views and schemas](views-schemas.md)
 - [Users and roles](users-roles.md)
-- [Query consoles](consoles.md)
-- [DynamoDB](dynamodb.md)
-- [Reading query plans](explain-plans.md)
 - [ER diagrams](diagrams.md)
+
+# Querying
+
+- [Query consoles](consoles.md)
 - [Files, parameters and find](files-parameters.md)
+- [Reading query plans](explain-plans.md)
+- [The query history](history.md)
+
+# Working with data
+
 - [Working with table data](table-data.md)
 - [Exporting and copying rows](exporting.md)
 - [Your own export formats](export-formats.md)
+
+# Reports
+
 - [Reports](reports.md)
-- [The query history](history.md)
-- [Keyboard shortcuts](shortcuts.md)
+
+# Customising and extending
+
 - [Settings](settings.md)
 - [Actions, snippets and themes](customising.md)
 - [Connecting an AI assistant](mcp.md)
+
+# Reference
+
+- [Keyboard shortcuts](shortcuts.md)
 - [Where DbRover keeps its files](files.md)
 - [Troubleshooting](troubleshooting.md)
