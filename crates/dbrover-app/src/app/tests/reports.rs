@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use dbrover_report::{
-    LimitHit, LoadedColumn, Preview, RunEvent, RunFailure, RunRequest, SourceStart, Step,
+    Batch, LimitHit, LoadedColumn, Preview, RunEvent, RunFailure, RunRequest, SourceStart, Step,
     WrittenFile,
 };
 use dbrover_store::ReportFiles;
@@ -313,6 +313,131 @@ fn shows_each_source_and_the_combine_step_of_a_combined_run() {
         2
     );
     harness.get_by_label("Preview: The first 1 rows, as the combine step returned them");
+}
+
+/// Entries, and their counterparties read by the entries' accounts.
+const LOOKUP: &str = r##"
+[report]
+name = "Trial balance"
+description = "Debits and credits per account."
+params = { since = "date", until = "date" }
+
+[[source]]
+id = "entries"
+data_source = "shop"
+query = "SELECT account, amount FROM entries WHERE booked_on >= :since AND booked_on < :until"
+
+[[source]]
+id = "accounts"
+data_source = "shop"
+lookup = { from = "entries", column = "account", as = "codes" }
+query = "SELECT account, name FROM accounts WHERE account IN :codes"
+columns = [{ name = "account" }, { name = "name" }]
+
+[combine]
+query = "SELECT * FROM entries JOIN accounts USING (account)"
+
+[[output]]
+format = "csv"
+file = "trial-balance-{since:%Y-%m}.csv"
+"##;
+
+#[test]
+fn shows_a_lookup_waiting_then_its_batches_then_done() {
+    let start = RunEvent::Started {
+        report: "Trial balance".to_owned(),
+        sources: vec![
+            SourceStart {
+                id: "entries".to_owned(),
+                data_source: "shop".to_owned(),
+                attached: false,
+                waits_for: None,
+            },
+            SourceStart {
+                id: "accounts".to_owned(),
+                data_source: "shop".to_owned(),
+                attached: false,
+                waits_for: Some("entries".to_owned()),
+            },
+        ],
+        combine: true,
+    };
+    let progress = |id: &str, batch| RunEvent::Progress {
+        step: Step::Source { id: id.to_owned() },
+        rows: 1_000,
+        bytes: 20_000,
+        elapsed_ms: 1_000,
+        batch,
+    };
+    let entries_done = RunEvent::SourceDone {
+        id: "entries".to_owned(),
+        rows: 3,
+        bytes: 60,
+        first_row_ms: Some(3),
+        elapsed_ms: 40,
+        table: Vec::new(),
+        warnings: Vec::new(),
+        batches: None,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let script = vec![start.clone(), progress("entries", None)];
+    let mut harness = start_with_reports(dir.path(), LOOKUP, StandIn::new(script));
+    open_and_fill(&mut harness, "2026-10-01");
+    harness.get_by_label("Run").click();
+    step_until_visible(&mut harness, "waiting for entries");
+    drop(harness);
+
+    let dir = tempfile::tempdir().unwrap();
+    let batch = Batch { number: 2, of: 7 };
+    let script = vec![
+        start.clone(),
+        entries_done.clone(),
+        progress("accounts", Some(batch)),
+    ];
+    let mut harness = start_with_reports(dir.path(), LOOKUP, StandIn::new(script));
+    open_and_fill(&mut harness, "2026-10-01");
+    harness.get_by_label("Run").click();
+    step_until_visible(&mut harness, "batch 2 of 7 · 1,000 rows, 20.0 KB · 1.0 s");
+    drop(harness);
+
+    let dir = tempfile::tempdir().unwrap();
+    let script = vec![
+        start,
+        entries_done,
+        RunEvent::SourceDone {
+            id: "accounts".to_owned(),
+            rows: 2,
+            bytes: 40,
+            first_row_ms: Some(5),
+            elapsed_ms: 2_500,
+            table: ["account", "name"]
+                .into_iter()
+                .map(|name| LoadedColumn {
+                    name: name.to_owned(),
+                    type_name: "VARCHAR".to_owned(),
+                    declared: true,
+                })
+                .collect(),
+            warnings: Vec::new(),
+            batches: Some(7),
+        },
+        RunEvent::CombineDone {
+            rows: 3,
+            bytes: 90,
+            first_row_ms: Some(1),
+            elapsed_ms: 10,
+        },
+        RunEvent::Finished { elapsed_ms: 3_000 },
+    ];
+    let mut harness = start_with_reports(dir.path(), LOOKUP, StandIn::new(script));
+    open_and_fill(&mut harness, "2026-10-01");
+    harness.get_by_label("Run").click();
+    step_until_visible(&mut harness, "Finished in 3.0 s: 3 rows combined.");
+    harness.get_by_label("7 batches · 2 rows, 40 bytes · 2.5 s");
+    harness.get_by_label("2 columns in DuckDB").click();
+    harness.run();
+    assert_eq!(harness.get_all_by_label("declared").count(), 2);
 }
 
 #[test]

@@ -17,8 +17,8 @@ use dbrover_core::DataSource;
 use dbrover_engine::{Command, Event, ReportText};
 use dbrover_export::CustomFormat;
 use dbrover_report::{
-    LoadedColumn, Plan, Preview, Report, RunEvent, RunFailure, RunRequest, SourceStart, Step,
-    TypedValues, WrittenFile, read_report,
+    Batch, LoadedColumn, Plan, Preview, Report, RunEvent, RunFailure, RunRequest, SourceStart,
+    Step, TypedValues, WrittenFile, read_report,
 };
 use dbrover_store::{ReportFiles, ReportName};
 
@@ -138,7 +138,11 @@ pub struct StepRecord {
     /// The data source a source reads; `None` for the combine step.
     pub data_source: Option<String>,
     pub attached: bool,
+    /// The source whose values this one's lookup reads, which it waits for.
+    pub waits_for: Option<String>,
     pub state: StepState,
+    /// The lookup's batch being read, while the source runs, or how many it ran, once done.
+    pub batches: Option<Batch>,
     /// A loaded source's table in DuckDB, its columns and their types.
     pub table: Vec<LoadedColumn>,
     pub warnings: Vec<String>,
@@ -205,7 +209,7 @@ impl RunRecord {
                 rows,
                 bytes,
                 elapsed_ms,
-                ..
+                batch,
             } => {
                 if let Some(record) = self.step_mut(&step) {
                     record.state = StepState::Running {
@@ -213,6 +217,7 @@ impl RunRecord {
                         bytes,
                         elapsed_ms,
                     };
+                    record.batches = batch;
                 }
             }
             RunEvent::SourceDone {
@@ -222,6 +227,7 @@ impl RunRecord {
                 elapsed_ms,
                 table,
                 warnings,
+                batches,
                 ..
             } => {
                 if !self.combines() {
@@ -233,6 +239,7 @@ impl RunRecord {
                         bytes,
                         elapsed_ms,
                     };
+                    record.batches = batches.map(|of| Batch { number: of, of });
                     record.table = table;
                     record.warnings = warnings;
                 }
@@ -277,18 +284,23 @@ impl StepRecord {
             step,
             data_source,
             attached,
+            waits_for: None,
             state: StepState::Waiting,
+            batches: None,
             table: Vec::new(),
             warnings: Vec::new(),
         }
     }
 
     fn source(source: SourceStart) -> Self {
-        Self::new(
-            Step::Source { id: source.id },
-            Some(source.data_source),
-            source.attached,
-        )
+        Self {
+            waits_for: source.waits_for,
+            ..Self::new(
+                Step::Source { id: source.id },
+                Some(source.data_source),
+                source.attached,
+            )
+        }
     }
 
     /// Whether the step has nothing more to do.
