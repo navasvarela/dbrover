@@ -24,9 +24,12 @@ settings in `~/.config/dbrover` or a folder of your choice, and roomier buttons,
 dialogs), v0.22.0 (your own export formats in `exports.toml`: presets, templates and
 programs), v0.23.0 (signing in with Google Cloud and Microsoft Entra ID accounts,
 PostgreSQL, MySQL and SQL Server signed into with a cloud account, cost guards on every data
-source, a progress line while statements run, and search across a whole catalog) and v0.24.0
+source, a progress line while statements run, and search across a whole catalog), v0.24.0
 (reports: a report file with parameters, run in a worker process with its limits, written to
-CSV and Excel with a declared schema).
+CSV and Excel with a declared schema) and v0.25.0 (reports with several sources combined in
+DuckDB, lookups and document sources, the accounting reports as examples, dialogs in one
+style, the query history and definitions as tabs, a value panel beside the grid, and exports
+and imports that run on in the status bar).
 R3's update notice is built, ahead of R2 (see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
