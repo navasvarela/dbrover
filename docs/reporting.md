@@ -282,7 +282,8 @@ After W8, which this builds on. One GitHub stack per milestone:
 - **RP3 — Lookups and documents:** lookups with batching, declared columns for document
   sources. The first iteration's exit: the four accounting reports above run and match. In
   layers RP3a to RP3g, [below](#rp3--lookups-and-documents).
-- **RP4 — Metrics:** the run history, the comparison of runs, and the hints.
+- **RP4 — Metrics:** the run history, the comparison of runs, the hints, and a Settings page
+  for the limits' defaults. In layers RP4a to RP4f, [below](#rp4--metrics).
 - **RP5 — PRQL:** `prql` in `[combine]`, with the compiled SQL shown.
 - **RP6 — The command line:** `dbrover report run <file> --param since=…`, for cron and CI,
   with the worker's guardrails and an exit code per outcome.
@@ -1035,6 +1036,184 @@ Taken on 2026-11-03 when RP3 started; each can be overturned in review.
 - **Tests that need servers.** The valuation, cost basis and general ledger need the
   PostgreSQL, DynamoDB and MongoDB test servers, which CI starts on Linux only; on macOS and
   Windows only the trial balance, on SQLite, runs end to end.
+
+## RP4 — Metrics
+
+Started on 2026-11-03, after RP3. RP4 keeps what each run measured, so the report's tab can
+put the last runs side by side, say which step took the time, and suggest what to change.
+It also gives the limits' defaults a Settings page, which RP1 and RP2 left to RP4. The report
+file, the combine step, the outputs and the guardrails stay as RP1 to RP3 built them.
+
+### The report file and the worker in RP4
+
+The report file doesn't change. What a run measures comes from the worker's events, which RP1
+to RP3 already fill with most of it; RP4 adds what is missing:
+
+| Step | Recorded | Already sent | New in RP4 |
+| --- | --- | --- | --- |
+| Each source | time to the first row, total time, rows, bytes read, batches for a lookup | `source_done`: all of it | — |
+| Combine | time, DuckDB's peak memory, the most it spilled to disk | `combine_done`: time, rows, time to the first row | `peak_memory`, `peak_temp_size` |
+| Each output | time, rows, file size | `output_written`: rows, size | `elapsed_ms` |
+| The run | total time, the parameters, how it ended | `finished` or `failed`; the app has the parameters and sees **Cancel** | — |
+
+- **DuckDB's peak memory and spill** come from DuckDB's own profiler, turned on in the run's
+  DuckDB before it is locked down: after the combine query, the profiler's
+  `SYSTEM_PEAK_BUFFER_MEMORY` and `SYSTEM_PEAK_TEMP_DIR_SIZE` are the most memory DuckDB's
+  buffer manager held and the most it held in its temporary folder, over the run's whole
+  DuckDB: loading the sources and the combine query. They are named after the keys that bound
+  them, `memory_limit` and `max_temp_size`, so the tab can show each beside its limit. The
+  profiler writes nothing anywhere (`no_output`), so the lock-down stays as it is.
+- **An output's time** is the time spent in its writer: converting each page to its schema,
+  writing it, and completing the file. Outputs are written while their rows stream in, so
+  their time overlaps the source's or the combine step's, and the tab says so.
+- **A run that fails** keeps what its steps measured up to the failure, and its error; one
+  that is cancelled, what the app had seen.
+
+### Run history
+
+Each run is kept in the history database W4 made (`history.sqlite` in the settings folder), in a
+table of its own, `report_runs`, one row a run:
+
+| Column | Holds |
+| --- | --- |
+| `report` | the report's file name without `.toml`, as the explorer lists it |
+| `started_at` | when the run started, in UTC, as the history's other times |
+| `elapsed_ms` | the run's total time |
+| `outcome` | `finished`, `failed` or `cancelled` |
+| `params` | the values the run used, as JSON |
+| `steps` | each source, the combine step and each output with what it measured, as JSON |
+| `failure` | the failed step and its error, for a run that failed |
+
+The schema's version goes from 2 to 3. As W4's rule says, the migration only adds: a table and
+its index, which an older DbRover neither reads nor minds. The app writes a run's row once the
+run ends, however it ends: the worker doesn't open the history, so a killed worker's run is kept
+too. Only the newest 20 runs of each report are kept; Settings › Reports changes how many. Rows
+are deleted when a run is added, so there is nothing to prune at start-up.
+
+The parameters are kept as typed. They are dates, numbers and names, not secrets; a report
+whose parameters are something to keep out of a file is one the manual says to run with care,
+as the query history already keeps every console's SQL.
+
+### The report's tab in RP4
+
+Below the last run, a **Runs** section shows the report's newest runs, at most five, side by
+side: a column per run, newest first, headed by when it started, how it ended and its total
+time; under it the parameters, then a row per step with its time and rows (bytes, batches,
+DuckDB's peak memory and spill, and file sizes in the cell's tooltip). A run of an older
+version of the file, whose steps differ, shows the steps it had and leaves the others empty.
+
+- **The step that dominates** is the one that took the longest share of the run's time. It is
+  marked in each run's column, and named under the table when it is the same in the newest
+  runs: "**Source entries** takes 80% of each run." Sources of one round run at the same time,
+  so shares can add up to more than the whole; the share is the step's time over the run's.
+- **Hints** come from the newest finished run, each one sentence that names the step and the
+  number behind it:
+  - a source that reads at least 10,000 rows and ten times as many as the outputs write:
+    "**Source entries** read 1,100,000 rows for 40 written. If the combine step drops most of
+    them, filter them in the source's query, where its database can use an index." An
+    aggregation reads more than it writes on purpose, so the hint says what to look for, not
+    that something is wrong;
+  - a combine step that spilled to disk: "**Combine** spilled 3.2 GB to disk past its 2 GiB
+    memory_limit. A larger memory_limit, or fewer rows from the sources, keeps it in memory."
+- **Clear history** deletes the report's runs, after asking.
+
+The tab reads the runs from the history when it opens, and again after each run.
+
+### Settings › Reports
+
+A page for the limits' defaults, which a report's file overrides key by key, as before:
+
+| Setting | Key in `settings.toml`'s `[reports]` | Default |
+| --- | --- | --- |
+| Rows a source may return | `max_rows` | 1,000,000 |
+| Bytes a source may return | `max_bytes` | 1 GiB |
+| A source's statement timeout | `source_timeout` | 10 minutes |
+| DuckDB's memory | `memory_limit` | 2 GiB |
+| DuckDB's spill to disk | `max_temp_size` | 10 GiB |
+| DuckDB's threads | `threads` | half the processor's cores |
+| The combine query's timeout | `combine_timeout` | 10 minutes |
+| Bytes an output may write | `max_size` | 1 GiB |
+| A whole run's time | `run_timeout` | 30 minutes |
+| Runs kept per report | `runs_kept` | 20 |
+
+Each is a choice of a few values around its default, as the query history's settings are, and
+saves at once; `settings.toml` takes any value in a report file's form (`"4 GiB"`, `"45m"`).
+A report file's keys keep their names (`timeout` in `[[source]]`, `[combine]` and `[report]`);
+the settings' names say which `timeout` they set.
+
+The app sends the defaults to the worker in the run's request, beside the parameters' values,
+so the worker reads no `settings.toml` of its own and a run uses what the tab showed. A run
+stopped by a limit the file doesn't set says the default came from Settings.
+
+### Layers
+
+Each layer is one pull request in a stack, useful and tested on its own, with synthetic data
+only.
+
+- **RP4a — Plan:** this section, RP4's decisions and risks, and the roadmap's entry in layers.
+- **RP4b — What a run measures:** in `dbrover-driver-duckdb`, the run's DuckDB profiled and its
+  peaks read after a query; in `dbrover-report`, `combine_done`'s `peak_memory` and
+  `peak_temp_size`, and each output's time in `output_written`.
+  **Exit:** in memory, a combine step over a small `memory_limit` reports a peak spill above
+  zero and one with room reports none; a locked-down workspace still reports its peaks; each
+  written file has its time; RP1's to RP3's events still read.
+- **RP4c — Run history:** in `dbrover-store`, the `report_runs` table, adding a run, reading a
+  report's newest runs and deleting them, keeping the newest 20; in `dbrover-engine`, commands
+  that record, list and clear a report's runs on the history's thread; in the app, each run
+  recorded when it ends, finished, failed or cancelled.
+  **Exit:** a run's row reads back with every step's numbers; the 21st run of a report deletes
+  its oldest and leaves other reports' alone; a version 2 file migrates and keeps its
+  statements; with a stand-in worker, a finished, a failed and a cancelled run are each
+  recorded with their outcome.
+- **RP4d — Runs side by side:** the tab's **Runs** section, the step that dominates, the two
+  hints and **Clear history**.
+  **Exit:** table tests of the dominant step and of each hint's thresholds (a source just under
+  and just over 10,000 rows and ten times the rows written, a combine with and without a
+  spill); a kittest with a stand-in worker runs a report twice and sees two columns, the
+  dominant step marked and the spill hint.
+- **RP4e — Settings › Reports:** `[reports]` in `settings.toml`, the page, the defaults applied
+  when a report is planned, sent in the run's request, and named in a limit's error.
+  **Exit:** a default changed in Settings stops a run that the constant would have let through,
+  and the error names Settings; a report's own key still wins; `settings.toml` without
+  `[reports]` reads as before; the page's choices save and search finds them.
+- **RP4f — Manual and demo note:** the **Reports** chapter's section on runs, the hints and the
+  Settings page; RP4's demo note.
+
+**Exit:** run a report twice from its tab: both runs are listed side by side with each step's
+time, the step that takes most of it is marked, and a combine step that spilled says to raise
+its memory limit or read fewer rows; the limits' defaults change in Settings › Reports.
+
+### RP4's decisions
+
+Taken on 2026-11-03 when RP4 started; each can be overturned in review.
+
+| Question | Chosen | Consequence |
+| --- | --- | --- |
+| Where runs are kept | **A `report_runs` table in `history.sqlite`,** as the design said. | One file to sync, back up or delete, with the history's WAL and busy timeout; the history's retention settings don't touch runs, which have their own count. |
+| Who writes a run | **The app, once the run ends.** | A worker that is killed, by **Cancel**, its time limit or the system, can't write; the app has every event it sent. RP6's command line will write its own runs the same way. |
+| How a run's steps are stored | **JSON in one column,** the parameters in another. | A report's steps differ from one report, and one version of its file, to the next; a table per step kind would be joined for every read and migrated for every new metric. Nothing searches inside them. |
+| How many runs are kept | **The newest 20 per report,** in Settings. | Enough to see a trend over months of monthly runs; a few kilobytes each. |
+| How runs are told apart from the report | **By its file name,** as the explorer lists it. | Renaming a report's file starts its runs afresh; editing the file keeps them, and a column per run shows the steps it had. |
+| DuckDB's peak memory and spill | **DuckDB's profiler,** read after the combine query. | Exact peaks, not samples, at no cost to the run. They cover the whole run's DuckDB, loads included; the peak memory can exceed `memory_limit` a little, since DuckDB counts some memory the limit doesn't hold back. |
+| What "spilled" means | **The most held on disk at once,** not the total written. | The number `max_temp_size` bounds, which is what the hint compares. DuckDB doesn't report the total. |
+| An output's time | **The time in its writer,** overlapping its feed's. | Shows when a writer, Excel's say, is the slow part; it is never added to the run's total. |
+| The step that dominates | **The longest share of the run's time,** marked in each run; named under the table when the newest runs agree. | Simple to read off the table. Concurrent sources may add up to more than the run. |
+| A source's hint | **At least 10,000 rows read, and ten times what the outputs write.** | Below 10,000 rows filtering in the query saves too little to mention; a lookup's batches count as one source. Aggregations trip it on purpose, so it is worded as a question to check. |
+| Where the defaults are set | **Settings › Reports, sent in the run's request.** | The worker reads no settings file of its own, and a run uses the defaults the tab shows. RP6's command line will read `[reports]` itself. |
+| The defaults' values | **Unchanged:** RP1's and RP2's constants. | The examples run well inside them (the general ledger's million rows sets its own `max_rows`), so nothing measured argues for moving them; Settings lets a machine with more memory raise them. |
+
+### RP4's risks
+
+- **The history file grows.** Twenty runs of a report with a dozen steps is tens of kilobytes;
+  a hundred reports, a few megabytes. The count is in Settings.
+- **The profiler's numbers move with DuckDB.** `SYSTEM_PEAK_BUFFER_MEMORY` and
+  `SYSTEM_PEAK_TEMP_DIR_SIZE` are DuckDB's names, read as text; a DuckDB that drops them gives
+  no peak, which the tab shows as unknown rather than zero.
+- **Hints that are wrong for the report.** An aggregation reads far more than it writes on
+  purpose; the hint says what to check rather than what is wrong, and there is no switch to
+  silence it yet.
+- **A synced settings folder.** H4's warning about a synced `history.sqlite` holds for runs: two
+  machines running one report each keep their own runs.
 
 ## Decisions
 
