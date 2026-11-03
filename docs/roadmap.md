@@ -1734,7 +1734,7 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   declaring a source's column types (RP3's declared columns), a Job Object on Windows, a
   Settings page for the limits' defaults (RP4), and stopping a slow source's statement on the
   server when another source fails first (its connection is dropped instead).
-- **RP3 — Lookups and documents** (started 2026-11-03, after RP2): a source read by the keys
+- **RP3 — Lookups and documents** (built, in seven layers, 2026-11-03, after RP2): a source read by the keys
   an earlier source found, in batches, and declared columns for DynamoDB, MongoDB,
   Elasticsearch and Redis sources. Planned in
   [Reports](reporting.md#rp3--lookups-and-documents). In layers, one PR each:
@@ -1756,6 +1756,38 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   synthetic data and match their checked-in output: a trial balance with subtotals, a general
   ledger past a million rows, a valuation across PostgreSQL, DynamoDB and DuckDB, and FIFO cost
   basis with realised gains.
+
+  **Demo note:** built in #407, #408, #410 and #412 to #414, and RP3g. To try it, make the
+  examples' data as the manual's **Reports** chapter says under *The four examples*: the
+  SQLite **ledger**, the MongoDB **crm** (`ledger-counterparties.js`), the PostgreSQL
+  **ledger-postgres**, the DynamoDB **assets-dynamodb** (create the table
+  `valuation_assets` first, then run `valuation-assets.partiql`) and the read-only DuckDB
+  **prices-duckdb**. Copy the four reports into the reports folder and **Reload**. Run
+  **Trial balance** for `2026-10-01` to `2026-11-01`: a subtotal per kind of account, and a total
+  of 309,957.53 on both sides. Run **General ledger** for the same month: **Source entries**
+  loads 246 entries, **Source counterparties** says *waiting for entries*, then reads 19
+  counterparties in two batches of at most ten (fold it out: its columns are marked
+  *declared*), and the CSV has each entry's counterparty and country, *unknown* for Gum Garden
+  Centre. Run **Valuation** and **Cost basis and realised gains** for `2026-10-01 00:00` to
+  `2026-11-01 00:00`: the assets are read from DynamoDB by key (one batch of three), SOL's chain
+  is *unknown*, and the cost basis lists 45 lot matches whose gains you can check by hand
+  against the valuation of every trade. To see the cost guard, change the valuation's lookup
+  to `WHERE "symbol" IN :asset_ids`: the run stops at **Source assets**, since that would scan
+  the table.
+
+  Checked: each layer's tests (parameters and literals in each language; 19 new kinds of
+  problem in a file; batches, empty lookups, caps and the deadline across batches, documents
+  into declared columns, in memory; a lookup on DynamoDB Local by partition key and one refused
+  by the cost guard; declared columns from the MongoDB test server; the tab's wait and batches
+  in kittest), the four examples matching their checked-in files, the cost basis matching
+  FIFO worked out one trade at a time in Rust, and, by hand with `--ignored`, the general
+  ledger on 1,100,000 entries (3 minutes in a debug build): every row written, a second Excel
+  sheet, each account's closing balance its sum. Not tried here: the app's window with the
+  real worker by hand (the worker and the tab are tested apart, as in RP1 and RP2); a real AWS
+  account, whose `IN` limit DynamoDB's documentation doesn't state (DynamoDB Local's is 100);
+  Elasticsearch and Redis sources beyond their parameters and literals, which no example
+  reads. Left for later: `if_invalid` on a source's columns, several lookups on one source, and
+  a program step, which the cost basis turned out not to need.
 - **RP4 — Metrics:** each run's steps in the history, runs compared side by side, and hints
   about the step that dominates.
 - **RP5 — PRQL:** the combine step in PRQL, compiled to DuckDB SQL by `prqlc`.

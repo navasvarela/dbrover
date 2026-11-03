@@ -7,8 +7,8 @@ limits you can see, so a report that reads too much never takes DbRover or your 
 it.
 
 A report reads one data source, or several, combined in DuckDB SQL, and writes CSV and Excel
-files. Lookups by key in DynamoDB and the other document databases come next; see
-[What's next](#whats-next).
+files. A source can read by the keys an earlier one found, and can be on a document database
+such as DynamoDB or MongoDB, by declaring the columns it makes.
 
 ## Your first report
 
@@ -22,35 +22,54 @@ run on a made-up ledger:
    in its console (**File → Open…**) and run it all. It makes a chart of accounts and three
    months of journal entries.
 3. Right-click **Reports** at the bottom of the explorer and choose **Open the reports folder**.
-   Copy `trial-balance.toml` and `general-ledger.toml` into it, then choose **Reload**.
+   Copy `trial-balance.toml` into it, then choose **Reload**.
 4. Click **Trial balance**. Its tab opens.
 5. Type `2026-10-01` for **since** and `2026-11-01` for **until**, and click **Run**.
 
 The tab shows the run as it goes, then the two files it wrote, `trial-balance-2026-10.xlsx` and
-`trial-balance-2026-10.csv`, in your Downloads folder. Click one to open it. Under them, a
-preview shows the rows the query returned.
+`trial-balance-2026-10.csv`, in your Downloads folder. Click one to open it: each account's
+debits, credits and balance, a subtotal for each kind of account, and a total whose debits and
+credits are both 309,957.53. Under the files, a preview shows the rows the report wrote.
 
-### Combining two data sources
+### The four examples
 
-The valuation example values each crypto transaction, kept in PostgreSQL, at its asset's price
-in the hour it ran, kept in a DuckDB file:
+The examples are the shapes of reports that accounting software makes, on made-up data. Each
+shows something of its own:
 
-1. Add a PostgreSQL data source named **ledger-postgres**, on any server you can write a schema
-   to. Open
-   [`valuation-postgres.sql`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/valuation-postgres.sql)
-   in its console and run it all. It makes the schema `valuation` with 300 made-up trades.
-2. Add a DuckDB data source named **prices-duckdb**, with a new file. Open
-   [`valuation-prices.sql`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/valuation-prices.sql)
-   in its console and run it all. It makes three months of hourly prices.
-3. Edit **prices-duckdb** and tick **Read-only**, so a report can read the file while DbRover
-   has it open (see [Several sources](#several-sources)).
-4. Copy `valuation.toml` into the reports folder, **Reload**, and click **Valuation**.
-5. Type `2026-10-01 00:00` for **since** and `2026-11-01 00:00` for **until**, and click **Run**.
+| Report | Reads | Shows |
+| --- | --- | --- |
+| [`trial-balance.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/trial-balance.toml) | SQLite | Subtotals with `GROUPING SETS`, and amounts rounded to the cent as they load. |
+| [`general-ledger.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/general-ledger.toml) | SQLite and MongoDB | Each entry's counterparty, read from MongoDB by the ids the entries name, and a running balance per account with a window function. |
+| [`valuation.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/valuation.toml) | PostgreSQL, DynamoDB and DuckDB | Each transaction valued at its asset's price in the hour it ran, with every digit. |
+| [`cost-basis.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/cost-basis.toml) | PostgreSQL, DynamoDB and DuckDB | Each disposal matched against the lots it used up, first in, first out, with its cost, proceeds and gain. |
 
-The tab shows each source, then the combine step: the transactions load into DuckDB, the
-price file is attached where it is, and the combined rows go to `valuation-2026-10.xlsx` and
-`valuation-2026-10.csv`. The CSV file keeps every digit of each value, 26 decimal places,
-while the Excel file rounds each to the cent.
+Their data comes from scripts beside them, each run in the console of the data source the
+report names:
+
+- **ledger** (SQLite): [`ledger.sql`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/ledger.sql),
+  as above.
+- **crm** (MongoDB, on a database you can write to):
+  [`ledger-counterparties.js`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/ledger-counterparties.js),
+  the ledger's customers, suppliers and vendors.
+- **ledger-postgres** (PostgreSQL, on a server you can write a schema to):
+  [`valuation-postgres.sql`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/valuation-postgres.sql),
+  300 made-up trades of BTC, ETH and SOL in the schema `valuation`, each amount in the asset's
+  smallest unit.
+- **assets-dynamodb** (DynamoDB):
+  [`valuation-assets.partiql`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/valuation-assets.partiql),
+  each asset's symbol, unit and chain. PartiQL can't make a table, so make `valuation_assets`
+  first, keyed by `asset_id`, as the script's first lines say.
+- **prices-duckdb** (DuckDB, with a new file):
+  [`valuation-prices.sql`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/valuation-prices.sql),
+  three months of hourly prices. Then edit the data source and tick **Read-only**, so a report
+  can read the file while DbRover has it open (see [Several sources](#several-sources)).
+
+Copy the reports into the reports folder, **Reload**, and run each for October 2026: `2026-10-01`
+and `2026-11-01` for the ledger's two, `2026-10-01 00:00` and `2026-11-01 00:00` for the other
+two. The valuation's tab shows **Source tx** loading, **Source assets** *waiting for tx*, then
+reading the three assets the month's transactions use, **Source prices** attached, then
+**Combine**. Its CSV file keeps every digit of each value, 26 decimal places, while the Excel
+file rounds each to the cent.
 
 ## The Reports section
 
@@ -92,7 +111,8 @@ The values and the folder are remembered for each report until you quit DbRover.
 ## A report file
 
 A report is a TOML file, with one `[report]`, one or more `[[source]]`s, a `[combine]` when
-there are several, and one or more `[[output]]`s. The trial balance reads one source:
+there are several, and one or more `[[output]]`s. The simplest reads one source; this trial
+balance, without the example's subtotals, does:
 
 ```toml
 [report]
@@ -153,14 +173,19 @@ and `T` works in place of the space).
 | `data_source` | The data source it reads, by its name in the explorer. When two share a name, use the data source's id instead (in `data_sources.toml`). Needed. |
 | `query` | One statement that only reads, in the data source's own SQL. Needed, unless `attach = true`. |
 | `attach` | `true` for a DuckDB file that `[combine]` reads in place, without a query. See [Several sources](#several-sources). |
-| `max_rows` | The most rows it may return. 1,000,000 unless you say. |
+| `lookup` | Reads by the values an earlier source found, as `{ from = "tx", column = "asset_id", as = "asset_ids" }`. See [Lookups](#lookups). |
+| `columns` | The columns it makes, each with a type. Needed for a document database. See [Declared columns](#declared-columns). |
+| `max_rows` | The most rows it may return, all its lookup's batches together. 1,000,000 unless you say. |
 | `max_bytes` | The most data it may return, as `"500 MB"` or `"4 GiB"`. 1 GiB unless you say. |
-| `timeout` | How long the query may run, as `"30s"` or `"10m"`. 10 minutes unless you say. |
+| `timeout` | How long the query may run, all its batches together, as `"30s"` or `"10m"`. 10 minutes unless you say. |
 
-The query uses parameters as a console does, as `:since` (see
-[Files, parameters and find](files-parameters.md#parameters)). Each `:name` must be in `params`. A report
-reads PostgreSQL, MySQL and MariaDB, SQLite, SQL Server, DuckDB, ClickHouse, Cassandra and
-ScyllaDB; DynamoDB, MongoDB, Elasticsearch and Redis come later.
+The query is in the data source's own language: SQL, PartiQL for DynamoDB, the shell's
+`db.collection.find(…)` for MongoDB, a request for Elasticsearch and OpenSearch, a command for
+Redis. It uses parameters as a console does, as `:since` (see
+[Files, parameters and find](files-parameters.md#parameters)), and each `:name` must be in
+`params`. In SQL, the values are bound as a console binds them; in the other languages they
+are written into the query as that language writes a value of their type: a date in MongoDB's
+shell is `ISODate("2026-10-01T00:00:00Z")`. A report reads every engine DbRover connects to.
 
 ### `[combine]`
 
@@ -302,6 +327,90 @@ digits:
 The outputs then round each value once, as their column's type says: the valuation's Excel file
 writes values as `decimal(38,2)`, and its CSV file every digit.
 
+## Lookups
+
+A source can read by the values an earlier source found, rather than reading everything and
+leaving the combine step to throw most of it away. The valuation reads, from DynamoDB, only the
+assets the month's transactions use:
+
+```toml
+[[source]]
+id = "assets"
+data_source = "assets-dynamodb"
+lookup = { from = "tx", column = "asset_id", as = "asset_ids" }
+query = 'SELECT asset_id, "symbol", unit, metadata FROM valuation_assets WHERE asset_id IN :asset_ids'
+```
+
+`lookup` takes the distinct values of the column `asset_id` of the source `tx`, once `tx` has
+loaded, and puts them where the query says `:asset_ids`, as a list in the query's language:
+
+| Language | The query reads | `:ids` becomes |
+| --- | --- | --- |
+| SQL | `WHERE id IN :ids` | `('a', 'b', 7)` |
+| PartiQL (DynamoDB) | `WHERE pk IN :ids` | `['a', 'b', 7]` |
+| MongoDB | `db.assets.find({_id: {$in: :ids}})` | `["a", "b", 7]` |
+| Elasticsearch, OpenSearch | `{"terms": {"id": :ids}}` | `["a", "b", 7]` |
+| Redis | `MGET :ids` | `a b 7` |
+
+A value from a number column goes in as a number, anything else as text: a key kept as text in
+one database and as a number in the other matches nothing, so declare the earlier column's type
+(see below) when it matters.
+
+- **`from`** names a source above this one in the file, with a query: an attached DuckDB file is
+  joined in `[combine]` instead.
+- **`as`** is the parameter's name, which can't be one of `params`. The query must use it.
+- **`batch_size`** lowers how many values one statement takes. A lookup with more values than
+  that runs its query again for each batch, and every batch's rows go into the one table. A
+  statement takes at most 100 values in PartiQL (DynamoDB refuses more) and in CQL, and 1,000
+  in the other languages; the tab shows which batch a source is on.
+
+Sources with a lookup run once the source they read is loaded: in rounds, each round's sources
+at the same time. When the earlier source found no value, a source with declared columns sends
+nothing and its table is empty; a SQL source without them runs its query once with `(NULL)`,
+which matches nothing.
+
+On DynamoDB, a lookup on the table's partition key reads each item by its key. One on any other
+attribute would scan the table, which the data source's cost guard refuses (see
+[Cost guards](cloud.md#cost-guards)). PartiQL keeps some words for itself, `symbol` and `value`
+among them: quote an attribute with such a name, as `"symbol"`.
+
+## Declared columns
+
+DynamoDB, MongoDB, Elasticsearch and Redis return documents rather than rows, so a source on one
+declares the columns it makes:
+
+```toml
+columns = [
+  { name = "asset_id", type = "text" },
+  { name = "symbol",   type = "text" },
+  { name = "unit",     type = "decimal(38,18)" },
+  { name = "chain",    from = "metadata.chain", type = "text", default = "unknown" },
+]
+```
+
+Each column is `{ name, from, type, default }`, of which only `name` is needed:
+
+- `name`: the column in the source's table, which `[combine]` reads.
+- `from`: where its value is, the same as `name` unless you say: a field of a document by its
+  path, as `metadata.chain` or `lines[0].sku`, or for a source that returns rows, the query's
+  column.
+- `type`: one of the output types (see [Columns](#columns)), `text` unless you say. Its type in
+  DuckDB follows: `integer` is a `BIGINT`, `decimal(38,18)` a `DECIMAL(38,18)`, `timestamp` a
+  `TIMESTAMP`.
+- `default`: the value a missing field, or `null`, gets.
+
+The table has the declared columns and nothing else: fields you don't declare are left out.
+MongoDB's typed values are read as their value: `NumberLong(7)` is `7`, `NumberDecimal("0.1")`
+is `0.1`, an `ObjectId` its hex digits, and a date its time in UTC. A time with an offset is
+converted to UTC; an object or an array goes into a `text` column as its JSON.
+
+A value that doesn't fit its type stops the run with the source, the item and the value, as
+`item 2 (_id "cp-7"): column "orders": "many" isn't a whole number`.
+
+A source on a SQL database may declare its columns too, to fix their types rather than let
+DuckDB's typing guess from the values: the examples declare SQLite's amounts `decimal(18,2)`, so
+each is rounded to the cent as it loads, and PostgreSQL's raw amounts `decimal(38,0)`.
+
 ## Limits
 
 A report runs in a process of its own, `dbrover report-worker`, which DbRover starts for each
@@ -310,7 +419,7 @@ consoles and their transactions carry on. The limits, cheapest first:
 
 | What | Limit | Change it with |
 | --- | --- | --- |
-| Each source | its rows, its data, its time; read-only | `max_rows`, `max_bytes`, `timeout` in `[[source]]` |
+| Each source | its rows, its data, its time, every batch of its lookup together; read-only | `max_rows`, `max_bytes`, `timeout` in `[[source]]` |
 | The combine step | DuckDB's memory, threads and spilled data; its time | `memory_limit`, `threads`, `max_temp_size`, `timeout` in `[combine]` |
 | Each output | its data; Excel's rows a sheet | `max_size`, `continue_on_new_sheet` in `[[output]]` |
 | The run | its time | `timeout` in `[report]` |
@@ -337,7 +446,5 @@ sign-in (see [Password from a command](data-sources.md#password-from-a-command))
 
 ## What's next
 
-Reports are being built in steps. Coming next: a source read by the keys an earlier source
-found, and sources on DynamoDB, MongoDB, Elasticsearch and Redis with the columns they declare;
-then a record of every run to compare them, the PRQL language for the combine step, and running
-a report from the command line.
+Reports are being built in steps. Coming next: a record of every run to compare them, the PRQL
+language for the combine step, and running a report from the command line.
