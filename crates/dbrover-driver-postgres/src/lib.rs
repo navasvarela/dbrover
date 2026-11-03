@@ -22,7 +22,7 @@ use dbrover_core::{
 };
 use tokio::task::{JoinError, JoinHandle};
 use tokio_postgres::tls::MakeTlsConnect;
-use tokio_postgres::{AsyncMessage, Client, Socket};
+use tokio_postgres::{AsyncMessage, Client, SimpleQueryMessage, Socket};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
 pub use tls::TlsSetupError;
@@ -66,11 +66,17 @@ pub async fn connect(
     })
 }
 
+/// Asked with the simple protocol, which prepares nothing a pooler could lose (C1c).
 async fn server_version(client: &Client) -> Result<String, tokio_postgres::Error> {
-    client
-        .query_one("SHOW server_version", &[])
-        .await?
-        .try_get(0)
+    let messages = client.simple_query("SHOW server_version").await?;
+    Ok(messages
+        .iter()
+        .find_map(|message| match message {
+            SimpleQueryMessage::Row(row) => row.get(0),
+            _ => None,
+        })
+        .unwrap_or_default()
+        .to_owned())
 }
 
 fn connect_error(error: tokio_postgres::Error) -> DriverError {
@@ -759,6 +765,119 @@ mod tests {
         assert!(connection.definition(&add).await.unwrap().contains("a + b"));
 
         Box::new(connection).close().await.unwrap();
+    }
+
+    /// The postgres service through PgBouncer in transaction mode, with two server connections
+    /// used in turn and protocol-level prepared statements off (C1c).
+    const POOLER_URL_VAR: &str = "DBROVER_TEST_PGBOUNCER_URL";
+
+    const POOLER_FIXTURE: &str = "
+        DROP SCHEMA IF EXISTS dbrover_pooler_test CASCADE;
+        CREATE SCHEMA dbrover_pooler_test;
+        CREATE TABLE dbrover_pooler_test.invoices (id integer PRIMARY KEY, total numeric);
+        CREATE VIEW dbrover_pooler_test.big_invoices AS
+            SELECT id FROM dbrover_pooler_test.invoices WHERE total > 100;
+    ";
+
+    /// Everything the driver asks the server for itself, in turn on two connections that share
+    /// the pooler's server connections: a statement prepared by name on one server connection
+    /// and bound on the next isn't found there.
+    ///
+    /// The conformance suite's checks are left out: each keeps a temporary table across
+    /// statements, which only a session pooler or a direct connection keeps.
+    #[tokio::test]
+    async fn browses_describes_and_checks_behind_a_transaction_pooler() {
+        let Some((config, password)) = server_from(POOLER_URL_VAR) else {
+            return;
+        };
+        let mut first = connect(&config, password.as_ref(), Route::Direct)
+            .await
+            .unwrap();
+        let mut second = connect(&config, password.as_ref(), Route::Direct)
+            .await
+            .unwrap();
+        first
+            .primary
+            .client
+            .batch_execute(POOLER_FIXTURE)
+            .await
+            .unwrap();
+        let schema = CatalogPath::root()
+            .child(NodeKind::Database, config.server.database.clone())
+            .child(NodeKind::Schema, "dbrover_pooler_test");
+        let invoices = folder(&schema, FolderKind::Tables).child(NodeKind::Table, "invoices");
+        let view = folder(&schema, FolderKind::Views).child(NodeKind::View, "big_invoices");
+        let unquoted = |name: &str| dbrover_core::Identifier {
+            name: name.to_owned(),
+            quoted: false,
+        };
+        let table = RelationName {
+            schema: Some(unquoted("dbrover_pooler_test")),
+            name: unquoted("invoices"),
+        };
+        let roles = folder(&CatalogPath::root(), FolderKind::Roles);
+        let own_role = roles.child(NodeKind::Role, config.server.user.clone());
+        let search = CatalogSearch::new("invoices");
+
+        for _ in 0..3 {
+            for connection in [&mut first, &mut second] {
+                let tables = connection
+                    .children(&folder(&schema, FolderKind::Tables))
+                    .await
+                    .unwrap();
+                assert_eq!(tables.len(), 1);
+                let columns = connection
+                    .children(&folder(&invoices, FolderKind::Columns))
+                    .await
+                    .unwrap();
+                assert_eq!(columns.len(), 2);
+                assert!(connection.definition(&view).await.unwrap().contains("100"));
+                let described = connection.describe_table(&table).await.unwrap();
+                assert_eq!(described.map(|table| table.columns.len()), Some(2));
+                let found = connection.search_catalog(&search).await.unwrap();
+                assert!(found.is_some_and(|found| !found.nodes.is_empty()));
+                let rejection = connection
+                    .validate("SELECT missing FROM dbrover_pooler_test.invoices")
+                    .await
+                    .unwrap();
+                assert!(rejection.is_some());
+                assert!(!connection.children(&roles).await.unwrap().is_empty());
+                connection.describe_role(&own_role).await.unwrap();
+            }
+        }
+
+        let sql = "SELECT n n n FROM dbrover_pooler_test.invoices";
+        let rejection = first.validate(sql).await.unwrap().expect("a syntax error");
+        assert_eq!(rejection.position, Some("SELECT n n ".len()));
+        assert_eq!(
+            first
+                .validate("SELECT id FROM dbrover_pooler_test.invoices -- a comment")
+                .await
+                .unwrap(),
+            None
+        );
+
+        // A read-only data source's guard (W11): the transaction pins one server connection.
+        for sql in ["BEGIN READ ONLY", "SELECT count(*) FROM pg_class"] {
+            first.execute(sql).await.unwrap().finish().await.unwrap();
+        }
+        assert_eq!(
+            first.transaction_status().await.unwrap(),
+            TransactionStatus::InTransaction
+        );
+        let refused = first
+            .execute("INSERT INTO dbrover_pooler_test.invoices VALUES (1, 1)")
+            .await;
+        assert!(matches!(refused, Err(DriverError::Statement { .. })));
+        first
+            .execute("ROLLBACK")
+            .await
+            .unwrap()
+            .finish()
+            .await
+            .unwrap();
+        Box::new(first).close().await.unwrap();
+        Box::new(second).close().await.unwrap();
     }
 
     #[tokio::test]

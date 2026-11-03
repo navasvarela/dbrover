@@ -8,7 +8,7 @@ use dbrover_core::{
     CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, ChildrenPage, ChildrenQuery,
     DriverError, FolderKind, NodeKind, PageToken, PathSegment, Quoting, like_contains,
 };
-use tokio_postgres::types::ToSql;
+use tokio_postgres::types::{ToSql, Type};
 use tokio_postgres::{Client, Row};
 
 use crate::{connection_error, roles};
@@ -21,7 +21,8 @@ const SCHEMA_FOLDERS: &[FolderKind] = &[
     FolderKind::Sequences,
 ];
 
-/// The oid of relation `$2` in schema `$1`. Spliced into queries that take those parameters.
+/// The oid of relation `$2` in schema `$1`. Spliced into queries that take those parameters,
+/// both [`Type::TEXT`].
 const RELATION_OID: &str = "(SELECT c.oid FROM pg_class c \
      JOIN pg_namespace n ON n.oid = c.relnamespace \
      WHERE n.nspname = $1 AND c.relname = $2)";
@@ -180,12 +181,22 @@ fn node(
     }
 }
 
-async fn query(
-    client: &Client,
-    sql: &str,
-    params: &[&(dyn ToSql + Sync)],
-) -> Result<Vec<Row>, DriverError> {
-    client.query(sql, params).await.map_err(connection_error)
+/// A parameter of a catalog query, with the type the server is told it has.
+type Param<'a> = (&'a (dyn ToSql + Sync), Type);
+
+/// Runs one of the driver's own queries as an unnamed statement, its parameters' types given
+/// rather than asked for, in one round trip (C1c).
+///
+/// Why not `Client::query`: it prepares a named statement, then binds and closes it in later
+/// messages. Behind a pooler in transaction mode (Neon's and Supabase's, PgBouncer's), each
+/// message may reach another server connection, where the statement doesn't exist, or where a
+/// statement another client left behind has the same name. An unnamed statement lives only
+/// until the next one on the same message exchange.
+async fn query(client: &Client, sql: &str, params: &[Param<'_>]) -> Result<Vec<Row>, DriverError> {
+    client
+        .query_typed(sql, params)
+        .await
+        .map_err(connection_error)
 }
 
 fn text(row: &Row, column: usize) -> Result<String, DriverError> {
@@ -248,7 +259,16 @@ pub(crate) async fn search(
     let relkinds = ["r", "p", "v", "m", "S"];
     let pattern = like_contains(&search.text);
     let read = i64::try_from(search.limit.saturating_add(1)).unwrap_or(i64::MAX);
-    let rows = query(client, sql, &[&&relkinds[..], &pattern, &read]).await?;
+    let rows = query(
+        client,
+        sql,
+        &[
+            (&&relkinds[..], Type::TEXT_ARRAY),
+            (&pattern, Type::TEXT),
+            (&read, Type::INT8),
+        ],
+    )
+    .await?;
     let nodes = rows
         .iter()
         .map(|row| {
@@ -349,7 +369,13 @@ impl Relations {
         let rows = query(
             client,
             sql,
-            &[&schema, &self.relkinds, &after, &pattern, &read],
+            &[
+                (&schema, Type::TEXT),
+                (&self.relkinds, Type::TEXT_ARRAY),
+                (&after, Type::TEXT),
+                (&pattern, Type::TEXT),
+                (&read, Type::INT8),
+            ],
         )
         .await?;
         let mut names = rows
@@ -384,7 +410,7 @@ async fn functions(
     let sql = "SELECT p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' \
                FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
                WHERE n.nspname = $1 AND p.prokind IN ('f', 'p', 'w') ORDER BY 1";
-    query(client, sql, &[&schema])
+    query(client, sql, &[(&schema, Type::TEXT)])
         .await?
         .iter()
         .map(|row| Ok(node(path, NodeKind::Function, text(row, 0)?, false, true)))
@@ -419,22 +445,26 @@ async fn columns(
          WHERE a.attrelid = {RELATION_OID} AND a.attnum > 0 AND NOT a.attisdropped \
          ORDER BY a.attnum"
     );
-    query(client, &sql, &[&schema, &relation])
-        .await?
-        .iter()
-        .map(|row| {
-            let column_type = text(row, 1)?;
-            let not_null: bool = row.try_get(2).map_err(connection_error)?;
-            Ok(CatalogNode {
-                detail: Some(if not_null {
-                    format!("{column_type}, not null")
-                } else {
-                    column_type
-                }),
-                ..node(path, NodeKind::Column, text(row, 0)?, false, false)
-            })
+    query(
+        client,
+        &sql,
+        &[(&schema, Type::TEXT), (&relation, Type::TEXT)],
+    )
+    .await?
+    .iter()
+    .map(|row| {
+        let column_type = text(row, 1)?;
+        let not_null: bool = row.try_get(2).map_err(connection_error)?;
+        Ok(CatalogNode {
+            detail: Some(if not_null {
+                format!("{column_type}, not null")
+            } else {
+                column_type
+            }),
+            ..node(path, NodeKind::Column, text(row, 0)?, false, false)
         })
-        .collect()
+    })
+    .collect()
 }
 
 async fn indexes(
@@ -448,23 +478,27 @@ async fn indexes(
          FROM pg_index x JOIN pg_class i ON i.oid = x.indexrelid \
          WHERE x.indrelid = {RELATION_OID} ORDER BY i.relname"
     );
-    query(client, &sql, &[&schema, &relation])
-        .await?
-        .iter()
-        .map(|row| {
-            let primary: bool = row.try_get(1).map_err(connection_error)?;
-            let unique: bool = row.try_get(2).map_err(connection_error)?;
-            let detail = match (primary, unique) {
-                (true, _) => Some("primary key".to_owned()),
-                (false, true) => Some("unique".to_owned()),
-                (false, false) => None,
-            };
-            Ok(CatalogNode {
-                detail,
-                ..node(path, NodeKind::Index, text(row, 0)?, false, true)
-            })
+    query(
+        client,
+        &sql,
+        &[(&schema, Type::TEXT), (&relation, Type::TEXT)],
+    )
+    .await?
+    .iter()
+    .map(|row| {
+        let primary: bool = row.try_get(1).map_err(connection_error)?;
+        let unique: bool = row.try_get(2).map_err(connection_error)?;
+        let detail = match (primary, unique) {
+            (true, _) => Some("primary key".to_owned()),
+            (false, true) => Some("unique".to_owned()),
+            (false, false) => None,
+        };
+        Ok(CatalogNode {
+            detail,
+            ..node(path, NodeKind::Index, text(row, 0)?, false, true)
         })
-        .collect()
+    })
+    .collect()
 }
 
 async fn constraints(
@@ -477,24 +511,28 @@ async fn constraints(
         "SELECT conname, contype::text FROM pg_constraint \
          WHERE conrelid = {RELATION_OID} ORDER BY conname"
     );
-    query(client, &sql, &[&schema, &relation])
-        .await?
-        .iter()
-        .map(|row| {
-            let detail = match text(row, 1)?.as_str() {
-                "p" => "primary key",
-                "f" => "foreign key",
-                "u" => "unique",
-                "c" => "check",
-                "x" => "exclusion",
-                _ => "constraint",
-            };
-            Ok(CatalogNode {
-                detail: Some(detail.to_owned()),
-                ..node(path, NodeKind::Constraint, text(row, 0)?, false, true)
-            })
+    query(
+        client,
+        &sql,
+        &[(&schema, Type::TEXT), (&relation, Type::TEXT)],
+    )
+    .await?
+    .iter()
+    .map(|row| {
+        let detail = match text(row, 1)?.as_str() {
+            "p" => "primary key",
+            "f" => "foreign key",
+            "u" => "unique",
+            "c" => "check",
+            "x" => "exclusion",
+            _ => "constraint",
+        };
+        Ok(CatalogNode {
+            detail: Some(detail.to_owned()),
+            ..node(path, NodeKind::Constraint, text(row, 0)?, false, true)
         })
-        .collect()
+    })
+    .collect()
 }
 
 async fn triggers(
@@ -507,11 +545,15 @@ async fn triggers(
         "SELECT tgname FROM pg_trigger \
          WHERE tgrelid = {RELATION_OID} AND NOT tgisinternal ORDER BY tgname"
     );
-    query(client, &sql, &[&schema, &relation])
-        .await?
-        .iter()
-        .map(|row| Ok(node(path, NodeKind::Trigger, text(row, 0)?, false, true)))
-        .collect()
+    query(
+        client,
+        &sql,
+        &[(&schema, Type::TEXT), (&relation, Type::TEXT)],
+    )
+    .await?
+    .iter()
+    .map(|row| Ok(node(path, NodeKind::Trigger, text(row, 0)?, false, true)))
+    .collect()
 }
 
 pub(crate) async fn definition(client: &Client, path: &CatalogPath) -> Result<String, DriverError> {
@@ -524,7 +566,13 @@ pub(crate) async fn definition(client: &Client, path: &CatalogPath) -> Result<St
     match leaf.kind {
         NodeKind::View | NodeKind::MaterializedView => {
             let sql = format!("SELECT pg_get_viewdef({RELATION_OID}, true)");
-            let body = single_text(client, path, &sql, &[&schema, &name]).await?;
+            let body = single_text(
+                client,
+                path,
+                &sql,
+                &[(&schema, Type::TEXT), (&name, Type::TEXT)],
+            )
+            .await?;
             let keyword = if leaf.kind == NodeKind::View {
                 "VIEW"
             } else {
@@ -537,11 +585,23 @@ pub(crate) async fn definition(client: &Client, path: &CatalogPath) -> Result<St
                        FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
                        WHERE n.nspname = $1 \
                          AND p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' = $2";
-            single_text(client, path, sql, &[&schema, &name]).await
+            single_text(
+                client,
+                path,
+                sql,
+                &[(&schema, Type::TEXT), (&name, Type::TEXT)],
+            )
+            .await
         }
         NodeKind::Index => {
             let sql = format!("SELECT pg_get_indexdef({RELATION_OID})");
-            let body = single_text(client, path, &sql, &[&schema, &name]).await?;
+            let body = single_text(
+                client,
+                path,
+                &sql,
+                &[(&schema, Type::TEXT), (&name, Type::TEXT)],
+            )
+            .await?;
             Ok(format!("{body};"))
         }
         NodeKind::Constraint => {
@@ -550,7 +610,17 @@ pub(crate) async fn definition(client: &Client, path: &CatalogPath) -> Result<St
                 "SELECT pg_get_constraintdef(oid, true) FROM pg_constraint \
                  WHERE conrelid = {RELATION_OID} AND conname = $3"
             );
-            let body = single_text(client, path, &sql, &[&schema, &relation, &name]).await?;
+            let body = single_text(
+                client,
+                path,
+                &sql,
+                &[
+                    (&schema, Type::TEXT),
+                    (&relation, Type::TEXT),
+                    (&name, Type::TEXT),
+                ],
+            )
+            .await?;
             Ok(format!(
                 "ALTER TABLE {}.{} ADD CONSTRAINT {qualified} {body};",
                 Quoting::STANDARD.identifier_if_needed(schema),
@@ -563,7 +633,17 @@ pub(crate) async fn definition(client: &Client, path: &CatalogPath) -> Result<St
                 "SELECT pg_get_triggerdef(oid, true) FROM pg_trigger \
                  WHERE tgrelid = {RELATION_OID} AND tgname = $3"
             );
-            let body = single_text(client, path, &sql, &[&schema, &relation, &name]).await?;
+            let body = single_text(
+                client,
+                path,
+                &sql,
+                &[
+                    (&schema, Type::TEXT),
+                    (&relation, Type::TEXT),
+                    (&name, Type::TEXT),
+                ],
+            )
+            .await?;
             Ok(format!("{body};"))
         }
         _ => Err(invalid()),
@@ -584,12 +664,11 @@ async fn single_text(
     client: &Client,
     path: &CatalogPath,
     sql: &str,
-    params: &[&(dyn ToSql + Sync)],
+    params: &[Param<'_>],
 ) -> Result<String, DriverError> {
-    let row = client
-        .query_opt(sql, params)
-        .await
-        .map_err(connection_error)?
+    let rows = query(client, sql, params).await?;
+    let row = rows
+        .first()
         .ok_or_else(|| DriverError::InvalidPath(path.clone()))?;
-    text(&row, 0)
+    text(row, 0)
 }
