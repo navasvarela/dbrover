@@ -483,6 +483,11 @@ impl Engine {
                 }
             }
             Command::SearchHistory(query) => self.history.search(query),
+            Command::RecordReportRun { run, kept, listed } => {
+                self.history.record_run(*run, kept, listed);
+            }
+            Command::ListReportRuns { report, listed } => self.history.list_runs(report, listed),
+            Command::ClearReportRuns(report) => self.history.clear_runs(report),
             Command::ExportHistory {
                 query,
                 path,

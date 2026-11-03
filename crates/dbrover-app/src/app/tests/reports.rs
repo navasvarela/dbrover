@@ -11,7 +11,7 @@ use dbrover_report::{
     Batch, LimitHit, LoadedColumn, Preview, RunEvent, RunFailure, RunRequest, SourceStart, Step,
     WrittenFile,
 };
-use dbrover_store::ReportFiles;
+use dbrover_store::{ReportFiles, ReportName, RunOutcome, StepMetrics};
 use egui_kittest::kittest::NodeT;
 
 use super::*;
@@ -227,6 +227,37 @@ fn runs_a_report_from_its_tab_and_shows_its_files_and_preview() {
     harness.get_by_label("Preview: All 2 rows, as the source returned them");
     harness.get_by_label("150.375");
     harness.get_by_label("NULL");
+
+    let history = HistoryFile::new(dir.path().join("history.sqlite"));
+    let report = ReportName::new("trial-balance").unwrap();
+    let runs = || history.open().unwrap().runs(&report, 5).unwrap();
+    step_until(&mut harness, "the run kept in the history", |_| {
+        !runs().is_empty()
+    });
+    let [run] = runs().try_into().unwrap_or_else(|runs| panic!("{runs:?}"));
+    assert_eq!(run.outcome, RunOutcome::Finished);
+    assert_eq!(run.elapsed, Duration::from_millis(1_200));
+    assert_eq!(
+        run.params.get("since").map(String::as_str),
+        Some("2026-10-01")
+    );
+    let steps: Vec<String> = run
+        .steps
+        .iter()
+        .map(|step| match step {
+            StepMetrics::Source(source) => format!("{} {} rows", source.id, source.rows),
+            StepMetrics::Output(output) => format!("{} {} bytes", output.file, output.size),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        steps,
+        [
+            "balances 2 rows",
+            "trial-balance-2026-10.xlsx 6100 bytes",
+            "trial-balance-2026-10.csv 48 bytes"
+        ]
+    );
 }
 
 /// The start of a run of `COMBINED`, both sources loaded.

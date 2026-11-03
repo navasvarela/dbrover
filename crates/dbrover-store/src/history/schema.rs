@@ -1,14 +1,14 @@
 //! The history's tables and indexes, and bringing an older file up to date.
 //!
-//! `PRAGMA user_version` numbers the schema. Every migration only adds nullable columns and
-//! indexes, never rewrites rows: an older DbRover may still have the file open during an
+//! `PRAGMA user_version` numbers the schema. Every migration only adds nullable columns,
+//! indexes and tables, never rewrites rows: an older DbRover may still have the file open during an
 //! upgrade, and its `INSERT`s, which leave the new columns out, keep working.
 
 use rusqlite::TransactionBehavior;
 
 /// The schema this DbRover writes. 0 is every file from before provenance (W4), with or without
-/// `source`.
-const VERSION: i32 = 2;
+/// `source`; 3 adds report runs (RP4).
+const VERSION: i32 = 3;
 
 /// The table as the first DbRover with MCP made it; [`COLUMNS`] adds the rest.
 const TABLE: &str = "
@@ -46,11 +46,27 @@ CREATE INDEX IF NOT EXISTS history_by_origin
     ON history (coalesce(origin, source), executed_at DESC);
 ";
 
+/// Each run of a report (`docs/reporting.md`, "Run history"), and its newest runs found by
+/// the report's name. A table of its own, which an older DbRover neither reads nor minds.
+const REPORT_RUNS: &str = "
+CREATE TABLE IF NOT EXISTS report_runs (
+    id          INTEGER PRIMARY KEY,
+    report      TEXT NOT NULL,
+    started_at  TEXT NOT NULL,
+    elapsed_ms  INTEGER NOT NULL,
+    outcome     TEXT NOT NULL,
+    params      TEXT NOT NULL,
+    steps       TEXT NOT NULL,
+    failure     TEXT
+);
+CREATE INDEX IF NOT EXISTS report_runs_by_report ON report_runs (report, started_at DESC);
+";
+
 /// Brings the schema up to date. In an immediate transaction, so when the app and the MCP
 /// server open an old file at the same moment, the second waits, then finds it migrated.
 ///
 /// A file from a newer DbRover (a higher version) is left as it is: its additions are more
-/// nullable columns, which this one doesn't write.
+/// nullable columns and tables, which this one doesn't write.
 pub(super) fn migrate(connection: &mut rusqlite::Connection) -> rusqlite::Result<()> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let version: i32 = transaction.query_row("PRAGMA user_version", [], |row| row.get(0))?;
@@ -65,6 +81,7 @@ pub(super) fn migrate(connection: &mut rusqlite::Connection) -> rusqlite::Result
             }
         }
         transaction.execute_batch(INDEXES)?;
+        transaction.execute_batch(REPORT_RUNS)?;
         transaction.pragma_update(None, "user_version", VERSION)?;
     }
     transaction.commit()

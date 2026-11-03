@@ -1,0 +1,424 @@
+//! Report runs: what each run of a report measured, in the history's `report_runs` table
+//! (`docs/reporting.md`, "Run history"). The app records a run once it ends, however it ends,
+//! and only the newest runs of each report are kept.
+
+use std::collections::BTreeMap;
+use std::num::NonZeroU32;
+use std::time::Duration;
+
+use jiff::Timestamp;
+use rusqlite::{OptionalExtension, params};
+use serde::{Deserialize, Serialize};
+
+use super::{History, HistoryError, format_timestamp};
+use crate::ReportName;
+
+/// How many runs of each report are kept unless Settings says otherwise: enough to see a
+/// trend over months of monthly runs, at a few kilobytes each.
+pub const DEFAULT_RUNS_KEPT: NonZeroU32 = match NonZeroU32::new(20) {
+    Some(kept) => kept,
+    None => panic!("the runs kept must not be zero"),
+};
+
+/// One run of a report, as it ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReportRun {
+    pub report: ReportName,
+    pub started_at: Timestamp,
+    /// From asking for the run to its end.
+    pub elapsed: Duration,
+    pub outcome: RunOutcome,
+    /// The parameters' values, as typed.
+    pub params: BTreeMap<String, String>,
+    /// Each step that finished, in the order it finished.
+    pub steps: Vec<StepMetrics>,
+}
+
+/// How a run ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunOutcome {
+    Finished,
+    Failed(RunError),
+    Cancelled,
+}
+
+/// Where a run failed and why, as its error said.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunError {
+    /// The step, as the error named it: `source "tx"`, `the combine step`.
+    pub step: String,
+    pub message: String,
+}
+
+impl RunOutcome {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Finished => "finished",
+            Self::Failed(_) => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    fn from_stored(outcome: &str, failure: Option<&str>) -> Option<Self> {
+        match outcome {
+            "finished" => Some(Self::Finished),
+            "cancelled" => Some(Self::Cancelled),
+            "failed" => serde_json::from_str(failure?).ok().map(Self::Failed),
+            _ => None,
+        }
+    }
+}
+
+/// What one step of a run measured.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "step", rename_all = "snake_case")]
+pub enum StepMetrics {
+    Source(SourceMetrics),
+    /// A DuckDB file attached for the combine step, which reads nothing of its own.
+    Attached {
+        id: String,
+        data_source: String,
+    },
+    Combine(CombineMetrics),
+    Output(OutputMetrics),
+}
+
+/// A source, copied into the run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceMetrics {
+    pub id: String,
+    pub data_source: String,
+    pub rows: u64,
+    pub bytes: u64,
+    /// `None` when it returned no row.
+    pub first_row_ms: Option<u64>,
+    pub elapsed_ms: u64,
+    /// For a source with a lookup, the statements it sent, one a batch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batches: Option<u64>,
+}
+
+/// The combine step.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CombineMetrics {
+    pub rows: u64,
+    pub bytes: u64,
+    pub first_row_ms: Option<u64>,
+    pub elapsed_ms: u64,
+    /// The most memory the run's DuckDB held at once, when DuckDB said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_memory: Option<u64>,
+    /// The most it held spilled to disk at once, when DuckDB said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_temp_size: Option<u64>,
+}
+
+/// A file the run wrote.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutputMetrics {
+    /// Counted from 1, in the file's order.
+    pub number: usize,
+    /// The file's name, which a run's parameters can change.
+    pub file: String,
+    pub rows: u64,
+    /// On disk.
+    pub size: u64,
+    /// In its writer, overlapping the time of the step its rows came from.
+    pub elapsed_ms: u64,
+}
+
+impl History {
+    /// Adds `run`, then deletes all but the newest `kept` runs of its report, in one
+    /// transaction.
+    ///
+    /// # Errors
+    ///
+    /// [`HistoryError::Database`] if the run can't be written; nothing is.
+    pub fn record_run(&self, run: &ReportRun, kept: NonZeroU32) -> Result<(), HistoryError> {
+        let failure = match &run.outcome {
+            RunOutcome::Failed(error) => Some(to_json(error)?),
+            RunOutcome::Finished | RunOutcome::Cancelled => None,
+        };
+        let transaction = self.connection.unchecked_transaction()?;
+        transaction.execute(
+            "INSERT INTO report_runs
+                 (report, started_at, elapsed_ms, outcome, params, steps, failure)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                run.report.as_str(),
+                format_timestamp(run.started_at),
+                i64::try_from(run.elapsed.as_millis()).unwrap_or(i64::MAX),
+                run.outcome.as_str(),
+                to_json(&run.params)?,
+                to_json(&run.steps)?,
+                failure,
+            ],
+        )?;
+        delete_older_runs(&transaction, &run.report, kept)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// The newest `limit` runs of `report`, newest first. Rows that don't parse (from a newer
+    /// DbRover, or edited by hand) are skipped.
+    ///
+    /// # Errors
+    ///
+    /// [`HistoryError::Database`] if the query fails.
+    pub fn runs(&self, report: &ReportName, limit: usize) -> Result<Vec<ReportRun>, HistoryError> {
+        let mut statement = self.connection.prepare_cached(
+            "SELECT started_at, elapsed_ms, outcome, params, steps, failure FROM report_runs
+             WHERE report = ?1 ORDER BY started_at DESC, id DESC LIMIT ?2",
+        )?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let stored = statement
+            .query_map(params![report.as_str(), limit], StoredRun::read)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(stored
+            .into_iter()
+            .filter_map(|stored| stored.into_run(report.clone()))
+            .collect())
+    }
+
+    /// Deletes every run of `report`. Returns how many went.
+    ///
+    /// # Errors
+    ///
+    /// [`HistoryError::Database`] if they can't be deleted.
+    pub fn clear_runs(&self, report: &ReportName) -> Result<u64, HistoryError> {
+        let deleted = self.connection.execute(
+            "DELETE FROM report_runs WHERE report = ?1",
+            [report.as_str()],
+        )?;
+        Ok(deleted as u64)
+    }
+}
+
+/// Deletes the runs of `report` past its newest `kept`: everything from the first one past
+/// them, on `report_runs_by_report`.
+fn delete_older_runs(
+    connection: &rusqlite::Connection,
+    report: &ReportName,
+    kept: NonZeroU32,
+) -> rusqlite::Result<()> {
+    let first_gone: Option<(String, i64)> = connection
+        .prepare_cached(
+            "SELECT started_at, id FROM report_runs WHERE report = ?1
+             ORDER BY started_at DESC, id DESC LIMIT 1 OFFSET ?2",
+        )?
+        .query_row(params![report.as_str(), kept.get()], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .optional()?;
+    if let Some((started_at, id)) = first_gone {
+        connection.execute(
+            "DELETE FROM report_runs WHERE report = ?1
+                 AND (started_at < ?2 OR (started_at = ?2 AND id <= ?3))",
+            params![report.as_str(), started_at, id],
+        )?;
+    }
+    Ok(())
+}
+
+fn to_json(value: &impl Serialize) -> Result<String, HistoryError> {
+    serde_json::to_string(value).map_err(HistoryError::Encode)
+}
+
+/// A `report_runs` row as stored, before parsing.
+struct StoredRun {
+    started_at: String,
+    elapsed_ms: i64,
+    outcome: String,
+    params: String,
+    steps: String,
+    failure: Option<String>,
+}
+
+impl StoredRun {
+    fn read(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            started_at: row.get(0)?,
+            elapsed_ms: row.get(1)?,
+            outcome: row.get(2)?,
+            params: row.get(3)?,
+            steps: row.get(4)?,
+            failure: row.get(5)?,
+        })
+    }
+
+    fn into_run(self, report: ReportName) -> Option<ReportRun> {
+        Some(ReportRun {
+            report,
+            started_at: self.started_at.parse().ok()?,
+            elapsed: Duration::from_millis(u64::try_from(self.elapsed_ms).ok()?),
+            outcome: RunOutcome::from_stored(&self.outcome, self.failure.as_deref())?,
+            params: serde_json::from_str(&self.params).ok()?,
+            steps: serde_json::from_str(&self.steps).ok()?,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use dbrover_core::DataSourceId;
+
+    use super::*;
+    use crate::{HistoryEntry, HistoryFile, HistoryOutcome, HistoryQuery, HistorySource};
+
+    fn name(name: &str) -> ReportName {
+        ReportName::new(name).unwrap()
+    }
+
+    /// A run of `report` started `minute` minutes into October 2026.
+    fn run(report: &str, minute: i64, outcome: RunOutcome) -> ReportRun {
+        ReportRun {
+            report: name(report),
+            started_at: Timestamp::from_second(1_790_812_800 + minute * 60).unwrap(),
+            elapsed: Duration::from_millis(4_250),
+            outcome,
+            params: [("since".to_owned(), "2026-10-01".to_owned())]
+                .into_iter()
+                .collect(),
+            steps: vec![
+                StepMetrics::Source(SourceMetrics {
+                    id: "tx".to_owned(),
+                    data_source: "ledger".to_owned(),
+                    rows: 1_100_000,
+                    bytes: 88_000_000,
+                    first_row_ms: Some(40),
+                    elapsed_ms: 3_100,
+                    batches: None,
+                }),
+                StepMetrics::Attached {
+                    id: "prices".to_owned(),
+                    data_source: "prices-duckdb".to_owned(),
+                },
+                StepMetrics::Combine(CombineMetrics {
+                    rows: 40,
+                    bytes: 2_000,
+                    first_row_ms: Some(900),
+                    elapsed_ms: 1_000,
+                    peak_memory: Some(2_400_000_000),
+                    peak_temp_size: Some(3_200_000_000),
+                }),
+                StepMetrics::Output(OutputMetrics {
+                    number: 1,
+                    file: "values-2026-10.csv".to_owned(),
+                    rows: 40,
+                    size: 2_100,
+                    elapsed_ms: 2,
+                }),
+            ],
+        }
+    }
+
+    fn failed() -> RunOutcome {
+        RunOutcome::Failed(RunError {
+            step: "the combine step".to_owned(),
+            message: "DuckDB ran past 2 GiB, its memory_limit".to_owned(),
+        })
+    }
+
+    #[test]
+    fn reads_back_each_run_newest_first_with_every_number() {
+        let dir = tempfile::tempdir().unwrap();
+        let history = HistoryFile::new(dir.path().join("history.sqlite"))
+            .open()
+            .unwrap();
+        let runs = [
+            run("values", 0, RunOutcome::Finished),
+            run("values", 2, failed()),
+            run("values", 1, RunOutcome::Cancelled),
+        ];
+        for run in &runs {
+            history.record_run(run, DEFAULT_RUNS_KEPT).unwrap();
+        }
+        let read = history.runs(&name("values"), 10).unwrap();
+        assert_eq!(read, [runs[1].clone(), runs[2].clone(), runs[0].clone()]);
+        assert_eq!(history.runs(&name("values"), 1).unwrap(), [runs[1].clone()]);
+        assert!(history.runs(&name("other"), 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn keeps_the_newest_runs_of_each_report_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let history = HistoryFile::new(dir.path().join("history.sqlite"))
+            .open()
+            .unwrap();
+        let kept = NonZeroU32::new(3).unwrap();
+        history
+            .record_run(&run("other", 0, RunOutcome::Finished), kept)
+            .unwrap();
+        for minute in 1..=5 {
+            history
+                .record_run(&run("values", minute, RunOutcome::Finished), kept)
+                .unwrap();
+        }
+        let minutes = |report: &str| -> Vec<i64> {
+            history
+                .runs(&name(report), 10)
+                .unwrap()
+                .iter()
+                .map(|run| (run.started_at.as_second() - 1_790_812_800) / 60)
+                .collect()
+        };
+        assert_eq!(minutes("values"), [5, 4, 3]);
+        assert_eq!(minutes("other"), [0], "another report's runs stay");
+
+        assert_eq!(history.clear_runs(&name("values")).unwrap(), 3);
+        assert!(minutes("values").is_empty());
+        assert_eq!(minutes("other"), [0]);
+    }
+
+    #[test]
+    fn adds_the_runs_table_to_a_version_2_file_and_keeps_its_statements() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = HistoryFile::new(dir.path().join("history.sqlite"));
+        let shop = DataSourceId::generate();
+        let history = file.open().unwrap();
+        history
+            .record(&HistoryEntry {
+                data_source: shop,
+                executed_at: Timestamp::UNIX_EPOCH,
+                sql: "SELECT 1".to_owned(),
+                duration: None,
+                rows: None,
+                outcome: HistoryOutcome::Ok,
+                source: HistorySource::DbRover,
+            })
+            .unwrap();
+        drop(history);
+        let version_2 = rusqlite::Connection::open(file.path()).unwrap();
+        version_2
+            .execute_batch("DROP TABLE report_runs; PRAGMA user_version = 2;")
+            .unwrap();
+
+        let history = file.open().unwrap();
+        history
+            .record_run(&run("values", 0, RunOutcome::Finished), DEFAULT_RUNS_KEPT)
+            .unwrap();
+        assert_eq!(history.runs(&name("values"), 10).unwrap().len(), 1);
+        assert_eq!(
+            history.search(&HistoryQuery::all(shop), 10).unwrap().len(),
+            1
+        );
+    }
+
+    #[test]
+    fn skips_a_run_it_cannot_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = HistoryFile::new(dir.path().join("history.sqlite"));
+        let history = file.open().unwrap();
+        history
+            .record_run(&run("values", 0, RunOutcome::Finished), DEFAULT_RUNS_KEPT)
+            .unwrap();
+        rusqlite::Connection::open(file.path())
+            .unwrap()
+            .execute_batch(
+                "INSERT INTO report_runs (report, started_at, elapsed_ms, outcome, params, steps)
+                 VALUES ('values', '2026-10-01T00:05:00.000Z', 1, 'later', '{}', '[]')",
+            )
+            .unwrap();
+        assert_eq!(history.runs(&name("values"), 10).unwrap().len(), 1);
+    }
+}
