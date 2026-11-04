@@ -10,11 +10,14 @@ publish.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+# Signs in to a data source's bucket with C0's AWS sign-in (C2).
+dbrover-cloud.workspace = true
 dbrover-core.workspace = true
 # Only to read a statement's first word, to tell a change's row count from a result.
 dbrover-sql.workspace = true
 # The work folder of a Parquet export.
 tempfile.workspace = true
+thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 

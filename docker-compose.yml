@@ -430,3 +430,34 @@ services:
       interval: 1s
       timeout: 5s
       retries: 30
+
+  # S3's stand-in (docs/cloud-data.md, C2): MinIO, as the pgsty/minio build of the same server,
+  # since MinIO's own images left Docker Hub and Quay in 2025. It starts with the bucket
+  # `dbrover` holding docker/minio/dbrover (see docker/minio/README.md), copied in with the
+  # image's own `mc` once the server answers; the healthcheck waits for that copy.
+  minio:
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    environment:
+      MINIO_ROOT_USER: dbrover
+      # MinIO wants eight characters at least.
+      MINIO_ROOT_PASSWORD: dbrover-test
+    ports:
+      - "59000:9000"
+    volumes:
+      - ./docker/minio/dbrover:/fixtures:ro
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        minio server /data --quiet &
+        until mc alias set local http://127.0.0.1:9000 dbrover dbrover-test >/dev/null 2>&1;
+        do sleep 0.2; done &&
+        mc mb --ignore-existing local/dbrover &&
+        mc mirror --quiet --overwrite /fixtures local/dbrover &&
+        touch /tmp/ready &&
+        wait
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/ready"]
+      interval: 1s
+      timeout: 5s
+      retries: 30

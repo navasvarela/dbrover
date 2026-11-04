@@ -97,7 +97,7 @@ impl ReportSource {
                 "could not connect to {:?}: {}{}",
                 data_source.name,
                 describe_error(&error),
-                password_hint(config.driver().uses_password())
+                password_hint(config.uses_password())
             ))
         })?;
         let mode = match read_only::guard(config.driver(), Storage::of(config)) {

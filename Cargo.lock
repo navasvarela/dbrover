@@ -2308,10 +2308,12 @@ name = "dbrover-driver-duckdb"
 version = "0.26.0"
 dependencies = [
  "async-trait",
+ "dbrover-cloud",
  "dbrover-core",
  "dbrover-sql",
  "duckdb",
  "tempfile",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
 ]
