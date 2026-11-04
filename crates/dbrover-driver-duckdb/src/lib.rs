@@ -19,10 +19,12 @@ use std::sync::{Arc, LazyLock, Mutex, Weak};
 use std::time::SystemTime;
 
 use async_trait::async_trait;
+use bucket::tree::BucketPath;
 use dbrover_core::{
-    BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, Connection, DriverError, DuckDbConfig,
-    DuckDbDatabase, Password, Rejection, RelationName, ResultCursor, ServerInfo, TableConstraints,
-    TableDescription, TableName, TransactionStatus,
+    BoxError, CATALOG_PAGE_SIZE, CancelHandle, CatalogNode, CatalogPath, Cell, ChildrenPage,
+    ChildrenQuery, Connection, DriverError, DuckDbConfig, DuckDbDatabase, PageToken, Password,
+    Rejection, RelationName, ResultCursor, ServerInfo, TableConstraints, TableDescription,
+    TableName, TransactionStatus,
 };
 use duckdb::AccessMode;
 
@@ -33,6 +35,15 @@ pub use workspace::{
 };
 
 const PRODUCT: &str = "DuckDB";
+
+/// How many pages of a bucket's level [`Connection::children`] lists at most, for its callers
+/// that want a level whole (the conformance walk, the MCP server's catalog): ten thousand
+/// keys. The explorer pages through a level instead, so it sees all of one.
+const WHOLE_LEVEL_PAGES: usize = 10;
+
+fn string_literal(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "''"))
+}
 
 /// Opens a database file, or a new database in memory.
 ///
@@ -267,10 +278,10 @@ impl DuckDbConnection {
     /// [`DriverError::Connection`] when signing in to the bucket fails, or DuckDB refuses the
     /// secret for another reason.
     async fn make_bucket_secret(&mut self) -> Result<(), DriverError> {
-        let Some(bucket) = &self.bucket else {
+        let Some(bucket) = &mut self.bucket else {
             return Ok(());
         };
-        let Some((statement, expires_at)) = bucket
+        let Some(statement) = bucket
             .due_secret(SystemTime::now())
             .await
             .map_err(connection_error)?
@@ -287,7 +298,7 @@ impl DuckDbConnection {
         match made {
             Ok(()) => {
                 if let Some(bucket) = &mut self.bucket {
-                    bucket.made(expires_at);
+                    bucket.made();
                 }
                 Ok(())
             }
@@ -300,6 +311,95 @@ impl DuckDbConnection {
             }
             Err(error) => Err(error),
         }
+    }
+
+    /// What `path` is in the data source's bucket, if it is in it.
+    fn bucket_path(&self, path: &CatalogPath) -> Option<BucketPath> {
+        let bucket = self.bucket.as_ref()?;
+        BucketPath::of(path, &bucket.storage().url())
+    }
+
+    /// A page of the bucket's level at `path`, whose keys start with `prefix`.
+    async fn bucket_level(
+        &mut self,
+        path: &CatalogPath,
+        prefix: &str,
+        query: &ChildrenQuery,
+    ) -> Result<ChildrenPage, DriverError> {
+        let Some(bucket) = &mut self.bucket else {
+            return Err(DriverError::InvalidPath(path.clone()));
+        };
+        let lister = bucket
+            .lister(SystemTime::now())
+            .await
+            .map_err(connection_error)?;
+        let limit = query
+            .limit
+            .unwrap_or(CATALOG_PAGE_SIZE)
+            .min(CATALOG_PAGE_SIZE);
+        let after = query.after.as_ref().map(PageToken::as_str);
+        let level = lister
+            .list(prefix, after, limit)
+            .await
+            .map_err(|error| connection_error(BucketError::from(error)))?;
+        Ok(ChildrenPage {
+            nodes: bucket::tree::level_nodes(path, prefix, &level, query),
+            next: level.next.map(PageToken::new),
+        })
+    }
+
+    /// Every node of the bucket's level at `path`, a page at a time, up to
+    /// [`WHOLE_LEVEL_PAGES`] pages.
+    async fn whole_bucket_level(
+        &mut self,
+        path: &CatalogPath,
+        prefix: &str,
+    ) -> Result<Vec<CatalogNode>, DriverError> {
+        let mut query = ChildrenQuery::default();
+        let mut nodes = Vec::new();
+        for _ in 0..WHOLE_LEVEL_PAGES {
+            let page = self.bucket_level(path, prefix, &query).await?;
+            nodes.extend(page.nodes);
+            match page.next {
+                Some(next) => query = query.after(next),
+                None => return Ok(nodes),
+            }
+        }
+        tracing::warn!(
+            "{path} has more than {} entries; listing the first of them",
+            nodes.len()
+        );
+        Ok(nodes)
+    }
+
+    /// The columns of the file at `url`, as DuckDB reads them from its footer (Parquet) or its
+    /// first rows (CSV, JSON).
+    async fn file_columns(
+        &mut self,
+        path: &CatalogPath,
+        url: String,
+    ) -> Result<Vec<CatalogNode>, DriverError> {
+        self.make_bucket_secret().await?;
+        let path = path.clone();
+        self.run_blocking(move |connection| {
+            let sql = format!("DESCRIBE SELECT * FROM {}", string_literal(&url));
+            let mut statement = connection
+                .prepare(&sql)
+                .map_err(|error| errors::statement_error(error, &sql))?;
+            let columns = statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(|error| errors::statement_error(error, &sql))?;
+            columns
+                .map(|column| {
+                    let (name, data_type) =
+                        column.map_err(|error| errors::statement_error(error, &sql))?;
+                    Ok(bucket::tree::column_node(&path, &name, &data_type))
+                })
+                .collect()
+        })
+        .await
     }
 
     async fn run_blocking<T: Send + 'static>(
@@ -332,9 +432,35 @@ impl Connection for DuckDbConnection {
     }
 
     async fn children(&mut self, path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError> {
-        let path = path.clone();
-        self.run_blocking(move |connection| catalog::children(connection, &path))
-            .await
+        match self.bucket_path(path) {
+            Some(BucketPath::Level { prefix }) => {
+                return self.whole_bucket_level(path, &prefix).await;
+            }
+            Some(BucketPath::File { url }) => return self.file_columns(path, url).await,
+            None => {}
+        }
+        let owned = path.clone();
+        let mut nodes = self
+            .run_blocking(move |connection| catalog::children(connection, &owned))
+            .await?;
+        if path.segments().is_empty()
+            && let Some(bucket) = &self.bucket
+        {
+            nodes.push(bucket::tree::bucket_node(bucket.storage()));
+        }
+        Ok(nodes)
+    }
+
+    /// A bucket's level a page at a time, from its own listing; every other level whole.
+    async fn children_page(
+        &mut self,
+        path: &CatalogPath,
+        query: &ChildrenQuery,
+    ) -> Result<ChildrenPage, DriverError> {
+        match self.bucket_path(path) {
+            Some(BucketPath::Level { prefix }) => self.bucket_level(path, &prefix, query).await,
+            _ => Ok(ChildrenPage::whole(self.children(path).await?, query)),
+        }
     }
 
     async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError> {

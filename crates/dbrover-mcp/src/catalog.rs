@@ -1,7 +1,7 @@
 //! Catalog paths and nodes as JSON. A node's `path` is what the next `list_objects` or
 //! `get_definition` call takes back, so a client walks the tree without knowing its shape.
 
-use dbrover_core::{CatalogNode, CatalogPath, FolderKind, KeyType, NodeKind};
+use dbrover_core::{CatalogNode, CatalogPath, FolderKind, KeyType, NodeKind, ObjectKind};
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 
@@ -62,7 +62,7 @@ const FOLDERS: [FolderKind; 18] = [
     FolderKind::Aggregates,
 ];
 
-const KINDS: [(NodeKind, &str); 20] = [
+const KINDS: [(NodeKind, &str); 23] = [
     (NodeKind::Database, "database"),
     (NodeKind::Schema, "schema"),
     (NodeKind::Table, "table"),
@@ -83,6 +83,9 @@ const KINDS: [(NodeKind, &str); 20] = [
     (NodeKind::IndexTemplate, "index_template"),
     (NodeKind::UserType, "type"),
     (NodeKind::Aggregate, "aggregate"),
+    (NodeKind::Object(ObjectKind::Bucket), "bucket"),
+    (NodeKind::Object(ObjectKind::Folder), "object_folder"),
+    (NodeKind::Object(ObjectKind::File), "object"),
 ];
 
 /// A Redis key's kind in a path. Its value's type is in the node's `detail`, and isn't needed

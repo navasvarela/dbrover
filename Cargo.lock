@@ -2239,6 +2239,7 @@ dependencies = [
  "hyper-util",
  "jiff",
  "ring",
+ "roxmltree",
  "serde",
  "serde_json",
  "tempfile",
