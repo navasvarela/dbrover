@@ -29,7 +29,8 @@ In:
 Out, and staying out:
 
 - Dashboards, charts that refresh, and a BI semantic layer. W12's charts stay one result's
-  picture in a console.
+  picture in a console. [Charts as code](charts-as-code.md) proposes one step past this line,
+  planned, not scheduled: a report writing a chart's picture as a file beside its others.
 - A scheduling service, sharing, users or permissions. DbRover stays a single-user desktop app.
 - Pixel-perfect PDF layouts.
 - Writing to a data source. Reports read; every source connects read-only (W11).
