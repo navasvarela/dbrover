@@ -1982,6 +1982,53 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   killed outright (Linux's parent-death signal).
 - **RP7 — Manual,** with the example reports.
 
+## Version control track
+
+Planned, not scheduled. Proposed on 2026-11-04 in [Version control](version-control.md), after
+looking at how other database tools use Git. The answer is a small piece: no Git client in the
+app (Vision keeps that a non-goal), but the files DbRover writes made safe under Git, a
+repository's folder of `.sql` files in the explorer, and schema snapshots Git can keep. It comes
+after CI fixes, the reports track and W13, and links no Git library.
+
+- **VC1 — Files that live well in Git (M):** planned in
+  [Version control](version-control.md#vc1--files-that-live-well-in-git). In layers, one PR
+  each:
+  - **VC1a — The plan:** the design, this entry and Vision's reworded non-goal.
+  - **VC1b — Noticing changes made outside DbRover:** every file DbRover rewrites is checked
+    before the write, so a `git pull` while it runs is no longer undone by the next save; data
+    sources and projects merge per entry, documents offer **Reload** or **Keep mine**, and the
+    check also runs when the window comes back to the front. A bug fix as much as a feature;
+    worth pulling forward if someone hits it.
+  - **VC1c — Comments and order kept:** `data_sources.toml`, `projects.toml` and
+    `settings.toml` edited in place with `toml_edit`, so a save changes only its own lines.
+  - **VC1d — A `.gitignore` for the history:** written when the settings folder is created or
+    chosen, never replaced, so `history.sqlite` isn't committed.
+  - **VC1e — A report's run names the report's version:** the file's Git blob id with each run,
+    in the tab, `--json` and the log, found with `git log --find-object`.
+  - **VC1f — Manual:** *Keeping your settings in Git*, and this demo note.
+
+  **Exit:** with the settings folder in Git and DbRover running, `git pull` brings a new data
+  source and a changed one; both show once the window is in front, saving a third keeps all
+  three and their comments, and `git diff` shows only the third's lines. `git status` doesn't
+  list `history.sqlite`. A report run before and after an edit shows two blob ids.
+- **VC2 — A folder of queries (S–M):** planned in
+  [Version control](version-control.md#vc2--a-folder-of-queries). Folders of `.sql` files you
+  add (a repository's `queries/`) as a tree in the explorer, hidden and Git-ignored files left
+  out, each file opened and saved in place through W6. The request other tools' users make most.
+  - **VC2a — The folder list and the tree.**
+  - **VC2b — Opening and creating** (**New query here**).
+  - **VC2c — Manual,** and the demo note.
+
+  **Exit:** a clone with `queries/sales.sql` and `queries/admin/users.sql` shows both and not
+  `.git`; saving `sales.sql` shows in `git diff`; checking out a branch that adds a file shows
+  it once the window is in front.
+- **VC3 — Schema snapshots (S–M), with W13:** a schema saved as a deterministic, diffable file
+  (in the app and as `dbrover schema snapshot`), and W13 comparing a live schema with one, so
+  Git's history of the file is the schema's history. Its format is decided when W13 starts.
+
+  **Exit:** a snapshot of `public` on the PostgreSQL test server taken twice is identical; after
+  adding a column and an index, comparing the live schema with the first snapshot lists both.
+
 ## Design and documentation track
 
 Runs alongside the feature milestones rather than after them: each item is usable on its own.
