@@ -202,6 +202,49 @@ async fn run_with(
     (outcome, events)
 }
 
+/// [`VALUES`] in PRQL, with its parameter in PRQL's form.
+const VALUES_IN_PRQL: &str = "from tx
+join prices (==asset)
+filter tx.executed_at >= ($since | as date)
+select {tx.id, tx.quantity, value = tx.quantity * prices.price}
+sort tx.id";
+
+#[tokio::test]
+async fn a_prql_combine_writes_what_its_sql_twin_writes() {
+    let mut written = Vec::new();
+    for prql in [false, true] {
+        let folder = tempfile::tempdir().unwrap();
+        let plan = if prql {
+            let text = TWO_SOURCES
+                .replace("{tx_limits}", "")
+                .replace(
+                    "query = \"\"\"\n{query}",
+                    &format!("prql = \"\"\"\n{VALUES_IN_PRQL}"),
+                )
+                .replace("{combine_limits}", "");
+            Plan::new(
+                read_report(&text).unwrap(),
+                &[ledger()],
+                &[],
+                &LimitDefaults::default(),
+            )
+            .unwrap()
+        } else {
+            report("", VALUES, "")
+        };
+        let Logic::Combine(combined) = &plan.logic else {
+            panic!("{:?}", plan.logic);
+        };
+        assert_eq!(combined.combine.query.compiled().is_some(), prql);
+        assert_eq!(plan.params.len(), 1, "{:?}", plan.params);
+        let opener = MemoryOpener::of(vec![("tx", transactions()), ("prices", prices())]);
+        let (outcome, _) = run_with(&plan, &opener, folder.path()).await;
+        assert_eq!(outcome.unwrap().rows, 3);
+        written.push(std::fs::read_to_string(folder.path().join("values.csv")).unwrap());
+    }
+    assert_eq!(written[0], written[1]);
+}
+
 #[tokio::test]
 async fn combines_two_sources_and_writes_every_digit() {
     let folder = tempfile::tempdir().unwrap();

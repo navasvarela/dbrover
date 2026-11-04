@@ -20,6 +20,7 @@ mod events;
 mod file_name;
 mod limits;
 mod plan;
+mod prql;
 mod read;
 mod report;
 mod request;
@@ -43,8 +44,8 @@ pub use plan::{
 };
 pub use read::read_report;
 pub use report::{
-    Combine, Lookup, Output, OutputColumns, OutputWriter, Param, Report, Source, SourceColumn,
-    SourceRead,
+    Combine, CombineQuery, Lookup, Output, OutputColumns, OutputWriter, Param, Report, Source,
+    SourceColumn, SourceRead,
 };
 pub use request::RunRequest;
 pub use run::{

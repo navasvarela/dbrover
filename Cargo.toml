@@ -150,6 +150,12 @@ bson = { version = "3.1.0", features = ["serde_json-1"] }
 mysql_async = { version = "0.37.1", default-features = false, features = ["minimal-rust", "rustls-tls", "ring", "tls12"] }
 # Find and replace's regular expressions; already built for mysql_common and arrow.
 regex = "1.13.1"
+# PRQL in a report's [combine] (docs/reporting.md, RP5), compiled to DuckDB's SQL. No default
+# features: they are prqlc's own command line. Pinned to 0.13 patches: PRQL still changes between
+# minor versions, and a report's compiled SQL shouldn't change with a `cargo update`. It brings
+# sqlparser 0.62 beside the workspace's 0.63; RP5a measured the cost (5.9 MB a release binary,
+# about 40 s of a release build's processor time).
+prqlc = { version = "~0.13.14", default-features = false }
 # Redis, Valkey and Dragonfly (docs/nosql.md, N1): the community client Redis Inc lists, in
 # pure Rust, BSD-3-Clause, releasing every few weeks; `fred`, the alternative, has had no
 # release since February 2025. Only its async connection on tokio: none of its TLS features,

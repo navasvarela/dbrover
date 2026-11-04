@@ -85,8 +85,35 @@ pub struct SourceColumn {
 /// The combine step: a DuckDB query over the sources, and the limits of the DuckDB it runs in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Combine {
-    pub query: String,
+    pub query: CombineQuery,
     pub limits: CombineLimitsSet,
+}
+
+/// The combine step's query, as the file writes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CombineQuery {
+    /// `query`: DuckDB's SQL.
+    Sql(String),
+    /// `prql`, and the SQL it compiled to when the file was read, which is what runs.
+    Prql { prql: String, compiled: String },
+}
+
+impl CombineQuery {
+    /// The SQL the run sends.
+    pub fn sql(&self) -> &str {
+        match self {
+            Self::Sql(sql) | Self::Prql { compiled: sql, .. } => sql,
+        }
+    }
+
+    /// The SQL a PRQL query compiled to, which nothing but the run shows otherwise; `None` for
+    /// SQL, which is the file's own.
+    pub fn compiled(&self) -> Option<&str> {
+        match self {
+            Self::Sql(_) => None,
+            Self::Prql { compiled, .. } => Some(compiled),
+        }
+    }
 }
 
 /// A file a run writes.
