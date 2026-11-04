@@ -2112,6 +2112,54 @@ after CI fixes, the reports track and W13, and links no Git library.
   **Exit:** a snapshot of `public` on the PostgreSQL test server taken twice is identical; after
   adding a column and an index, comparing the live schema with the first snapshot lists both.
 
+## Charts as code track
+
+Planned, not scheduled. Proposed on 2026-11-04 in [Charts as code](charts-as-code.md), after
+asking for a simple syntax for charts of queries and reports. W12's chart, written down as a few
+TOML keys (`kind`, `x`, `y`, `series`, `title`, `sort`, `limit`, …): in a comment block above a
+statement, which opens its result on that chart and which the tab writes back, and as a report's
+`[[chart]]`, written each run as an SVG or PNG file beside its other files. No charting library
+is added. It comes after CI fixes, the reports track and W13.
+
+- **CH1 — A chart in a query's text (M):** planned in
+  [Charts as code](charts-as-code.md#ch1--a-chart-in-a-querys-text-m). In layers, one PR each:
+  - **CH1a — The plan:** the design and this entry.
+  - **CH1b — The spec:** its types in `dbrover-chart`, read from TOML with every problem as a
+    sentence, resolved against a result's columns, `sort`, `limit` and the titles in the layout,
+    and written back.
+  - **CH1c — Finding the block:** the `-- [chart]` block above each statement, by the language's
+    line comment.
+  - **CH1d — The tab reads and writes it:** a statement with a block opens on **Chart**;
+    problems in the editor and the tab; **Save to query** and **Copy for a report**.
+  - **CH1e — Manual** and the demo note.
+
+  **Exit:** a console whose statement has a block of bars by month opens as that chart; **Save
+  to query** after switching to lines rewrites only `kind`, keeping the block's comments; a
+  misspelt column shows the result's columns.
+- **CH2 — Series and stacked bars (S–M):** `series` splits one Y by a column's values, so
+  `GROUP BY month, category` charts without a pivot, and `stack = true` stacks the bars.
+  Horizontal bars and area wait until asked; histograms stay a `GROUP BY` in the query.
+  - **CH2a — `series`.**
+  - **CH2b — Stacked bars.**
+  - **CH2c — The toolbar's Series and Stacked, and the manual.**
+- **CH3 — Charts from reports (M):** a report's `[[chart]]`, drawn from its result or its own
+  DuckDB `query`, written through the staging folder with the other files. Past a kind's row
+  limit a run fails rather than draw part of the data, unless the chart sets `limit`.
+  `dbrover report run` prints and reports charts as outputs. The Reports scope line moves one
+  step: a chart stays one result's picture, in a console or as a report's file.
+  - **CH3a — The plan,** and the Scope line's wording.
+  - **CH3b — Drawing without a window:** the SVG writer in `dbrover-chart`, the fonts and a
+    measure of their text (`ttf-parser`, already built for resvg) in `dbrover-picture`.
+  - **CH3c — `[[chart]]` in the report file.**
+  - **CH3d — Running it,** its limits, events and exit codes.
+  - **CH3e — A chart's own `query`.**
+  - **CH3f — Manual,** the sales-by-category example with its chart, and the demo note.
+
+  **Exit:** `dbrover report run sales-by-category` writes Excel, CSV and an SVG equal byte for
+  byte to a checked-in one; 251 bars without `limit` exit with 5 and leave no file.
+- **CH4 — A chart for MCP clients (S):** a read-only `chart` tool that runs one query as `query`
+  does, under its row limit, and returns a PNG (or SVG) of it.
+
 ## Design and documentation track
 
 Runs alongside the feature milestones rather than after them: each item is usable on its own.
