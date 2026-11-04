@@ -493,6 +493,13 @@ Each layer is one pull request in a stack, useful and tested on its own, with no
   fixtures' rows through a data source with an access key, and fails with MinIO's refusal
   without it; a secret near its expiry is made again before the next statement; no secret is
   persistent; the error for an extension that can't be downloaded names it.
+  **As built:** the secret is scoped to the bucket (`SCOPE 's3://<bucket>'`), so the data
+  source's credentials and endpoint apply to it alone, and a console can still read another
+  bucket with a secret of its own. Every DuckDB database DbRover opens, buckets or not, starts
+  with `allow_persistent_secrets` off. A statement naming a remote address (`://`) isn't
+  checked as it is typed, since preparing it reads the file's footer from the bucket; its
+  errors show when it runs. The `minio` test server is healthy 1.8 s after `docker compose up`
+  on a laptop, and its image is 54 MB to download.
 - **C2d — The bucket in the explorer:** S3's listing with a delimiter, a level at a time and a
   thousand entries a page; folders, files and their columns; **Open data** on a file.
   **Exit:** on MinIO, the explorer's levels list the fixtures' folders and files with paging

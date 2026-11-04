@@ -3,6 +3,7 @@
 //! DuckDB calls block, so every one runs on tokio's blocking pool and never stalls the engine's
 //! async workers, as the SQLite driver does. Must run inside a tokio runtime.
 
+mod bucket;
 mod catalog;
 mod errors;
 mod execution;
@@ -15,15 +16,17 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, Weak};
+use std::time::SystemTime;
 
 use async_trait::async_trait;
 use dbrover_core::{
     BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, Connection, DriverError, DuckDbConfig,
-    DuckDbDatabase, Rejection, RelationName, ResultCursor, ServerInfo, TableConstraints,
+    DuckDbDatabase, Password, Rejection, RelationName, ResultCursor, ServerInfo, TableConstraints,
     TableDescription, TableName, TransactionStatus,
 };
 use duckdb::AccessMode;
 
+pub use bucket::BucketError;
 pub use parquet::{ParquetCompression, ParquetWriter};
 pub use workspace::{
     DuckDbType, TableLoader, Workspace, WorkspaceLimit, WorkspaceLimits, WorkspacePeaks,
@@ -42,17 +45,51 @@ const PRODUCT: &str = "DuckDB";
 /// process holds it open for writing, or this process has it open the other way (see
 /// [`SharedDatabase`]).
 pub async fn connect(config: &DuckDbConfig) -> Result<DuckDbConnection, DriverError> {
+    connect_with_secret(config, None).await
+}
+
+/// Opens the database as [`connect`] does, and hands DuckDB the credentials of the data
+/// source's bucket, if it has one, signing in to it with `secret` where the bucket's sign-in
+/// takes one (an access key's).
+///
+/// An extension DuckDB couldn't download doesn't stop the connection: the database's own
+/// tables still work offline, and the bucket's secret is tried again before each statement.
+///
+/// # Errors
+///
+/// As for [`connect`], and [`DriverError::Connect`] when signing in to the bucket fails.
+pub async fn connect_with_secret(
+    config: &DuckDbConfig,
+    secret: Option<&Password>,
+) -> Result<DuckDbConnection, DriverError> {
     let database = config.database.clone();
     let (connection, shared, version) = tokio::task::spawn_blocking(move || open(&database))
         .await
         .map_err(connect_error)??;
 
-    Ok(DuckDbConnection {
+    let mut connection = DuckDbConnection {
         cancel: Arc::new(execution::DuckDbCancel::new(connection.interrupt_handle())),
         connection: Arc::new(Mutex::new(connection)),
         _database: shared,
         server_info: ServerInfo::new(PRODUCT, version),
-    })
+        bucket: config
+            .storage
+            .clone()
+            .map(|storage| bucket::Bucket::new(storage, secret.cloned())),
+    };
+    connection
+        .make_bucket_secret()
+        .await
+        .map_err(|error| DriverError::Connect(error.into()))?;
+    Ok(connection)
+}
+
+/// Settings every database DbRover opens starts with, which can't change once it runs.
+///
+/// Persistent secrets are off, so DuckDB never writes a bucket's credentials to
+/// `~/.duckdb/stored_secrets`, nor loads secrets someone else stored there (C2).
+fn duckdb_config() -> Result<duckdb::Config, duckdb::Error> {
+    duckdb::Config::default().with("allow_persistent_secrets", "false")
 }
 
 /// A connection, the file's shared database it belongs to (`None` in memory), and DuckDB's
@@ -66,7 +103,9 @@ fn open(database: &DuckDbDatabase) -> Result<Opened, DriverError> {
             (connection, Some(shared))
         }
         DuckDbDatabase::InMemory => (
-            duckdb::Connection::open_in_memory().map_err(connect_error)?,
+            duckdb_config()
+                .and_then(duckdb::Connection::open_in_memory_with_flags)
+                .map_err(connect_error)?,
             None,
         ),
     };
@@ -129,8 +168,8 @@ fn open_file(
     } else {
         AccessMode::ReadWrite
     };
-    let config = duckdb::Config::default()
-        .access_mode(access)
+    let config = duckdb_config()
+        .and_then(|config| config.access_mode(access))
         .map_err(connect_error)?;
     let first = duckdb::Connection::open_with_flags(path, config).map_err(connect_error)?;
     let connection = first.try_clone().map_err(connect_error)?;
@@ -214,9 +253,55 @@ pub struct DuckDbConnection {
     /// [`SharedDatabase`].
     _database: Option<Arc<SharedDatabase>>,
     server_info: ServerInfo,
+    /// The data source's bucket, whose secret is made before a statement when it is due.
+    bucket: Option<bucket::Bucket>,
 }
 
 impl DuckDbConnection {
+    /// Makes the bucket's secret if it was never made or is about to expire. An extension
+    /// DuckDB couldn't download is logged and left for the statement that needs it to report,
+    /// which [`errors`] explains; the secret is tried again before the next statement.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError::Connection`] when signing in to the bucket fails, or DuckDB refuses the
+    /// secret for another reason.
+    async fn make_bucket_secret(&mut self) -> Result<(), DriverError> {
+        let Some(bucket) = &self.bucket else {
+            return Ok(());
+        };
+        let Some((statement, expires_at)) = bucket
+            .due_secret(SystemTime::now())
+            .await
+            .map_err(connection_error)?
+        else {
+            return Ok(());
+        };
+        let made = self
+            .run_blocking(move |connection| {
+                connection
+                    .execute_batch(statement.expose())
+                    .map_err(errors::secret_error)
+            })
+            .await;
+        match made {
+            Ok(()) => {
+                if let Some(bucket) = &mut self.bucket {
+                    bucket.made(expires_at);
+                }
+                Ok(())
+            }
+            Err(error) if errors::is_missing_extension(&error) => {
+                tracing::warn!(
+                    "the bucket's secret waits for a DuckDB extension: {}",
+                    dbrover_core::describe_error(&error)
+                );
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     async fn run_blocking<T: Send + 'static>(
         &self,
         work: impl FnOnce(&duckdb::Connection) -> Result<T, DriverError> + Send + 'static,
@@ -259,6 +344,7 @@ impl Connection for DuckDbConnection {
     }
 
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError> {
+        self.make_bucket_secret().await?;
         execution::execute(&self.connection, &self.cancel, sql, &[]).await
     }
 
@@ -267,6 +353,7 @@ impl Connection for DuckDbConnection {
         sql: &str,
         values: &[Cell],
     ) -> Result<Box<dyn ResultCursor>, DriverError> {
+        self.make_bucket_secret().await?;
         execution::execute(&self.connection, &self.cancel, sql, values).await
     }
 
@@ -332,6 +419,8 @@ impl Connection for DuckDbConnection {
     }
 }
 
+#[cfg(test)]
+mod bucket_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

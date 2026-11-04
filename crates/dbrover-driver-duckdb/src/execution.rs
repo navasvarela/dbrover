@@ -272,14 +272,27 @@ impl Fetch<'_> {
 
 /// Prepares `sql` without running it: DuckDB parses it and binds its names, as it would to
 /// run it.
+/// What preparing `sql` finds wrong with it, if anything.
+///
+/// A statement naming a remote address (`s3://…`, `https://…`) isn't prepared: DuckDB binds a
+/// file's columns by reading it, so checking it as it is typed would send a request to the
+/// bucket at every pause, and could start an extension's download. Its errors show when it
+/// runs.
 pub(crate) fn validate(
     connection: &duckdb::Connection,
     sql: &str,
 ) -> Result<Option<Rejection>, DriverError> {
+    if names_remote_address(sql) {
+        return Ok(None);
+    }
     match connection.prepare(sql) {
         Ok(_) => Ok(None),
         Err(error) => rejection(error, sql).map(Some),
     }
+}
+
+fn names_remote_address(sql: &str) -> bool {
+    sql.contains("://")
 }
 
 struct DuckDbCursor {
