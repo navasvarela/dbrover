@@ -10,7 +10,7 @@
 //! Images go to `book/src/images`, or `DBROVER_SCREENSHOTS_DIR` when set. Scenes are rendered in
 //! the light theme, or in each theme `DBROVER_SCREENSHOTS_THEMES` lists (`light,dark`), against a
 //! SQLite fixture database. When `DBROVER_TEST_POSTGRES_URL` is set, a PostgreSQL data source
-//! joins it.
+//! joins it. `DBROVER_SCREENSHOTS_ONLY=report-runs,welcome` renders only the scenes it names.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -383,6 +383,14 @@ const SCENES: &[Scene] = &[
         needs: &[POSTGRES_URL],
     },
     Scene {
+        name: "report-runs",
+        data_sources: FixtureSources::Shop,
+        play: report_runs,
+        keeps_pointer: false,
+        region: report_runs_region,
+        needs: &[],
+    },
+    Scene {
         name: "explorer-projects",
         data_sources: FixtureSources::Projects,
         play: explorer_projects,
@@ -646,7 +654,16 @@ fn regenerate_screenshots() {
     let out_dir = output_dir();
     std::fs::create_dir_all(&out_dir).unwrap();
     let themes = themes();
-    for scene in SCENES.iter().filter(|scene| has_servers_for(scene)) {
+    let only = only_scenes();
+    let wanted = |scene: &&Scene| {
+        only.as_ref()
+            .is_none_or(|names| names.contains(&scene.name))
+    };
+    for scene in SCENES
+        .iter()
+        .filter(|scene| has_servers_for(scene))
+        .filter(wanted)
+    {
         for &theme in &themes {
             let file_name = match themes.as_slice() {
                 [_] => format!("{}.png", scene.name),
@@ -659,6 +676,20 @@ fn regenerate_screenshots() {
             println!("wrote {}", path.display());
         }
     }
+}
+
+/// The scenes `DBROVER_SCREENSHOTS_ONLY` names, comma-separated, to render a picture or two
+/// without rendering every other; `None` renders them all.
+fn only_scenes() -> Option<Vec<&'static str>> {
+    let names = std::env::var("DBROVER_SCREENSHOTS_ONLY").ok()?;
+    let wanted: Vec<&str> = names.split(',').map(str::trim).collect();
+    Some(
+        SCENES
+            .iter()
+            .map(|scene| scene.name)
+            .filter(|name| wanted.contains(name))
+            .collect(),
+    )
 }
 
 /// Picks the part of the window a picture shows, in points; `None` keeps all of it.
@@ -1590,6 +1621,149 @@ fn settings_actions(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixtur
 }
 
 /// Opens the Settings tab on its page `category`.
+/// The manual's first report, run three times: from the tab, from cron, and once past a limit.
+fn report_runs(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
+    use dbrover_store::{
+        CombineMetrics, OutputMetrics, ReportFiles, ReportName, ReportRun, RunError, RunOrigin,
+        RunOutcome, SourceMetrics, StepMetrics,
+    };
+
+    let files = ReportFiles::new(fixture.dir.path().join("reports"));
+    std::fs::create_dir_all(files.dir()).unwrap();
+    std::fs::write(
+        files.path(&ReportName::new("sales-by-category").unwrap()),
+        include_str!("../../../examples/reports/sales-by-category.toml"),
+    )
+    .unwrap();
+    let source = |elapsed_ms: u64| {
+        StepMetrics::Source(SourceMetrics {
+            id: "lines".to_owned(),
+            data_source: "shop".to_owned(),
+            rows: 246,
+            bytes: 6_500,
+            first_row_ms: Some(elapsed_ms / 3),
+            elapsed_ms,
+            batches: None,
+        })
+    };
+    let finished = |day: i64, origin, combine_ms, excel_ms| ReportRun {
+        report: ReportName::new("sales-by-category").unwrap(),
+        // 1 November 2026, 07:00 UTC, and the days after.
+        started_at: jiff::Timestamp::from_second(1_793_516_400 + day * 86_400).unwrap(),
+        elapsed: std::time::Duration::from_millis(1_300 + combine_ms + excel_ms),
+        outcome: RunOutcome::Finished,
+        params: [("since", "2026-10-01"), ("until", "2026-11-01")]
+            .into_iter()
+            .map(|(name, value)| (name.to_owned(), value.to_owned()))
+            .collect(),
+        steps: vec![
+            source(1_240 + combine_ms / 4),
+            StepMetrics::Combine(CombineMetrics {
+                rows: 22,
+                bytes: 900,
+                first_row_ms: Some(combine_ms - 5),
+                elapsed_ms: combine_ms + excel_ms + 2,
+                peak_memory: Some(3_400_000),
+                peak_temp_size: Some(0),
+            }),
+            StepMetrics::Output(OutputMetrics {
+                number: 1,
+                file: "sales-by-category-2026-10.xlsx".to_owned(),
+                rows: 22,
+                size: 7_400,
+                elapsed_ms: excel_ms,
+            }),
+            StepMetrics::Output(OutputMetrics {
+                number: 2,
+                file: "sales-by-category-2026-10.csv".to_owned(),
+                rows: 22,
+                size: 1_100,
+                elapsed_ms: 2,
+            }),
+        ],
+        origin,
+    };
+    let failed = ReportRun {
+        outcome: RunOutcome::Failed(RunError {
+            step: "source \"lines\"".to_owned(),
+            message: "the source returned more than 100 rows, its max_rows".to_owned(),
+        }),
+        steps: Vec::new(),
+        ..finished(1, RunOrigin::App, 300, 500)
+    };
+    let history = HistoryFile::new(fixture.dir.path().join("history.sqlite"))
+        .open()
+        .unwrap();
+    for run in [
+        finished(0, RunOrigin::App, 310, 640),
+        failed,
+        finished(2, RunOrigin::App, 420, 610),
+        finished(3, RunOrigin::Command, 380, 590),
+    ] {
+        history
+            .record_run(&run, dbrover_store::DEFAULT_RUNS_KEPT)
+            .unwrap();
+    }
+    harness
+        .state_mut()
+        .use_reports(crate::reports::ReportsSetup {
+            files,
+            launcher: Box::new(crate::reports::ProcessLauncher {
+                executable: PathBuf::from("dbrover"),
+                settings_folder: fixture.dir.path().to_owned(),
+            }),
+            default_folder: PathBuf::from("/Users/ada/Downloads"),
+        });
+    harness.state_mut().close_log_console();
+    step_until_visible(harness, "Sales by category");
+    harness.get_by_label("Sales by category").click();
+    step_until_visible(harness, "from the command line");
+    for (label, value) in [("since", "2026-10-01"), ("until", "2026-11-01")] {
+        harness
+            .get_by_role_and_label(Role::TextInput, label)
+            .focus();
+        harness.run_ok();
+        harness
+            .get_by_role_and_label(Role::TextInput, label)
+            .type_text(value);
+        harness.run_ok();
+    }
+    harness.key_press(egui::Key::Escape);
+    harness.run_ok();
+    // Down to the runs, which the window is too short to show under the parameters.
+    let over_the_tab = harness.get_by_label("Parameters").rect().center();
+    harness.event(egui::Event::PointerMoved(over_the_tab));
+    harness.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, -400.0),
+        modifiers: egui::Modifiers::NONE,
+        phase: egui::TouchPhase::Move,
+    });
+    harness.run_steps(SETTLE_STEPS);
+}
+
+/// A report's tab from its runs' heading to the line under them that names the step taking
+/// the most time.
+fn report_runs_region(harness: &Harness<'static, DbRoverApp>) -> Option<egui::Rect> {
+    const MARGIN: f32 = 12.0;
+    let heading = harness.query_by_label("Runs")?.rect();
+    let note = harness
+        .query_by_label_contains("An output is written as its rows come")?
+        .rect();
+    let last = harness
+        .query_by_label_contains("takes the most time in every run listed")
+        .map_or(note, |line| line.rect());
+    // The table's last column ends with its widest date, a start or a parameter's value.
+    let table = harness
+        .query_all_by_label_contains("2026-")
+        .map(|node| node.rect().max.x)
+        .fold(note.max.x.max(last.max.x), f32::max);
+    Some(egui::Rect::from_min_max(
+        egui::pos2(heading.min.x - MARGIN, heading.min.y - MARGIN),
+        egui::pos2(table + 2.0 * MARGIN, last.max.y + MARGIN),
+    ))
+}
+
 fn open_settings_page(harness: &mut Harness<'static, DbRoverApp>, category: &str) {
     harness.get_by_label("View").click();
     harness.run_ok();

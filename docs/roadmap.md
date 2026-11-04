@@ -1960,8 +1960,9 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   hint on a report that reads more than it writes on purpose, the run's error saying whether a
   limit came from the file or from Settings, runs kept when a report's file is renamed, a
   picture of **Runs** in the manual, and MCP clients running reports, which RP4's numbers may now
-  inform.
-- **RP5 — PRQL, and the track finished** (started 2026-11-04, after RP6): the combine step in
+  inform. All five were built with RP5, as RP4g to RP4j and RP7 (below).
+- **RP5 — PRQL, and the track finished** (built, in twelve layers with RP7, 2026-11-04, after
+  RP6): the combine step in
   PRQL, compiled to DuckDB SQL by `prqlc` and shown in the tab, the run's details and the command
   line; and what RP4 and RP6 left for later, as layers of their own. Planned in
   [Reports](reporting.md#rp5--prql-and-the-track-finished). In layers, one PR each:
@@ -1986,6 +1987,48 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   **Exit:** a report whose combine step is PRQL runs from the tab, the command line and an MCP
   client, its compiled SQL shown in each; its runs say where they came from, survive a rename,
   and can silence a hint.
+
+  **Demo note:** built in #469 to #479, and RP7. To try it: make the SQLite **shop** from
+  `examples/reports/shop.sql` as the manual's "Your first report" says, and copy
+  `sales-by-week.toml` and `sales-by-category.toml` into the reports folder. Open **Sales by
+  week**: under its parameters, **Combine SQL, compiled from PRQL** folds out the SQL its PRQL
+  became, with `:since` where the PRQL says `$since`. Run it for `2026-10-01` to `2026-11-01`:
+  20 rows, a week and a category each, whose net amounts add up to 68,435.76, as Sales by
+  category's total does. Leave out the comma after `net = sum amount` in the file and
+  **Reload**: the tab says *[combine]: prql, line 9, column 5: expected new line or something
+  else, but found average*, the line under it with a caret. Put it back. Then, in a terminal:
+
+  ```bash
+  dbrover report list
+  dbrover report run sales-by-week -p since=2026-10-01 -p until=2026-11-01 -o /tmp/sales --progress
+  ```
+
+  The list names both reports with their parameters. `--progress` keeps a live line while a
+  step reads, about once a second, so a run this small ends before it shows; the tab's **Runs**
+  lists the run *from the command line*. Set `max_rows = 10` on the source:
+  "It stopped at max_rows = 10 rows, set in the [[source]] "lines" of the report's file". Take
+  it out and add `[reports]` with `max_rows = 100` to `settings.toml`: "…the default in Settings ›
+  Reports, since the report's file doesn't set it", with a link there. Right-click
+  the report, **Rename…**, `weekly-sales`: its runs are still listed. On the Big sort of RP4's
+  note, add `quiet_hints = ["source-reads-more"]` to `[report]`: that hint gives way to *1 hint
+  is silenced by the file's quiet_hints*. Last, put **shop** in a project, allow MCP and **Run
+  reports** on its page, and ask an MCP client to list the reports and run Sales by week for
+  October: the files land in Downloads, and the run is listed *from MCP*.
+
+  Checked: each layer's tests (PRQL compiled and its parameters bound, a `$` in a string left
+  alone, a PRQL combine step writing what its SQL twin writes, its errors placed; the compiled
+  SQL in the tab and the run's fold-out in kittest, and numbered under a combine error on the
+  command line; hint ids read and refused, a silenced hint in kittest; who set a limit for each
+  kind of step, through the real binary with a file's limit and with Settings' default; a report
+  renamed in kittest with its runs, and a name taken refused; origins read back from a version 3
+  history migrated; `report list` on the real binary in lines and JSON; the live line's text, and
+  nothing more through a pipe; a worker whose events' reader closes stopping and removing its
+  staging folder, on the real binary; `list_reports` and `run_report` through rmcp's client with
+  a stand-in runner, and `run_report` through the real `dbrover mcp` running the shop's report),
+  and `sales-by-week.toml` matching its checked-in CSV file. Not tried here: the Linux test of a
+  command killed with SIGKILL taking its worker, which runs only in CI's Ubuntu job; the live
+  line in Windows' terminals; an MCP client of the user's own, beyond the test client; `prqlc` on
+  Windows beyond CI.
 - **RP6 — The command line** (built, in six layers, 2026-11-03, after RP4): `dbrover report run`, for
   cron, scheduled tasks and CI: a report by its name in `reports/` or by its path, its
   parameters as `--param name=value`, its files in `--output-dir`, run in the worker with every
@@ -2056,11 +2099,21 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   they move `HOME`); the CI step on a GitHub runner with the `.deb`; a cloud sign-in, or the
   macOS keychain, from cron. Left for later: a live progress line in a terminal, `dbrover report
   list`, marking a run in the history as the command's, and a worker that dies with a command
-  killed outright (Linux's parent-death signal).
-- **RP7 — Manual,** with the example reports: the **Reports** chapter brought up to RP5 (PRQL
-  and a PRQL example, quiet hints, where a limit came from, **Rename…**, `report list`,
-  `--progress`, a picture of **Runs**), the MCP chapter's report tools, and RP4's to RP7's
-  entries here marked built. Planned in [Reports](reporting.md#rp7--manual).
+  killed outright (Linux's parent-death signal). All four were built with RP5, as RP6g to RP6j
+  (below).
+- **RP7 — Manual** (built, #480, 2026-11-04, with RP5), with the example reports: the
+  **Reports** chapter brought up to RP5 (a section on PRQL and the `sales-by-week.toml` example,
+  quiet hints, who set a limit, **Rename…**, `report list`, `--progress`, a command killed
+  outright, and a picture of **Runs**, rendered by a new screenshot scene), the MCP chapter's
+  report tools and **Run reports** permission with its two pictures rendered again, and RP4's to
+  RP7's entries here marked built. Planned in [Reports](reporting.md#rp7--manual).
+
+  **Demo note:** open the manual's **Reports** chapter: **Runs** has its picture, four runs side
+  by side, the newest *from the command line*; **PRQL** follows **Several sources**; **From the
+  command line** has `--progress`, **Listing the reports** and **A command killed outright**;
+  "What's next" is gone. The MCP chapter lists `list_reports` and `run_report`, and **Run
+  reports** among the permissions. `DBROVER_SCREENSHOTS_ONLY=report-runs cargo test -p
+  dbrover-app regenerate_screenshots -- --ignored` renders the picture alone.
 
 Reports over sources of terabytes, and tools to see and tune a report's performance: planned,
 not scheduled, after RP5, in [Reports at scale](reports-at-scale.md). Terabytes stay in their

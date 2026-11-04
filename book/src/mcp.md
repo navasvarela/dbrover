@@ -104,8 +104,11 @@ Each statement it runs shows up in the data source's **History**, marked **MCP**
 | `query` | Runs one statement that only reads (on Redis, one command, such as `HGETALL`; on MongoDB, one shell command, such as `db.orders.find({status: "open"})`, whose documents come as canonical Extended JSON; on Elasticsearch and OpenSearch, one request, such as a search, whose hits come as documents, or a `_sql` query; on Cassandra and ScyllaDB, one CQL `SELECT`, whose collections come as JSON; on DynamoDB, one PartiQL `SELECT`, refused if it would read a whole table while the data source's guard is on), and returns its rows as text: as JSON, or with `format` set to `csv`, `markdown` or `jsonl`, as that text, ready to save or paste. |
 | `explain` | Shows how the database would run one read statement, without running it. |
 | `execute` | Runs statements that change something, in one transaction. Only offered when the project allows `write`, `schema` or `admin`. |
+| `list_reports` | The [reports](reports.md) whose data sources are all in the project: each one's name, title, parameters with their types, and what keeps it from running. Reports that read another project's data sources aren't listed. |
+| `run_report` | Runs one of them with its parameters, as **Run** does in its tab: under the report's own limits, each source read-only, its files written to your Downloads folder. Returns how it ended, each step's rows and time, the files' paths and the first rows written (at most the row limit), or the step that failed and, for a limit, which and where to raise it. Cancelling the call stops the run, leaving no file. Only offered when the project allows **Run reports**. |
 
-Every tool but `execute` is marked read-only, and `execute` is marked destructive. Clients that
+Every tool but `execute` and `run_report` is marked read-only, and `execute` is marked
+destructive. Clients that
 ask before running tools can therefore let the others run freely and ask before each `execute`.
 
 ## Permissions
@@ -122,6 +125,7 @@ defaults in **View › Settings… › MCP**; they apply to every project that d
 | **Write** | `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `TRUNCATE` | off |
 | **Schema** | `CREATE`, `ALTER`, `DROP`, `COMMENT ON` and other DDL | off |
 | **Admin** | Grants, roles and users, databases, server settings, `COPY` to or from files, killing sessions, procedures (`CALL`), and anything DbRover can't parse | off |
+| **Run reports** | Running the reports whose data sources are all in the project, with `run_report`. A run reads what its report says, under the report's limits rather than the row limit and statement timeout below | off |
 | **Row limit** | The most rows one call returns; the reply says `"truncated": true` when there were more | 500 |
 | **Statement timeout** | How long one statement may run before it is cancelled | 30 s |
 | **Schemas** | All, or only the schemas listed: the catalog tools show only those, and statements may only name those | all |
@@ -132,6 +136,10 @@ project lacks, the whole call is refused, and the log says which permission was 
 Otherwise the statements run in one transaction, committed only if they all succeed. The
 exception is MySQL and MariaDB, which commit DDL on their own; there the reply says the call
 wasn't atomic. `query` still only reads, whatever the project allows.
+
+A run from `run_report` is kept with the report's [runs](reports.md#runs), marked *from MCP*.
+**Run reports** is saved as `reports = true` in `projects.toml`; an older DbRover, from before
+the setting, refuses a `projects.toml` that has it, so switch it off before going back to one.
 
 A running server keeps the settings it started with. After changing them, restart the server:
 most clients have a button for it, or restart the client.

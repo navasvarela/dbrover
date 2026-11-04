@@ -1159,7 +1159,7 @@ so the worker reads no `settings.toml` of its own and a run uses what the tab sh
 as read keeps only the limits its file sets; planning fills the rest from the defaults. Under a
 run stopped by a limit that has a default, the report's tab links to Settings › Reports beside
 the file's key. The error doesn't say which of the two set the value: the run knows only the
-value it ran with.
+value it ran with. (RP4h made it say: the plan keeps which limits the file sets.)
 
 ### Layers
 
@@ -1211,7 +1211,7 @@ Taken on 2026-11-03 when RP4 started; each can be overturned in review.
 | Who writes a run | **The app, once the run ends.** | A worker that is killed, by **Cancel**, its time limit or the system, can't write; the app has every event it sent. RP6's command line will write its own runs the same way. |
 | How a run's steps are stored | **JSON in one column,** the parameters in another. | A report's steps differ from one report, and one version of its file, to the next; a table per step kind would be joined for every read and migrated for every new metric. Nothing searches inside them. |
 | How many runs are kept | **The newest 20 per report,** in Settings. | Enough to see a trend over months of monthly runs; a few kilobytes each. |
-| How runs are told apart from the report | **By its file name,** as the explorer lists it. | Renaming a report's file starts its runs afresh; editing the file keeps them, and a column per run shows the steps it had. |
+| How runs are told apart from the report | **By its file name,** as the explorer lists it. | Renaming a report's file outside DbRover starts its runs afresh (RP4i's **Rename…** moves them); editing the file keeps them, and a column per run shows the steps it had. |
 | DuckDB's peak memory and spill | **DuckDB's profiler,** read after the combine query. | Exact peaks, not samples, at no cost to the run. They cover the whole run's DuckDB, loads included; the peak memory can exceed `memory_limit` a little, since DuckDB counts some memory the limit doesn't hold back. |
 | What "spilled" means | **The most held on disk at once,** not the total written. | The number `max_temp_size` bounds, which is what the hint compares. DuckDB doesn't report the total. |
 | An output's time | **The time in its writer,** overlapping its feed's. | Shows when a writer, Excel's say, is the slow part; it is never added to the run's total. |
@@ -1230,14 +1230,14 @@ Taken on 2026-11-03 when RP4 started; each can be overturned in review.
   `SYSTEM_PEAK_TEMP_DIR_SIZE` are DuckDB's names, read as text; a DuckDB that drops them gives
   no peak, which the tab shows as unknown rather than zero.
 - **Hints that are wrong for the report.** An aggregation reads far more than it writes on
-  purpose; the hint says what to check rather than what is wrong, and there is no switch to
-  silence it yet.
+  purpose; the hint says what to check rather than what is wrong, and `quiet_hints` (RP4g)
+  silences it for such a report.
 - **A synced settings folder.** H4's warning about a synced `history.sqlite` holds for runs: two
   machines running one report each keep their own runs.
 
 ## RP5 — PRQL, and the track finished
 
-Started on 2026-11-04, after RP6. RP5 lets the combine step be written in
+Started and built on 2026-11-04, after RP6. RP5 lets the combine step be written in
 [PRQL](https://prql-lang.org), compiled to DuckDB's SQL before the run. The same stack finishes
 what RP4 and RP6 left for later, as layers RP4g to RP4j and RP6g to RP6j, and RP7 brings the
 manual up to date. The report file's other tables, the worker and its guardrails stay as RP1 to
@@ -1307,7 +1307,7 @@ are its command line's):
 
 | | Adds |
 | --- | --- |
-| Crates | 15 new to `Cargo.lock`: `prqlc`, `prqlc-parser`, `chumsky`, `ariadne`, `sqlformat`, `schemars`, a second `sqlparser` (0.62, beside the workspace's 0.63) and small ones |
+| Crates | 35 entries new to `Cargo.lock`, a few of them second versions of crates already there: `prqlc`, `prqlc-parser`, `chumsky`, `ariadne`, `sqlformat`, `schemars`, `vergen` (its build script's), a second `sqlparser` (0.62, beside the workspace's 0.63), `winnow` and `strum`, and small ones |
 | A debug build (CI's clippy and tests) | about 11 s of processor time, built beside the rest, so less on the clock |
 | A release build | about 40 s of processor time; the second `sqlparser` is 17 s of it |
 | The release binary | 5.9 MB stripped, per architecture, against a program that already links `regex`, `serde_json`, `chrono`, `csv` and `sqlparser`: about 2.5% of DbRover's |
@@ -1375,7 +1375,7 @@ and a report's compiled SQL shouldn't change under it with a `cargo update`.
 ### RP7 — Manual
 
 The **Reports** chapter covers RP1 to RP6. RP7 adds PRQL (a section, the `[combine]` table's
-`prql`, and an example, `sales-by-month.toml` on the shop, with its checked-in CSV file), quiet
+`prql`, and an example, `sales-by-week.toml` on the shop, with its checked-in CSV file), quiet
 hints, where a limit came from, **Rename…**, `report list`, `--progress`, a picture of **Runs**
 (a screenshot scene with two runs in the history), and the MCP tools in the MCP chapter, and
 removes "What's next".
@@ -1385,42 +1385,42 @@ removes "What's next".
 Each layer is one pull request in a stack, useful and tested on its own, with synthetic data
 only.
 
-- **RP5a — Plan:** this section, its decisions and risks, and the roadmap's entries.
-- **RP5b — PRQL:** in `dbrover-report`, `prql` read, compiled, its parameters rewritten, its
+- **RP5a — Plan** (built, #469): this section, its decisions and risks, and the roadmap's entries.
+- **RP5b — PRQL** (built, #470): in `dbrover-report`, `prql` read, compiled, its parameters rewritten, its
   errors pointing into it; the plan and the run use the compiled SQL.
   **Exit:** a PRQL combine and its SQL twin write the same files; a PRQL error names its line
   and column; `$since` is bound and a `$` in a string isn't; `prql` beside `query` is a problem.
-- **RP5c — The compiled SQL, shown:** the tab's **Combine SQL**, the combine line's fold-out,
+- **RP5c — The compiled SQL, shown** (built, #471): the tab's **Combine SQL**, the combine line's fold-out,
   `combine_sql` in `started`, and the command's SQL under a combine error.
   **Exit:** kittest finds the compiled SQL in a PRQL report's tab and none in a SQL report's;
   the command prints the numbered SQL under a combine error and `--json` carries it.
-- **RP4g — Quiet hints:** ids, `quiet_hints` read and checked, the tab's hints filtered.
+- **RP4g — Quiet hints** (built, #472): ids, `quiet_hints` read and checked, the tab's hints filtered.
   **Exit:** a report that silences `source-reads-more` shows no such hint where an identical one
   without it does; an unknown id is a problem listing the ids.
-- **RP4h — Where a limit came from:** `set_in` from the plan to the error, the tab and the
+- **RP4h — Where a limit came from** (built, #473): `set_in` from the plan to the error, the tab and the
   command.
   **Exit:** a run stopped at a file's `max_rows` and one stopped at Settings' say which; older
   events still read.
-- **RP4i — Renaming a report:** **Rename…**, the file renamed and its runs moved.
+- **RP4i — Renaming a report** (built, #474): **Rename…**, the file renamed and its runs moved.
   **Exit:** a report with runs renamed in the app lists them under its new name; a name in use,
   or one that isn't a file name, is refused.
-- **RP6g — A run's origin:** the column, the record and the Runs table.
+- **RP6g — A run's origin** (built, #475): the column, the record and the Runs table.
   **Exit:** a version 3 history migrates; runs from the app and the command read back with
   their origin; kittest shows *from the command line*.
-- **RP6h — `dbrover report list`.**
+- **RP6h — `dbrover report list`** (built, #476).
   **Exit:** on the real binary, a folder with a good report and one with problems lists both,
   in lines and in JSON.
-- **RP6i — `--progress`.**
+- **RP6i — `--progress`** (built, #477).
   **Exit:** table tests of the line's text; on a pipe, `--progress` prints nothing more.
-- **RP6j — The worker dies with its command.**
+- **RP6j — The worker dies with its command** (built, #478).
   **Exit:** on Linux, the real binary SIGKILLed during a slow source leaves no worker; on every
   system, a worker whose events' reader closes stops and removes its staging folder.
-- **RP4j — MCP clients running reports:** `list_reports`, `run_report`, the permission, and the
+- **RP4j — MCP clients running reports** (built, #479): `list_reports`, `run_report`, the permission, and the
   app's runner.
   **Exit:** through the MCP test client, a project without the permission lists reports and is
   refused a run; with it, the shop's report runs and its files exist; a report on another
   project's data source isn't listed.
-- **RP7 — Manual and demo notes:** the chapter and the MCP chapter as above, the example, the
+- **RP7 — Manual and demo notes** (built, #480): the chapter and the MCP chapter as above, the example, the
   picture, and RP4's to RP7's roadmap entries marked built with their demo notes.
 
 **Exit:** a report whose combine step is PRQL runs from the tab, the command line and an MCP
@@ -1457,6 +1457,12 @@ Taken on 2026-11-04 when RP5 started; each can be overturned in review.
   which a comment at the call says.
 - **An MCP client running a large report** runs under the report's own limits, which the person
   set; the permission is off until they turn it on.
+- **An older DbRover and `reports = true`.** `projects.toml`'s MCP settings refuse unknown keys,
+  so a DbRover from before RP4j can't read a file with the permission set; the MCP chapter says
+  to switch it off before going back.
+- **A killed command's files on Linux.** The parent-death signal kills the worker outright, so
+  the staging folder of a command killed with SIGKILL stays in the output folder, hidden; on
+  macOS and Windows the worker removes it once it finds nobody reading its events.
 
 ## RP6 — The command line
 
@@ -1569,8 +1575,8 @@ Combine: 13 rows, 509 bytes in 0.0 s
 Finished in 0.0 s.
 ```
 
-Progress lines aren't printed once a second, to keep a cron mail short; RP6 leaves a live line
-for a terminal for later.
+Progress lines aren't printed once a second, to keep a cron mail short; RP6i's `--progress`
+keeps a live line on a terminal.
 
 With **`--json`**, standard output is the worker's events, a line each, as the worker wrote them
 (`started`, `progress`, `source_done`, `combine_done`, `preview`, `output_written`, then
@@ -1666,7 +1672,7 @@ Taken on 2026-11-03 when RP6 started; each can be overturned in review.
 | Exit codes | **0 to 6, one per outcome** (the table above). | A cron wrapper or a CI step tells "raise a limit" (5) from "the database is down" (4) from "fix the file" (3). Not `timeout(1)`'s 124 or the shell's 130, which name one cause each, where 6 covers every stop from outside. |
 | Signals | **Ctrl-C, SIGTERM and SIGHUP cancel,** as **Cancel** does. | The output folder is left as it was, and the command exits with 6. |
 | The worker's process group | **One of its own on Unix,** so a terminal's Ctrl-C reaches only the command. | The command alone decides how the run ends, so the exit code doesn't depend on which process saw the signal first. Killing the command's process group no longer reaches the worker; a signal to the command does. |
-| Run history | **Kept for reports in `reports/`,** the app's rows; nothing marks a run as the command's. | The tab shows cron's runs with no schema change. Telling them from the app's waits until someone needs it. |
+| Run history | **Kept for reports in `reports/`,** the app's rows; nothing marks a run as the command's. | The tab shows cron's runs with no schema change. RP6g marks them, in a column of their own. |
 | Logs | **The data folder's `logs/dbrover-report.*.log`.** | The terminal shows only the run; a failure's details are where the app's are. |
 | Windows | **Nothing added:** `dbrover.exe` is a console program. | `--version`, `mcp` and `report run` print and return codes there as elsewhere. If the app is ever built as a windowed program, the command line needs a console attached first. |
 
@@ -1674,7 +1680,8 @@ Taken on 2026-11-03 when RP6 started; each can be overturned in review.
 
 - **A command killed outright** (SIGKILL, a CI runner's hard stop) can't kill its worker,
   which runs on until it ends or reaches Linux's `RLIMIT_CPU`; its staging folder stays in the
-  output folder. The worker is in a process group of its own, so killing the command's group
+  output folder. (RP6j: the worker now dies with it on Linux, and stops at its next event
+  elsewhere.) The worker is in a process group of its own, so killing the command's group
   doesn't reach it either; SIGTERM to the command stops both, and the worker's group can be
   killed after the command's.
 - **Keychains away from a desktop.** A Linux server without a Secret Service, or a macOS user

@@ -1,0 +1,54 @@
+# Sales by week: each category's order lines, units and net amount, week by week, in a period,
+# to CSV. Its combine step is written in PRQL, which DbRover compiles to DuckDB's SQL; the
+# report's tab shows the SQL it compiled to. Runs on the "shop" data source that shop.sql makes.
+
+[report]
+name = "Sales by week"
+description = "Each category's order lines, units and net amount, week by week, in a period."
+# The period: from :since, up to but not including :until.
+params = { since = "date", until = "date" }
+
+# Every order line with its product's category. The period is the combine step's to filter, to
+# show PRQL's parameters; a source of millions of lines would filter in its own query.
+[[source]]
+id = "lines"
+data_source = "shop"
+query = """
+SELECT p.category, l.ordered_on, l.quantity, l.amount
+FROM order_lines l JOIN products p ON p.id = l.product_id
+"""
+columns = [
+  { name = "category",   type = "text" },
+  { name = "ordered_on", type = "date" },
+  { name = "quantity",   type = "integer" },
+  { name = "amount",     type = "decimal(18,2)" },
+]
+
+# PRQL reads top to bottom: the lines, those in the period ($since and $until are the report's
+# parameters), the Monday each week starts on (an s-string is DuckDB's SQL, as written), then
+# a row per week and category.
+[combine]
+prql = """
+from lines
+filter (ordered_on >= ($since | as date) && ordered_on < ($until | as date))
+derive week = s"date_trunc('week', {ordered_on})"
+group {week, category} (
+  aggregate {
+    order_lines = count this,
+    units = sum quantity,
+    net = sum amount,
+  }
+)
+sort {week, category}
+"""
+
+[[output]]
+format = "csv"
+file = "sales-by-week-{since:%Y-%m}.csv"
+columns = [
+  { name = "Week",     from = "week",        type = "date" },
+  { name = "Category", from = "category" },
+  { name = "Lines",    from = "order_lines", type = "integer" },
+  { name = "Units",    from = "units",       type = "integer" },
+  { name = "Net",      from = "net",         type = "decimal(18,2)" },
+]
