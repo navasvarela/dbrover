@@ -766,3 +766,24 @@ fn shows_the_runs_side_by_side_with_the_step_that_dominates_and_the_hints() {
     let report = ReportName::new("trial-balance").unwrap();
     assert!(history.open().unwrap().runs(&report, 5).unwrap().is_empty());
 }
+
+#[test]
+fn a_report_that_silences_a_hint_says_so_instead() {
+    let dir = tempfile::tempdir().unwrap();
+    let launcher = StandIn::new(spilling_run(&dir.path().join("out")));
+    let quiet = COMBINED.replace(
+        "params = { since = \"date\", until = \"date\" }",
+        "params = { since = \"date\", until = \"date\" }\nquiet_hints = [\"combine-spilled\"]",
+    );
+    let mut harness = start_with_reports(dir.path(), &quiet, launcher);
+    open_and_fill(&mut harness, "2026-10-01");
+    harness.get_by_label("Run").click();
+    step_until(&mut harness, "the run listed", |harness| {
+        harness.query_all_by_label("finished").count() == 1
+    });
+    assert!(
+        harness.query_by_label_contains("Combine spilled").is_none(),
+        "the hint is silenced"
+    );
+    harness.get_by_label("1 hint is silenced by the file's quiet_hints.");
+}

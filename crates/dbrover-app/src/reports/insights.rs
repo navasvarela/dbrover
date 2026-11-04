@@ -5,7 +5,7 @@
 use std::fmt;
 
 use dbrover_core::ByteCount;
-use dbrover_report::grouped;
+use dbrover_report::{HintId, grouped};
 use dbrover_store::{ReportRun, RunOutcome, StepMetrics};
 
 /// A source must read at least this many rows for the filter hint: below it, filtering in the
@@ -151,6 +151,16 @@ pub enum Hint {
     },
     /// The combine step held this many bytes on disk at its peak.
     Spilled { bytes: u64 },
+}
+
+impl Hint {
+    /// The id a report's `quiet_hints` silences it by.
+    pub fn id(&self) -> HintId {
+        match self {
+            Self::Filter { .. } => HintId::SourceReadsMore,
+            Self::Spilled { .. } => HintId::CombineSpilled,
+        }
+    }
 }
 
 /// The hints the newest finished run of `runs` gives.

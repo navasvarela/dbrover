@@ -18,6 +18,7 @@ mod combine;
 mod declared;
 mod events;
 mod file_name;
+mod hints;
 mod limits;
 mod plan;
 mod prql;
@@ -32,6 +33,7 @@ pub use events::{
     Batch, LimitHit, LoadedColumn, Preview, RunEvent, RunFailure, SourceStart, Step, WrittenFile,
 };
 pub use file_name::FileName;
+pub use hints::{HintId, UnknownHint};
 pub use limits::{
     ByteSize, CombineLimits, CombineLimitsSet, DEFAULT_COMBINE_TIMEOUT, DEFAULT_MAX_BYTES,
     DEFAULT_MAX_ROWS, DEFAULT_MAX_SIZE, DEFAULT_MAX_TEMP_SIZE, DEFAULT_MEMORY_LIMIT,

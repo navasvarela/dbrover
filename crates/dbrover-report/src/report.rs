@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use dbrover_export::{ColumnType, CustomFormatId, Preset, SchemaColumn};
 
-use crate::{CombineLimitsSet, FileName, OutputLimitsSet, SourceLimitsSet};
+use crate::{CombineLimitsSet, FileName, HintId, OutputLimitsSet, SourceLimitsSet};
 
 /// A report file, checked on its own.
 #[derive(Debug, Clone, PartialEq)]
@@ -16,6 +16,9 @@ pub struct Report {
     pub params: Vec<Param>,
     /// How long the whole run may take before the app stops it, when the file says.
     pub timeout: Option<Duration>,
+    /// The hints its runs don't give, for a report that, say, reads more than it writes on
+    /// purpose.
+    pub quiet_hints: Vec<HintId>,
     /// As the file lists them: one without `combine`, one or more with it.
     pub sources: Vec<Source>,
     /// The query that combines the sources' tables into the rows the outputs write.
