@@ -2035,6 +2035,36 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   killed outright (Linux's parent-death signal).
 - **RP7 — Manual,** with the example reports.
 
+Reports over sources of terabytes, and tools to see and tune a report's performance: planned,
+not scheduled, after RP5, in [Reports at scale](reports-at-scale.md). Terabytes stay in their
+engines; the desktop combines reduced results. The tooling comes first, so the rest is chosen by
+measurement.
+
+- **RS0 — The plan:** [Reports at scale](reports-at-scale.md) and these entries.
+- **RS1 — Seeing a run:** a run profile with each step's phases and waits, a timeline, live
+  throughput and the bottleneck, hints as rules with ids that a report can silence, two runs
+  compared, `--progress` and `--profile` on the command line, and a benchmark of today's paths.
+- **RS2 — Explaining a report:** each source's plan and estimated cost before a run, the
+  combine's DuckDB plan in W10's view, bytes scanned on the engines that report them, and hints
+  for unused columns and filters or aggregates that belong in a source.
+- **RS3 — Larger than memory on one machine:** the run's DuckDB on a file, typed loading
+  without the text copy, Parquet outputs written by DuckDB, a disk budget, a stall timeout,
+  and keeping the machine awake.
+- **RS4 — Partitions:** a source read in ranges of time or key, some at once, and a run
+  combined and written one range at a time.
+- **RS5 — Resume:** large runs keep a work folder and resume after a crash or a kill from the
+  last finished range or job page; pause; incremental sources with a lookback.
+- **RS6 — Columnar sources:** Arrow batches from engines that give them (DuckDB, ClickHouse,
+  then C3 to C6), appended to DuckDB without text; ADR 0007. Before C3.
+- **RS7 — Lakes and warehouses in the combine:** C2's buckets attached with DuckDB's pruning,
+  and large warehouse results handed over through a bucket the user names.
+- **RS8 — Reports over MCP:** read-only tools to list, explain and compare reports and their
+  runs, and the decision on MCP clients running them.
+- **RS9 — Composing reports:** a report used as another's source, by name, with its
+  parameters bound, run in the same worker and DuckDB; only its result is visible to the outer
+  report. Later, `reuse = "24h"` takes a recent result from RS5's cache. Independent of the
+  scale work, so it can come right after RP5.
+
 ## Version control track
 
 Planned, not scheduled. Proposed on 2026-11-04 in [Version control](version-control.md), after
