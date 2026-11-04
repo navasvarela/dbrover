@@ -210,6 +210,12 @@ pub struct DuckDbFields {
     /// Kept while In memory is chosen, so switching back to File doesn't lose it.
     pub path: String,
     pub read_only: bool,
+    /// The MotherDuck database's name; empty for the account's default. Kept while another
+    /// location is chosen.
+    pub motherduck_name: String,
+    /// The data source's password as typed: a MotherDuck token, or a bucket's access key's
+    /// secret. Empty keeps the saved one.
+    pub secret: String,
     /// The bucket the data source reads from, kept as it was read so that saving the dialog
     /// doesn't drop it.
     pub storage: Option<ObjectStorage>,
@@ -220,6 +226,7 @@ pub struct DuckDbFields {
 pub enum DuckDbLocation {
     File,
     InMemory,
+    MotherDuck,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -248,6 +255,8 @@ impl DriverFields {
                 location: DuckDbLocation::File,
                 path: String::new(),
                 read_only: false,
+                motherduck_name: String::new(),
+                secret: String::new(),
                 storage: None,
             }),
             DriverKind::ClickHouse => Self::ClickHouse(ClickHouseFields {
@@ -279,20 +288,36 @@ impl DriverFields {
             ConnectionConfig::SqlServer(config) => Self::SqlServer(SqlServerFields {
                 server: ServerFields::from_config(&config.server, SQL_SERVER_DEFAULTS),
             }),
-            ConnectionConfig::DuckDb(config) => Self::DuckDb(match &config.database {
-                DuckDbDatabase::File { path, read_only } => DuckDbFields {
-                    location: DuckDbLocation::File,
-                    path: path.display().to_string(),
-                    read_only: *read_only,
+            ConnectionConfig::DuckDb(config) => {
+                let (location, path, read_only, motherduck_name) = match &config.database {
+                    DuckDbDatabase::File { path, read_only } => (
+                        DuckDbLocation::File,
+                        path.display().to_string(),
+                        *read_only,
+                        String::new(),
+                    ),
+                    DuckDbDatabase::InMemory => (
+                        DuckDbLocation::InMemory,
+                        String::new(),
+                        false,
+                        String::new(),
+                    ),
+                    DuckDbDatabase::MotherDuck { name } => (
+                        DuckDbLocation::MotherDuck,
+                        String::new(),
+                        false,
+                        name.clone(),
+                    ),
+                };
+                Self::DuckDb(DuckDbFields {
+                    location,
+                    path,
+                    read_only,
+                    motherduck_name,
+                    secret: String::new(),
                     storage: config.storage.clone(),
-                },
-                DuckDbDatabase::InMemory => DuckDbFields {
-                    location: DuckDbLocation::InMemory,
-                    path: String::new(),
-                    read_only: false,
-                    storage: config.storage.clone(),
-                },
-            }),
+                })
+            }
             ConnectionConfig::ClickHouse(config) => Self::ClickHouse(ClickHouseFields {
                 server: ServerFields::from_config(&config.server, CLICKHOUSE_DEFAULTS),
             }),
@@ -415,6 +440,10 @@ impl DataSourceForm {
                 location: DuckDbLocation::InMemory,
                 ..
             }) => Storage::InMemory,
+            DriverFields::DuckDb(DuckDbFields {
+                location: DuckDbLocation::MotherDuck,
+                ..
+            }) => Storage::Hosted,
             _ => Storage::Kept,
         }
     }
@@ -460,7 +489,13 @@ impl DataSourceForm {
     }
 
     pub fn password_update(&self) -> PasswordUpdate {
-        match self.fields.server().and_then(ServerFields::typed_password) {
+        let typed = match &self.fields {
+            DriverFields::DuckDb(fields) => {
+                Some(fields.secret.as_str()).filter(|secret| !secret.is_empty())
+            }
+            _ => self.fields.server().and_then(ServerFields::typed_password),
+        };
+        match typed {
             Some(password) => PasswordUpdate::Set(Password::new(password)),
             None => PasswordUpdate::Keep,
         }
@@ -496,6 +531,9 @@ impl DuckDbFields {
                 read_only: self.read_only,
             },
             DuckDbLocation::InMemory => DuckDbDatabase::InMemory,
+            DuckDbLocation::MotherDuck => DuckDbDatabase::MotherDuck {
+                name: self.motherduck_name.trim().to_owned(),
+            },
         };
         Ok(DuckDbConfig {
             database,
@@ -593,6 +631,9 @@ mod tests {
                     cloud_sign_in: None,
                 },
             }),
+            ConnectionConfig::DuckDb(DuckDbConfig::new(DuckDbDatabase::MotherDuck {
+                name: "analytics".to_owned(),
+            })),
             ConnectionConfig::DuckDb(DuckDbConfig {
                 database: DuckDbDatabase::InMemory,
                 storage: Some(ObjectStorage::S3(S3Bucket {
@@ -622,6 +663,33 @@ mod tests {
 
             assert_eq!(form.to_data_source(data_source.id), Ok(data_source));
         }
+    }
+
+    #[test]
+    fn a_typed_motherduck_token_is_the_password_to_save() {
+        let mut form = DataSourceForm::new(DriverKind::DuckDb);
+        let DriverFields::DuckDb(fields) = &mut form.fields else {
+            unreachable!("a DuckDB form has DuckDB's fields");
+        };
+        fields.location = DuckDbLocation::MotherDuck;
+        assert_eq!(form.password_update(), PasswordUpdate::Keep);
+        assert_eq!(form.storage(), Storage::Hosted);
+
+        if let DriverFields::DuckDb(fields) = &mut form.fields {
+            fields.secret = "md-token".to_owned();
+        }
+
+        assert_eq!(
+            form.password_update(),
+            PasswordUpdate::Set(Password::new("md-token"))
+        );
+        let saved = form.to_data_source(DataSourceId::generate()).unwrap();
+        assert_eq!(
+            saved.config,
+            ConnectionConfig::DuckDb(DuckDbConfig::new(DuckDbDatabase::MotherDuck {
+                name: String::new(),
+            }))
+        );
     }
 
     #[test]

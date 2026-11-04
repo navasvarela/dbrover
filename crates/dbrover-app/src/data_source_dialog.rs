@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use dbrover_core::{
-    AzureTool, CloudProvider, DataSource, DataSourceId, DriverKind, DynamoDbSignIn,
+    AzureTool, CloudProvider, DataSource, DataSourceId, DriverKind, DuckDbConfig, DynamoDbSignIn,
     ElasticsearchAuth, ManagedService, MongoConfig, SafetyLevel, ScanGuard, ServerInfo,
     SourceColor, expand, expand_path, has_placeholder,
 };
@@ -229,7 +229,7 @@ impl DataSourceDialog {
                     &mut fields.read_only,
                 );
             }
-            DriverFields::DuckDb(fields) => return duckdb_rows(ui, fields),
+            DriverFields::DuckDb(fields) => return duckdb_rows(ui, fields, password_hint),
         };
         if let Some(server) = server {
             server_rows(ui, server, password_hint);
@@ -983,11 +983,20 @@ fn mongo_rows(ui: &mut Ui, fields: &mut MongoFields, password_hint: &str) {
     );
 }
 
-fn duckdb_rows(ui: &mut Ui, fields: &mut DuckDbFields) -> Option<DatabaseFile> {
+fn duckdb_rows(
+    ui: &mut Ui,
+    fields: &mut DuckDbFields,
+    password_hint: &str,
+) -> Option<DatabaseFile> {
     ui.label("Database");
     ui.horizontal(|ui| {
         ui.radio_value(&mut fields.location, DuckDbLocation::File, "File");
         ui.radio_value(&mut fields.location, DuckDbLocation::InMemory, "In memory");
+        ui.radio_value(
+            &mut fields.location,
+            DuckDbLocation::MotherDuck,
+            "MotherDuck",
+        );
     });
     ui.end_row();
     match fields.location {
@@ -1006,7 +1015,37 @@ fn duckdb_rows(ui: &mut Ui, fields: &mut DuckDbFields) -> Option<DatabaseFile> {
             ui.end_row();
             None
         }
+        DuckDbLocation::MotherDuck => {
+            motherduck_rows(ui, fields, password_hint);
+            None
+        }
     }
+}
+
+/// A MotherDuck database's name and token. The token is kept in the keychain, as a password
+/// is, and handed to DuckDB on every connection.
+fn motherduck_rows(ui: &mut Ui, fields: &mut DuckDbFields, password_hint: &str) {
+    text_row(
+        ui,
+        "Name",
+        &mut fields.motherduck_name,
+        DuckDbConfig::MOTHERDUCK_DEFAULT_DATABASE,
+    );
+    let label = ui.label("Token");
+    ui.add(
+        TextEdit::singleline(&mut fields.secret)
+            .password(true)
+            .hint_text(password_hint)
+            .desired_width(FIELD_WIDTH),
+    )
+    .labelled_by(label.id);
+    ui.end_row();
+    ui.label("");
+    ui.weak(
+        "A token from MotherDuck's settings, kept in the keychain. DuckDB downloads its \
+         motherduck extension the first time it connects.",
+    );
+    ui.end_row();
 }
 
 /// A button with a coloured icon before its text, named by the text alone.

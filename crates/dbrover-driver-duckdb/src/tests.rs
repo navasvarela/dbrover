@@ -423,3 +423,19 @@ async fn opens_a_file_one_way_at_a_time() {
 
     connect(&file(&path, false)).await.unwrap();
 }
+
+/// Needs no network: without a token nothing is opened, so MotherDuck is never asked.
+#[tokio::test]
+async fn a_motherduck_database_without_a_token_says_where_to_set_it() {
+    let config = DuckDbConfig::new(DuckDbDatabase::MotherDuck {
+        name: "analytics".to_owned(),
+    });
+
+    let error = connect_with_secret(&config, None).await.err().unwrap();
+
+    let message = dbrover_core::describe_error(&error);
+    assert!(
+        message.contains("a MotherDuck database signs in with a token"),
+        "{message}"
+    );
+}

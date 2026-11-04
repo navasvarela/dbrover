@@ -174,6 +174,13 @@ fn every_kind(home: &Path, beside: &Path, project: ProjectId) -> Vec<DataSource>
             }),
         ),
         data_source(
+            "hosted",
+            None,
+            ConnectionConfig::DuckDb(DuckDbConfig::new(DuckDbDatabase::MotherDuck {
+                name: "analytics".to_owned(),
+            })),
+        ),
+        data_source(
             "scratchpad",
             None,
             ConnectionConfig::DuckDb(DuckDbConfig {
@@ -243,6 +250,10 @@ fn writes_portable_paths_and_reads_them_back_for_another_home_and_folder() {
     );
     assert!(
         text.contains("with = \"access-key\"\nkey_id = \"dbrover\""),
+        "{text}"
+    );
+    assert!(
+        text.contains("database = \"motherduck\"\nmotherduck_database = \"analytics\""),
         "{text}"
     );
     assert!(text.contains(r#"login = "agent""#), "{text}");

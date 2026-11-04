@@ -69,10 +69,17 @@ pub async fn connect_with_secret(
     config: &DuckDbConfig,
     secret: Option<&Password>,
 ) -> Result<DuckDbConnection, DriverError> {
+    // One password per data source: a MotherDuck database's token, else the secret of the
+    // bucket's access key.
+    let (token, bucket_secret) = match config.database {
+        DuckDbDatabase::MotherDuck { .. } => (secret.cloned(), None),
+        DuckDbDatabase::File { .. } | DuckDbDatabase::InMemory => (None, secret.cloned()),
+    };
     let database = config.database.clone();
-    let (connection, shared, version) = tokio::task::spawn_blocking(move || open(&database))
-        .await
-        .map_err(connect_error)??;
+    let (connection, shared, version) =
+        tokio::task::spawn_blocking(move || open(&database, token.as_ref()))
+            .await
+            .map_err(connect_error)??;
 
     let mut connection = DuckDbConnection {
         cancel: Arc::new(execution::DuckDbCancel::new(connection.interrupt_handle())),
@@ -82,7 +89,7 @@ pub async fn connect_with_secret(
         bucket: config
             .storage
             .clone()
-            .map(|storage| bucket::Bucket::new(storage, secret.cloned())),
+            .map(|storage| bucket::Bucket::new(storage, bucket_secret)),
     };
     connection
         .make_bucket_secret()
@@ -147,7 +154,7 @@ fn duckdb_config() -> Result<duckdb::Config, duckdb::Error> {
 /// version.
 type Opened = (duckdb::Connection, Option<Arc<SharedDatabase>>, String);
 
-fn open(database: &DuckDbDatabase) -> Result<Opened, DriverError> {
+fn open(database: &DuckDbDatabase, token: Option<&Password>) -> Result<Opened, DriverError> {
     let (connection, shared) = match database {
         DuckDbDatabase::File { path, read_only } => {
             let (connection, shared) = open_file(path, *read_only)?;
@@ -159,6 +166,7 @@ fn open(database: &DuckDbDatabase) -> Result<Opened, DriverError> {
                 .map_err(connect_error)?,
             None,
         ),
+        DuckDbDatabase::MotherDuck { name } => (open_motherduck(name, token)?, None),
     };
     // `v1.5.6`, as `PRAGMA version` and the command-line client show it.
     let version: String = connection
@@ -166,6 +174,32 @@ fn open(database: &DuckDbDatabase) -> Result<Opened, DriverError> {
         .map_err(connect_error)?;
     let version = version.strip_prefix('v').unwrap_or(&version).to_owned();
     Ok((connection, shared, version))
+}
+
+/// The setting MotherDuck's extension reads its token from (MotherDuck's documentation,
+/// "Authenticating to MotherDuck").
+const MOTHERDUCK_TOKEN_SETTING: &str = "motherduck_token";
+
+/// The MotherDuck database `name`, signed in with `token`.
+///
+/// The token is DuckDB's `motherduck_token` setting, which the `motherduck` extension (downloaded
+/// on first use, as DuckDB loads it for an `md:` path) reads when the database opens. It never
+/// goes in the path, which DuckDB's errors and DbRover's log can show.
+fn open_motherduck(
+    name: &str,
+    token: Option<&Password>,
+) -> Result<duckdb::Connection, DriverError> {
+    let token = token.ok_or_else(|| {
+        connect_error(
+            "a MotherDuck database signs in with a token, and the data source has none: set it \
+             as its password in its settings",
+        )
+    })?;
+    let config = duckdb_config()
+        .and_then(|config| config.with(MOTHERDUCK_TOKEN_SETTING, token.expose()))
+        .map_err(connect_error)?;
+    duckdb::Connection::open_with_flags(DuckDbDatabase::motherduck_path(name), config)
+        .map_err(connect_error)
 }
 
 /// A database file this process has open, held by a connection kept only to open more

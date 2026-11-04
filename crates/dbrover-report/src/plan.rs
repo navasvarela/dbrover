@@ -463,6 +463,14 @@ fn attach(id: &str, data_source: &DataSource) -> Result<AttachedSource, String> 
                     data_source.name
                 ));
             }
+            // A report's DuckDB is cut off from the network once its sources are in (RP2).
+            DuckDbDatabase::MotherDuck { .. } => {
+                return Err(format!(
+                    "{:?} is a MotherDuck database, which a report can't attach; give the \
+                     source a query",
+                    data_source.name
+                ));
+            }
         },
         other => {
             return Err(format!(
