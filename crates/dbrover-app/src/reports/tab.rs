@@ -100,6 +100,9 @@ fn report(
         }
     };
     let ready = parameters(ui, &palette, reports, name, &plan);
+    if let Some(sql) = plan.compiled_combine() {
+        compiled_sql(ui, sql, "Combine SQL, compiled from PRQL", false);
+    }
     ui.add_space(6.0);
     output_folder(ui, reports, name, actions);
     let files = plan.values(&reports.state_mut(name).values);
@@ -359,6 +362,11 @@ fn steps(ui: &mut Ui, palette: &Palette, record: &RunRecord) {
                     if !step.table.is_empty() {
                         table(ui, step);
                     }
+                    if let Some(sql) = &step.sql {
+                        // DuckDB's errors name a line of the SQL, so a failed step shows it.
+                        let failed = step.state == StepState::Failed;
+                        compiled_sql(ui, sql, "The SQL it ran, compiled from PRQL", failed);
+                    }
                     for warning in &step.warnings {
                         ui.colored_label(palette.warning, warning);
                     }
@@ -434,6 +442,23 @@ fn amounts(rows: u64, bytes: u64, elapsed_ms: u64) -> String {
         ByteCount(bytes),
         elapsed_ms as f64 / 1000.0
     )
+}
+
+/// The SQL a combine step's PRQL compiled to, folded away unless `open`, with **Copy**.
+fn compiled_sql(ui: &mut Ui, sql: &str, heading: &str, open: bool) {
+    CollapsingHeader::new(heading)
+        .id_salt(("report_compiled_sql", heading))
+        .default_open(open)
+        .show(ui, |ui| {
+            if ui.button("Copy").clicked() {
+                ui.ctx().copy_text(sql.to_owned());
+            }
+            ui.add(
+                egui::Label::new(RichText::new(sql).monospace())
+                    .selectable(true)
+                    .wrap_mode(egui::TextWrapMode::Extend),
+            );
+        });
 }
 
 /// A loaded source's columns and the types DuckDB gave them, folded away until asked for.

@@ -302,6 +302,7 @@ fn runs_a_report_and_reports_each_step() {
                 waits_for: None,
             }],
             combine: false,
+            combine_sql: None,
         }
     );
     assert_eq!(

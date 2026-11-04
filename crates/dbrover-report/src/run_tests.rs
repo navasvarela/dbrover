@@ -360,6 +360,7 @@ fn events_are_json_lines_the_app_reads_back() {
                 waits_for: Some("tx".to_owned()),
             }],
             combine: false,
+            combine_sql: None,
         },
         RunEvent::Progress {
             step: Step::Combine,

@@ -213,6 +213,8 @@ pub struct StepRecord {
     /// A loaded source's table in DuckDB, its columns and their types.
     pub table: Vec<LoadedColumn>,
     pub warnings: Vec<String>,
+    /// For a combine step in PRQL, the SQL it compiled to, which is what ran.
+    pub sql: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -359,11 +361,17 @@ impl RunRecord {
         self.measure(&event);
         match event {
             RunEvent::Started {
-                sources, combine, ..
+                sources,
+                combine,
+                combine_sql,
+                ..
             } => {
                 self.steps = sources.into_iter().map(StepRecord::source).collect();
                 if combine {
-                    self.steps.push(StepRecord::new(Step::Combine, None, false));
+                    self.steps.push(StepRecord {
+                        sql: combine_sql,
+                        ..StepRecord::new(Step::Combine, None, false)
+                    });
                 }
             }
             RunEvent::Progress {
@@ -451,6 +459,7 @@ impl StepRecord {
             batches: None,
             table: Vec::new(),
             warnings: Vec::new(),
+            sql: None,
         }
     }
 
@@ -764,6 +773,7 @@ mod tests {
                     waits_for: None,
                 }],
                 combine: false,
+                combine_sql: None,
             });
             record.apply(RunEvent::SourceDone {
                 id: "balances".to_owned(),
@@ -828,6 +838,7 @@ mod tests {
             report: "Valuation".to_owned(),
             sources: vec![source("tx", false), source("prices", true)],
             combine: true,
+            combine_sql: None,
         });
         let states = |record: &RunRecord| -> Vec<StepState> {
             record.steps.iter().map(|step| step.state).collect()

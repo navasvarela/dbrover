@@ -5,7 +5,7 @@
 use std::io::Write;
 
 use dbrover_core::ByteCount;
-use dbrover_report::{LimitHit, RunEvent, RunFailure, TypedValues, WrittenFile, grouped};
+use dbrover_report::{LimitHit, RunEvent, RunFailure, Step, TypedValues, WrittenFile, grouped};
 
 use super::printer::Printer;
 
@@ -17,14 +17,22 @@ pub struct HumanLines<O: Write, E: Write> {
     out: O,
     err: E,
     values: TypedValues,
+    /// The SQL a combine step in PRQL compiled to, as the run's start said, printed under a
+    /// combine step's error, whose line numbers point into it.
+    combine_sql: Option<String>,
 }
 
 impl<O: Write, E: Write> Printer for HumanLines<O, E> {
     fn event(&mut self, event: &RunEvent) {
         match event {
-            RunEvent::Started { report, .. } => {
+            RunEvent::Started {
+                report,
+                combine_sql,
+                ..
+            } => {
                 let line = started(report, &self.values);
                 self.error_line(&line);
+                self.combine_sql.clone_from(combine_sql);
             }
             RunEvent::SourceDone {
                 id,
@@ -67,6 +75,13 @@ impl<O: Write, E: Write> Printer for HumanLines<O, E> {
                 for line in failed(failure) {
                     self.error_line(&line);
                 }
+                if failure.step == Step::Combine
+                    && let Some(sql) = self.combine_sql.take()
+                {
+                    for line in numbered_sql(&sql) {
+                        self.error_line(&line);
+                    }
+                }
             }
             RunEvent::Cancelled => self.error_line("Cancelled. No file was written."),
             RunEvent::Progress { .. } | RunEvent::Preview(_) => {}
@@ -84,7 +99,12 @@ impl<O: Write, E: Write> Printer for HumanLines<O, E> {
 impl<O: Write, E: Write> HumanLines<O, E> {
     /// `values` are the parameters the run was given, named in its first line.
     pub fn new(out: O, err: E, values: TypedValues) -> Self {
-        Self { out, err, values }
+        Self {
+            out,
+            err,
+            values,
+            combine_sql: None,
+        }
     }
 
     fn written(&mut self, file: &WrittenFile) {
@@ -117,6 +137,20 @@ fn started(report: &str, values: &TypedValues) -> String {
         .map(|(name, value)| format!("{name} = {value}"))
         .collect();
     format!("{report} ({})", values.join(", "))
+}
+
+/// The SQL a combine step's PRQL compiled to, its lines numbered as DuckDB's errors count them.
+fn numbered_sql(sql: &str) -> Vec<String> {
+    let lines: Vec<&str> = sql.lines().collect();
+    let width = lines.len().to_string().len();
+    std::iter::once("The combine step's SQL, compiled from its PRQL:".to_owned())
+        .chain(
+            lines
+                .iter()
+                .enumerate()
+                .map(|(index, line)| format!("{:>width$} | {line}", index + 1)),
+        )
+        .collect()
 }
 
 /// The failure, and for a limit, where to raise it, as the report's tab says it.
@@ -162,9 +196,41 @@ fn seconds(ms: u64) -> String {
 mod tests {
     use std::path::PathBuf;
 
-    use dbrover_report::Step;
-
     use super::*;
+
+    #[test]
+    fn prints_a_prql_combine_steps_sql_under_its_error() {
+        let started = |combine_sql: Option<&str>| RunEvent::Started {
+            report: "Sales by month".to_owned(),
+            sources: Vec::new(),
+            combine: true,
+            combine_sql: combine_sql.map(str::to_owned),
+        };
+        let failed = RunEvent::Failed(RunFailure::new(
+            Step::Combine,
+            "Binder Error: column \"amont\" not found, LINE 2",
+        ));
+        let (_, err) = lines(
+            &[],
+            &[
+                started(Some("SELECT\n  amont\nFROM\n  lines")),
+                failed.clone(),
+            ],
+        );
+        assert_eq!(
+            err,
+            "Sales by month\n\
+             Failed in the combine step: Binder Error: column \"amont\" not found, LINE 2\n\
+             The combine step's SQL, compiled from its PRQL:\n\
+             1 | SELECT\n\
+             2 |   amont\n\
+             3 | FROM\n\
+             4 |   lines\n"
+        );
+        // A combine step in SQL has its SQL in the file.
+        let (_, err) = lines(&[], &[started(None), failed]);
+        assert!(!err.contains("compiled"), "{err}");
+    }
 
     fn lines(values: &[(&str, &str)], events: &[RunEvent]) -> (String, String) {
         let values = values
@@ -189,6 +255,7 @@ mod tests {
                 report: "Sales by category".to_owned(),
                 sources: Vec::new(),
                 combine: true,
+                combine_sql: None,
             },
             RunEvent::Progress {
                 step: Step::Combine,
@@ -297,6 +364,7 @@ mod tests {
             report: "Stock".to_owned(),
             sources: Vec::new(),
             combine: false,
+            combine_sql: None,
         };
         assert_eq!(lines(&[], &[started]).1, "Stock\n");
     }

@@ -179,6 +179,7 @@ fn finished_run(folder: &Path) -> Vec<RunEvent> {
                 waits_for: None,
             }],
             combine: false,
+            combine_sql: None,
         },
         RunEvent::SourceDone {
             id: "balances".to_owned(),
@@ -299,6 +300,7 @@ fn combined_start() -> Vec<RunEvent> {
             report: "Trial balance".to_owned(),
             sources: vec![source("entries"), source("accounts")],
             combine: true,
+            combine_sql: None,
         },
         loaded(
             "entries",
@@ -359,6 +361,56 @@ fn shows_each_source_and_the_combine_step_of_a_combined_run() {
     harness.get_by_label("Preview: The first 1 rows, as the combine step returned them");
 }
 
+/// [`COMBINED`] with its combine step in PRQL.
+fn combined_in_prql() -> String {
+    COMBINED.replace(
+        "query = \"SELECT account, SUM(amount) AS balance FROM entries JOIN accounts USING (account) GROUP BY account\"",
+        "prql = \"from entries | join accounts (==account) | group {entries.account} (aggregate {balance = sum entries.amount})\"",
+    )
+}
+
+#[test]
+fn shows_the_sql_a_prql_combine_step_compiled_to() {
+    let dir = tempfile::tempdir().unwrap();
+    let compiled = "SELECT\n  entries.account,\n  SUM(entries.amount) AS balance\nFROM\n  entries";
+    let mut script = combined_start();
+    if let Some(RunEvent::Started { combine_sql, .. }) = script.first_mut() {
+        *combine_sql = Some(compiled.to_owned());
+    }
+    script.push(RunEvent::Failed(RunFailure::new(
+        Step::Combine,
+        "Binder Error: Referenced column \"amont\" not found",
+    )));
+    let mut harness = start_with_reports(dir.path(), &combined_in_prql(), StandIn::new(script));
+    open_and_fill(&mut harness, "2026-10-01");
+    harness
+        .get_by_label("Combine SQL, compiled from PRQL")
+        .click();
+    harness.run();
+    let shown = |harness: &Harness<'_, DbRoverApp>| {
+        harness.query_all_by_label_contains("AS balance").count()
+    };
+    assert_eq!(shown(&harness), 1, "the tab shows the compiled SQL");
+
+    harness.get_by_label("Run").click();
+    step_until_visible(&mut harness, "Failed at the combine step.");
+    // The run's combine line shows the SQL it ran, unfolded, since DuckDB's error points into it.
+    harness.get_by_label("The SQL it ran, compiled from PRQL");
+    assert_eq!(shown(&harness), 2);
+}
+
+#[test]
+fn shows_no_compiled_sql_for_a_combine_step_in_sql() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut harness = start_with_reports(dir.path(), COMBINED, StandIn::new(Vec::new()));
+    open_and_fill(&mut harness, "2026-10-01");
+    assert!(
+        harness
+            .query_by_label("Combine SQL, compiled from PRQL")
+            .is_none()
+    );
+}
+
 /// Entries, and their counterparties read by the entries' accounts.
 const LOOKUP: &str = r##"
 [report]
@@ -405,6 +457,7 @@ fn shows_a_lookup_waiting_then_its_batches_then_done() {
             },
         ],
         combine: true,
+        combine_sql: None,
     };
     let progress = |id: &str, batch| RunEvent::Progress {
         step: Step::Source { id: id.to_owned() },
@@ -611,6 +664,7 @@ fn cancel_stops_the_running_report() {
             waits_for: None,
         }],
         combine: false,
+        combine_sql: None,
     }]);
     let mut harness = start_with_reports(dir.path(), TRIAL_BALANCE, launcher);
 

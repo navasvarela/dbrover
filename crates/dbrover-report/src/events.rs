@@ -17,6 +17,10 @@ pub enum RunEvent {
         sources: Vec<SourceStart>,
         /// Whether a combine step makes the rows the outputs write.
         combine: bool,
+        /// The SQL a combine step written in PRQL compiled to, which is what runs; `None` for a
+        /// combine step in SQL, whose SQL is the file's.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        combine_sql: Option<String>,
     },
     /// What a step has returned so far, about once a second.
     Progress {
