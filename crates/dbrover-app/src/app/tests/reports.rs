@@ -790,3 +790,62 @@ fn a_report_that_silences_a_hint_says_so_instead() {
     );
     harness.get_by_label("1 hint is silenced by the file's quiet_hints.");
 }
+
+#[test]
+fn renaming_a_report_keeps_its_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let history = HistoryFile::new(dir.path().join("history.sqlite"));
+    let name = |name: &str| ReportName::new(name).unwrap();
+    history
+        .open()
+        .unwrap()
+        .record_run(
+            &dbrover_store::ReportRun {
+                report: name("trial-balance"),
+                started_at: jiff::Timestamp::UNIX_EPOCH,
+                elapsed: Duration::from_millis(1_200),
+                outcome: RunOutcome::Finished,
+                params: std::collections::BTreeMap::new(),
+                steps: Vec::new(),
+            },
+            dbrover_store::DEFAULT_RUNS_KEPT,
+        )
+        .unwrap();
+    let mut harness = start_with_reports(dir.path(), TRIAL_BALANCE, StandIn::new(Vec::new()));
+    std::fs::write(dir.path().join("reports").join("taken.toml"), "").unwrap();
+
+    harness.get_by_label("Trial balance").click_secondary();
+    harness.run();
+    harness.get_by_label("Rename…").click();
+    harness.run();
+    let rename_to = |harness: &mut Harness<'_, DbRoverApp>, to: &str| {
+        harness
+            .get_by_role_and_label(Role::TextInput, "File name")
+            .focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness
+            .get_by_role_and_label(Role::TextInput, "File name")
+            .type_text(to);
+        harness.key_press(egui::Key::Enter);
+    };
+    rename_to(&mut harness, "taken");
+    step_until_visible(
+        &mut harness,
+        "Could not rename: there is already a report named taken",
+    );
+    rename_to(&mut harness, "monthly-balance");
+    step_until(&mut harness, "the dialog closing", |harness| {
+        harness.query_by_label("Rename report").is_none()
+    });
+
+    let reports = dir.path().join("reports");
+    assert!(reports.join("monthly-balance.toml").exists());
+    assert!(!reports.join("trial-balance.toml").exists());
+    let kept = history.open().unwrap();
+    assert!(kept.runs(&name("trial-balance"), 5).unwrap().is_empty());
+    assert_eq!(kept.runs(&name("monthly-balance"), 5).unwrap().len(), 1);
+    step_until_visible(&mut harness, "Trial balance");
+    harness.get_by_label("Trial balance").click();
+    step_until_visible(&mut harness, "finished");
+}

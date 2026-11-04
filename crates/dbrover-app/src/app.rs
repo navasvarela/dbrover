@@ -62,7 +62,7 @@ use crate::picture::PictureFormat;
 use crate::project_dialog::{
     DeleteProjectChoice, DeleteProjectConfirmation, ProjectDialogAction, ProjectNameDialog,
 };
-use crate::reports::{self, ReportAction, Reports, ReportsSetup};
+use crate::reports::{self, RenameAction, RenameReportDialog, ReportAction, Reports, ReportsSetup};
 use crate::rollback_dialog::{Closing, RollbackChoice, RollbackConfirmation};
 use crate::settings::AppSettings;
 use crate::settings_tab::{Page, SettingsAction, SettingsTab};
@@ -120,6 +120,7 @@ pub struct DbRoverApp {
     data_source_dialog: Option<DataSourceDialog>,
     delete_confirmation: Option<DeleteConfirmation>,
     project_dialog: Option<ProjectNameDialog>,
+    rename_report_dialog: Option<RenameReportDialog>,
     /// View › Settings › MCP's draft, kept while the window is closed.
     mcp_defaults: McpDefaultsEditor,
     settings_tab: SettingsTab,
@@ -257,6 +258,7 @@ impl DbRoverApp {
             data_source_dialog: None,
             delete_confirmation: None,
             project_dialog: None,
+            rename_report_dialog: None,
             mcp_defaults: McpDefaultsEditor::new(&McpPermissions::default()),
             settings_tab: SettingsTab::default(),
             delete_project_confirmation: None,
@@ -468,6 +470,20 @@ impl DbRoverApp {
             .is_some_and(|dialog| dialog.apply(event))
         {
             self.project_dialog = None;
+        }
+        if self
+            .rename_report_dialog
+            .as_mut()
+            .is_some_and(|dialog| dialog.apply(event))
+        {
+            self.rename_report_dialog = None;
+        }
+        if let Event::ReportRenamed {
+            from,
+            result: Ok(to),
+        } = event
+        {
+            workspace::rename_report_tab(&mut self.dock, from, to);
         }
         self.settings_tab.apply(event);
         if let Some(changed) = self
@@ -1127,6 +1143,23 @@ impl DbRoverApp {
             ReportAction::OpenPath(path) => reports::open_path(ctx, &path),
             ReportAction::ClearRuns(name) => self.send(Command::ClearReportRuns(name)),
             ReportAction::OpenSettings => self.open_settings_page(Page::REPORTS),
+            ReportAction::Rename(name) => {
+                self.rename_report_dialog = Some(RenameReportDialog::new(name));
+            }
+        }
+    }
+
+    fn show_rename_report_dialog(&mut self, ctx: &egui::Context) {
+        let Some(action) = self
+            .rename_report_dialog
+            .as_mut()
+            .and_then(|dialog| dialog.show(ctx))
+        else {
+            return;
+        };
+        match action {
+            RenameAction::Rename { from, to } => self.send_if(self.reports.rename(&from, &to)),
+            RenameAction::Close => self.rename_report_dialog = None,
         }
     }
 
@@ -2816,6 +2849,7 @@ impl eframe::App for DbRoverApp {
         self.show_data_source_dialog(&ctx);
         self.show_delete_confirmation(&ctx);
         self.show_project_dialog(&ctx);
+        self.show_rename_report_dialog(&ctx);
         self.show_delete_project_confirmation(&ctx);
         self.show_object_dialog(&ctx);
         self.show_password_prompt(&ctx);

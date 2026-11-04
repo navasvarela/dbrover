@@ -149,11 +149,52 @@ impl ReportFiles {
             format!("{name}.{EXTENSION} and {MAX_NUMBERED} numbered names after it are taken"),
         ))
     }
+
+    /// Renames the report `from` to `to`. Never replaces a report.
+    ///
+    /// # Errors
+    ///
+    /// [`io::ErrorKind::AlreadyExists`] if a report is named `to`, or why the file can't be
+    /// renamed.
+    pub fn rename(&self, from: &ReportName, to: &ReportName) -> io::Result<()> {
+        let target = self.path(to);
+        // A rename replaces what it lands on, so a report there is checked for first. Another
+        // program could write one in between; nothing in DbRover does.
+        if target.try_exists()? {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("there is already a report named {to}"),
+            ));
+        }
+        std::fs::rename(self.path(from), target)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn renames_a_report_but_never_over_another() {
+        let folder = tempfile::tempdir().unwrap();
+        let files = ReportFiles::new(folder.path().join("reports"));
+        let name = |name| ReportName::new(name).unwrap();
+        files.create(&name("sales"), "sales").unwrap();
+        files.create(&name("stock"), "stock").unwrap();
+        files
+            .rename(&name("sales"), &name("monthly-sales"))
+            .unwrap();
+        assert_eq!(
+            files.list().unwrap(),
+            [name("monthly-sales"), name("stock")]
+        );
+        let error = files
+            .rename(&name("stock"), &name("monthly-sales"))
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(files.read(&name("monthly-sales")).unwrap(), "sales");
+        assert!(files.rename(&name("missing"), &name("other")).is_err());
+    }
 
     #[test]
     fn lists_the_toml_files_by_name() {

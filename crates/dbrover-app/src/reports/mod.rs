@@ -9,6 +9,7 @@
 
 mod insights;
 mod launcher;
+mod rename_dialog;
 mod runs_table;
 mod tab;
 
@@ -32,6 +33,7 @@ use dbrover_store::{
 use jiff::Timestamp;
 
 pub use launcher::{ProcessLauncher, ReportLauncher, RunningReport};
+pub use rename_dialog::{RenameAction, RenameReportDialog};
 pub use tab::{ReportView, show};
 
 /// What a new report starts as: a commented trial balance on the first data source, written
@@ -96,6 +98,8 @@ pub enum ReportAction {
     OpenPath(PathBuf),
     /// Deletes every run of the report the history keeps.
     ClearRuns(ReportName),
+    /// Asks for a new name for the report's file, which its runs follow.
+    Rename(ReportName),
     /// Opens Settings › Reports, where the limits' defaults are.
     OpenSettings,
 }
@@ -505,6 +509,21 @@ impl Reports {
         Some(Command::ListReports(setup.files.clone()))
     }
 
+    /// The command that renames `from`'s file to `to` and moves its runs; `None` while it
+    /// runs, since the worker reads the file by its name.
+    pub fn rename(&self, from: &ReportName, to: &ReportName) -> Option<Command> {
+        if self.running() == Some(from) {
+            return None;
+        }
+        let setup = self.setup.as_ref()?;
+        Some(Command::RenameReport {
+            files: setup.files.clone(),
+            from: from.clone(),
+            to: to.clone(),
+            listed: RUNS_LISTED,
+        })
+    }
+
     /// The command that writes a new report, if there is a folder to write it in, starting
     /// on `data_source` when there is one.
     pub fn create(&self, data_source: Option<&str>) -> Option<Command> {
@@ -546,6 +565,16 @@ impl Reports {
             Event::ReportCreated(Err(error)) => {
                 tracing::error!("could not create a report: {error}");
                 (None, None)
+            }
+            Event::ReportRenamed {
+                from,
+                result: Ok(to),
+            } => {
+                if let Some(state) = self.states.remove(from) {
+                    self.states.insert(to.clone(), state);
+                }
+                self.runs.remove(from);
+                (None, self.reload())
             }
             Event::ReportRunsFound { report, result } => {
                 if let Err(error) = result {

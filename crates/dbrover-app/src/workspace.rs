@@ -217,6 +217,15 @@ pub fn open_report_tab(layout: &mut DockState<Tab>, name: ReportName) {
     }
 }
 
+/// Points the tab of the report `from`, if one is open, at `to`, its new name, where it is.
+pub fn rename_report_tab(layout: &mut DockState<Tab>, from: &ReportName, to: &ReportName) {
+    for (_, tab) in layout.iter_all_tabs_mut() {
+        if matches!(tab, Tab::Report(name) if name == from) {
+            *tab = Tab::Report(to.clone());
+        }
+    }
+}
+
 /// Brings the Settings tab to the front, opening it beside the consoles the first time, as an
 /// editor opens its settings.
 pub fn open_settings_tab(layout: &mut DockState<Tab>) {
