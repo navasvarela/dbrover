@@ -41,6 +41,7 @@ mod log_console;
 mod macos;
 mod mcp;
 mod mcp_client_config;
+mod mcp_reports;
 mod mcp_settings;
 mod menu_bar;
 mod native_menu;
@@ -233,6 +234,13 @@ fn open_window(session: Session, log_feed: LogFeed, files: Vec<PathBuf>) -> anyh
     })
 }
 
+/// Where a report's files go until it has a folder of its own: Downloads, else the home folder.
+fn default_report_folder(paths: &AppPaths) -> PathBuf {
+    directories::UserDirs::new()
+        .and_then(|folders| folders.download_dir().map(Path::to_path_buf))
+        .unwrap_or_else(|| paths.home().to_path_buf())
+}
+
 /// Reports in `reports/` of the settings folder, run by this executable as
 /// `dbrover report-worker` on the same folder, their files going to Downloads until a report
 /// is given a folder of its own.
@@ -241,9 +249,7 @@ fn reports_setup(paths: &AppPaths) -> reports::ReportsSetup {
         tracing::warn!("could not find DbRover's own executable ({error}); reports start dbrover");
         PathBuf::from("dbrover")
     });
-    let default_folder = directories::UserDirs::new()
-        .and_then(|folders| folders.download_dir().map(Path::to_path_buf))
-        .unwrap_or_else(|| paths.home().to_path_buf());
+    let default_folder = default_report_folder(paths);
     reports::ReportsSetup {
         files: paths.report_files(),
         launcher: Box::new(reports::ProcessLauncher {

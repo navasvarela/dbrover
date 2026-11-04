@@ -79,6 +79,10 @@ pub struct McpPermissions {
     pub schema: bool,
     /// Grants, roles, server settings and other administration.
     pub admin: bool,
+    /// Running the reports whose data sources are all in the project (`docs/reporting.md`,
+    /// "Finishing RP4"). Off by default: a run reads as much as its report says, under the
+    /// report's own limits, not the project's.
+    pub reports: bool,
     /// The most rows one call returns; the reply says when there were more.
     pub max_rows: NonZeroU32,
     /// How long one statement may run before it is cancelled.
@@ -104,6 +108,7 @@ impl Default for McpPermissions {
             write: false,
             schema: false,
             admin: false,
+            reports: false,
             max_rows: DEFAULT_MAX_ROWS,
             statement_timeout: StatementTimeout(DEFAULT_STATEMENT_TIMEOUT),
             schemas: SchemaScope::All,
@@ -124,6 +129,8 @@ pub struct McpOverrides {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub admin: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub reports: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_rows: Option<NonZeroU32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub statement_timeout: Option<StatementTimeout>,
@@ -143,6 +150,7 @@ impl McpOverrides {
             write: self.write.unwrap_or(defaults.write),
             schema: self.schema.unwrap_or(defaults.schema),
             admin: self.admin.unwrap_or(defaults.admin),
+            reports: self.reports.unwrap_or(defaults.reports),
             max_rows: self.max_rows.unwrap_or(defaults.max_rows),
             statement_timeout: self.statement_timeout.unwrap_or(defaults.statement_timeout),
             schemas: self

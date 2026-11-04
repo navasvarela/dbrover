@@ -5,7 +5,7 @@
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-use dbrover_report::{LimitDefaults, Plan, read_report};
+use dbrover_report::{LimitDefaults, Plan, Report, read_report};
 use dbrover_store::{AppPaths, ReportName};
 use serde::Serialize;
 
@@ -19,7 +19,11 @@ pub struct ListedReport {
     pub name: ReportName,
     /// `[report] name`, or the file's name when the file can't be read.
     pub title: String,
+    pub description: Option<String>,
     pub path: PathBuf,
+    /// The data sources its sources name, by name or id as the file writes them; `None` when
+    /// the file can't be read.
+    pub data_sources: Option<Vec<String>>,
     /// In the order the report asks for them.
     pub params: Vec<ListedParam>,
     /// Empty when it can run.
@@ -61,10 +65,18 @@ fn describe(
     named: &Result<Named, Vec<String>>,
     defaults: &LimitDefaults,
 ) -> ListedReport {
-    let listed = |title: String, params, problems| ListedReport {
+    let listed = |title: String, report: Option<&Report>, params, problems| ListedReport {
         name: name.clone(),
         title,
+        description: report.and_then(|report| report.description.clone()),
         path: path.clone(),
+        data_sources: report.map(|report| {
+            report
+                .sources
+                .iter()
+                .map(|source| source.data_source.clone())
+                .collect()
+        }),
         params,
         problems,
     };
@@ -74,17 +86,28 @@ fn describe(
     };
     let report = match report {
         Ok(report) => report,
-        Err(problems) => return listed(name.to_string(), Vec::new(), problems),
+        Err(problems) => return listed(name.to_string(), None, Vec::new(), problems),
     };
-    let title = report.name.clone();
     let declared = params(&report.params);
     let named = match named {
         Ok(named) => named,
-        Err(problems) => return listed(title, declared, problems.clone()),
+        Err(problems) => {
+            return listed(
+                report.name.clone(),
+                Some(&report),
+                declared,
+                problems.clone(),
+            );
+        }
     };
-    match Plan::new(report, &named.data_sources, &named.presets, defaults) {
-        Ok(plan) => listed(plan.name.clone(), params(&plan.params), Vec::new()),
-        Err(problems) => listed(title, declared, problems),
+    match Plan::new(
+        report.clone(),
+        &named.data_sources,
+        &named.presets,
+        defaults,
+    ) {
+        Ok(plan) => listed(plan.name, Some(&report), params(&plan.params), Vec::new()),
+        Err(problems) => listed(report.name.clone(), Some(&report), declared, problems),
     }
 }
 
@@ -160,7 +183,9 @@ mod tests {
         ListedReport {
             name: ReportName::new(name).unwrap(),
             title: format!("The {name}"),
+            description: None,
             path: PathBuf::from(format!("/reports/{name}.toml")),
+            data_sources: Some(vec!["shop".to_owned()]),
             params: params
                 .iter()
                 .map(|(name, param_type)| ListedParam {

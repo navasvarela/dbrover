@@ -8,9 +8,9 @@
 //! code per outcome ([`Outcome`]).
 
 mod args;
-mod history;
+pub(crate) mod history;
 mod human;
-mod list;
+pub(crate) mod list;
 mod outcome;
 mod printer;
 mod progress;
@@ -23,7 +23,7 @@ use std::process::Command;
 
 use dbrover_engine::WorkerRun;
 use dbrover_report::{Plan, RunEvent, RunFailure, RunRequest, Step, TypedValues};
-use dbrover_store::{AppPaths, ReportSettings, SettingsFile};
+use dbrover_store::{AppPaths, ReportSettings, RunOrigin, SettingsFile};
 use tracing_appender::non_blocking::WorkerGuard;
 
 pub use args::Request;
@@ -79,10 +79,10 @@ fn list(args: &ListArgs) -> Outcome {
 
 /// A run ready to start: the report planned, the worker's request, and how many of the
 /// report's runs the history keeps.
-struct Prepared {
-    plan: Plan,
-    request: RunRequest,
-    runs_kept: NonZeroU32,
+pub(crate) struct Prepared {
+    pub(crate) plan: Plan,
+    pub(crate) request: RunRequest,
+    pub(crate) runs_kept: NonZeroU32,
 }
 
 fn run(args: &RunArgs) -> Outcome {
@@ -100,14 +100,20 @@ fn run(args: &RunArgs) -> Outcome {
     // ending the command with a worker behind it.
     let stopping = Stopping::listen();
     let report = report_path(&paths, &args.report);
-    let prepared = match prepare(&paths, &report, args) {
+    let prepared = match prepare(&paths, &report, &args.values, args.output_dir.as_deref()) {
         Ok(prepared) => prepared,
         Err(problems) => {
             printer.not_started(&format!("{} can't run:", report.display()), &problems);
             return Outcome::Report;
         }
     };
-    let mut history = RunHistory::start(&paths, &report, args.values.clone(), prepared.runs_kept);
+    let mut history = RunHistory::start(
+        &paths,
+        &report,
+        args.values.clone(),
+        prepared.runs_kept,
+        RunOrigin::Command,
+    );
     let outcome = run_worker(&paths, &prepared, &stopping, &mut |event| {
         printer.event(event);
         if let Some(history) = &mut history {
@@ -144,26 +150,29 @@ fn report_path(paths: &AppPaths, report: &ReportArg) -> PathBuf {
     }
 }
 
-/// Reads and plans the report under the settings folder's limits, and checks the values as
-/// the worker will, so that what is wrong is said before anything starts.
-fn prepare(paths: &AppPaths, report: &Path, args: &RunArgs) -> Result<Prepared, Vec<String>> {
+/// Reads and plans the report under the settings folder's limits, and checks `values` as the
+/// worker will, so that what is wrong is said before anything starts. The files go in
+/// `output_dir`, else the current folder.
+pub(crate) fn prepare(
+    paths: &AppPaths,
+    report: &Path,
+    values: &TypedValues,
+    output_dir: Option<&Path>,
+) -> Result<Prepared, Vec<String>> {
     let settings = report_settings(paths)?;
     let defaults = reports::limit_defaults(&settings);
     let plan = report_worker::plan(paths, report, &defaults)?;
-    let mut problems = unknown_parameters(&plan, &args.values);
-    if let Err(more) = plan.values(&args.values) {
+    let mut problems = unknown_parameters(&plan, values);
+    if let Err(more) = plan.values(values) {
         problems.extend(more);
     }
     if !problems.is_empty() {
         return Err(problems);
     }
-    let folder = args
-        .output_dir
-        .as_deref()
-        .map_or_else(current_folder, absolute);
+    let folder = output_dir.map_or_else(current_folder, absolute);
     let request = RunRequest {
         report: report.to_owned(),
-        values: args.values.clone(),
+        values: values.clone(),
         staging: folder.join(reports::staging_name()),
         folder,
         defaults,
@@ -178,7 +187,7 @@ fn prepare(paths: &AppPaths, report: &Path, args: &RunArgs) -> Result<Prepared, 
 
 /// Settings › Reports as `settings.toml` keeps it: the limits' defaults, which the app sends
 /// with each run, and the runs kept.
-fn report_settings(paths: &AppPaths) -> Result<ReportSettings, Vec<String>> {
+pub(crate) fn report_settings(paths: &AppPaths) -> Result<ReportSettings, Vec<String>> {
     SettingsFile::new(paths.settings_file())
         .load()
         .map(|settings| settings.reports)
@@ -216,7 +225,7 @@ fn absolute(path: &Path) -> PathBuf {
 }
 
 /// Starts `dbrover report-worker` from this executable on the request, as the app does.
-fn start_worker(paths: &AppPaths, prepared: &Prepared) -> io::Result<WorkerRun> {
+pub(crate) fn start_worker(paths: &AppPaths, prepared: &Prepared) -> io::Result<WorkerRun> {
     let launcher = ProcessLauncher {
         executable: std::env::current_exe()?,
         settings_folder: paths.folders().settings.clone(),

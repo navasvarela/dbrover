@@ -385,6 +385,7 @@ fn project_settings(project: &Project) -> Settings {
         write,
         schema,
         admin,
+        reports,
         max_rows,
         statement_timeout,
         schemas,
@@ -397,6 +398,7 @@ fn project_settings(project: &Project) -> Settings {
         ("MCP writing", or_default(write.map(yes_no))),
         ("MCP schema changes", or_default(schema.map(yes_no))),
         ("MCP administration", or_default(admin.map(yes_no))),
+        ("MCP running reports", or_default(reports.map(yes_no))),
         (
             "MCP schemas",
             or_default(schemas.as_ref().map(|scope| match scope {

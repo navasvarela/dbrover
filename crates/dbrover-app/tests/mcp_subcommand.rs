@@ -191,6 +191,7 @@ async fn serves_a_project_over_stdio_with_no_window() {
             "get_definition",
             "list_data_sources",
             "list_objects",
+            "list_reports",
             "query"
         ]
     );

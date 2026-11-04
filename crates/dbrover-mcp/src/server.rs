@@ -18,7 +18,7 @@ use jiff::Timestamp;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, Implementation, ServerCapabilities, ServerConfig};
-use rmcp::service::{NotificationContext, RoleServer};
+use rmcp::service::{NotificationContext, RequestContext, RoleServer};
 use rmcp::{ErrorData, ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -28,6 +28,7 @@ use crate::catalog::{self, NodeJson, PathStep};
 use crate::connections::Connections;
 use crate::execute::ExecuteArgs;
 use crate::project::ServedProject;
+use crate::reports::{ReportRunner, RunReportArgs};
 use crate::scope::Scope;
 use crate::transaction::{self, Access, CallSettings, Rows, RunError, Watchdog};
 
@@ -48,6 +49,8 @@ pub(crate) struct Inner {
     pub(crate) project: ServedProject,
     pub(crate) connections: Arc<Connections>,
     pub(crate) audit: Audit,
+    /// What lists and runs reports; `None` where nothing does, as in tests of other tools.
+    pub(crate) reports: Option<Arc<dyn ReportRunner>>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -236,17 +239,27 @@ fn reply(outcome: Result<Value, ToolError>) -> ToolResult {
 
 #[tool_router]
 impl DbRoverMcp {
-    pub(crate) fn new(project: ServedProject, connections: Arc<Connections>, audit: Audit) -> Self {
+    pub(crate) fn new(
+        project: ServedProject,
+        connections: Arc<Connections>,
+        audit: Audit,
+        reports: Option<Arc<dyn ReportRunner>>,
+    ) -> Self {
         let mut tool_router = Self::tool_router();
         // A project that only reads has nothing for execute to run, so clients don't see it.
         if !project.changes.any() {
             tool_router.remove_route("execute");
+        }
+        // Nor, without the permission, is run_report there to call.
+        if !project.reports || reports.is_none() {
+            tool_router.remove_route("run_report");
         }
         Self {
             inner: Arc::new(Inner {
                 project,
                 connections,
                 audit,
+                reports,
             }),
             tool_router,
         }
@@ -363,6 +376,37 @@ impl DbRoverMcp {
     ))]
     async fn execute(&self, Parameters(args): Parameters<ExecuteArgs>) -> ToolResult {
         reply(self.execute_json(args).await)
+    }
+
+    /// Lists the reports in DbRover's reports folder that read only this project's data
+    /// sources: each one's name (which run_report takes), title, parameters with their types,
+    /// and what keeps it from running, if anything. `may_run` says whether this project lets
+    /// run_report run them.
+    #[tool(annotations(read_only_hint = true, open_world_hint = false))]
+    async fn list_reports(&self) -> ToolResult {
+        reply(self.list_reports_json())
+    }
+
+    /// Runs one of list_reports' reports with its parameters, as DbRover runs it: each source
+    /// read-only, under the report's own limits, its files written to the user's Downloads
+    /// folder. Returns how it ended, each step's rows and time, the files' paths and the first
+    /// rows written; or the step that failed, and for a limit, which and where to raise it.
+    /// A run can take minutes; cancelling the call stops it, leaving no file.
+    #[tool(annotations(
+        read_only_hint = false,
+        destructive_hint = false,
+        idempotent_hint = false,
+        open_world_hint = false
+    ))]
+    async fn run_report(
+        &self,
+        Parameters(args): Parameters<RunReportArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> ToolResult {
+        reply(
+            self.run_report_json(args, context.ct.cancelled_owned())
+                .await,
+        )
     }
 }
 

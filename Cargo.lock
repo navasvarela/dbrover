@@ -2668,6 +2668,7 @@ dependencies = [
  "dbrover-engine",
  "dbrover-export",
  "dbrover-language",
+ "dbrover-report",
  "dbrover-sql",
  "dbrover-store",
  "jiff",

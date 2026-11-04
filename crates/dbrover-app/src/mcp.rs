@@ -2,6 +2,7 @@
 
 use std::ffi::OsStr;
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::Context as _;
 use dbrover_core::describe_error;
@@ -10,6 +11,7 @@ use dbrover_store::{
     AppPaths, DataSourceFile, HistoryFile, PREVIOUS_APP_NAME, ProjectFile, os_keychain,
 };
 
+use crate::mcp_reports::McpReports;
 use crate::{settings_folder, telemetry};
 
 /// Serves the project until the client closes standard input. Needs no display: nothing here
@@ -39,6 +41,10 @@ pub fn run(project: &str, config_dir: Option<&Path>) -> anyhow::Result<()> {
         secrets: os_keychain(),
         known_hosts: paths.ssh_known_hosts_file(),
         trusted_commands: paths.trusted_commands_file(),
+        reports: Some(Arc::new(McpReports {
+            paths: paths.clone(),
+            folder: crate::default_report_folder(paths),
+        })),
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .thread_name("dbrover-mcp")

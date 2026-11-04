@@ -117,6 +117,8 @@ pub struct ServedProject {
     /// The schemas the catalog tools show and statements may name.
     pub schemas: SchemaScope,
     pub data_sources: Vec<DataSource>,
+    /// Whether `run_report` may run the project's reports.
+    pub reports: bool,
 }
 
 impl ServedProject {
@@ -181,6 +183,7 @@ impl ServedProject {
             changes,
             schemas: permissions.schemas.clone(),
             data_sources,
+            reports: permissions.reports,
         })
     }
 

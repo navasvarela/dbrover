@@ -17,6 +17,7 @@ mod catalog;
 mod connections;
 mod execute;
 mod project;
+mod reports;
 mod scope;
 mod server;
 mod transaction;
@@ -31,6 +32,7 @@ use rmcp::service::ServerInitializeError;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 pub use project::{Changes, Limits, Permission, ServedProject, StartError};
+pub use reports::{ReportListing, ReportRunner, RunningReport};
 
 use crate::audit::Audit;
 use crate::connections::Connections;
@@ -46,6 +48,8 @@ pub struct McpConfig {
     pub known_hosts: PathBuf,
     /// The password commands the user trusted in the app, the only ones the server runs.
     pub trusted_commands: TrustedCommandsFile,
+    /// Lists and runs the settings folder's reports; `None` leaves the project without any.
+    pub reports: Option<Arc<dyn ReportRunner>>,
 }
 
 /// [`StartError`] is boxed: it carries paths, I/O and TOML errors, which made this type large
@@ -121,7 +125,7 @@ where
         &project.data_sources,
     );
     connections.sweep_idle();
-    let server = DbRoverMcp::new(project, Arc::clone(&connections), audit);
+    let server = DbRoverMcp::new(project, Arc::clone(&connections), audit, config.reports);
     let running = server
         .serve(transport)
         .await
