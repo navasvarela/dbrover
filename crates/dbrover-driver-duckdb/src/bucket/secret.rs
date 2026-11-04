@@ -3,7 +3,7 @@
 
 use std::fmt;
 
-use dbrover_core::{Password, S3Bucket};
+use dbrover_core::{AzureContainer, GcsBucket, ObjectStorage, Password, S3Bucket};
 
 use super::{BucketCredentials, BucketError, SignedIn};
 
@@ -38,15 +38,29 @@ enum Value<'a> {
     Boolean(bool),
 }
 
-/// The secret DuckDB reads `bucket` with, from what signing in gave.
+/// The secret DuckDB reads `storage` with, from what signing in gave.
+///
+/// # Errors
+///
+/// [`BucketError::Endpoint`] for an S3 or Google Cloud Storage endpoint that isn't an
+/// `http://` or `https://` address.
+pub(crate) fn secret(
+    storage: &ObjectStorage,
+    signed_in: &SignedIn,
+) -> Result<SecretStatement, BucketError> {
+    match storage {
+        ObjectStorage::S3(bucket) => s3_secret(bucket, signed_in),
+        ObjectStorage::Gcs(bucket) => gcs_secret(bucket, signed_in),
+        ObjectStorage::Azure(container) => Ok(azure_secret(container, signed_in)),
+    }
+}
+
+/// The secret DuckDB reads an S3 `bucket` with, from what signing in gave.
 ///
 /// # Errors
 ///
 /// [`BucketError::Endpoint`] for an endpoint that isn't an `http://` or `https://` address.
-pub(crate) fn s3_secret(
-    bucket: &S3Bucket,
-    signed_in: &SignedIn,
-) -> Result<SecretStatement, BucketError> {
+fn s3_secret(bucket: &S3Bucket, signed_in: &SignedIn) -> Result<SecretStatement, BucketError> {
     let scope = format!("s3://{}", bucket.bucket);
     let region = Some(bucket.region.as_str())
         .filter(|region| !region.is_empty())
@@ -69,16 +83,58 @@ pub(crate) fn s3_secret(
                 parameters.push(("SESSION_TOKEN", Value::Text(token.expose())));
             }
         }
-        BucketCredentials::Anonymous => {}
+        // A token is no S3 credential; DuckDB reads the bucket as if anonymously.
+        BucketCredentials::BearerToken(_) | BucketCredentials::Anonymous => {}
     }
     let endpoint = Endpoint::parse(&bucket.endpoint)?;
-    if let Some(endpoint) = &endpoint {
-        // S3-compatible stores serve buckets by path; few have a DNS name per bucket.
+    push_endpoint(&mut parameters, endpoint.as_ref());
+    Ok(statement(&parameters))
+}
+
+/// The secret DuckDB reads a Google Cloud Storage `bucket` with: C0's Google token as its
+/// bearer token, through `httpfs`.
+fn gcs_secret(bucket: &GcsBucket, signed_in: &SignedIn) -> Result<SecretStatement, BucketError> {
+    let scope = format!("gs://{}", bucket.bucket);
+    let mut parameters = vec![("TYPE", Value::Text("gcs")), ("SCOPE", Value::Text(&scope))];
+    if let BucketCredentials::BearerToken(token) = &signed_in.credentials {
+        parameters.push(("BEARER_TOKEN", Value::Text(token.expose())));
+    }
+    let endpoint = Endpoint::parse(&bucket.endpoint)?;
+    push_endpoint(&mut parameters, endpoint.as_ref());
+    Ok(statement(&parameters))
+}
+
+/// The secret DuckDB reads an Azure `container` with: C0's Entra ID token for Azure Storage,
+/// through the `azure` extension, or none for a public container.
+fn azure_secret(container: &AzureContainer, signed_in: &SignedIn) -> SecretStatement {
+    let scope = format!("az://{}", container.container);
+    let mut parameters = vec![("TYPE", Value::Text("azure"))];
+    match &signed_in.credentials {
+        BucketCredentials::BearerToken(token) => {
+            parameters.push(("PROVIDER", Value::Text("access_token")));
+            parameters.push(("ACCESS_TOKEN", Value::Text(token.expose())));
+        }
+        BucketCredentials::S3Keys { .. } | BucketCredentials::Anonymous => {
+            parameters.push(("PROVIDER", Value::Text("config")));
+        }
+    }
+    parameters.push(("ACCOUNT_NAME", Value::Text(&container.account)));
+    parameters.push(("SCOPE", Value::Text(&scope)));
+    let endpoint = container.endpoint.trim();
+    if !endpoint.is_empty() {
+        parameters.push(("ENDPOINT", Value::Text(endpoint)));
+    }
+    statement(&parameters)
+}
+
+/// An S3-compatible store's or a stand-in's address, which serves buckets by path: few have a
+/// DNS name per bucket.
+fn push_endpoint<'a>(parameters: &mut Vec<(&str, Value<'a>)>, endpoint: Option<&Endpoint<'a>>) {
+    if let Some(endpoint) = endpoint {
         parameters.push(("ENDPOINT", Value::Text(endpoint.authority)));
         parameters.push(("URL_STYLE", Value::Text("path")));
         parameters.push(("USE_SSL", Value::Boolean(endpoint.tls)));
     }
-    Ok(statement(&parameters))
 }
 
 fn statement(parameters: &[(&str, Value<'_>)]) -> SecretStatement {
@@ -193,6 +249,64 @@ mod tests {
         for (bucket, signed_in, expected) in cases {
             let statement = s3_secret(&bucket, &signed_in).unwrap();
             assert_eq!(statement.expose(), expected);
+        }
+    }
+
+    #[test]
+    fn gcs_and_azure_secrets_hand_duckdb_the_token() {
+        let token = || {
+            signed_in(
+                BucketCredentials::BearerToken(Password::new("ya29.x")),
+                None,
+            )
+        };
+        let anonymous = || signed_in(BucketCredentials::Anonymous, None);
+        let gcs = |endpoint: &str| {
+            ObjectStorage::Gcs(GcsBucket {
+                bucket: "logs".to_owned(),
+                endpoint: endpoint.to_owned(),
+                ..GcsBucket::default()
+            })
+        };
+        let azure = |endpoint: &str| {
+            ObjectStorage::Azure(AzureContainer {
+                account: "acme".to_owned(),
+                container: "raw".to_owned(),
+                endpoint: endpoint.to_owned(),
+                ..AzureContainer::default()
+            })
+        };
+        let cases = [
+            (
+                gcs(""),
+                token(),
+                "CREATE OR REPLACE TEMPORARY SECRET dbrover_bucket (TYPE 'gcs', \
+                 SCOPE 'gs://logs', BEARER_TOKEN 'ya29.x')",
+            ),
+            (
+                gcs("http://localhost:59100"),
+                anonymous(),
+                "CREATE OR REPLACE TEMPORARY SECRET dbrover_bucket (TYPE 'gcs', \
+                 SCOPE 'gs://logs', ENDPOINT 'localhost:59100', URL_STYLE 'path', \
+                 USE_SSL false)",
+            ),
+            (
+                azure(""),
+                token(),
+                "CREATE OR REPLACE TEMPORARY SECRET dbrover_bucket (TYPE 'azure', \
+                 PROVIDER 'access_token', ACCESS_TOKEN 'ya29.x', ACCOUNT_NAME 'acme', \
+                 SCOPE 'az://raw')",
+            ),
+            (
+                azure("https://acme.privatelink.blob.core.windows.net"),
+                anonymous(),
+                "CREATE OR REPLACE TEMPORARY SECRET dbrover_bucket (TYPE 'azure', \
+                 PROVIDER 'config', ACCOUNT_NAME 'acme', SCOPE 'az://raw', \
+                 ENDPOINT 'https://acme.privatelink.blob.core.windows.net')",
+            ),
+        ];
+        for (storage, signed_in, expected) in cases {
+            assert_eq!(secret(&storage, &signed_in).unwrap().expose(), expected);
         }
     }
 

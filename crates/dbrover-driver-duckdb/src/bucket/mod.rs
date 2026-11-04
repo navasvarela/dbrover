@@ -5,13 +5,24 @@
 mod secret;
 pub(crate) mod tree;
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 use std::time::SystemTime;
 
 use dbrover_cloud::aws::{AwsCredentials, AwsError, AwsSignIn};
-use dbrover_cloud::storage::{S3Keys, S3Lister, S3Location, StorageError};
+use dbrover_cloud::entra::{EntraError, EntraResource, EntraSignIn, EntraTool};
+use dbrover_cloud::google::{GoogleError, GoogleSignIn};
+use dbrover_cloud::storage::{
+    AzureLister, AzureLocation, GcsLister, GcsLocation, Lister, S3Keys, S3Lister, S3Location,
+    StorageError,
+};
 use dbrover_cloud::token::REFRESH_MARGIN;
-use dbrover_core::{ObjectStorage, Password, S3Bucket, S3SignIn, StorageProvider};
+use dbrover_cloud::{AccessToken, TokenCache};
+use dbrover_core::{
+    AzureContainer, AzureSignIn, AzureTool, GcsBucket, GcsSignIn, ObjectStorage, Password,
+    S3Bucket, S3SignIn, Variables,
+};
 
 pub(crate) use secret::SecretStatement;
 
@@ -27,10 +38,12 @@ pub enum BucketError {
          https://host"
     )]
     Endpoint(String),
-    #[error("reading {0} isn't built yet")]
-    Unsupported(StorageProvider),
     #[error(transparent)]
     Aws(#[from] AwsError),
+    #[error(transparent)]
+    Google(#[from] GoogleError),
+    #[error(transparent)]
+    Entra(#[from] EntraError),
     #[error("couldn't list the bucket: {0}")]
     Listing(#[from] StorageError),
 }
@@ -43,6 +56,8 @@ pub(crate) enum BucketCredentials {
         secret: Password,
         session_token: Option<Password>,
     },
+    /// An access token, from Google Cloud's or Entra ID's sign-in.
+    BearerToken(Password),
     /// Nothing, for a public bucket.
     Anonymous,
 }
@@ -73,7 +88,7 @@ struct Session {
     signed_in: SignedIn,
     /// Whether DuckDB holds a secret made from `signed_in`.
     secret_made: bool,
-    lister: Option<Arc<S3Lister>>,
+    lister: Option<Arc<Lister>>,
 }
 
 /// A connection's bucket.
@@ -108,9 +123,6 @@ impl Bucket {
         &mut self,
         now: SystemTime,
     ) -> Result<Option<SecretStatement>, BucketError> {
-        let ObjectStorage::S3(bucket) = &self.storage else {
-            return Err(BucketError::Unsupported(self.storage.provider()));
-        };
         let session = fresh_session(
             &mut self.session,
             &self.storage,
@@ -121,7 +133,7 @@ impl Bucket {
         if session.secret_made {
             return Ok(None);
         }
-        secret::s3_secret(bucket, &session.signed_in).map(Some)
+        secret::secret(&self.storage, &session.signed_in).map(Some)
     }
 
     /// Records that DuckDB took the secret [`Bucket::due_secret`] gave.
@@ -136,10 +148,7 @@ impl Bucket {
     /// # Errors
     ///
     /// [`BucketError`] when the sign-in gives no credentials.
-    pub(crate) async fn lister(&mut self, now: SystemTime) -> Result<Arc<S3Lister>, BucketError> {
-        let ObjectStorage::S3(bucket) = &self.storage else {
-            return Err(BucketError::Unsupported(self.storage.provider()));
-        };
+    pub(crate) async fn lister(&mut self, now: SystemTime) -> Result<Arc<Lister>, BucketError> {
         let session = fresh_session(
             &mut self.session,
             &self.storage,
@@ -150,7 +159,7 @@ impl Bucket {
         if let Some(lister) = &session.lister {
             return Ok(Arc::clone(lister));
         }
-        let lister = Arc::new(S3Lister::new(s3_location(bucket, &session.signed_in))?);
+        let lister = Arc::new(lister(&self.storage, &session.signed_in)?);
         session.lister = Some(Arc::clone(&lister));
         Ok(lister)
     }
@@ -190,9 +199,96 @@ async fn sign_in(
 ) -> Result<SignedIn, BucketError> {
     match storage {
         ObjectStorage::S3(bucket) => sign_in_to_s3(bucket, password).await,
-        ObjectStorage::Gcs(_) | ObjectStorage::Azure(_) => {
-            Err(BucketError::Unsupported(storage.provider()))
-        }
+        ObjectStorage::Gcs(bucket) => sign_in_to_gcs(bucket).await,
+        ObjectStorage::Azure(container) => sign_in_to_azure(container).await,
+    }
+}
+
+/// What a token sign-in gave, or nothing for a public bucket.
+fn with_token(token: Option<AccessToken>) -> SignedIn {
+    match token {
+        Some(token) => SignedIn {
+            credentials: BucketCredentials::BearerToken(token.secret),
+            region: None,
+            expires_at: Some(token.expires_at),
+        },
+        None => SignedIn {
+            credentials: BucketCredentials::Anonymous,
+            region: None,
+            expires_at: None,
+        },
+    }
+}
+
+/// C0b's Google sign-in, whose token's scope (`cloud-platform`) covers Cloud Storage.
+async fn sign_in_to_gcs(bucket: &GcsBucket) -> Result<SignedIn, BucketError> {
+    let credentials_file = match &bucket.sign_in {
+        GcsSignIn::Google => None,
+        GcsSignIn::CredentialsFile { credentials_file } => Some(credentials_file.clone()),
+        GcsSignIn::Anonymous => return Ok(with_token(None)),
+    };
+    let google = GoogleSignIn {
+        credentials_file: credentials_file.clone(),
+    };
+    let token = token_cache(TokenKey::Google { credentials_file })
+        .token(|| async {
+            let credentials = google.credentials(&ProcessVariables)?;
+            Ok::<_, BucketError>(credentials.token().await?)
+        })
+        .await?;
+    Ok(with_token(Some(token)))
+}
+
+/// C0c's Entra ID sign-in, for Azure Storage's resource.
+async fn sign_in_to_azure(container: &AzureContainer) -> Result<SignedIn, BucketError> {
+    let AzureSignIn::Entra { tool, tenant } = &container.sign_in else {
+        return Ok(with_token(None));
+    };
+    let entra = EntraSignIn {
+        tool: match tool {
+            AzureTool::AzureCli => EntraTool::AzureCli,
+            AzureTool::AzureDeveloperCli => EntraTool::AzureDeveloperCli,
+        },
+        tenant: Some(tenant.clone()).filter(|tenant| !tenant.is_empty()),
+    };
+    let key = TokenKey::Entra {
+        tool: *tool,
+        tenant: tenant.clone(),
+    };
+    let token = token_cache(key)
+        .token(|| async { Ok::<_, BucketError>(entra.token(EntraResource::Storage).await?) })
+        .await?;
+    Ok(with_token(Some(token)))
+}
+
+/// Which sign-in a token was fetched for.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum TokenKey {
+    Google { credentials_file: Option<PathBuf> },
+    Entra { tool: AzureTool, tenant: String },
+}
+
+/// The tokens fetched for each sign-in, kept for the app's lifetime, so that every console
+/// opened on a bucket doesn't ask Google again or run `az` again, as C0's tokens for
+/// databases are kept (`dbrover-engine`'s `cloud_sign_in`).
+static TOKENS: LazyLock<Mutex<HashMap<TokenKey, Arc<TokenCache>>>> = LazyLock::new(Mutex::default);
+
+fn token_cache(key: TokenKey) -> Arc<TokenCache> {
+    let mut tokens = TOKENS.lock().unwrap_or_else(PoisonError::into_inner);
+    Arc::clone(tokens.entry(key).or_default())
+}
+
+/// The process's environment, where Application Default Credentials are looked for, as the
+/// engine's own `ProcessEnvironment` reads it for placeholders.
+struct ProcessVariables;
+
+impl Variables for ProcessVariables {
+    fn var(&self, name: &str) -> Option<String> {
+        std::env::var(name).ok()
+    }
+
+    fn home(&self) -> Option<PathBuf> {
+        std::env::home_dir()
     }
 }
 
@@ -240,7 +336,36 @@ async fn sign_in_to_s3(
     })
 }
 
-/// Where the lister sends its requests, and the keys it signs them with: the same as
+/// The lister of `storage`, going where DuckDB's secret sends DuckDB, signed in the same way.
+fn lister(storage: &ObjectStorage, signed_in: &SignedIn) -> Result<Lister, BucketError> {
+    Ok(match storage {
+        ObjectStorage::S3(bucket) => Lister::S3(S3Lister::new(s3_location(bucket, signed_in))?),
+        ObjectStorage::Gcs(bucket) => Lister::Gcs(GcsLister::new(GcsLocation {
+            bucket: bucket.bucket.clone(),
+            endpoint: endpoint(&bucket.endpoint),
+            token: bearer_token(signed_in),
+        })?),
+        ObjectStorage::Azure(container) => Lister::Azure(AzureLister::new(AzureLocation {
+            account: container.account.clone(),
+            container: container.container.clone(),
+            endpoint: endpoint(&container.endpoint),
+            token: bearer_token(signed_in),
+        })?),
+    })
+}
+
+fn endpoint(endpoint: &str) -> Option<String> {
+    Some(endpoint.trim().to_owned()).filter(|endpoint| !endpoint.is_empty())
+}
+
+fn bearer_token(signed_in: &SignedIn) -> Option<Password> {
+    match &signed_in.credentials {
+        BucketCredentials::BearerToken(token) => Some(token.clone()),
+        BucketCredentials::S3Keys { .. } | BucketCredentials::Anonymous => None,
+    }
+}
+
+/// Where the S3 lister sends its requests, and the keys it signs them with: the same as
 /// DuckDB's secret.
 fn s3_location(bucket: &S3Bucket, signed_in: &SignedIn) -> S3Location {
     let keys = match &signed_in.credentials {
@@ -253,7 +378,7 @@ fn s3_location(bucket: &S3Bucket, signed_in: &SignedIn) -> S3Location {
             secret: secret.clone(),
             session_token: session_token.clone(),
         }),
-        BucketCredentials::Anonymous => None,
+        BucketCredentials::BearerToken(_) | BucketCredentials::Anonymous => None,
     };
     S3Location {
         bucket: bucket.bucket.clone(),
@@ -261,7 +386,7 @@ fn s3_location(bucket: &S3Bucket, signed_in: &SignedIn) -> S3Location {
             .filter(|region| !region.is_empty())
             .or_else(|| signed_in.region.clone())
             .unwrap_or_default(),
-        endpoint: Some(bucket.endpoint.trim().to_owned()).filter(|endpoint| !endpoint.is_empty()),
+        endpoint: endpoint(&bucket.endpoint),
         keys,
     }
 }

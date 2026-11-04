@@ -45,7 +45,55 @@ pub(super) fn s3_level(body: &[u8]) -> Result<Level, StorageError> {
     })
 }
 
-/// S3's `Error` document, or the status alone when the answer has none (a `HEAD`, a proxy's
+/// List Blobs' `EnumerationResults`: its blob prefixes as folders, its blobs as files, and
+/// its next marker, which is empty when the level is whole.
+pub(super) fn azure_level(body: &[u8]) -> Result<Level, StorageError> {
+    let text = std::str::from_utf8(body).map_err(|error| unreadable(&error))?;
+    // Azure starts its answers with a byte-order mark, which isn't XML.
+    let document =
+        Document::parse(text.trim_start_matches('\u{feff}')).map_err(|error| unreadable(&error))?;
+    let root = document.root_element();
+    if root.tag_name().name() != "EnumerationResults" {
+        return Err(StorageError::Unreadable(format!(
+            "expected EnumerationResults, found {}",
+            root.tag_name().name()
+        )));
+    }
+    let blobs = children(root, "Blobs").next();
+    let folders = blobs
+        .into_iter()
+        .flat_map(|blobs| children(blobs, "BlobPrefix"))
+        .filter_map(|prefix| text_of(prefix, "Name"))
+        .map(str::to_owned)
+        .collect();
+    let files = blobs
+        .into_iter()
+        .flat_map(|blobs| children(blobs, "Blob"))
+        .map(|blob| {
+            let key = text_of(blob, "Name")
+                .ok_or_else(|| StorageError::Unreadable("a blob without a name".to_owned()))?;
+            let size = children(blob, "Properties")
+                .next()
+                .and_then(|properties| text_of(properties, "Content-Length"))
+                .and_then(|size| size.parse().ok())
+                .unwrap_or_default();
+            Ok(StoredFile {
+                key: key.to_owned(),
+                size,
+            })
+        })
+        .collect::<Result<_, StorageError>>()?;
+    let next = text_of(root, "NextMarker")
+        .filter(|marker| !marker.is_empty())
+        .map(str::to_owned);
+    Ok(Level {
+        folders,
+        files,
+        next,
+    })
+}
+
+/// S3's `Error` document (Azure's has the same `Code` and `Message`), or the status alone when the answer has none (a `HEAD`, a proxy's
 /// page).
 pub(super) fn s3_refusal(status: u16, body: &[u8]) -> StorageError {
     let document = std::str::from_utf8(body)
@@ -149,6 +197,39 @@ mod tests {
         for (body, expected) in cases {
             assert_eq!(s3_refusal(403, body).to_string(), expected);
         }
+    }
+
+    /// As Azure documents List Blobs' answer, with a delimiter and a marker.
+    const AZURE: &str = "\u{feff}<?xml version=\"1.0\" encoding=\"utf-8\"?>
+<EnumerationResults ServiceEndpoint=\"https://acme.blob.core.windows.net/\" ContainerName=\"raw\">
+  <Prefix>2026/</Prefix>
+  <MaxResults>2</MaxResults>
+  <Delimiter>/</Delimiter>
+  <Blobs>
+    <Blob>
+      <Name>2026/orders.parquet</Name>
+      <Properties><Content-Length>4096</Content-Length><BlobType>BlockBlob</BlobType></Properties>
+    </Blob>
+    <BlobPrefix><Name>2026/01/</Name></BlobPrefix>
+  </Blobs>
+  <NextMarker>2!96!MDAwMDE5</NextMarker>
+</EnumerationResults>";
+
+    #[test]
+    fn reads_an_azure_levels_prefixes_blobs_and_marker() {
+        let level = azure_level(AZURE.as_bytes()).unwrap();
+
+        assert_eq!(level.folders, ["2026/01/"]);
+        assert_eq!(
+            level.files,
+            [StoredFile {
+                key: "2026/orders.parquet".to_owned(),
+                size: 4096,
+            }]
+        );
+        assert_eq!(level.next.as_deref(), Some("2!96!MDAwMDE5"));
+        let whole = AZURE.replace("<NextMarker>2!96!MDAwMDE5</NextMarker>", "<NextMarker />");
+        assert_eq!(azure_level(whole.as_bytes()).unwrap().next, None);
     }
 
     #[test]

@@ -4,10 +4,10 @@
 
 use std::time::Duration;
 
-use dbrover_core::TlsMode;
+use dbrover_core::{Password, TlsMode};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
-use hyper::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
+use hyper::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use hyper::{Method, Request, Uri};
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::Client;
@@ -110,6 +110,25 @@ impl Https {
             request.headers_mut().insert(name, value);
         }
         self.send(request).await
+    }
+
+    /// Gets `address` with `headers`, and `token` as a bearer token when there is one. A
+    /// token is a password for its lifetime, so it goes only over HTTPS, or to this machine.
+    pub(crate) async fn get_with_token(
+        &self,
+        address: &str,
+        token: Option<&Password>,
+        headers: &[(String, String)],
+    ) -> Result<Answer, HttpError> {
+        let mut headers = headers.to_vec();
+        if let Some(token) = token {
+            sendable(address)?;
+            headers.push((
+                AUTHORIZATION.to_string(),
+                format!("Bearer {}", token.expose()),
+            ));
+        }
+        self.get_signed(address, &headers).await
     }
 
     async fn send(&self, request: Request<Full<Bytes>>) -> Result<Answer, HttpError> {

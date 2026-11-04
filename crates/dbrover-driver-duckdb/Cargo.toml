@@ -32,7 +32,10 @@ duckdb = { workspace = true, features = ["bundled", "parquet", "json"] }
 duckdb.workspace = true
 
 [dev-dependencies]
+# A token endpoint on the loopback address, for signing in to the Google Cloud Storage stand-in.
+dbrover-cloud = { workspace = true, features = ["stand-in"] }
 dbrover-core = { workspace = true, features = ["conformance"] }
+serde_json.workspace = true
 tempfile.workspace = true
 
 [lints]

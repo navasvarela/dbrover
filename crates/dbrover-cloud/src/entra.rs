@@ -43,6 +43,8 @@ pub enum EntraResource {
     AzureSql,
     /// Azure Database for PostgreSQL and for MySQL.
     AzureDatabase,
+    /// Azure Blob Storage, for a DuckDB data source's container (C2).
+    Storage,
 }
 
 impl EntraResource {
@@ -51,6 +53,7 @@ impl EntraResource {
         match self {
             Self::AzureSql => "https://database.windows.net/.default",
             Self::AzureDatabase => "https://ossrdbms-aad.database.windows.net/.default",
+            Self::Storage => "https://storage.azure.com/.default",
         }
     }
 }

@@ -2,10 +2,13 @@
 //!
 //! The tests that read a bucket run against MinIO from `docker-compose.yml` when
 //! `DBROVER_TEST_S3_URL` is set (see `test-servers.env`), signing in with MinIO's own access
-//! key, and skip otherwise. The first of them in a run downloads DuckDB's `httpfs` extension.
+//! key, and against fake-gcs-server when `DBROVER_TEST_GCS_URL` is, and skip otherwise. The
+//! first of them in a run downloads DuckDB's `httpfs` extension.
 
 use dbrover_core::conformance;
-use dbrover_core::{ChildrenQuery, NodeKind, ObjectKind, ObjectStorage, S3Bucket, S3SignIn};
+use dbrover_core::{
+    ChildrenQuery, GcsBucket, GcsSignIn, NodeKind, ObjectKind, ObjectStorage, S3Bucket, S3SignIn,
+};
 
 use super::*;
 use crate::tests::{failure, in_memory, rows, text};
@@ -312,4 +315,64 @@ async fn finds_iceberg_and_delta_tables_in_their_folders_and_reads_them() {
         let names: Vec<_> = described.iter().map(|node| node.label.as_str()).collect();
         assert_eq!(names, columns);
     }
+}
+
+const GCS_URL_VAR: &str = "DBROVER_TEST_GCS_URL";
+
+/// fake-gcs-server's bucket from `http://<host>:<port>/<bucket>`, signed into with a Google
+/// credentials file whose token endpoint is `token_uri`.
+fn test_gcs_bucket(directory: &std::path::Path, token_uri: &str) -> Option<GcsBucket> {
+    let Ok(url) = std::env::var(GCS_URL_VAR) else {
+        eprintln!("skipping: {GCS_URL_VAR} is not set");
+        return None;
+    };
+    let (endpoint, bucket) = url.rsplit_once('/')?;
+    let credentials_file = directory.join("application_default_credentials.json");
+    let file = serde_json::json!({
+        "type": "authorized_user",
+        "client_id": "client",
+        "client_secret": "client-secret",
+        "refresh_token": "refresh-token",
+        "token_uri": token_uri,
+    });
+    std::fs::write(&credentials_file, file.to_string()).ok()?;
+    Some(GcsBucket {
+        bucket: bucket.to_owned(),
+        endpoint: endpoint.to_owned(),
+        sign_in: GcsSignIn::CredentialsFile { credentials_file },
+    })
+}
+
+/// Google Cloud Storage through fake-gcs-server, with a token from C0's Google sign-in handed
+/// out by a stand-in token endpoint: DuckDB reads with it, and DbRover lists with it.
+#[tokio::test]
+async fn reads_and_lists_a_google_cloud_storage_bucket_with_a_google_token() {
+    let directory = tempfile::tempdir().unwrap();
+    let body = serde_json::json!({ "access_token": "ya29.made-up", "expires_in": 3600 });
+    let endpoint = dbrover_cloud::stand_in::token_endpoint(200, &body.to_string())
+        .await
+        .unwrap();
+    let Some(bucket) = test_gcs_bucket(directory.path(), &endpoint.address) else {
+        return;
+    };
+    let config = DuckDbConfig {
+        storage: Some(ObjectStorage::Gcs(bucket)),
+        ..in_memory()
+    };
+    let mut connection = connect_with_secret(&config, None).await.unwrap();
+
+    let counted = rows(
+        &mut connection,
+        "SELECT count(*) FROM 'gs://dbrover/sales/*/*.parquet'",
+    )
+    .await;
+    let root = CatalogPath::root().child(NodeKind::Object(ObjectKind::Bucket), "gs://dbrover");
+    let listed = connection.children(&root).await.unwrap();
+
+    assert_eq!(counted, vec![text(&[Some("15")])]);
+    let labels: Vec<_> = listed.iter().map(|node| node.label.as_str()).collect();
+    assert!(
+        labels.contains(&"sales") && labels.contains(&"customers.csv"),
+        "{labels:?}"
+    );
 }
