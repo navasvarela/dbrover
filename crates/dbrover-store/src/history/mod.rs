@@ -17,7 +17,7 @@ pub use change::{NamedCell, ReplacedCell, RowChange, RowChangeKind};
 pub use export::HistoryExportError;
 pub use redact::redact_secrets;
 pub use runs::{
-    CombineMetrics, DEFAULT_RUNS_KEPT, OutputMetrics, ReportRun, RunError, RunOutcome,
+    CombineMetrics, DEFAULT_RUNS_KEPT, OutputMetrics, ReportRun, RunError, RunOrigin, RunOutcome,
     SourceMetrics, StepMetrics,
 };
 pub use source::{HistorySource, HistorySourceKind};
@@ -821,7 +821,7 @@ mod tests {
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .unwrap();
-            assert_eq!((mode.as_str(), version), ("wal", 3));
+            assert_eq!((mode.as_str(), version), ("wal", 4));
         }
     }
 
@@ -832,7 +832,7 @@ mod tests {
         drop(file.open().unwrap());
         let newer = rusqlite::Connection::open(file.path()).unwrap();
         newer
-            .execute_batch("ALTER TABLE history ADD COLUMN later TEXT; PRAGMA user_version = 4;")
+            .execute_batch("ALTER TABLE history ADD COLUMN later TEXT; PRAGMA user_version = 5;")
             .unwrap();
 
         let history = file.open().unwrap();
@@ -845,7 +845,7 @@ mod tests {
         let version: i32 = newer
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
     }
 
     /// The guard against secrets in the history: statements carrying one in every form

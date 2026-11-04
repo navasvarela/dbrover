@@ -28,7 +28,7 @@ use dbrover_report::{
 };
 use dbrover_store::{
     CombineMetrics, DEFAULT_RUNS_KEPT, OutputMetrics, ReportFiles, ReportName, ReportRun,
-    ReportSettings, RunError, RunOutcome, SourceMetrics, StepMetrics,
+    ReportSettings, RunError, RunOrigin, RunOutcome, SourceMetrics, StepMetrics,
 };
 use jiff::Timestamp;
 
@@ -262,8 +262,8 @@ impl RunRecord {
         }
     }
 
-    /// The run as the history keeps it, once it has ended.
-    pub fn to_report_run(&self, report: &ReportName) -> Option<ReportRun> {
+    /// The run as the history keeps it, once it has ended, started from `origin`.
+    pub fn to_report_run(&self, report: &ReportName, origin: RunOrigin) -> Option<ReportRun> {
         let (elapsed, outcome) = match self.end.as_ref()? {
             RunEnd::Finished { elapsed_ms } => {
                 (Duration::from_millis(*elapsed_ms), RunOutcome::Finished)
@@ -284,6 +284,7 @@ impl RunRecord {
             outcome,
             params: self.params.clone(),
             steps: self.measured.clone(),
+            origin,
         })
     }
 
@@ -703,7 +704,7 @@ impl Reports {
         for event in events {
             record.apply(event);
         }
-        let run = record.to_report_run(&report)?;
+        let run = record.to_report_run(&report, RunOrigin::App)?;
         self.running = None;
         Some(Command::RecordReportRun {
             run: Box::new(run),
@@ -828,10 +829,13 @@ mod tests {
                 elapsed_ms: 2,
                 warnings: Vec::new(),
             }));
-            assert!(record.to_report_run(&report).is_none(), "still running");
+            assert!(
+                record.to_report_run(&report, RunOrigin::App).is_none(),
+                "still running"
+            );
             record.apply(end);
 
-            let run = record.to_report_run(&report).unwrap();
+            let run = record.to_report_run(&report, RunOrigin::App).unwrap();
             assert_eq!(run.outcome, outcome);
             if let Some(elapsed) = elapsed {
                 assert_eq!(run.elapsed, elapsed);

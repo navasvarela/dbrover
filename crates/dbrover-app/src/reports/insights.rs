@@ -272,6 +272,7 @@ mod tests {
             outcome,
             params: Default::default(),
             steps,
+            origin: dbrover_store::RunOrigin::App,
         }
     }
 

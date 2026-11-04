@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 
 use dbrover_core::ByteCount;
 use dbrover_report::{HintId, grouped};
-use dbrover_store::{ReportName, ReportRun, RunOutcome, StepMetrics};
+use dbrover_store::{ReportName, ReportRun, RunOrigin, RunOutcome, StepMetrics};
 use egui::{Grid, RichText, Ui};
 use jiff::tz::TimeZone;
 
@@ -110,7 +110,12 @@ fn table(ui: &mut Ui, palette: &Palette, name: &ReportName, runs: &[ReportRun]) 
             ui.label("");
             for run in runs {
                 let started = run.started_at.to_zoned(time_zone.clone());
-                ui.label(RichText::new(started.strftime(STARTED_FORMAT).to_string()).strong());
+                ui.vertical(|ui| {
+                    ui.label(RichText::new(started.strftime(STARTED_FORMAT).to_string()).strong());
+                    if let Some(origin) = origin(run.origin) {
+                        ui.weak(origin);
+                    }
+                });
             }
             ui.end_row();
 
@@ -156,6 +161,15 @@ fn table(ui: &mut Ui, palette: &Palette, name: &ReportName, runs: &[ReportRun]) 
                 ui.end_row();
             }
         });
+}
+
+/// Where a run came from, under its start, for the runs the tab didn't start.
+fn origin(origin: RunOrigin) -> Option<&'static str> {
+    match origin {
+        RunOrigin::App => None,
+        RunOrigin::Command => Some("from the command line"),
+        RunOrigin::Mcp => Some("from MCP"),
+    }
 }
 
 fn outcome(ui: &mut Ui, palette: &Palette, run: &ReportRun) {

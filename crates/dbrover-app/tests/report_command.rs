@@ -508,6 +508,7 @@ mod runs {
         let runs = settings.runs("sales-by-category");
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].outcome, RunOutcome::Finished);
+        assert_eq!(runs[0].origin, dbrover_store::RunOrigin::Command);
         assert_eq!(
             runs[0].params.get("since").map(String::as_str),
             Some("2026-10-01")
