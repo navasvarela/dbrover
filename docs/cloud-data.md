@@ -427,8 +427,9 @@ as the first level of a small one.
   `*.metadata.json` files an Iceberg table: the folder's first child is then the table, which
   opens with `delta_scan` or with `iceberg_scan` on the newest metadata file, found by listing
   the metadata folder. A `*.metadata.json` file opens with `iceberg_scan` too.
-- The explorer's filter goes to the server as a prefix where the provider takes one; a filter
-  that isn't a prefix of a level's names is applied to each page as it loads.
+- The explorer's filter is applied to each page of a level as it loads. The providers filter
+  only by a key's start, with case, and the explorer's filter keeps any name that contains it,
+  without, so sending it would change what it finds.
 - Nothing is read to draw the tree but the listings: no file is opened until it is expanded
   or opened.
 
@@ -505,6 +506,16 @@ Each layer is one pull request in a stack, useful and tested on its own, with no
   **Exit:** on MinIO, the explorer's levels list the fixtures' folders and files with paging
   and a prefix filter; a Parquet file's columns are its schema's; the conformance walk passes
   on every node; the listing's request is signed as AWS's signer signs it.
+  **As built:** the listing is `dbrover-cloud`'s `storage` module: `ListObjectsV2` signed by
+  `aws-sigv4` (the signature checked against a separate SigV4 in Python's standard library),
+  read with `roxmltree`, virtual-hosted on AWS unless the bucket's name has a dot, by path at
+  an endpoint, and asked again in the bucket's own region when S3 answers with a redirect
+  naming it. The bucket's node is named by its address (`s3://dbrover`) and labelled by its
+  name, so a path alone says where an object is, and **Open data** on a file is
+  `SELECT * FROM '<address>'`. A file's columns are DuckDB's `DESCRIBE` of that, so a file in
+  a Hive-style folder (`year=2025/`) has the partition's column too, as its rows do.
+  `Connection::children`, which wants a level whole (the conformance walk, the MCP server),
+  lists ten pages at most and logs that it stopped; the explorer pages through all of it.
 - **C2e — Iceberg and Delta tables:** the explorer's table nodes for both formats, opened with
   `iceberg_scan` and `delta_scan`.
   **Exit:** on MinIO, the fixtures' Iceberg and Delta tables are found from their folders and

@@ -8,8 +8,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::AzureTool;
 use crate::placeholder::{PlaceholderError, Setting, Variables, expand, expand_path};
+use crate::{AzureTool, CatalogPath, NodeKind, ObjectKind};
 
 /// A bucket, written in `data_sources.toml` as `[data_source.storage]` with its `provider`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -259,6 +259,58 @@ impl ObjectStorage {
     }
 }
 
+/// The extensions of the files DuckDB reads as a table on its own, by their name: Parquet, CSV
+/// and JSON, compressed or not.
+const TABLE_EXTENSIONS: &[&str] = &[
+    ".parquet",
+    ".csv",
+    ".tsv",
+    ".json",
+    ".jsonl",
+    ".ndjson",
+    ".csv.gz",
+    ".tsv.gz",
+    ".json.gz",
+    ".jsonl.gz",
+    ".ndjson.gz",
+    ".csv.zst",
+    ".json.zst",
+    ".jsonl.zst",
+    ".ndjson.zst",
+];
+
+/// Whether DuckDB reads the file `name` as a table with `SELECT * FROM '<address>'`, choosing
+/// its reader by the name's extension, as its replacement scans do.
+pub fn reads_as_table(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    TABLE_EXTENSIONS
+        .iter()
+        .any(|extension| name.ends_with(extension))
+}
+
+/// The address of the bucket, folder or file at `path`: the bucket's segment's name
+/// (`s3://sales`), then each folder's and the file's, joined by `/`. A folder's ends with `/`,
+/// as a prefix of keys does. `None` for a path that isn't in a bucket.
+pub fn object_url(path: &CatalogPath) -> Option<String> {
+    let (bucket, rest) = path.segments().split_first()?;
+    if bucket.kind != NodeKind::Object(ObjectKind::Bucket) {
+        return None;
+    }
+    let mut url = format!("{}/", bucket.name);
+    for (index, segment) in rest.iter().enumerate() {
+        let is_last = index + 1 == rest.len();
+        match segment.kind {
+            NodeKind::Object(ObjectKind::Folder) => {
+                url.push_str(&segment.name);
+                url.push('/');
+            }
+            NodeKind::Object(ObjectKind::File) if is_last => url.push_str(&segment.name),
+            _ => return None,
+        }
+    }
+    Some(url)
+}
+
 /// The bucket's address and where it is served from, for logs and tooltips. Never a secret,
 /// and never the key's id either, which names an account.
 impl fmt::Display for ObjectStorage {
@@ -399,6 +451,44 @@ mod tests {
         for (storage, url, shown) in cases {
             assert_eq!(storage.url(), url);
             assert_eq!(storage.to_string(), shown);
+        }
+    }
+
+    #[test]
+    fn a_paths_address_joins_its_folders_and_file_to_the_buckets() {
+        let bucket = CatalogPath::root().child(NodeKind::Object(ObjectKind::Bucket), "s3://sales");
+        let folder = bucket
+            .child(NodeKind::Object(ObjectKind::Folder), "year=2025")
+            .child(NodeKind::Object(ObjectKind::Folder), "month=01");
+        let file = folder.child(NodeKind::Object(ObjectKind::File), "part 0.parquet");
+        let cases = [
+            (bucket, Some("s3://sales/")),
+            (folder, Some("s3://sales/year=2025/month=01/")),
+            (file, Some("s3://sales/year=2025/month=01/part 0.parquet")),
+            (
+                CatalogPath::root().child(NodeKind::Database, "memory"),
+                None,
+            ),
+            (CatalogPath::root(), None),
+        ];
+        for (path, expected) in cases {
+            assert_eq!(object_url(&path).as_deref(), expected, "{path}");
+        }
+    }
+
+    #[test]
+    fn files_read_as_tables_by_their_extension() {
+        let cases = [
+            ("part-0.parquet", true),
+            ("events.JSONL", true),
+            ("orders.csv.gz", true),
+            ("00002-1f.metadata.json", true),
+            ("_SUCCESS", false),
+            ("photo.png", false),
+            ("snap-1.avro", false),
+        ];
+        for (name, expected) in cases {
+            assert_eq!(reads_as_table(name), expected, "{name}");
         }
     }
 

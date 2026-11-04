@@ -7,7 +7,7 @@ use std::time::Duration;
 use dbrover_core::TlsMode;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
-use hyper::header::{CONTENT_TYPE, HeaderValue};
+use hyper::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use hyper::{Method, Request, Uri};
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::Client;
@@ -16,8 +16,8 @@ use hyper_util::rt::TokioExecutor;
 
 use crate::with_causes;
 
-/// How long a token request may take, connecting included. Token endpoints answer in well
-/// under a second; a sign-in that hangs would hold the data source's connection up with it.
+/// How long a request may take, connecting included. Token endpoints and a bucket's listing
+/// answer in well under a second; a request that hangs would hold the connection up with it.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, thiserror::Error)]
@@ -34,11 +34,19 @@ pub enum HttpError {
     TimedOut,
 }
 
-/// What an endpoint answered: its status and its whole body.
+/// What an endpoint answered: its status, its headers and its whole body.
 #[derive(Debug)]
 pub(crate) struct Answer {
     pub status: u16,
+    pub headers: HeaderMap,
     pub body: Bytes,
+}
+
+impl Answer {
+    /// The header's value, when it is there and is text.
+    pub(crate) fn header(&self, name: &str) -> Option<&str> {
+        self.headers.get(name)?.to_str().ok()
+    }
 }
 
 pub(crate) struct Https {
@@ -78,6 +86,33 @@ impl Https {
             CONTENT_TYPE,
             HeaderValue::from_static("application/x-www-form-urlencoded"),
         );
+        self.send(request).await
+    }
+
+    /// Gets `address` with `headers`, which carry no secret of their own: a request signed
+    /// with SigV4 shows only its signature, so it may go over plain HTTP to a store on the
+    /// network, as DuckDB's own requests to it do.
+    pub(crate) async fn get_signed(
+        &self,
+        address: &str,
+        headers: &[(String, String)],
+    ) -> Result<Answer, HttpError> {
+        let uri: Uri = address
+            .parse()
+            .map_err(|_| HttpError::BadAddress(address.to_owned()))?;
+        let mut request = Request::new(Full::new(Bytes::new()));
+        *request.uri_mut() = uri;
+        for (name, value) in headers {
+            let name = HeaderName::from_bytes(name.as_bytes())
+                .map_err(|_| HttpError::BadAddress(address.to_owned()))?;
+            let value = HeaderValue::from_str(value)
+                .map_err(|_| HttpError::BadAddress(address.to_owned()))?;
+            request.headers_mut().insert(name, value);
+        }
+        self.send(request).await
+    }
+
+    async fn send(&self, request: Request<Full<Bytes>>) -> Result<Answer, HttpError> {
         let exchange = async {
             let response = self
                 .client
@@ -85,13 +120,18 @@ impl Https {
                 .await
                 .map_err(|error| HttpError::Request(with_causes(&error)))?;
             let status = response.status().as_u16();
+            let headers = response.headers().clone();
             let body = response
                 .into_body()
                 .collect()
                 .await
                 .map_err(|error| HttpError::Request(with_causes(&error)))?
                 .to_bytes();
-            Ok(Answer { status, body })
+            Ok(Answer {
+                status,
+                headers,
+                body,
+            })
         };
         tokio::time::timeout(REQUEST_TIMEOUT, exchange)
             .await
