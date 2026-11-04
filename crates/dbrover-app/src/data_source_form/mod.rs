@@ -1,6 +1,7 @@
 //! The editable fields behind the data source dialog, and their validation. No egui here, so
 //! the rules are testable without a UI.
 
+mod bucket;
 mod cassandra;
 mod dynamodb;
 mod elasticsearch;
@@ -11,13 +12,14 @@ mod ssh;
 
 use dbrover_core::{
     ClickHouseConfig, CloudProvider, ConnectionConfig, DataSource, DataSourceId, DriverKind,
-    DuckDbConfig, DuckDbDatabase, McpLogin, MysqlConfig, ObjectStorage, Password, Port,
-    PostgresConfig, ProjectId, RedisConfig, SafetyLevel, SourceColor, SqlServerConfig,
-    SqliteConfig, TemplateError, has_placeholder,
+    DuckDbConfig, DuckDbDatabase, McpLogin, MysqlConfig, Password, Port, PostgresConfig, ProjectId,
+    RedisConfig, SafetyLevel, SourceColor, SqlServerConfig, SqliteConfig, StorageProvider,
+    TemplateError, has_placeholder,
 };
 use dbrover_engine::PasswordUpdate;
 use dbrover_engine::read_only::Storage;
 
+pub use bucket::{BucketFields, BucketSignIn};
 pub use cassandra::CassandraFields;
 pub use dynamodb::DynamoDbFields;
 pub use elasticsearch::ElasticsearchFields;
@@ -123,6 +125,23 @@ pub enum FormError {
     InvalidStatementTimeout,
     #[error("This service signs in only with {0}.")]
     CloudSignInRequired(CloudProvider),
+    #[error("Bucket is required.")]
+    BucketMissing,
+    #[error("Storage account is required.")]
+    StorageAccountMissing,
+    #[error("Profile is required to sign in with an AWS profile.")]
+    ProfileMissing,
+    #[error("Access key is required to sign in with an access key.")]
+    AccessKeyMissing,
+    #[error("Credentials file is required to sign in with one.")]
+    CredentialsFileMissing,
+    #[error("{1} doesn't sign in with {0}.")]
+    BucketSignInNotOffered(&'static str, StorageProvider),
+    #[error(
+        "A MotherDuck database keeps its token as the password, so its bucket can't sign in \
+         with an access key: use an AWS profile."
+    )]
+    MotherDuckWithAccessKey,
 }
 
 /// Text as the user typed it. Converted to a [`DataSource`] only on Test or Save.
@@ -216,9 +235,7 @@ pub struct DuckDbFields {
     /// The data source's password as typed: a MotherDuck token, or a bucket's access key's
     /// secret. Empty keeps the saved one.
     pub secret: String,
-    /// The bucket the data source reads from, kept as it was read so that saving the dialog
-    /// doesn't drop it.
-    pub storage: Option<ObjectStorage>,
+    pub bucket: BucketFields,
 }
 
 /// Where a DuckDB data source's database is.
@@ -257,7 +274,7 @@ impl DriverFields {
                 read_only: false,
                 motherduck_name: String::new(),
                 secret: String::new(),
-                storage: None,
+                bucket: BucketFields::default(),
             }),
             DriverKind::ClickHouse => Self::ClickHouse(ClickHouseFields {
                 server: ServerFields::new(CLICKHOUSE_DEFAULTS),
@@ -315,7 +332,7 @@ impl DriverFields {
                     read_only,
                     motherduck_name,
                     secret: String::new(),
-                    storage: config.storage.clone(),
+                    bucket: BucketFields::from_storage(config.storage.as_ref()),
                 })
             }
             ConnectionConfig::ClickHouse(config) => Self::ClickHouse(ClickHouseFields {
@@ -535,9 +552,12 @@ impl DuckDbFields {
                 name: self.motherduck_name.trim().to_owned(),
             },
         };
+        if self.location == DuckDbLocation::MotherDuck && self.bucket.uses_password() {
+            return Err(FormError::MotherDuckWithAccessKey);
+        }
         Ok(DuckDbConfig {
             database,
-            storage: self.storage.clone(),
+            storage: self.bucket.to_storage()?,
         })
     }
 }
@@ -565,7 +585,9 @@ fn required(value: &str, missing: FormError) -> Result<String, FormError> {
 
 #[cfg(test)]
 mod tests {
-    use dbrover_core::{S3Bucket, S3SignIn, ServerConfig, SshConfig, SshLogin, TlsMode};
+    use dbrover_core::{
+        ObjectStorage, S3Bucket, S3SignIn, ServerConfig, SshConfig, SshLogin, TlsMode,
+    };
 
     use super::*;
 

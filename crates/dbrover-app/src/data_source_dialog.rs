@@ -5,7 +5,7 @@ use std::path::Path;
 use dbrover_core::{
     AzureTool, CloudProvider, DataSource, DataSourceId, DriverKind, DuckDbConfig, DynamoDbSignIn,
     ElasticsearchAuth, ManagedService, MongoConfig, SafetyLevel, ScanGuard, ServerInfo,
-    SourceColor, expand, expand_path, has_placeholder,
+    SourceColor, StorageProvider, expand, expand_path, has_placeholder,
 };
 use dbrover_engine::read_only::{self, Guard};
 use dbrover_engine::{DatabaseFile, Event, PasswordUpdate, ProcessEnvironment};
@@ -15,10 +15,10 @@ use egui::{
 };
 
 use crate::data_source_form::{
-    CassandraFields, CloudFields, DataSourceForm, DatabaseField, DriverFields, DuckDbFields,
-    DuckDbLocation, DynamoDbFields, ElasticsearchFields, FormError, McpLoginFields,
-    McpPasswordChange, MongoFields, MongoTarget, ServerFields, SshFields, SshLoginChoice,
-    TlsChoice,
+    BucketFields, BucketSignIn, CassandraFields, CloudFields, DataSourceForm, DatabaseField,
+    DriverFields, DuckDbFields, DuckDbLocation, DynamoDbFields, ElasticsearchFields, FormError,
+    McpLoginFields, McpPasswordChange, MongoFields, MongoTarget, ServerFields, SshFields,
+    SshLoginChoice, TlsChoice,
 };
 use crate::dialog::{self, DialogSize};
 use crate::file_picker::{self, FileEngine};
@@ -999,7 +999,7 @@ fn duckdb_rows(
         );
     });
     ui.end_row();
-    match fields.location {
+    let creating = match fields.location {
         DuckDbLocation::File => file_rows(
             ui,
             FileEngine::DuckDb,
@@ -1019,7 +1019,163 @@ fn duckdb_rows(
             motherduck_rows(ui, fields, password_hint);
             None
         }
+    };
+    bucket_rows(ui, &mut fields.bucket, &mut fields.secret, password_hint);
+    creating
+}
+
+/// The bucket a DuckDB data source reads from (C2): its provider, where it is, and how it
+/// signs in. `secret` is the data source's password, an access key's secret here.
+fn bucket_rows(ui: &mut Ui, bucket: &mut BucketFields, secret: &mut String, password_hint: &str) {
+    ui.label("Bucket");
+    ui.checkbox(&mut bucket.enabled, "Read from a bucket")
+        .on_hover_text(
+            "DuckDB is given the bucket's credentials, and the explorer lists its folders and \
+             files",
+        );
+    ui.end_row();
+    if !bucket.enabled {
+        return;
     }
+    let label = ui.label("Provider");
+    let mut provider = bucket.provider;
+    egui::ComboBox::from_id_salt("data_source_bucket_provider")
+        .selected_text(provider.to_string())
+        .show_ui(ui, |ui| {
+            for offered in StorageProvider::ALL {
+                ui.selectable_value(&mut provider, offered, offered.to_string());
+            }
+        })
+        .response
+        .labelled_by(label.id);
+    ui.end_row();
+    bucket.choose_provider(provider);
+    match bucket.provider {
+        StorageProvider::S3 => {
+            setting_row(
+                ui,
+                "Bucket name",
+                &mut bucket.bucket,
+                "sales",
+                Resolve::Text,
+            );
+            setting_row(
+                ui,
+                "Region",
+                &mut bucket.region,
+                "the profile's, or us-east-1",
+                Resolve::Text,
+            );
+            setting_row(
+                ui,
+                "Endpoint",
+                &mut bucket.endpoint,
+                "AWS's own",
+                Resolve::Text,
+            );
+        }
+        StorageProvider::Gcs => {
+            setting_row(
+                ui,
+                "Bucket name",
+                &mut bucket.bucket,
+                "sales",
+                Resolve::Text,
+            );
+            setting_row(
+                ui,
+                "Endpoint",
+                &mut bucket.endpoint,
+                "Google's own",
+                Resolve::Text,
+            );
+        }
+        StorageProvider::Azure => {
+            setting_row(ui, "Account", &mut bucket.account, "acme", Resolve::Text);
+            setting_row(ui, "Container", &mut bucket.bucket, "sales", Resolve::Text);
+            setting_row(
+                ui,
+                "Endpoint",
+                &mut bucket.endpoint,
+                "https://<account>.blob.core.windows.net",
+                Resolve::Text,
+            );
+        }
+    }
+    bucket_sign_in_rows(ui, bucket, secret, password_hint);
+}
+
+fn bucket_sign_in_rows(
+    ui: &mut Ui,
+    bucket: &mut BucketFields,
+    secret: &mut String,
+    password_hint: &str,
+) {
+    let provider = bucket.provider;
+    let label = ui.label("Sign in with");
+    egui::ComboBox::from_id_salt("data_source_bucket_sign_in")
+        .selected_text(bucket.sign_in.label(provider))
+        .show_ui(ui, |ui| {
+            for sign_in in BucketSignIn::offered(provider) {
+                ui.selectable_value(&mut bucket.sign_in, *sign_in, sign_in.label(provider));
+            }
+        })
+        .response
+        .labelled_by(label.id);
+    ui.end_row();
+    match (bucket.sign_in, provider) {
+        (BucketSignIn::Profile, _) => {
+            setting_row(ui, "Profile", &mut bucket.profile, "default", Resolve::Text)
+        }
+        (BucketSignIn::AccessKey, _) => {
+            setting_row(
+                ui,
+                "Access key",
+                &mut bucket.key_id,
+                "the store's key id",
+                Resolve::Text,
+            );
+            let label = ui.label("Secret key");
+            ui.add(
+                TextEdit::singleline(secret)
+                    .password(true)
+                    .hint_text(password_hint)
+                    .desired_width(FIELD_WIDTH),
+            )
+            .labelled_by(label.id);
+            ui.end_row();
+        }
+        (BucketSignIn::CredentialsFile, _) => setting_row(
+            ui,
+            "Credentials file",
+            &mut bucket.credentials_file,
+            "a service account's key",
+            Resolve::Path,
+        ),
+        (BucketSignIn::Provider, StorageProvider::Azure) => {
+            ui.label("Signed in with");
+            ui.horizontal(|ui| {
+                for tool in [AzureTool::AzureCli, AzureTool::AzureDeveloperCli] {
+                    ui.radio_value(&mut bucket.tool, tool, tool.to_string());
+                }
+            });
+            ui.end_row();
+            setting_row(
+                ui,
+                "Tenant",
+                &mut bucket.tenant,
+                "the CLI's default",
+                Resolve::Text,
+            );
+        }
+        (BucketSignIn::Provider | BucketSignIn::Anonymous, _) => {}
+    }
+    ui.label("");
+    ui.weak(
+        "DuckDB downloads the extension that reads the bucket the first time, and is handed \
+         short-lived credentials that DbRover never stores.",
+    );
+    ui.end_row();
 }
 
 /// A MotherDuck database's name and token. The token is kept in the keychain, as a password
