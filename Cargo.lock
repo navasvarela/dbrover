@@ -2297,7 +2297,7 @@ checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 
 [[package]]
 name = "dbrover-app"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2348,7 +2348,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-chart"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "dbrover-core",
  "jiff",
@@ -2356,7 +2356,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-cloud"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "aws-config",
  "aws-credential-types",
@@ -2384,7 +2384,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-core"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -2396,11 +2396,11 @@ dependencies = [
 
 [[package]]
 name = "dbrover-diagram"
-version = "0.26.0"
+version = "0.27.0"
 
 [[package]]
 name = "dbrover-document"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "data-encoding",
  "thiserror 2.0.21",
@@ -2408,7 +2408,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-driver-cassandra"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "async-trait",
  "dbrover-core",
@@ -2423,7 +2423,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-driver-clickhouse"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "async-trait",
  "clickhouse",
@@ -2441,7 +2441,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-driver-duckdb"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "async-trait",
  "dbrover-cloud",
@@ -2457,7 +2457,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-driver-dynamodb"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "async-trait",
  "aws-sdk-dynamodb",
@@ -2474,7 +2474,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-driver-elasticsearch"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2495,7 +2495,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-driver-mongodb"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "async-trait",
  "bson",
@@ -2513,7 +2513,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-driver-mysql"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "async-trait",
  "dbrover-core",
@@ -2527,7 +2527,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-driver-postgres"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "async-trait",
  "dbrover-core",
@@ -2542,7 +2542,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-driver-redis"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "async-trait",
  "dbrover-core",
@@ -2559,7 +2559,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-driver-sqlite"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "async-trait",
  "dbrover-core",
@@ -2570,7 +2570,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-driver-sqlserver"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "async-trait",
  "dbrover-core",
@@ -2588,7 +2588,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-engine"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "async-trait",
  "aws-sdk-dynamodb",
@@ -2629,7 +2629,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-export"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "calamine",
  "dbrover-core",
@@ -2648,7 +2648,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-language"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "dbrover-core",
  "dbrover-document",
@@ -2659,7 +2659,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-mcp"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "aws-sdk-dynamodb",
  "dbrover-cloud",
@@ -2685,7 +2685,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-picture"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "resvg",
  "thiserror 2.0.21",
@@ -2693,7 +2693,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-plan"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "roxmltree",
  "serde_json",
@@ -2702,7 +2702,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-report"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "calamine",
  "dbrover-core",
@@ -2725,7 +2725,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-sql"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "base64 0.22.1",
  "dbrover-core",
@@ -2739,7 +2739,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-ssh"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "data-encoding",
  "dbrover-core",
@@ -2755,7 +2755,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-store"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "dbrover-core",
  "dbrover-export",
@@ -2772,7 +2772,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-tls"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "dbrover-core",
  "rustls",
