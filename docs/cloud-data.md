@@ -565,6 +565,15 @@ Each layer is one pull request in a stack, useful and tested on its own, with no
   C2g.
   **Exit:** a kittest adds an S3 bucket with an access key and a MotherDuck database, and
   each saves as typed.
+  **As built:** **Read from a bucket** opens the section: **Provider**, then **Bucket name**,
+  **Region** and **Endpoint** (S3), **Bucket name** and **Endpoint** (Google Cloud Storage),
+  or **Account**, **Container** and **Endpoint** (Azure), and **Sign in with**, offering each
+  provider's own sign-ins (AWS's default chain, an AWS profile, an access key and its **Secret
+  key**, Application Default Credentials, a credentials file, Microsoft Entra ID through `az`
+  or `azd`, or none). Every field takes `${NAME}` placeholders and shows what they resolve to.
+  Each provider's fields are kept while another is chosen. A MotherDuck database's bucket
+  can't sign in with an access key (one password per data source), which saving says. The
+  kittest adds the S3 bucket; MotherDuck's rows are C2g's, tested in the form.
 - **C2i — Manual and demo note:** a page in the manual's Data sources part, **Object storage
   and MotherDuck**, and the C2 demo note in the roadmap.
 
