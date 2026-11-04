@@ -6,6 +6,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::Plan;
+
 /// One step of a run, or how it ended.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
@@ -168,6 +170,16 @@ impl RunFailure {
         }
     }
 
+    /// Says where the limit it stopped at was set, from `plan`, the plan it ran, unless the
+    /// limit already says.
+    pub fn place_limit(&mut self, plan: &Plan) {
+        if let Some(limit) = &mut self.limit
+            && limit.set_in.is_none()
+        {
+            limit.set_in = plan.limit_set_in(&self.step, &limit.key);
+        }
+    }
+
     pub fn at_limit(step: Step, message: impl Into<String>, limit: LimitHit) -> Self {
         Self {
             step,
@@ -218,6 +230,58 @@ pub struct LimitHit {
     pub value: String,
     /// Where the key goes, as `the [[source]] "balances"`.
     pub raise_in: String,
+    /// Who set the value the run stopped at; `None` for a limit that is a format's own (an
+    /// Excel sheet's rows), and in events from before RP4h.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set_in: Option<LimitSetIn>,
+}
+
+/// Where the value of a limit a run stopped at came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LimitSetIn {
+    /// The report's file sets the key.
+    File,
+    /// The file leaves it out, so the default in Settings › Reports holds: the one set there,
+    /// or the built-in one the page shows.
+    Settings,
+}
+
+/// The key a run stops at past an Excel sheet's rows, which is Excel's limit, not DbRover's.
+const EXCEL_ROWS_KEY: &str = "continue_on_new_sheet";
+
+impl LimitHit {
+    /// What to change to let the run go further, as the report's tab and `dbrover report run`
+    /// say it.
+    pub fn advice(&self) -> String {
+        let Self {
+            key,
+            value,
+            raise_in,
+            set_in,
+        } = self;
+        if key == EXCEL_ROWS_KEY {
+            return format!(
+                "It stopped at {value}. To go on in a new sheet, set {key} = true in {raise_in} \
+                 of the report's file."
+            );
+        }
+        match set_in {
+            Some(LimitSetIn::File) => format!(
+                "It stopped at {key} = {value}, set in {raise_in} of the report's file. To allow \
+                 more, raise it there."
+            ),
+            Some(LimitSetIn::Settings) => format!(
+                "It stopped at {key} = {value}, the default in Settings › Reports, since the \
+                 report's file doesn't set it. To allow more, raise it there for every report, \
+                 or set {key} in {raise_in} of the report's file for this one."
+            ),
+            None => format!(
+                "It stopped at {key} = {value}. To allow more, raise {key} in {raise_in} of the \
+                 report's file, or its default for every report in Settings › Reports."
+            ),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -258,5 +322,24 @@ mod tests {
                 "{line}"
             );
         }
+    }
+
+    /// A limit's `set_in` came with RP4h: older lines have none, and a limit without one
+    /// writes none, so older readers see the line they knew.
+    #[test]
+    fn reads_a_limit_from_before_it_said_who_set_it() {
+        let line = r#"{"key":"max_rows","value":"10 rows","raise_in":"[combine]"}"#;
+        let limit: LimitHit = serde_json::from_str(line).unwrap();
+        assert_eq!(limit.set_in, None);
+        assert_eq!(serde_json::to_string(&limit).unwrap(), line);
+        let settings = LimitHit {
+            set_in: Some(LimitSetIn::Settings),
+            ..limit
+        };
+        assert!(
+            serde_json::to_string(&settings)
+                .unwrap()
+                .ends_with(r#""set_in":"settings"}"#)
+        );
     }
 }

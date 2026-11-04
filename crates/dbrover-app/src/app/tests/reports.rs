@@ -550,6 +550,7 @@ fn marks_the_combine_step_a_run_failed_at() {
             key: "memory_limit".to_owned(),
             value: "2 GiB".to_owned(),
             raise_in: "[combine]".to_owned(),
+            set_in: None,
         },
     )));
     let mut harness = start_with_reports(dir.path(), COMBINED, StandIn::new(script));
@@ -559,7 +560,8 @@ fn marks_the_combine_step_a_run_failed_at() {
     step_until_visible(&mut harness, "Failed at the combine step.");
     shows(&harness, "failed");
     harness.get_by_label_contains(
-        "To allow more, raise memory_limit in [combine] of the report's file.",
+        "It stopped at memory_limit = 2 GiB, the default in Settings › Reports, since the \
+         report's file doesn't set it.",
     );
 }
 
@@ -585,6 +587,7 @@ fn shows_a_failed_run_and_the_limit_it_hit() {
         key: "max_rows".to_owned(),
         value: "1,000,000 rows".to_owned(),
         raise_in: "the [[source]] \"balances\"".to_owned(),
+        set_in: None,
     };
     let launcher = StandIn::new(vec![RunEvent::Failed(RunFailure::at_limit(
         Step::Source {
@@ -600,9 +603,9 @@ fn shows_a_failed_run_and_the_limit_it_hit() {
     step_until_visible(&mut harness, "Failed at source \"balances\".");
     harness.get_by_label("the source returned more than 1,000,000 rows, its max_rows");
     harness.get_by_label_contains(
-        "To allow more, raise max_rows in the [[source]] \"balances\" of the report's file.",
+        "or set max_rows in the [[source]] \"balances\" of the report's file for this one.",
     );
-    harness.get_by_label("Settings › Reports").click();
+    harness.get_by_label("Open Settings › Reports").click();
     step_until_visible(&mut harness, "Rows a source may return");
 }
 

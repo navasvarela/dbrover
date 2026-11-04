@@ -30,7 +30,8 @@ mod statement;
 mod typing;
 
 pub use events::{
-    Batch, LimitHit, LoadedColumn, Preview, RunEvent, RunFailure, SourceStart, Step, WrittenFile,
+    Batch, LimitHit, LimitSetIn, LoadedColumn, Preview, RunEvent, RunFailure, SourceStart, Step,
+    WrittenFile,
 };
 pub use file_name::FileName;
 pub use hints::{HintId, UnknownHint};

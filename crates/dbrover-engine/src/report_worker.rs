@@ -340,6 +340,7 @@ fn timed_out(timeout: Duration) -> RunFailure {
             key: "timeout".to_owned(),
             value,
             raise_in: "[report]".to_owned(),
+            set_in: None,
         },
     )
 }

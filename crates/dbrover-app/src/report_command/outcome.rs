@@ -79,6 +79,7 @@ mod tests {
                 key: "max_rows".to_owned(),
                 value: "10 rows".to_owned(),
                 raise_in: "the [[source]] \"lines\"".to_owned(),
+                set_in: None,
             },
         ))
     }

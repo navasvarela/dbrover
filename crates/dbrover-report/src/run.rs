@@ -380,6 +380,7 @@ impl Count {
                     key: "max_rows".to_owned(),
                     value,
                     raise_in,
+                    set_in: None,
                 },
             ));
         }
@@ -395,6 +396,7 @@ impl Count {
                     key: "max_bytes".to_owned(),
                     value,
                     raise_in,
+                    set_in: None,
                 },
             ));
         }
@@ -539,6 +541,7 @@ impl OutputRun<'_> {
                     key: "max_size".to_owned(),
                     value,
                     raise_in: self.raise_in(),
+                    set_in: None,
                 },
             ));
         }
@@ -556,6 +559,7 @@ impl OutputRun<'_> {
                     key: "continue_on_new_sheet".to_owned(),
                     value: format!("{} rows a sheet", grouped(per_sheet)),
                     raise_in: self.raise_in(),
+                    set_in: None,
                 },
             ));
         }

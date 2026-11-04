@@ -35,6 +35,8 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
     }
     let started = Instant::now();
     let mut out = Events::new(io::stdout().lock());
+    // Kept to say, of a limit the run stops at, whether the file or Settings set it.
+    let mut planned: Option<Plan> = None;
     let outcome = read_request()
         .map_err(|message| RunFailure::new(Step::Worker, message))
         .and_then(|request| {
@@ -52,7 +54,9 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
                 folder: &request.folder,
                 staging: &request.staging,
             };
-            run_report(&paths, &plan, &values, folders, &mut out)
+            let ran = run_report(&paths, &plan, &values, folders, &mut out);
+            planned = Some(plan);
+            ran
         });
     match outcome {
         Ok(()) => {
@@ -61,7 +65,10 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
             });
             FINISHED
         }
-        Err(failure) => {
+        Err(mut failure) => {
+            if let Some(plan) = &planned {
+                failure.place_limit(plan);
+            }
             tracing::warn!("the report failed: {failure}");
             out.send(&RunEvent::Failed(failure));
             FAILED

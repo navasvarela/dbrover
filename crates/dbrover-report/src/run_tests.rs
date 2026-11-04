@@ -287,6 +287,7 @@ async fn names_the_limit_and_where_to_raise_it() {
             key: "max_rows".to_owned(),
             value: "120 rows".to_owned(),
             raise_in: "the [[source]] \"balances\"".to_owned(),
+            set_in: None,
         }))
     );
 }
@@ -331,6 +332,7 @@ async fn passes_on_the_sources_own_failure() {
             key: "timeout".to_owned(),
             value: "10m".to_owned(),
             raise_in: "the [[source]] \"balances\"".to_owned(),
+            set_in: None,
         })),
     });
     let (outcome, _) = run_into(&plan("", BOTH), reader, folder.path()).await;
@@ -404,6 +406,7 @@ fn events_are_json_lines_the_app_reads_back() {
                 key: "max_rows".to_owned(),
                 value: "120 rows".to_owned(),
                 raise_in: "the [[source]] \"balances\"".to_owned(),
+                set_in: None,
             },
         )),
     ];
