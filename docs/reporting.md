@@ -1385,42 +1385,42 @@ removes "What's next".
 Each layer is one pull request in a stack, useful and tested on its own, with synthetic data
 only.
 
-- **RP5a — Plan** (built, {RP5a}): this section, its decisions and risks, and the roadmap's entries.
-- **RP5b — PRQL** (built, {RP5b}): in `dbrover-report`, `prql` read, compiled, its parameters rewritten, its
+- **RP5a — Plan** (built, #469): this section, its decisions and risks, and the roadmap's entries.
+- **RP5b — PRQL** (built, #470): in `dbrover-report`, `prql` read, compiled, its parameters rewritten, its
   errors pointing into it; the plan and the run use the compiled SQL.
   **Exit:** a PRQL combine and its SQL twin write the same files; a PRQL error names its line
   and column; `$since` is bound and a `$` in a string isn't; `prql` beside `query` is a problem.
-- **RP5c — The compiled SQL, shown** (built, {RP5c}): the tab's **Combine SQL**, the combine line's fold-out,
+- **RP5c — The compiled SQL, shown** (built, #471): the tab's **Combine SQL**, the combine line's fold-out,
   `combine_sql` in `started`, and the command's SQL under a combine error.
   **Exit:** kittest finds the compiled SQL in a PRQL report's tab and none in a SQL report's;
   the command prints the numbered SQL under a combine error and `--json` carries it.
-- **RP4g — Quiet hints** (built, {RP4g}): ids, `quiet_hints` read and checked, the tab's hints filtered.
+- **RP4g — Quiet hints** (built, #472): ids, `quiet_hints` read and checked, the tab's hints filtered.
   **Exit:** a report that silences `source-reads-more` shows no such hint where an identical one
   without it does; an unknown id is a problem listing the ids.
-- **RP4h — Where a limit came from** (built, {RP4h}): `set_in` from the plan to the error, the tab and the
+- **RP4h — Where a limit came from** (built, #473): `set_in` from the plan to the error, the tab and the
   command.
   **Exit:** a run stopped at a file's `max_rows` and one stopped at Settings' say which; older
   events still read.
-- **RP4i — Renaming a report** (built, {RP4i}): **Rename…**, the file renamed and its runs moved.
+- **RP4i — Renaming a report** (built, #474): **Rename…**, the file renamed and its runs moved.
   **Exit:** a report with runs renamed in the app lists them under its new name; a name in use,
   or one that isn't a file name, is refused.
-- **RP6g — A run's origin** (built, {RP6g}): the column, the record and the Runs table.
+- **RP6g — A run's origin** (built, #475): the column, the record and the Runs table.
   **Exit:** a version 3 history migrates; runs from the app and the command read back with
   their origin; kittest shows *from the command line*.
-- **RP6h — `dbrover report list`** (built, {RP6h}).
+- **RP6h — `dbrover report list`** (built, #476).
   **Exit:** on the real binary, a folder with a good report and one with problems lists both,
   in lines and in JSON.
-- **RP6i — `--progress`** (built, {RP6i}).
+- **RP6i — `--progress`** (built, #477).
   **Exit:** table tests of the line's text; on a pipe, `--progress` prints nothing more.
-- **RP6j — The worker dies with its command** (built, {RP6j}).
+- **RP6j — The worker dies with its command** (built, #478).
   **Exit:** on Linux, the real binary SIGKILLed during a slow source leaves no worker; on every
   system, a worker whose events' reader closes stops and removes its staging folder.
-- **RP4j — MCP clients running reports** (built, {RP4j}): `list_reports`, `run_report`, the permission, and the
+- **RP4j — MCP clients running reports** (built, #479): `list_reports`, `run_report`, the permission, and the
   app's runner.
   **Exit:** through the MCP test client, a project without the permission lists reports and is
   refused a run; with it, the shop's report runs and its files exist; a report on another
   project's data source isn't listed.
-- **RP7 — Manual and demo notes** (built, {RP7}): the chapter and the MCP chapter as above, the example, the
+- **RP7 — Manual and demo notes** (built, #480): the chapter and the MCP chapter as above, the example, the
   picture, and RP4's to RP7's roadmap entries marked built with their demo notes.
 
 **Exit:** a report whose combine step is PRQL runs from the tab, the command line and an MCP

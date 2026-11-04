@@ -1988,7 +1988,7 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   client, its compiled SQL shown in each; its runs say where they came from, survive a rename,
   and can silence a hint.
 
-  **Demo note:** built in {RP5a} to {RP4j}, and RP7. To try it: make the SQLite **shop** from
+  **Demo note:** built in #469 to #479, and RP7. To try it: make the SQLite **shop** from
   `examples/reports/shop.sql` as the manual's "Your first report" says, and copy
   `sales-by-week.toml` and `sales-by-category.toml` into the reports folder. Open **Sales by
   week**: under its parameters, **Combine SQL, compiled from PRQL** folds out the SQL its PRQL
@@ -2101,7 +2101,7 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   list`, marking a run in the history as the command's, and a worker that dies with a command
   killed outright (Linux's parent-death signal). All four were built with RP5, as RP6g to RP6j
   (below).
-- **RP7 — Manual** (built, {RP7}, 2026-11-04, with RP5), with the example reports: the
+- **RP7 — Manual** (built, #480, 2026-11-04, with RP5), with the example reports: the
   **Reports** chapter brought up to RP5 (a section on PRQL and the `sales-by-week.toml` example,
   quiet hints, who set a limit, **Rename…**, `report list`, `--progress`, a command killed
   outright, and a picture of **Runs**, rendered by a new screenshot scene), the MCP chapter's
