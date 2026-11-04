@@ -42,6 +42,8 @@ enum RunsChange {
         kept: NonZeroU32,
     },
     Clear,
+    /// The report was renamed from this name: its runs move to the new one.
+    RenameFrom(ReportName),
 }
 
 /// A search to write to a file, as [`crate::Command::ExportHistory`] asks.
@@ -110,6 +112,16 @@ impl HistoryLog {
             report,
             change: RunsChange::Clear,
             listed: 0,
+        });
+    }
+
+    /// Moves `from`'s runs to `to`, a report renamed, then answers with `to`'s newest
+    /// `listed`, by [`Event::ReportRunsFound`].
+    pub(crate) fn rename_runs(&self, from: ReportName, to: ReportName, listed: usize) {
+        self.send(HistoryRequest::Runs {
+            report: to,
+            change: RunsChange::RenameFrom(from),
+            listed,
         });
     }
 
@@ -205,6 +217,9 @@ fn runs(
         RunsChange::Record { run, kept } => history.record_run(&run, kept)?,
         RunsChange::Clear => {
             history.clear_runs(report)?;
+        }
+        RunsChange::RenameFrom(from) => {
+            history.rename_runs(&from, report)?;
         }
     }
     history.runs(report, listed)

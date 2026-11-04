@@ -192,6 +192,24 @@ impl History {
         )?;
         Ok(deleted as u64)
     }
+
+    /// Moves `from`'s runs to `to`, a report renamed, in one transaction. Runs already kept
+    /// under `to`, from an older report of that name, are deleted first, so the two reports'
+    /// runs don't mix. Returns how many moved.
+    ///
+    /// # Errors
+    ///
+    /// [`HistoryError::Database`] if they can't be moved; nothing is.
+    pub fn rename_runs(&self, from: &ReportName, to: &ReportName) -> Result<u64, HistoryError> {
+        let transaction = self.connection.unchecked_transaction()?;
+        transaction.execute("DELETE FROM report_runs WHERE report = ?1", [to.as_str()])?;
+        let moved = transaction.execute(
+            "UPDATE report_runs SET report = ?2 WHERE report = ?1",
+            [from.as_str(), to.as_str()],
+        )?;
+        transaction.commit()?;
+        Ok(moved as u64)
+    }
 }
 
 /// Deletes the runs of `report` past its newest `kept`: everything from the first one past
@@ -402,6 +420,37 @@ mod tests {
             history.search(&HistoryQuery::all(shop), 10).unwrap().len(),
             1
         );
+    }
+
+    #[test]
+    fn moves_a_renamed_reports_runs_over_any_kept_under_its_new_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let history = HistoryFile::new(dir.path().join("history.sqlite"))
+            .open()
+            .unwrap();
+        for (report, minute) in [("sales", 0), ("sales", 1), ("monthly", 2), ("stock", 3)] {
+            history
+                .record_run(
+                    &run(report, minute, RunOutcome::Finished),
+                    DEFAULT_RUNS_KEPT,
+                )
+                .unwrap();
+        }
+        assert_eq!(
+            history
+                .rename_runs(&name("sales"), &name("monthly"))
+                .unwrap(),
+            2
+        );
+        assert!(history.runs(&name("sales"), 10).unwrap().is_empty());
+        let moved = history.runs(&name("monthly"), 10).unwrap();
+        let minutes: Vec<i64> = moved
+            .iter()
+            .map(|run| (run.started_at.as_second() - 1_790_812_800) / 60)
+            .collect();
+        assert_eq!(minutes, [1, 0], "the old monthly's run went");
+        assert!(moved.iter().all(|run| run.report == name("monthly")));
+        assert_eq!(history.runs(&name("stock"), 10).unwrap().len(), 1);
     }
 
     #[test]

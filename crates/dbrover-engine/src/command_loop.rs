@@ -410,6 +410,18 @@ impl Engine {
                 self.events
                     .send(report_files::create(files, name, text).await);
             }
+            Command::RenameReport {
+                files,
+                from,
+                to,
+                listed,
+            } => {
+                let renamed = report_files::rename(files, &from, &to).await;
+                if matches!(renamed, Event::ReportRenamed { result: Ok(_), .. }) {
+                    self.history.rename_runs(from, to, listed);
+                }
+                self.events.send(renamed);
+            }
             Command::ReloadCustomFiles => {
                 for event in config_files::load_custom(&self.custom_files).await {
                     self.events.send(event);

@@ -1391,7 +1391,15 @@ fn reports_section(
                         listed.name.clone(),
                     )));
                 }
-                widgets::context_menu(&row, |ui| reports_menu(ui, actions));
+                widgets::context_menu(&row, |ui| {
+                    if widgets::menu_item(ui, icons::PENCIL_SIMPLE, "Rename…").clicked() {
+                        actions.push(ExplorerAction::Report(ReportAction::Rename(
+                            listed.name.clone(),
+                        )));
+                    }
+                    ui.separator();
+                    reports_menu(ui, actions);
+                });
             });
         }
     });

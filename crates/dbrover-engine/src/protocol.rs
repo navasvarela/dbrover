@@ -344,6 +344,15 @@ pub enum Command {
         name: ReportName,
         text: String,
     },
+    /// Renames the report `from` to `to` in `files`, and moves its runs in the history with it.
+    /// Answered by [`Event::ReportRenamed`], then, once renamed, by [`Event::ReportRunsFound`]
+    /// for `to` with its newest `listed` runs.
+    RenameReport {
+        files: ReportFiles,
+        from: ReportName,
+        to: ReportName,
+        listed: usize,
+    },
     /// Runs a command action's program on the node or cells it was chosen on, if the user has
     /// trusted it, with what the request names filled in. It runs until it ends, its timeout
     /// passes or [`Command::StopProgram`] stops it. Answered by [`Event::ProgramFinished`].
@@ -561,6 +570,11 @@ pub enum Event {
     ReportsListed(Result<Vec<ReportText>, String>),
     /// The name [`Command::CreateReport`] wrote the new report under, or why it couldn't.
     ReportCreated(Result<ReportName, String>),
+    /// What [`Command::RenameReport`] renamed, or why it couldn't.
+    ReportRenamed {
+        from: ReportName,
+        result: Result<ReportName, String>,
+    },
     /// The command actions the user trusted to run, read at start-up right after the
     /// customisation files, and again after each [`Command::TrustCommand`].
     TrustedCommandsLoaded(TrustedCommands),

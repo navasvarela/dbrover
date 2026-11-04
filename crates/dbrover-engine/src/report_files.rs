@@ -41,3 +41,17 @@ pub(crate) async fn create(files: ReportFiles, name: ReportName, text: String) -
     }
     Event::ReportCreated(created)
 }
+
+/// Renames the report `from` to `to`. Its runs are moved by the history, once this succeeds.
+pub(crate) async fn rename(files: ReportFiles, from: &ReportName, to: &ReportName) -> Event {
+    let (old, new) = (from.clone(), to.clone());
+    let renamed = blocking(move || files.rename(&old, &new).map(|()| new)).await;
+    match &renamed {
+        Ok(to) => tracing::info!("renamed the report {from} to {to}"),
+        Err(error) => tracing::error!("could not rename the report {from}: {error}"),
+    }
+    Event::ReportRenamed {
+        from: from.clone(),
+        result: renamed,
+    }
+}
