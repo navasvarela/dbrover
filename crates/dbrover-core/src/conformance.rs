@@ -193,8 +193,20 @@ pub fn check_connect_failure<C>(result: Result<C, DriverError>) {
 /// empty, and every node that claims a definition can produce one. Returns every node visited,
 /// so driver tests can assert on what their backend should contain.
 pub async fn walk_catalog(connection: &mut dyn Connection, max_depth: usize) -> Vec<CatalogNode> {
+    walk_catalog_under(connection, &CatalogPath::root(), max_depth).await
+}
+
+/// Walks the catalog below `start` as [`walk_catalog`] walks it below the root. For a server
+/// that other tests change while this one runs: a walk that lists another test's table and
+/// then asks for its definition after that test dropped it fails, so such a test walks only
+/// the part of the catalog it made.
+pub async fn walk_catalog_under(
+    connection: &mut dyn Connection,
+    start: &CatalogPath,
+    max_depth: usize,
+) -> Vec<CatalogNode> {
     let mut visited = Vec::new();
-    let mut frontier = vec![CatalogPath::root()];
+    let mut frontier = vec![start.clone()];
     for _ in 0..max_depth {
         let mut next = Vec::new();
         for path in frontier {
