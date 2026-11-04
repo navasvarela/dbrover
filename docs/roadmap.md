@@ -1961,7 +1961,31 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   limit came from the file or from Settings, runs kept when a report's file is renamed, a
   picture of **Runs** in the manual, and MCP clients running reports, which RP4's numbers may now
   inform.
-- **RP5 — PRQL:** the combine step in PRQL, compiled to DuckDB SQL by `prqlc`.
+- **RP5 — PRQL, and the track finished** (started 2026-11-04, after RP6): the combine step in
+  PRQL, compiled to DuckDB SQL by `prqlc` and shown in the tab, the run's details and the command
+  line; and what RP4 and RP6 left for later, as layers of their own. Planned in
+  [Reports](reporting.md#rp5--prql-and-the-track-finished). In layers, one PR each:
+  - **RP5a — Plan:** RP5's layers, decisions and risks, `prqlc`'s cost (5.9 MB a binary, about
+    40 s of a release build's processor time), and this entry.
+  - **RP5b — PRQL:** `prql` in `[combine]` read and compiled when the file is read, `$name`
+    parameters bound, errors pointing into the PRQL.
+  - **RP5c — The compiled SQL, shown:** in the tab, the combine step's line, and `dbrover report
+    run`'s `started` event and combine errors.
+  - **RP4g — Quiet hints:** hint ids and `[report] quiet_hints`.
+  - **RP4h — Where a limit came from:** the file or Settings › Reports, in the run's error.
+  - **RP4i — Renaming a report:** **Rename…** in the explorer, its runs moved with it.
+  - **RP6g — A run's origin:** the app, the command line or MCP, in the history and the Runs
+    table.
+  - **RP6h — `dbrover report list`.**
+  - **RP6i — A live progress line:** `dbrover report run --progress` on a terminal.
+  - **RP6j — The worker dies with its command:** Linux's parent-death signal, and a worker that
+    stops when nobody reads its events.
+  - **RP4j — MCP clients running reports:** `list_reports`, and `run_report` behind a project
+    permission off by default.
+
+  **Exit:** a report whose combine step is PRQL runs from the tab, the command line and an MCP
+  client, its compiled SQL shown in each; its runs say where they came from, survive a rename,
+  and can silence a hint.
 - **RP6 — The command line** (built, in six layers, 2026-11-03, after RP4): `dbrover report run`, for
   cron, scheduled tasks and CI: a report by its name in `reports/` or by its path, its
   parameters as `--param name=value`, its files in `--output-dir`, run in the worker with every
@@ -2033,7 +2057,10 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   macOS keychain, from cron. Left for later: a live progress line in a terminal, `dbrover report
   list`, marking a run in the history as the command's, and a worker that dies with a command
   killed outright (Linux's parent-death signal).
-- **RP7 — Manual,** with the example reports.
+- **RP7 — Manual,** with the example reports: the **Reports** chapter brought up to RP5 (PRQL
+  and a PRQL example, quiet hints, where a limit came from, **Rename…**, `report list`,
+  `--progress`, a picture of **Runs**), the MCP chapter's report tools, and RP4's to RP7's
+  entries here marked built. Planned in [Reports](reporting.md#rp7--manual).
 
 ## Version control track
 
