@@ -431,3 +431,74 @@ fn fails_cleanly_past_its_memory_limit() {
     );
     assert_eq!(files_in(&settings.out()), Vec::<String>::new());
 }
+
+/// A source that returns rows for a long time, slowly, so the run sends a progress event a
+/// second for as long as it is let run.
+const STREAMING: &str = r#"
+[report]
+name = "Streaming"
+params = { since = "date", until = "date" }
+[[source]]
+id = "numbers"
+data_source = "ledger"
+query = """
+WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 1000000000)
+SELECT x, length(randomblob(100000)) AS noise, :since AS since, :until AS until FROM n
+"""
+max_rows = 1000000000
+max_bytes = "100 GiB"
+[[output]]
+format = "csv"
+file = "numbers.csv"
+max_size = "100 GiB"
+"#;
+
+/// A worker whose events nobody reads any more, its app or command gone without killing it,
+/// stops at its next event and removes its staging folder.
+#[test]
+fn stops_once_nobody_reads_its_events() {
+    use std::io::{BufRead as _, BufReader, Write as _};
+    use std::process::Stdio;
+
+    let settings = Settings::new();
+    let report = settings.write_report("streaming", STREAMING);
+    let request = settings.request(&report);
+    let mut worker = settings
+        .command()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = worker.stdin.take().unwrap();
+    writeln!(stdin, "{}", serde_json::to_string(&request).unwrap()).unwrap();
+    let mut events = BufReader::new(worker.stdout.take().unwrap());
+    let mut line = String::new();
+    while !line.contains("\"progress\"") {
+        line.clear();
+        assert!(
+            events.read_line(&mut line).unwrap() > 0,
+            "the worker ended early"
+        );
+    }
+    assert!(
+        request.staging.exists(),
+        "the run writes in its staging folder"
+    );
+    drop(events);
+
+    let closed = Instant::now();
+    let status = loop {
+        if let Some(status) = worker.try_wait().unwrap() {
+            break status;
+        }
+        assert!(
+            closed.elapsed() < Duration::from_secs(30),
+            "the worker runs on with nobody reading"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    assert_eq!(status.code(), Some(1));
+    assert!(!request.staging.exists(), "its staging folder is removed");
+    assert_eq!(files_in(&settings.out()), Vec::<String>::new());
+}

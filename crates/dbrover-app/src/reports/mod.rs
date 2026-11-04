@@ -32,7 +32,7 @@ use dbrover_store::{
 };
 use jiff::Timestamp;
 
-pub use launcher::{ProcessLauncher, ReportLauncher, RunningReport};
+pub use launcher::{PARENT_ENV, ProcessLauncher, ReportLauncher, RunningReport};
 pub use rename_dialog::{RenameAction, RenameReportDialog};
 pub use tab::{ReportView, show};
 

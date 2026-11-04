@@ -38,12 +38,14 @@ pub fn for_style(style: OutputStyle, values: &TypedValues, progress: bool) -> Bo
 
 impl<W: Write> Printer for Events<W> {
     fn event(&mut self, event: &RunEvent) {
-        self.send(event);
+        // A closed standard output (`| head`) isn't the run's failure: its exit code says how
+        // it ended.
+        let _ = self.send(event);
     }
 
     /// As the worker says it: a run that failed in the report step, a problem a line.
     fn not_started(&mut self, _heading: &str, problems: &[String]) {
         let failure = RunFailure::new(Step::Report, problems.join("\n"));
-        self.send(&RunEvent::Failed(failure));
+        let _ = self.send(&RunEvent::Failed(failure));
     }
 }

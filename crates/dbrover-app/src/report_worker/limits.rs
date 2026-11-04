@@ -15,6 +15,32 @@ use std::time::Duration;
 #[cfg(unix)]
 const NICENESS: i32 = 10;
 
+/// Asks Linux to kill the worker when the process that started it dies, so a command or an app
+/// killed outright (SIGKILL, a CI runner's hard stop) doesn't leave its worker running. A parent
+/// that died before the request was made gets no signal sent, so the worker checks that its
+/// parent is still the one `parent` names, and exits if not. Elsewhere, the worker stops once
+/// its events can't be written (`report_worker::run`).
+pub fn die_with_parent(parent: Option<&str>) {
+    #[cfg(target_os = "linux")]
+    {
+        use rustix::process::{Signal, getppid, set_parent_process_death_signal};
+        if let Err(error) = set_parent_process_death_signal(Some(Signal::KILL)) {
+            tracing::warn!("could not ask to die with the worker's parent: {error}");
+            return;
+        }
+        let expected = parent.and_then(|parent| parent.parse::<i32>().ok());
+        let actual = getppid().map(|pid| pid.as_raw_nonzero().get());
+        if let Some(expected) = expected
+            && actual != Some(expected)
+        {
+            tracing::warn!("the process that started the worker is gone, so it stops");
+            std::process::exit(super::FAILED);
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = parent;
+}
+
 pub fn lower_priority() {
     #[cfg(unix)]
     if let Err(error) = rustix::process::setpriority_process(None, NICENESS) {

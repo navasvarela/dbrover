@@ -22,6 +22,7 @@ use dbrover_report::{
 };
 use dbrover_store::{AppPaths, CustomFile, CustomFileKind, DataSourceFile, os_keychain};
 
+use crate::reports::PARENT_ENV;
 use crate::{settings_folder, telemetry};
 
 /// Exit codes, for whoever runs the worker by hand: the app reads the events instead.
@@ -30,6 +31,7 @@ const FAILED: i32 = 1;
 
 /// Runs the request on standard input, and returns the process's exit code.
 pub fn run(config_dir: Option<&Path>) -> i32 {
+    limits::die_with_parent(std::env::var(PARENT_ENV).ok().as_deref());
     limits::lower_priority();
     if let Err(error) = telemetry::init_stderr() {
         eprintln!("{error:#}");
@@ -45,12 +47,15 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
             let paths = settings_paths(config_dir)?;
             let (plan, values) = prepare(&paths, &request)?;
             limits::limit_processor_time(plan.processor_time());
-            out.send(&RunEvent::Started {
+            let started = out.send(&RunEvent::Started {
                 report: plan.name.clone(),
                 sources: plan.source_starts(),
                 combine: matches!(plan.logic, Logic::Combine(_)),
                 combine_sql: plan.compiled_combine().map(str::to_owned),
             });
+            if started.is_err() {
+                abandon(&request.staging);
+            }
             let folders = RunFolders {
                 folder: &request.folder,
                 staging: &request.staging,
@@ -61,7 +66,8 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
         });
     match outcome {
         Ok(()) => {
-            out.send(&RunEvent::Finished {
+            // The run is over: whether anyone reads its end changes nothing.
+            let _ = out.send(&RunEvent::Finished {
                 elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
             });
             FINISHED
@@ -71,7 +77,7 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
                 failure.place_limit(plan);
             }
             tracing::warn!("the report failed: {failure}");
-            out.send(&RunEvent::Failed(failure));
+            let _ = out.send(&RunEvent::Failed(failure));
             FAILED
         }
     }
@@ -88,15 +94,22 @@ impl<W: Write> Events<W> {
         Self { out }
     }
 
-    pub(crate) fn send(&mut self, event: &RunEvent) {
+    /// Writes `event`.
+    ///
+    /// # Errors
+    ///
+    /// When it can't be written: the reader has gone, or closed the pipe. Logged here; the
+    /// worker stops its run, while `dbrover report run --json` runs on, its exit code saying
+    /// how the run ended.
+    pub(crate) fn send(&mut self, event: &RunEvent) -> io::Result<()> {
         let written = serde_json::to_string(event)
             .map_err(io::Error::other)
             .and_then(|line| writeln!(self.out, "{line}"))
             .and_then(|()| self.out.flush());
-        if let Err(error) = written {
-            // The reader has gone, or closed the pipe: nobody is left to tell.
+        if let Err(error) = &written {
             tracing::warn!("could not write an event: {error}");
         }
+        written
     }
 }
 
@@ -206,11 +219,27 @@ fn run_report(
             commands: &commands,
         };
         dbrover_report::run(plan, values, &access, folders, &mut |event| {
-            out.send(&event);
+            if out.send(&event).is_err() {
+                abandon(folders.staging);
+            }
         })
         .await
         .map(drop)
     })
+}
+
+/// Stops a run nobody reads the events of any more: the app or command that started it was
+/// killed without killing it. Its staging folder goes, as a cancelled run's does, and nothing
+/// is put in place. Exits rather than unwinding the run: the sources' connections and DuckDB
+/// go with the process.
+fn abandon(staging: &Path) -> ! {
+    tracing::warn!("nobody reads the run's events any more, so it stops");
+    if let Err(error) = std::fs::remove_dir_all(staging)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        tracing::warn!("could not remove {}: {error}", staging.display());
+    }
+    std::process::exit(FAILED)
 }
 
 fn make_folder(folder: &Path) -> Result<(), RunFailure> {

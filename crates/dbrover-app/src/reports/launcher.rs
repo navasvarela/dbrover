@@ -42,15 +42,24 @@ pub struct ProcessLauncher {
 
 impl ProcessLauncher {
     /// `dbrover report-worker` on the settings folder, ready for [`WorkerRun::start`].
+    ///
+    /// The worker is told this process's id, so on Linux it can die with it (see
+    /// `report_worker::limits::die_with_parent`). Linux sends that signal when the *thread*
+    /// that started the worker ends, not the process: both callers start it from their main
+    /// thread, the app's UI thread and the command's, which live as long as the run.
     pub fn command(&self) -> Command {
         let mut command = Command::new(&self.executable);
         command
             .arg(REPORT_WORKER)
             .arg(dbrover_store::CONFIG_DIR_FLAG)
-            .arg(&self.settings_folder);
+            .arg(&self.settings_folder)
+            .env(PARENT_ENV, std::process::id().to_string());
         command
     }
 }
+
+/// The variable that tells the worker the id of the process that started it.
+pub const PARENT_ENV: &str = "DBROVER_REPORT_PARENT";
 
 impl ReportLauncher for ProcessLauncher {
     fn start(
