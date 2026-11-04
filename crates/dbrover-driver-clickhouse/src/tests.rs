@@ -333,7 +333,7 @@ async fn failure(connection: &mut ClickHouseConnection, sql: &str) -> String {
 async fn a_read_only_connection_refuses_changes_with_clickhouses_own_error() {
     let Some(server) = test_server() else { return };
     let mut writer = server.connect().await;
-    // In `default`, where the catalog test, listing `dbrover`'s tables, doesn't see it.
+    // In `default`, outside the database `walks_the_catalog_and_shows_definitions` walks.
     let table = format!("default.dbrover_read_only_{}", Uuid::new_v4().simple());
     run(
         &mut writer,
@@ -404,11 +404,14 @@ async fn walks_the_catalog_and_shows_definitions() {
         run(&mut connection, statement).await;
     }
 
-    let nodes = conformance::walk_catalog(&mut connection, 5).await;
-    conformance::check_invalid_path(&mut connection).await;
-
     let database = &server.config.server.database;
     let schema = CatalogPath::root().child(NodeKind::Schema, database);
+    // The databases, then only this test's own: other tests create and drop tables in other
+    // databases (`default`) while this one runs.
+    let mut nodes = conformance::walk_catalog(&mut connection, 1).await;
+    nodes.extend(conformance::walk_catalog_under(&mut connection, &schema, 4).await);
+    conformance::check_invalid_path(&mut connection).await;
+
     assert!(labels_under(&nodes, &CatalogPath::root()).contains(&database.as_str()));
     let system = nodes
         .iter()
