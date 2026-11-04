@@ -5,12 +5,9 @@
 use std::io::Write;
 
 use dbrover_core::ByteCount;
-use dbrover_report::{LimitHit, RunEvent, RunFailure, Step, TypedValues, WrittenFile, grouped};
+use dbrover_report::{RunEvent, RunFailure, Step, TypedValues, WrittenFile, grouped};
 
 use super::printer::Printer;
-
-/// Excel's rows a sheet: a limit of Excel's, with no default in Settings to point at.
-const EXCEL_ROWS_KEY: &str = "continue_on_new_sheet";
 
 /// Writes the lines for each event of a run.
 pub struct HumanLines<O: Write, E: Write> {
@@ -157,24 +154,9 @@ fn numbered_sql(sql: &str) -> Vec<String> {
 fn failed(failure: &RunFailure) -> Vec<String> {
     let mut lines = vec![format!("Failed in {}: {}", failure.step, failure.message)];
     if let Some(limit) = &failure.limit {
-        lines.push(raise(limit));
+        lines.push(limit.advice());
     }
     lines
-}
-
-fn raise(limit: &LimitHit) -> String {
-    let LimitHit {
-        key,
-        value,
-        raise_in,
-    } = limit;
-    let in_file = format!(
-        "It stopped at {key} = {value}. To allow more, raise {key} in {raise_in} of the report's file"
-    );
-    if key == EXCEL_ROWS_KEY {
-        return format!("{in_file}.");
-    }
-    format!("{in_file}, or its default for every report in Settings › Reports.")
 }
 
 /// `1,250 rows, 61.4 KB in 0.1 s`.
@@ -318,7 +300,9 @@ mod tests {
 
     #[test]
     fn tells_where_to_raise_the_limit_a_run_stopped_at() {
-        let limit = |key: &str| {
+        use dbrover_report::{LimitHit, LimitSetIn};
+
+        let limit = |key: &str, set_in| {
             RunEvent::Failed(RunFailure::at_limit(
                 Step::Source {
                     id: "lines".to_owned(),
@@ -328,6 +312,7 @@ mod tests {
                     key: key.to_owned(),
                     value: "10 rows".to_owned(),
                     raise_in: "the [[source]] \"lines\"".to_owned(),
+                    set_in,
                 },
             ))
         };
@@ -337,17 +322,30 @@ mod tests {
                 "Failed in the report: since needs a value\n",
             ),
             (
-                limit("max_rows"),
+                limit("max_rows", None),
                 "Failed in source \"lines\": it returned more than 10 rows\n\
                  It stopped at max_rows = 10 rows. To allow more, raise max_rows in the \
                  [[source]] \"lines\" of the report's file, or its default for every report in \
                  Settings › Reports.\n",
             ),
             (
-                limit(EXCEL_ROWS_KEY),
+                limit("max_rows", Some(LimitSetIn::File)),
                 "Failed in source \"lines\": it returned more than 10 rows\n\
-                 It stopped at continue_on_new_sheet = 10 rows. To allow more, raise \
-                 continue_on_new_sheet in the [[source]] \"lines\" of the report's file.\n",
+                 It stopped at max_rows = 10 rows, set in the [[source]] \"lines\" of the \
+                 report's file. To allow more, raise it there.\n",
+            ),
+            (
+                limit("max_rows", Some(LimitSetIn::Settings)),
+                "Failed in source \"lines\": it returned more than 10 rows\n\
+                 It stopped at max_rows = 10 rows, the default in Settings › Reports, since the \
+                 report's file doesn't set it. To allow more, raise it there for every report, \
+                 or set max_rows in the [[source]] \"lines\" of the report's file for this one.\n",
+            ),
+            (
+                limit("continue_on_new_sheet", None),
+                "Failed in source \"lines\": it returned more than 10 rows\n\
+                 It stopped at 10 rows. To go on in a new sheet, set continue_on_new_sheet = \
+                 true in the [[source]] \"lines\" of the report's file.\n",
             ),
             (RunEvent::Cancelled, "Cancelled. No file was written.\n"),
         ];

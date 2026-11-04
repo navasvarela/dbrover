@@ -485,6 +485,9 @@ impl StepRecord {
 
 struct Running {
     report: ReportName,
+    /// What the run runs, to say who set a limit it stops at that the worker can't place: the
+    /// run's own time limit, enforced from the app's side.
+    plan: Plan,
     run: Box<dyn RunningReport>,
 }
 
@@ -634,6 +637,7 @@ impl Reports {
             Ok(run) => {
                 self.running = Some(Running {
                     report: name.clone(),
+                    plan: plan.clone(),
                     run,
                 });
             }
@@ -659,7 +663,10 @@ impl Reports {
     pub fn poll(&mut self, kept: NonZeroU32) -> Option<Command> {
         let running = self.running.as_mut()?;
         let mut events = Vec::new();
-        while let Some(event) = running.run.try_next() {
+        while let Some(mut event) = running.run.try_next() {
+            if let RunEvent::Failed(failure) = &mut event {
+                failure.place_limit(&running.plan);
+            }
             events.push(event);
         }
         let report = running.report.clone();

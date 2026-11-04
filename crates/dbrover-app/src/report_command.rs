@@ -229,7 +229,11 @@ fn run_worker(
         }
     };
     stopping.started(run.stopper());
-    while let Some(event) = run.wait_next() {
+    while let Some(mut event) = run.wait_next() {
+        // The worker places its own limits; the run's time limit is enforced from here.
+        if let RunEvent::Failed(failure) = &mut event {
+            failure.place_limit(&prepared.plan);
+        }
         on_event(&event);
         if let Some(outcome) = Outcome::of_end(&event) {
             return outcome;

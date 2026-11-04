@@ -484,6 +484,7 @@ fn duckdb_failure(error: &DriverError, limits: &CombineLimits) -> SourceError {
             key: key.to_owned(),
             value,
             raise_in: "[combine]".to_owned(),
+            set_in: None,
         })),
     }
 }
@@ -593,6 +594,7 @@ async fn watch<T>(
             key: "timeout".to_owned(),
             value,
             raise_in: "[combine]".to_owned(),
+            set_in: None,
         })),
     })
 }

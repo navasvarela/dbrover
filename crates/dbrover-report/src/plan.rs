@@ -15,9 +15,9 @@ use dbrover_language::QueryLanguage;
 use dbrover_sql::{Dialect, ParameterValues, StatementKind};
 
 use crate::{
-    CombineLimits, CombineQuery, FileName, LimitDefaults, Lookup, Output, OutputColumns,
-    OutputLimits, OutputWriter, Param, Report, Source, SourceColumn, SourceLimits, SourceRead,
-    SourceStart,
+    CombineLimits, CombineLimitsSet, CombineQuery, FileName, LimitDefaults, LimitSetIn, Lookup,
+    Output, OutputColumns, OutputLimits, OutputLimitsSet, OutputWriter, Param, Report, Source,
+    SourceColumn, SourceLimits, SourceLimitsSet, SourceRead, SourceStart, Step,
 };
 
 /// A report ready to run.
@@ -31,6 +31,71 @@ pub struct Plan {
     pub timeout: Duration,
     pub logic: Logic,
     pub outputs: Vec<PlannedOutput>,
+    /// The limits the report's file sets, so a run stopped at one can say who set it.
+    file_limits: FileLimits,
+}
+
+/// The limits a report's file sets, by where they are set; every other limit is a default.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct FileLimits {
+    /// `[report] timeout`.
+    timeout: bool,
+    /// By source id.
+    sources: BTreeMap<String, SourceLimitsSet>,
+    combine: CombineLimitsSet,
+    /// In the outputs' order.
+    outputs: Vec<OutputLimitsSet>,
+}
+
+impl FileLimits {
+    fn of(report: &Report) -> Self {
+        Self {
+            timeout: report.timeout.is_some(),
+            sources: report
+                .sources
+                .iter()
+                .filter_map(|source| match &source.read {
+                    SourceRead::Query { limits, .. } => Some((source.id.clone(), *limits)),
+                    SourceRead::Attach => None,
+                })
+                .collect(),
+            combine: report
+                .combine
+                .as_ref()
+                .map(|combine| combine.limits)
+                .unwrap_or_default(),
+            outputs: report.outputs.iter().map(|output| output.limits).collect(),
+        }
+    }
+
+    /// Whether the file sets `key` where `step` stopped at it; `None` for a key no default
+    /// holds, such as an Excel sheet's rows.
+    fn sets(&self, step: &Step, key: &str) -> Option<bool> {
+        match (step, key) {
+            (Step::Worker | Step::Report, "timeout") => Some(self.timeout),
+            (Step::Source { id }, _) => {
+                let set = self.sources.get(id).copied().unwrap_or_default();
+                match key {
+                    "max_rows" => Some(set.max_rows.is_some()),
+                    "max_bytes" => Some(set.max_bytes.is_some()),
+                    "timeout" => Some(set.timeout.is_some()),
+                    _ => None,
+                }
+            }
+            (Step::Combine, "timeout") => Some(self.combine.timeout.is_some()),
+            (Step::Combine, "memory_limit") => Some(self.combine.memory_limit.is_some()),
+            (Step::Combine, "max_temp_size") => Some(self.combine.max_temp_size.is_some()),
+            (Step::Output { number, .. }, "max_size") => {
+                let set = number
+                    .checked_sub(1)
+                    .and_then(|index| self.outputs.get(index))
+                    .copied()
+                    .unwrap_or_default();
+                Some(set.max_size.is_some())
+            }
+            _ => None,
+        }
+    }
 }
 
 /// Where the rows the outputs write come from.
@@ -208,6 +273,7 @@ impl Plan {
         defaults: &LimitDefaults,
     ) -> Result<Self, Vec<String>> {
         let mut problems = Vec::new();
+        let file_limits = FileLimits::of(&report);
         let sources: Vec<PlannedSource> = report
             .sources
             .iter()
@@ -258,6 +324,19 @@ impl Plan {
             timeout: report.timeout.unwrap_or(defaults.run_timeout),
             logic,
             outputs,
+            file_limits,
+        })
+    }
+
+    /// Who set the limit `key` a run stopped at in `step`: the report's file, or Settings ›
+    /// Reports' default where the file leaves it out; `None` for a limit no default holds.
+    pub fn limit_set_in(&self, step: &Step, key: &str) -> Option<LimitSetIn> {
+        self.file_limits.sets(step, key).map(|set| {
+            if set {
+                LimitSetIn::File
+            } else {
+                LimitSetIn::Settings
+            }
         })
     }
 

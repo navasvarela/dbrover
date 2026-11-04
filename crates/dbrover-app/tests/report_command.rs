@@ -318,7 +318,8 @@ mod runs {
                 report: one_source("", "query = \"SELECT * FROM products\"\nmax_rows = 2"),
                 args: vec!["products"],
                 code: 5,
-                says: "To allow more, raise max_rows in the [[source]] \"products\"",
+                says: "It stopped at max_rows = 2 rows, set in the [[source]] \"products\" of the \
+                       report's file.",
             },
             Case {
                 what: "the run passing its time limit",
@@ -351,6 +352,31 @@ mod runs {
                 case.what
             );
         }
+    }
+
+    /// A limit the file leaves to Settings › Reports says so, and where to set it instead.
+    #[test]
+    fn says_a_limit_came_from_settings() {
+        let settings = Settings::new();
+        std::fs::write(
+            settings.config().join("settings.toml"),
+            "[reports]\nmax_rows = 2\n",
+        )
+        .unwrap();
+        settings.write_report(
+            "products",
+            &one_source("", "query = \"SELECT * FROM products\""),
+        );
+        let output = settings.run(&["products"]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(5), "{}", describe(&output));
+        assert!(
+            stderr.contains(
+                "It stopped at max_rows = 2 rows, the default in Settings › Reports, since the \
+                 report's file doesn't set it."
+            ),
+            "{stderr}"
+        );
     }
 
     /// What a terminal's Ctrl-C, cron's or a CI runner's stop, and a closed terminal send:

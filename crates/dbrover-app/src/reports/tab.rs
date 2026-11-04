@@ -6,7 +6,9 @@ use std::path::Path;
 
 use dbrover_core::{ByteCount, DataSource};
 use dbrover_export::{ColumnType, CustomFormat};
-use dbrover_report::{Batch, LimitDefaults, LimitHit, Plan, Preview, Step, WrittenFile, grouped};
+use dbrover_report::{
+    Batch, LimitDefaults, LimitHit, LimitSetIn, Plan, Preview, Step, WrittenFile, grouped,
+};
 use dbrover_store::ReportName;
 use egui::{CollapsingHeader, Grid, RichText, ScrollArea, TextEdit, Ui, vec2};
 
@@ -481,23 +483,19 @@ fn table(ui: &mut Ui, step: &StepRecord) {
         });
 }
 
-/// Where to raise the limit a run stopped at: the report's file, and, for a limit with a
-/// default, Settings › Reports for every report.
+/// Where to raise the limit a run stopped at: the report's file, or Settings › Reports for a
+/// default, as the limit says who set it.
 fn limit_hint(ui: &mut Ui, limit: &LimitHit, actions: &mut Vec<ReportAction>) {
-    ui.label(format!(
-        "It stopped at {} = {}. To allow more, raise {} in {} of the report's file.",
-        limit.key, limit.value, limit.key, limit.raise_in
-    ));
-    // Excel's rows a sheet is Excel's, not a default.
-    if limit.key == "continue_on_new_sheet" {
-        return;
+    ui.label(limit.advice());
+    let settings = match limit.set_in {
+        Some(LimitSetIn::Settings) => "Open Settings › Reports",
+        // From a worker of before RP4h, which didn't say: the default may be what stopped it.
+        None if limit.key != "continue_on_new_sheet" => "Settings › Reports",
+        Some(LimitSetIn::File) | None => return,
+    };
+    if ui.link(settings).clicked() {
+        actions.push(ReportAction::OpenSettings);
     }
-    ui.horizontal_wrapped(|ui| {
-        ui.label("Where the file doesn't set it, its default for every report is in");
-        if ui.link("Settings › Reports").clicked() {
-            actions.push(ReportAction::OpenSettings);
-        }
-    });
 }
 
 fn files(ui: &mut Ui, palette: &Palette, files: &[WrittenFile], actions: &mut Vec<ReportAction>) {

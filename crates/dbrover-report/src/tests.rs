@@ -1081,3 +1081,52 @@ fn orders_parameters_across_the_sources_and_the_combine_step() {
         ]
     );
 }
+
+#[test]
+fn says_whether_the_file_or_settings_set_a_limit() {
+    let plan = Plan::new(
+        read_report(TRIAL_BALANCE).unwrap(),
+        &[sqlite("ledger")],
+        &presets(),
+        &LimitDefaults::default(),
+    )
+    .unwrap();
+    let source = Step::Source {
+        id: "balances".to_owned(),
+    };
+    let output = Step::Output {
+        number: 1,
+        file: "trial-balance-2026-10.xlsx".to_owned(),
+    };
+    let cases = [
+        (&source, "max_rows", Some(LimitSetIn::File)),
+        (&source, "max_bytes", Some(LimitSetIn::Settings)),
+        (&source, "timeout", Some(LimitSetIn::Settings)),
+        (&output, "max_size", Some(LimitSetIn::Settings)),
+        (&output, "continue_on_new_sheet", None),
+        (&Step::Worker, "timeout", Some(LimitSetIn::Settings)),
+    ];
+    for (step, key, expected) in cases {
+        assert_eq!(plan.limit_set_in(step, key), expected, "{step} {key}");
+    }
+
+    let hit = |set_in| LimitHit {
+        key: "max_rows".to_owned(),
+        value: "100,000 rows".to_owned(),
+        raise_in: "the [[source]] \"balances\"".to_owned(),
+        set_in,
+    };
+    let mut failure = RunFailure::at_limit(source.clone(), "it stopped", hit(None));
+    failure.place_limit(&plan);
+    assert_eq!(failure.limit.as_deref(), Some(&hit(Some(LimitSetIn::File))));
+    assert_eq!(
+        hit(Some(LimitSetIn::File)).advice(),
+        "It stopped at max_rows = 100,000 rows, set in the [[source]] \"balances\" of the \
+         report's file. To allow more, raise it there."
+    );
+    assert!(
+        hit(Some(LimitSetIn::Settings)).advice().starts_with(
+            "It stopped at max_rows = 100,000 rows, the default in Settings › Reports"
+        )
+    );
+}
