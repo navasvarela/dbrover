@@ -8,6 +8,7 @@ use dbrover_core::ByteCount;
 use dbrover_report::{RunEvent, RunFailure, Step, TypedValues, WrittenFile, grouped};
 
 use super::printer::Printer;
+use super::progress::{CLEAR_LINE, LiveLine};
 
 /// Writes the lines for each event of a run.
 pub struct HumanLines<O: Write, E: Write> {
@@ -17,10 +18,34 @@ pub struct HumanLines<O: Write, E: Write> {
     /// The SQL a combine step in PRQL compiled to, as the run's start said, printed under a
     /// combine step's error, whose line numbers point into it.
     combine_sql: Option<String>,
+    /// With `--progress` on a terminal: the line rewritten in place as steps run.
+    live: Option<LiveLine>,
+    /// Whether the live line is on the terminal now, to clear before another line.
+    live_shown: bool,
 }
 
 impl<O: Write, E: Write> Printer for HumanLines<O, E> {
     fn event(&mut self, event: &RunEvent) {
+        let live_changed = self.live.as_mut().is_some_and(|live| live.apply(event));
+        let shown_before = self.live_shown;
+        self.lines(event);
+        // Redrawn when it changed, or when a line of the run's took its place.
+        if live_changed || (shown_before && !self.live_shown) {
+            self.draw_live();
+        }
+    }
+
+    fn not_started(&mut self, heading: &str, problems: &[String]) {
+        self.error_line(heading);
+        for problem in problems {
+            self.error_line(&format!("  {problem}"));
+        }
+    }
+}
+
+impl<O: Write, E: Write> HumanLines<O, E> {
+    /// The lines `event` prints.
+    fn lines(&mut self, event: &RunEvent) {
         match event {
             RunEvent::Started {
                 report,
@@ -85,15 +110,6 @@ impl<O: Write, E: Write> Printer for HumanLines<O, E> {
         }
     }
 
-    fn not_started(&mut self, heading: &str, problems: &[String]) {
-        self.error_line(heading);
-        for problem in problems {
-            self.error_line(&format!("  {problem}"));
-        }
-    }
-}
-
-impl<O: Write, E: Write> HumanLines<O, E> {
     /// `values` are the parameters the run was given, named in its first line.
     pub fn new(out: O, err: E, values: TypedValues) -> Self {
         Self {
@@ -101,7 +117,32 @@ impl<O: Write, E: Write> HumanLines<O, E> {
             err,
             values,
             combine_sql: None,
+            live: None,
+            live_shown: false,
         }
+    }
+
+    /// With a live progress line, for a terminal.
+    pub fn with_live_line(self) -> Self {
+        Self {
+            live: Some(LiveLine::default()),
+            ..self
+        }
+    }
+
+    /// Writes the live line in place of the one shown, or clears it once no step runs.
+    fn draw_live(&mut self) {
+        let Some(text) = self.live.as_ref().map(LiveLine::text) else {
+            return;
+        };
+        // As for any line on standard error: nothing is left to tell if it is gone.
+        let _ = match &text {
+            Some(text) => write!(self.err, "{CLEAR_LINE}{text}"),
+            None if self.live_shown => write!(self.err, "{CLEAR_LINE}"),
+            None => Ok(()),
+        }
+        .and_then(|()| self.err.flush());
+        self.live_shown = text.is_some();
     }
 
     fn written(&mut self, file: &WrittenFile) {
@@ -119,6 +160,9 @@ impl<O: Write, E: Write> HumanLines<O, E> {
     }
 
     fn error_line(&mut self, line: &str) {
+        if std::mem::take(&mut self.live_shown) {
+            let _ = write!(self.err, "{CLEAR_LINE}");
+        }
         // As for standard output: nothing is left to tell if standard error is gone.
         let _ = writeln!(self.err, "{line}");
     }
@@ -179,6 +223,52 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+
+    #[test]
+    fn keeps_a_live_line_under_the_finished_steps() {
+        let mut human =
+            HumanLines::new(Vec::new(), Vec::new(), TypedValues::new()).with_live_line();
+        let events = [
+            RunEvent::Progress {
+                step: Step::Source {
+                    id: "lines".to_owned(),
+                },
+                rows: 100,
+                bytes: 1_000,
+                elapsed_ms: 1_000,
+                batch: None,
+            },
+            RunEvent::SourceDone {
+                id: "lines".to_owned(),
+                rows: 246,
+                bytes: 6_500,
+                first_row_ms: Some(1),
+                elapsed_ms: 1_500,
+                table: Vec::new(),
+                warnings: Vec::new(),
+                batches: None,
+            },
+            RunEvent::Progress {
+                step: Step::Combine,
+                rows: 13,
+                bytes: 500,
+                elapsed_ms: 2_000,
+                batch: None,
+            },
+            RunEvent::Finished { elapsed_ms: 2_100 },
+        ];
+        for event in &events {
+            human.event(event);
+        }
+        let err = String::from_utf8(human.err).unwrap();
+        assert_eq!(
+            err,
+            "\r\x1b[2KSource lines: 100 rows, 1.0 KB, 1 s\
+             \r\x1b[2KSource lines: 246 rows, 6.5 KB in 1.5 s\n\
+             \r\x1b[2KCombine: 13 rows, 500 bytes, 2 s\
+             \r\x1b[2KFinished in 2.1 s.\n"
+        );
+    }
 
     #[test]
     fn prints_a_prql_combine_steps_sql_under_its_error() {
