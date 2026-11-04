@@ -272,6 +272,15 @@ impl Plan {
             .saturating_mul(u32::try_from(threads + 1).unwrap_or(u32::MAX))
     }
 
+    /// The SQL the combine step's PRQL compiled to; `None` without a combine step, or with one
+    /// in SQL.
+    pub fn compiled_combine(&self) -> Option<&str> {
+        match &self.logic {
+            Logic::Direct(_) => None,
+            Logic::Combine(combined) => combined.combine.query.compiled(),
+        }
+    }
+
     /// Each source, as the run's start lists them.
     pub fn source_starts(&self) -> Vec<SourceStart> {
         let start = |source: &PlannedSource| SourceStart {

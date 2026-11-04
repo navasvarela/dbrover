@@ -46,6 +46,7 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
                 report: plan.name.clone(),
                 sources: plan.source_starts(),
                 combine: matches!(plan.logic, Logic::Combine(_)),
+                combine_sql: plan.compiled_combine().map(str::to_owned),
             });
             let folders = RunFolders {
                 folder: &request.folder,
