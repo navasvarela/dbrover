@@ -102,7 +102,7 @@ fn postgres(name: &str) -> DataSource {
 
 fn duckdb(name: &str, database: DuckDbDatabase) -> DataSource {
     DataSource {
-        config: ConnectionConfig::DuckDb(DuckDbConfig { database }),
+        config: ConnectionConfig::DuckDb(DuckDbConfig::new(database)),
         ..sqlite(name)
     }
 }

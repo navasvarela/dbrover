@@ -7,18 +7,14 @@ use super::*;
 const LONG_RUNNING: &str = "SELECT sum(a.range * b.range) FROM range(1000000) a, range(1000000) b";
 
 fn in_memory() -> DuckDbConfig {
-    DuckDbConfig {
-        database: DuckDbDatabase::InMemory,
-    }
+    DuckDbConfig::new(DuckDbDatabase::InMemory)
 }
 
 fn file(path: &Path, read_only: bool) -> DuckDbConfig {
-    DuckDbConfig {
-        database: DuckDbDatabase::File {
-            path: path.to_owned(),
-            read_only,
-        },
-    }
+    DuckDbConfig::new(DuckDbDatabase::File {
+        path: path.to_owned(),
+        read_only,
+    })
 }
 
 async fn run(connection: &mut DuckDbConnection, sql: &str) -> Option<u64> {

@@ -176,12 +176,10 @@ fn a_read_only_duckdb_data_source_refuses_a_write_inside_a_function() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     runtime.block_on(async {
         dbrover_driver_duckdb::create_database(&path).await.unwrap();
-        let config = DuckDbConfig {
-            database: DuckDbDatabase::File {
-                path: path.clone(),
-                read_only: false,
-            },
-        };
+        let config = DuckDbConfig::new(DuckDbDatabase::File {
+            path: path.clone(),
+            read_only: false,
+        });
         let mut writer = dbrover_driver_duckdb::connect(&config).await.unwrap();
         for sql in [
             "CREATE TABLE orders (id integer)",
@@ -200,12 +198,10 @@ fn a_read_only_duckdb_data_source_refuses_a_write_inside_a_function() {
         safety: SafetyLevel::Normal,
         project: None,
         mcp_login: None,
-        config: ConnectionConfig::DuckDb(DuckDbConfig {
-            database: DuckDbDatabase::File {
-                path,
-                read_only: false,
-            },
-        }),
+        config: ConnectionConfig::DuckDb(DuckDbConfig::new(DuckDbDatabase::File {
+            path,
+            read_only: false,
+        })),
     };
     let production = read_only(&lake);
     save(&mut engine, &production, PasswordUpdate::Keep);

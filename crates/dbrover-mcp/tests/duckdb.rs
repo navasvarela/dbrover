@@ -26,12 +26,10 @@ fn main() {
 
 /// A connection of the test's own, outside the server, as another program's would be.
 async fn open_for_writing(path: &Path) -> DuckDbConnection {
-    let config = DuckDbConfig {
-        database: DuckDbDatabase::File {
-            path: path.to_owned(),
-            read_only: false,
-        },
-    };
+    let config = DuckDbConfig::new(DuckDbDatabase::File {
+        path: path.to_owned(),
+        read_only: false,
+    });
     dbrover_driver_duckdb::connect(&config).await.unwrap()
 }
 
@@ -61,19 +59,15 @@ async fn reads_a_duckdb_file_read_only() {
     let lake = data_source(
         "lake",
         project_id,
-        ConnectionConfig::DuckDb(DuckDbConfig {
-            database: DuckDbDatabase::File {
-                path: path.clone(),
-                read_only: false,
-            },
-        }),
+        ConnectionConfig::DuckDb(DuckDbConfig::new(DuckDbDatabase::File {
+            path: path.clone(),
+            read_only: false,
+        })),
     );
     let scratch = data_source(
         "scratch",
         project_id,
-        ConnectionConfig::DuckDb(DuckDbConfig {
-            database: DuckDbDatabase::InMemory,
-        }),
+        ConnectionConfig::DuckDb(DuckDbConfig::new(DuckDbDatabase::InMemory)),
     );
     let mut project = Project::new(
         project_id,

@@ -205,12 +205,10 @@ async fn the_order_history_example_matches_its_checked_in_file() {
 async fn prices(folder: &Path) -> DataSource {
     let path = folder.join("prices.duckdb");
     dbrover_driver_duckdb::create_database(&path).await.unwrap();
-    let mut file = dbrover_driver_duckdb::connect(&DuckDbConfig {
-        database: DuckDbDatabase::File {
-            path: path.clone(),
-            read_only: false,
-        },
-    })
+    let mut file = dbrover_driver_duckdb::connect(&DuckDbConfig::new(DuckDbDatabase::File {
+        path: path.clone(),
+        read_only: false,
+    }))
     .await
     .unwrap();
     run_script(
@@ -222,12 +220,10 @@ async fn prices(folder: &Path) -> DataSource {
     Box::new(file).close().await.unwrap();
     data_source(
         "prices-duckdb",
-        ConnectionConfig::DuckDb(DuckDbConfig {
-            database: DuckDbDatabase::File {
-                path,
-                read_only: true,
-            },
-        }),
+        ConnectionConfig::DuckDb(DuckDbConfig::new(DuckDbDatabase::File {
+            path,
+            read_only: true,
+        })),
     )
 }
 

@@ -11,9 +11,9 @@ mod ssh;
 
 use dbrover_core::{
     ClickHouseConfig, CloudProvider, ConnectionConfig, DataSource, DataSourceId, DriverKind,
-    DuckDbConfig, DuckDbDatabase, McpLogin, MysqlConfig, Password, Port, PostgresConfig, ProjectId,
-    RedisConfig, SafetyLevel, SourceColor, SqlServerConfig, SqliteConfig, TemplateError,
-    has_placeholder,
+    DuckDbConfig, DuckDbDatabase, McpLogin, MysqlConfig, ObjectStorage, Password, Port,
+    PostgresConfig, ProjectId, RedisConfig, SafetyLevel, SourceColor, SqlServerConfig,
+    SqliteConfig, TemplateError, has_placeholder,
 };
 use dbrover_engine::PasswordUpdate;
 use dbrover_engine::read_only::Storage;
@@ -210,6 +210,9 @@ pub struct DuckDbFields {
     /// Kept while In memory is chosen, so switching back to File doesn't lose it.
     pub path: String,
     pub read_only: bool,
+    /// The bucket the data source reads from, kept as it was read so that saving the dialog
+    /// doesn't drop it.
+    pub storage: Option<ObjectStorage>,
 }
 
 /// Where a DuckDB data source's database is.
@@ -245,6 +248,7 @@ impl DriverFields {
                 location: DuckDbLocation::File,
                 path: String::new(),
                 read_only: false,
+                storage: None,
             }),
             DriverKind::ClickHouse => Self::ClickHouse(ClickHouseFields {
                 server: ServerFields::new(CLICKHOUSE_DEFAULTS),
@@ -280,11 +284,13 @@ impl DriverFields {
                     location: DuckDbLocation::File,
                     path: path.display().to_string(),
                     read_only: *read_only,
+                    storage: config.storage.clone(),
                 },
                 DuckDbDatabase::InMemory => DuckDbFields {
                     location: DuckDbLocation::InMemory,
                     path: String::new(),
                     read_only: false,
+                    storage: config.storage.clone(),
                 },
             }),
             ConnectionConfig::ClickHouse(config) => Self::ClickHouse(ClickHouseFields {
@@ -491,7 +497,10 @@ impl DuckDbFields {
             },
             DuckDbLocation::InMemory => DuckDbDatabase::InMemory,
         };
-        Ok(DuckDbConfig { database })
+        Ok(DuckDbConfig {
+            database,
+            storage: self.storage.clone(),
+        })
     }
 }
 
@@ -518,7 +527,7 @@ fn required(value: &str, missing: FormError) -> Result<String, FormError> {
 
 #[cfg(test)]
 mod tests {
-    use dbrover_core::{ServerConfig, SshConfig, SshLogin, TlsMode};
+    use dbrover_core::{S3Bucket, S3SignIn, ServerConfig, SshConfig, SshLogin, TlsMode};
 
     use super::*;
 
@@ -583,6 +592,17 @@ mod tests {
                     password_command: None,
                     cloud_sign_in: None,
                 },
+            }),
+            ConnectionConfig::DuckDb(DuckDbConfig {
+                database: DuckDbDatabase::InMemory,
+                storage: Some(ObjectStorage::S3(S3Bucket {
+                    bucket: "dbrover".to_owned(),
+                    region: String::new(),
+                    endpoint: "http://localhost:59000".to_owned(),
+                    sign_in: S3SignIn::AccessKey {
+                        key_id: "dbrover".to_owned(),
+                    },
+                })),
             }),
         ];
         for config in configs {
