@@ -10,6 +10,7 @@
 mod args;
 mod history;
 mod human;
+mod list;
 mod outcome;
 mod printer;
 mod stopping;
@@ -26,7 +27,7 @@ use tracing_appender::non_blocking::WorkerGuard;
 
 pub use args::Request;
 
-use self::args::{ReportArg, RunArgs, USAGE};
+use self::args::{ListArgs, ReportArg, RunArgs, USAGE};
 use self::history::RunHistory;
 use self::outcome::Outcome;
 use self::stopping::Stopping;
@@ -45,7 +46,34 @@ pub fn main(request: Request) -> i32 {
             Outcome::CommandLine.code()
         }
         Request::Run(args) => run(&args).code(),
+        Request::List(args) => list(&args).code(),
     }
+}
+
+/// Prints the reports in the settings folder's `reports/`.
+fn list(args: &ListArgs) -> Outcome {
+    let unusable = |heading: &str, problem: String| {
+        eprintln!("{heading}\n  {problem}");
+        Outcome::Report
+    };
+    let paths = match report_worker::settings_paths(args.config_dir.as_deref()) {
+        Ok(paths) => paths,
+        Err(failure) => return unusable("The settings folder can't be used:", failure.message),
+    };
+    let defaults = match report_settings(&paths) {
+        Ok(settings) => reports::limit_defaults(&settings),
+        Err(problems) => return unusable("settings.toml can't be read:", problems.join("\n  ")),
+    };
+    let listed = match list::reports(&paths, &defaults) {
+        Ok(listed) => listed,
+        Err(error) => {
+            let folder = paths.report_files().dir().display().to_string();
+            return unusable(&format!("{folder} can't be read:"), error.to_string());
+        }
+    };
+    // As for a run's files: a closed standard output isn't the listing's failure.
+    let _ = list::print(&mut io::stdout().lock(), &listed, args.style);
+    Outcome::Finished
 }
 
 /// A run ready to start: the report planned, the worker's request, and how many of the

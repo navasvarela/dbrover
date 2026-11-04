@@ -13,8 +13,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use dbrover_core::describe_error;
+use dbrover_core::{DataSource, describe_error};
 use dbrover_engine::{PasswordCommands, ProcessRunner, SourceAccess, Tunnels};
+use dbrover_export::CustomFormat;
 use dbrover_report::{
     LimitDefaults, Logic, Plan, RunEvent, RunFailure, RunFolders, RunRequest, RunValues, Step,
     read_report,
@@ -147,15 +148,32 @@ pub(crate) fn plan(
     let text = std::fs::read_to_string(report)
         .map_err(|error| vec![format!("could not read {}: {error}", report.display())])?;
     let report = read_report(&text)?;
-    let data_sources = DataSourceFile::new(paths.data_sources_file())
-        .load()
-        .map_err(|error| vec![describe_error(&error)])?;
-    let presets = match paths.custom_files().read(CustomFileKind::Exports) {
-        CustomFile::Exports(checked) => checked.value,
-        // `read` answers with the kind it was asked for.
-        _ => Vec::new(),
-    };
-    Plan::new(report, &data_sources, &presets, defaults)
+    let named = Named::load(paths)?;
+    Plan::new(report, &named.data_sources, &named.presets, defaults)
+}
+
+/// What a report names, as the settings folder has it: its data sources, and `exports.toml`'s
+/// presets.
+pub(crate) struct Named {
+    pub(crate) data_sources: Vec<DataSource>,
+    pub(crate) presets: Vec<CustomFormat>,
+}
+
+impl Named {
+    pub(crate) fn load(paths: &AppPaths) -> Result<Self, Vec<String>> {
+        let data_sources = DataSourceFile::new(paths.data_sources_file())
+            .load()
+            .map_err(|error| vec![describe_error(&error)])?;
+        let presets = match paths.custom_files().read(CustomFileKind::Exports) {
+            CustomFile::Exports(checked) => checked.value,
+            // `read` answers with the kind it was asked for.
+            _ => Vec::new(),
+        };
+        Ok(Self {
+            data_sources,
+            presets,
+        })
+    }
 }
 
 fn run_report(

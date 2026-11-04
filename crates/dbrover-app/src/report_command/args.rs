@@ -11,6 +11,11 @@ use crate::version::parse_config_dir;
 pub const USAGE: &str = "\
 Usage: dbrover report run <report> [--param <name>=<value>]… [--output-dir <folder>]
                           [--json] [--config-dir <folder>]
+       dbrover report list [--json] [--config-dir <folder>]
+
+list prints each report in the settings folder's reports folder: the name run takes, its
+title and parameters, and what keeps it from running, if anything. With --json, an object a
+line.
 
 Runs a report without opening a window, for cron, a scheduled task or a CI job, under the
 limits a run from the app has, and exits with a code that says how it ended.
@@ -45,6 +50,7 @@ Exit codes:
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Request {
     Run(RunArgs),
+    List(ListArgs),
     Help,
     /// Arguments that can't be followed, with what was wrong.
     Invalid(String),
@@ -60,6 +66,34 @@ pub struct RunArgs {
     pub output_dir: Option<PathBuf>,
     pub style: OutputStyle,
     pub config_dir: Option<PathBuf>,
+}
+
+/// `dbrover report list`'s arguments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListArgs {
+    pub style: OutputStyle,
+    pub config_dir: Option<PathBuf>,
+}
+
+impl ListArgs {
+    /// `None` when `--help` was asked for.
+    fn parse(args: impl Iterator<Item = String>) -> Result<Option<Self>, String> {
+        let mut args = args.peekable();
+        let mut style = OutputStyle::Human;
+        let mut config_dir = None;
+        while let Some(arg) = args.next() {
+            if let Some(folder) = parse_config_dir(&arg, &mut args) {
+                config_dir = Some(folder?);
+                continue;
+            }
+            match arg.as_str() {
+                "--help" | "-h" => return Ok(None),
+                "--json" => style = OutputStyle::JsonLines,
+                other => return Err(format!("unknown argument {other:?}")),
+            }
+        }
+        Ok(Some(Self { style, config_dir }))
+    }
 }
 
 /// What the command prints as the run goes.
@@ -104,9 +138,14 @@ impl Request {
                 Ok(None) => Self::Help,
                 Err(problem) => Self::Invalid(problem),
             },
+            Some("list") => match ListArgs::parse(args) {
+                Ok(Some(list)) => Self::List(list),
+                Ok(None) => Self::Help,
+                Err(problem) => Self::Invalid(problem),
+            },
             Some("--help" | "-h") => Self::Help,
             Some(other) => Self::Invalid(format!("unknown report command {other:?}")),
-            None => Self::Invalid("dbrover report needs a command: run".to_owned()),
+            None => Self::Invalid("dbrover report needs a command: run or list".to_owned()),
         }
     }
 }
@@ -222,6 +261,28 @@ mod tests {
     }
 
     #[test]
+    fn reads_a_list() {
+        let list = |style, config_dir: Option<&str>| {
+            Request::List(ListArgs {
+                style,
+                config_dir: config_dir.map(PathBuf::from),
+            })
+        };
+        let cases: Vec<(&[&str], Request)> = vec![
+            (&["list"], list(OutputStyle::Human, None)),
+            (
+                &["list", "--json", "--config-dir", "/srv/dbrover"],
+                list(OutputStyle::JsonLines, Some("/srv/dbrover")),
+            ),
+            (&["list", "--help"], Request::Help),
+            (&["list", "sales"], invalid("unknown argument \"sales\"")),
+        ];
+        for (args, expected) in cases {
+            assert_eq!(parse(args), expected, "{args:?}");
+        }
+    }
+
+    #[test]
     fn reads_a_run_and_refuses_what_it_does_not_know() {
         let cases: Vec<(&[&str], Request)> = vec![
             (
@@ -300,8 +361,8 @@ mod tests {
             ),
             (&["run", "sales", "--help"], Request::Help),
             (&["--help"], Request::Help),
-            (&[], invalid("dbrover report needs a command: run")),
-            (&["list"], invalid("unknown report command \"list\"")),
+            (&[], invalid("dbrover report needs a command: run or list")),
+            (&["lists"], invalid("unknown report command \"lists\"")),
             (
                 &["run"],
                 invalid("dbrover report run needs a report: its name or its file"),

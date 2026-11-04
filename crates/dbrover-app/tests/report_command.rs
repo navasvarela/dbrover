@@ -116,10 +116,15 @@ mod runs {
 
         /// `dbrover report run` on this settings folder, from the home folder.
         fn command(&self, args: &[&str]) -> Command {
+            self.subcommand("run", args)
+        }
+
+        /// `dbrover report <subcommand>` on this settings folder, from the home folder.
+        fn subcommand(&self, subcommand: &str, args: &[&str]) -> Command {
             let mut command = Command::new(BINARY);
             command
                 .arg("report")
-                .arg("run")
+                .arg(subcommand)
                 .args(args)
                 .arg("--config-dir")
                 .arg(self.config())
@@ -352,6 +357,39 @@ mod runs {
                 case.what
             );
         }
+    }
+
+    /// `report list` names each report, the one with problems among them.
+    #[test]
+    fn lists_the_reports_and_what_keeps_one_from_running() {
+        let settings = Settings::new();
+        settings.write_report(
+            "broken",
+            &one_source("", "query = \"SELECT 1\"")
+                .replace("data_source = \"shop\"", "data_source = \"nowhere\""),
+        );
+        let output = settings.subcommand("list", &[]).output().unwrap();
+        assert_eq!(output.status.code(), Some(0), "{}", describe(&output));
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines: Vec<&str> = stdout.lines().collect();
+        assert!(
+            lines[0].starts_with("broken  ") && lines[0].ends_with("can't run, 1 problem:"),
+            "{stdout}"
+        );
+        assert!(lines[1].contains("nowhere"), "{stdout}");
+        assert_eq!(
+            lines[2],
+            "sales-by-category  Sales by category (since: date, until: date)"
+        );
+
+        let json = settings.subcommand("list", &["--json"]).output().unwrap();
+        let reports: Vec<serde_json::Value> = String::from_utf8_lossy(&json.stdout)
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(reports.len(), 2);
+        assert_eq!(reports[1]["name"], "sales-by-category");
+        assert_eq!(reports[1]["problems"].as_array().unwrap().len(), 0);
     }
 
     /// A limit the file leaves to Settings › Reports says so, and where to set it instead.
