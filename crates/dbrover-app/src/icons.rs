@@ -3,7 +3,7 @@
 //! Icons are Phosphor glyphs (see `fonts`), so they scale with the text and take any colour.
 //! Colours are palette roles, never fixed values, so every icon is readable in both themes.
 
-use dbrover_core::{DriverKind, KeyType, NodeKind, SourceColor};
+use dbrover_core::{DriverKind, KeyType, NodeKind, ObjectKind, SourceColor};
 use egui::{Color32, Image, RichText, Vec2};
 use egui_phosphor::regular as glyph;
 
@@ -127,6 +127,13 @@ pub fn node(kind: NodeKind) -> Icon {
         NodeKind::IndexTemplate => Icon::new(glyph::FILE_SQL, Role::Secondary),
         NodeKind::UserType => Icon::new(glyph::BRACKETS_CURLY, Role::Secondary),
         NodeKind::Aggregate => Icon::new(glyph::FUNCTION, Role::Success),
+        NodeKind::Object(object) => match object {
+            ObjectKind::Bucket => Icon::new(glyph::CLOUD, Role::Secondary),
+            // A folder of keys, drawn apart from the tree's own folders of kinds.
+            ObjectKind::Folder => Icon::new(glyph::FOLDER, Role::Warning),
+            ObjectKind::File => Icon::new(glyph::FILE, Role::Primary),
+            ObjectKind::Table(_) => Icon::new(glyph::TABLE, Role::Primary),
+        },
     }
 }
 

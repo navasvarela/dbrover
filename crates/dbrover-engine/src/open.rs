@@ -125,7 +125,7 @@ pub(crate) async fn open(
         ),
         None => None,
     };
-    let password = match data_source.config.driver().uses_password() {
+    let password = match data_source.config.uses_password() {
         true => database_password(data_source.id, &config, typed, connector).await?,
         false => None,
     };
@@ -331,7 +331,10 @@ async fn connect(
         ConnectionConfig::SqlServer(config) => {
             Box::new(dbrover_driver_sqlserver::connect(config, password, route).await?)
         }
-        ConnectionConfig::DuckDb(config) => Box::new(dbrover_driver_duckdb::connect(config).await?),
+        // The password is the secret of the bucket's access key, when it signs in with one.
+        ConnectionConfig::DuckDb(config) => {
+            Box::new(dbrover_driver_duckdb::connect_with_secret(config, password).await?)
+        }
         ConnectionConfig::ClickHouse(config) => {
             Box::new(dbrover_driver_clickhouse::connect(config, password, route).await?)
         }

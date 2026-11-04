@@ -2239,6 +2239,7 @@ dependencies = [
  "hyper-util",
  "jiff",
  "ring",
+ "roxmltree",
  "serde",
  "serde_json",
  "tempfile",
@@ -2308,10 +2309,13 @@ name = "dbrover-driver-duckdb"
 version = "0.26.0"
 dependencies = [
  "async-trait",
+ "dbrover-cloud",
  "dbrover-core",
  "dbrover-sql",
  "duckdb",
+ "serde_json",
  "tempfile",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
 ]

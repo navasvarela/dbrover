@@ -11,6 +11,7 @@ pub mod entra;
 pub mod google;
 mod http;
 pub mod rds;
+pub mod storage;
 pub mod token;
 
 use std::error::Error;

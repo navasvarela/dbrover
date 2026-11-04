@@ -430,3 +430,51 @@ services:
       interval: 1s
       timeout: 5s
       retries: 30
+
+  # S3's stand-in (docs/cloud-data.md, C2): MinIO, as the pgsty/minio build of the same server,
+  # since MinIO's own images left Docker Hub and Quay in 2025. It starts with the bucket
+  # `dbrover` holding docker/minio/dbrover (see docker/minio/README.md), copied in with the
+  # image's own `mc` once the server answers; the healthcheck waits for that copy.
+  minio:
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    environment:
+      MINIO_ROOT_USER: dbrover
+      # MinIO wants eight characters at least.
+      MINIO_ROOT_PASSWORD: dbrover-test
+    ports:
+      - "59000:9000"
+    volumes:
+      - ./docker/minio/dbrover:/fixtures:ro
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        minio server /data --quiet &
+        until mc alias set local http://127.0.0.1:9000 dbrover dbrover-test >/dev/null 2>&1;
+        do sleep 0.2; done &&
+        mc mb --ignore-existing local/dbrover &&
+        mc mirror --quiet --overwrite /fixtures local/dbrover &&
+        touch /tmp/ready &&
+        wait
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/ready"]
+      interval: 1s
+      timeout: 5s
+      retries: 30
+
+  # Google Cloud Storage's stand-in (docs/cloud-data.md, C2f): fake-gcs-server, serving the
+  # minio service's fixtures (docker/minio/dbrover) as the bucket `dbrover` over plain HTTP,
+  # with any token. DuckDB reads from it and DbRover lists it; it doesn't take DuckDB's writes.
+  fake-gcs:
+    image: fsouza/fake-gcs-server:1.56.1
+    command:
+      ["-scheme", "http", "-port", "4443", "-public-host", "localhost:59100", "-data", "/data"]
+    ports:
+      - "59100:4443"
+    volumes:
+      - ./docker/minio/dbrover:/data/dbrover:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:4443/storage/v1/b"]
+      interval: 1s
+      timeout: 5s
+      retries: 30

@@ -31,6 +31,8 @@ hyper-util.workspace = true
 # Reads the expiry the Azure CLIs print (C0c).
 jiff.workspace = true
 ring.workspace = true
+# Reads the XML a bucket's listing answers with (C2).
+roxmltree.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

@@ -1,9 +1,10 @@
 use std::path::PathBuf;
 
 use dbrover_core::{
-    ClickHouseConfig, ConnectionConfig, DataSourceId, DuckDbConfig, DuckDbDatabase, MysqlConfig,
-    PasswordCommand, Port, PostgresConfig, ProjectId, ServerConfig, SourceColor, SqlServerConfig,
-    SqliteConfig, SshConfig, SshLogin, TlsMode, Variables,
+    ClickHouseConfig, ConnectionConfig, DataSourceId, DuckDbConfig, DuckDbDatabase, GcsBucket,
+    GcsSignIn, MysqlConfig, ObjectStorage, PasswordCommand, Port, PostgresConfig, ProjectId,
+    S3Bucket, S3SignIn, ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, SshConfig,
+    SshLogin, TlsMode, Variables,
 };
 
 use super::*;
@@ -163,13 +164,35 @@ fn every_kind(home: &Path, beside: &Path, project: ProjectId) -> Vec<DataSource>
                     path: beside.join("data/lake.duckdb"),
                     read_only: true,
                 },
+                storage: Some(ObjectStorage::Gcs(GcsBucket {
+                    bucket: "lake".to_owned(),
+                    endpoint: String::new(),
+                    sign_in: GcsSignIn::CredentialsFile {
+                        credentials_file: home.join("keys/lake.json"),
+                    },
+                })),
             }),
+        ),
+        data_source(
+            "hosted",
+            None,
+            ConnectionConfig::DuckDb(DuckDbConfig::new(DuckDbDatabase::MotherDuck {
+                name: "analytics".to_owned(),
+            })),
         ),
         data_source(
             "scratchpad",
             None,
             ConnectionConfig::DuckDb(DuckDbConfig {
                 database: DuckDbDatabase::InMemory,
+                storage: Some(ObjectStorage::S3(S3Bucket {
+                    bucket: "dbrover".to_owned(),
+                    region: String::new(),
+                    endpoint: "http://localhost:59000".to_owned(),
+                    sign_in: S3SignIn::AccessKey {
+                        key_id: "dbrover".to_owned(),
+                    },
+                })),
             }),
         ),
     ]
@@ -219,6 +242,18 @@ fn writes_portable_paths_and_reads_them_back_for_another_home_and_folder() {
     assert!(text.contains(r#"key_file = "~/.ssh/id_ed25519""#), "{text}");
     assert!(
         text.contains(r#"credentials_file = "~/keys/reader.json""#),
+        "{text}"
+    );
+    assert!(
+        text.contains(r#"credentials_file = "~/keys/lake.json""#),
+        "{text}"
+    );
+    assert!(
+        text.contains("with = \"access-key\"\nkey_id = \"dbrover\""),
+        "{text}"
+    );
+    assert!(
+        text.contains("database = \"motherduck\"\nmotherduck_database = \"analytics\""),
         "{text}"
     );
     assert!(text.contains(r#"login = "agent""#), "{text}");

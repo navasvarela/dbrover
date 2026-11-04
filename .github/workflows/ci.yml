@@ -18,6 +18,12 @@ env:
   # dbrover_prebuilt_duckdb links DuckDB's prebuilt library, fetched below, rather than compiling
   # it; see docs/duckdb-prebuilt.md.
   RUSTFLAGS: -D warnings --cfg dbrover_prebuilt_duckdb
+  # No debug info: nothing here runs a debugger, and a failed test's panic still names its file
+  # and line. Debug info made up a third of the dependencies' build output (measured on Linux),
+  # so without it `check` builds and links faster and its caches are smaller. They have to fit
+  # under GitHub's 10 GB with the release caches: at 12.8 GB, GitHub evicted main's Linux and
+  # macOS caches, and every pull request then built cold, often past the 30-minute limit.
+  CARGO_PROFILE_DEV_DEBUG: 0
 
 permissions:
   contents: read

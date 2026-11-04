@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::placeholder::{PlaceholderError, Setting, Variables, expand, expand_path};
-use crate::{CloudSignIn, CostGuard, DriverError, PasswordCommand};
+use crate::{CloudSignIn, CostGuard, DriverError, ObjectStorage, PasswordCommand};
 
 /// Stable identity of a data source. Written once when the data source is created, so renaming
 /// it never breaks the keychain entry, consoles or history that refer to it.
@@ -245,6 +245,24 @@ impl ConnectionConfig {
         }
     }
 
+    /// Whether connecting needs the data source's password, from the keychain or as typed:
+    /// every engine with a login, and a DuckDB data source whose bucket signs in with an
+    /// access key, whose secret is kept as its password.
+    pub fn uses_password(&self) -> bool {
+        match self {
+            // A MotherDuck database's token is its password, and an access key's secret its
+            // bucket's; the dialog keeps a data source from needing both.
+            Self::DuckDb(config) => {
+                matches!(config.database, DuckDbDatabase::MotherDuck { .. })
+                    || config
+                        .storage
+                        .as_ref()
+                        .is_some_and(ObjectStorage::uses_password)
+            }
+            _ => self.driver().uses_password(),
+        }
+    }
+
     /// Where the server is, for engines that connect over the network.
     pub fn server(&self) -> Option<&ServerConfig> {
         match self {
@@ -401,7 +419,16 @@ impl ConnectionConfig {
                         read_only: *read_only,
                     },
                     DuckDbDatabase::InMemory => DuckDbDatabase::InMemory,
+                    DuckDbDatabase::MotherDuck { name } => DuckDbDatabase::MotherDuck {
+                        name: expand(name, variables)
+                            .map_err(PlaceholderError::in_setting(Setting::Database))?,
+                    },
                 },
+                storage: config
+                    .storage
+                    .as_ref()
+                    .map(|storage| storage.resolve(variables))
+                    .transpose()?,
             }),
         })
     }
@@ -429,6 +456,7 @@ impl ConnectionConfig {
             Self::DuckDb(config) => match &config.database {
                 DuckDbDatabase::File { path, .. } => file_name(path),
                 DuckDbDatabase::InMemory => DuckDbConfig::IN_MEMORY_NAME.to_owned(),
+                DuckDbDatabase::MotherDuck { name } => DuckDbDatabase::motherduck_path(name),
             },
         }
     }
@@ -480,14 +508,7 @@ impl fmt::Display for ConnectionConfig {
                 write!(f, "{} (read-only)", config.path.display())
             }
             Self::Sqlite(config) => write!(f, "{}", config.path.display()),
-            Self::DuckDb(config) => match &config.database {
-                DuckDbDatabase::File {
-                    path,
-                    read_only: true,
-                } => write!(f, "{} (read-only)", path.display()),
-                DuckDbDatabase::File { path, .. } => write!(f, "{}", path.display()),
-                DuckDbDatabase::InMemory => f.write_str("in memory"),
-            },
+            Self::DuckDb(config) => config.fmt(f),
         }
     }
 }
@@ -1032,11 +1053,15 @@ impl DynamoDbSignIn {
 }
 
 /// A DuckDB database: a file, or one in memory that starts empty each time, for querying CSV,
-/// Parquet and JSON files with DuckDB's table functions.
+/// Parquet and JSON files with DuckDB's table functions; and a bucket it reads from, if any.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DuckDbConfig {
     #[serde(flatten)]
     pub database: DuckDbDatabase,
+    /// A bucket in object storage that DuckDB is given credentials for and the explorer
+    /// browses (C2). Absent from files written before it existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage: Option<ObjectStorage>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1048,18 +1073,73 @@ pub enum DuckDbDatabase {
         read_only: bool,
     },
     InMemory,
+    /// A database on MotherDuck, hosted DuckDB (C2), signed in to with a token kept in the
+    /// keychain as the data source's password.
+    #[serde(rename = "motherduck")]
+    MotherDuck {
+        /// The database's name; empty for the account's default database (`my_db`).
+        #[serde(
+            default,
+            rename = "motherduck_database",
+            skip_serializing_if = "String::is_empty"
+        )]
+        name: String,
+    },
+}
+
+impl DuckDbDatabase {
+    /// What DuckDB opens for a MotherDuck database: `md:` and its name.
+    pub fn motherduck_path(name: &str) -> String {
+        format!("md:{name}")
+    }
 }
 
 impl DuckDbConfig {
     /// What DuckDB calls an in-memory database in its catalog.
     pub const IN_MEMORY_NAME: &str = "memory";
 
-    /// The name DuckDB gives the database it opens: the file's name without its extension, or
-    /// `memory`. `None` for a file name that isn't valid UTF-8.
+    /// A database with no bucket.
+    pub fn new(database: DuckDbDatabase) -> Self {
+        Self {
+            database,
+            storage: None,
+        }
+    }
+
+    /// The database MotherDuck opens when a data source names none.
+    pub const MOTHERDUCK_DEFAULT_DATABASE: &str = "my_db";
+
+    /// The name DuckDB gives the database it opens: the file's name without its extension,
+    /// `memory`, or the MotherDuck database's. `None` for a file name that isn't valid UTF-8.
     pub fn database_name(&self) -> Option<&str> {
         match &self.database {
             DuckDbDatabase::File { path, .. } => path.file_stem()?.to_str(),
             DuckDbDatabase::InMemory => Some(Self::IN_MEMORY_NAME),
+            DuckDbDatabase::MotherDuck { name } if name.is_empty() => {
+                Some(Self::MOTHERDUCK_DEFAULT_DATABASE)
+            }
+            DuckDbDatabase::MotherDuck { name } => Some(name),
+        }
+    }
+}
+
+/// The file or memory, and the bucket when there is one.
+impl fmt::Display for DuckDbConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.database {
+            DuckDbDatabase::File {
+                path,
+                read_only: true,
+            } => write!(f, "{} (read-only)", path.display())?,
+            DuckDbDatabase::File { path, .. } => write!(f, "{}", path.display())?,
+            DuckDbDatabase::InMemory => f.write_str("in memory")?,
+            DuckDbDatabase::MotherDuck { name } => {
+                write!(f, "{} on MotherDuck", DuckDbDatabase::motherduck_path(name))?;
+            }
+        }
+        match &self.storage {
+            Some(storage) => write!(f, " with {storage}"),
+            None => Ok(()),
         }
     }
 }
@@ -1614,7 +1694,7 @@ mod tests {
                     safety: SafetyLevel::Normal,
                     project: None,
                     mcp_login: None,
-                    config: ConnectionConfig::DuckDb(DuckDbConfig { database }),
+                    config: ConnectionConfig::DuckDb(DuckDbConfig::new(database)),
                 }],
             };
 
@@ -1629,6 +1709,100 @@ mod tests {
             assert_eq!(config.default_name(), default_name);
             assert_eq!(config.to_string(), shown);
         }
+    }
+
+    #[test]
+    fn a_duckdb_data_source_keeps_its_bucket_and_needs_a_password_only_for_an_access_key() {
+        let text = r#"
+            [[data_source]]
+            id = "4b5f9a3e-8a52-4a7e-9c6b-1f0f2b0c9d11"
+            name = "lake"
+            driver = "duckdb"
+            database = "in-memory"
+
+            [data_source.storage]
+            provider = "s3"
+            bucket = "dbrover"
+            endpoint = "http://localhost:59000"
+            sign_in = { with = "access-key", key_id = "dbrover" }
+        "#;
+
+        let file: File = toml::from_str(text).unwrap();
+
+        let config = &file.data_source[0].config;
+        let ConnectionConfig::DuckDb(duckdb) = config else {
+            panic!("not DuckDB: {config:?}");
+        };
+        assert_eq!(
+            duckdb.storage.as_ref().map(ObjectStorage::url).as_deref(),
+            Some("s3://dbrover")
+        );
+        assert!(config.uses_password());
+        assert!(!config.driver().uses_password());
+        assert_eq!(
+            config.to_string(),
+            "in memory with s3://dbrover at http://localhost:59000"
+        );
+        assert_eq!(
+            toml::from_str::<File>(&toml::to_string(&file).unwrap()).unwrap(),
+            file
+        );
+    }
+
+    #[test]
+    fn a_motherduck_database_is_named_by_its_md_path_and_needs_its_token() {
+        let cases = [
+            ("analytics", "md:analytics", Some("analytics")),
+            ("", "md:", Some(DuckDbConfig::MOTHERDUCK_DEFAULT_DATABASE)),
+        ];
+        for (name, path, catalog_name) in cases {
+            let file = File {
+                data_source: vec![DataSource {
+                    id: DataSourceId::generate(),
+                    name: "hosted".to_owned(),
+                    color: None,
+                    safety: SafetyLevel::Normal,
+                    project: None,
+                    mcp_login: None,
+                    config: ConnectionConfig::DuckDb(DuckDbConfig::new(
+                        DuckDbDatabase::MotherDuck {
+                            name: name.to_owned(),
+                        },
+                    )),
+                }],
+            };
+
+            let text = toml::to_string(&file).unwrap();
+
+            assert!(text.contains("database = \"motherduck\""), "{text}");
+            assert_eq!(toml::from_str::<File>(&text).unwrap(), file);
+            let config = &file.data_source[0].config;
+            assert!(config.uses_password());
+            assert_eq!(config.default_name(), path);
+            assert_eq!(config.database(), catalog_name);
+            assert_eq!(config.to_string(), format!("{path} on MotherDuck"));
+        }
+    }
+
+    #[test]
+    fn a_duckdb_data_source_written_before_buckets_reads_without_one() {
+        let text = r#"
+            [[data_source]]
+            id = "4b5f9a3e-8a52-4a7e-9c6b-1f0f2b0c9d11"
+            name = "orders"
+            driver = "duckdb"
+            database = "file"
+            path = "/data/orders.duckdb"
+        "#;
+
+        let file: File = toml::from_str(text).unwrap();
+
+        let ConnectionConfig::DuckDb(duckdb) = &file.data_source[0].config else {
+            panic!("not DuckDB");
+        };
+        assert_eq!(duckdb.storage, None);
+        assert!(!file.data_source[0].config.uses_password());
+        assert!(!toml::to_string(&file).unwrap().contains("storage"));
     }
 
     #[test]

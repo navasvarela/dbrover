@@ -3250,8 +3250,80 @@ mod tests {
         };
         assert_eq!(
             saved.config,
+            dbrover_core::ConnectionConfig::DuckDb(dbrover_core::DuckDbConfig::new(
+                dbrover_core::DuckDbDatabase::InMemory
+            ))
+        );
+    }
+
+    /// A DuckDB data source reading a bucket on an S3-compatible store with an access key (C2):
+    /// the dialog's Bucket section offers the key's fields once Access key is chosen, and
+    /// saving writes the bucket; the key's secret goes where a password goes.
+    #[test]
+    fn adds_a_duckdb_data_source_reading_a_bucket_with_an_access_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "No data sources yet.");
+
+        harness
+            .get_all_by_label("New data source")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("DuckDB").click();
+        harness.run();
+        harness.get_by_label("In memory").click();
+        harness.run();
+        assert!(harness.query_by_label("Bucket name").is_none());
+        harness.get_by_label("Read from a bucket").click();
+        harness.run();
+        type_into(&mut harness, Role::TextInput, "Bucket name", "dbrover");
+        type_into(
+            &mut harness,
+            Role::TextInput,
+            "Endpoint",
+            "http://localhost:59000",
+        );
+        assert!(harness.query_by_label("Secret key").is_none());
+        harness
+            .get_by(|node| {
+                node.role() == Role::ComboBox
+                    && node.value().as_deref() == Some("AWS (default chain)")
+            })
+            .click();
+        harness.run();
+        harness.get_by_label("Access key").click();
+        harness.run();
+        type_into(&mut harness, Role::TextInput, "Access key", "dbrover");
+        type_into(
+            &mut harness,
+            Role::PasswordInput,
+            "Secret key",
+            "dbrover-test",
+        );
+        harness.get_by_label("Save").click();
+
+        step_until_visible(&mut harness, "Expand memory");
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        let [saved] = saved.as_slice() else {
+            panic!("expected one data source, got {saved:?}");
+        };
+        assert_eq!(
+            saved.config,
             dbrover_core::ConnectionConfig::DuckDb(dbrover_core::DuckDbConfig {
                 database: dbrover_core::DuckDbDatabase::InMemory,
+                storage: Some(dbrover_core::ObjectStorage::S3(dbrover_core::S3Bucket {
+                    bucket: "dbrover".to_owned(),
+                    region: String::new(),
+                    endpoint: "http://localhost:59000".to_owned(),
+                    sign_in: dbrover_core::S3SignIn::AccessKey {
+                        key_id: "dbrover".to_owned(),
+                    },
+                })),
             })
         );
     }
@@ -4806,9 +4878,9 @@ mod tests {
             safety: dbrover_core::SafetyLevel::Normal,
             project: None,
             mcp_login: None,
-            config: dbrover_core::ConnectionConfig::DuckDb(dbrover_core::DuckDbConfig {
-                database: dbrover_core::DuckDbDatabase::InMemory,
-            }),
+            config: dbrover_core::ConnectionConfig::DuckDb(dbrover_core::DuckDbConfig::new(
+                dbrover_core::DuckDbDatabase::InMemory,
+            )),
         };
         DataSourceFile::new(dir.path().join("data_sources.toml"))
             .save(std::slice::from_ref(&warehouse))

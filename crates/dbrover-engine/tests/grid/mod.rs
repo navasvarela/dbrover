@@ -34,12 +34,10 @@ pub fn test_sources(engine: &mut TestEngine, dir: &std::path::Path) -> Vec<TestS
         ),
         (
             "duckdb",
-            ConnectionConfig::DuckDb(DuckDbConfig {
-                database: DuckDbDatabase::File {
-                    path: duckdb,
-                    read_only: false,
-                },
-            }),
+            ConnectionConfig::DuckDb(DuckDbConfig::new(DuckDbDatabase::File {
+                path: duckdb,
+                read_only: false,
+            })),
             PasswordUpdate::Keep,
         ),
     ];
@@ -571,9 +569,7 @@ fn read_parquet(path: &std::path::Path, sql: &str) -> Vec<Vec<Option<String>>> {
 
     let runtime = tokio::runtime::Runtime::new().unwrap();
     runtime.block_on(async {
-        let config = dbrover_core::DuckDbConfig {
-            database: dbrover_core::DuckDbDatabase::InMemory,
-        };
+        let config = dbrover_core::DuckDbConfig::new(dbrover_core::DuckDbDatabase::InMemory);
         let mut connection = dbrover_driver_duckdb::connect(&config).await.unwrap();
         let file = path.to_string_lossy().replace('\'', "''");
         let sql = format!("WITH rows AS (SELECT * FROM '{file}') {sql}");

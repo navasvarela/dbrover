@@ -4,6 +4,7 @@
 //! refreshes what expires. Only the profile's and region's names are kept in DbRover's files.
 
 use std::error::Error;
+use std::time::SystemTime;
 
 use aws_config::profile::ProfileFileCredentialsProvider;
 use aws_config::provider_config::ProviderConfig;
@@ -13,6 +14,7 @@ use aws_credential_types::provider::ProvideCredentials;
 use aws_credential_types::provider::error::CredentialsError;
 use aws_runtime::env_config::file::EnvConfigFiles;
 use aws_smithy_http_client::tls::{self, rustls_provider::CryptoMode};
+use dbrover_core::Password;
 
 pub use aws_config::SdkConfig;
 
@@ -69,6 +71,19 @@ impl AwsCredentials {
     }
 }
 
+/// Credentials as a request is signed with: an access key, and the session token that comes
+/// with temporary ones (IAM Identity Center, a role). `Debug` hides the secret and the token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AwsKeys {
+    pub key_id: String,
+    pub secret: Password,
+    pub session_token: Option<Password>,
+    /// When temporary credentials stop working; `None` for a long-lived key.
+    pub expires_at: Option<SystemTime>,
+    /// The sign-in's or its profile's region, when either names one.
+    pub region: Option<String>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum AwsError {
     #[error("A local emulator signs in only with its endpoint; set the data source's endpoint")]
@@ -103,10 +118,15 @@ impl AwsSignIn {
     /// Asks for credentials once, so that a sign-in that can't give any fails here, saying
     /// which.
     async fn check_credentials(&self, config: &SdkConfig) -> Result<(), AwsError> {
+        self.provide(config).await.map(|_| ())
+    }
+
+    /// The credentials `config`'s provider gives, or why it gives none.
+    async fn provide(&self, config: &SdkConfig) -> Result<Credentials, AwsError> {
         let error = match config.credentials_provider() {
             None => return Err(AwsError::Credentials(self.credentials.not_found())),
             Some(provider) => match provider.provide_credentials().await {
-                Ok(_) => return Ok(()),
+                Ok(credentials) => return Ok(credentials),
                 Err(error) => error,
             },
         };
@@ -116,6 +136,30 @@ impl AwsSignIn {
             _ => with_causes(&error),
         };
         Err(AwsError::Credentials(message))
+    }
+
+    /// The keys AWS's SDK finds for this sign-in, for a client that signs its own requests
+    /// (DuckDB's reads from S3, C2), and the region the sign-in or its profile names. Unlike
+    /// [`AwsSignIn::sdk_config`], no region is no error: S3's callers have their own default.
+    ///
+    /// # Errors
+    ///
+    /// [`AwsError`] when the sign-in gives no credentials, saying why.
+    pub async fn keys(&self) -> Result<AwsKeys, AwsError> {
+        self.keys_from(self.loader(EnvConfigFiles::default())?)
+            .await
+    }
+
+    async fn keys_from(&self, loader: ConfigLoader) -> Result<AwsKeys, AwsError> {
+        let config = loader.load().await;
+        let credentials = self.provide(&config).await?;
+        Ok(AwsKeys {
+            key_id: credentials.access_key_id().to_owned(),
+            secret: Password::new(credentials.secret_access_key()),
+            session_token: credentials.session_token().map(Password::new),
+            expires_at: credentials.expiry(),
+            region: config.region().map(|region| region.as_ref().to_owned()),
+        })
     }
 
     fn loader(&self, files: EnvConfigFiles) -> Result<ConfigLoader, AwsError> {
@@ -238,6 +282,31 @@ mod tests {
         sign_in.region = Some("eu-central-1".into());
         let config = sign_in.load_only(files).await.unwrap();
         assert_eq!(config.region().map(Region::as_ref), Some("eu-central-1"));
+    }
+
+    #[tokio::test]
+    async fn keys_carry_the_session_token_and_need_no_region() {
+        let directory = tempfile::tempdir().unwrap();
+        let files = files(
+            directory.path(),
+            "[profile reader]\n",
+            "[reader]\naws_access_key_id = READERKEY\naws_secret_access_key = hunter2\n\
+             aws_session_token = SESSION\n",
+        );
+        let sign_in = sign_in(AwsCredentials::Profile("reader".into()));
+        let loader = sign_in.loader(files).unwrap().env(Env::from_slice(&[]));
+
+        let keys = sign_in.keys_from(loader).await.unwrap();
+
+        assert_eq!(keys.key_id, "READERKEY");
+        assert_eq!(keys.secret.expose(), "hunter2");
+        assert_eq!(keys.session_token, Some(Password::new("SESSION")));
+        assert_eq!(keys.region, None);
+        let shown = format!("{keys:?}");
+        assert!(
+            !shown.contains("hunter2") && !shown.contains("SESSION"),
+            "{shown}"
+        );
     }
 
     #[tokio::test]

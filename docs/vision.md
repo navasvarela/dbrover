@@ -29,9 +29,11 @@
 - Replacing each NoSQL vendor's own tool (RedisInsight, MongoDB Compass, Kibana). DbRover
   browses, queries and edits; monitoring, profiling and cluster administration stay with them.
 - Feature parity with full database IDEs such as DBeaver or DataGrip. In particular:
-  refactorings, VCS integration, and a full SQL language server. ER diagrams and schema
-  diffing were on this list until 2026-10-29; both are now planned, though not soon (ER1 and
-  W13 in the [roadmap](roadmap.md)).
+  refactorings, a Git client inside the app, and a full SQL language server. ER diagrams and
+  schema diffing were on this list until 2026-10-29; both are now planned, though not soon
+  (ER1 and W13 in the [roadmap](roadmap.md)). DbRover's files work with the Git you already
+  use instead: [Version control](version-control.md) plans making the files it writes safe
+  under Git, a repository's `.sql` files in the explorer, and schema snapshots Git can keep.
 - A plugin system that loads native code. Extension happens through files, external commands
   and, later, sandboxed WebAssembly plugins (see [Hackability](hackability.md) and
   [ADR 0005](adr/0005-customisation-files-commands-then-wasm.md)). New database engines are

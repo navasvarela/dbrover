@@ -539,8 +539,61 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
     Neon's pooled and direct hosts; Supabase's session pooler, transaction pooler and direct
     host; and ClickHouse Cloud, woken from idle. Each should connect, browse and run the
     conformance suite.
-- **C2 — Object storage:** Parquet, CSV and JSON in S3, Google Cloud Storage and Azure Blob
-  Storage, Iceberg and Delta tables, and MotherDuck, all through DuckDB.
+- **C2 — Object storage and table formats** (built, in nine layers, 2026-11-04, after C1):
+  Parquet, CSV and JSON in S3, Google Cloud Storage and Azure Blob Storage, Iceberg and Delta
+  tables, and MotherDuck, all through DuckDB and the extensions it downloads on first use.
+  Planned in
+  [Cloud and big data](cloud-data.md#c2--object-storage-and-table-formats-duckdb). In layers,
+  one PR each:
+  - **C2a — Plan:** C2's layers, decisions and risks, and this entry.
+  - **C2b — A bucket in a DuckDB data source's settings:** the provider, bucket, region,
+    endpoint and sign-in, saved in `data_sources.toml`, with an access key's secret in the
+    keychain.
+  - **C2c — Reading S3 through DuckDB:** C0's AWS sign-in, an access key or none, made into a
+    temporary DuckDB secret and made again before it expires; MinIO among the test servers.
+  - **C2d — The bucket in the explorer:** a level at a time with a delimiter, a thousand keys a
+    page; files' columns and **Open data**.
+  - **C2e — Iceberg and Delta tables:** found from their folders and opened with
+    `iceberg_scan` and `delta_scan`.
+  - **C2f — Google Cloud Storage and Azure Blob Storage:** C0's Google and Entra ID tokens as
+    DuckDB secrets, and each provider's listing; fake-gcs-server among the test servers.
+  - **C2g — MotherDuck:** an `md:` database, with its token in the keychain.
+  - **C2h — The data source dialog:** a **Bucket** section, and MotherDuck beside **File** and
+    **In memory**.
+  - **C2i — Manual:** a page on object storage and MotherDuck, and the demo note.
+
+  Nothing is tried against a real cloud account while building C2: S3 is tried on MinIO,
+  Google Cloud Storage on fake-gcs-server, Azure's listing on its documented answers, and
+  MotherDuck's connection string by unit tests; the live checks are listed in the demo note.
+
+  **Exit:** query `s3://bucket/path/*.parquet` and an Iceberg table from a MinIO container in
+  CI with no AWS account.
+
+  **C2 demo note:** the parts that need no cloud account first.
+  - *A bucket on MinIO:* run `docker compose up -d --wait minio`, add a **DuckDB** data source
+    **In memory**, tick **Read from a bucket**, and type **Bucket name** `dbrover`,
+    **Endpoint** `http://localhost:59000`, **Sign in with** **Access key**, **Access key**
+    `dbrover` and **Secret key** `dbrover-test`. The explorer shows **dbrover** under it, with
+    `sales/` (folders `year=2025`, `year=2026`), `warehouse/` and `customers.csv`; a Parquet
+    file expands to its columns, `year` included, and **Open data** shows its rows. In a
+    console, `SELECT count(*), sum(amount) FROM 's3://dbrover/sales/*/*.parquet'` gives 15 and
+    300.00. The first query downloads DuckDB's `httpfs` (16 MB).
+  - *Iceberg and Delta:* under `warehouse/shop/orders` the first node is **orders**, *Iceberg
+    table*, and under `warehouse/products` **products**, *Delta table*; **Open data** on each
+    shows four rows (DuckDB downloads `iceberg`, `avro` and `delta` the first time).
+  - *Google Cloud Storage's stand-in:* `docker compose up -d --wait fake-gcs` serves the same
+    files as `gs://dbrover` at `http://localhost:59100`; it takes any token, so it can be
+    tried with **None (public)** and that endpoint.
+  - *Offline:* with the network off and a DuckDB version whose `httpfs` was never downloaded,
+    the first bucket query says DuckDB couldn't download its httpfs extension and how to
+    install it from a file; the database's own tables still work.
+  - *By hand, with real accounts* (not tried while building C2), as the manual's page lists:
+    an S3 bucket with an AWS profile whose credentials expire (IAM Identity Center or a role)
+    used past their hour, a public bucket, and Cloudflare R2; Google Cloud Storage with
+    Application Default Credentials and a service account's key; an Azure container with
+    `az login`, a private endpoint and a public container; Iceberg and Delta tables written by
+    Spark, Glue, Snowflake or Databricks; and a MotherDuck database with a token, read-only
+    too.
 - **C3 — Athena and Trino**, over AWS's Athena API and then Trino's HTTP protocol.
 - **C4 — BigQuery**, over its jobs API, with a dry run showing the bytes a query will scan.
 - **C5 — Snowflake**, over its SQL API.
@@ -2011,6 +2064,53 @@ measurement.
   parameters bound, run in the same worker and DuckDB; only its result is visible to the outer
   report. Later, `reuse = "24h"` takes a recent result from RS5's cache. Independent of the
   scale work, so it can come right after RP5.
+
+## Version control track
+
+Planned, not scheduled. Proposed on 2026-11-04 in [Version control](version-control.md), after
+looking at how other database tools use Git. The answer is a small piece: no Git client in the
+app (Vision keeps that a non-goal), but the files DbRover writes made safe under Git, a
+repository's folder of `.sql` files in the explorer, and schema snapshots Git can keep. It comes
+after CI fixes, the reports track and W13, and links no Git library.
+
+- **VC1 — Files that live well in Git (M):** planned in
+  [Version control](version-control.md#vc1--files-that-live-well-in-git). In layers, one PR
+  each:
+  - **VC1a — The plan:** the design, this entry and Vision's reworded non-goal.
+  - **VC1b — Noticing changes made outside DbRover:** every file DbRover rewrites is checked
+    before the write, so a `git pull` while it runs is no longer undone by the next save; data
+    sources and projects merge per entry, documents offer **Reload** or **Keep mine**, and the
+    check also runs when the window comes back to the front. A bug fix as much as a feature;
+    worth pulling forward if someone hits it.
+  - **VC1c — Comments and order kept:** `data_sources.toml`, `projects.toml` and
+    `settings.toml` edited in place with `toml_edit`, so a save changes only its own lines.
+  - **VC1d — A `.gitignore` for the history:** written when the settings folder is created or
+    chosen, never replaced, so `history.sqlite` isn't committed.
+  - **VC1e — A report's run names the report's version:** the file's Git blob id with each run,
+    in the tab, `--json` and the log, found with `git log --find-object`.
+  - **VC1f — Manual:** *Keeping your settings in Git*, and this demo note.
+
+  **Exit:** with the settings folder in Git and DbRover running, `git pull` brings a new data
+  source and a changed one; both show once the window is in front, saving a third keeps all
+  three and their comments, and `git diff` shows only the third's lines. `git status` doesn't
+  list `history.sqlite`. A report run before and after an edit shows two blob ids.
+- **VC2 — A folder of queries (S–M):** planned in
+  [Version control](version-control.md#vc2--a-folder-of-queries). Folders of `.sql` files you
+  add (a repository's `queries/`) as a tree in the explorer, hidden and Git-ignored files left
+  out, each file opened and saved in place through W6. The request other tools' users make most.
+  - **VC2a — The folder list and the tree.**
+  - **VC2b — Opening and creating** (**New query here**).
+  - **VC2c — Manual,** and the demo note.
+
+  **Exit:** a clone with `queries/sales.sql` and `queries/admin/users.sql` shows both and not
+  `.git`; saving `sales.sql` shows in `git diff`; checking out a branch that adds a file shows
+  it once the window is in front.
+- **VC3 — Schema snapshots (S–M), with W13:** a schema saved as a deterministic, diffable file
+  (in the app and as `dbrover schema snapshot`), and W13 comparing a live schema with one, so
+  Git's history of the file is the schema's history. Its format is decided when W13 starts.
+
+  **Exit:** a snapshot of `public` on the PostgreSQL test server taken twice is identical; after
+  adding a column and an index, comparing the live schema with the first snapshot lists both.
 
 ## Design and documentation track
 

@@ -6,19 +6,15 @@ use super::*;
 /// Runs far longer than the conformance check allows: a trillion-row cross join.
 const LONG_RUNNING: &str = "SELECT sum(a.range * b.range) FROM range(1000000) a, range(1000000) b";
 
-fn in_memory() -> DuckDbConfig {
-    DuckDbConfig {
-        database: DuckDbDatabase::InMemory,
-    }
+pub(crate) fn in_memory() -> DuckDbConfig {
+    DuckDbConfig::new(DuckDbDatabase::InMemory)
 }
 
 fn file(path: &Path, read_only: bool) -> DuckDbConfig {
-    DuckDbConfig {
-        database: DuckDbDatabase::File {
-            path: path.to_owned(),
-            read_only,
-        },
-    }
+    DuckDbConfig::new(DuckDbDatabase::File {
+        path: path.to_owned(),
+        read_only,
+    })
 }
 
 async fn run(connection: &mut DuckDbConnection, sql: &str) -> Option<u64> {
@@ -32,14 +28,14 @@ async fn run(connection: &mut DuckDbConnection, sql: &str) -> Option<u64> {
     cursor.finish().await.unwrap()
 }
 
-async fn rows(connection: &mut DuckDbConnection, sql: &str) -> Vec<Vec<Option<String>>> {
+pub(crate) async fn rows(connection: &mut DuckDbConnection, sql: &str) -> Vec<Vec<Option<String>>> {
     let mut cursor = connection.execute(sql).await.unwrap();
     let rows = cursor.next_page(1000).await.unwrap();
     cursor.finish().await.unwrap();
     rows
 }
 
-fn text(values: &[Option<&str>]) -> Vec<Option<String>> {
+pub(crate) fn text(values: &[Option<&str>]) -> Vec<Option<String>> {
     values
         .iter()
         .map(|value| value.map(str::to_owned))
@@ -363,7 +359,7 @@ async fn connections_to_one_file_share_its_database() {
 }
 
 /// What running `sql` fails with, whether starting it or reading it to its end fails.
-async fn failure(connection: &mut DuckDbConnection, sql: &str) -> String {
+pub(crate) async fn failure(connection: &mut DuckDbConnection, sql: &str) -> String {
     let error = match connection.execute(sql).await {
         Ok(cursor) => cursor.finish().await.err(),
         Err(error) => Some(error),
@@ -426,4 +422,20 @@ async fn opens_a_file_one_way_at_a_time() {
     Box::new(reader).close().await.unwrap();
 
     connect(&file(&path, false)).await.unwrap();
+}
+
+/// Needs no network: without a token nothing is opened, so MotherDuck is never asked.
+#[tokio::test]
+async fn a_motherduck_database_without_a_token_says_where_to_set_it() {
+    let config = DuckDbConfig::new(DuckDbDatabase::MotherDuck {
+        name: "analytics".to_owned(),
+    });
+
+    let error = connect_with_secret(&config, None).await.err().unwrap();
+
+    let message = dbrover_core::describe_error(&error);
+    assert!(
+        message.contains("a MotherDuck database signs in with a token"),
+        "{message}"
+    );
 }

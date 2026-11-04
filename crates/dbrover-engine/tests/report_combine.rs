@@ -36,12 +36,10 @@ async fn execute(connection: &mut dyn Connection, statements: &[&str]) {
 async fn prices(folder: &Path) -> DataSource {
     let path = folder.join("prices.duckdb");
     dbrover_driver_duckdb::create_database(&path).await.unwrap();
-    let mut file = dbrover_driver_duckdb::connect(&DuckDbConfig {
-        database: DuckDbDatabase::File {
-            path: path.clone(),
-            read_only: false,
-        },
-    })
+    let mut file = dbrover_driver_duckdb::connect(&DuckDbConfig::new(DuckDbDatabase::File {
+        path: path.clone(),
+        read_only: false,
+    }))
     .await
     .unwrap();
     execute(
@@ -63,12 +61,10 @@ async fn prices(folder: &Path) -> DataSource {
         safety: SafetyLevel::Normal,
         project: None,
         mcp_login: None,
-        config: ConnectionConfig::DuckDb(DuckDbConfig {
-            database: DuckDbDatabase::File {
-                path,
-                read_only: true,
-            },
-        }),
+        config: ConnectionConfig::DuckDb(DuckDbConfig::new(DuckDbDatabase::File {
+            path,
+            read_only: true,
+        })),
     }
 }
 
@@ -209,6 +205,7 @@ async fn combines_a_sqlite_source_with_an_attached_duckdb_file() {
     assert!(out.join("valuation.xlsx").is_file());
     let ConnectionConfig::DuckDb(DuckDbConfig {
         database: DuckDbDatabase::File { path, .. },
+        ..
     }) = prices.config
     else {
         unreachable!("prices is a DuckDB file");

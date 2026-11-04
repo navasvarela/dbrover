@@ -22,7 +22,9 @@ mod test_language;
 
 use std::ops::Range;
 
-use dbrover_core::{CatalogPath, DriverKind, NodeKind, Quoting, ResultShape, ServerInfo};
+use dbrover_core::{
+    CatalogPath, DriverKind, NodeKind, Quoting, ResultShape, ServerInfo, object_source,
+};
 use dbrover_plan::PlanFormat;
 use dbrover_sql::Dialect;
 pub use dbrover_sql::{
@@ -355,12 +357,13 @@ impl QueryLanguage {
 
     /// What **Open data** runs on the catalog object at `path`, for a language that reads a
     /// table or index whole in its own words: PartiQL's `SELECT *` of a DynamoDB table or of
-    /// one of its indexes. `None` for any other object, and for the languages whose objects
-    /// the app reads by their kind (SQL's tables, Redis's keys, MongoDB's collections and
-    /// search indices).
+    /// one of its indexes, and DuckDB's of a file in a bucket (C2), by its address. `None` for
+    /// any other object, and for the languages whose objects the app reads by their kind
+    /// (SQL's tables, Redis's keys, MongoDB's collections and search indices).
     pub fn read_all(self, path: &CatalogPath) -> Option<String> {
         match self {
             Self::PartiQl => partiql::read_all(path),
+            Self::Sql(Dialect::DuckDb) => read_object(path),
             Self::Sql(_) | Self::Redis | Self::Mongo | Self::Search => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
@@ -482,9 +485,47 @@ pub fn command_at(commands: &[Range<usize>], cursor: usize) -> Option<usize> {
     dbrover_sql::statement_at(commands, cursor)
 }
 
+/// `SELECT *` of the file or table at `path` in a bucket, as DuckDB reads it (C2).
+fn read_object(path: &CatalogPath) -> Option<String> {
+    Some(format!("SELECT * FROM {};", object_source(path)?))
+}
+
 #[cfg(test)]
 mod tests {
+    use dbrover_core::{ObjectKind, TableFormat};
+
     use super::*;
+
+    #[test]
+    fn duckdb_opens_a_file_or_table_in_a_bucket_by_its_address() {
+        let folder = CatalogPath::root()
+            .child(NodeKind::Object(ObjectKind::Bucket), "s3://dbrover")
+            .child(NodeKind::Object(ObjectKind::Folder), "sales");
+        let file = |name: &str| folder.child(NodeKind::Object(ObjectKind::File), name);
+        let duckdb = QueryLanguage::Sql(Dialect::DuckDb);
+        let cases = [
+            (
+                duckdb,
+                file("O'Brien.parquet"),
+                Some("SELECT * FROM 's3://dbrover/sales/O''Brien.parquet';"),
+            ),
+            (duckdb, file("_SUCCESS"), None),
+            (
+                duckdb,
+                folder.child(NodeKind::Object(ObjectKind::Table(TableFormat::Delta)), ""),
+                Some("SELECT * FROM delta_scan('s3://dbrover/sales/');"),
+            ),
+            (duckdb, folder.clone(), None),
+            (
+                QueryLanguage::Sql(Dialect::Postgres),
+                file("orders.parquet"),
+                None,
+            ),
+        ];
+        for (language, path, expected) in cases {
+            assert_eq!(language.read_all(&path).as_deref(), expected, "{path}");
+        }
+    }
 
     #[test]
     fn every_sql_driver_speaks_its_own_dialect() {

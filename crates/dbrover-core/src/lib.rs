@@ -16,6 +16,7 @@ mod execution;
 mod job;
 mod managed_service;
 mod mongo_uri;
+mod object_storage;
 mod password;
 mod password_command;
 mod placeholder;
@@ -28,7 +29,9 @@ mod table;
 pub mod conformance;
 
 pub use byte_size::ByteSize;
-pub use catalog::{CatalogNode, CatalogPath, FolderKind, KeyType, NodeKind, PathSegment};
+pub use catalog::{
+    CatalogNode, CatalogPath, FolderKind, KeyType, NodeKind, ObjectKind, PathSegment, TableFormat,
+};
 pub use catalog_page::{
     CATALOG_PAGE_SIZE, CATALOG_SEARCH_LIMIT, CatalogMatches, CatalogSearch, ChildrenPage,
     ChildrenQuery, PageToken, like_contains,
@@ -54,6 +57,10 @@ pub use managed_service::{
     ServiceVendor,
 };
 pub use mongo_uri::MongoUri;
+pub use object_storage::{
+    AzureContainer, AzureSignIn, GcsBucket, GcsSignIn, ICEBERG_METADATA_SUFFIX, ObjectStorage,
+    S3Bucket, S3SignIn, StorageProvider, object_source, object_url, reads_as_table,
+};
 pub use password::Password;
 pub use password_command::PasswordCommand;
 pub use placeholder::{

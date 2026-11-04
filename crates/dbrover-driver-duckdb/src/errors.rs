@@ -12,7 +12,7 @@
 //!
 //! A long line is quoted in part, with `...` where it was cut.
 
-use dbrover_core::{DriverError, Rejection, RejectionKind};
+use dbrover_core::{BoxError, DriverError, Rejection, RejectionKind};
 
 /// What DuckDB shows for a quoted line cut short, at either end.
 const ELLIPSIS: &str = "...";
@@ -33,11 +33,67 @@ impl std::error::Error for DuckDbError {}
 /// A failed user statement, with the byte offset of the error when DuckDB says where.
 pub(crate) fn statement_error(error: duckdb::Error, sql: &str) -> DriverError {
     let message = error.to_string();
+    let summary = summary(&message);
     DriverError::Statement {
         position: position(&message, sql),
-        source: Box::new(DuckDbError(summary(&message).to_owned())),
+        source: Box::new(DuckDbError(
+            explain_missing_extension(summary).unwrap_or_else(|| summary.to_owned()),
+        )),
         sqlstate: None,
     }
+}
+
+/// DuckDB refusing the secret DbRover made for the data source's bucket, without the quoted
+/// line DuckDB adds to some errors: that line is the statement, which holds the credentials.
+pub(crate) fn secret_error(error: duckdb::Error) -> DriverError {
+    let message = error.to_string();
+    let summary = summary(&message);
+    let source: BoxError = match explain_missing_extension(summary) {
+        Some(explained) => Box::new(MissingExtension(explained)),
+        None => Box::new(DuckDbError(format!(
+            "DuckDB refused the bucket's credentials: {summary}"
+        ))),
+    };
+    DriverError::Connection(source)
+}
+
+/// An extension DuckDB couldn't download, explained.
+#[derive(Debug)]
+pub(crate) struct MissingExtension(String);
+
+impl std::fmt::Display for MissingExtension {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for MissingExtension {}
+
+/// Whether `error` is DuckDB failing to install an extension, rather than the statement's or
+/// the credentials' fault.
+pub(crate) fn is_missing_extension(error: &DriverError) -> bool {
+    matches!(error, DriverError::Connection(source) if source.is::<MissingExtension>())
+}
+
+/// What DuckDB starts the message with when it couldn't install an extension a statement
+/// needs, which it does on its own the first time one is needed.
+const AUTOLOADING_ERROR: &str = "Extension Autoloading Error";
+
+/// DuckDB's message for an extension it couldn't download, with what it means and what to do
+/// offline; `None` for any other message. DuckDB's own message follows, for its cause.
+fn explain_missing_extension(summary: &str) -> Option<String> {
+    let rest = summary.strip_prefix(AUTOLOADING_ERROR)?;
+    let name = rest
+        .split_once("extension '")
+        .and_then(|(_, after)| after.split_once('\''))
+        .map_or("an", |(name, _)| name);
+    Some(format!(
+        "DuckDB couldn't download its {name} extension, which this needs. DuckDB downloads \
+         each extension from extensions.duckdb.org the first time it is needed, once per \
+         DuckDB version, and keeps it in ~/.duckdb/extensions. Try again once this computer \
+         is online, or install the extension from a file: INSTALL \
+         '/path/to/{name}.duckdb_extension'.\n\n{summary}"
+    ))
 }
 
 /// A statement stopped by a cancel between two fetches, where DuckDB's own interrupt had
@@ -168,6 +224,27 @@ mod tests {
         for (sql, message, expected) in cases {
             assert_eq!(position(&message, sql), expected, "{message}");
         }
+    }
+
+    #[test]
+    fn explains_an_extension_duckdb_couldnt_download() {
+        let duckdb = "Extension Autoloading Error: An error occurred while trying to \
+                      automatically install the required extension 'httpfs':\n\
+                      Failed to download extension \"httpfs\" at URL \
+                      \"http://127.0.0.1:9/v1.5.6/osx_arm64/httpfs.duckdb_extension.gz\"";
+
+        let explained = explain_missing_extension(duckdb).unwrap();
+
+        assert!(
+            explained.starts_with("DuckDB couldn't download its httpfs extension"),
+            "{explained}"
+        );
+        assert!(explained.contains("INSTALL '/path/to/httpfs.duckdb_extension'"));
+        assert!(explained.ends_with(duckdb), "{explained}");
+        assert_eq!(
+            explain_missing_extension("Catalog Error: Table x does not exist"),
+            None
+        );
     }
 
     #[test]

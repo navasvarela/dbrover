@@ -62,6 +62,43 @@ pub enum NodeKind {
     /// A user-defined aggregate (Cassandra's `CREATE AGGREGATE`), named with its argument types
     /// as a function is.
     Aggregate,
+    /// A bucket in object storage, a folder of its keys, or a file in it (C2), beside a DuckDB
+    /// database's own objects. See [`crate::object_url`].
+    Object(ObjectKind),
+}
+
+/// What a node in a bucket is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ObjectKind {
+    /// The bucket itself, or an Azure container. Its path segment's name is the address its
+    /// files are read under (`s3://sales`), so a path alone says where an object is.
+    Bucket,
+    /// The keys that share a prefix up to the next `/`. Its segment's name is that part of
+    /// the key, without the `/`.
+    Folder,
+    /// An object, named by the last part of its key.
+    File,
+    /// A table in a table format, the first child of the folder that holds it. Its segment's
+    /// name is the path, from that folder, of what DuckDB reads it from: the newest metadata
+    /// file of an Iceberg table (`metadata/00002-….metadata.json`), and nothing for a Delta
+    /// table, which DuckDB reads from its folder.
+    Table(TableFormat),
+}
+
+/// A format that makes a folder of Parquet files a table, with its own log or metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TableFormat {
+    Iceberg,
+    Delta,
+}
+
+impl TableFormat {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Iceberg => "Iceberg table",
+            Self::Delta => "Delta table",
+        }
+    }
 }
 
 /// The type of a Redis key's value, as `TYPE` answers.
@@ -282,9 +319,12 @@ impl CatalogPath {
             | NodeKind::Collection
             | NodeKind::SearchIndex
             | NodeKind::IndexTemplate => Some(object.name.clone()),
-            NodeKind::Database | NodeKind::Schema | NodeKind::Folder(_) | NodeKind::KeyPrefix => {
-                None
-            }
+            // An object in a bucket is read by its address, which isn't a name SQL quotes.
+            NodeKind::Database
+            | NodeKind::Schema
+            | NodeKind::Folder(_)
+            | NodeKind::KeyPrefix
+            | NodeKind::Object(_) => None,
         }
     }
 

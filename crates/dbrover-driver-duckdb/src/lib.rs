@@ -3,6 +3,7 @@
 //! DuckDB calls block, so every one runs on tokio's blocking pool and never stalls the engine's
 //! async workers, as the SQLite driver does. Must run inside a tokio runtime.
 
+mod bucket;
 mod catalog;
 mod errors;
 mod execution;
@@ -15,21 +16,30 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, Weak};
+use std::time::SystemTime;
 
 use async_trait::async_trait;
+use bucket::tree::BucketPath;
 use dbrover_core::{
-    BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, Connection, DriverError, DuckDbConfig,
-    DuckDbDatabase, Rejection, RelationName, ResultCursor, ServerInfo, TableConstraints,
-    TableDescription, TableName, TransactionStatus,
+    BoxError, CATALOG_PAGE_SIZE, CancelHandle, CatalogNode, CatalogPath, Cell, ChildrenPage,
+    ChildrenQuery, Connection, DriverError, DuckDbConfig, DuckDbDatabase, PageToken, Password,
+    Rejection, RelationName, ResultCursor, ServerInfo, TableConstraints, TableDescription,
+    TableFormat, TableName, TransactionStatus,
 };
 use duckdb::AccessMode;
 
+pub use bucket::BucketError;
 pub use parquet::{ParquetCompression, ParquetWriter};
 pub use workspace::{
     DuckDbType, TableLoader, Workspace, WorkspaceLimit, WorkspaceLimits, WorkspacePeaks,
 };
 
 const PRODUCT: &str = "DuckDB";
+
+/// How many pages of a bucket's level [`Connection::children`] lists at most, for its callers
+/// that want a level whole (the conformance walk, the MCP server's catalog): ten thousand
+/// keys. The explorer pages through a level instead, so it sees all of one.
+const WHOLE_LEVEL_PAGES: usize = 10;
 
 /// Opens a database file, or a new database in memory.
 ///
@@ -42,33 +52,121 @@ const PRODUCT: &str = "DuckDB";
 /// process holds it open for writing, or this process has it open the other way (see
 /// [`SharedDatabase`]).
 pub async fn connect(config: &DuckDbConfig) -> Result<DuckDbConnection, DriverError> {
-    let database = config.database.clone();
-    let (connection, shared, version) = tokio::task::spawn_blocking(move || open(&database))
-        .await
-        .map_err(connect_error)??;
+    connect_with_secret(config, None).await
+}
 
-    Ok(DuckDbConnection {
+/// Opens the database as [`connect`] does, and hands DuckDB the credentials of the data
+/// source's bucket, if it has one, signing in to it with `secret` where the bucket's sign-in
+/// takes one (an access key's).
+///
+/// An extension DuckDB couldn't download doesn't stop the connection: the database's own
+/// tables still work offline, and the bucket's secret is tried again before each statement.
+///
+/// # Errors
+///
+/// As for [`connect`], and [`DriverError::Connect`] when signing in to the bucket fails.
+pub async fn connect_with_secret(
+    config: &DuckDbConfig,
+    secret: Option<&Password>,
+) -> Result<DuckDbConnection, DriverError> {
+    // One password per data source: a MotherDuck database's token, else the secret of the
+    // bucket's access key.
+    let (token, bucket_secret) = match config.database {
+        DuckDbDatabase::MotherDuck { .. } => (secret.cloned(), None),
+        DuckDbDatabase::File { .. } | DuckDbDatabase::InMemory => (None, secret.cloned()),
+    };
+    let database = config.database.clone();
+    let (connection, shared, version) =
+        tokio::task::spawn_blocking(move || open(&database, token.as_ref()))
+            .await
+            .map_err(connect_error)??;
+
+    let mut connection = DuckDbConnection {
         cancel: Arc::new(execution::DuckDbCancel::new(connection.interrupt_handle())),
         connection: Arc::new(Mutex::new(connection)),
         _database: shared,
         server_info: ServerInfo::new(PRODUCT, version),
-    })
+        bucket: config
+            .storage
+            .clone()
+            .map(|storage| bucket::Bucket::new(storage, bucket_secret)),
+    };
+    connection
+        .make_bucket_secret()
+        .await
+        .map_err(|error| DriverError::Connect(error.into()))?;
+    Ok(connection)
+}
+
+/// How many pages of an Iceberg table's metadata folder are listed for its newest metadata
+/// file: twenty thousand files, a table's metadata files and manifests after thousands of
+/// commits. Past that the newest of those listed is used, and a log line says so.
+const ICEBERG_METADATA_PAGES: usize = 20;
+
+/// The name of the table node in the folder at `prefix`: nothing for a Delta table, which
+/// DuckDB reads from its folder, and the newest metadata file of an Iceberg table, found by
+/// listing its metadata folder; `None` when that folder holds no metadata file.
+async fn table_source_name(
+    lister: &dbrover_cloud::storage::Lister,
+    prefix: &str,
+    format: TableFormat,
+) -> Result<Option<String>, DriverError> {
+    if format == TableFormat::Delta {
+        return Ok(Some(String::new()));
+    }
+    let metadata = format!("{prefix}{}", bucket::tree::ICEBERG_METADATA_FOLDER);
+    let mut keys = Vec::new();
+    let mut after = None;
+    for _ in 0..ICEBERG_METADATA_PAGES {
+        let level = lister
+            .list(&metadata, after.as_deref(), CATALOG_PAGE_SIZE)
+            .await
+            .map_err(listing_error)?;
+        keys.extend(level.files.into_iter().map(|file| file.key));
+        after = level.next;
+        if after.is_none() {
+            break;
+        }
+    }
+    if after.is_some() {
+        tracing::warn!("{metadata} has more files than DbRover lists; using the newest listed");
+    }
+    Ok(
+        bucket::tree::newest_metadata(keys.iter().map(String::as_str))
+            .and_then(|key| key.strip_prefix(prefix))
+            .map(str::to_owned),
+    )
+}
+
+fn listing_error(error: dbrover_cloud::storage::StorageError) -> DriverError {
+    connection_error(BucketError::from(error))
+}
+
+/// Settings every database DbRover opens starts with, which can't change once it runs.
+///
+/// Persistent secrets are off, so DuckDB never writes a bucket's credentials to
+/// `~/.duckdb/stored_secrets`, nor loads secrets someone else stored there (C2).
+fn duckdb_config() -> Result<duckdb::Config, duckdb::Error> {
+    duckdb::Config::default().with("allow_persistent_secrets", "false")
 }
 
 /// A connection, the file's shared database it belongs to (`None` in memory), and DuckDB's
 /// version.
 type Opened = (duckdb::Connection, Option<Arc<SharedDatabase>>, String);
 
-fn open(database: &DuckDbDatabase) -> Result<Opened, DriverError> {
+fn open(database: &DuckDbDatabase, token: Option<&Password>) -> Result<Opened, DriverError> {
     let (connection, shared) = match database {
         DuckDbDatabase::File { path, read_only } => {
             let (connection, shared) = open_file(path, *read_only)?;
             (connection, Some(shared))
         }
         DuckDbDatabase::InMemory => (
-            duckdb::Connection::open_in_memory().map_err(connect_error)?,
+            duckdb_config()
+                .and_then(duckdb::Connection::open_in_memory_with_flags)
+                .map_err(connect_error)?,
             None,
         ),
+        DuckDbDatabase::MotherDuck { name } => (open_motherduck(name, token)?, None),
     };
     // `v1.5.6`, as `PRAGMA version` and the command-line client show it.
     let version: String = connection
@@ -76,6 +174,32 @@ fn open(database: &DuckDbDatabase) -> Result<Opened, DriverError> {
         .map_err(connect_error)?;
     let version = version.strip_prefix('v').unwrap_or(&version).to_owned();
     Ok((connection, shared, version))
+}
+
+/// The setting MotherDuck's extension reads its token from (MotherDuck's documentation,
+/// "Authenticating to MotherDuck").
+const MOTHERDUCK_TOKEN_SETTING: &str = "motherduck_token";
+
+/// The MotherDuck database `name`, signed in with `token`.
+///
+/// The token is DuckDB's `motherduck_token` setting, which the `motherduck` extension (downloaded
+/// on first use, as DuckDB loads it for an `md:` path) reads when the database opens. It never
+/// goes in the path, which DuckDB's errors and DbRover's log can show.
+fn open_motherduck(
+    name: &str,
+    token: Option<&Password>,
+) -> Result<duckdb::Connection, DriverError> {
+    let token = token.ok_or_else(|| {
+        connect_error(
+            "a MotherDuck database signs in with a token, and the data source has none: set it \
+             as its password in its settings",
+        )
+    })?;
+    let config = duckdb_config()
+        .and_then(|config| config.with(MOTHERDUCK_TOKEN_SETTING, token.expose()))
+        .map_err(connect_error)?;
+    duckdb::Connection::open_with_flags(DuckDbDatabase::motherduck_path(name), config)
+        .map_err(connect_error)
 }
 
 /// A database file this process has open, held by a connection kept only to open more
@@ -129,8 +253,8 @@ fn open_file(
     } else {
         AccessMode::ReadWrite
     };
-    let config = duckdb::Config::default()
-        .access_mode(access)
+    let config = duckdb_config()
+        .and_then(|config| config.access_mode(access))
         .map_err(connect_error)?;
     let first = duckdb::Connection::open_with_flags(path, config).map_err(connect_error)?;
     let connection = first.try_clone().map_err(connect_error)?;
@@ -214,9 +338,155 @@ pub struct DuckDbConnection {
     /// [`SharedDatabase`].
     _database: Option<Arc<SharedDatabase>>,
     server_info: ServerInfo,
+    /// The data source's bucket, whose secret is made before a statement when it is due.
+    bucket: Option<bucket::Bucket>,
 }
 
 impl DuckDbConnection {
+    /// Makes the bucket's secret if it was never made or is about to expire. An extension
+    /// DuckDB couldn't download is logged and left for the statement that needs it to report,
+    /// which [`errors`] explains; the secret is tried again before the next statement.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError::Connection`] when signing in to the bucket fails, or DuckDB refuses the
+    /// secret for another reason.
+    async fn make_bucket_secret(&mut self) -> Result<(), DriverError> {
+        let Some(bucket) = &mut self.bucket else {
+            return Ok(());
+        };
+        let Some(statement) = bucket
+            .due_secret(SystemTime::now())
+            .await
+            .map_err(connection_error)?
+        else {
+            return Ok(());
+        };
+        let made = self
+            .run_blocking(move |connection| {
+                connection
+                    .execute_batch(statement.expose())
+                    .map_err(errors::secret_error)
+            })
+            .await;
+        match made {
+            Ok(()) => {
+                if let Some(bucket) = &mut self.bucket {
+                    bucket.made();
+                }
+                Ok(())
+            }
+            Err(error) if errors::is_missing_extension(&error) => {
+                tracing::warn!(
+                    "the bucket's secret waits for a DuckDB extension: {}",
+                    dbrover_core::describe_error(&error)
+                );
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// What `path` is in the data source's bucket, if it is in it.
+    fn bucket_path(&self, path: &CatalogPath) -> Option<BucketPath> {
+        let bucket = self.bucket.as_ref()?;
+        BucketPath::of(path, &bucket.storage().url())
+    }
+
+    /// A page of the bucket's level at `path`, whose keys start with `prefix`.
+    async fn bucket_level(
+        &mut self,
+        path: &CatalogPath,
+        prefix: &str,
+        query: &ChildrenQuery,
+    ) -> Result<ChildrenPage, DriverError> {
+        let Some(bucket) = &mut self.bucket else {
+            return Err(DriverError::InvalidPath(path.clone()));
+        };
+        let lister = bucket
+            .lister(SystemTime::now())
+            .await
+            .map_err(connection_error)?;
+        let limit = query
+            .limit
+            .unwrap_or(CATALOG_PAGE_SIZE)
+            .min(CATALOG_PAGE_SIZE);
+        let after = query.after.as_ref().map(PageToken::as_str);
+        let level = lister
+            .list(prefix, after, limit)
+            .await
+            .map_err(listing_error)?;
+        let mut nodes = Vec::new();
+        if after.is_none()
+            && let Some(format) = bucket::tree::table_format(prefix, &level)
+            && let Some(source_name) = table_source_name(&lister, prefix, format).await?
+        {
+            let table = bucket::tree::table_node(path, format, &source_name);
+            if query.matches(&table.label) {
+                nodes.push(table);
+            }
+        }
+        nodes.extend(bucket::tree::level_nodes(path, prefix, &level, query));
+        Ok(ChildrenPage {
+            nodes,
+            next: level.next.map(PageToken::new),
+        })
+    }
+
+    /// Every node of the bucket's level at `path`, a page at a time, up to
+    /// [`WHOLE_LEVEL_PAGES`] pages.
+    async fn whole_bucket_level(
+        &mut self,
+        path: &CatalogPath,
+        prefix: &str,
+    ) -> Result<Vec<CatalogNode>, DriverError> {
+        let mut query = ChildrenQuery::default();
+        let mut nodes = Vec::new();
+        for _ in 0..WHOLE_LEVEL_PAGES {
+            let page = self.bucket_level(path, prefix, &query).await?;
+            nodes.extend(page.nodes);
+            match page.next {
+                Some(next) => query = query.after(next),
+                None => return Ok(nodes),
+            }
+        }
+        tracing::warn!(
+            "{path} has more than {} entries; listing the first of them",
+            nodes.len()
+        );
+        Ok(nodes)
+    }
+
+    /// The columns of the file or table DuckDB reads from `source`, as it reads them from a
+    /// file's footer (Parquet), first rows (CSV, JSON), or a table's metadata.
+    async fn object_columns(
+        &mut self,
+        path: &CatalogPath,
+        source: String,
+    ) -> Result<Vec<CatalogNode>, DriverError> {
+        self.make_bucket_secret().await?;
+        let path = path.clone();
+        self.run_blocking(move |connection| {
+            let sql = format!("DESCRIBE SELECT * FROM {source}");
+            let mut statement = connection
+                .prepare(&sql)
+                .map_err(|error| errors::statement_error(error, &sql))?;
+            let columns = statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(|error| errors::statement_error(error, &sql))?;
+            columns
+                .map(|column| {
+                    let (name, data_type) =
+                        column.map_err(|error| errors::statement_error(error, &sql))?;
+                    Ok(bucket::tree::column_node(&path, &name, &data_type))
+                })
+                .collect()
+        })
+        .await
+    }
+
     async fn run_blocking<T: Send + 'static>(
         &self,
         work: impl FnOnce(&duckdb::Connection) -> Result<T, DriverError> + Send + 'static,
@@ -247,9 +517,37 @@ impl Connection for DuckDbConnection {
     }
 
     async fn children(&mut self, path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError> {
-        let path = path.clone();
-        self.run_blocking(move |connection| catalog::children(connection, &path))
-            .await
+        match self.bucket_path(path) {
+            Some(BucketPath::Level { prefix }) => {
+                return self.whole_bucket_level(path, &prefix).await;
+            }
+            Some(BucketPath::Readable { source }) => {
+                return self.object_columns(path, source).await;
+            }
+            None => {}
+        }
+        let owned = path.clone();
+        let mut nodes = self
+            .run_blocking(move |connection| catalog::children(connection, &owned))
+            .await?;
+        if path.segments().is_empty()
+            && let Some(bucket) = &self.bucket
+        {
+            nodes.push(bucket::tree::bucket_node(bucket.storage()));
+        }
+        Ok(nodes)
+    }
+
+    /// A bucket's level a page at a time, from its own listing; every other level whole.
+    async fn children_page(
+        &mut self,
+        path: &CatalogPath,
+        query: &ChildrenQuery,
+    ) -> Result<ChildrenPage, DriverError> {
+        match self.bucket_path(path) {
+            Some(BucketPath::Level { prefix }) => self.bucket_level(path, &prefix, query).await,
+            _ => Ok(ChildrenPage::whole(self.children(path).await?, query)),
+        }
     }
 
     async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError> {
@@ -259,6 +557,7 @@ impl Connection for DuckDbConnection {
     }
 
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError> {
+        self.make_bucket_secret().await?;
         execution::execute(&self.connection, &self.cancel, sql, &[]).await
     }
 
@@ -267,6 +566,7 @@ impl Connection for DuckDbConnection {
         sql: &str,
         values: &[Cell],
     ) -> Result<Box<dyn ResultCursor>, DriverError> {
+        self.make_bucket_secret().await?;
         execution::execute(&self.connection, &self.cancel, sql, values).await
     }
 
@@ -332,6 +632,8 @@ impl Connection for DuckDbConnection {
     }
 }
 
+#[cfg(test)]
+mod bucket_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
