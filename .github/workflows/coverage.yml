@@ -22,7 +22,7 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings --cfg dbrover_prebuilt_duckdb
   # Coverage comes from the instrumentation's own mapping, not from debug info, and without debug
-  # info the build links faster and its cache is smaller.
+  # info the build links faster.
   CARGO_PROFILE_DEV_DEBUG: 0
 
 permissions:
@@ -39,12 +39,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
-      # A cache of its own, saved from main only. ci.yml's caches hold uninstrumented builds,
-      # which cargo-llvm-cov can't reuse: it builds into target/llvm-cov-target with
-      # `-C instrument-coverage` on every crate.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # No Rust cache. ci.yml's caches hold uninstrumented builds, which cargo-llvm-cov can't
+      # reuse (it builds into target/llvm-cov-target with `-C instrument-coverage` on every
+      # crate), and a cache of its own took 1.2 GB of GitHub's 10 GB per repository, which
+      # pushed ci.yml's `check` caches out. Nothing waits for this job, so it builds cold.
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov@0.9.1
