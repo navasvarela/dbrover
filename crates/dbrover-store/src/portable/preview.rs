@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use dbrover_core::{
-    ConnectionConfig, DataSource, DataSourceId, DuckDbDatabase, ProjectId, ServerConfig, SshLogin,
-    TlsMode, Variables, expand_path,
+    ConnectionConfig, DataSource, DataSourceId, DuckDbDatabase, GcsBucket, GcsSignIn,
+    ObjectStorage, ProjectId, ServerConfig, SshLogin, TlsMode, Variables, expand_path,
 };
 
 use super::Incoming;
@@ -488,13 +488,21 @@ fn data_source_settings(data_source: &DataSource, names: &ProjectNames) -> Setti
             settings.push(("File", config.path.display().to_string()));
             settings.push(("Read-only", yes_no(config.read_only)));
         }
-        ConnectionConfig::DuckDb(config) => match &config.database {
-            DuckDbDatabase::File { path, read_only } => {
-                settings.push(("File", path.display().to_string()));
-                settings.push(("Read-only", yes_no(*read_only)));
+        ConnectionConfig::DuckDb(config) => {
+            match &config.database {
+                DuckDbDatabase::File { path, read_only } => {
+                    settings.push(("File", path.display().to_string()));
+                    settings.push(("Read-only", yes_no(*read_only)));
+                }
+                DuckDbDatabase::InMemory => settings.push(("File", "in memory".to_owned())),
+                DuckDbDatabase::MotherDuck { name } => {
+                    settings.push(("Database", DuckDbDatabase::motherduck_path(name)));
+                }
             }
-            DuckDbDatabase::InMemory => settings.push(("File", "in memory".to_owned())),
-        },
+            if let Some(storage) = &config.storage {
+                settings.push(("Bucket", storage.to_string()));
+            }
+        }
     }
     settings
 }
@@ -547,10 +555,18 @@ fn paths(config: &ConnectionConfig) -> Vec<(&'static str, &Path)> {
         ConnectionConfig::Sqlite(config) => return vec![("File", &config.path)],
         ConnectionConfig::DynamoDb(_) => return Vec::new(),
         ConnectionConfig::DuckDb(config) => {
-            return match &config.database {
-                DuckDbDatabase::File { path, .. } => vec![("File", path)],
-                DuckDbDatabase::InMemory => Vec::new(),
+            let file = match &config.database {
+                DuckDbDatabase::File { path, .. } => Some(("File", path.as_path())),
+                DuckDbDatabase::InMemory | DuckDbDatabase::MotherDuck { .. } => None,
             };
+            let key_file = match &config.storage {
+                Some(ObjectStorage::Gcs(GcsBucket {
+                    sign_in: GcsSignIn::CredentialsFile { credentials_file },
+                    ..
+                })) => Some(("Credentials file", credentials_file.as_path())),
+                _ => None,
+            };
+            return file.into_iter().chain(key_file).collect();
         }
         ConnectionConfig::Postgres(config) => &config.server,
         ConnectionConfig::Mysql(config) => &config.server,

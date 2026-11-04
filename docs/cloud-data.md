@@ -550,8 +550,19 @@ Each layer is one pull request in a stack, useful and tested on its own, with no
   DuckDB as `motherduck_token`, never in the saved settings.
   **Exit:** the connection string for each case, and the token's absence from every `Debug`,
   `Display` and error; connecting to MotherDuck is tried by hand only.
+  **As built:** written as `database = "motherduck"` with `motherduck_database = "<name>"`
+  (empty for the account's default, `my_db`). DuckDB opens `md:<name>` with the token as its
+  `motherduck_token` setting, as MotherDuck documents for its clients; an in-memory DuckDB
+  refuses that setting, since only an `md:` path loads the extension that reads it, so it
+  couldn't be tried without contacting MotherDuck. The dialog's **MotherDuck** choice, with
+  **Name** and **Token**, came forward from C2h, since the dialog has to show every kind of
+  DuckDB database. A read-only MotherDuck data source has the statement check only
+  (`Storage::Hosted`, like a database in memory), so the MCP server doesn't serve it; a report
+  can't attach one. A data source has one password, so a MotherDuck database's bucket can't
+  sign in with an access key (an AWS profile, Google Cloud or Azure works).
 - **C2h — The data source dialog:** the DuckDB dialog gains a **Bucket** section (provider,
-  bucket, region, endpoint, sign-in) and MotherDuck beside **File** and **In memory**.
+  bucket, region, endpoint, sign-in); MotherDuck beside **File** and **In memory** came with
+  C2g.
   **Exit:** a kittest adds an S3 bucket with an access key and a MotherDuck database, and
   each saves as typed.
 - **C2i — Manual and demo note:** a page in the manual's Data sources part, **Object storage

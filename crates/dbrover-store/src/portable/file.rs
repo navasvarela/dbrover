@@ -239,6 +239,9 @@ impl PortableConfig {
                             read_only: *read_only,
                         },
                         DuckDbDatabase::InMemory => PortableDuckDbDatabase::InMemory,
+                        DuckDbDatabase::MotherDuck { name } => {
+                            PortableDuckDbDatabase::MotherDuck { name: name.clone() }
+                        }
                     },
                     storage: storage
                         .as_ref()
@@ -312,6 +315,9 @@ impl PortableConfig {
                             read_only,
                         },
                         PortableDuckDbDatabase::InMemory => DuckDbDatabase::InMemory,
+                        PortableDuckDbDatabase::MotherDuck { name } => {
+                            DuckDbDatabase::MotherDuck { name }
+                        }
                     },
                     storage: storage.map(|storage| portable_storage(&storage, path)),
                 })
@@ -606,4 +612,14 @@ enum PortableDuckDbDatabase {
         read_only: bool,
     },
     InMemory,
+    /// Travels by name; its token stays in each machine's keychain.
+    #[serde(rename = "motherduck")]
+    MotherDuck {
+        #[serde(
+            default,
+            rename = "motherduck_database",
+            skip_serializing_if = "String::is_empty"
+        )]
+        name: String,
+    },
 }

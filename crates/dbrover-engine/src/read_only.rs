@@ -46,6 +46,9 @@ pub enum Storage {
     Kept,
     /// In the connection's memory, gone when it disconnects.
     InMemory,
+    /// On a service DuckDB reaches over the network (MotherDuck, C2), which DbRover doesn't
+    /// open read-only: nothing it was told about such a service says it would refuse writes.
+    Hosted,
 }
 
 impl Storage {
@@ -55,6 +58,10 @@ impl Storage {
                 database: DuckDbDatabase::InMemory,
                 ..
             }) => Self::InMemory,
+            ConnectionConfig::DuckDb(DuckDbConfig {
+                database: DuckDbDatabase::MotherDuck { .. },
+                ..
+            }) => Self::Hosted,
             _ => Self::Kept,
         }
     }
@@ -75,10 +82,11 @@ pub fn mode(driver: DriverKind, storage: Storage) -> Option<ReadOnlyMode> {
         (DriverKind::Sqlite | DriverKind::ClickHouse, _) | (DriverKind::DuckDb, Storage::Kept) => {
             Some(ReadOnlyMode::Connection)
         }
-        // DuckDB refuses to open a database in memory read-only. SQL Server has no read-only
+        // DuckDB refuses to open a database in memory read-only, and a MotherDuck database
+        // isn't opened read-only (see `Storage::Hosted`). SQL Server has no read-only
         // transaction, and Redis, MongoDB, Elasticsearch, Cassandra and DynamoDB no read-only
         // session at all: a user who may only read is their guard (docs/nosql.md, N0a to N5).
-        (DriverKind::DuckDb, Storage::InMemory)
+        (DriverKind::DuckDb, Storage::InMemory | Storage::Hosted)
         | (
             DriverKind::SqlServer
             | DriverKind::Redis
@@ -378,10 +386,13 @@ mod tests {
             };
             assert!(expected, "{driver:?}: {guard:?}");
         }
-        assert_eq!(
-            guard(DriverKind::DuckDb, Storage::InMemory),
-            Guard::CheckOnly
-        );
+        for storage in [Storage::InMemory, Storage::Hosted] {
+            assert_eq!(guard(DriverKind::DuckDb, storage), Guard::CheckOnly);
+        }
+        let motherduck = ConnectionConfig::DuckDb(DuckDbConfig::new(DuckDbDatabase::MotherDuck {
+            name: "analytics".to_owned(),
+        }));
+        assert_eq!(Storage::of(&motherduck), Storage::Hosted);
         assert_eq!(
             read_only_login(DriverKind::Redis),
             "an ACL user with only +@read"

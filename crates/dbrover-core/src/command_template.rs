@@ -40,7 +40,7 @@ impl From<&ConnectionConfig> for DataSourceFields {
             ConnectionConfig::Sqlite(sqlite) => Some(&sqlite.path),
             ConnectionConfig::DuckDb(duckdb) => match &duckdb.database {
                 DuckDbDatabase::File { path, .. } => Some(path),
-                DuckDbDatabase::InMemory => None,
+                DuckDbDatabase::InMemory | DuckDbDatabase::MotherDuck { .. } => None,
             },
             ConnectionConfig::Postgres(_)
             | ConnectionConfig::Mysql(_)
