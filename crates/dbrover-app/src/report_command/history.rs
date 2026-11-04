@@ -18,6 +18,8 @@ pub struct RunHistory {
     record: RunRecord,
     file: HistoryFile,
     kept: NonZeroU32,
+    /// What started the run: the command, or an MCP client.
+    origin: RunOrigin,
 }
 
 impl RunHistory {
@@ -29,6 +31,7 @@ impl RunHistory {
         report: &Path,
         values: TypedValues,
         kept: NonZeroU32,
+        origin: RunOrigin,
     ) -> Option<Self> {
         let report = listed_name(paths.report_files().dir(), report)?;
         Some(Self {
@@ -36,6 +39,7 @@ impl RunHistory {
             record: RunRecord::new(values),
             file: HistoryFile::new(paths.history_file()),
             kept,
+            origin,
         })
     }
 
@@ -51,7 +55,7 @@ impl RunHistory {
     pub fn keep(self) -> Result<(), String> {
         let run = self
             .record
-            .to_report_run(&self.report, RunOrigin::Command)
+            .to_report_run(&self.report, self.origin)
             .ok_or("the run hasn't ended")?;
         self.file
             .open()

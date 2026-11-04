@@ -98,11 +98,77 @@ fn serve_as_child(dir: &Path) {
         secrets: Arc::new(secrets),
         known_hosts: dir.join("known_hosts"),
         trusted_commands: TrustedCommandsFile::new(dir.join("trusted_commands.toml")),
+        reports: Some(Arc::new(StandInReports)),
     };
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(serve_stdio(config, SLUG))
         .unwrap();
+}
+
+/// Reports as the app's runner would list and run them, in the server process: `sales` reads
+/// the data source `lake`, `broken` too but can't run, and `elsewhere` reads `warehouse`, which
+/// no test project has. A run of `sales` writes `sales-<since>.csv` in the test's folder.
+pub struct StandInReports;
+
+impl dbrover_mcp::ReportRunner for StandInReports {
+    fn list(&self) -> Result<Vec<dbrover_mcp::ReportListing>, String> {
+        let listing =
+            |name: &str, data_source: &str, problems: &[&str]| dbrover_mcp::ReportListing {
+                name: name.to_owned(),
+                title: format!("The {name} report"),
+                description: None,
+                params: vec![("since".to_owned(), "date".to_owned())],
+                data_sources: Some(vec![data_source.to_owned()]),
+                problems: problems
+                    .iter()
+                    .map(|problem| (*problem).to_owned())
+                    .collect(),
+            };
+        Ok(vec![
+            listing("sales", "lake", &[]),
+            listing("broken", "lake", &["[combine]: needs a query"]),
+            listing("elsewhere", "warehouse", &[]),
+        ])
+    }
+
+    fn start(
+        &self,
+        report: &str,
+        values: dbrover_report::TypedValues,
+    ) -> Result<Box<dyn dbrover_mcp::RunningReport>, Vec<String>> {
+        use dbrover_report::{RunEvent, WrittenFile};
+        let since = values
+            .get("since")
+            .cloned()
+            .ok_or_else(|| vec!["since needs a value".to_owned()])?;
+        let dir = std::env::var(CHILD_DIR).map_err(|error| vec![error.to_string()])?;
+        let path = Path::new(&dir).join(format!("{report}-{since}.csv"));
+        std::fs::write(&path, "n\n1\n").map_err(|error| vec![error.to_string()])?;
+        let events = vec![
+            RunEvent::OutputWritten(WrittenFile {
+                path,
+                rows: 1,
+                size: 4,
+                elapsed_ms: 1,
+                warnings: Vec::new(),
+            }),
+            RunEvent::Finished { elapsed_ms: 3 },
+        ];
+        Ok(Box::new(Scripted(events.into_iter().collect())))
+    }
+}
+
+struct Scripted(std::collections::VecDeque<dbrover_report::RunEvent>);
+
+impl dbrover_mcp::RunningReport for Scripted {
+    fn next(&mut self) -> Option<dbrover_report::RunEvent> {
+        self.0.pop_front()
+    }
+
+    fn stopper(&self) -> Box<dyn Fn() + Send + Sync> {
+        Box::new(|| {})
+    }
 }
 
 /// One engine under test: its data source and how its fixture is spelt.

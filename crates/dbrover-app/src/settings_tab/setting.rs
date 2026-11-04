@@ -193,6 +193,7 @@ impl Setting {
                 "write",
                 "schema",
                 "admin",
+                "reports",
                 "row limit",
                 "timeout",
                 "permissions",

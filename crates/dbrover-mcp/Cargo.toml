@@ -13,6 +13,8 @@ dbrover-core.workspace = true
 dbrover-engine.workspace = true
 dbrover-export.workspace = true
 dbrover-language.workspace = true
+# The events of a report's run, which run_report reads.
+dbrover-report.workspace = true
 dbrover-sql.workspace = true
 dbrover-store.workspace = true
 jiff.workspace = true
@@ -75,4 +77,8 @@ harness = false
 
 [[test]]
 name = "cassandra"
+harness = false
+
+[[test]]
+name = "reports"
 harness = false
