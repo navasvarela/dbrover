@@ -285,11 +285,14 @@ After W8, which this builds on. One GitHub stack per milestone:
   layers RP3a to RP3g, [below](#rp3--lookups-and-documents).
 - **RP4 — Metrics:** the run history, the comparison of runs, the hints, and a Settings page
   for the limits' defaults. In layers RP4a to RP4f, [below](#rp4--metrics).
-- **RP5 — PRQL:** `prql` in `[combine]`, with the compiled SQL shown.
+- **RP5 — PRQL, and the track finished:** `prql` in `[combine]`, with the compiled SQL shown,
+  and what RP4 and RP6 left for later. In layers RP5a to RP5c, RP4g to RP4j and RP6g to RP6j,
+  [below](#rp5--prql-and-the-track-finished).
 - **RP6 — The command line:** `dbrover report run <file> --param since=…`, for cron and CI,
   with the worker's guardrails and an exit code per outcome. Built in layers RP6a to RP6f,
   [below](#rp6--the-command-line).
-- **RP7 — Manual,** with the examples.
+- **RP7 — Manual,** with the examples: the chapter brought up to RP6, PRQL and RP5's other
+  layers, [below](#rp7--manual).
 
 ## RP1 — One source, one file
 
@@ -1232,6 +1235,229 @@ Taken on 2026-11-03 when RP4 started; each can be overturned in review.
 - **A synced settings folder.** H4's warning about a synced `history.sqlite` holds for runs: two
   machines running one report each keep their own runs.
 
+## RP5 — PRQL, and the track finished
+
+Started on 2026-11-04, after RP6. RP5 lets the combine step be written in
+[PRQL](https://prql-lang.org), compiled to DuckDB's SQL before the run. The same stack finishes
+what RP4 and RP6 left for later, as layers RP4g to RP4j and RP6g to RP6j, and RP7 brings the
+manual up to date. The report file's other tables, the worker and its guardrails stay as RP1 to
+RP6 built them.
+
+Two later plans touch the same ground, and the choices below leave room for them:
+[Reports at scale](reports-at-scale.md) (RS1's hints as rules with ids, RS1's live progress,
+RS8's read-only MCP tools) and [Charts as code](charts-as-code.md) (`[[chart]]` outputs, not
+built here).
+
+### PRQL in `[combine]`
+
+```toml
+[combine]
+prql = """
+from lines
+filter ordered_at >= $since && ordered_at < $until
+derive net = amount - refunded
+group {category} (aggregate {net = sum net})
+sort category
+"""
+memory_limit = "1 GiB"
+```
+
+- **`prql`** takes the place of `query`: a `[combine]` has one of the two, and its limits' keys
+  as before.
+- **Compiled when the file is read,** by the app, `dbrover report run` and the worker alike,
+  with `prqlc` for DuckDB's dialect. A `prql target:` line in the text doesn't change it: the
+  combine step runs in DuckDB. The compiled SQL then goes through the SQL path's checks (one
+  statement that only reads) and runs as a `query` would.
+- **Parameters** are PRQL's own, `$since`. `prqlc` leaves them as `$since` in the SQL, which the
+  compiler's side rewrites to the `:since` the run binds, with the lexer, so a `$` in a string is
+  never one. Each must be in `[report] params`, as in SQL.
+- **A PRQL that doesn't compile** is a problem of the file, as a TOML error is, and points into
+  the PRQL: its line and column there, the line itself with a caret under the place, and
+  `prqlc`'s hint when it gives one:
+
+  ```text
+  [combine]: prql, line 2, column 8: Unknown name `ordred_at`
+      filter ordred_at >= $since && ordered_at < $until
+             ^
+  ```
+
+- `[report] prql`, which RP1 kept for later, becomes a problem that says PRQL goes in
+  `[combine]`.
+
+### The compiled SQL, shown
+
+The combine step's SQL isn't shown anywhere today but in the file. A PRQL report's compiled SQL
+is shown where a person looks for what ran:
+
+- **The report's tab:** under the parameters, **Combine SQL**, folded, with the SQL `prqlc`
+  made, as `prqlc` lays it out and as it ran, and **Copy**.
+- **The run's details:** the combine step's line folds out the same SQL, beside the loaded
+  sources' columns. DuckDB's errors name a line of the SQL, so a combine step that fails shows
+  it unfolded.
+- **`dbrover report run`:** the `started` event carries `combine_sql` for a PRQL report, so
+  `--json` has it; the human lines print it, its lines numbered, under a combine step's error,
+  where DuckDB's line numbers point.
+
+A SQL report shows none of these: its SQL is the file's.
+
+### What `prqlc` costs
+
+Measured on 2026-11-04 on an M-series Mac, `prqlc` 0.13.14 with its default features off (they
+are its command line's):
+
+| | Adds |
+| --- | --- |
+| Crates | 15 new to `Cargo.lock`: `prqlc`, `prqlc-parser`, `chumsky`, `ariadne`, `sqlformat`, `schemars`, a second `sqlparser` (0.62, beside the workspace's 0.63) and small ones |
+| A debug build (CI's clippy and tests) | about 11 s of processor time, built beside the rest, so less on the clock |
+| A release build | about 40 s of processor time; the second `sqlparser` is 17 s of it |
+| The release binary | 5.9 MB stripped, per architecture, against a program that already links `regex`, `serde_json`, `chrono`, `csv` and `sqlparser`: about 2.5% of DbRover's |
+
+The second `sqlparser` goes when `prqlc` moves to the workspace's. `prqlc` is pinned to its
+minor version (`~0.13.14`), as DuckDB is: PRQL's language still changes between minor versions,
+and a report's compiled SQL shouldn't change under it with a `cargo update`.
+
+### Finishing RP4
+
+- **RP4g — Quiet hints.** Each hint gets an id, the one RS1's table of rules gives it:
+  `source-reads-more` and `combine-spilled`. `[report] quiet_hints = ["source-reads-more"]`
+  silences a hint for a report that reads more than it writes on purpose; an id that isn't one
+  is a problem naming the ids there are. The ids live in `dbrover-report`, where RS1e's rules
+  will, so RS1e adds rules to the same list rather than replacing it. The tab says how many
+  hints a report silences, and each hint's tooltip names its id and how to silence it.
+- **RP4h — Where a limit came from.** A run stopped by a limit says whether the report's file
+  set it or Settings › Reports did: *It stopped at max_rows = 1,000,000 rows, the default in
+  Settings › Reports. Raise it there, or set max_rows in the [[source]] "lines".* The plan keeps,
+  for each limit, whether the file set it; `LimitHit` gains `set_in` (`file` or `settings`),
+  absent in older events and for a limit of a format's own (an Excel sheet's rows). The tab
+  links to Settings › Reports only for `settings`.
+- **RP4i — Renaming a report.** **Rename…** on a report in the explorer renames its file in
+  `reports/` and moves its runs in the history with it, in one engine command, and reopens its
+  tab under the new name. A file renamed outside DbRover still starts its runs afresh, as the
+  manual says: nothing in the file ties it to them.
+- **RP4j — MCP clients running reports.** RS8 plans read-only tools for reports and leaves
+  running them open; RP4j decides it. `dbrover mcp` gets two tools:
+  - `list_reports`, read-only, for every project: the reports whose data sources are all in the
+    project, with their parameters and problems. The others are invisible, as other projects'
+    data sources are. RS8's tools (`explain_report`, `report_runs` and the others) join it.
+  - `run_report`, behind a new project permission, **Run reports** (`reports` in `[mcp]` and
+    `[mcp_defaults]`), off by default. It runs the report in the worker as `dbrover report run`
+    does, with every guardrail, the files going to Downloads, where the app's runs go until a
+    folder is chosen, and returns how it ended,
+    each step's numbers, the files' paths and the preview's first rows, at most the project's
+    `max_rows`. Sources connect read-only, as every report's do. The client's cancellation
+    stops the worker.
+
+  The server doesn't run reports itself: the app hands it a runner (`ReportRunner`) built on the
+  command line's code, so the MCP crate needs nothing of the worker's.
+
+### Finishing RP6
+
+- **RP6g — A run's origin.** `report_runs` gains `origin` (`app`, `command`, `mcp`; none in an
+  older row, which reads as the app's), schema 3 to 4, a nullable column as W4's rule says. The
+  Runs table says *from the command line* or *from MCP* under a run's start.
+- **RP6h — `dbrover report list`.** Each report in `reports/`: its name for `report run`, its
+  title, its parameters with their types, and its problems, against the settings folder's data
+  sources. `--json` for one object a report; `--config-dir` as `run`'s. Exits with 0, or 3 when
+  the folder can't be read.
+- **RP6i — A live progress line.** `dbrover report run --progress` keeps a line on standard
+  error that is rewritten each second while a step runs (*Source lines: 120,000 rows, 3.1 MB,
+  4 s*), only when standard error is a terminal; with a pipe, cron's mail or `--json` it prints
+  nothing more. The finished steps' lines are as before. RS1d adds throughput and what a step
+  waits on to the same line.
+- **RP6j — A worker that dies with its command.** On Linux the worker asks the kernel for
+  SIGKILL when the process that started it dies (`PR_SET_PDEATHSIG`), so a command killed
+  outright takes its worker; a worker whose parent is already gone by then exits at once. The
+  signal is sent when the starting *thread* ends, so the worker is started from a thread that
+  lives as long as the run: the command's main thread, and the app's own. On every system, a
+  worker whose events can't be written any more (its reader is gone) stops its run and removes
+  its staging folder, which also covers macOS and Windows within a second of its next event.
+
+### RP7 — Manual
+
+The **Reports** chapter covers RP1 to RP6. RP7 adds PRQL (a section, the `[combine]` table's
+`prql`, and an example, `sales-by-month.toml` on the shop, with its checked-in CSV file), quiet
+hints, where a limit came from, **Rename…**, `report list`, `--progress`, a picture of **Runs**
+(a screenshot scene with two runs in the history), and the MCP tools in the MCP chapter, and
+removes "What's next".
+
+### Layers
+
+Each layer is one pull request in a stack, useful and tested on its own, with synthetic data
+only.
+
+- **RP5a — Plan:** this section, its decisions and risks, and the roadmap's entries.
+- **RP5b — PRQL:** in `dbrover-report`, `prql` read, compiled, its parameters rewritten, its
+  errors pointing into it; the plan and the run use the compiled SQL.
+  **Exit:** a PRQL combine and its SQL twin write the same files; a PRQL error names its line
+  and column; `$since` is bound and a `$` in a string isn't; `prql` beside `query` is a problem.
+- **RP5c — The compiled SQL, shown:** the tab's **Combine SQL**, the combine line's fold-out,
+  `combine_sql` in `started`, and the command's SQL under a combine error.
+  **Exit:** kittest finds the compiled SQL in a PRQL report's tab and none in a SQL report's;
+  the command prints the numbered SQL under a combine error and `--json` carries it.
+- **RP4g — Quiet hints:** ids, `quiet_hints` read and checked, the tab's hints filtered.
+  **Exit:** a report that silences `source-reads-more` shows no such hint where an identical one
+  without it does; an unknown id is a problem listing the ids.
+- **RP4h — Where a limit came from:** `set_in` from the plan to the error, the tab and the
+  command.
+  **Exit:** a run stopped at a file's `max_rows` and one stopped at Settings' say which; older
+  events still read.
+- **RP4i — Renaming a report:** **Rename…**, the file renamed and its runs moved.
+  **Exit:** a report with runs renamed in the app lists them under its new name; a name in use,
+  or one that isn't a file name, is refused.
+- **RP6g — A run's origin:** the column, the record and the Runs table.
+  **Exit:** a version 3 history migrates; runs from the app and the command read back with
+  their origin; kittest shows *from the command line*.
+- **RP6h — `dbrover report list`.**
+  **Exit:** on the real binary, a folder with a good report and one with problems lists both,
+  in lines and in JSON.
+- **RP6i — `--progress`.**
+  **Exit:** table tests of the line's text; on a pipe, `--progress` prints nothing more.
+- **RP6j — The worker dies with its command.**
+  **Exit:** on Linux, the real binary SIGKILLed during a slow source leaves no worker; on every
+  system, a worker whose events' reader closes stops and removes its staging folder.
+- **RP4j — MCP clients running reports:** `list_reports`, `run_report`, the permission, and the
+  app's runner.
+  **Exit:** through the MCP test client, a project without the permission lists reports and is
+  refused a run; with it, the shop's report runs and its files exist; a report on another
+  project's data source isn't listed.
+- **RP7 — Manual and demo notes:** the chapter and the MCP chapter as above, the example, the
+  picture, and RP4's to RP7's roadmap entries marked built with their demo notes.
+
+**Exit:** a report whose combine step is PRQL runs from the tab, the command line and an MCP
+client, its compiled SQL shown in each; its runs say where they came from, survive a rename, and
+can silence a hint.
+
+### RP5's decisions
+
+Taken on 2026-11-04 when RP5 started; each can be overturned in review.
+
+| Question | Chosen | Consequence |
+| --- | --- | --- |
+| Where PRQL compiles | **When the file is read,** everywhere it is read. | A PRQL error is a file problem the explorer marks, before any run; the worker compiles again, with the same `prqlc`, so it runs what the tab showed. |
+| Parameters | **PRQL's `$name`,** rewritten to `:name` after compiling. | Reads as PRQL; the run binds them as it binds SQL's. |
+| A `prql target:` line | **Ignored:** always DuckDB's dialect. | A file copied from elsewhere runs in the only dialect the combine step has. |
+| Where the compiled SQL shows | **The tab, the run's combine line, the command's error and `started`.** | Visible where a person needs it; a SQL report's tab doesn't repeat its file. |
+| `prqlc`'s version | **Pinned to 0.13,** default features off. | A minor version of PRQL can change compiled SQL; moving it is a change of its own. |
+| Hint ids | **RS1's,** in `dbrover-report`. | RS1e adds rules to the list RP4g starts. |
+| Where a limit came from | **The file or Settings,** kept by the plan, carried in `LimitHit`. | A built-in default reads as Settings', since Settings › Reports shows it. |
+| Renamed reports | **Rename… in the app** moves the runs; renaming outside it doesn't. | No id in the file to keep in step; the manual says which keeps runs. |
+| MCP running reports | **Yes, behind a project permission off by default,** files in Downloads. | An assistant runs what the person wrote, never a report of its own; it can't choose where files go. |
+| Origin of a run | **A nullable column,** schema 4. | Older DbRovers keep writing runs, which read as the app's. |
+| The progress line | **`--progress`, on a terminal only.** | Cron's mail stays short; RS1d extends the same flag. |
+| A command killed outright | **`PR_SET_PDEATHSIG` on Linux; a closed pipe stops the worker everywhere.** | No worker outlives its command on Linux; elsewhere it stops at its next event. |
+
+### RP5's risks
+
+- **`prqlc`'s SQL is DuckDB's but not always the shortest.** PRQL makes CTEs (`table_0`) that
+  DuckDB plans away; the compiled SQL shown is what ran, so a slow step can still be read.
+- **PRQL changes.** 0.13 is not 1.0; a later minor version may refuse a file 0.13 compiled. The
+  pin keeps it still until the move is tested on the examples.
+- **The parent-death signal follows a thread.** A worker started from a thread that ends early
+  would be killed with it; both callers start it from a thread that lives as long as the run,
+  which a comment at the call says.
+- **An MCP client running a large report** runs under the report's own limits, which the person
+  set; the permission is off until they turn it on.
+
 ## RP6 — The command line
 
 Started and built on 2026-11-03, after RP4. RP6 runs a report without the app's window, so cron, a
@@ -1472,8 +1698,8 @@ Taken on 2026-11-03 when RP6 started; each can be overturned in review.
 
 ## Open questions
 
-- Should MCP clients be able to run a report? Read-only and bounded, it would suit them, but it
-  waits until RP4's metrics show what runs cost.
+- ~~Should MCP clients be able to run a report?~~ Decided in RP4j: yes, behind a project
+  permission that is off by default ([Finishing RP4](#finishing-rp4)).
 - Where the run history lives when the settings folder is synced (H4's warning about a synced
   `history.sqlite` applies here too).
 
