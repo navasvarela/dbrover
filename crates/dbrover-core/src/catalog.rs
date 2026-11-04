@@ -78,6 +78,27 @@ pub enum ObjectKind {
     Folder,
     /// An object, named by the last part of its key.
     File,
+    /// A table in a table format, the first child of the folder that holds it. Its segment's
+    /// name is the path, from that folder, of what DuckDB reads it from: the newest metadata
+    /// file of an Iceberg table (`metadata/00002-….metadata.json`), and nothing for a Delta
+    /// table, which DuckDB reads from its folder.
+    Table(TableFormat),
+}
+
+/// A format that makes a folder of Parquet files a table, with its own log or metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TableFormat {
+    Iceberg,
+    Delta,
+}
+
+impl TableFormat {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Iceberg => "Iceberg table",
+            Self::Delta => "Delta table",
+        }
+    }
 }
 
 /// The type of a Redis key's value, as `TYPE` answers.

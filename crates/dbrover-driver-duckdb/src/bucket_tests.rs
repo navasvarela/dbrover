@@ -5,7 +5,7 @@
 //! key, and skip otherwise. The first of them in a run downloads DuckDB's `httpfs` extension.
 
 use dbrover_core::conformance;
-use dbrover_core::{NodeKind, ObjectKind, ObjectStorage, S3Bucket, S3SignIn};
+use dbrover_core::{ChildrenQuery, NodeKind, ObjectKind, ObjectStorage, S3Bucket, S3SignIn};
 
 use super::*;
 use crate::tests::{failure, in_memory, rows, text};
@@ -265,4 +265,51 @@ async fn a_listing_the_store_refuses_says_why() {
 
     let message = dbrover_core::describe_error(&error);
     assert!(message.contains("AccessDenied"), "{message}");
+}
+
+/// C2's exit: an Iceberg table written by pyiceberg and a Delta table written by delta-rs, on
+/// MinIO, found from their folders and read through what **Open data** runs. Downloads
+/// DuckDB's `iceberg`, `avro` and `delta` extensions the first time.
+#[tokio::test]
+async fn finds_iceberg_and_delta_tables_in_their_folders_and_reads_them() {
+    let Some(test) = test_bucket() else { return };
+    let mut connection = connect_with_secret(&with_bucket(test.bucket), Some(&test.secret))
+        .await
+        .unwrap();
+    let warehouse = bucket_path().child(NodeKind::Object(ObjectKind::Folder), "warehouse");
+    let cases = [
+        (
+            warehouse
+                .child(NodeKind::Object(ObjectKind::Folder), "shop")
+                .child(NodeKind::Object(ObjectKind::Folder), "orders"),
+            "orders",
+            "Iceberg table",
+            vec!["id", "customer", "total", "ordered_on"],
+        ),
+        (
+            warehouse.child(NodeKind::Object(ObjectKind::Folder), "products"),
+            "products",
+            "Delta table",
+            vec!["sku", "name", "stock"],
+        ),
+    ];
+    for (folder, label, detail, columns) in cases {
+        let page = connection
+            .children_page(&folder, &ChildrenQuery::default())
+            .await
+            .unwrap();
+        let table = &page.nodes[0];
+        let source = dbrover_core::object_source(&table.path).unwrap();
+
+        let counted = rows(&mut connection, &format!("SELECT count(*) FROM {source}")).await;
+        let described = connection.children(&table.path).await.unwrap();
+
+        assert_eq!(
+            (table.label.as_str(), table.detail.as_deref()),
+            (label, Some(detail))
+        );
+        assert_eq!(counted, vec![text(&[Some("4")])], "{source}");
+        let names: Vec<_> = described.iter().map(|node| node.label.as_str()).collect();
+        assert_eq!(names, columns);
+    }
 }

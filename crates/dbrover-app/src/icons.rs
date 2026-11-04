@@ -132,6 +132,7 @@ pub fn node(kind: NodeKind) -> Icon {
             // A folder of keys, drawn apart from the tree's own folders of kinds.
             ObjectKind::Folder => Icon::new(glyph::FOLDER, Role::Warning),
             ObjectKind::File => Icon::new(glyph::FILE, Role::Primary),
+            ObjectKind::Table(_) => Icon::new(glyph::TABLE, Role::Primary),
         },
     }
 }

@@ -520,6 +520,15 @@ Each layer is one pull request in a stack, useful and tested on its own, with no
   `iceberg_scan` and `delta_scan`.
   **Exit:** on MinIO, the fixtures' Iceberg and Delta tables are found from their folders and
   **Open data** reads their rows: C2's exit, in CI.
+  **As built:** the table is the first node of its folder's first page, labelled with the
+  folder's name, beside the folder's own keys (`_delta_log/`, `data/`, `metadata/`), which stay
+  browsable. Its path's last segment names what DuckDB reads (the newest metadata file, or
+  nothing for Delta), so `object_source` in `dbrover-core` turns any bucket path into the
+  `FROM` clause that both **Open data** and the table's columns use. The newest Iceberg
+  metadata file is the highest version among `NNNNN-….metadata.json` or `vN.metadata.json`,
+  from at most twenty pages of the metadata folder. The fixtures: an Iceberg table written by
+  pyiceberg's SQL catalog against MinIO, and a Delta table written by delta-rs, 60 KB in all
+  (`docker/minio/README.md`).
 - **C2f — Google Cloud Storage and Azure Blob Storage:** the `gcs` secret from C0's Google
   token and the listing over the JSON API, tried on fake-gcs-server, which joins the test
   servers; the `azure` secret from an Entra ID token for Azure Storage, and List Blobs.
