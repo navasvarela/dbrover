@@ -19,6 +19,8 @@ dbrover-language.workspace = true
 dbrover-sql.workspace = true
 futures-util.workspace = true
 jiff.workspace = true
+# Compiles a [combine]'s PRQL to DuckDB's SQL.
+prqlc.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

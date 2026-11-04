@@ -99,7 +99,7 @@ impl<O: SourceOpener> Combining<'_, O> {
             .map_err(|error| RunFailure::new(Step::Combine, describe_error(&error)))?;
 
         let started = Instant::now();
-        let query = &self.combined.combine.query;
+        let query = self.combined.combine.query.sql();
         let mut reader = CombineReader::start(workspace, query, self.outputs.values, self.limits())
             .await
             .map_err(|error| error.at(Step::Combine))?;

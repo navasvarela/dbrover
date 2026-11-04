@@ -11,14 +11,17 @@ use dbrover_export::{ColumnType, CustomFormatId, ExportFormat, IfInvalid, Preset
 use dbrover_driver_duckdb::DuckDbType;
 
 use crate::{
-    ByteSize, Combine, CombineLimitsSet, FileName, Lookup, Output, OutputColumns, OutputLimitsSet,
-    OutputWriter, Param, Report, Source, SourceColumn, SourceLimitsSet, SourceRead,
+    ByteSize, Combine, CombineLimitsSet, CombineQuery, FileName, Lookup, Output, OutputColumns,
+    OutputLimitsSet, OutputWriter, Param, Report, Source, SourceColumn, SourceLimitsSet,
+    SourceRead,
 };
 
-/// Keys of later milestones, and what each waits for, so a file written for one says why it
-/// can't run yet rather than running something else.
-const LATER_REPORT_KEYS: [(&str, &str); 1] = [("prql", "PRQL comes with RP5")];
-const LATER_COMBINE_KEYS: [(&str, &str); 1] = [("prql", "PRQL in [combine] comes with RP5")];
+/// Keys a file may put in the wrong table, and where each goes, so it says so rather than
+/// calling the key unknown.
+const MISPLACED_REPORT_KEYS: [(&str, &str); 1] = [(
+    "prql",
+    "PRQL goes in [combine], as prql = \"from …\", in place of its query",
+)];
 
 /// Names DuckDB gives its own catalogs and schemas, which a source's table or attached
 /// database can't take.
@@ -40,9 +43,9 @@ pub fn read_report(text: &str) -> Result<Report, Vec<String>> {
     let sources = file.tables("source");
     let combine = file.table("combine");
     let outputs = file.tables("output");
-    for (key, later) in LATER_REPORT_KEYS {
+    for (key, place) in MISPLACED_REPORT_KEYS {
         if file.take(key).is_some() {
-            problems.push(later.to_owned());
+            problems.push(place.to_owned());
         }
     }
     problems.extend(file.unknown(
@@ -145,9 +148,9 @@ fn read_header(table: toml::Table, problems: &mut Vec<String>) -> Option<Header>
     let description = fields.string("description");
     let params = fields.table("params").map(Option::unwrap_or_default);
     let timeout = fields.duration("timeout");
-    for (key, later) in LATER_REPORT_KEYS {
+    for (key, place) in MISPLACED_REPORT_KEYS {
         if fields.take(key).is_some() {
-            found.push(later.to_owned());
+            found.push(place.to_owned());
         }
     }
     found.extend(fields.unknown("[report]", "name, description, params and timeout"));
@@ -630,25 +633,16 @@ fn check_id(id: &str) -> Result<(), String> {
 fn read_combine(table: toml::Table, problems: &mut Vec<String>) -> Option<Combine> {
     let mut fields = Fields::new(table);
     let mut found = Vec::new();
-    let query = fields.string("query").and_then(|query| {
-        query
-            .filter(|query| !query.trim().is_empty())
-            .ok_or_else(|| {
-                "needs a query, the DuckDB SQL that combines the sources' tables".to_owned()
-            })
-    });
+    let sql = fields.string("query");
+    let prql = fields.string("prql");
+    let query = combine_query(sql, prql);
     let timeout = fields.duration("timeout");
     let memory_limit = fields.byte_size("memory_limit");
     let threads = fields.count("threads");
     let max_temp_size = fields.byte_size("max_temp_size");
-    for (key, later) in LATER_COMBINE_KEYS {
-        if fields.take(key).is_some() {
-            found.push(later.to_owned());
-        }
-    }
     found.extend(fields.unknown(
         "[combine]",
-        "query, timeout, memory_limit, threads and max_temp_size",
+        "query or prql, timeout, memory_limit, threads and max_temp_size",
     ));
     let combine = match (query, timeout, memory_limit, threads, max_temp_size) {
         (Ok(query), Ok(timeout), Ok(memory_limit), Ok(threads), Ok(max_temp_size)) => {
@@ -665,7 +659,7 @@ fn read_combine(table: toml::Table, problems: &mut Vec<String>) -> Option<Combin
             })
         }
         (query, timeout, memory_limit, threads, max_temp_size) => {
-            found.extend(query.err());
+            found.extend(query.err().into_iter().flatten());
             found.extend(timeout.err());
             found.extend(memory_limit.err());
             found.extend(threads.err());
@@ -680,6 +674,30 @@ fn read_combine(table: toml::Table, problems: &mut Vec<String>) -> Option<Combin
             .map(|problem| format!("[combine]: {problem}")),
     );
     combine
+}
+
+/// The combine step's query from its `query` and `prql` keys, of which it has one; PRQL
+/// compiled. A PRQL that doesn't compile can give several problems.
+fn combine_query(
+    sql: Result<Option<String>, String>,
+    prql: Result<Option<String>, String>,
+) -> Result<CombineQuery, Vec<String>> {
+    let given = |text: Option<String>| text.filter(|text| !text.trim().is_empty());
+    match (sql.map(given), prql.map(given)) {
+        (Err(problem), _) | (_, Err(problem)) => Err(vec![problem]),
+        (Ok(Some(_)), Ok(Some(_))) => Err(vec![
+            "has both a query and prql; it runs one, so keep the one you mean".to_owned(),
+        ]),
+        (Ok(Some(sql)), Ok(None)) => Ok(CombineQuery::Sql(sql)),
+        (Ok(None), Ok(Some(prql))) => {
+            crate::prql::compile(&prql).map(|compiled| CombineQuery::Prql { prql, compiled })
+        }
+        (Ok(None), Ok(None)) => Err(vec![
+            "needs a query, the DuckDB SQL that combines the sources' tables, or prql, the same \
+             in PRQL"
+                .to_owned(),
+        ]),
+    }
 }
 
 fn read_outputs(

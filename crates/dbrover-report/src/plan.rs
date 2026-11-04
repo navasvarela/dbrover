@@ -15,8 +15,9 @@ use dbrover_language::QueryLanguage;
 use dbrover_sql::{Dialect, ParameterValues, StatementKind};
 
 use crate::{
-    CombineLimits, FileName, LimitDefaults, Lookup, Output, OutputColumns, OutputLimits,
-    OutputWriter, Param, Report, Source, SourceColumn, SourceLimits, SourceRead, SourceStart,
+    CombineLimits, CombineQuery, FileName, LimitDefaults, Lookup, Output, OutputColumns,
+    OutputLimits, OutputWriter, Param, Report, Source, SourceColumn, SourceLimits, SourceRead,
+    SourceStart,
 };
 
 /// A report ready to run.
@@ -134,10 +135,10 @@ pub struct AttachedSource {
     pub path: PathBuf,
 }
 
-/// The combine step's query, in DuckDB's SQL, and the limits of the DuckDB it runs in.
+/// The combine step's query, and the limits of the DuckDB it runs in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlannedCombine {
-    pub query: String,
+    pub query: CombineQuery,
     pub limits: CombineLimits,
 }
 
@@ -219,7 +220,7 @@ impl Plan {
             })
             .collect();
         let combine = report.combine.map(|combine| {
-            if let Err(problem) = check_combine(&combine.query) {
+            if let Err(problem) = check_combine(combine.query.sql()) {
                 problems.push(format!("[combine]: {problem}"));
             }
             PlannedCombine {
@@ -556,7 +557,7 @@ fn queries<'a>(sources: &'a [PlannedSource], combine: Option<&'a PlannedCombine>
     });
     let combine = combine.map(|combine| Sent {
         label: "[combine]".to_owned(),
-        query: combine.query.as_str(),
+        query: combine.query.sql(),
         language: QueryLanguage::Sql(Dialect::DuckDb),
         lookup: None,
     });

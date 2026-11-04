@@ -749,7 +749,8 @@ fn reads_and_plans_the_valuation() {
         .collect();
     assert_eq!(ids, [("tx", false), ("prices", true)]);
     let combine = report.combine.clone().unwrap();
-    assert!(combine.query.contains("ASOF JOIN"));
+    assert!(combine.query.sql().contains("ASOF JOIN"));
+    assert_eq!(combine.query.compiled(), None);
     assert_eq!(
         combine.limits,
         CombineLimitsSet {
@@ -901,7 +902,18 @@ fn names_every_problem_with_several_sources() {
                 "[combine]\nquery = \"\"\"",
                 "[combine]\nprql = \"from tx\"\nquery = \"\"\"",
             ),
-            "[combine]: PRQL in [combine] comes with RP5",
+            "[combine]: has both a query and prql",
+        ),
+        (
+            VALUATION.replace(
+                "[combine]\nquery = \"\"\"",
+                "[combine]\nprql = \"from tx | derive x = \"\nquery_was = \"\"\"",
+            ),
+            "[combine]: prql, line 1, column ",
+        ),
+        (
+            VALUATION.replace("[report]\n", "[report]\nprql = \"from tx\"\n"),
+            "[report]: PRQL goes in [combine]",
         ),
         (
             VALUATION.replace("memory_limit = \"1 GiB\"", "threads = 0"),
@@ -909,12 +921,13 @@ fn names_every_problem_with_several_sources() {
         ),
         (
             VALUATION.replace("memory_limit = \"1 GiB\"", "memory = \"1 GiB\""),
-            "[combine]: \"memory\" is not part of [combine], which has query, timeout, \
-             memory_limit, threads and max_temp_size",
+            "[combine]: \"memory\" is not part of [combine], which has query or prql, \
+             timeout, memory_limit, threads and max_temp_size",
         ),
         (
             VALUATION.replace("[combine]\nquery = \"\"\"", "[combine]\nsql = \"\"\""),
-            "[combine]: needs a query, the DuckDB SQL that combines the sources' tables",
+            "[combine]: needs a query, the DuckDB SQL that combines the sources' tables, or \
+             prql",
         ),
     ];
     for (text, expected) in cases {
