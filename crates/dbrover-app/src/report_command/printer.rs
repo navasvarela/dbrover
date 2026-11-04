@@ -2,7 +2,7 @@
 //! lines for a person ([`HumanLines`]), or the worker's own events as JSON Lines ([`Events`]),
 //! the types the app reads, so there is no format of the command's own to keep.
 
-use std::io::{self, Write};
+use std::io::{self, IsTerminal as _, Write};
 
 use dbrover_report::{RunEvent, RunFailure, Step, TypedValues};
 
@@ -20,14 +20,18 @@ pub trait Printer {
 }
 
 /// The printer for `style`, on the process's standard output and error. `values` are the
-/// parameters the run was given.
-pub fn for_style(style: OutputStyle, values: &TypedValues) -> Box<dyn Printer> {
+/// parameters the run was given. `progress` asks for a live line, which only a terminal gets:
+/// in a pipe or cron's mail, a line rewritten in place is noise.
+pub fn for_style(style: OutputStyle, values: &TypedValues, progress: bool) -> Box<dyn Printer> {
     match style {
-        OutputStyle::Human => Box::new(HumanLines::new(
-            io::stdout().lock(),
-            io::stderr().lock(),
-            values.clone(),
-        )),
+        OutputStyle::Human => {
+            let lines = HumanLines::new(io::stdout().lock(), io::stderr().lock(), values.clone());
+            if progress && io::stderr().is_terminal() {
+                Box::new(lines.with_live_line())
+            } else {
+                Box::new(lines)
+            }
+        }
         OutputStyle::JsonLines => Box::new(Events::new(io::stdout().lock())),
     }
 }

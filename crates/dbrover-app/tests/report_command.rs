@@ -359,6 +359,32 @@ mod runs {
         }
     }
 
+    /// `--progress` keeps a live line only on a terminal: through a pipe, as here, the lines
+    /// are those of a run without it.
+    #[test]
+    fn progress_adds_nothing_through_a_pipe() {
+        let settings = Settings::new();
+        let args = |progress: bool| {
+            let mut args = vec!["sales-by-category"];
+            args.extend_from_slice(&OCTOBER);
+            if progress {
+                args.push("--progress");
+            }
+            args
+        };
+        let without = settings.run(&args(false));
+        let with = settings.run(&args(true));
+        assert_eq!(with.status.code(), Some(0), "{}", describe(&with));
+        let lines = |output: &Output| {
+            String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .map(|line| line.split(" in ").next().unwrap_or(line).to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(lines(&with), lines(&without));
+        assert!(!String::from_utf8_lossy(&with.stderr).contains('\r'));
+    }
+
     /// `report list` names each report, the one with problems among them.
     #[test]
     fn lists_the_reports_and_what_keeps_one_from_running() {

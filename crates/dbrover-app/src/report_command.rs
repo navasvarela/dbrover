@@ -13,6 +13,7 @@ mod human;
 mod list;
 mod outcome;
 mod printer;
+mod progress;
 mod stopping;
 
 use std::io;
@@ -85,7 +86,7 @@ struct Prepared {
 }
 
 fn run(args: &RunArgs) -> Outcome {
-    let mut printer = printer::for_style(args.style, &args.values);
+    let mut printer = printer::for_style(args.style, &args.values, args.progress);
     let paths = match report_worker::settings_paths(args.config_dir.as_deref()) {
         Ok(paths) => paths,
         Err(failure) => {

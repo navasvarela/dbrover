@@ -10,7 +10,7 @@ use crate::version::parse_config_dir;
 
 pub const USAGE: &str = "\
 Usage: dbrover report run <report> [--param <name>=<value>]… [--output-dir <folder>]
-                          [--json] [--config-dir <folder>]
+                          [--json] [--progress] [--config-dir <folder>]
        dbrover report list [--json] [--config-dir <folder>]
 
 list prints each report in the settings folder's reports folder: the name run takes, its
@@ -30,6 +30,8 @@ in .toml or holding a folder separator is a path.
                                folder without it.
       --json                   Writes the run's events to standard output as JSON Lines,
                                one object a line, the last saying how the run ended.
+      --progress               On a terminal, keeps a line on standard error of what each
+                               running step has read so far, rewritten each second.
       --config-dir <folder>    The settings folder whose data sources, export formats and
                                report limits the run uses, as for the app.
 
@@ -65,6 +67,8 @@ pub struct RunArgs {
     /// `None` for the current folder.
     pub output_dir: Option<PathBuf>,
     pub style: OutputStyle,
+    /// Whether to keep a live line of the running steps on a terminal.
+    pub progress: bool,
     pub config_dir: Option<PathBuf>,
 }
 
@@ -158,6 +162,7 @@ impl RunArgs {
         let mut values = TypedValues::new();
         let mut output_dir = None;
         let mut style = OutputStyle::Human;
+        let mut progress = false;
         let mut config_dir = None;
         while let Some(arg) = args.next() {
             if let Some(folder) = parse_config_dir(&arg, &mut args) {
@@ -178,6 +183,7 @@ impl RunArgs {
             match arg.as_str() {
                 "--help" | "-h" => return Ok(None),
                 "--json" => style = OutputStyle::JsonLines,
+                "--progress" => progress = true,
                 option if option.starts_with('-') => {
                     return Err(format!("unknown argument {option:?}"));
                 }
@@ -193,6 +199,7 @@ impl RunArgs {
             values,
             output_dir,
             style,
+            progress,
             config_dir,
         }))
     }
@@ -252,6 +259,7 @@ mod tests {
                 .collect(),
             output_dir: None,
             style: OutputStyle::Human,
+            progress: false,
             config_dir: None,
         })
     }
@@ -325,6 +333,7 @@ mod tests {
                     "sales",
                     "-o",
                     "/srv/out",
+                    "--progress",
                     "--config-dir=/srv/dbrover",
                 ],
                 Request::Run(RunArgs {
@@ -332,6 +341,7 @@ mod tests {
                     values: TypedValues::new(),
                     output_dir: Some("/srv/out".into()),
                     style: OutputStyle::Human,
+                    progress: true,
                     config_dir: Some("/srv/dbrover".into()),
                 }),
             ),
@@ -342,6 +352,7 @@ mod tests {
                     values: TypedValues::new(),
                     output_dir: Some("out".into()),
                     style: OutputStyle::Human,
+                    progress: false,
                     config_dir: None,
                 }),
             ),
@@ -352,6 +363,7 @@ mod tests {
                     values: TypedValues::new(),
                     output_dir: None,
                     style: OutputStyle::JsonLines,
+                    progress: false,
                     config_dir: None,
                 }),
             ),
