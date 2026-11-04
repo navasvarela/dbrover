@@ -3250,9 +3250,9 @@ mod tests {
         };
         assert_eq!(
             saved.config,
-            dbrover_core::ConnectionConfig::DuckDb(dbrover_core::DuckDbConfig {
-                database: dbrover_core::DuckDbDatabase::InMemory,
-            })
+            dbrover_core::ConnectionConfig::DuckDb(dbrover_core::DuckDbConfig::new(
+                dbrover_core::DuckDbDatabase::InMemory
+            ))
         );
     }
 
@@ -4806,9 +4806,9 @@ mod tests {
             safety: dbrover_core::SafetyLevel::Normal,
             project: None,
             mcp_login: None,
-            config: dbrover_core::ConnectionConfig::DuckDb(dbrover_core::DuckDbConfig {
-                database: dbrover_core::DuckDbDatabase::InMemory,
-            }),
+            config: dbrover_core::ConnectionConfig::DuckDb(dbrover_core::DuckDbConfig::new(
+                dbrover_core::DuckDbDatabase::InMemory,
+            )),
         };
         DataSourceFile::new(dir.path().join("data_sources.toml"))
             .save(std::slice::from_ref(&warehouse))

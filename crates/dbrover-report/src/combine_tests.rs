@@ -38,24 +38,20 @@ fn ledger() -> DataSource {
 fn prices_file(path: &Path) -> DataSource {
     data_source(
         "prices",
-        ConnectionConfig::DuckDb(DuckDbConfig {
-            database: DuckDbDatabase::File {
-                path: path.to_owned(),
-                read_only: true,
-            },
-        }),
+        ConnectionConfig::DuckDb(DuckDbConfig::new(DuckDbDatabase::File {
+            path: path.to_owned(),
+            read_only: true,
+        })),
     )
 }
 
 /// A DuckDB file at `path`, made by `statements`.
 async fn duckdb_file(path: &Path, statements: &[&str]) {
     dbrover_driver_duckdb::create_database(path).await.unwrap();
-    let mut connection = dbrover_driver_duckdb::connect(&DuckDbConfig {
-        database: DuckDbDatabase::File {
-            path: path.to_owned(),
-            read_only: false,
-        },
-    })
+    let mut connection = dbrover_driver_duckdb::connect(&DuckDbConfig::new(DuckDbDatabase::File {
+        path: path.to_owned(),
+        read_only: false,
+    }))
     .await
     .unwrap();
     for statement in statements {

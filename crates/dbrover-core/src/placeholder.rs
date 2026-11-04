@@ -52,6 +52,10 @@ pub enum Setting {
     Endpoint,
     CredentialsFile,
     Tenant,
+    /// A bucket's name, or an Azure container's (C2).
+    Bucket,
+    AccessKey,
+    StorageAccount,
 }
 
 impl fmt::Display for Setting {
@@ -75,6 +79,9 @@ impl fmt::Display for Setting {
             Self::Endpoint => "the endpoint",
             Self::CredentialsFile => "the credentials file",
             Self::Tenant => "the tenant",
+            Self::Bucket => "the bucket",
+            Self::AccessKey => "the access key",
+            Self::StorageAccount => "the storage account",
         })
     }
 }

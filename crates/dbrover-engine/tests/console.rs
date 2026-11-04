@@ -1612,9 +1612,7 @@ fn applies_edits_on_duckdb_and_refuses_them_inside_a_transaction() {
         safety: dbrover_core::SafetyLevel::Normal,
         project: None,
         mcp_login: None,
-        config: ConnectionConfig::DuckDb(DuckDbConfig {
-            database: DuckDbDatabase::InMemory,
-        }),
+        config: ConnectionConfig::DuckDb(DuckDbConfig::new(DuckDbDatabase::InMemory)),
     };
     let id = data_source.id;
     engine.send(Command::SaveDataSource {

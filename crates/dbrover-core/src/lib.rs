@@ -16,6 +16,7 @@ mod execution;
 mod job;
 mod managed_service;
 mod mongo_uri;
+mod object_storage;
 mod password;
 mod password_command;
 mod placeholder;
@@ -54,6 +55,10 @@ pub use managed_service::{
     ServiceVendor,
 };
 pub use mongo_uri::MongoUri;
+pub use object_storage::{
+    AzureContainer, AzureSignIn, GcsBucket, GcsSignIn, ObjectStorage, S3Bucket, S3SignIn,
+    StorageProvider,
+};
 pub use password::Password;
 pub use password_command::PasswordCommand;
 pub use placeholder::{

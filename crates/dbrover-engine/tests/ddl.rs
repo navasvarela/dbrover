@@ -339,9 +339,7 @@ fn a_table_built_from_a_spec_is_described_as_the_spec_says_on_every_engine() {
     check_round_trip(&mut engine, &sqlite, None);
     let duckdb = data_source(
         "duckdb",
-        ConnectionConfig::DuckDb(DuckDbConfig {
-            database: DuckDbDatabase::InMemory,
-        }),
+        ConnectionConfig::DuckDb(DuckDbConfig::new(DuckDbDatabase::InMemory)),
     );
     check_round_trip(&mut engine, &duckdb, None);
     if let Some(server) = postgres_test_server() {
@@ -567,9 +565,7 @@ fn every_engine() -> Vec<(DataSource, Option<Password>)> {
     let mut sources = vec![(
         data_source(
             "duckdb",
-            ConnectionConfig::DuckDb(DuckDbConfig {
-                database: DuckDbDatabase::InMemory,
-            }),
+            ConnectionConfig::DuckDb(DuckDbConfig::new(DuckDbDatabase::InMemory)),
         ),
         None,
     )];
@@ -1491,12 +1487,10 @@ fn modifies_a_table_with_rows_on_every_engine() {
     });
     let duckdb = data_source(
         "duckdb",
-        ConnectionConfig::DuckDb(DuckDbConfig {
-            database: DuckDbDatabase::File {
-                path: dir.path().join("modify.duckdb"),
-                read_only: false,
-            },
-        }),
+        ConnectionConfig::DuckDb(DuckDbConfig::new(DuckDbDatabase::File {
+            path: dir.path().join("modify.duckdb"),
+            read_only: false,
+        })),
     );
     check_modify_table(&mut engine, &duckdb, None);
     let servers = every_engine()

@@ -53,6 +53,7 @@ impl Storage {
         match config {
             ConnectionConfig::DuckDb(DuckDbConfig {
                 database: DuckDbDatabase::InMemory,
+                ..
             }) => Self::InMemory,
             _ => Self::Kept,
         }
@@ -198,6 +199,7 @@ pub fn connection_config(mut data_source: DataSource) -> DataSource {
         ConnectionConfig::ClickHouse(config) => config.read_only = true,
         ConnectionConfig::DuckDb(DuckDbConfig {
             database: DuckDbDatabase::File { read_only, .. },
+            ..
         }) => *read_only = true,
         _ => {}
     }

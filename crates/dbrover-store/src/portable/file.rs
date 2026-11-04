@@ -12,10 +12,10 @@ use std::path::{Path, PathBuf};
 
 use dbrover_core::{
     CassandraConfig, ClickHouseConfig, CloudSignIn, ConnectionConfig, DataSource, DataSourceId,
-    DuckDbConfig, DuckDbDatabase, DynamoDbConfig, ElasticsearchAuth, ElasticsearchConfig, McpLogin,
-    MongoConfig, MysqlConfig, PasswordCommand, Port, PostgresConfig, ProjectId, RedisConfig,
-    SafetyLevel, ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin,
-    TlsMode,
+    DuckDbConfig, DuckDbDatabase, DynamoDbConfig, ElasticsearchAuth, ElasticsearchConfig,
+    GcsBucket, GcsSignIn, McpLogin, MongoConfig, MysqlConfig, ObjectStorage, PasswordCommand, Port,
+    PostgresConfig, ProjectId, RedisConfig, SafetyLevel, ServerConfig, SourceColor,
+    SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode,
 };
 use serde::{Deserialize, Serialize};
 
@@ -228,18 +228,23 @@ impl PortableConfig {
                 path: path(file),
                 read_only: *read_only,
             }),
-            ConnectionConfig::DuckDb(DuckDbConfig { database }) => Self::DuckDb(PortableDuckDb {
-                database: match database {
-                    DuckDbDatabase::File {
-                        path: file,
-                        read_only,
-                    } => PortableDuckDbDatabase::File {
-                        path: path(file),
-                        read_only: *read_only,
+            ConnectionConfig::DuckDb(DuckDbConfig { database, storage }) => {
+                Self::DuckDb(PortableDuckDb {
+                    database: match database {
+                        DuckDbDatabase::File {
+                            path: file,
+                            read_only,
+                        } => PortableDuckDbDatabase::File {
+                            path: path(file),
+                            read_only: *read_only,
+                        },
+                        DuckDbDatabase::InMemory => PortableDuckDbDatabase::InMemory,
                     },
-                    DuckDbDatabase::InMemory => PortableDuckDbDatabase::InMemory,
-                },
-            }),
+                    storage: storage
+                        .as_ref()
+                        .map(|storage| portable_storage(storage, path)),
+                })
+            }
         }
     }
 
@@ -296,18 +301,21 @@ impl PortableConfig {
                 path: path(&file),
                 read_only,
             }),
-            Self::DuckDb(PortableDuckDb { database }) => ConnectionConfig::DuckDb(DuckDbConfig {
-                database: match database {
-                    PortableDuckDbDatabase::File {
-                        path: file,
-                        read_only,
-                    } => DuckDbDatabase::File {
-                        path: path(&file),
-                        read_only,
+            Self::DuckDb(PortableDuckDb { database, storage }) => {
+                ConnectionConfig::DuckDb(DuckDbConfig {
+                    database: match database {
+                        PortableDuckDbDatabase::File {
+                            path: file,
+                            read_only,
+                        } => DuckDbDatabase::File {
+                            path: path(&file),
+                            read_only,
+                        },
+                        PortableDuckDbDatabase::InMemory => DuckDbDatabase::InMemory,
                     },
-                    PortableDuckDbDatabase::InMemory => DuckDbDatabase::InMemory,
-                },
-            }),
+                    storage: storage.map(|storage| portable_storage(&storage, path)),
+                })
+            }
         }
     }
 }
@@ -564,6 +572,29 @@ struct PortableSqlite {
 struct PortableDuckDb {
     #[serde(flatten)]
     database: PortableDuckDbDatabase,
+    /// Travels as written, as a server's cloud sign-in does: it names a bucket, a profile, an
+    /// access key's id or a key file, and an access key's secret stays in each machine's
+    /// keychain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    storage: Option<ObjectStorage>,
+}
+
+/// `storage` with its credentials file, if it names one, moved as every other path is.
+fn portable_storage(storage: &ObjectStorage, path: &impl Fn(&Path) -> PathBuf) -> ObjectStorage {
+    match storage {
+        ObjectStorage::Gcs(GcsBucket {
+            bucket,
+            endpoint,
+            sign_in: GcsSignIn::CredentialsFile { credentials_file },
+        }) => ObjectStorage::Gcs(GcsBucket {
+            bucket: bucket.clone(),
+            endpoint: endpoint.clone(),
+            sign_in: GcsSignIn::CredentialsFile {
+                credentials_file: path(credentials_file),
+            },
+        }),
+        other => other.clone(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

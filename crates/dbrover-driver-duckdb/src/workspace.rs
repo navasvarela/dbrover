@@ -134,10 +134,7 @@ impl Workspace {
     /// [`DriverError`] if DuckDB refuses a limit, such as a temporary folder it can't make.
     pub async fn open(limits: &WorkspaceLimits) -> Result<Self, DriverError> {
         std::fs::create_dir_all(&limits.temp_directory).map_err(connection_error)?;
-        let connection = crate::connect(&DuckDbConfig {
-            database: DuckDbDatabase::InMemory,
-        })
-        .await?;
+        let connection = crate::connect(&DuckDbConfig::new(DuckDbDatabase::InMemory)).await?;
         let settings = [
             format!("SET memory_limit = '{}'", kibibytes(limits.memory_limit)),
             format!("SET threads = {}", limits.threads.max(1)),

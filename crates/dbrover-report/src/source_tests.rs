@@ -130,12 +130,10 @@ fn data_sources() -> Vec<DataSource> {
         dynamodb("assets-dynamodb"),
         data_source(
             "prices-duckdb",
-            ConnectionConfig::DuckDb(DuckDbConfig {
-                database: DuckDbDatabase::File {
-                    path: PathBuf::from("/tmp/prices.duckdb"),
-                    read_only: true,
-                },
-            }),
+            ConnectionConfig::DuckDb(DuckDbConfig::new(DuckDbDatabase::File {
+                path: PathBuf::from("/tmp/prices.duckdb"),
+                read_only: true,
+            })),
         ),
         mongo("crm"),
     ]
