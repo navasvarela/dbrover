@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 
 use dbrover_core::ByteCount;
-use dbrover_report::grouped;
+use dbrover_report::{HintId, grouped};
 use dbrover_store::{ReportName, ReportRun, RunOutcome, StepMetrics};
 use egui::{Grid, RichText, Ui};
 use jiff::tz::TimeZone;
@@ -57,13 +57,43 @@ pub fn show(
             dominant.share * 100.0
         ));
     }
-    for hint in insights::hints(&runs) {
+    let quiet = quiet_hints(reports, name);
+    let (silenced, shown): (Vec<_>, Vec<_>) = insights::hints(&runs)
+        .into_iter()
+        .partition(|hint| quiet.contains(&hint.id()));
+    for hint in shown {
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
             ui.label(widgets::glyph(icons::LIGHTBULB).color(palette.warning));
-            ui.label(hint.to_string());
+            ui.label(hint.to_string()).on_hover_text(format!(
+                "To stop this hint for this report, add quiet_hints = [\"{}\"] to [report] in its \
+                 file.",
+                hint.id()
+            ));
         });
     }
+    match silenced.len() {
+        0 => {}
+        1 => {
+            ui.add_space(4.0);
+            ui.weak("1 hint is silenced by the file's quiet_hints.");
+        }
+        count => {
+            ui.add_space(4.0);
+            ui.weak(format!(
+                "{count} hints are silenced by the file's quiet_hints."
+            ));
+        }
+    }
+}
+
+/// The hints `name`'s file silences; none while it can't be read.
+fn quiet_hints(reports: &Reports, name: &ReportName) -> Vec<HintId> {
+    reports
+        .find(name)
+        .and_then(|listed| listed.read.as_ref().ok())
+        .map(|report| report.quiet_hints.clone())
+        .unwrap_or_default()
 }
 
 fn table(ui: &mut Ui, palette: &Palette, name: &ReportName, runs: &[ReportRun]) {

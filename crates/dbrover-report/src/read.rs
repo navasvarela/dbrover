@@ -11,9 +11,9 @@ use dbrover_export::{ColumnType, CustomFormatId, ExportFormat, IfInvalid, Preset
 use dbrover_driver_duckdb::DuckDbType;
 
 use crate::{
-    ByteSize, Combine, CombineLimitsSet, CombineQuery, FileName, Lookup, Output, OutputColumns,
-    OutputLimitsSet, OutputWriter, Param, Report, Source, SourceColumn, SourceLimitsSet,
-    SourceRead,
+    ByteSize, Combine, CombineLimitsSet, CombineQuery, FileName, HintId, Lookup, Output,
+    OutputColumns, OutputLimitsSet, OutputWriter, Param, Report, Source, SourceColumn,
+    SourceLimitsSet, SourceRead,
 };
 
 /// Keys a file may put in the wrong table, and where each goes, so it says so rather than
@@ -111,6 +111,7 @@ pub fn read_report(text: &str) -> Result<Report, Vec<String>> {
             description: header.description,
             params: header.params,
             timeout: header.timeout,
+            quiet_hints: header.quiet_hints,
             sources,
             combine,
             outputs,
@@ -135,6 +136,7 @@ struct Header {
     description: Option<String>,
     params: Vec<Param>,
     timeout: Option<Duration>,
+    quiet_hints: Vec<HintId>,
 }
 
 fn read_header(table: toml::Table, problems: &mut Vec<String>) -> Option<Header> {
@@ -148,25 +150,31 @@ fn read_header(table: toml::Table, problems: &mut Vec<String>) -> Option<Header>
     let description = fields.string("description");
     let params = fields.table("params").map(Option::unwrap_or_default);
     let timeout = fields.duration("timeout");
+    let quiet_hints = read_quiet_hints(fields.take("quiet_hints"));
     for (key, place) in MISPLACED_REPORT_KEYS {
         if fields.take(key).is_some() {
             found.push(place.to_owned());
         }
     }
-    found.extend(fields.unknown("[report]", "name, description, params and timeout"));
+    found.extend(fields.unknown(
+        "[report]",
+        "name, description, params, timeout and quiet_hints",
+    ));
     let params = params.map(|params| read_params(params, &mut found));
-    let header = match (name, description, params, timeout) {
-        (Ok(name), Ok(description), Ok(params), Ok(timeout)) => Some(Header {
+    let header = match (name, description, params, timeout, quiet_hints) {
+        (Ok(name), Ok(description), Ok(params), Ok(timeout), Ok(quiet_hints)) => Some(Header {
             name,
             description: description.filter(|text| !text.trim().is_empty()),
             params,
             timeout,
+            quiet_hints,
         }),
-        (name, description, params, timeout) => {
+        (name, description, params, timeout, quiet_hints) => {
             found.extend(name.err());
             found.extend(description.err());
             found.extend(params.err());
             found.extend(timeout.err());
+            found.extend(quiet_hints.err().into_iter().flatten());
             None
         }
     };
@@ -176,6 +184,37 @@ fn read_header(table: toml::Table, problems: &mut Vec<String>) -> Option<Header>
             .map(|problem| format!("{label}: {problem}")),
     );
     header
+}
+
+/// `quiet_hints`, the ids of the hints the report's runs don't give, each a problem when it
+/// names none.
+fn read_quiet_hints(value: Option<toml::Value>) -> Result<Vec<HintId>, Vec<String>> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let toml::Value::Array(items) = value else {
+        return Err(vec![
+            "quiet_hints is a list of hints' ids, as quiet_hints = [\"source-reads-more\"]"
+                .to_owned(),
+        ]);
+    };
+    let mut ids = Vec::new();
+    let mut problems = Vec::new();
+    for item in items {
+        match item.as_str().map(str::parse::<HintId>) {
+            Some(Ok(id)) if !ids.contains(&id) => ids.push(id),
+            Some(Ok(_)) => {}
+            Some(Err(unknown)) => problems.push(format!("quiet_hints: {unknown}")),
+            None => problems.push(format!(
+                "quiet_hints: {item} isn't a hint's id, which is a string"
+            )),
+        }
+    }
+    if problems.is_empty() {
+        Ok(ids)
+    } else {
+        Err(problems)
+    }
 }
 
 fn read_params(table: toml::Table, problems: &mut Vec<String>) -> Vec<Param> {

@@ -749,6 +749,13 @@ fn reads_and_plans_the_valuation() {
         .collect();
     assert_eq!(ids, [("tx", false), ("prices", true)]);
     let combine = report.combine.clone().unwrap();
+    assert!(report.quiet_hints.is_empty());
+    let quiet = read_report(&VALUATION.replace(
+        "[report]\n",
+        "[report]\nquiet_hints = [\"source-reads-more\", \"combine-spilled\", \"source-reads-more\"]\n",
+    ))
+    .unwrap();
+    assert_eq!(quiet.quiet_hints, HintId::ALL);
     assert!(combine.query.sql().contains("ASOF JOIN"));
     assert_eq!(combine.query.compiled(), None);
     assert_eq!(
@@ -910,6 +917,18 @@ fn names_every_problem_with_several_sources() {
                 "[combine]\nprql = \"from tx | derive x = \"\nquery_was = \"\"\"",
             ),
             "[combine]: prql, line 1, column ",
+        ),
+        (
+            VALUATION.replace("[report]\n", "[report]\nquiet_hints = [\"spills\"]\n"),
+            "[report]: quiet_hints: \"spills\" isn't a hint's id; the ids are source-reads-more \
+             and combine-spilled",
+        ),
+        (
+            VALUATION.replace(
+                "[report]\n",
+                "[report]\nquiet_hints = \"combine-spilled\"\n",
+            ),
+            "[report]: quiet_hints is a list of hints' ids",
         ),
         (
             VALUATION.replace("[report]\n", "[report]\nprql = \"from tx\"\n"),
