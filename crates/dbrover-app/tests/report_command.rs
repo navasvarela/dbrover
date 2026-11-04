@@ -359,6 +359,79 @@ mod runs {
         }
     }
 
+    /// On Linux, a command killed outright takes its worker with it: the worker asked the
+    /// kernel for SIGKILL when its parent dies.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_command_killed_outright_takes_its_worker() {
+        use std::io::{BufRead, BufReader};
+        use std::process::Stdio;
+        use std::time::{Duration, Instant};
+
+        /// The pids of `parent`'s children, from each process's `stat` in `/proc`.
+        fn children(parent: u32) -> Vec<u32> {
+            let parent = parent.to_string();
+            std::fs::read_dir("/proc")
+                .unwrap()
+                .filter_map(|entry| {
+                    let pid: u32 = entry.ok()?.file_name().to_str()?.parse().ok()?;
+                    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+                    // The command's name, in brackets, can hold spaces: fields follow its `)`.
+                    let fields: Vec<&str> = stat.rsplit_once(')')?.1.split_whitespace().collect();
+                    (fields.get(1) == Some(&parent.as_str())).then_some(pid)
+                })
+                .collect()
+        }
+
+        /// Whether `pid` is still a process, not one that has died and awaits its reaping.
+        fn alive(pid: u32) -> bool {
+            std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .ok()
+                .and_then(|stat| {
+                    let state = stat
+                        .rsplit_once(')')?
+                        .1
+                        .split_whitespace()
+                        .next()?
+                        .to_owned();
+                    Some(state != "Z" && state != "X")
+                })
+                .unwrap_or(false)
+        }
+
+        let settings = Settings::new();
+        settings.write_report("products", &one_source("", SLOW_QUERY));
+        let out = settings.out().display().to_string();
+        let mut child = settings
+            .command(&["products", "-o", &out])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut stderr = BufReader::new(child.stderr.take().unwrap());
+        let mut started = String::new();
+        stderr.read_line(&mut started).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let worker = loop {
+            if let [worker] = children(child.id()).as_slice() {
+                break *worker;
+            }
+            assert!(Instant::now() < deadline, "the worker never started");
+            std::thread::sleep(Duration::from_millis(50));
+        };
+
+        child.kill().unwrap();
+        child.wait().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while alive(worker) {
+            assert!(
+                Instant::now() < deadline,
+                "the worker {worker} outlived its command"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
     /// `--progress` keeps a live line only on a terminal: through a pipe, as here, the lines
     /// are those of a run without it.
     #[test]
