@@ -52,7 +52,9 @@ Read from the code as built through RP6:
    because RP2 infers a column's type from all its values. For a large source, that is twice
    the I/O and, briefly, twice the space.
 3. **The run's DuckDB lives in memory.** Operators spill past `memory_limit` to the staging
-   folder, but the loaded tables are the database's own data, held in a database with no file.
+   folder; whether, and at what cost, DuckDB also evicts an in-memory database's own tables to
+   that folder is something RS1's benchmark measures rather than something the plan assumes.
+   A database on a file evicts its pages as any database does.
 4. **The combine's rows come back as text to Rust writers,** a page at a time, even when the
    output is a format DuckDB writes itself. Parquet isn't a report output yet (RP1 refuses it),
    though `dbrover-driver-duckdb::parquet` writes it for exports.
@@ -124,8 +126,8 @@ a columnar format that reads into Arrow without text:
 | PostgreSQL, MySQL, SQL Server | None. PostgreSQL's `COPY (query) TO STDOUT` streams text faster than the simple protocol, inside the read-only transaction. | A later layer of this plan, if RS1 measures it worthwhile. |
 
 The proposal: an optional capability on `ResultCursor`, `next_batch`, that returns an Arrow
-`RecordBatch`, which the loader hands to DuckDB's `Appender::append_record_batch` with no text
-in between. Drivers without it keep `next_page`, and the console and the grid keep text, as
+`RecordBatch`, which the loader hands to DuckDB's `Appender::append_record_batch` (the `duckdb`
+crate's `appender-arrow` feature, not yet turned on) with no text in between. Drivers without it keep `next_page`, and the console and the grid keep text, as
 ADR 0004 says: values on screen are text, whatever the engine. A new ADR (0007) records the
 exception: **bulk paths (reports, exports) may carry Arrow where the engine gives it
 natively.** Arrow's `Decimal128` holds 38 digits, so exact decimals stay exact; `arrow` 58 is
@@ -167,7 +169,8 @@ GROUP BY 1, 2
 partition = { from = ":since", to = ":until", every = "1 month", parallel = 2 }
 ```
 
-Each range binds `:part_from` and `:part_to`, as a lookup binds its list. Ranges are of time
+Each range binds `:part_from` and `:part_to`, as a lookup binds its list; neither can be one
+of `params`, as a lookup's `as` can't. Ranges are of time
 (`every = "1 day"`) or of an integer key (`every = 10_000_000` over `from` and `to`), never
 guessed from the data. The source's table gets every range's rows. What it buys:
 
@@ -186,16 +189,17 @@ partition = { from = ":since", to = ":until", every = "1 month" }
 
 [[output]]
 format = "parquet"
-file = "ledger/{part_from:%Y-%m}.parquet"
+file = "ledger-{part_from:%Y-%m}.parquet"
 ```
 
 The combine step then works on one range at a time, so the run's memory and spill are a
-range's, not the whole period's. That is correct only when the combine is local to the range:
+range's, not the whole period's. `file` stays a plain file name (RP1): a file per range names
+the range in it, as above, and a `file` without `part_from` or `part_to` is one file that every
+range's rows are appended to. That is correct only when the combine is local to the range:
 each output row depends on its range's rows alone. DbRover can't check that in general, so the
 manual says what isn't (a running balance carried across months, a `DISTINCT` over the whole
-period) and how to make it so (an opening-balance source per range). CSV and Parquet outputs
-either append each range's rows to one file or write a file per range, as `file` says; Excel
-appends to one file, within its row limit.
+period) and how to make it so (an opening-balance source per range). Excel appends to one
+file, within its row limit.
 
 Hash partitions (`hash(customer_id) % 8`) are left out: they need the same expression in every
 engine's dialect, and ranges cover the reports this plan is checked against.
@@ -209,8 +213,9 @@ The guardrails of [Reports](reporting.md#guardrails) hold, and gain what long ru
    C0's cost guard judges a source's estimate across all its ranges and batches, since nobody
    is there to approve the twelfth month.
 2. **Combine:** `memory_limit`, `threads`, `max_temp_size` and `timeout` as in RP2. The
-   workspace moves to a file (RS3), so loaded tables are evicted to disk like any database's
-   pages, and `max_temp_size` bounds the spill beside it.
+   workspace moves to a file in the run's work folder (RS3), always, since a file-backed DuckDB
+   with little in it costs nothing measurable to open: loaded tables are evicted to disk like
+   any database's pages, and `max_temp_size` bounds the spill beside it.
 3. **Disk for the whole run:** a new `max_disk`, the most the run's work folder may hold (the
    workspace file, the spill, kept ranges and the staging files), checked against the free
    space of its disk before the run starts and as it grows. DuckDB already computes the free
@@ -219,24 +224,25 @@ The guardrails of [Reports](reporting.md#guardrails) hold, and gain what long ru
 4. **Memory outside DuckDB:** the bounded queues make it computable: `memory_limit` + each
    running source's queue (batches × batch size) + the writers' buffers. The run's plan says
    the bound, and the profile records the worker's peak resident memory (`getrusage` through
-   `nix`, already in the build, on Linux and macOS).
+   `rustix`, which the worker already uses for its priority and `RLIMIT`s, on Linux and macOS).
 5. **Time:** the run's wall-clock `timeout` stays, and a **stall timeout** joins it: a run whose
    steps report no progress (no row, batch, range or DuckDB work) for `stall_timeout` (default
    10 minutes) is stopped as stuck. A long run sets a long `timeout` and keeps a short stall
    timeout. On Linux, `RLIMIT_CPU` keeps following the run's time limit.
 6. **Sleep:** a run longer than a few minutes keeps the machine awake while it runs: on macOS
-   `caffeinate -i -w <worker pid>`, on Linux `systemd-inhibit` where it exists, both programs
-   the system already has. Windows waits for a safe wrapper, as its Job Object does.
+   `caffeinate -i -w <worker pid>`, on Linux `systemd-inhibit` holding a sleep inhibitor
+   around a wait on the worker's pid, where it exists; both are programs the system already has. Windows waits for a safe wrapper, as its Job Object does.
 
 The defaults go in Settings › Reports with RP4's, and a report's file overrides them.
 
 ### Pause, resume and checkpoints
 
-**A run folder that outlives a failed run.** Today the staging folder is removed however a run
-ends. A run that loads more than `resumable_above` (default 1 GiB) keeps a **work folder** in the
-data folder's `report-runs/<run id>/` until it finishes or the user discards it: the workspace
-file, the spill, and a `manifest.json`. Output staging stays in the output folder, where the
-final rename needs it. Work folders expire after 7 days and count against a total in Settings,
+**A work folder that outlives a failed run.** Today the staging folder is removed however a run
+ends. From RS3, every run has a **work folder** in the data folder's `report-runs/<run id>/`
+with the workspace file, the spill and a `manifest.json`. A run that finishes removes it; a run
+that fails or is stopped keeps it when it had loaded more than `resumable_above` (default
+1 GiB), and removes it otherwise, since starting such a run again costs less than keeping its
+folder. Output staging stays in the output folder, where the final rename needs it. Work folders expire after 7 days and count against a total in Settings,
 and **Discard** removes one at once.
 
 **The manifest** records, as each unit finishes:
@@ -277,12 +283,12 @@ Two answers, both explicit:
 id = "events"
 data_source = "events-clickhouse"
 query = "SELECT * FROM events WHERE ts >= :after"
-incremental = { column = "ts", lookback = "2 days", key = ["event_id"] }
+incremental = { column = "ts", from = ":since", lookback = "2 days", key = ["event_id"] }
 ```
 
-The rows are kept as Parquet in the data folder's `report-cache/<report>/<source>/`; each run
-reads from the newest `ts` kept minus `lookback`, replaces kept rows by `key`, and loads the
-union. Late or back-dated rows inside `lookback` are picked up; older ones aren't, which the
+The rows are kept as Parquet in the data folder's `report-cache/<report>/<source>/`. The first
+run binds `:after` to `from`; each later run binds it to the newest `ts` kept minus
+`lookback`, replaces kept rows by `key`, and loads the union. Late or back-dated rows inside `lookback` are picked up; older ones aren't, which the
 manual says plainly (back-dated journal entries are the accounting case), and **Run from
 scratch** drops the cache. The cache counts against the work folders' total and is cleared with
 **Clear history**.
@@ -311,7 +317,8 @@ where each part runs, and two paths for results too large for row-by-row paging:
    Athena's `UNLOAD` (Athena writes its results to S3 anyway), Databricks's external links.
    Writing to a bucket is a side effect that a report's read-only promise doesn't cover, so a
    source opts in with `handoff = "s3://my-bucket/dbrover-tmp/"`, a prefix the user names, and
-   the run deletes what it wrote when it ends. After C3 to C5, engine by engine.
+   the run deletes what it wrote when it ends (a signed delete per object, a small addition to
+   C2's listers, which only list). After C3 to C5, engine by engine.
 4. **A federating engine as the source.** When two large sources live in engines that can read
    each other (Athena or Trino over several catalogs, BigQuery over GCS external tables,
    Snowflake over S3), the join of the two runs as one source's query there, and DbRover
@@ -373,13 +380,15 @@ GROUP BY wallet
 """
 ```
 
-- **What it gives:** the rows the other report would write, which is its `[combine]`'s result,
-  or its one source's rows without one, as the table `valued`. Its outputs aren't written. Its
-  result is its contract: the outer report can't read the inner report's own sources, so the
+- **What it gives:** the inner report's result, its `[combine]`'s rows with the columns and
+  types DuckDB gives them, or its one source's rows without a combine, as the table `valued`.
+  Its outputs aren't written and their schemas aren't applied: an output's rounding and formats
+  are for files, and the outer report's outputs do their own. Its result is its contract: the outer report can't read the inner report's own sources, so the
   inner report can change how it gets its rows without breaking the reports that use it.
 - **Parameters:** `params` gives each of the inner report's parameters a value, either one of
-  the outer report's parameters (`":since"`) or a literal of its type. A parameter left out, or
-  of another type, is a problem in the outer file that names both reports.
+  the outer report's parameters (`":since"`) or a literal of its type; a text literal can't
+  start with a colon. A parameter left out, or of another type, is a problem in the outer file
+  that names both reports.
 - **Where it runs:** in the same worker and the same DuckDB. The inner report's sources load
   with the outer's, under their own limits, into a schema named after the outer source's id
   (`valued.tx`), so ids never clash. Once everything is loaded and the database is locked, each
@@ -390,8 +399,14 @@ GROUP BY wallet
   as from any loaded source.
 - **Nesting:** a report used by another may itself use reports, up to a depth of 4. A cycle is a
   problem when the files are read, naming the reports in it.
+- **Attached sources** (RP2's `attach = true`) are catalogs, not tables, and keep their ids as
+  aliases across the run, since the inner combine names them (`prices.hourly_prices`). Two
+  reports in one run attaching different files under one id is a problem naming both; the
+  same file under one id is attached once.
 - **Limits:** each inner source keeps its own caps, and the outer report's `[combine]` limits
-  bound the one DuckDB they share. The outer report's run timeout covers everything.
+  bound the one DuckDB they share; the inner report's `[combine]` limits and `[report] timeout`
+  aren't read. An inner report's `[report] partition` (RS4) is a problem: a partitioned run is
+  the outer report's to declare.
 - **The profile and the history:** an inner report's steps nest under the outer source's lane
   in the timeline, and hints name them by path (`valued › tx`). The outer report's run is
   recorded with the file hash of every report it used. The inner report's own history doesn't
@@ -481,8 +496,8 @@ running it:
   (`EXPLAIN PLAN json = 1, indexes = 1`, whose granules say how much of a table is read), and,
   as C3 to C6 bring them, Trino's and Athena's `EXPLAIN (TYPE IO)`, BigQuery's dry run,
   Snowflake's `EXPLAIN` (partitions and bytes assigned) and Databricks's `EXPLAIN COST`;
-- a lookup's source explained with its first batch's worth of keys, from the last run's table
-  when there is one, else a placeholder list the plan says it used;
+- a lookup's source explained with the statement its first batch ran in the last run, which
+  the profile keeps, else with a placeholder list the plan says it used;
 - the combine explained over empty tables of each source's last known columns, with the last
   run's row counts as DuckDB's estimates;
 - C0's cost guard over every estimate, and each estimate in bytes beside the source's limit.
@@ -515,7 +530,7 @@ each with an id, a threshold, and one sentence naming the step and the number be
 | `unused-columns` | the combine reads none of some of a source's columns, worth ≥ 20% of its bytes | drop them from the query |
 | `filter-one-source` | the combine's plan filters one source's scan by a constant or parameter | move the filter into the source |
 | `aggregate-one-source` | the combine aggregates one source's scan with nothing joined first | aggregate in the source |
-| `scanned-more` | an engine scanned ≥ 100× what it returned | filter on the table's partition or clustering column |
+| `scanned-more` | an engine scanned ≥ 100× what it returned | check that the query filters on the table's partition or clustering column; an aggregation scans more than it returns on purpose, so this is a question, as `source-reads-more` is |
 | `slow-first-row` | a source spent ≥ 80% of its time before its first row | explain its query (W10), look for an index |
 | `load-bound` | a source spent most of its time loading | declare its columns, or partition it |
 | `many-batches` | a lookup ran ≥ 50 batches | raise `batch_size`, or join in the combine |
@@ -644,7 +659,7 @@ runs the small cases.
   **Exit:** on MinIO in CI, a report joins a PostgreSQL source with a partitioned Parquet lake,
   and the profile shows the lake's bytes read far below its size.
 - **RS8 — Reports over MCP:** the read-only tools above, and the decision on running reports.
-- **RS9 — Composing reports:** independent of RS1 to RS8 except its last layer, so it can be
+- **RS9 — Composing reports:** independent of RS1 to RS8 except `reuse`, so it can be
   scheduled at any point after RP5.
   - RS9a — Plan.
   - RS9b — The report file: `report` and its `params` on a source, read and planned, with the
@@ -690,8 +705,8 @@ Proposed defaults; each is confirmed when its milestone starts.
 | DuckDB's postgres and mysql scanners | **Not now,** as RP2 decided. | DbRover's guards stay in one place; reopened if RS1 shows PostgreSQL loading is the bottleneck and `COPY` doesn't fix it. |
 | Values on the bulk path | **Arrow where the engine gives it natively,** text otherwise; screens stay text (ADR 0004, amended by ADR 0007). | Exact decimals through `Decimal128`; no new dependency for the arrays. |
 | Typing loaded sources | **Typed on arrival when the type is known,** RP2's load-then-cast for the columns whose type comes from their values. | One copy for most sources; inferred columns behave as before. |
-| The run's DuckDB | **On a file in a work folder** for runs past `resumable_above`, in memory below it. | Small runs start as fast as today; large ones evict loaded tables to disk and can resume. |
-| Where work folders live | **The data folder's `report-runs/`,** with a setting for another disk; output staging stays in the output folder. | Resumable work survives an output folder being cleaned, and the final rename stays on one disk. |
+| The run's DuckDB | **On a file in a work folder, always;** the folder is kept after a failure only past `resumable_above`. | Loaded tables evict to disk like any database's pages; a small run that fails costs nothing to keep for, and starts again. |
+| Where work folders live | **The data folder's `report-runs/`,** with a setting for another disk; output staging stays in the output folder. | Resumable work survives an output folder being cleaned, and the final rename stays on one disk. The spill moves off the output folder's disk, which RP2 put it on. |
 | Partitions | **Explicit ranges of time or integer keys** in the file, `:part_from` and `:part_to` bound; one at a time by default. | Nothing is guessed from data; a range is the unit of progress, retry and resume. |
 | Partitioned runs | **The author asserts the combine is local to a range;** the manual says what breaks it. | Bounded memory per range; a running balance needs an opening-balance source. |
 | Pause | **A cancel that keeps the work folder,** not a suspended process. | No connections or warehouse jobs held open, and nothing billed while paused. |
@@ -730,6 +745,9 @@ Proposed defaults; each is confirmed when its milestone starts.
   the prefix.
 - **Laptops.** Sleep, Wi-Fi changes and battery: keeping awake covers sleep on macOS and Linux;
   a dropped connection fails its unit, which resume reruns.
+- **The history file grows.** A profile with DuckDB's operator tree and each range's numbers is
+  tens of kilobytes to a megabyte, against RP4's few kilobytes a run. `runs_kept` bounds it;
+  the plan and the per-range numbers are the first to be capped in size if it matters.
 - **A shared report edited for one use.** Changing a report changes every report built on it.
   **Used by** in its tab and the file hashes in each run's profile show who is affected and
   since when.
