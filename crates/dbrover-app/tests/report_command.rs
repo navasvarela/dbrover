@@ -245,6 +245,28 @@ mod runs {
         assert_matches_expected(&settings.out(), "sales-by-category-2026-10.csv");
     }
 
+    /// The PRQL example matches its checked-in file, and says the SQL it compiled to in its
+    /// events.
+    #[test]
+    fn runs_the_prql_example() {
+        let settings = Settings::new();
+        let report = examples().join("sales-by-week.toml");
+        let report = report.to_str().unwrap();
+        let output = settings.run(&[&[report, "--json"][..], &OCTOBER].concat());
+        assert_eq!(output.status.code(), Some(0), "{}", describe(&output));
+        assert_matches_expected(&settings.out(), "sales-by-week-2026-10.csv");
+        let started: serde_json::Value = serde_json::from_str(
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .next()
+                .unwrap(),
+        )
+        .unwrap();
+        let sql = started["combine_sql"].as_str().unwrap();
+        assert!(sql.contains("date_trunc('week', ordered_on)"), "{sql}");
+        assert!(sql.contains(":since"), "{sql}");
+    }
+
     /// One row of products, for the reports below.
     fn one_source(report: &str, source: &str) -> String {
         format!(

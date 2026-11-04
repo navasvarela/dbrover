@@ -342,9 +342,22 @@ impl DbRoverApp {
 
     /// Where reports are kept and how they run, which turns on the explorer's **Reports**.
     pub fn with_reports(mut self, setup: ReportsSetup) -> Self {
+        self.use_reports(setup);
+        self
+    }
+
+    /// Closes the log console's tab, for a picture with room for what is above it.
+    #[cfg(test)]
+    pub(crate) fn close_log_console(&mut self) {
+        if let Some(path) = self.dock.find_tab(&Tab::LogConsole) {
+            self.dock.remove_tab(path);
+        }
+    }
+
+    /// Lists and runs reports as `setup` says, from now on.
+    pub(crate) fn use_reports(&mut self, setup: ReportsSetup) {
         self.reports = Reports::new(setup);
         self.send_if(self.reports.reload());
-        self
     }
 
     /// The settings folder in use, which Settings › Files shows and changes.

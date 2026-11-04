@@ -6,8 +6,8 @@ you chose once. It lives in a file of its own, runs in a process of its own, and
 limits you can see, so a report that reads too much never takes DbRover or your machine with
 it.
 
-A report reads one data source, or several, combined in DuckDB SQL, and writes CSV and Excel
-files. A source can read by the keys an earlier one found, and can be on a document database
+A report reads one data source, or several, combined in DuckDB SQL or in PRQL, and writes CSV
+and Excel files. A source can read by the keys an earlier one found, and can be on a document database
 such as DynamoDB or MongoDB, by declaring the columns it makes.
 
 ## Your first report
@@ -31,13 +31,14 @@ and `sales-by-category-2026-10.csv`, in your Downloads folder. Click one to open
 product's units, sales, returns and net amount, a subtotal for each category, and a total of
 68,435.76. Under the files, a preview shows the rows the report wrote.
 
-### The four examples
+### The examples
 
 Each example shows a kind of report of its own:
 
 | Report | Reads | Shows |
 | --- | --- | --- |
 | [`sales-by-category.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/sales-by-category.toml) | SQLite | Grouping with a subtotal for each group and a total, with `GROUPING SETS`, and amounts rounded to the cent as they load. |
+| [`sales-by-week.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/sales-by-week.toml) | SQLite | A combine step in [PRQL](#prql): each category's net sales, week by week, filtered by the report's parameters in PRQL's own `$since`. |
 | [`order-history.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/order-history.toml) | SQLite and MongoDB | Every order line of a period with its customer, read from MongoDB by the ids the lines name, and each customer's running total with a window function. Past an Excel sheet's million rows, it goes on in a new sheet. |
 | [`battery-flows.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/battery-flows.toml) | PostgreSQL, DynamoDB and DuckDB | Three sources joined: each battery's charges and discharges priced at the hour's energy price with `ASOF JOIN`, keeping every digit. |
 | [`battery-cycles.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/battery-cycles.toml) | PostgreSQL, DynamoDB and DuckDB | State carried across rows: each discharge matched against the charges it drew from, first in, first out, with the price at each end. |
@@ -82,6 +83,9 @@ and click it to see them. Right-click **Reports** for:
   with any editor.
 - **Reload**: reads every report again, after you have changed one.
 
+Right-click a report for **Rename…** too, which renames its file in the `reports` folder and
+keeps its [runs](#runs) with it.
+
 The folder is `reports` in your settings folder (see [Where DbRover keeps its files](files.md)),
 one for all your projects, so a report can read data sources from any of them.
 
@@ -110,12 +114,17 @@ The values and the folder are remembered for each report until you quit DbRover.
 
 ## Runs
 
+![The Runs of Sales by category: four runs side by side, the newest from the command line, one
+failed, each step's time and rows, and the step that takes the most time named under
+them.](images/report-runs.png)
+
 Every run of a report is kept, finished, failed or cancelled, with what each of its steps
 measured. Under the last run, **Runs** shows the newest five side by side, a column each, newest
 first:
 
-- when the run started, how it ended (hover over *failed* for the step and the error), its
-  total time and the parameters it ran with;
+- when the run started, *from the command line* or *from MCP* when it wasn't started from the
+  tab, how it ended (hover over *failed* for the step and the error), its total time and the
+  parameters it ran with;
 - a row for each source, the combine step and each output: its time and its rows, or for an
   output the file's size. Hover over a cell for everything the step measured: the bytes it read,
   how long its first row took, a lookup's batches, the combine step's peak memory and how much
@@ -141,10 +150,22 @@ Under it, hints from the newest finished run say what to try:
   memory.* A step that spills still finishes, but disk is slower than memory, and
   `max_temp_size` stops it once it spills too much.
 
+Each hint has an id: `source-reads-more` for the first, `combine-spilled` for the second; hover
+over a hint to see it. A report that reads far more than it writes on purpose, such as one that
+adds up a year of lines into twelve, can silence a hint in its file, and the tab then says how
+many it silences:
+
+```toml
+[report]
+name = "Sales by month"
+quiet_hints = ["source-reads-more"]
+```
+
 **Clear history**, beside the heading, deletes every run of the report, after asking.
 
 Runs are kept in `history.sqlite` with the [query history](history.md), by the report's file
-name: rename the file and its runs start afresh, edit it and they carry on. Each report keeps its
+name: edit the file and they carry on; rename it with **Rename…** and they move with it, but
+rename it outside DbRover and its runs start afresh, since nothing in the file ties it to them. Each report keeps its
 newest 20, unless **Settings › Reports** says otherwise; the query history's own limits don't
 touch them.
 
@@ -202,6 +223,7 @@ columns = "same"
 | `description` | A sentence under the name. |
 | `params` | Each parameter and its type, as `{ since = "date", until = "date" }`. |
 | `timeout` | How long a whole run may take, as `"30m"` or `"1h"`. 30 minutes unless you say. |
+| `quiet_hints` | The ids of the hints its runs don't give, as `["source-reads-more"]` (see [Runs](#runs)). |
 
 A parameter's type is `text`, `integer`, `decimal`, `boolean`, `date` or `timestamp`. A date is
 typed as `2026-10-01`, a timestamp as `2026-10-01 12:00` (seconds and a fraction are optional,
@@ -236,7 +258,8 @@ outputs write:
 
 | Key | What it is |
 | --- | --- |
-| `query` | One statement that only reads, over the sources' tables, with the report's `:name` parameters. Needed. |
+| `query` | One statement that only reads, over the sources' tables, with the report's `:name` parameters. |
+| `prql` | Instead of `query`: the same in [PRQL](#prql), with the report's parameters as `$name`. A `[combine]` has one of the two. |
 | `timeout` | How long the query may run. 10 minutes unless you say. |
 | `memory_limit` | The memory DuckDB may use before it spills to disk, as `"2 GiB"`. 2 GiB unless you say. |
 | `threads` | How many of the processor's cores DuckDB may use. Half of them unless you say. |
@@ -339,6 +362,52 @@ one under [A report file](#a-report-file) does.
 A DuckDB file can be read by one program while another has it open for writing only if neither
 writes. Tick **Read-only** on a DuckDB data source that a report attaches, or disconnect it
 before you run the report; otherwise the run says the file is locked.
+
+### PRQL
+
+[PRQL](https://prql-lang.org) is a language for the same queries, written as a pipeline that
+reads top to bottom: take a table, filter it, derive columns, group, sort. A `[combine]` can be
+written in it, with `prql` in place of `query`; DbRover compiles it to DuckDB's SQL when it
+reads the file, and runs that SQL as it runs a `query`. `sales-by-week.toml` does:
+
+```toml
+[combine]
+prql = """
+from lines
+filter (ordered_on >= ($since | as date) && ordered_on < ($until | as date))
+derive week = s"date_trunc('week', {ordered_on})"
+group {week, category} (
+  aggregate {
+    order_lines = count this,
+    units = sum quantity,
+    net = sum amount,
+  }
+)
+sort {week, category}
+"""
+```
+
+- **Parameters** are PRQL's, `$since`, and must be in `[report]`'s `params`, as in SQL.
+- **DuckDB's own functions** go in an s-string, `s"date_trunc('week', {ordered_on})"`, written
+  as DuckDB's SQL, the columns in braces.
+- **The dialect** is always DuckDB's: a `prql target:` line naming another is ignored.
+- **A mistake** is one of the file's problems, as a TOML error is, and points into the PRQL. A
+  comma left out after `net = sum amount`:
+
+  ```text
+  [combine]: prql, line 9, column 5: expected new line or something else, but found average
+          average = net / order_lines,
+          ^
+  ```
+
+  PRQL doesn't know a table's columns, so a misspelt column compiles, and DuckDB names it when
+  the run reaches the combine step.
+
+The tab shows the SQL the PRQL compiled to under the parameters, in **Combine SQL, compiled
+from PRQL**, with **Copy**; a run's combine step folds out the same SQL, and opens it when the
+step fails, since DuckDB's errors name a line of it. `dbrover report run` prints it, its lines
+numbered, under a combine step's error, and `--json`'s `started` event has it as
+`combine_sql`. PRQL's `sum` of no rows is 0, where SQL's `SUM` is null, so the two differ there.
 
 ### Types in DuckDB
 
@@ -502,9 +571,11 @@ goes with the run. On macOS and Windows, which don't cap a process's memory, `me
 what keeps a large combine step from filling your machine's memory: lower it on a small
 machine, raise it for a report that combines millions of rows.
 
-A run stopped by a limit names it, its value and where to raise it, as "It stopped at max_rows =
-1,000,000 rows. To allow more, raise max_rows in the `[[source]]` "sales" of the report's
-file.", with a link to **Settings › Reports**, where its default for every report is. Before
+A run stopped by a limit names it, its value, and who set it: the report's file, as "It stopped
+at max_rows = 100,000 rows, set in the `[[source]]` "sales" of the report's file. To allow more,
+raise it there."; or Settings › Reports, where the file leaves it out, as "It stopped at
+max_rows = 1,000,000 rows, the default in Settings › Reports, since the report's file doesn't set
+it.", with a link to that page. Before
 raising one, ask whether the query should read less: the hints under [Runs](#runs) point at a
 source that returns far more rows than the report writes.
 
@@ -541,6 +612,7 @@ on a Mac, `/usr/bin/dbrover` from the `.deb`, the AppImage itself, and
 | `--param <name>=<value>`, `-p` | A parameter's value, once for each, as the report's tab takes it: a date as `2026-10-01`, a timestamp as `"2026-10-01 12:00"`. A parameter missing, of the wrong type, or one the report doesn't take stops the command before anything runs. |
 | `--output-dir <folder>`, `-o` | Where the files go, made if it doesn't exist. Without it, the current folder. |
 | `--json` | The run's events on standard output, a JSON object a line (see below). |
+| `--progress` | On a terminal, a line on standard error that says what each running step has read so far, rewritten each second. In a pipe, cron's mail or with `--json`, nothing more is printed. |
 | `--config-dir <folder>` | The settings folder to use, as for the app (see [Choosing the settings folder](files.md#choosing-the-settings-folder)). Without it, the one DbRover uses. |
 
 The report's data sources are the settings folder's, by the names the report gives them, and
@@ -591,8 +663,32 @@ Ctrl-C, or the SIGTERM that cron, `timeout` and CI runners send to stop a job, c
 ### Runs in the app
 
 A run of a report in the `reports` folder is kept with the app's runs, so its tab lists it
-under [Runs](#runs) beside your own. A report file elsewhere, such as one in a repository's
-checkout, isn't kept.
+under [Runs](#runs) beside your own, marked *from the command line*. A report file elsewhere,
+such as one in a repository's checkout, isn't kept.
+
+### Listing the reports
+
+`dbrover report list` prints each report in the `reports` folder: the name `report run` takes,
+its title and parameters, or what keeps it from running.
+
+```text
+$ dbrover report list
+sales-by-category  Sales by category (since: date, until: date)
+sales-by-week      Sales by week (since: date, until: date)
+stock              Stock — can't run, 1 problem:
+  ! source "items": there is no data source "warehouse"; there are shop
+```
+
+With `--json`, one object a report, a line each, with its `name`, `title`, `description`,
+`path`, `params`, `data_sources` and `problems`. `--config-dir` works as for `run`.
+
+### A command killed outright
+
+Ctrl-C and SIGTERM stop the run cleanly. A command killed outright, by SIGKILL or a CI runner's
+hard stop, can't: on Linux its worker dies with it, and elsewhere the worker stops at its next
+event, about a second later, once it finds nobody reading them. Either way, a file it was
+writing stays in a hidden `.dbrover-report-…` folder inside the output folder on Linux, and is
+removed elsewhere.
 
 ### Passwords
 
@@ -672,7 +768,3 @@ reach its database fails the job. `--config-dir` takes a full path, hence `$PWD`
 source's `id` is any UUID, as `uuidgen` makes one. A data source
 on a server takes its password from a command, such as `printenv` of a CI secret, trusted as
 under [Passwords](#passwords).
-
-## What's next
-
-Reports are being built in steps. Coming next: the PRQL language for the combine step.
