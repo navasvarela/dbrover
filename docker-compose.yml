@@ -461,3 +461,20 @@ services:
       interval: 1s
       timeout: 5s
       retries: 30
+
+  # Google Cloud Storage's stand-in (docs/cloud-data.md, C2f): fake-gcs-server, serving the
+  # minio service's fixtures (docker/minio/dbrover) as the bucket `dbrover` over plain HTTP,
+  # with any token. DuckDB reads from it and DbRover lists it; it doesn't take DuckDB's writes.
+  fake-gcs:
+    image: fsouza/fake-gcs-server:1.56.1
+    command:
+      ["-scheme", "http", "-port", "4443", "-public-host", "localhost:59100", "-data", "/data"]
+    ports:
+      - "59100:4443"
+    volumes:
+      - ./docker/minio/dbrover:/data/dbrover:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:4443/storage/v1/b"]
+      interval: 1s
+      timeout: 5s
+      retries: 30

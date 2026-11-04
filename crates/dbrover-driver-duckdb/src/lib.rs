@@ -100,7 +100,7 @@ const ICEBERG_METADATA_PAGES: usize = 20;
 /// DuckDB reads from its folder, and the newest metadata file of an Iceberg table, found by
 /// listing its metadata folder; `None` when that folder holds no metadata file.
 async fn table_source_name(
-    lister: &dbrover_cloud::storage::S3Lister,
+    lister: &dbrover_cloud::storage::Lister,
     prefix: &str,
     format: TableFormat,
 ) -> Result<Option<String>, DriverError> {

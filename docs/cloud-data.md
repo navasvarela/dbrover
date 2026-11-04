@@ -535,6 +535,16 @@ Each layer is one pull request in a stack, useful and tested on its own, with no
   **Exit:** on fake-gcs-server, a Parquet file is read and its bucket listed with a stand-in
   token; Azure's listing reads documented answers, pages with its marker, and sends the token
   only over HTTPS.
+  **As built:** `dbrover-cloud`'s `storage` module gains `GcsLister` (the JSON API's
+  `objects.list`) and `AzureLister` (List Blobs, `x-ms-version: 2023-11-03`), and a `Lister`
+  over the three. C0c's Entra ID sign-in gains Azure Storage's resource
+  (`https://storage.azure.com/.default`); C0b's Google token already has the
+  `cloud-platform` scope. Tokens are cached for the app's lifetime per sign-in, as C0's are
+  for databases, so consoles opened in a row don't each run `az`. The `fake-gcs` test server
+  (`fsouza/fake-gcs-server:1.56.1`, 25 MB, healthy in under 2 s) serves MinIO's fixtures from
+  the same folder; it ignores `maxResults` when it lists prefixes, so paging is tried on Google's
+  documented answers instead. Nothing touches Azure or Azurite: the `azure` secret's form was
+  tried against DuckDB, and listing on documented XML.
 - **C2g — MotherDuck:** a DuckDB data source's database can be a MotherDuck database (`md:`
   and its name), signed in with a token kept in the keychain as its password and handed to
   DuckDB as `motherduck_token`, never in the saved settings.

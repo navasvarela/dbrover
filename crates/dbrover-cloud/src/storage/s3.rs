@@ -10,7 +10,7 @@ use aws_sigv4::http_request::{
 use aws_sigv4::sign::v4;
 use dbrover_core::Password;
 
-use super::{Level, StorageError, xml};
+use super::{Level, StorageError, encode, xml};
 use crate::http::{Answer, Https};
 
 /// The service name S3's requests are signed for.
@@ -186,20 +186,6 @@ fn signed_headers(
         .headers()
         .map(|(name, value)| (name.to_owned(), value.to_owned()))
         .collect())
-}
-
-/// Percent-encodes everything but SigV4's unreserved characters, as S3 expects a query's
-/// values and a path's bucket name: form encoding's `+` for a space would read back as a plus.
-fn encode(text: &str) -> String {
-    let mut encoded = String::with_capacity(text.len());
-    for byte in text.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
-            encoded.push(char::from(byte));
-        } else {
-            encoded.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    encoded
 }
 
 #[cfg(test)]
