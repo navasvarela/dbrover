@@ -539,8 +539,34 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
     Neon's pooled and direct hosts; Supabase's session pooler, transaction pooler and direct
     host; and ClickHouse Cloud, woken from idle. Each should connect, browse and run the
     conformance suite.
-- **C2 — Object storage:** Parquet, CSV and JSON in S3, Google Cloud Storage and Azure Blob
-  Storage, Iceberg and Delta tables, and MotherDuck, all through DuckDB.
+- **C2 — Object storage and table formats** (started 2026-11-04, after C1): Parquet, CSV and
+  JSON in S3, Google Cloud Storage and Azure Blob Storage, Iceberg and Delta tables, and
+  MotherDuck, all through DuckDB and the extensions it downloads on first use. Planned in
+  [Cloud and big data](cloud-data.md#c2--object-storage-and-table-formats-duckdb). In layers,
+  one PR each:
+  - **C2a — Plan:** C2's layers, decisions and risks, and this entry.
+  - **C2b — A bucket in a DuckDB data source's settings:** the provider, bucket, region,
+    endpoint and sign-in, saved in `data_sources.toml`, with an access key's secret in the
+    keychain.
+  - **C2c — Reading S3 through DuckDB:** C0's AWS sign-in, an access key or none, made into a
+    temporary DuckDB secret and made again before it expires; MinIO among the test servers.
+  - **C2d — The bucket in the explorer:** a level at a time with a delimiter, a thousand keys a
+    page; files' columns and **Open data**.
+  - **C2e — Iceberg and Delta tables:** found from their folders and opened with
+    `iceberg_scan` and `delta_scan`.
+  - **C2f — Google Cloud Storage and Azure Blob Storage:** C0's Google and Entra ID tokens as
+    DuckDB secrets, and each provider's listing; fake-gcs-server among the test servers.
+  - **C2g — MotherDuck:** an `md:` database, with its token in the keychain.
+  - **C2h — The data source dialog:** a **Bucket** section, and MotherDuck beside **File** and
+    **In memory**.
+  - **C2i — Manual:** a page on object storage and MotherDuck, and the demo note.
+
+  Nothing is tried against a real cloud account while building C2: S3 is tried on MinIO,
+  Google Cloud Storage on fake-gcs-server, Azure's listing on its documented answers, and
+  MotherDuck's connection string by unit tests; the live checks are listed in the demo note.
+
+  **Exit:** query `s3://bucket/path/*.parquet` and an Iceberg table from a MinIO container in
+  CI with no AWS account.
 - **C3 — Athena and Trino**, over AWS's Athena API and then Trino's HTTP protocol.
 - **C4 — BigQuery**, over its jobs API, with a dry run showing the bytes a query will scan.
 - **C5 — Snowflake**, over its SQL API.

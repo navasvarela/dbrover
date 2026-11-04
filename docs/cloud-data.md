@@ -1,7 +1,7 @@
 # Cloud and big data
 
 Status: **C0 built** (2026-11-02); **C1 built** (2026-11-03), tried only against local
-stand-ins; C2 to C6 planned, not scheduled. Proposed on
+stand-ins; **C2 started** (2026-11-04); C3 to C6 planned, not scheduled. Proposed on
 2026-10-27; the order and the decisions below are confirmed as each milestone starts. The
 providers' priority was set on 2026-10-28: AWS, then Google Cloud, then Azure. On 2026-11-01
 DynamoDB was moved ahead of the track, as the NoSQL track's [N5](nosql.md#n5--dynamodb), with
@@ -383,13 +383,147 @@ before release, as C0's sign-ins were.
 
 ### C2 — Object storage and table formats (DuckDB)
 
-- An **object storage** data source (or a DuckDB option): S3, then Google Cloud Storage, then
-  Azure Blob Storage, with C0's credentials passed to DuckDB as secrets, and the bucket
-  browsable in the explorer.
-- Iceberg and Delta tables, through DuckDB's extensions.
-- MotherDuck, through DuckDB's `md:` databases.
-- **Exit:** query `s3://bucket/path/*.parquet` and an Iceberg table from a MinIO container in CI
-  with no AWS account.
+Started on 2026-11-04, after C1. DuckDB reads Parquet, CSV and JSON from S3, Google Cloud
+Storage and Azure Blob Storage, and Iceberg and Delta tables, through extensions it downloads
+on first use. C2 gives a DuckDB data source a bucket: C0's sign-ins become DuckDB's secrets,
+the bucket shows in the explorer, and its files and tables open like any table. MotherDuck
+comes through the same driver, as a third kind of DuckDB database.
+
+#### What DuckDB does, as tried on 2026-11-04
+
+Tried with the library DbRover links (DuckDB 1.5.6's prebuilt library for macOS arm64, as CI
+and the release link it; `docs/duckdb-prebuilt.md`) against MinIO, fake-gcs-server and
+Azurite in local containers, with no cloud account:
+
+| Question | What DuckDB does |
+| --- | --- |
+| Extensions in the build | Only `core_functions`, `parquet`, `json`, `icu` and `autocomplete` are linked in. `httpfs` (S3, Google Cloud Storage, HTTP), `azure`, `iceberg` (and `avro`, which it loads), `delta` and `motherduck` are downloaded from `extensions.duckdb.org`, signed by DuckDB and checked against that signature, the first time a statement needs them (`autoinstall_known_extensions`, on by default). All of them installed and loaded. |
+| Their size | `httpfs` 16 MB, `iceberg` 34 MB and `avro` 8 MB, `delta` 65 MB, `azure` 13 MB, `motherduck` 10 MB, each downloaded once per DuckDB version. |
+| Where they are kept | DuckDB's own folder, `~/.duckdb/extensions/v1.5.6/<platform>/` (`osx_arm64`, `linux_amd64`, `windows_amd64`), shared with DuckDB's command-line client and Python package; a new DuckDB version downloads its own. |
+| Offline | The statement that needs the extension fails with DuckDB's *Extension Autoloading Error*, naming the extension and the address it tried; nothing else is affected, and the next statement tries again. Making an S3 or Google Cloud Storage secret needs `httpfs` too, so it fails the same way. |
+| Credentials | A temporary secret, kept in memory: `CREATE TEMPORARY SECRET (TYPE s3, KEY_ID …, SECRET …, SESSION_TOKEN …, REGION …, ENDPOINT …)`; `TYPE gcs` takes a `BEARER_TOKEN`, which is C0's Google token; `TYPE azure` with `PROVIDER access_token` takes an `ACCESS_TOKEN`, which is C0's Entra ID token. `duckdb_secrets()` shows every secret's values as `redacted`. |
+| MinIO and other S3-compatible stores | `ENDPOINT`, `URL_STYLE 'path'` and `USE_SSL false` reach MinIO on `localhost`. Reading and writing Parquet, and globs such as `s3://bucket/sales/*/*.parquet`, work. |
+| Listing a bucket | `glob('s3://bucket/*')` lists only the files at that level and no folders, and `glob('s3://bucket/**')` lists every key under the prefix: DuckDB asks S3 for every key below the glob's fixed prefix, with no delimiter, and matches them itself. Fine for a query, no good for a tree. |
+| Iceberg | `iceberg_scan` reads a table from its metadata file (`…/metadata/00002-….metadata.json`) on MinIO. Given the table's folder alone, it needs `metadata/version-hint.text`, which Hadoop-style catalogs write and pyiceberg's SQL catalog, Glue and REST catalogs don't; otherwise it refuses unless `unsafe_enable_version_guessing` is set. |
+| Delta | `delta_scan('s3://bucket/products')` reads a delta-rs table on MinIO with the same S3 secret. |
+| Google Cloud Storage stand-in | fake-gcs-server (25 MB to download) answers DuckDB's reads and its listing with a made-up token, but not its writes. |
+| Azure stand-in | Azurite answers the `azure` extension, but its image is 427 MB. |
+
+#### How a bucket is browsed
+
+DuckDB can't list a level of a bucket, so DbRover lists it itself, over HTTPS with the same
+credentials it gives DuckDB: S3's `ListObjectsV2`, signed with SigV4 (AWS's own signer, already
+in the build for C0's RDS tokens), Google Cloud Storage's JSON API and Azure's List Blobs, each
+with `/` as the delimiter. One request lists a level, a thousand entries at a time
+(N0a's page), so a bucket of millions of keys loads only the levels that are expanded, as fast
+as the first level of a small one.
+
+- The bucket is a node beside the DuckDB database's own, labelled with its name. Prefixes are
+  folders, and files are leaves with their size beside them.
+- A file DuckDB reads (`.parquet`, `.csv`, `.tsv`, `.json`, `.jsonl`, `.ndjson`, compressed or
+  not) opens with **Open data** as `SELECT * FROM 's3://bucket/path/file.parquet'`, and expands
+  to its columns, which `DESCRIBE` reads from the file's footer or first rows.
+- A folder holding `_delta_log/` is a Delta table, and one holding `metadata/` with
+  `*.metadata.json` files an Iceberg table: the folder's first child is then the table, which
+  opens with `delta_scan` or with `iceberg_scan` on the newest metadata file, found by listing
+  the metadata folder. A `*.metadata.json` file opens with `iceberg_scan` too.
+- The explorer's filter goes to the server as a prefix where the provider takes one; a filter
+  that isn't a prefix of a level's names is applied to each page as it loads.
+- Nothing is read to draw the tree but the listings: no file is opened until it is expanded
+  or opened.
+
+#### Signing in to a bucket
+
+| Provider | Sign-ins | DuckDB secret |
+| --- | --- | --- |
+| Amazon S3 | an AWS profile or the default chain (C0), an access key whose secret is in the keychain (MinIO, Cloudflare R2 and other S3-compatible stores), or none, for public buckets | `TYPE s3` with the key, secret and session token |
+| Google Cloud Storage | Application Default Credentials or a key file (C0b), or none | `TYPE gcs` with the access token as `BEARER_TOKEN` |
+| Azure Blob Storage | the Azure CLI's or Azure Developer CLI's sign-in (C0c), for the storage resource, or none | `TYPE azure`, `PROVIDER access_token`, and the account name |
+
+The secret is made when the connection opens and made again before a statement once the
+credentials have less than five minutes left (C0's margin): AWS's SDK says when a profile's
+role or SSO credentials expire, and C0's tokens carry their expiry. It is always temporary,
+and `allow_persistent_secrets` is turned off, so DuckDB never writes one to
+`~/.duckdb/stored_secrets` nor loads one from there. The statement that makes it is DbRover's
+own, so it reaches neither the history nor the log, and an error making it is reported without
+DuckDB's echo of the statement.
+
+#### Testing without an account
+
+- **S3:** MinIO in `docker-compose.yml`, with a bucket that starts with checked-in fixtures:
+  Parquet files under a partitioned path, a delta-rs table, and an Iceberg table written by
+  pyiceberg against MinIO (its metadata names `s3://dbrover/…`, so the bucket keeps that
+  name). MinIO's own images were withdrawn from Docker Hub and Quay in 2025; the
+  `pgsty/minio` build of the same server (54 MB to download, `mc` included) stands in, pinned
+  to a release.
+- **Google Cloud Storage:** fake-gcs-server, which DuckDB reads from; listing is tried against
+  it too. Writing isn't, as it doesn't take DuckDB's.
+- **Azure Blob Storage:** not in CI, since Azurite is 427 MB. The listing's request and its
+  answers are unit-tested with answers in Azure's documented XML, and reading is tried by hand
+  against Azurite.
+- **Credentials:** the AWS sign-in with C0's test credentials files and an empty environment;
+  Google and Entra ID with C0's stand-ins. None reads the machine's own sign-in.
+- **MotherDuck:** needs an account, so only the connection string and the token's handling are
+  tested; connecting is left to the user, as the demo note says.
+- **CI:** the tests that read buckets run where the MinIO and fake-gcs-server variables are
+  set, which is the Linux check, as for every test server. They download `httpfs`, `iceberg`,
+  `avro` and `delta` (about 125 MB, a few seconds on GitHub's runners) from DuckDB on each
+  run; if that turns out flaky, the extension folder is cached by DuckDB version.
+
+#### Layers
+
+Each layer is one pull request in a stack, useful and tested on its own, with no cloud account.
+
+- **C2a — Plan:** this section, C2's rows in [Decisions](#decisions) and [Risks](#risks), and
+  the roadmap's entry in layers.
+- **C2b — A bucket in a DuckDB data source's settings:** `DuckDbConfig` gains an optional
+  `storage`: the provider (S3, Google Cloud Storage or Azure Blob Storage), the bucket (an
+  Azure account and container), a region, an endpoint for S3-compatible stores and stand-ins,
+  and the sign-in. Written to `data_sources.toml` as `[data_source.storage]`, with
+  placeholders (W9) resolved in each field; an access key's secret goes to the keychain as the
+  data source's password.
+  **Exit:** each provider and sign-in saves and reads back; a data source written before C2
+  reads as before; the `Display` of a data source names the bucket and never a secret.
+- **C2c — Reading S3 through DuckDB:** the DuckDB driver makes the bucket's secret from the
+  sign-in (C0's AWS chain or profile, the access key and its secret, or none), makes it again
+  before it expires, and turns persistent secrets off. An extension that couldn't be
+  downloaded is reported as such, with what to do offline. MinIO joins the test servers with
+  its fixtures.
+  **Exit:** on MinIO, `SELECT count(*) FROM 's3://dbrover/sales/*/*.parquet'` counts the
+  fixtures' rows through a data source with an access key, and fails with MinIO's refusal
+  without it; a secret near its expiry is made again before the next statement; no secret is
+  persistent; the error for an extension that can't be downloaded names it.
+- **C2d — The bucket in the explorer:** S3's listing with a delimiter, a level at a time and a
+  thousand entries a page; folders, files and their columns; **Open data** on a file.
+  **Exit:** on MinIO, the explorer's levels list the fixtures' folders and files with paging
+  and a prefix filter; a Parquet file's columns are its schema's; the conformance walk passes
+  on every node; the listing's request is signed as AWS's signer signs it.
+- **C2e — Iceberg and Delta tables:** the explorer's table nodes for both formats, opened with
+  `iceberg_scan` and `delta_scan`.
+  **Exit:** on MinIO, the fixtures' Iceberg and Delta tables are found from their folders and
+  **Open data** reads their rows: C2's exit, in CI.
+- **C2f — Google Cloud Storage and Azure Blob Storage:** the `gcs` secret from C0's Google
+  token and the listing over the JSON API, tried on fake-gcs-server, which joins the test
+  servers; the `azure` secret from an Entra ID token for Azure Storage, and List Blobs.
+  **Exit:** on fake-gcs-server, a Parquet file is read and its bucket listed with a stand-in
+  token; Azure's listing reads documented answers, pages with its marker, and sends the token
+  only over HTTPS.
+- **C2g — MotherDuck:** a DuckDB data source's database can be a MotherDuck database (`md:`
+  and its name), signed in with a token kept in the keychain as its password and handed to
+  DuckDB as `motherduck_token`, never in the saved settings.
+  **Exit:** the connection string for each case, and the token's absence from every `Debug`,
+  `Display` and error; connecting to MotherDuck is tried by hand only.
+- **C2h — The data source dialog:** the DuckDB dialog gains a **Bucket** section (provider,
+  bucket, region, endpoint, sign-in) and MotherDuck beside **File** and **In memory**.
+  **Exit:** a kittest adds an S3 bucket with an access key and a MotherDuck database, and
+  each saves as typed.
+- **C2i — Manual and demo note:** a page in the manual's Data sources part, **Object storage
+  and MotherDuck**, and the C2 demo note in the roadmap.
+
+**Exit:** query `s3://bucket/path/*.parquet` and an Iceberg table from a MinIO container in CI
+with no AWS account (C2c and C2e). S3 itself, Google Cloud Storage, Azure Blob Storage and
+MotherDuck are tried by hand with real accounts, before release, as C0's and C1's services
+were.
 
 ### C3 — Athena and Trino
 
@@ -458,6 +592,21 @@ C1's own decisions, taken on 2026-11-03 when it started; each can be overturned 
 | TLS in presets | **`verify-full` where the service's certificate chains to a public authority** (Azure, Redshift, Neon, ClickHouse Cloud), **`require` where it is the provider's own** (RDS, Cloud SQL, Supabase), with the CA file to download named in the manual. | Presets connect on the first try; checking the server's name on RDS, Cloud SQL and Supabase is one file away. |
 | Testing | **Stand-ins only** (PgBouncer, views imitating Redshift's, SQL Server with a warehouse forced), and a list of live checks in the demo note. | CI needs no account; what only the services show waits for the user's own accounts. |
 
+C2's own decisions, taken on 2026-11-04 when it started; each can be overturned in review.
+
+| Question | Chosen | Consequence |
+| --- | --- | --- |
+| A data source of its own, or a DuckDB option | **An optional bucket on a DuckDB data source**, in a file, in memory or on MotherDuck, rather than a new kind of data source. | A query joins a bucket's files with the database's tables, and everything DuckDB data sources have (the console, the grid, exports, reports, the MCP server) works unchanged. One bucket per data source; two buckets are two data sources, or a second secret made in a console. |
+| How DuckDB is linked | **Unchanged:** the prebuilt library (`docs/duckdb-prebuilt.md`) in CI and the release, compiled locally, with the extensions downloaded on first use (the proposed default above, confirmed). | Downloads stay the size they are; the first S3, Iceberg or Delta query needs the network once per DuckDB version. Compiling `httpfs` and the others in would add a C++ build and their own dependencies (curl, OpenSSL, the Azure SDK, delta-kernel in Rust) to every build. |
+| Where extensions are kept | **DuckDB's own folder,** `~/.duckdb/extensions/<version>/<platform>`, shared with DuckDB's other clients. | An extension one installed is the other's too; DbRover adds no folder of its own. The report's DuckDB (RP2) still never downloads one. |
+| Offline | **The statement fails with DuckDB's own error, and DbRover says what it means:** which extension, that it is downloaded once, and how to install it from a file. Connecting doesn't fail when the bucket's secret can't be made for that reason; it is made again before the next statement. | A DuckDB file with a bucket still opens on a plane; its local tables work. |
+| Extensions under read-only and cost guards | **Downloading stays allowed:** it changes no data and costs nothing on the user's bill. `INSTALL`, `LOAD`, `CREATE SECRET`, `ATTACH` and `COPY` stay refused on read-only data sources and in read-only MCP projects, as W11 classifies them; a `SELECT` that needs an extension still loads it. No setting. | A read-only data source reads its bucket. An administrator who wants no downloads at all sets DuckDB's `autoinstall_known_extensions` off in a console; a setting for it can follow if asked for. |
+| Cost | **No byte limit for buckets in C2.** DuckDB doesn't estimate what a statement reads, and object storage bills requests and transfer rather than scans; the explorer's own actions read a listing, a file's footer, or a page of rows. | A query over `**/*.parquet` reads what it reads, as in DuckDB's own client. An estimate from the listing's sizes could feed C0's byte limit later. |
+| Credentials for DuckDB | **Temporary secrets made by DbRover from C0's sign-ins,** never DuckDB's own credential chains (the `aws` extension, `PROVIDER credential_chain`), and persistent secrets off. | One sign-in code path for databases and buckets; no 20 MB `aws` extension to download; nothing written to disk; tokens refreshed by DbRover before they expire. |
+| Listing a bucket | **DbRover's own requests with a delimiter,** a level and a thousand keys at a time, rather than DuckDB's `glob`. Signed S3 requests may go over plain HTTP, as DuckDB's do, since a signature doesn't reveal the secret; a bearer token goes only over HTTPS, or to this machine. | A bucket of millions of keys browses as fast as a small one. Three small clients to keep, one per provider's API. |
+| Iceberg without a catalog | **The newest `*.metadata.json` in the table's `metadata/` folder,** found by listing it, rather than DuckDB's version guessing. | Tables written by any catalog open; a table whose metadata folder holds many thousands of files takes a request per thousand to open. Iceberg REST catalogs (Glue, Polaris, S3 Tables) come later, through DuckDB's `ATTACH … (TYPE iceberg)`. |
+| S3 stand-in | **MinIO, as the `pgsty/minio` build,** pinned to a release, since MinIO's own images are gone from Docker Hub and Quay. | The server the plan named, maintained by a third party; swapping in another S3-compatible server (versitygw, SeaweedFS) changes only the compose file. |
+
 ## Risks
 
 - **Surprise bills.** A missed automatic query on a large table costs the user money. Every
@@ -483,6 +632,18 @@ C1's own decisions, taken on 2026-11-03 when it started; each can be overturned 
 - **Catalog differences documented wrongly or changing.** Synapse's and Fabric's supported
   views and DDL change often (Fabric is young). The capability table is one place to correct,
   and anything it wrongly allows fails with the warehouse's own error rather than silently.
+- **Extensions DbRover doesn't build.** `httpfs`, `iceberg`, `delta` and `azure` are DuckDB's,
+  downloaded at run time: a DuckDB release that changes one changes DbRover's behaviour
+  without a DbRover release, and an extension that isn't published for a platform yet
+  (as happens for a few days after a DuckDB release) fails there. The extension's version is
+  tied to DuckDB's, which DbRover pins, and C2's tests on MinIO run on every pull request.
+- **Secrets in DuckDB's memory.** A temporary secret lives in the connection's DuckDB, where a
+  console or an MCP client could read it if DuckDB let it: `duckdb_secrets()` redacts it, and
+  neither `allow_unredacted_secrets` nor `allow_persistent_secrets` can be turned on while
+  DuckDB runs (tried: *Cannot change allow_unredacted_secrets setting while database is
+  running*). An error making the secret is reported without the statement, which holds it.
+- **Stand-ins for buckets.** MinIO, fake-gcs-server and documented XML answers aren't S3,
+  Google Cloud Storage and Azure. C2's demo note lists what to try with real accounts.
 - **Session state behind a transaction pooler.** A console's `SET`, temporary table or
   `LISTEN` lasts only for its transaction's server connection, and the next statement may get
   another. DbRover sets nothing of its own on the session; the manual's Neon and Supabase
