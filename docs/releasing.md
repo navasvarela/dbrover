@@ -29,10 +29,14 @@ source, a progress line while statements run, and search across a whole catalog)
 CSV and Excel with a declared schema), v0.25.0 (reports with several sources combined in
 DuckDB, lookups and document sources, the accounting reports as examples, dialogs in one
 style, the query history and definitions as tabs, a value panel beside the grid, and exports
-and imports that run on in the status bar) and v0.26.0 (each report run's steps kept in the
+and imports that run on in the status bar), v0.26.0 (each report run's steps kept in the
 history, runs side by side with hints, Settings › Reports, `dbrover report run` on the command
 line, and managed databases as presets in the data source dialog: RDS, Aurora, Redshift, Cloud
-SQL, Azure SQL, Synapse, Fabric, Neon, Supabase and ClickHouse Cloud).
+SQL, Azure SQL, Synapse, Fabric, Neon, Supabase and ClickHouse Cloud) and v0.27.0 (Parquet, CSV
+and JSON files in S3, Google Cloud Storage and Azure Blob Storage, Iceberg and Delta tables in a
+bucket and MotherDuck databases, all through DuckDB; PRQL in a report's combine step with the
+SQL it compiles to; hints a report can silence, renaming a report with its runs, `dbrover report
+list` and `--progress`, and reports listed and run over MCP).
 R3's update notice is built, ahead of R2 (see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
