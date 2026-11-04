@@ -7,8 +7,8 @@
 use rusqlite::TransactionBehavior;
 
 /// The schema this DbRover writes. 0 is every file from before provenance (W4), with or without
-/// `source`; 3 adds report runs (RP4).
-const VERSION: i32 = 3;
+/// `source`; 3 adds report runs (RP4); 4 where a run came from (RP6g).
+const VERSION: i32 = 4;
 
 /// The table as the first DbRover with MCP made it; [`COLUMNS`] adds the rest.
 const TABLE: &str = "
@@ -73,7 +73,7 @@ pub(super) fn migrate(connection: &mut rusqlite::Connection) -> rusqlite::Result
     if version < VERSION {
         transaction.execute_batch(TABLE)?;
         for (column, definition) in COLUMNS {
-            if !has_column(&transaction, column)? {
+            if !has_column(&transaction, "history", column)? {
                 transaction.execute(
                     &format!("ALTER TABLE history ADD COLUMN {column} {definition}"),
                     [],
@@ -82,13 +82,22 @@ pub(super) fn migrate(connection: &mut rusqlite::Connection) -> rusqlite::Result
         }
         transaction.execute_batch(INDEXES)?;
         transaction.execute_batch(REPORT_RUNS)?;
+        // Where a run came from: see `RunOrigin`. `NULL` in runs from before it, and in runs an
+        // older DbRover writes, which read as the app's.
+        if !has_column(&transaction, "report_runs", "origin")? {
+            transaction.execute("ALTER TABLE report_runs ADD COLUMN origin TEXT", [])?;
+        }
         transaction.pragma_update(None, "user_version", VERSION)?;
     }
     transaction.commit()
 }
 
-fn has_column(connection: &rusqlite::Connection, column: &str) -> rusqlite::Result<bool> {
+fn has_column(
+    connection: &rusqlite::Connection,
+    table: &str,
+    column: &str,
+) -> rusqlite::Result<bool> {
     connection
-        .prepare_cached("SELECT 1 FROM pragma_table_info('history') WHERE name = ?1")?
-        .exists([column])
+        .prepare_cached("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2")?
+        .exists([table, column])
 }

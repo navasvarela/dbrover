@@ -807,6 +807,7 @@ fn renaming_a_report_keeps_its_runs() {
                 outcome: RunOutcome::Finished,
                 params: std::collections::BTreeMap::new(),
                 steps: Vec::new(),
+                origin: dbrover_store::RunOrigin::Command,
             },
             dbrover_store::DEFAULT_RUNS_KEPT,
         )
@@ -848,4 +849,6 @@ fn renaming_a_report_keeps_its_runs() {
     step_until_visible(&mut harness, "Trial balance");
     harness.get_by_label("Trial balance").click();
     step_until_visible(&mut harness, "finished");
+    // A run `dbrover report run` kept says so.
+    harness.get_by_label("from the command line");
 }

@@ -32,6 +32,39 @@ pub struct ReportRun {
     pub params: BTreeMap<String, String>,
     /// Each step that finished, in the order it finished.
     pub steps: Vec<StepMetrics>,
+    pub origin: RunOrigin,
+}
+
+/// What started a run.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RunOrigin {
+    /// The report's tab. Also every run kept before RP6g, which only the app kept then, as far
+    /// as the history knows.
+    #[default]
+    App,
+    /// `dbrover report run`.
+    Command,
+    /// An MCP client, through `dbrover mcp`.
+    Mcp,
+}
+
+impl RunOrigin {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::App => "app",
+            Self::Command => "command",
+            Self::Mcp => "mcp",
+        }
+    }
+
+    /// `None`, and a value a newer DbRover wrote, read as the app's.
+    fn from_stored(origin: Option<&str>) -> Self {
+        match origin {
+            Some("command") => Self::Command,
+            Some("mcp") => Self::Mcp,
+            _ => Self::App,
+        }
+    }
 }
 
 /// How a run ended.
@@ -142,8 +175,8 @@ impl History {
         let transaction = self.connection.unchecked_transaction()?;
         transaction.execute(
             "INSERT INTO report_runs
-                 (report, started_at, elapsed_ms, outcome, params, steps, failure)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                 (report, started_at, elapsed_ms, outcome, params, steps, failure, origin)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 run.report.as_str(),
                 format_timestamp(run.started_at),
@@ -152,6 +185,7 @@ impl History {
                 to_json(&run.params)?,
                 to_json(&run.steps)?,
                 failure,
+                run.origin.as_str(),
             ],
         )?;
         delete_older_runs(&transaction, &run.report, kept)?;
@@ -167,7 +201,8 @@ impl History {
     /// [`HistoryError::Database`] if the query fails.
     pub fn runs(&self, report: &ReportName, limit: usize) -> Result<Vec<ReportRun>, HistoryError> {
         let mut statement = self.connection.prepare_cached(
-            "SELECT started_at, elapsed_ms, outcome, params, steps, failure FROM report_runs
+            "SELECT started_at, elapsed_ms, outcome, params, steps, failure, origin
+             FROM report_runs
              WHERE report = ?1 ORDER BY started_at DESC, id DESC LIMIT ?2",
         )?;
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
@@ -250,6 +285,7 @@ struct StoredRun {
     params: String,
     steps: String,
     failure: Option<String>,
+    origin: Option<String>,
 }
 
 impl StoredRun {
@@ -261,6 +297,7 @@ impl StoredRun {
             params: row.get(3)?,
             steps: row.get(4)?,
             failure: row.get(5)?,
+            origin: row.get(6)?,
         })
     }
 
@@ -272,6 +309,7 @@ impl StoredRun {
             outcome: RunOutcome::from_stored(&self.outcome, self.failure.as_deref())?,
             params: serde_json::from_str(&self.params).ok()?,
             steps: serde_json::from_str(&self.steps).ok()?,
+            origin: RunOrigin::from_stored(self.origin.as_deref()),
         })
     }
 }
@@ -327,6 +365,7 @@ mod tests {
                     elapsed_ms: 2,
                 }),
             ],
+            origin: RunOrigin::App,
         }
     }
 
@@ -451,6 +490,42 @@ mod tests {
         assert_eq!(minutes, [1, 0], "the old monthly's run went");
         assert!(moved.iter().all(|run| run.report == name("monthly")));
         assert_eq!(history.runs(&name("stock"), 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn keeps_where_each_run_came_from_and_reads_older_runs_as_the_apps() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = HistoryFile::new(dir.path().join("history.sqlite"));
+        drop(file.open().unwrap());
+        // A version 3 file, with a run from before origins.
+        let version_3 = rusqlite::Connection::open(file.path()).unwrap();
+        version_3
+            .execute_batch(
+                "ALTER TABLE report_runs DROP COLUMN origin; PRAGMA user_version = 3;
+                 INSERT INTO report_runs (report, started_at, elapsed_ms, outcome, params, steps)
+                 VALUES ('values', '2026-10-01T00:00:00Z', 5, 'finished', '{}', '[]');",
+            )
+            .unwrap();
+        drop(version_3);
+
+        let history = file.open().unwrap();
+        for (minute, origin) in [(1, RunOrigin::Command), (2, RunOrigin::Mcp)] {
+            let run = ReportRun {
+                origin,
+                ..run("values", minute, RunOutcome::Finished)
+            };
+            history.record_run(&run, DEFAULT_RUNS_KEPT).unwrap();
+        }
+        let origins: Vec<RunOrigin> = history
+            .runs(&name("values"), 10)
+            .unwrap()
+            .iter()
+            .map(|run| run.origin)
+            .collect();
+        assert_eq!(
+            origins,
+            [RunOrigin::Mcp, RunOrigin::Command, RunOrigin::App]
+        );
     }
 
     #[test]

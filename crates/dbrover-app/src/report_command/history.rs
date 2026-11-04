@@ -8,7 +8,7 @@ use std::path::Path;
 
 use dbrover_core::describe_error;
 use dbrover_report::{RunEvent, TypedValues};
-use dbrover_store::{AppPaths, HistoryFile, ReportName};
+use dbrover_store::{AppPaths, HistoryFile, ReportName, RunOrigin};
 
 use crate::reports::RunRecord;
 
@@ -51,7 +51,7 @@ impl RunHistory {
     pub fn keep(self) -> Result<(), String> {
         let run = self
             .record
-            .to_report_run(&self.report)
+            .to_report_run(&self.report, RunOrigin::Command)
             .ok_or("the run hasn't ended")?;
         self.file
             .open()

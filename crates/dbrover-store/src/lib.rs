@@ -40,8 +40,8 @@ pub use diagrams::{
 pub use history::{
     CombineMetrics, DEFAULT_RUNS_KEPT, History, HistoryEntry, HistoryError, HistoryExportError,
     HistoryFile, HistoryOutcome, HistoryQuery, HistorySource, HistorySourceKind, NamedCell,
-    OutputMetrics, ReplacedCell, ReportRun, RowChange, RowChangeKind, RunError, RunOutcome,
-    SourceMetrics, StepMetrics, redact_secrets,
+    OutputMetrics, ReplacedCell, ReportRun, RowChange, RowChangeKind, RunError, RunOrigin,
+    RunOutcome, SourceMetrics, StepMetrics, redact_secrets,
 };
 pub use keymap::{KeymapBindings, KeymapError, KeymapFile};
 pub use paths::{APP_NAME, AppPaths, PREVIOUS_APP_NAME};
