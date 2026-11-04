@@ -1,7 +1,8 @@
 # Cloud and big data
 
 Status: **C0 built** (2026-11-02); **C1 built** (2026-11-03), tried only against local
-stand-ins; **C2 started** (2026-11-04); C3 to C6 planned, not scheduled. Proposed on
+stand-ins; **C2 built** (2026-11-04), tried only against local stand-ins; C3 to C6 planned,
+not scheduled. Proposed on
 2026-10-27; the order and the decisions below are confirmed as each milestone starts. The
 providers' priority was set on 2026-10-28: AWS, then Google Cloud, then Azure. On 2026-11-01
 DynamoDB was moved ahead of the track, as the NoSQL track's [N5](nosql.md#n5--dynamodb), with
@@ -574,8 +575,8 @@ Each layer is one pull request in a stack, useful and tested on its own, with no
   Each provider's fields are kept while another is chosen. A MotherDuck database's bucket
   can't sign in with an access key (one password per data source), which saving says. The
   kittest adds the S3 bucket; MotherDuck's rows are C2g's, tested in the form.
-- **C2i — Manual and demo note:** a page in the manual's Data sources part, **Object storage
-  and MotherDuck**, and the C2 demo note in the roadmap.
+- **C2i — Manual and demo note** (built): a page in the manual's Data sources part, **Object
+  storage and MotherDuck**, and the C2 demo note in the roadmap.
 
 **Exit:** query `s3://bucket/path/*.parquet` and an Iceberg table from a MinIO container in CI
 with no AWS account (C2c and C2e). S3 itself, Google Cloud Storage, Azure Blob Storage and

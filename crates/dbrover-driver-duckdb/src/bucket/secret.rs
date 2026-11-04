@@ -11,8 +11,9 @@ use super::{BucketCredentials, BucketError, SignedIn};
 /// name, so a fresh secret replaces the expiring one.
 pub(crate) const SECRET_NAME: &str = "dbrover_bucket";
 
-/// AWS's own tools' region when nothing names one. S3 answers a request signed for the wrong
-/// region with a redirect DuckDB follows, so this only costs a round trip elsewhere.
+/// AWS's own tools' region when nothing names one. A bucket in another region needs its
+/// region in the data source's settings: DbRover's own listing follows S3's redirect to the
+/// bucket's region, but whether DuckDB's reads do wasn't tried.
 const DEFAULT_S3_REGION: &str = "us-east-1";
 
 /// A `CREATE OR REPLACE TEMPORARY SECRET` statement. It holds credentials, so its `Debug`
