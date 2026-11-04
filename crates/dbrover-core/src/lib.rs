@@ -30,7 +30,7 @@ pub mod conformance;
 
 pub use byte_size::ByteSize;
 pub use catalog::{
-    CatalogNode, CatalogPath, FolderKind, KeyType, NodeKind, ObjectKind, PathSegment,
+    CatalogNode, CatalogPath, FolderKind, KeyType, NodeKind, ObjectKind, PathSegment, TableFormat,
 };
 pub use catalog_page::{
     CATALOG_PAGE_SIZE, CATALOG_SEARCH_LIMIT, CatalogMatches, CatalogSearch, ChildrenPage,
@@ -58,8 +58,8 @@ pub use managed_service::{
 };
 pub use mongo_uri::MongoUri;
 pub use object_storage::{
-    AzureContainer, AzureSignIn, GcsBucket, GcsSignIn, ObjectStorage, S3Bucket, S3SignIn,
-    StorageProvider, object_url, reads_as_table,
+    AzureContainer, AzureSignIn, GcsBucket, GcsSignIn, ICEBERG_METADATA_SUFFIX, ObjectStorage,
+    S3Bucket, S3SignIn, StorageProvider, object_source, object_url, reads_as_table,
 };
 pub use password::Password;
 pub use password_command::PasswordCommand;

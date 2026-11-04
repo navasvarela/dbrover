@@ -3,8 +3,8 @@
 
 use dbrover_cloud::storage::Level;
 use dbrover_core::{
-    ByteCount, CatalogNode, CatalogPath, ChildrenQuery, NodeKind, ObjectKind, ObjectStorage,
-    object_url, reads_as_table,
+    ByteCount, CatalogNode, CatalogPath, ChildrenQuery, ICEBERG_METADATA_SUFFIX, NodeKind,
+    ObjectKind, ObjectStorage, TableFormat, object_source, object_url, reads_as_table,
 };
 
 /// Which part of a bucket a path is.
@@ -13,8 +13,8 @@ pub(crate) enum BucketPath {
     /// The bucket or one of its folders, whose keys start with `prefix` (empty, or ending in
     /// `/`).
     Level { prefix: String },
-    /// A file DuckDB reads as a table, at `url`.
-    File { url: String },
+    /// A file or table DuckDB reads, from `source`, as a `FROM` clause takes it.
+    Readable { source: String },
 }
 
 impl BucketPath {
@@ -25,17 +25,87 @@ impl BucketPath {
         if first.kind != NodeKind::Object(ObjectKind::Bucket) || first.name != root {
             return None;
         }
-        let url = object_url(path)?;
-        let last = path.last()?;
-        match last.kind {
-            NodeKind::Object(ObjectKind::File) if reads_as_table(&last.name) => {
-                Some(Self::File { url })
-            }
+        match path.last()?.kind {
             NodeKind::Object(ObjectKind::Bucket | ObjectKind::Folder) => Some(Self::Level {
-                prefix: url.strip_prefix(root)?.trim_start_matches('/').to_owned(),
+                prefix: object_url(path)?
+                    .strip_prefix(root)?
+                    .trim_start_matches('/')
+                    .to_owned(),
             }),
+            NodeKind::Object(ObjectKind::File | ObjectKind::Table(_)) => {
+                object_source(path).map(|source| Self::Readable { source })
+            }
             _ => None,
         }
+    }
+}
+
+/// The table format of the folder whose level is `level` and whose keys start with `prefix`:
+/// Delta when it holds `_delta_log/`, and Iceberg when it holds `metadata/`, whose newest
+/// metadata file then has to be found.
+pub(crate) fn table_format(prefix: &str, level: &Level) -> Option<TableFormat> {
+    let holds = |folder: &str| {
+        level
+            .folders
+            .iter()
+            .any(|listed| listed.strip_prefix(prefix) == Some(folder))
+    };
+    if holds("_delta_log/") {
+        Some(TableFormat::Delta)
+    } else if holds(ICEBERG_METADATA_FOLDER) {
+        Some(TableFormat::Iceberg)
+    } else {
+        None
+    }
+}
+
+/// The folder an Iceberg table keeps its metadata files in.
+pub(crate) const ICEBERG_METADATA_FOLDER: &str = "metadata/";
+
+/// The newest of an Iceberg table's metadata files among `keys`, by the version their names
+/// start with: `00002-<uuid>.metadata.json` as Iceberg's Java library and pyiceberg write
+/// them, or `v2.metadata.json` as Hadoop tables do. The version is compared as a number, so
+/// `v10` is newer than `v9`.
+pub(crate) fn newest_metadata<'a>(keys: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
+    keys.into_iter()
+        .filter_map(|key| {
+            let name = key
+                .rsplit('/')
+                .next()?
+                .strip_suffix(ICEBERG_METADATA_SUFFIX)?;
+            let digits: String = name
+                .trim_start_matches('v')
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect();
+            Some((digits.parse::<u64>().ok()?, key))
+        })
+        .max()
+        .map(|(_, key)| key)
+}
+
+/// The table at the folder `parent`, read from `source_name` (its segment's name), labelled
+/// with the folder's name.
+pub(crate) fn table_node(
+    parent: &CatalogPath,
+    format: TableFormat,
+    source_name: &str,
+) -> CatalogNode {
+    let label = parent.last().map_or_else(String::new, |folder| {
+        folder
+            .name
+            .rsplit('/')
+            .next()
+            .unwrap_or(&folder.name)
+            .to_owned()
+    });
+    CatalogNode {
+        path: parent.child(NodeKind::Object(ObjectKind::Table(format)), source_name),
+        label,
+        detail: Some(format.label().to_owned()),
+        has_children: true,
+        has_definition: false,
+        system: false,
     }
 }
 
@@ -131,8 +201,14 @@ mod tests {
             ),
             (
                 sales.child(NodeKind::Object(ObjectKind::File), "part-0.parquet"),
-                Some(BucketPath::File {
-                    url: "s3://dbrover/sales/part-0.parquet".to_owned(),
+                Some(BucketPath::Readable {
+                    source: "'s3://dbrover/sales/part-0.parquet'".to_owned(),
+                }),
+            ),
+            (
+                sales.child(NodeKind::Object(ObjectKind::Table(TableFormat::Delta)), ""),
+                Some(BucketPath::Readable {
+                    source: "delta_scan('s3://dbrover/sales/')".to_owned(),
                 }),
             ),
             (
@@ -151,6 +227,76 @@ mod tests {
         for (path, expected) in cases {
             assert_eq!(BucketPath::of(&path, "s3://dbrover"), expected, "{path}");
         }
+    }
+
+    #[test]
+    fn a_folder_holding_a_log_or_metadata_is_a_table() {
+        let cases = [
+            (
+                "w/products/",
+                vec!["w/products/_delta_log/", "w/products/date=2026-01-01/"],
+                Some(TableFormat::Delta),
+            ),
+            (
+                "w/orders/",
+                vec!["w/orders/data/", "w/orders/metadata/"],
+                Some(TableFormat::Iceberg),
+            ),
+            ("w/orders/", vec!["w/orders/data/"], None),
+            ("w/", vec!["w/orders/"], None),
+        ];
+        for (prefix, folders, expected) in cases {
+            let level = Level {
+                folders: folders.into_iter().map(str::to_owned).collect(),
+                ..Level::default()
+            };
+            assert_eq!(table_format(prefix, &level), expected, "{prefix}");
+        }
+    }
+
+    #[test]
+    fn the_newest_metadata_file_has_the_highest_version() {
+        let cases = [
+            (
+                vec![
+                    "t/metadata/00000-a.metadata.json",
+                    "t/metadata/00002-c.metadata.json",
+                    "t/metadata/00001-b.metadata.json",
+                    "t/metadata/snap-1-b.avro",
+                ],
+                Some("t/metadata/00002-c.metadata.json"),
+            ),
+            (
+                vec![
+                    "t/metadata/v9.metadata.json",
+                    "t/metadata/v10.metadata.json",
+                    "t/metadata/version-hint.text",
+                ],
+                Some("t/metadata/v10.metadata.json"),
+            ),
+            (vec!["t/metadata/snap-1-b.avro"], None),
+        ];
+        for (keys, expected) in cases {
+            assert_eq!(newest_metadata(keys.iter().copied()), expected);
+        }
+    }
+
+    #[test]
+    fn a_table_is_labelled_with_its_folders_name() {
+        let orders = bucket().child(NodeKind::Object(ObjectKind::Folder), "orders");
+
+        let node = table_node(
+            &orders,
+            TableFormat::Iceberg,
+            "metadata/00002-c.metadata.json",
+        );
+
+        assert_eq!(node.label, "orders");
+        assert_eq!(node.detail.as_deref(), Some("Iceberg table"));
+        assert_eq!(
+            object_url(&node.path).as_deref(),
+            Some("s3://dbrover/orders/metadata/00002-c.metadata.json")
+        );
     }
 
     #[test]

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::placeholder::{PlaceholderError, Setting, Variables, expand, expand_path};
-use crate::{AzureTool, CatalogPath, NodeKind, ObjectKind};
+use crate::{AzureTool, CatalogPath, NodeKind, ObjectKind, TableFormat};
 
 /// A bucket, written in `data_sources.toml` as `[data_source.storage]` with its `provider`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -304,11 +304,39 @@ pub fn object_url(path: &CatalogPath) -> Option<String> {
                 url.push_str(&segment.name);
                 url.push('/');
             }
-            NodeKind::Object(ObjectKind::File) if is_last => url.push_str(&segment.name),
+            NodeKind::Object(ObjectKind::File | ObjectKind::Table(_)) if is_last => {
+                url.push_str(&segment.name);
+            }
             _ => return None,
         }
     }
     Some(url)
+}
+
+/// The end of an Iceberg table's metadata files' names, which `iceberg_scan` reads a table
+/// from.
+pub const ICEBERG_METADATA_SUFFIX: &str = ".metadata.json";
+
+/// What DuckDB reads the file or table at `path` from, as a `FROM` clause takes it: the
+/// address itself for a file it reads as a table (`'s3://sales/orders.parquet'`), and
+/// `iceberg_scan` or `delta_scan` of it for a table, or for an Iceberg metadata file. `None`
+/// for anything else.
+pub fn object_source(path: &CatalogPath) -> Option<String> {
+    let last = path.last()?;
+    let reader = match last.kind {
+        NodeKind::Object(ObjectKind::Table(TableFormat::Iceberg)) => Some("iceberg_scan"),
+        NodeKind::Object(ObjectKind::Table(TableFormat::Delta)) => Some("delta_scan"),
+        NodeKind::Object(ObjectKind::File) if last.name.ends_with(ICEBERG_METADATA_SUFFIX) => {
+            Some("iceberg_scan")
+        }
+        NodeKind::Object(ObjectKind::File) if reads_as_table(&last.name) => None,
+        _ => return None,
+    };
+    let address = format!("'{}'", object_url(path)?.replace('\'', "''"));
+    Some(match reader {
+        Some(reader) => format!("{reader}({address})"),
+        None => address,
+    })
 }
 
 /// The bucket's address and where it is served from, for logs and tooltips. Never a secret,
@@ -473,6 +501,44 @@ mod tests {
         ];
         for (path, expected) in cases {
             assert_eq!(object_url(&path).as_deref(), expected, "{path}");
+        }
+    }
+
+    #[test]
+    fn duckdb_reads_files_by_their_address_and_tables_with_their_formats_reader() {
+        let warehouse = CatalogPath::root()
+            .child(NodeKind::Object(ObjectKind::Bucket), "s3://lake")
+            .child(NodeKind::Object(ObjectKind::Folder), "warehouse");
+        let orders = warehouse.child(NodeKind::Object(ObjectKind::Folder), "orders");
+        let products = warehouse.child(NodeKind::Object(ObjectKind::Folder), "products");
+        let object =
+            |parent: &CatalogPath, kind, name: &str| parent.child(NodeKind::Object(kind), name);
+        let cases = [
+            (
+                object(&orders, ObjectKind::File, "O'Brien.csv"),
+                Some("'s3://lake/warehouse/orders/O''Brien.csv'"),
+            ),
+            (
+                object(
+                    &orders,
+                    ObjectKind::Table(TableFormat::Iceberg),
+                    "metadata/00002-a.metadata.json",
+                ),
+                Some("iceberg_scan('s3://lake/warehouse/orders/metadata/00002-a.metadata.json')"),
+            ),
+            (
+                object(&orders, ObjectKind::File, "00002-a.metadata.json"),
+                Some("iceberg_scan('s3://lake/warehouse/orders/00002-a.metadata.json')"),
+            ),
+            (
+                object(&products, ObjectKind::Table(TableFormat::Delta), ""),
+                Some("delta_scan('s3://lake/warehouse/products/')"),
+            ),
+            (object(&orders, ObjectKind::File, "snap-1.avro"), None),
+            (orders.clone(), None),
+        ];
+        for (path, expected) in cases {
+            assert_eq!(object_source(&path).as_deref(), expected, "{path}");
         }
     }
 

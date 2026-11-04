@@ -23,8 +23,7 @@ mod test_language;
 use std::ops::Range;
 
 use dbrover_core::{
-    CatalogPath, DriverKind, NodeKind, ObjectKind, Quoting, ResultShape, ServerInfo, object_url,
-    reads_as_table,
+    CatalogPath, DriverKind, NodeKind, Quoting, ResultShape, ServerInfo, object_source,
 };
 use dbrover_plan::PlanFormat;
 use dbrover_sql::Dialect;
@@ -486,23 +485,19 @@ pub fn command_at(commands: &[Range<usize>], cursor: usize) -> Option<usize> {
     dbrover_sql::statement_at(commands, cursor)
 }
 
-/// `SELECT *` of the file at `path` in a bucket, when DuckDB reads it as a table by its
-/// extension.
+/// `SELECT *` of the file or table at `path` in a bucket, as DuckDB reads it (C2).
 fn read_object(path: &CatalogPath) -> Option<String> {
-    let file = path.last()?;
-    if file.kind != NodeKind::Object(ObjectKind::File) || !reads_as_table(&file.name) {
-        return None;
-    }
-    let url = object_url(path)?;
-    Some(format!("SELECT * FROM '{}';", url.replace('\'', "''")))
+    Some(format!("SELECT * FROM {};", object_source(path)?))
 }
 
 #[cfg(test)]
 mod tests {
+    use dbrover_core::{ObjectKind, TableFormat};
+
     use super::*;
 
     #[test]
-    fn duckdb_opens_a_file_in_a_bucket_by_its_address() {
+    fn duckdb_opens_a_file_or_table_in_a_bucket_by_its_address() {
         let folder = CatalogPath::root()
             .child(NodeKind::Object(ObjectKind::Bucket), "s3://dbrover")
             .child(NodeKind::Object(ObjectKind::Folder), "sales");
@@ -515,6 +510,11 @@ mod tests {
                 Some("SELECT * FROM 's3://dbrover/sales/O''Brien.parquet';"),
             ),
             (duckdb, file("_SUCCESS"), None),
+            (
+                duckdb,
+                folder.child(NodeKind::Object(ObjectKind::Table(TableFormat::Delta)), ""),
+                Some("SELECT * FROM delta_scan('s3://dbrover/sales/');"),
+            ),
             (duckdb, folder.clone(), None),
             (
                 QueryLanguage::Sql(Dialect::Postgres),

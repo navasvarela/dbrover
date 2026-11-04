@@ -24,7 +24,7 @@ use dbrover_core::{
     BoxError, CATALOG_PAGE_SIZE, CancelHandle, CatalogNode, CatalogPath, Cell, ChildrenPage,
     ChildrenQuery, Connection, DriverError, DuckDbConfig, DuckDbDatabase, PageToken, Password,
     Rejection, RelationName, ResultCursor, ServerInfo, TableConstraints, TableDescription,
-    TableName, TransactionStatus,
+    TableFormat, TableName, TransactionStatus,
 };
 use duckdb::AccessMode;
 
@@ -40,10 +40,6 @@ const PRODUCT: &str = "DuckDB";
 /// that want a level whole (the conformance walk, the MCP server's catalog): ten thousand
 /// keys. The explorer pages through a level instead, so it sees all of one.
 const WHOLE_LEVEL_PAGES: usize = 10;
-
-fn string_literal(text: &str) -> String {
-    format!("'{}'", text.replace('\'', "''"))
-}
 
 /// Opens a database file, or a new database in memory.
 ///
@@ -93,6 +89,50 @@ pub async fn connect_with_secret(
         .await
         .map_err(|error| DriverError::Connect(error.into()))?;
     Ok(connection)
+}
+
+/// How many pages of an Iceberg table's metadata folder are listed for its newest metadata
+/// file: twenty thousand files, a table's metadata files and manifests after thousands of
+/// commits. Past that the newest of those listed is used, and a log line says so.
+const ICEBERG_METADATA_PAGES: usize = 20;
+
+/// The name of the table node in the folder at `prefix`: nothing for a Delta table, which
+/// DuckDB reads from its folder, and the newest metadata file of an Iceberg table, found by
+/// listing its metadata folder; `None` when that folder holds no metadata file.
+async fn table_source_name(
+    lister: &dbrover_cloud::storage::S3Lister,
+    prefix: &str,
+    format: TableFormat,
+) -> Result<Option<String>, DriverError> {
+    if format == TableFormat::Delta {
+        return Ok(Some(String::new()));
+    }
+    let metadata = format!("{prefix}{}", bucket::tree::ICEBERG_METADATA_FOLDER);
+    let mut keys = Vec::new();
+    let mut after = None;
+    for _ in 0..ICEBERG_METADATA_PAGES {
+        let level = lister
+            .list(&metadata, after.as_deref(), CATALOG_PAGE_SIZE)
+            .await
+            .map_err(listing_error)?;
+        keys.extend(level.files.into_iter().map(|file| file.key));
+        after = level.next;
+        if after.is_none() {
+            break;
+        }
+    }
+    if after.is_some() {
+        tracing::warn!("{metadata} has more files than DbRover lists; using the newest listed");
+    }
+    Ok(
+        bucket::tree::newest_metadata(keys.iter().map(String::as_str))
+            .and_then(|key| key.strip_prefix(prefix))
+            .map(str::to_owned),
+    )
+}
+
+fn listing_error(error: dbrover_cloud::storage::StorageError) -> DriverError {
+    connection_error(BucketError::from(error))
 }
 
 /// Settings every database DbRover opens starts with, which can't change once it runs.
@@ -341,9 +381,20 @@ impl DuckDbConnection {
         let level = lister
             .list(prefix, after, limit)
             .await
-            .map_err(|error| connection_error(BucketError::from(error)))?;
+            .map_err(listing_error)?;
+        let mut nodes = Vec::new();
+        if after.is_none()
+            && let Some(format) = bucket::tree::table_format(prefix, &level)
+            && let Some(source_name) = table_source_name(&lister, prefix, format).await?
+        {
+            let table = bucket::tree::table_node(path, format, &source_name);
+            if query.matches(&table.label) {
+                nodes.push(table);
+            }
+        }
+        nodes.extend(bucket::tree::level_nodes(path, prefix, &level, query));
         Ok(ChildrenPage {
-            nodes: bucket::tree::level_nodes(path, prefix, &level, query),
+            nodes,
             next: level.next.map(PageToken::new),
         })
     }
@@ -372,17 +423,17 @@ impl DuckDbConnection {
         Ok(nodes)
     }
 
-    /// The columns of the file at `url`, as DuckDB reads them from its footer (Parquet) or its
-    /// first rows (CSV, JSON).
-    async fn file_columns(
+    /// The columns of the file or table DuckDB reads from `source`, as it reads them from a
+    /// file's footer (Parquet), first rows (CSV, JSON), or a table's metadata.
+    async fn object_columns(
         &mut self,
         path: &CatalogPath,
-        url: String,
+        source: String,
     ) -> Result<Vec<CatalogNode>, DriverError> {
         self.make_bucket_secret().await?;
         let path = path.clone();
         self.run_blocking(move |connection| {
-            let sql = format!("DESCRIBE SELECT * FROM {}", string_literal(&url));
+            let sql = format!("DESCRIBE SELECT * FROM {source}");
             let mut statement = connection
                 .prepare(&sql)
                 .map_err(|error| errors::statement_error(error, &sql))?;
@@ -436,7 +487,9 @@ impl Connection for DuckDbConnection {
             Some(BucketPath::Level { prefix }) => {
                 return self.whole_bucket_level(path, &prefix).await;
             }
-            Some(BucketPath::File { url }) => return self.file_columns(path, url).await,
+            Some(BucketPath::Readable { source }) => {
+                return self.object_columns(path, source).await;
+            }
             None => {}
         }
         let owned = path.clone();
