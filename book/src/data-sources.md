@@ -220,7 +220,7 @@ the login are planned.
 - **Read-only** — opens the file read-only. Statements that would change it fail with SQLite's
   error.
 
-**DuckDB** has two kinds of database, chosen under **Database**:
+**DuckDB** has three kinds of database, chosen under **Database**:
 
 ![The New DuckDB data source dialog](images/duckdb-data-source-dialog.png)
 
@@ -234,6 +234,12 @@ the login are planned.
 - **In memory** — an empty database that lives as long as the connection, for querying files
   rather than storing data: DuckDB reads CSV, Parquet and JSON files directly. Each console has
   its own, and everything created in it is gone when it disconnects.
+- **MotherDuck** — a database on MotherDuck, hosted DuckDB, signed in to with a token; see
+  [Object storage and MotherDuck](object-storage.md#motherduck).
+
+Any of them can **Read from a bucket** in Amazon S3, Google Cloud Storage or Azure Blob
+Storage, which the explorer then lists beside the database: see
+[Object storage and MotherDuck](object-storage.md).
 
 DuckDB is part of DbRover, so there is nothing to install. **Test connection** says which
 version it is ("Connected to DuckDB 1.5.6").
@@ -333,7 +339,8 @@ Read-only uses the same checks as an AI assistant's read-only projects (see
   may only read to have the database refuse it; [The MCP login](mcp.md#the-mcp-login) shows how
   to make one on each.
 - A **DuckDB** database **in memory** can't be opened read-only: statements are checked, and
-  what it holds is gone when it disconnects anyway. The dialog says so.
+  what it holds is gone when it disconnects anyway. A **MotherDuck** database isn't opened
+  read-only either. The dialog says so.
 - A read-only mode guards the database it opened. A DuckDB console can still reach other files,
   with `COPY … TO` or `ATTACH`, which the check refuses as administration.
 - Anything that isn't a plain read is refused, including `SET`, `BEGIN` and statements DbRover
@@ -341,8 +348,9 @@ Read-only uses the same checks as an AI assistant's read-only projects (see
 
 ## Placeholders: `${VARIABLE}`
 
-Host, port, database, user, a SQLite or DuckDB file and a CA file may hold `${NAME}`
-placeholders, which DbRover replaces with the environment variable `NAME` each time it connects.
+Host, port, database, user, a SQLite or DuckDB file, a CA file and a bucket's fields may hold
+`${NAME}` placeholders, which DbRover replaces with the environment variable `NAME` each time it
+connects.
 One shared list of data sources then works on machines whose settings differ: each machine sets
 `PGHOST`, say, and the data source's host is `${PGHOST}`. A placeholder can be part of a value
 (`db-${ENV}.internal`), and a path starting with `~` is in your home folder.

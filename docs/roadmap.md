@@ -539,9 +539,10 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
     Neon's pooled and direct hosts; Supabase's session pooler, transaction pooler and direct
     host; and ClickHouse Cloud, woken from idle. Each should connect, browse and run the
     conformance suite.
-- **C2 — Object storage and table formats** (started 2026-11-04, after C1): Parquet, CSV and
-  JSON in S3, Google Cloud Storage and Azure Blob Storage, Iceberg and Delta tables, and
-  MotherDuck, all through DuckDB and the extensions it downloads on first use. Planned in
+- **C2 — Object storage and table formats** (built, in nine layers, 2026-11-04, after C1):
+  Parquet, CSV and JSON in S3, Google Cloud Storage and Azure Blob Storage, Iceberg and Delta
+  tables, and MotherDuck, all through DuckDB and the extensions it downloads on first use.
+  Planned in
   [Cloud and big data](cloud-data.md#c2--object-storage-and-table-formats-duckdb). In layers,
   one PR each:
   - **C2a — Plan:** C2's layers, decisions and risks, and this entry.
@@ -567,6 +568,32 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
 
   **Exit:** query `s3://bucket/path/*.parquet` and an Iceberg table from a MinIO container in
   CI with no AWS account.
+
+  **C2 demo note:** the parts that need no cloud account first.
+  - *A bucket on MinIO:* run `docker compose up -d --wait minio`, add a **DuckDB** data source
+    **In memory**, tick **Read from a bucket**, and type **Bucket name** `dbrover`,
+    **Endpoint** `http://localhost:59000`, **Sign in with** **Access key**, **Access key**
+    `dbrover` and **Secret key** `dbrover-test`. The explorer shows **dbrover** under it, with
+    `sales/` (folders `year=2025`, `year=2026`), `warehouse/` and `customers.csv`; a Parquet
+    file expands to its columns, `year` included, and **Open data** shows its rows. In a
+    console, `SELECT count(*), sum(amount) FROM 's3://dbrover/sales/*/*.parquet'` gives 15 and
+    300.00. The first query downloads DuckDB's `httpfs` (16 MB).
+  - *Iceberg and Delta:* under `warehouse/shop/orders` the first node is **orders**, *Iceberg
+    table*, and under `warehouse/products` **products**, *Delta table*; **Open data** on each
+    shows four rows (DuckDB downloads `iceberg`, `avro` and `delta` the first time).
+  - *Google Cloud Storage's stand-in:* `docker compose up -d --wait fake-gcs` serves the same
+    files as `gs://dbrover` at `http://localhost:59100`; it takes any token, so it can be
+    tried with **None (public)** and that endpoint.
+  - *Offline:* with the network off and a DuckDB version whose `httpfs` was never downloaded,
+    the first bucket query says DuckDB couldn't download its httpfs extension and how to
+    install it from a file; the database's own tables still work.
+  - *By hand, with real accounts* (not tried while building C2), as the manual's page lists:
+    an S3 bucket with an AWS profile whose credentials expire (IAM Identity Center or a role)
+    used past their hour, a public bucket, and Cloudflare R2; Google Cloud Storage with
+    Application Default Credentials and a service account's key; an Azure container with
+    `az login`, a private endpoint and a public container; Iceberg and Delta tables written by
+    Spark, Glue, Snowflake or Databricks; and a MotherDuck database with a token, read-only
+    too.
 - **C3 — Athena and Trino**, over AWS's Athena API and then Trino's HTTP protocol.
 - **C4 — BigQuery**, over its jobs API, with a dry run showing the bytes a query will scan.
 - **C5 — Snowflake**, over its SQL API.

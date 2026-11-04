@@ -17,6 +17,7 @@
   - [Neon](neon.md)
   - [Supabase](supabase.md)
   - [ClickHouse Cloud](clickhouse-cloud.md)
+- [Object storage and MotherDuck](object-storage.md)
 - [DynamoDB](dynamodb.md)
 - [Moving data sources to another machine](sharing.md)
 
