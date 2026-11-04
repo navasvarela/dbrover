@@ -13,7 +13,8 @@ in BigQuery, a lake of Parquet files in S3, an orders table of hundreds of milli
 This plan says how reports reach those sources from a desktop app, and what tools show where a
 report's time, memory and bytes go so that its author can make it faster. It builds on RP1 to
 RP6, on C0's jobs and cost guards, and on C2's object storage, and lands in milestones RS1 to
-RS8, one GitHub stack each.
+RS8, one GitHub stack each. RS9 adds [composing reports](#composing-reports) from other
+reports, which helps at any scale.
 
 ## The principle: terabytes stay where they are
 
@@ -344,6 +345,90 @@ before any is added.
 | **DuckDB's scanners** (postgres, mysql) | Pushdown and parallel binary reads for two engines. | Extension downloads; DbRover's guards redone for them. | **Not now** (option C above). |
 | **DuckDB's httpfs, iceberg, delta** | Lakes in the combine step. | Downloaded on first use, already accepted in C2. | **Yes**, RS7. |
 
+## Composing reports
+
+Proposed on 2026-11-04, after the rest of this plan, at the user's request: build a report from
+parts of other reports. A valuation, a trial balance or a heavy warehouse aggregation is written
+once and used by several reports, instead of being copied from file to file and drifting. It
+belongs here too because reuse is how a heavy step runs once rather than once per report.
+
+### A report as a source
+
+```toml
+[report]
+name = "Gains by wallet"
+params = { since = "timestamp", until = "timestamp" }
+
+# The rows of the report "valuation" in reports/, run with this report's period.
+[[source]]
+id = "valued"
+report = "valuation"
+params = { since = ":since", until = ":until" }
+
+[combine]
+query = """
+SELECT wallet, SUM(value_usd) AS value_usd
+FROM valued
+GROUP BY wallet
+"""
+```
+
+- **What it gives:** the rows the other report would write, which is its `[combine]`'s result,
+  or its one source's rows without one, as the table `valued`. Its outputs aren't written. Its
+  result is its contract: the outer report can't read the inner report's own sources, so the
+  inner report can change how it gets its rows without breaking the reports that use it.
+- **Parameters:** `params` gives each of the inner report's parameters a value, either one of
+  the outer report's parameters (`":since"`) or a literal of its type. A parameter left out, or
+  of another type, is a problem in the outer file that names both reports.
+- **Where it runs:** in the same worker and the same DuckDB. The inner report's sources load
+  with the outer's, under their own limits, into a schema named after the outer source's id
+  (`valued.tx`), so ids never clash. Once everything is loaded and the database is locked, each
+  inner combine runs as `CREATE TABLE main.valued AS …`, innermost first, then the outer
+  combine. Each inner combine runs on a connection whose `search_path` names its schema,
+  set before the lock, so it reads its own `tx` as written. This is checked in the milestone's
+  first layer against DuckDB's `lock_configuration`. A lookup may read from a report source,
+  as from any loaded source.
+- **Nesting:** a report used by another may itself use reports, up to a depth of 4. A cycle is a
+  problem when the files are read, naming the reports in it.
+- **Limits:** each inner source keeps its own caps, and the outer report's `[combine]` limits
+  bound the one DuckDB they share. The outer report's run timeout covers everything.
+- **The profile and the history:** an inner report's steps nest under the outer source's lane
+  in the timeline, and hints name them by path (`valued › tx`). The outer report's run is
+  recorded with the file hash of every report it used. The inner report's own history doesn't
+  change, since it wrote no files.
+- **In the app:** the explorer marks a report that others use, and its tab lists them under
+  **Used by**. A problem in an inner report shows as a problem in every report that uses it.
+  **Edit file** on a report source opens the inner report.
+
+### Reusing a result
+
+With RS5's cache, a report source can take a recent result instead of running again:
+
+```toml
+[[source]]
+id = "daily"
+report = "events-by-customer-day"
+params = { since = ":since", until = ":until" }
+reuse = "24h"
+```
+
+A run of the inner report, alone or inside another, keeps its result as Parquet in the data
+folder's `report-cache/`, keyed by its file's hash and its parameters. `reuse` takes a kept
+result younger than its age with the same key, and otherwise runs the report and keeps the new
+result. A warehouse aggregation that costs ten minutes and real money then runs once a day for
+every report that uses it. The profile marks a reused source and how old its result was, and
+**Run from scratch** ignores the cache. Without `reuse`, the inner report always runs.
+
+### Options considered
+
+| Option | What it is | Verdict |
+| --- | --- | --- |
+| **A report as a source** (above) | Another report's result, by name, with its parameters bound. | **Yes.** Encapsulated, checked when files are read, and it uses the run's existing machinery. |
+| **Shared definitions** (`include = "parts/sources.toml"`) | Textual reuse of `[[source]]` or `[combine]` blocks across files. | **No.** Nothing is encapsulated, an edit to a part changes every report silently, and a problem's position is hard to report. A report source covers the need with a contract. |
+| **Shared SQL functions** | `reports/macros.sql` of DuckDB `CREATE MACRO`s (`fiscal_period(d)`, `to_usd(amount, unit, price)`) loaded into every run's DuckDB before the lock. | **Later, small.** Reusable logic rather than reusable data, and a natural layer of the same milestone if reports start repeating expressions. |
+| **Reading another report's output files** | Attach the Parquet or CSV a report wrote. | **No.** Paths differ by machine and by run, nothing says how fresh a file is, and the lock-down would have to allow them. `reuse` does the same with a key and an age. |
+| **A separate worker per inner report** | Run each inner report in its own process and pass its result as a file. | **No.** Two DuckDBs to bound instead of one, and a file between them. The shared workspace keeps one set of limits. |
+
 ## Performance tooling
 
 Everything below reads one record: the **run profile**, a JSON document per run, versioned,
@@ -476,7 +561,8 @@ Runs table.
 ## How it's built
 
 - `dbrover-report`: the run profile, partitions and ranges, the manifest and resuming, the
-  hints' rules, typed loading's plan, `pushdown` and `handoff` read and planned.
+  hints' rules, typed loading's plan, `pushdown` and `handoff` read and planned, and the graph
+  of reports used as sources.
 - `dbrover-driver-duckdb`: the workspace on a file, `allowed_directories`, Parquet by `COPY`,
   appending Arrow batches, the profiler's operator tree, free disk space.
 - `dbrover-plan`: DuckDB's and ClickHouse's plan formats, then each warehouse's.
@@ -558,6 +644,19 @@ runs the small cases.
   **Exit:** on MinIO in CI, a report joins a PostgreSQL source with a partitioned Parquet lake,
   and the profile shows the lake's bytes read far below its size.
 - **RS8 — Reports over MCP:** the read-only tools above, and the decision on running reports.
+- **RS9 — Composing reports:** independent of RS1 to RS8 except its last layer, so it can be
+  scheduled at any point after RP5.
+  - RS9a — Plan.
+  - RS9b — The report file: `report` and its `params` on a source, read and planned, with the
+    graph of reports, cycles and depth refused, and every problem naming both reports.
+  - RS9c — Running a report source: inner sources in their schema, inner combines locked and
+    innermost first, the result as the outer source's table.
+  - RS9d — The tab and the profile: **Used by**, nested lanes, and file hashes kept.
+  - RS9e — Shared SQL functions, if reports repeat expressions by then.
+  - RS9f — `reuse`, once RS5's cache exists.
+  - RS9g — Manual and demo note.
+  **Exit:** a report built on the valuation example writes gains by wallet that equal a sum
+  over the valuation's own CSV file; a cycle of two reports is a problem in both files.
 
 ## Recommended path
 
@@ -571,6 +670,8 @@ runs the small cases.
 4. **RS4 and RS5** once runs are long enough to need them, which RS1's history will show.
 5. **RS7** after C2 is merged for the lake, and with each of C3 to C5 for handoff.
 6. **RS8** whenever an MCP client should help tune reports.
+7. **RS9 (composing reports) whenever it is wanted.** It is small, doesn't depend on the scale
+   work, and could come right after RP5, ahead of RS1. Only `reuse` waits for RS5.
 
 Left out: DataFusion, Polars, Arrow Flight and ADBC; DuckDB's scanners for now; a cluster or any
 distributed execution; writing to a source to stage results; moving data between warehouses;
@@ -601,6 +702,9 @@ Proposed defaults; each is confirmed when its milestone starts.
 | The profile | **One JSON document per run,** versioned, in `report_runs`' `steps`. | No schema migration; the app, the command line and MCP read the same thing. |
 | A flame graph | **W10's plan view for DuckDB's operator tree,** a timeline for the steps. | One plan view to maintain; the timeline covers what a flame graph of steps would. |
 | New engines | **None.** DataFusion, Polars, Flight and ADBC are out. | The binary and CI's build time stay where they are; one combine dialect. |
+| Composing reports | **A report as a source:** its result by name, with its parameters bound, run in the same worker and DuckDB. | Reports reuse each other through a contract, their result, not through copied text. One set of limits bounds the whole run. |
+| What a report source exposes | **Only the inner report's result,** not its sources. | An inner report can change how it gets its rows without breaking the reports that use it. |
+| Reusing results | **`reuse = "<age>"`, opt-in,** keyed by the inner file's hash and its parameters. | A heavy step runs once for many reports, and freshness is stated in the file rather than assumed. |
 
 ## Risks
 
@@ -626,6 +730,9 @@ Proposed defaults; each is confirmed when its milestone starts.
   the prefix.
 - **Laptops.** Sleep, Wi-Fi changes and battery: keeping awake covers sleep on macOS and Linux;
   a dropped connection fails its unit, which resume reruns.
+- **A shared report edited for one use.** Changing a report changes every report built on it.
+  **Used by** in its tab and the file hashes in each run's profile show who is affected and
+  since when.
 - **CI time.** Large-data tests are slow tests run by hand; CI runs small cases only, and RS7's
   lake test reuses C2's MinIO.
 

@@ -2007,6 +2007,10 @@ measurement.
   and large warehouse results handed over through a bucket the user names.
 - **RS8 — Reports over MCP:** read-only tools to list, explain and compare reports and their
   runs, and the decision on MCP clients running them.
+- **RS9 — Composing reports:** a report used as another's source, by name, with its
+  parameters bound, run in the same worker and DuckDB; only its result is visible to the outer
+  report. Later, `reuse = "24h"` takes a recent result from RS5's cache. Independent of the
+  scale work, so it can come right after RP5.
 
 ## Design and documentation track
 
