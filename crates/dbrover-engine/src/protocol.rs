@@ -295,6 +295,14 @@ pub enum Command {
         data_source: DataSourceId,
         schema: String,
     },
+    /// Reads `schema` as [`Command::DescribeSchema`] does and writes its snapshot to `path`,
+    /// beside it first and renamed into place once whole. Answered by
+    /// [`Event::SchemaSnapshotSaved`].
+    SaveSchemaSnapshot {
+        data_source: DataSourceId,
+        schema: String,
+        path: PathBuf,
+    },
     /// Inserts the rows of a CSV file into a table, on the explorer's connection to the data
     /// source, all in one transaction: in batches of several rows per `INSERT`, and rolled back
     /// at the first failure, which names the line it was on. Refused on a read-only data
@@ -664,6 +672,13 @@ pub enum Event {
         data_source: DataSourceId,
         schema: String,
         result: Result<Schema, String>,
+    },
+    /// The answer to [`Command::SaveSchemaSnapshot`].
+    SchemaSnapshotSaved {
+        data_source: DataSourceId,
+        schema: String,
+        path: PathBuf,
+        result: Result<(), String>,
     },
     /// The answer to [`Command::ApplyEdits`].
     EditsApplied {

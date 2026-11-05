@@ -12,7 +12,10 @@ publish.workspace = true
 dbrover-core.workspace = true
 # E-track's DDL builder: tables are its specs, and the script is its statements.
 dbrover-sql.workspace = true
+# Reads snapshot files back; they are written by a writer of the crate's own.
+serde.workspace = true
 thiserror.workspace = true
+toml.workspace = true
 
 [lints]
 workspace = true

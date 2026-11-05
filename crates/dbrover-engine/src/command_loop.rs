@@ -357,6 +357,16 @@ impl Engine {
             } => {
                 self.request(data_source, SessionRequest::DescribeSchema(schema));
             }
+            Command::SaveSchemaSnapshot {
+                data_source,
+                schema,
+                path,
+            } => {
+                self.request(
+                    data_source,
+                    SessionRequest::SaveSchemaSnapshot { schema, path },
+                );
+            }
             Command::LoadTable { data_source, path } => {
                 self.request(data_source, SessionRequest::LoadTable(path));
             }

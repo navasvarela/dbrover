@@ -59,6 +59,7 @@ mod report_command;
 mod report_worker;
 mod reports;
 mod rollback_dialog;
+mod schema_command;
 #[cfg(test)]
 mod screenshots;
 mod settings;
@@ -114,6 +115,9 @@ fn main() -> anyhow::Result<()> {
         } => return mcp::run(&project, config_dir.as_deref()),
         version::CliRequest::Report(request) => {
             std::process::exit(report_command::main(request));
+        }
+        version::CliRequest::Schema(request) => {
+            std::process::exit(schema_command::main(request));
         }
         version::CliRequest::ReportWorker { config_dir } => {
             std::process::exit(report_worker::run(config_dir.as_deref()));

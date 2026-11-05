@@ -312,6 +312,12 @@ pub(super) fn refuse(context: &SessionContext, request: SessionRequest, reason: 
             schema,
             result: Err(message),
         },
+        (SessionRequest::SaveSchemaSnapshot { schema, path }, _) => Event::SchemaSnapshotSaved {
+            data_source: id,
+            schema,
+            path,
+            result: Err(message),
+        },
         // Rows to fetch were the lost connection's; the explorer never edits or ends a
         // transaction.
         (

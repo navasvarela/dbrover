@@ -2312,6 +2312,7 @@ dependencies = [
  "dbrover-picture",
  "dbrover-plan",
  "dbrover-report",
+ "dbrover-schema",
  "dbrover-sql",
  "dbrover-store",
  "directories",
@@ -2732,7 +2733,9 @@ version = "0.27.0"
 dependencies = [
  "dbrover-core",
  "dbrover-sql",
+ "serde",
  "thiserror 2.0.21",
+ "toml",
 ]
 
 [[package]]

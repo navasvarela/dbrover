@@ -281,6 +281,9 @@ query = """
   `git diff`, and a type change is one changed line.
 - **Readable without DbRover:** the keys are the words the manual uses; a pull request's
   reviewer reads the diff as it is.
+- **A foreign key into another schema** names it in a key of its own,
+  `references_schema = "audit"`, beside `references = "events"`, rather than as
+  `audit.events`, which a table named with a dot would make ambiguous. *(Settled in VC3a.)*
 - **`engine`** is checked when comparing: a PostgreSQL snapshot compares only with a PostgreSQL
   schema. **`schema`** is informational: a snapshot of `public` may be compared with
   `staging`, as two live schemas may.

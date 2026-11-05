@@ -18,6 +18,7 @@ mod transaction;
 mod validate;
 
 use std::future::Future;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -63,6 +64,10 @@ pub(crate) enum SessionRequest {
     Ddl(CatalogPath),
     LoadTable(CatalogPath),
     DescribeSchema(String),
+    SaveSchemaSnapshot {
+        schema: String,
+        path: PathBuf,
+    },
     /// Prepares statements without running them; see [`crate::Command::ValidateStatements`].
     Validate(Vec<String>),
     ExportAll(ExportAll),
@@ -660,6 +665,10 @@ impl Worker<'_> {
             }
             SessionRequest::DescribeSchema(schema) => {
                 let work = schema::describe(self.context, &mut *self.connection, schema);
+                self.signals.guard(work, None, self.cancel_handle).await
+            }
+            SessionRequest::SaveSchemaSnapshot { schema, path } => {
+                let work = schema::save_snapshot(self.context, &mut *self.connection, schema, path);
                 self.signals.guard(work, None, self.cancel_handle).await
             }
             SessionRequest::FetchMore(_) | SessionRequest::Validate(_) => Ok(()),
