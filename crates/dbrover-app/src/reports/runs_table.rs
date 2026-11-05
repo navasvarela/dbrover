@@ -110,10 +110,16 @@ fn table(ui: &mut Ui, palette: &Palette, name: &ReportName, runs: &[ReportRun]) 
             ui.label("");
             for run in runs {
                 let started = run.started_at.to_zoned(time_zone.clone());
-                ui.vertical(|ui| {
-                    ui.label(RichText::new(started.strftime(STARTED_FORMAT).to_string()).strong());
-                    if let Some(origin) = origin(run.origin) {
-                        ui.weak(origin);
+                // On one line, with a glyph for a run from elsewhere: two wrapped lines of date
+                // and two of "from the command line" made every column four lines tall.
+                ui.horizontal(|ui| {
+                    let date = RichText::new(started.strftime(STARTED_FORMAT).to_string()).strong();
+                    ui.add(egui::Label::new(date).wrap_mode(egui::TextWrapMode::Extend));
+                    if let Some((glyph, origin)) = origin(run.origin) {
+                        let response = ui
+                            .label(widgets::glyph(glyph).color(palette.text_weak))
+                            .on_hover_text(origin);
+                        widgets::name(response, egui::WidgetType::Label, origin, true);
                     }
                 });
             }
@@ -163,12 +169,13 @@ fn table(ui: &mut Ui, palette: &Palette, name: &ReportName, runs: &[ReportRun]) 
         });
 }
 
-/// Where a run came from, under its start, for the runs the tab didn't start.
-fn origin(origin: RunOrigin) -> Option<&'static str> {
+/// Where a run came from, beside its start, for the runs the tab didn't start: a glyph, and
+/// what it means.
+fn origin(origin: RunOrigin) -> Option<(&'static str, &'static str)> {
     match origin {
         RunOrigin::App => None,
-        RunOrigin::Command => Some("from the command line"),
-        RunOrigin::Mcp => Some("from MCP"),
+        RunOrigin::Command => Some((icons::TERMINAL_WINDOW, "from the command line")),
+        RunOrigin::Mcp => Some((icons::PLUGS_CONNECTED, "from MCP")),
     }
 }
 

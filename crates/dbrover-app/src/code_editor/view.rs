@@ -83,9 +83,9 @@ pub fn edit<P: EditorProblem>(
     output
 }
 
-/// Applies a cursor move or selection requested from outside the editor. A cursor move also
-/// focuses the editor; a selection (a match the find bar went to) leaves the focus where it
-/// is, and is returned so the editor can scroll to it. After the text was replaced (a format,
+/// Applies a cursor move or selection requested from outside the editor, and returns it so
+/// the editor scrolls to it. A cursor move also focuses the editor; a selection (a match the
+/// find bar went to) leaves the focus where it is. After the text was replaced (a format,
 /// a reload from its file, a replacement), also records the text before and after as undo
 /// points, so one undo restores it; egui would otherwise only record a point once the text
 /// had stayed the same for a second.
@@ -113,7 +113,6 @@ fn move_cursor(ui: &Ui, editor: &mut CodeEditor, editor_id: Id) -> Option<CCurso
     state.store(ui.ctx(), editor_id);
     if focus {
         ui.memory_mut(|memory| memory.request_focus(editor_id));
-        return None;
     }
     Some(cursor)
 }

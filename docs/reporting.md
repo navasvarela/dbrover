@@ -446,7 +446,9 @@ whose metrics show what they should be.
 - **Explorer:** a **Reports** section under the data sources lists the files in `reports/` by
   their names, with a mark on those with problems. Its menu has **New report** (a commented
   starter file on the first data source), **Open the reports folder** and **Reload**.
-- **The report's tab:** its name and description, the file's path with **Edit file** (the
+- **The report's tab** (laid out again in RP8, with the file edited in it: see
+  [The report's page and its editor](report-editor.md)): its name and description, the file's
+  path with **Edit file** (the
   system's editor), the problems if there are any (and **Run** off), a field for each
   parameter with its type and its check, the output folder (Downloads at first, then the last
   one chosen for the report), **Run** and **Cancel**. While it runs: the step, rows, bytes and
