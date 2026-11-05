@@ -14,6 +14,7 @@ use dbrover_export::{
 use dbrover_language::QueryLanguage;
 use dbrover_sql::{Dialect, ParameterValues, StatementKind};
 
+use crate::problem::{Place, ReportProblem, Table, messages};
 use crate::{
     CombineLimits, CombineLimitsSet, CombineQuery, FileName, LimitDefaults, LimitSetIn, Lookup,
     Output, OutputColumns, OutputLimits, OutputLimitsSet, OutputWriter, Param, Report, Source,
@@ -272,22 +273,48 @@ impl Plan {
         presets: &[CustomFormat],
         defaults: &LimitDefaults,
     ) -> Result<Self, Vec<String>> {
+        Self::with_places(report, data_sources, presets, defaults).map_err(messages)
+    }
+
+    /// Plans `report` as [`Plan::new`] does.
+    ///
+    /// # Errors
+    ///
+    /// Every problem found, each with its place in the report's file. A report that read
+    /// without problems has every source and output its file has, in the file's order, so a
+    /// source's or output's index here is its position in the file.
+    pub fn with_places(
+        report: Report,
+        data_sources: &[DataSource],
+        presets: &[CustomFormat],
+        defaults: &LimitDefaults,
+    ) -> Result<Self, Vec<ReportProblem>> {
         let mut problems = Vec::new();
         let file_limits = FileLimits::of(&report);
         let sources: Vec<PlannedSource> = report
             .sources
             .iter()
-            .filter_map(|source| {
+            .enumerate()
+            .filter_map(|(index, source)| {
                 plan_source(source, data_sources, defaults.source)
-                    .map_err(|problem| {
-                        problems.push(format!("source {:?}: {problem}", source.id));
+                    .map_err(|(key, problem)| {
+                        problems.push(ReportProblem::new(
+                            format!("source {:?}: {problem}", source.id),
+                            Place::Key {
+                                table: Table::Source(index),
+                                key: key.map(str::to_owned),
+                            },
+                        ));
                     })
                     .ok()
             })
             .collect();
         let combine = report.combine.map(|combine| {
             if let Err(problem) = check_combine(combine.query.sql()) {
-                problems.push(format!("[combine]: {problem}"));
+                problems.push(ReportProblem::new(
+                    format!("[combine]: {problem}"),
+                    Place::key(Table::Combine, combine_key(&combine.query)),
+                ));
             }
             PlannedCombine {
                 query: combine.query,
@@ -438,12 +465,24 @@ impl Plan {
     }
 }
 
+/// A problem planning a source, and the key of its table it is about.
+type KeyedProblem = (Option<&'static str>, String);
+
+/// The key of `[combine]` that holds its query.
+fn combine_key(query: &CombineQuery) -> &'static str {
+    match query {
+        CombineQuery::Sql(_) => "query",
+        CombineQuery::Prql { .. } => "prql",
+    }
+}
+
 fn plan_source(
     source: &Source,
     data_sources: &[DataSource],
     defaults: SourceLimits,
-) -> Result<PlannedSource, String> {
-    let data_source = find_data_source(&source.data_source, data_sources)?;
+) -> Result<PlannedSource, KeyedProblem> {
+    let data_source = find_data_source(&source.data_source, data_sources)
+        .map_err(|problem| (Some("data_source"), problem))?;
     match &source.read {
         SourceRead::Query {
             query,
@@ -461,7 +500,9 @@ fn plan_source(
             },
         )
         .map(PlannedSource::Query),
-        SourceRead::Attach => attach(&source.id, data_source).map(PlannedSource::Attached),
+        SourceRead::Attach => attach(&source.id, data_source)
+            .map(PlannedSource::Attached)
+            .map_err(|problem| (Some("attach"), problem)),
     }
 }
 
@@ -477,21 +518,26 @@ fn plan_query(
     id: &str,
     data_source: &DataSource,
     read: QueryRead<'_>,
-) -> Result<QuerySource, String> {
+) -> Result<QuerySource, KeyedProblem> {
     let driver = data_source.config.driver();
     let language = QueryLanguage::from(driver);
     if language.dialect().is_none() && read.columns.is_none() {
-        return Err(format!(
-            "{:?} is a {} data source, whose results have no fixed columns; declare the columns \
-             the source makes, as columns = [{{ name = \"symbol\", type = \"text\" }}]",
-            data_source.name,
-            driver.display_name()
+        return Err((
+            Some("columns"),
+            format!(
+                "{:?} is a {} data source, whose results have no fixed columns; declare the \
+                 columns the source makes, as columns = [{{ name = \"symbol\", type = \"text\" \
+                 }}]",
+                data_source.name,
+                driver.display_name()
+            ),
         ));
     }
     let lookup = read
         .lookup
         .map(|lookup| plan_lookup(lookup, language, read.query))
-        .transpose()?;
+        .transpose()
+        .map_err(|problem| (Some("lookup"), problem))?;
     Ok(QuerySource {
         id: id.to_owned(),
         data_source: data_source.clone(),
@@ -624,6 +670,7 @@ fn starts_as_query(query: &str) -> bool {
 /// binds, which isn't one of the report's.
 struct Sent<'a> {
     label: String,
+    place: Place,
     query: &'a str,
     language: QueryLanguage,
     lookup: Option<&'a str>,
@@ -631,20 +678,25 @@ struct Sent<'a> {
 
 /// Each query the run sends, sources first.
 fn queries<'a>(sources: &'a [PlannedSource], combine: Option<&'a PlannedCombine>) -> Vec<Sent<'a>> {
-    let sources = sources.iter().filter_map(|source| match source {
-        PlannedSource::Query(source) => Some(Sent {
-            label: format!("source {:?}", source.id),
-            query: source.query.as_str(),
-            language: source.language,
-            lookup: source
-                .lookup
-                .as_ref()
-                .map(|lookup| lookup.parameter.as_str()),
-        }),
-        PlannedSource::Attached(_) => None,
-    });
+    let sources = sources
+        .iter()
+        .enumerate()
+        .filter_map(|(index, source)| match source {
+            PlannedSource::Query(source) => Some(Sent {
+                label: format!("source {:?}", source.id),
+                place: Place::key(Table::Source(index), "query"),
+                query: source.query.as_str(),
+                language: source.language,
+                lookup: source
+                    .lookup
+                    .as_ref()
+                    .map(|lookup| lookup.parameter.as_str()),
+            }),
+            PlannedSource::Attached(_) => None,
+        });
     let combine = combine.map(|combine| Sent {
         label: "[combine]".to_owned(),
+        place: Place::key(Table::Combine, combine_key(&combine.query)),
         query: combine.query.sql(),
         language: QueryLanguage::Sql(Dialect::DuckDb),
         lookup: None,
@@ -653,7 +705,7 @@ fn queries<'a>(sources: &'a [PlannedSource], combine: Option<&'a PlannedCombine>
 }
 
 /// The data source `wanted` names: by name if one has it, else by id.
-fn find_data_source<'a>(
+pub(crate) fn find_data_source<'a>(
     wanted: &str,
     data_sources: &'a [DataSource],
 ) -> Result<&'a DataSource, String> {
@@ -701,7 +753,7 @@ fn find_data_source<'a>(
 fn ordered_params(
     params: &[Param],
     queries: &[Sent<'_>],
-    problems: &mut Vec<String>,
+    problems: &mut Vec<ReportProblem>,
 ) -> Vec<Param> {
     let mut ordered: Vec<Param> = Vec::new();
     for sent in queries {
@@ -718,9 +770,12 @@ fn ordered_params(
             }
             match params.iter().find(|param| param.name == name) {
                 Some(param) => ordered.push(param.clone()),
-                None => problems.push(format!(
-                    "{label}: the query uses :{name}, which [report] params doesn't declare; \
-                     add {name} = \"text\" (or its type) to params"
+                None => problems.push(ReportProblem::new(
+                    format!(
+                        "{label}: the query uses :{name}, which [report] params doesn't \
+                         declare; add {name} = \"text\" (or its type) to params"
+                    ),
+                    sent.place.clone(),
                 )),
             }
         }
@@ -738,7 +793,7 @@ fn plan_outputs(
     outputs: &[Output],
     presets: &[CustomFormat],
     defaults: OutputLimits,
-    problems: &mut Vec<String>,
+    problems: &mut Vec<ReportProblem>,
 ) -> Vec<PlannedOutput> {
     let first_columns = outputs.first().and_then(|first| match &first.columns {
         OutputColumns::Declared(columns) => Some(columns.clone()),
@@ -751,16 +806,24 @@ fn plan_outputs(
             OutputWriter::Format(preset) => built_in(preset.format, &preset.options),
             OutputWriter::Preset(id) => find_preset(id.as_str(), presets),
         };
+        let writer_key = match &output.writer {
+            OutputWriter::Format(_) => "format",
+            OutputWriter::Preset(_) => "preset",
+        };
         let format = match format {
             Ok(format) => format,
             Err(problem) => {
-                problems.push(format!("{label}: {problem}"));
+                problems.push(ReportProblem::new(
+                    format!("{label}: {problem}"),
+                    Place::key(Table::Output(index), writer_key),
+                ));
                 continue;
             }
         };
         if output.continue_on_new_sheet && !format.is_excel() {
-            problems.push(format!(
-                "{label}: continue_on_new_sheet is for Excel outputs"
+            problems.push(ReportProblem::new(
+                format!("{label}: continue_on_new_sheet is for Excel outputs"),
+                Place::key(Table::Output(index), "continue_on_new_sheet"),
             ));
         }
         let columns = match &output.columns {

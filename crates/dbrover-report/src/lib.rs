@@ -4,7 +4,8 @@
 //!
 //! A report goes through three steps, each a type:
 //!
-//! 1. [`Report`]: the file as read ([`read_report`]), on its own, with every problem it has;
+//! 1. [`Report`]: the file as read ([`read_report`]), on its own, with every problem it has
+//!    (each with its place in the file, from [`read_with_places`], for an editor);
 //! 2. [`Plan`]: the report against what it names, the data sources and `exports.toml`'s
 //!    presets, ready to run but for its parameters' values;
 //! 3. [`RunValues`]: the values typed for a run, checked against their types, and the file
@@ -21,12 +22,14 @@ mod file_name;
 mod hints;
 mod limits;
 mod plan;
+mod problem;
 mod prql;
 mod read;
 mod report;
 mod request;
 mod run;
 mod statement;
+mod text;
 mod typing;
 
 pub use events::{
@@ -45,7 +48,8 @@ pub use plan::{
     AttachedSource, Combined, Logic, OutputFormat, Plan, PlannedCombine, PlannedLookup,
     PlannedOutput, PlannedSource, QuerySource, RunValues, TypedValues,
 };
-pub use read::read_report;
+pub use problem::{Locator, Place, ReportProblem, Table};
+pub use read::{read_report, read_with_places};
 pub use report::{
     Combine, CombineQuery, Lookup, Output, OutputColumns, OutputWriter, Param, Report, Source,
     SourceColumn, SourceRead,
@@ -55,6 +59,7 @@ pub use run::{
     PREVIEW_ROWS, RunFolders, RunSummary, SourceError, SourceOpener, SourceReader, SourceStatement,
     grouped, run,
 };
+pub use text::plan_text;
 
 #[cfg(test)]
 mod combine_tests;
