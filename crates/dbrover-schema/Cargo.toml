@@ -1,0 +1,18 @@
+[package]
+name = "dbrover-schema"
+description = "Schema compare and snapshots: a schema's model, comparing two, the script between them, and the snapshot file."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+dbrover-core.workspace = true
+# E-track's DDL builder: tables are its specs, and the script is its statements.
+dbrover-sql.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

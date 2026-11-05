@@ -34,6 +34,7 @@ dbrover-mcp = { path = "crates/dbrover-mcp" }
 dbrover-picture = { path = "crates/dbrover-picture" }
 dbrover-plan = { path = "crates/dbrover-plan" }
 dbrover-report = { path = "crates/dbrover-report" }
+dbrover-schema = { path = "crates/dbrover-schema" }
 dbrover-sql = { path = "crates/dbrover-sql" }
 dbrover-ssh = { path = "crates/dbrover-ssh" }
 dbrover-store = { path = "crates/dbrover-store" }
