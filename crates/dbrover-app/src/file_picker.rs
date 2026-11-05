@@ -202,6 +202,25 @@ pub fn pick_picture(name: &str, format: PictureFormat) -> Option<PathBuf> {
         .save_file()
 }
 
+/// Shows the open dialog for a schema snapshot, a compare tab's side, and returns the chosen
+/// file, or `None` if it was cancelled.
+pub fn pick_schema_snapshot() -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .set_title("Choose a schema snapshot")
+        .add_filter("Schema snapshot", &["toml"])
+        .pick_file()
+}
+
+/// Shows the save dialog for a snapshot of `schema`, suggesting `<schema>.schema.toml`, and
+/// returns the chosen path, or `None` if it was cancelled.
+pub fn pick_schema_snapshot_path(schema: &str) -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .set_title(format!("Save a snapshot of {schema}"))
+        .add_filter("Schema snapshot", &["toml"])
+        .set_file_name(format!("{schema}.schema.toml"))
+        .save_file()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

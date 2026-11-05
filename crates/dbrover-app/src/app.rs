@@ -64,7 +64,7 @@ use crate::project_dialog::{
 };
 use crate::reports::{self, RenameAction, RenameReportDialog, ReportAction, Reports, ReportsSetup};
 use crate::rollback_dialog::{Closing, RollbackChoice, RollbackConfirmation};
-use crate::schema_compare::{CompareAction, LiveSchema, SchemaCompares};
+use crate::schema_compare::{CompareAction, LiveSchema, Reading, SchemaCompares};
 use crate::settings::AppSettings;
 use crate::settings_tab::{Page, SettingsAction, SettingsTab};
 use crate::sql_files::{self, Destination, OpenFileAction, OpenFileDialog, SqlFiles};
@@ -108,6 +108,8 @@ type PickSavePath = Box<dyn Fn(&str) -> Option<PathBuf>>;
 
 /// Asks where to export a diagram named by the `&str` as a picture; `None` if cancelled.
 type PickPicturePath = dyn Fn(&str, PictureFormat) -> Option<PathBuf>;
+type PickSnapshot = dyn Fn() -> Option<PathBuf>;
+type PickSnapshotPath = dyn Fn(&str) -> Option<PathBuf>;
 
 pub struct DbRoverApp {
     /// `None` once the engine has been shut down, at exit or after it stopped unexpectedly.
@@ -209,6 +211,12 @@ pub struct DbRoverApp {
     /// Asks where to export a diagram's picture, suggesting a name. The platform's save
     /// dialog, except in tests.
     pub(crate) pick_picture: Box<PickPicturePath>,
+    /// A schema snapshot for a compare tab's side.
+    pub(crate) pick_schema_snapshot: Box<PickSnapshot>,
+    /// Where to save a schema's snapshot, by the schema's name.
+    pub(crate) pick_schema_snapshot_path: Box<PickSnapshotPath>,
+    /// Where the last schema snapshot was saved, or why it wasn't, for the status bar.
+    snapshot_notice: Option<Result<PathBuf, String>>,
     /// Set on first launch until the window has been asked to maximize. After that, eframe
     /// restores whatever size the user left it at.
     maximize_window: bool,
@@ -315,6 +323,9 @@ impl DbRoverApp {
             pick_sql_file: Box::new(file_picker::pick_sql_file),
             pick_sql_save_path: Box::new(file_picker::pick_sql_save_path),
             pick_picture: Box::new(file_picker::pick_picture),
+            pick_schema_snapshot: Box::new(file_picker::pick_schema_snapshot),
+            pick_schema_snapshot_path: Box::new(file_picker::pick_schema_snapshot_path),
+            snapshot_notice: None,
             maximize_window,
             native_menu: None,
             integrated_title_bar: false,
@@ -520,6 +531,9 @@ impl DbRoverApp {
         }
         self.definitions.apply(event);
         self.compares.apply(event);
+        if let Event::SchemaSnapshotSaved { path, result, .. } = event {
+            self.snapshot_notice = Some(result.clone().map(|()| path.clone()));
+        }
         let searches = self.history.apply(event);
         self.send_all(searches);
         self.apply_to_password_prompt(event);
@@ -1374,6 +1388,14 @@ impl DbRoverApp {
             ExplorerAction::ExportData(id, path) => self.open_table_export(id, &path),
             ExplorerAction::Diagram(id, path) => self.open_diagram_dialog(id, &path),
             ExplorerAction::CompareSchema(id, path) => self.open_schema_compare(id, &path),
+            ExplorerAction::SaveSchemaSnapshot(id, path) => {
+                if let Some(schema) = path.name_of(NodeKind::Schema) {
+                    self.save_schema_snapshot(LiveSchema {
+                        data_source: id,
+                        schema: schema.to_owned(),
+                    });
+                }
+            }
             ExplorerAction::Report(action) => self.handle_report_action(action, ctx),
             ExplorerAction::OpenDiagram(key) => {
                 let first = self.diagrams.reopen(&key);
@@ -1962,16 +1984,37 @@ impl DbRoverApp {
         workspace::open_compare_tab(&mut self.dock, tab);
     }
 
+    /// Asks where to save `live`'s snapshot, then has the engine read and write it.
+    fn save_schema_snapshot(&mut self, live: LiveSchema) {
+        let Some(path) = (self.pick_schema_snapshot_path)(&live.schema) else {
+            return;
+        };
+        self.send(Command::SaveSchemaSnapshot {
+            data_source: live.data_source,
+            schema: live.schema,
+            path,
+        });
+    }
+
     fn handle_compare_action(&mut self, action: CompareAction) {
         match action {
-            CompareAction::Read(sides) => {
-                for side in sides {
-                    self.send(Command::DescribeSchema {
-                        data_source: side.data_source,
-                        schema: side.schema,
+            CompareAction::Read(readings) => {
+                for reading in readings {
+                    self.send(match reading {
+                        Reading::Live(live) => Command::DescribeSchema {
+                            data_source: live.data_source,
+                            schema: live.schema,
+                        },
+                        Reading::Snapshot(path) => Command::ReadSchemaSnapshot { path },
                     });
                 }
             }
+            CompareAction::PickSnapshot { tab, side } => {
+                if let Some(path) = (self.pick_schema_snapshot)() {
+                    self.compares.set_snapshot(tab, side, path);
+                }
+            }
+            CompareAction::SaveSnapshot(live) => self.save_schema_snapshot(live),
             CompareAction::OpenInConsole { data_source, text } => {
                 if let Some(entry) = self.state.data_source(data_source) {
                     let console = self.consoles.open(&entry.data_source, text);
@@ -2685,6 +2728,25 @@ impl DbRoverApp {
                 .clicked()
         {
             self.action_problem = None;
+        }
+        if let Some(notice) = &self.snapshot_notice {
+            let (text, color) = match notice {
+                Ok(path) => (
+                    format!("Schema snapshot saved to {}", path.display()),
+                    palette.primary,
+                ),
+                Err(error) => (
+                    format!("The schema snapshot wasn't saved: {error}"),
+                    palette.error,
+                ),
+            };
+            if ui
+                .link(RichText::new(text).small().color(color))
+                .on_hover_text("Dismiss")
+                .clicked()
+            {
+                self.snapshot_notice = None;
+            }
         }
         if let Some(notice) = self.updates.notice()
             && ui

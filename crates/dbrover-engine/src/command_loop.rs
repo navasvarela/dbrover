@@ -317,6 +317,12 @@ impl Engine {
                 }
             }
             Command::DeleteDiagram(key) => diagram_files::delete(&self.diagram_files, key).await,
+            Command::ReadSchemaSnapshot { path } => {
+                let events = self.events.clone();
+                tokio::spawn(
+                    async move { events.send(crate::schema_snapshot::read_file(path).await) },
+                );
+            }
             Command::ExportPicture { path, picture } => {
                 let events = self.events.clone();
                 tokio::spawn(async move { events.send(pictures::export(path, picture).await) });

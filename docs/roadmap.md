@@ -2215,7 +2215,7 @@ after CI fixes, the reports track and W13, and links no Git library.
   - **VC3a — Snapshot files:** built; the writer and reader, `dbrover schema snapshot`, and
     the engine's `SaveSchemaSnapshot`. A snapshot of a schema taken twice is the same file,
     tested on the PostgreSQL test server.
-  - **VC3b — Comparing with a snapshot:** a snapshot as a side in the tab, **Save schema
+  - **VC3b — Comparing with a snapshot:** built; a snapshot as a side in the tab, **Save schema
     snapshot…**, and `dbrover schema compare`.
 
   **Exit:** a snapshot of `public` on the PostgreSQL test server taken twice is identical; after

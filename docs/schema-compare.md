@@ -315,13 +315,16 @@ query = """
 ### Comparing with one
 
 A side of the compare tab is a live schema **or** a snapshot file (**Snapshot file…** in the
-side's picker), and `dbrover schema compare` takes either:
+side's picker), and `dbrover schema compare` takes either. Without `--script` it prints each
+object that differs under its kind, with what differs indented under it, as the tab's list
+does; with `--script`, the script, whose header names a snapshot side by its file:
 
 ```text
 dbrover schema compare <left> <right> [--script] [--config-dir <folder>]
 ```
 
-Each side is `<data source>:<schema>` (split at the last `:`) or the path of a snapshot file.
+Each side is `<data source>:<schema>` (split at the last `:`) or the path of a snapshot file:
+an argument ending in `.toml`, or naming a file that exists, is a file. *(Settled in VC3b.)*
 It prints the differences, or with `--script` the script, and exits as `diff` does: **0** when
 the schemas are the same, **1** when they differ, **2** when something went wrong. A CI job
 that fails when production has drifted from the committed snapshot is one line.

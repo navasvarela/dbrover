@@ -369,3 +369,34 @@ fn identities_say_where_they_start_when_not_from_one() {
         "identity: by default \u{2192} by default, from 100 by 10"
     );
 }
+
+#[test]
+fn reports_each_difference_under_its_kind() {
+    let left = schema("public");
+    let mut right = schema("public");
+    let orders = right.tables.get_mut("orders").unwrap();
+    orders.spec.columns.push(column("note", "text"));
+    orders.spec.columns[2].data_type = "numeric(12,2)".to_owned();
+    right.indexes.clear();
+    right.views.get_mut("recent_orders").unwrap().query = " SELECT 1".to_owned();
+
+    let report = compare(&left, &right).unwrap().report();
+
+    assert_eq!(
+        report,
+        "\
+Tables
+  ~ orders
+      1 column added, 1 column changed
+      + column note
+      ~ total: type: numeric(10,2) \u{2192} numeric(12,2)
+Indexes
+  \u{2212} orders_customer_idx
+      only on the left
+Views
+  ~ recent_orders
+      query changed
+"
+    );
+    assert_eq!(compare(&left, &left).unwrap().report(), "");
+}

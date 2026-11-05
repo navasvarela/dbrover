@@ -134,20 +134,25 @@ fn pick_right(harness: &mut Harness<'_, Open>, data_source: &str, schema: &str) 
     harness.run();
 }
 
-/// Answers the reads the last **Compare** asked for, as the engine would.
+/// Answers the reads the last **Compare** asked for, as the engine would: `left` for the
+/// first, `right` for the second.
 fn answer(harness: &mut Harness<'_, Open>, left: Result<Schema, String>, right: Schema) {
-    let Some(CompareAction::Read(sides)) = harness.state_mut().actions.pop() else {
+    let Some(CompareAction::Read(readings)) = harness.state_mut().actions.pop() else {
         panic!("expected Compare to ask for both sides");
     };
-    let [first, second] = sides.as_slice() else {
-        panic!("expected two sides, got {sides:?}");
+    let [first, second] = readings.as_slice() else {
+        panic!("expected two sides, got {readings:?}");
     };
-    for (side, result) in [(first, left), (second, Ok(right))] {
-        harness.state_mut().compares.apply(&Event::SchemaDescribed {
-            data_source: side.data_source,
-            schema: side.schema.clone(),
-            result,
-        });
+    for (reading, result) in [(first, left), (second, Ok(right))] {
+        let event = match reading.clone() {
+            Reading::Live(live) => Event::SchemaDescribed {
+                data_source: live.data_source,
+                schema: live.schema,
+                result,
+            },
+            Reading::Snapshot(path) => Event::SchemaSnapshotRead { path, result },
+        };
+        harness.state_mut().compares.apply(&event);
     }
     harness.run();
 }
@@ -273,7 +278,79 @@ fn swapping_turns_the_script_round() {
     harness.run();
 
     let sides = &tab(&harness).sides;
-    assert_eq!(sides[0].data_source, Some(prod.id));
-    assert_eq!(sides[0].schema, "public");
-    assert_eq!(sides[1].schema, "staging");
+    assert_eq!(sides[0].data_source(), Some(prod.id));
+    assert_eq!(sides[0].short_name(), "public");
+    assert_eq!(sides[1].short_name(), "staging");
+}
+
+/// VC3: a snapshot file as the left side, read through the engine's command; the script then
+/// opens on a data source picked from those of the snapshot's engine.
+#[test]
+fn compares_a_snapshot_with_a_live_schema() {
+    let dev = candidate("shop-dev");
+    let prod = candidate("shop");
+    let mut harness = harness(vec![dev.clone(), prod]);
+    harness
+        .get_by(|node| node.role() == Role::ComboBox && node.value().as_deref() == Some("shop-dev"))
+        .click();
+    harness.run();
+    harness.get_by_label("Snapshot file\u{2026}").click();
+    harness.run();
+    let Some(CompareAction::PickSnapshot { tab: id, side }) = harness.state_mut().actions.pop()
+    else {
+        panic!("expected a snapshot to be asked for");
+    };
+    assert_eq!(side, SideIndex::Left);
+    let path = PathBuf::from("/snapshots/staging.schema.toml");
+    harness
+        .state_mut()
+        .compares
+        .set_snapshot(id, side, path.clone());
+    harness.run();
+    harness.get_by_label("staging.schema.toml");
+    pick_right(&mut harness, "shop-dev", "public");
+
+    harness.get_by_label("Compare").click();
+    harness.run_steps(2);
+    assert!(matches!(
+        harness.state().actions.last(),
+        Some(CompareAction::Read(readings)) if readings[0] == Reading::Snapshot(path.clone())
+    ));
+    answer(&mut harness, Ok(staging()), public());
+    harness.get_by_label("2 differences");
+    assert_eq!(tab(&harness).title(), "staging.schema.toml \u{2192} public");
+
+    harness.get_by_label("Open script in console").click();
+    harness.run();
+    harness.get_all_by_label("shop-dev").last().unwrap().click();
+    harness.run();
+    let Some(CompareAction::OpenInConsole { data_source, text }) =
+        harness.state_mut().actions.pop()
+    else {
+        panic!("expected the script to open on the picked data source");
+    };
+    assert_eq!(data_source, dev.id);
+    assert!(
+        text.starts_with("-- Changes snapshot staging.schema.toml (left)"),
+        "{text}"
+    );
+}
+
+#[test]
+fn saves_a_snapshot_of_a_live_side() {
+    let dev = candidate("shop-dev");
+    let mut harness = harness(vec![dev.clone()]);
+
+    harness
+        .get_by_label("Save a snapshot of the left side")
+        .click();
+    harness.run();
+
+    assert_eq!(
+        harness.state().actions.last(),
+        Some(&CompareAction::SaveSnapshot(LiveSchema {
+            data_source: dev.id,
+            schema: "staging".to_owned(),
+        }))
+    );
 }

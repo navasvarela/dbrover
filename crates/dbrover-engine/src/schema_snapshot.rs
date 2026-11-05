@@ -1,11 +1,38 @@
-//! Reading a schema without the app, for `dbrover schema snapshot` and `dbrover schema
-//! compare` (VC3).
+//! Schemas outside a session: read headless for `dbrover schema snapshot` and `dbrover schema
+//! compare`, and read from snapshot files (VC3).
+
+use std::path::{Path, PathBuf};
 
 use dbrover_core::{DataSource, describe_error};
 use dbrover_language::QueryLanguage;
-use dbrover_schema::Schema;
+use dbrover_schema::{Schema, read_snapshot};
 
-use crate::{SourceAccess, open_data_source};
+use crate::{Event, SourceAccess, open_data_source};
+
+/// Reads the snapshot file at `path` on the blocking pool. Answered with
+/// [`Event::SchemaSnapshotRead`].
+pub(crate) async fn read_file(path: PathBuf) -> Event {
+    let task_path = path.clone();
+    let result = tokio::task::spawn_blocking(move || read_snapshot_file(&task_path))
+        .await
+        .map_err(|error| describe_error(&error))
+        .and_then(|read| read);
+    if let Err(error) = &result {
+        tracing::warn!("could not read the snapshot {}: {error}", path.display());
+    }
+    Event::SchemaSnapshotRead { path, result }
+}
+
+/// The schema in the snapshot file at `path`.
+///
+/// # Errors
+///
+/// Why the file can't be read, or isn't a snapshot, as a sentence naming it.
+pub fn read_snapshot_file(path: &Path) -> Result<Schema, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    read_snapshot(&text).map_err(|error| format!("{}: {error}", path.display()))
+}
 
 /// Connects to `data_source` as the app would, reads `schema`, and disconnects.
 ///

@@ -1,7 +1,7 @@
 //! `dbrover schema` as a CI job runs it: the real binary. Reading a PostgreSQL schema and
 //! writing its snapshot are tested in dbrover-schema and dbrover-engine (`read_schema`, which
-//! this command calls); this checks the command around them: its arguments, what it prints
-//! and its exit codes.
+//! these commands call); this checks the commands around them: their arguments, what they
+//! print and their exit codes, comparing snapshot files, which need no server.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::process::Command;
@@ -29,6 +29,75 @@ fn refuses_a_command_line_it_does_not_understand() {
         assert!(stderr.contains("Exit codes:"), "{args:?}: {stderr}");
         assert!(output.stdout.is_empty(), "{args:?}");
     }
+}
+
+/// `orders` as a snapshot holds it, `extra` lines added to its table.
+fn snapshot(extra: &str) -> String {
+    format!(
+        "[snapshot]\nformat = 1\nengine = \"postgresql\"\nschema = \"public\"\n\n\
+         [tables.orders]\ncolumns = [\n  {{ name = \"id\", type = \"integer\", nullable = false }},\n{extra}]\n\
+         primary_key = {{ name = \"orders_pkey\", columns = [\"id\"] }}\n"
+    )
+}
+
+fn compare(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
+    Command::new(BINARY)
+        .args(["schema", "compare"])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap()
+}
+
+/// `dbrover schema compare` exits as `diff` does: 1 with the differences, 0 when there are
+/// none, 2 when a side can't be read.
+#[test]
+fn compares_two_snapshots() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("before.schema.toml"), snapshot("")).unwrap();
+    std::fs::write(
+        dir.path().join("after.schema.toml"),
+        snapshot("  { name = \"note\", type = \"text\" },\n"),
+    )
+    .unwrap();
+
+    let differ = compare(dir.path(), &["before.schema.toml", "after.schema.toml"]);
+    assert_eq!(differ.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&differ.stdout),
+        "Tables\n  ~ orders\n      1 column added\n      + column note\n"
+    );
+
+    let script = compare(
+        dir.path(),
+        &["before.schema.toml", "after.schema.toml", "--script"],
+    );
+    assert_eq!(script.status.code(), Some(1));
+    let script = String::from_utf8_lossy(&script.stdout);
+    assert!(
+        script.contains("-- Changes snapshot before.schema.toml (left) to match snapshot after.schema.toml (right)."),
+        "{script}"
+    );
+    assert!(
+        script.contains("ALTER TABLE \"public\".orders ADD COLUMN note text;"),
+        "{script}"
+    );
+
+    let same = compare(dir.path(), &["before.schema.toml", "before.schema.toml"]);
+    assert_eq!(same.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&same.stdout),
+        "The schemas are the same.\n"
+    );
+
+    let missing = compare(dir.path(), &["before.schema.toml", "gone.schema.toml"]);
+    assert_eq!(missing.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&missing.stderr).contains("could not read gone.schema.toml"),
+        "{}",
+        String::from_utf8_lossy(&missing.stderr)
+    );
+    assert!(missing.stdout.is_empty());
 }
 
 #[test]

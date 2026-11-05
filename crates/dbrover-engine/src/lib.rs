@@ -67,7 +67,7 @@ pub use releases::{GithubReleases, Release, ReleaseError, ReleaseFeed};
 pub use repaint::Repaint;
 pub use report_source::{ReportSource, SourceAccess};
 pub use report_worker::{RunStopper, WorkerRun};
-pub use schema_snapshot::read_schema;
+pub use schema_snapshot::{read_schema, read_snapshot_file};
 pub use sql_files::WatchedFile;
 pub use stop_signals::StopSignals;
 pub use tunnels::Tunnels;

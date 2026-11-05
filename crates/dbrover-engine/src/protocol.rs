@@ -303,6 +303,11 @@ pub enum Command {
         schema: String,
         path: PathBuf,
     },
+    /// Reads the schema snapshot file at `path`, for a compare tab's side. Answered by
+    /// [`Event::SchemaSnapshotRead`].
+    ReadSchemaSnapshot {
+        path: PathBuf,
+    },
     /// Inserts the rows of a CSV file into a table, on the explorer's connection to the data
     /// source, all in one transaction: in batches of several rows per `INSERT`, and rolled back
     /// at the first failure, which names the line it was on. Refused on a read-only data
@@ -679,6 +684,11 @@ pub enum Event {
         schema: String,
         path: PathBuf,
         result: Result<(), String>,
+    },
+    /// The answer to [`Command::ReadSchemaSnapshot`]: the file's schema, or why it isn't one.
+    SchemaSnapshotRead {
+        path: PathBuf,
+        result: Result<Schema, String>,
     },
     /// The answer to [`Command::ApplyEdits`].
     EditsApplied {
