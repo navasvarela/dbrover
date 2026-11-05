@@ -774,7 +774,19 @@ fn shows_the_runs_side_by_side_with_the_step_that_dominates_and_the_hints() {
     harness.get_by_label("Output 1");
     assert_eq!(harness.query_all_by_label("0.9 s · 2 rows").count(), 2);
     harness.get_by_label("Combine takes the most time in every run listed: 90% of the newest.");
-    harness.get_by_label_contains("Combine spilled 3.2 GB to disk, past its memory_limit.");
+    // In the runs' hints, and beside the file once it is checked again with the new run.
+    step_until(
+        &mut harness,
+        "the hint by the runs and by the file",
+        |harness| {
+            harness
+                .query_all_by_label_contains(
+                    "Combine spilled 3.2 GB to disk, past its memory_limit.",
+                )
+                .count()
+                == 2
+        },
+    );
 
     harness.get_by_label("Clear history").click();
     harness.run();
