@@ -5,6 +5,7 @@
 mod compare;
 mod model;
 mod script;
+mod snapshot;
 mod summary;
 
 pub use compare::{
@@ -13,3 +14,4 @@ pub use compare::{
 };
 pub use model::{Index, Schema, Table, View};
 pub use script::{NotWritten, Script, Sides, script};
+pub use snapshot::{SnapshotError, read_snapshot, write_snapshot};

@@ -1,10 +1,10 @@
 //! Writing pictures, such as ER diagrams, on the blocking pool.
 
 use std::path::{Path, PathBuf};
-use std::{fs, io};
 
 use dbrover_core::describe_error;
 
+use crate::whole_file::write_whole;
 use crate::{Event, Picture};
 
 /// Writes a picture to `path`: beside it first, renamed into place once whole, so
@@ -31,15 +31,5 @@ fn write_picture(path: &Path, picture: Picture) -> Result<(), String> {
             dbrover_picture::png(&svg, scale, &fonts).map_err(|error| describe_error(&error))?
         }
     };
-    write_beside_then_rename(path, &bytes).map_err(|error| describe_error(&error))
-}
-
-fn write_beside_then_rename(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut partial = path.as_os_str().to_owned();
-    partial.push(".part");
-    let partial = PathBuf::from(partial);
-    fs::write(&partial, bytes)?;
-    fs::rename(&partial, path).inspect_err(|_| {
-        let _ = fs::remove_file(&partial);
-    })
+    write_whole(path, &bytes).map_err(|error| describe_error(&error))
 }

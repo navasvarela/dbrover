@@ -35,6 +35,7 @@ mod report_source;
 mod report_worker;
 #[cfg(test)]
 mod repository_rename_tests;
+mod schema_snapshot;
 mod session;
 mod settings;
 mod sql_files;
@@ -42,6 +43,7 @@ mod stop_signals;
 mod transfer;
 mod tunnels;
 mod updater;
+mod whole_file;
 
 pub use dbrover_ssh::HostKey;
 pub use environment::ProcessEnvironment;
@@ -65,6 +67,7 @@ pub use releases::{GithubReleases, Release, ReleaseError, ReleaseFeed};
 pub use repaint::Repaint;
 pub use report_source::{ReportSource, SourceAccess};
 pub use report_worker::{RunStopper, WorkerRun};
+pub use schema_snapshot::read_schema;
 pub use sql_files::WatchedFile;
 pub use stop_signals::StopSignals;
 pub use tunnels::Tunnels;
@@ -72,3 +75,4 @@ pub use updater::{
     InstallError, InstallSupport, InstalledUpdate, PackagerInstaller, Restart, StagedInstaller,
     UpdateInstaller,
 };
+pub use whole_file::write_whole;

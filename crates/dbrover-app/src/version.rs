@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use dbrover_store::CONFIG_DIR_FLAG;
 
-use crate::report_command;
+use crate::{report_command, schema_command};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Set by `build.rs`: the commit the binary was built from, or "unknown".
@@ -21,12 +21,16 @@ pub const REPORT_WORKER: &str = "report-worker";
 /// The subcommand that runs a report from the command line (`docs/reporting.md`, RP6).
 pub const REPORT: &str = "report";
 
+/// The subcommand that snapshots and compares schemas (`docs/schema-compare.md`, VC3).
+pub const SCHEMA: &str = "schema";
+
 const USAGE: &str = "\
 Usage: dbrover [--config-dir <folder>] [--version | --help] [FILE.sql …]
        dbrover mcp --project <slug> [--config-dir <folder>]
        dbrover report run <report> [--param <name>=<value>]… [--output-dir <folder>]
                           [--config-dir <folder>]
        dbrover report-worker [--config-dir <folder>]
+       dbrover schema snapshot <data source> <schema> [-o <file>] [--config-dir <folder>]
 
 Starts the DbRover desktop app, opening each FILE.sql given in a console. With --version (-V),
 prints the version and exits.
@@ -37,6 +41,9 @@ over standard input and output, without opening a window. An MCP client starts i
 
 `dbrover report run` runs a report from the command line, for cron and CI, and exits with a
 code that says how it ended; `dbrover report run --help` says more.
+
+`dbrover schema snapshot` writes a schema's tables, indexes and views as a TOML file that is
+the same each time it is taken of an unchanged schema; `dbrover schema --help` says more.
 
 `dbrover report-worker` runs one report for the app, in a process of its own: it reads the
 request from standard input and writes the run's progress to standard output as JSON Lines.
@@ -58,6 +65,8 @@ pub enum CliRequest {
     },
     /// Run a report from the command line, headless.
     Report(report_command::Request),
+    /// Snapshot or compare schemas, headless.
+    Schema(schema_command::Request),
     /// Run one report for the app, headless.
     ReportWorker {
         config_dir: Option<PathBuf>,
@@ -84,6 +93,9 @@ impl CliRequest {
         }
         if args.peek().is_some_and(|first| first == REPORT) {
             return Self::Report(report_command::Request::parse(args.skip(1)));
+        }
+        if args.peek().is_some_and(|first| first == SCHEMA) {
+            return Self::Schema(schema_command::Request::parse(args.skip(1)));
         }
         let mut help = false;
         let mut files = Vec::new();
@@ -170,6 +182,7 @@ impl CliRequest {
             Self::Help => println!("{}\n\n{USAGE}", describe()),
             Self::Mcp { .. }
             | Self::Report(_)
+            | Self::Schema(_)
             | Self::ReportWorker { .. }
             | Self::Invalid(_)
             | Self::Run { .. } => {

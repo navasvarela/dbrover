@@ -1,7 +1,10 @@
 //! Schema compare (W13) through the engine, on the PostgreSQL test server: reading schemas, and
 //! the script that makes one like another.
 
-use dbrover_schema::{Change, Schema, Sides, compare, script};
+use common::MemorySecrets;
+use dbrover_engine::{PasswordCommands, ProcessRunner, SourceAccess, Tunnels, read_schema};
+use dbrover_schema::{Change, Schema, Sides, compare, read_snapshot, script, write_snapshot};
+use dbrover_store::{Secret, SecretStore, TrustedCommands};
 
 use super::*;
 
@@ -291,6 +294,104 @@ fn the_script_builds_a_schema_from_nothing_and_empties_it_again() {
             format!("DROP SCHEMA {empty} CASCADE"),
             format!("DROP SCHEMA {full} CASCADE"),
         ],
+    )
+    .unwrap();
+}
+
+/// The first half of VC3's exit: a snapshot of a schema taken twice is the same file, whether
+/// taken headless as `dbrover schema snapshot` does or saved by the app's command; after a
+/// column and an index are added, the live schema compared with the first snapshot lists both.
+#[test]
+fn a_snapshot_taken_twice_is_the_same_file() {
+    let Some(server) = postgres_test_server() else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = start(dir.path());
+    let password = server.password.clone();
+    let postgres = data_source("postgres", ConnectionConfig::Postgres(server.config));
+    save(&mut engine, &postgres, Some(server.password));
+    let schema = unique("dbrover_snapshot", &postgres);
+    apply(
+        &mut engine,
+        postgres.id,
+        vec![
+            format!("CREATE SCHEMA {schema}"),
+            format!("CREATE TABLE {schema}.orders (id serial PRIMARY KEY, total numeric(12,2))"),
+            format!("CREATE VIEW {schema}.big_orders AS SELECT id FROM {schema}.orders WHERE total > 100"),
+        ],
+    )
+    .unwrap();
+
+    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecrets::default());
+    secrets
+        .set(postgres.id, Secret::Database, &password)
+        .unwrap();
+    let tunnels = Tunnels::new(dir.path().join("known_hosts"));
+    let commands = PasswordCommands::new(TrustedCommands::default(), Arc::new(ProcessRunner));
+    let access = SourceAccess {
+        secrets: &secrets,
+        tunnels: &tunnels,
+        commands: &commands,
+    };
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let headless = || {
+        let read = runtime
+            .block_on(read_schema(&postgres, &schema, &access))
+            .unwrap();
+        write_snapshot(&read)
+    };
+    let first = headless();
+    let second = headless();
+    assert_eq!(first, second);
+    assert!(first.contains("[tables.orders]\n"), "{first}");
+
+    let path = dir.path().join("orders.schema.toml");
+    engine.send(Command::SaveSchemaSnapshot {
+        data_source: postgres.id,
+        schema: schema.clone(),
+        path: path.clone(),
+    });
+    loop {
+        match engine.next_event() {
+            Event::SchemaSnapshotSaved { result, .. } => break result.unwrap(),
+            Event::SessionChanged { .. } => {}
+            other => panic!("expected SchemaSnapshotSaved, got {other:?}"),
+        }
+    }
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), first);
+
+    apply(
+        &mut engine,
+        postgres.id,
+        vec![
+            format!("ALTER TABLE {schema}.orders ADD COLUMN note text"),
+            format!("CREATE INDEX orders_total_idx ON {schema}.orders (total)"),
+        ],
+    )
+    .unwrap();
+    let live = describe_schema(&mut engine, postgres.id, &schema).unwrap();
+    let comparison = compare(&read_snapshot(&first).unwrap(), &live).unwrap();
+    let tables: Vec<String> = comparison
+        .tables
+        .iter()
+        .map(|table| match &table.change {
+            Change::Differs(differences) => format!("{}: {}", table.name, differences.summary()),
+            other => panic!("expected a changed table, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(tables, ["orders: 1 column added"]);
+    let indexes: Vec<(&str, &str)> = comparison
+        .indexes
+        .iter()
+        .map(|index| (index.name.as_str(), index.change.mark()))
+        .collect();
+    assert_eq!(indexes, [("orders_total_idx", "+")]);
+
+    apply(
+        &mut engine,
+        postgres.id,
+        vec![format!("DROP SCHEMA {schema} CASCADE")],
     )
     .unwrap();
 }

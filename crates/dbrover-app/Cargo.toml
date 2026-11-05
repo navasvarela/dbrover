@@ -25,6 +25,7 @@ dbrover-language.workspace = true
 dbrover-mcp.workspace = true
 dbrover-plan.workspace = true
 dbrover-report.workspace = true
+dbrover-schema.workspace = true
 dbrover-sql.workspace = true
 dbrover-store.workspace = true
 directories.workspace = true
