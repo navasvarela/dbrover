@@ -22,6 +22,7 @@ mod password_command;
 mod placeholder;
 mod quoting;
 mod role;
+mod schema;
 mod sql_template;
 mod table;
 
@@ -68,6 +69,7 @@ pub use placeholder::{
 };
 pub use quoting::Quoting;
 pub use role::{RoleAttribute, RoleDescription};
+pub use schema::{IndexDescription, SchemaDescription, SchemaTable, ViewDescription};
 pub use sql_template::{
     Placeholder, RenderError, SelectedCells, SqlTemplate, TemplateError, TemplateValues,
 };

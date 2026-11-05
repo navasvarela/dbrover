@@ -2724,6 +2724,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dbrover-schema"
+version = "0.27.0"
+dependencies = [
+ "dbrover-core",
+ "dbrover-sql",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "dbrover-sql"
 version = "0.27.0"
 dependencies = [
