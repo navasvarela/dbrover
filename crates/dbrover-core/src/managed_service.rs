@@ -414,6 +414,15 @@ impl ServiceVendor {
             .into_iter()
             .filter(move |service| service.vendor() == self)
     }
+
+    /// The engines of DbRover's own that only this cloud runs, such as DynamoDB and Athena
+    /// on AWS, which its menu offers beside the managed services.
+    pub fn engines(self) -> &'static [DriverKind] {
+        match self {
+            Self::Aws => &[DriverKind::DynamoDb, DriverKind::Athena],
+            Self::GoogleCloud | Self::Azure | Self::Independent => &[],
+        }
+    }
 }
 
 impl fmt::Display for ManagedService {

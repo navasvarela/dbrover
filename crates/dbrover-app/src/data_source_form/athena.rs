@@ -19,9 +19,16 @@ pub struct AthenaFields {
     pub cost_guard: CostGuard,
 }
 
+/// A new data source's fields: names left empty show Athena's defaults as their hints, and
+/// saving fills them in.
 impl Default for AthenaFields {
     fn default() -> Self {
-        Self::from_config(&AthenaConfig::default())
+        Self {
+            workgroup: String::new(),
+            catalog: String::new(),
+            database: String::new(),
+            ..Self::from_config(&AthenaConfig::default())
+        }
     }
 }
 

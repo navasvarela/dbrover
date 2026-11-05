@@ -3387,6 +3387,63 @@ mod tests {
         ));
     }
 
+    /// Amazon Athena from **New data source › Amazon Web Services** (C3): a profile, a region,
+    /// the workgroup left at `primary`, and an output location for results.
+    #[test]
+    fn adds_an_athena_data_source_from_the_aws_menu() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "No data sources yet.");
+
+        harness
+            .get_all_by_label("New data source")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label_contains("Amazon Web Services").hover();
+        step_until_visible(&mut harness, "Amazon RDS");
+        // The engine list has Athena too; the AWS submenu's is the last.
+        harness
+            .get_all_by_label("Amazon Athena")
+            .last()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label_contains("New Amazon Athena data source");
+        for (field, text) in [
+            ("Profile", "analytics"),
+            ("Region", "eu-west-1"),
+            ("Database", "sales"),
+            ("Output location", "s3://dbrover-results/athena/"),
+        ] {
+            harness.get_by_label(field).focus();
+            harness.run();
+            harness.get_by_label(field).type_text(text);
+            harness.run();
+        }
+        harness.get_by_label("Save").click();
+
+        step_until_visible(&mut harness, "Expand primary@eu-west-1");
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        let [saved] = saved.as_slice() else {
+            panic!("expected one data source, got {saved:?}");
+        };
+        assert_eq!(
+            saved.config,
+            dbrover_core::ConnectionConfig::Athena(dbrover_core::AthenaConfig {
+                profile: "analytics".to_owned(),
+                region: "eu-west-1".to_owned(),
+                database: "sales".to_owned(),
+                output_location: "s3://dbrover-results/athena/".to_owned(),
+                ..dbrover_core::AthenaConfig::default()
+            })
+        );
+    }
+
     #[test]
     fn adds_a_mysql_data_source_with_the_servers_defaults() {
         let dir = tempfile::tempdir().unwrap();
