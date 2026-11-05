@@ -7,6 +7,9 @@
 //! are typed, but never runs one: the worker reads the file again and runs it, so what runs is
 //! what is saved.
 
+// TODO(RP8e): the report's page draws its editor with it; remove this when it does.
+#[expect(dead_code, reason = "the report's editor uses it from RP8e")]
+mod highlight;
 mod insights;
 mod launcher;
 mod rename_dialog;

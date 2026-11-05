@@ -739,6 +739,7 @@ fn editor(
     let marks = Marks {
         error: console.error_marker.clone(),
         current_statement: console.current_statement(),
+        code_blocks: Vec::new(),
         current_match: found.current.map(|index| found.matches[index].clone()),
         matches: found.matches.clone(),
     };

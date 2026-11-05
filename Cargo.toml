@@ -226,6 +226,9 @@ tokio-postgres-rustls = { version = "0.14.0", features = ["ring"] }
 # aws-lc-rs, where dbrover-tls's configuration names ring.
 tokio-rustls = { version = "0.26.6", default-features = false }
 toml = "1.1.8"
+# A report file's TOML lexed for highlighting in the app (docs/report-editor.md, RP8d): the
+# lexer toml itself parses with, so nothing new is built.
+toml_parser = "1.1.5"
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "registry", "std", "tracing-log"] }
