@@ -288,7 +288,8 @@ comparing it with the file at that commit, checked out or saved with `git show`.
   was just taken from is empty by construction. DataGrip's DDL dumps that still differ from
   their source [G2] are the failure this avoids.
 
-The format is decided when W13 starts (see Decisions).
+The format was decided when W13 started: TOML, one column per line, from DbRover's own
+writer ([Comparing schemas](schema-compare.md#the-format)).
 
 ### Layers
 
@@ -312,7 +313,7 @@ same two.
 | How a change is noticed | (a) A file watcher (`notify`). (b) Checking when saving and when the window comes to the front, as W6 does | **(b)** | One mechanism for every file, already proven by W6, no new dependency or thread, and Git changes files while you are in another window. |
 | Keeping the history out of Git | (a) Move `history.sqlite` to the data folder. (b) Write a `.gitignore`. (c) Only the manual | **(b)**, with (c) | H4 put the history in the settings folder on purpose, to travel with the settings in a synced folder; (a) would undo that and need a migration. (b) helps exactly the Git users and nobody else. |
 | How a run names its report's version | (a) The Git commit, by running `git`. (b) A SHA-256 of the file. (c) The file's Git blob id | **(c)** | (a) needs Git and a clean tree, and fails outside a repository. (b) works everywhere but Git can't look it up. (c) works everywhere and Git can. |
-| A snapshot's format | (a) DDL, as the object helpers write it. (b) Structured TOML, one table per object. (c) Both | **Decided at W13's start**; leaning to (b) | W13 compares structure, and reading DDL back needs a parser per dialect; TOML reads well in a diff. (a) can be run, which a snapshot shouldn't invite. |
+| A snapshot's format | (a) DDL, as the object helpers write it. (b) Structured TOML, one table per object. (c) Both | **(b)**, decided at W13's start in [Comparing schemas](schema-compare.md#the-format) | W13 compares structure, and reading DDL back needs a parser per dialect; TOML reads well in a diff. (a) can be run, which a snapshot shouldn't invite. |
 | Where the list of query folders lives | (a) `settings.toml`. (b) The data folder, per machine. (c) A file in each repository | **(a)**, paths as `~/…` | A synced settings folder brings the list, and a clone at the same place under the home folder just works; a folder missing on one machine is shown dimmed. (c) would mean DbRover writing into your repositories. |
 | Which data source a `.sql` file in a repository opens on | (a) Remembered per machine, as today. (b) A comment in the file. (c) A file beside it | **(a)**, revisited if asked | The first open asks once; a magic comment is one more format to define for a choice made once. |
 
