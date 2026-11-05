@@ -169,6 +169,8 @@ and E4's golden tests already cover what each stage writes.
 -- script to rename it instead, or its data is lost.
 
 BEGIN;
+-- The definitions below name the schema's own objects without the schema.
+SET LOCAL search_path TO staging;
 
 -- Drops column orders.legacy_code and the values in it.
 ALTER TABLE staging.orders DROP COLUMN legacy_code;
@@ -182,6 +184,13 @@ COMMIT;
 
 - **Names** are written for the left's schema, quoted as E-track quotes them (bare where that
   reads the same everywhere).
+- **The search path** is set to the left's schema for the script's transaction
+  (`SET LOCAL`), because the definitions it copies (a view's query, a default, a check, an
+  enum column's type) name the schema's own objects without the schema, as they were read.
+  Without it they would resolve to whatever schema the console's search path finds first.
+  *(Added in W13d: the plan's example had no such line.)*
+- **A primary key** keeps the right's name: one created or re-added under another name is
+  renamed with `ALTER TABLE … RENAME CONSTRAINT`.
 - **`BEGIN` and `COMMIT`** wrap it where DDL is transactional, as PostgreSQL's is, so a failure
   part way leaves the console in a failed transaction to roll back, with nothing half done. The
   console's transaction status shows it, as for any statement.
@@ -189,7 +198,9 @@ COMMIT;
   each get a comment saying what is lost.
 - **What can't be written** is a comment in its place, with the reason, and the comparison marks
   the difference: "-- Not written: column orders.id becomes an identity column, which can't be
-  changed in place; change it by hand." The rest of the script is still written.
+  changed in place; change it by hand." The rest of the script is still written. So far that
+  is a column becoming or ceasing to be an identity column, a column changing to or from a
+  serial type, and any change E4's builder refuses.
 - **An empty comparison** has no script: the tab says the schemas are the same, and
   **Open script** is off.
 
