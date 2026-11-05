@@ -17,6 +17,7 @@
 
 mod combine;
 mod declared;
+mod embedded;
 mod events;
 mod file_name;
 mod hints;
@@ -32,6 +33,7 @@ mod statement;
 mod text;
 mod typing;
 
+pub use embedded::{Embedded, PrqlToken, StepLanguage, embedded_code, prql_tokens};
 pub use events::{
     Batch, LimitHit, LimitSetIn, LoadedColumn, Preview, RunEvent, RunFailure, SourceStart, Step,
     WrittenFile,

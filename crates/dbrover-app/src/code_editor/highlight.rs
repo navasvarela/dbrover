@@ -26,6 +26,9 @@ pub struct Marks {
     pub error: Option<Range<usize>>,
     /// Shaded: the statement the cursor is in.
     pub current_statement: Option<Range<usize>>,
+    /// Shaded as the current statement is: code inside another language's text, such as a
+    /// report step's SQL inside its TOML, so where it starts and stops shows.
+    pub code_blocks: Vec<Range<usize>>,
     /// Highlighted: what the find bar found, in order.
     pub matches: Vec<Range<usize>>,
     /// Highlighted more strongly: the match the find bar selected.
@@ -139,10 +142,15 @@ pub fn layout_job(
             {
                 format.underline = error_stroke;
             }
-            if marks
-                .current_statement
-                .as_ref()
-                .is_some_and(|current| overlaps(current, &piece))
+            let in_block = marks
+                .code_blocks
+                .iter()
+                .any(|block| overlaps(block, &piece));
+            if in_block
+                || marks
+                    .current_statement
+                    .as_ref()
+                    .is_some_and(|current| overlaps(current, &piece))
             {
                 format.background = current_background;
             }
