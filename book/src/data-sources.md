@@ -8,9 +8,10 @@ keychain, never in that file.
 
 Click **+** at the top of the explorer (or **New data source** on the Welcome tab) and choose
 **PostgreSQL**, **SQLite**, **MySQL / MariaDB**, **SQL Server**, **DuckDB**, **ClickHouse**,
-**Redis / Valkey**, **MongoDB**, **Elasticsearch / OpenSearch**, **Cassandra / ScyllaDB** or
-**DynamoDB**. A DynamoDB data source signs in with your AWS profile rather than a password: see
-[DynamoDB](dynamodb.md).
+**Redis / Valkey**, **MongoDB**, **Elasticsearch / OpenSearch**, **Cassandra / ScyllaDB**,
+**DynamoDB**, **Amazon Athena** or **Trino / Presto**. A DynamoDB or Athena data source signs in
+with your AWS profile rather than a password: see [DynamoDB](dynamodb.md) and
+[Athena and Trino](athena-trino.md).
 
 ![The New PostgreSQL data source dialog](images/data-source-dialog.png)
 
@@ -333,8 +334,8 @@ Read-only uses the same checks as an AI assistant's read-only projects (see
   open the file read-only, so `SELECT nextval('orders_id')` fails on DuckDB, since it advances
   the sequence. **ClickHouse** sends `readonly = 2` with every statement: ClickHouse then
   refuses changes, and lifting the setting, while a query's own `SETTINGS` still run.
-- **SQL Server**, **Redis**, **MongoDB**, **Elasticsearch**, **OpenSearch** and **DynamoDB**
-  have no read-only mode for one connection: statements are still checked, but a write inside a
+- **SQL Server**, **Redis**, **MongoDB**, **Elasticsearch**, **OpenSearch**, **DynamoDB**,
+  **Athena** and **Trino** have no read-only mode for one connection: statements are still checked, but a write inside a
   procedure, a function or a script isn't stopped. The dialog says so. Sign in as a user who
   may only read to have the database refuse it; [The MCP login](mcp.md#the-mcp-login) shows how
   to make one on each.

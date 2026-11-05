@@ -95,8 +95,10 @@ than you allowed:
 
 - **Ask before reading a whole table**, on by default, holds back a statement that would read
   every item of a table. [DynamoDB](dynamodb.md#the-scan-guard) is the first engine with it.
-- **A byte limit**, for engines that say how many bytes a statement will scan before it runs.
-  None does yet; BigQuery's dry run will be the first. It is kept in `data_sources.toml` as
+- **A byte limit.** Athena says what a query scanned only once it runs, so there the limit
+  stops a query that passes it, where the workgroup has no limit of its own: see
+  [Athena and Trino](athena-trino.md#what-a-query-costs). An engine that can say before it runs,
+  as BigQuery's dry run will, asks first. It is kept in `data_sources.toml` as
   `ask_above_bytes = 10000000000`.
 
 A console asks before running a held statement, with what it would read and **Scan anyway**,

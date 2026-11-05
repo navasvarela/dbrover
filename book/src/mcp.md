@@ -173,7 +173,9 @@ SQL Server has no read-only transaction, and Redis, MongoDB, Elasticsearch and O
 Cassandra and ScyllaDB, and DynamoDB have no read-only session at all, so their data sources
 are served to MCP clients only through an [MCP login](#the-mcp-login) whose grants allow
 nothing but reading. DynamoDB's is an **MCP profile**, an AWS profile whose IAM policy allows
-only reading; see [DynamoDB](dynamodb.md#safety-and-ai-assistants). Without one, a data
+only reading; see [DynamoDB](dynamodb.md#safety-and-ai-assistants). Athena's is an MCP profile
+too, and Trino's a user whose access control allows only reading; see
+[Athena and Trino](athena-trino.md). Without one, a data
 source isn't served, and the server's log says why when it starts; the project's page lists it
 too.
 

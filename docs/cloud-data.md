@@ -1,8 +1,9 @@
 # Cloud and big data
 
 Status: **C0 built** (2026-11-02); **C1 built** (2026-11-03), tried only against local
-stand-ins; **C2 built** (2026-11-04), tried only against local stand-ins; **C3 started**
-(2026-11-05); C4 to C6 planned, not scheduled. Proposed on
+stand-ins; **C2 built** (2026-11-04), tried only against local stand-ins; **C3 built**
+(2026-11-05), Athena tried only against exchanges written from its documentation and Trino
+against its container; C4 to C6 planned, not scheduled. Proposed on
 2026-10-27; the order and the decisions below are confirmed as each milestone starts. The
 providers' priority was set on 2026-10-28: AWS, then Google Cloud, then Azure. On 2026-11-01
 DynamoDB was moved ahead of the track, as the NoSQL track's [N5](nosql.md#n5--dynamodb), with
@@ -702,14 +703,20 @@ Athena comes first, then Trino.
 
 - **C3a — Plan:** this section, C3's rows in [Decisions](#decisions) and [Risks](#risks), the
   roadmap's entry in layers, and RS6's entry.
-- **C3b — The Trino dialect:** `Dialect::Trino` in `dbrover-sql`: double-quoted names and
+- **C3b — The Trino dialect** (built): `Dialect::Trino` in `dbrover-sql`: double-quoted names and
   backquoted ones for Athena's DDL, Trino's functions for completion, `EXPLAIN` for ⌥⌘E,
   `information_schema` and Trino's `system` catalog hidden unless **System** is ticked, the
   verbs that write, and `sqlparser`'s generic dialect for the syntax check (it has no Trino
   one), with a corpus of Trino's and Athena's statements and the gaps it rejects wrongly.
   **Exit:** the corpus passes or names its gaps; a script with Athena's DDL and Trino's queries
   splits and formats as the engines read them.
-- **C3c — Athena: settings and queries as jobs:** `ConnectionConfig::Athena` and
+  **As built:** every Trino statement of the 70-statement corpus was first run through Trino
+  484's own parser. `sqlparser`'s generic dialect rejects three things it accepts: `VALUES 1, 2`
+  without parentheses (a new `ParserGap::BareValues`) and `FOR VERSION AS OF` and `FOR
+  TIMESTAMP AS OF`; it reads Athena's Hive DDL as it is. A classify corpus
+  (`tests/classify/trino.sql`) covers read-only mode: `UNLOAD`, `MSCK REPAIR`, `CALL`, `USE`
+  and `SET SESSION` are administration. The object helpers write no Trino DDL (`writes_ddl`).
+- **C3c — Athena: settings and queries as jobs** (built): `ConnectionConfig::Athena` and
   `DriverKind::Athena` with the sign-in (C0's AWS profile or default chain), region,
   workgroup (`primary` by default), catalog (`AwsDataCatalog`), database, an output location
   for workgroups without one, an endpoint for the test server, and C0's cost guard; a
@@ -721,7 +728,15 @@ Athena comes first, then Trino.
   stay apart; a failed query's message reaches the console with its position; cancel stops the
   job by its id; a workgroup without an output location, and a data source without one, is an
   error that says to set one; the settings round-trip through `data_sources.toml`.
-- **C3d — The Glue Data Catalog in the explorer:** catalogs, databases, then tables and views
+  **As built:** paged over three short pages rather than past 1,000 rows, since Athena may end a
+  page early and the replay files stay readable; the header row is dropped by PyAthena's rule,
+  when the first row equals the column names. `DynamoDbSignIn` became `AwsSignInKind`, shared
+  with Athena, and an emulator's sign-in now reads none of the machine's AWS files (an empty
+  config in memory), DynamoDB's tests included. A failed job carries a position, and a job's
+  page the rows changed, since Athena's `UpdateCount` comes with the result. The dialog's rows,
+  the logo (DbRover's own glyph, as DynamoDB's) and the read-only guard (an AWS profile's IAM
+  policy, as for DynamoDB) came forward from C3e, as the compiler asked for them.
+- **C3d — The Glue Data Catalog in the explorer** (built): catalogs, databases, then tables and views
   (fifty a request, the explorer's filter sent as Athena's expression), then columns, with
   partition keys marked; **Show definition** from `SHOW CREATE TABLE` or `SHOW CREATE VIEW`;
   **Open data** with a `LIMIT`.
@@ -729,14 +744,23 @@ Athena comes first, then Trino.
   partitioned table and a view; a level of 120 tables pages in three requests; the filter
   reaches Athena as an expression; nothing the explorer does starts a query except
   **Show definition**.
-- **C3e — Athena in the data source dialog:** **New data source › Amazon Web Services ›
+  **As built:** the level pages over three requests of Athena's choosing rather than 120 tables.
+  **Show definition** is offered only in the data source's own catalog, which its queries run
+  in. **Open data** reads `SELECT * FROM catalog.schema.table LIMIT 1000` for Athena and Trino
+  alike (the Trino dialect's `read_all`), since Athena runs a query to its end and bills its
+  scan whatever the console reads.
+- **C3e — Athena in the data source dialog** (built): **New data source › Amazon Web Services ›
   Amazon Athena**, with **Sign in with** (AWS's default chain or a profile), **Region**,
   **Workgroup**, **Catalog**, **Database** and **Output location**, each taking `${NAME}`
   placeholders; Athena's logo; the MCP server's read-only mode (statements classified, as for
   MotherDuck, with an MCP login being another profile, as for DynamoDB).
   **Exit:** a kittest adds an Athena data source from the menu and it saves as typed; with the
   replay server, it connects and browses.
-- **C3f — Bytes scanned and the per-query limit:** a statement's summary gains its job's last
+  **As built:** what was left after C3c: **Amazon Web Services** lists the engines only AWS runs,
+  DynamoDB and Athena, above its services, and a new Athena data source shows Athena's defaults
+  as hints. The kittest saves; connecting and browsing are the driver's tests, since the replay
+  server is the driver crate's test code.
+- **C3f — Bytes scanned and the per-query limit** (built): a statement's summary gains its job's last
   progress, shown after each statement and kept in the history; `GetWorkGroup` when connecting;
   the data source's limit as the workgroup's cutoff where it has none, stopping the query at
   the poll that passes it; the limit's field in Athena's dialog (**Stop queries above**), with
@@ -745,7 +769,11 @@ Athena comes first, then Trino.
   workgroup without one, a query whose second poll reports 1.4 GB is stopped by its id and
   fails naming both; with the workgroup's own limit, DbRover stops nothing; the limit
   round-trips as `ask_above_bytes`.
-- **C3g — Trino:** `ConnectionConfig::Trino` and `DriverKind::Trino` on the shared server
+  **As built:** a result cursor says what its statement did once it ended
+  (`ResultCursor::progress`), and the console's result line ends `· 2.5 MB read`. The history
+  doesn't keep it yet: that needs a new column and the field on every history entry, left for a
+  follow-up. Test connection names the workgroup's own limit.
+- **C3g — Trino** (built): `ConnectionConfig::Trino` and `DriverKind::Trino` on the shared server
   settings (host, port 8080, user, password, TLS, SSH), with the catalog and schema a console
   starts in and the protocol's spelling (Trino's, or Presto's `X-Presto-…` headers); a
   `dbrover-driver-trino` crate over hyper and rustls, as the Elasticsearch driver's requests
@@ -760,13 +788,22 @@ Athena comes first, then Trino.
   `check_transactions` and `check_describe_table` are skipped and say why (connectors decide
   transactions; no table has a key). On every pull request, against the small server: each
   header's round trip, a 503 retried, Presto's headers, and a result's values in their text form.
-- **C3h — Trino in the data source dialog:** a **Trino** data source with **Catalog**,
+  **As built:** the suite ran against Trino 484 locally, the cancel test eight times without a
+  flake. `check_validate` is left out too, since the `memory` connector refuses `DELETE`; the
+  driver's own test checks statements instead. `nextUri` is followed at the client's own address,
+  since a coordinator names itself as it sees itself. A password goes only over HTTPS. The
+  dialog's rows, Trino's logo and the read-only guard came forward from C3h. The `trino` service
+  mounts only the `memory` and `tpch` catalogs (`docker/trino/`), and is healthy 6 s after
+  `docker compose up` on a laptop.
+- **C3h — Trino in the data source dialog** (built): a **Trino** data source with **Catalog**,
   **Schema** and **Protocol** (Trino or Presto), Trino's logo, Starburst Galaxy in C1's table
   of services (`*.galaxy.starburst.io`, 443, `verify-full`) and in **Other cloud services**,
   and the MCP server's read-only mode as Athena's.
   **Exit:** a kittest adds a Trino data source and a Starburst Galaxy one, each saving as typed;
   Galaxy's host is recognised.
-- **C3i — Manual and demo note:** a page in the manual's Data sources part, **Athena and
+  **As built:** what was left after C3g: Starburst Galaxy in the table of services
+  (`ServiceEngine::Trino`), and the kittests.
+- **C3i — Manual and demo note** (built): a page in the manual's Data sources part, **Athena and
   Trino**, and the C3 demo note in the roadmap, with the live checks.
 
 **Exit:** Athena tested with exchanges replayed in CI and tried live by the user (the demo
