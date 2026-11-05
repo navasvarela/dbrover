@@ -251,9 +251,19 @@ mod tests {
 
         assert!(Arc::ptr_eq(&first, &second), "one data source, one tunnel");
         assert!(!Arc::ptr_eq(&first, &other), "each data source its own");
-        let first_port = first.local_addr();
+        let old = Arc::downgrade(&first);
         drop((first, second));
+        assert!(
+            old.upgrade().is_none(),
+            "the old tunnel closed with its last holder"
+        );
         let reopened = tunnels.lease(shop, request).await.unwrap();
-        assert_ne!(reopened.local_addr(), first_port, "the old tunnel closed");
+        // Not a comparison of local ports: the system may hand the closed tunnel's port to the
+        // new one. `old` keeps the old tunnel's allocation alive, so the new tunnel cannot sit
+        // at the same address, and a different address means a new tunnel was opened.
+        assert!(
+            !std::ptr::eq(Arc::as_ptr(&reopened), old.as_ptr()),
+            "a new tunnel opened"
+        );
     }
 }

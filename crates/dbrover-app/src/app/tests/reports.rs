@@ -839,13 +839,26 @@ fn renaming_a_report_keeps_its_runs() {
     step_until(&mut harness, "the dialog closing", |harness| {
         harness.query_by_label("Rename report").is_none()
     });
+    // The dialog closes on `ReportRenamed`, which arrives before the two things that follow
+    // it: the explorer's new listing, and the history's thread moving the runs. Until the
+    // listing arrives, the explorer still shows "Trial balance" as `trial-balance`, which has
+    // no runs, so clicking it then waits for "finished" forever. That failed on macOS CI.
+    let renamed = name("monthly-balance");
+    step_until(
+        &mut harness,
+        "the renamed report listed, with its runs",
+        |harness| {
+            let reports = &harness.state().reports;
+            reports.find(&renamed).is_some() && reports.runs(&renamed).is_some()
+        },
+    );
 
     let reports = dir.path().join("reports");
     assert!(reports.join("monthly-balance.toml").exists());
     assert!(!reports.join("trial-balance.toml").exists());
     let kept = history.open().unwrap();
     assert!(kept.runs(&name("trial-balance"), 5).unwrap().is_empty());
-    assert_eq!(kept.runs(&name("monthly-balance"), 5).unwrap().len(), 1);
+    assert_eq!(kept.runs(&renamed, 5).unwrap().len(), 1);
     step_until_visible(&mut harness, "Trial balance");
     harness.get_by_label("Trial balance").click();
     step_until_visible(&mut harness, "finished");
