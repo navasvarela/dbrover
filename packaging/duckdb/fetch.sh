@@ -5,6 +5,9 @@
 #
 #   packaging/duckdb/fetch.sh aarch64-apple-darwin target/duckdb >> "$GITHUB_ENV"
 #
+# `packaging/duckdb/fetch.sh --version` prints only the DuckDB version, which CI puts in the key
+# of the Actions cache that keeps the downloads (.github/actions/duckdb/action.yml).
+#
 # The build must also pass `--cfg dbrover_prebuilt_duckdb` in RUSTFLAGS, which drops the
 # `bundled` feature from dbrover-driver-duckdb's duckdb dependency.
 #
@@ -14,11 +17,9 @@ set -euo pipefail
 
 usage() {
     echo "usage: $0 <rust-target> <download-dir>" >&2
+    echo "       $0 --version" >&2
     exit 2
 }
-[[ $# -eq 2 ]] || usage
-target=$1
-download_dir=$2
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 
@@ -29,6 +30,14 @@ duckdb_version() {
     [[ -n "$encoded" ]] || { echo "libduckdb-sys is missing from Cargo.lock" >&2; exit 1; }
     echo "$((10#$encoded / 10000)).$((10#$encoded / 100 % 100)).$((10#$encoded % 100))"
 }
+
+if [[ $# -eq 1 && "$1" == --version ]]; then
+    duckdb_version
+    exit
+fi
+[[ $# -eq 2 ]] || usage
+target=$1
+download_dir=$2
 
 # Static libraries on Linux and macOS. DuckDB publishes no static library built with MSVC, so
 # Windows links the DLL, which the installer ships beside dbrover.exe.
@@ -59,7 +68,12 @@ zip="$download_dir/v$version-$archive"
 lib_dir="$download_dir/v$version-$target"
 
 if [[ ! -f "$zip" ]] || [[ "$(sha256 "$zip")" != "$pinned" ]]; then
-    curl -fsSL --retry 3 -o "$zip.part" \
+    # GitHub's release downloads answer 504 now and then, sometimes for longer than the 7 seconds
+    # three retries used to wait (2026-11-05, run 42045110073). Without --retry-delay, curl
+    # waits 1 second and doubles that before each retry, so eight retries span about 4 minutes.
+    # --retry-all-errors also retries what curl takes for a permanent failure, such as a
+    # connection reset mid-transfer. The cost: a wrong pin's 404 fails after 4 minutes, not at once.
+    curl -fsSL --retry 8 --retry-all-errors -o "$zip.part" \
         "https://github.com/duckdb/duckdb/releases/download/v$version/$archive"
     actual=$(sha256 "$zip.part")
     if [[ "$actual" != "$pinned" ]]; then

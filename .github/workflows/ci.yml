@@ -134,7 +134,9 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # DuckDB's own library for this runner, checked against packaging/duckdb/SHA256SUMS; the
-      # tests on Windows load its DLL from PATH.
+      # tests on Windows load its DLL from PATH. The action restores the download from the cache.
+      - if: env.CODE != 'false'
+        uses: ./.github/actions/duckdb
       - if: env.CODE != 'false'
         name: Fetch DuckDB's prebuilt library
         shell: bash
