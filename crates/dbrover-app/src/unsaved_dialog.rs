@@ -1,6 +1,7 @@
-//! Asks before closing a console, or quitting, would lose changes not written to `.sql` files.
+//! Asks before closing a console or a report's tab, or quitting, would lose changes not
+//! written to their files.
 
-use dbrover_store::ConsoleKey;
+use dbrover_store::{ConsoleKey, ReportName};
 use egui::Id;
 
 use crate::dialog::{self, DialogSize};
@@ -16,19 +17,22 @@ pub enum UnsavedChoice {
     Cancel,
 }
 
+/// A tab whose text isn't all written to its file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnsavedFile {
+    Console(ConsoleKey),
+    Report(ReportName),
+}
+
 pub struct UnsavedConfirmation {
     pub closing: Closing,
-    /// The consoles with unsaved changes, and their titles.
-    pub consoles: Vec<(ConsoleKey, String)>,
+    /// The tabs with unsaved changes, and their titles.
+    pub files: Vec<(UnsavedFile, String)>,
 }
 
 impl UnsavedConfirmation {
     pub fn show(&self, ctx: &egui::Context) -> Option<UnsavedChoice> {
-        let names: Vec<&str> = self
-            .consoles
-            .iter()
-            .map(|(_, title)| title.as_str())
-            .collect();
+        let names: Vec<&str> = self.files.iter().map(|(_, title)| title.as_str()).collect();
         let title = match names.as_slice() {
             [name] => format!("Save the changes to {name}?"),
             _ => "Save the changes to these files?".to_owned(),

@@ -7,8 +7,7 @@
 //! are typed, but never runs one: the worker reads the file again and runs it, so what runs is
 //! what is saved.
 
-// TODO(RP8e): the report's page draws its editor with it; remove this when it does.
-#[expect(dead_code, reason = "the report's editor uses it from RP8e")]
+mod file;
 mod highlight;
 mod insights;
 mod launcher;
@@ -19,10 +18,10 @@ mod tab;
 use std::collections::BTreeMap;
 use std::num::{NonZeroU32, NonZeroUsize};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use dbrover_core::DataSource;
-use dbrover_engine::{Command, Event, ReportText};
+use dbrover_engine::{Command, Event, ReportSaveFailure, ReportText};
 use dbrover_export::CustomFormat;
 use dbrover_report::{
     Batch, CombineLimits, LimitDefaults, LoadedColumn, OutputLimits, Plan, Preview, Report,
@@ -35,6 +34,7 @@ use dbrover_store::{
 };
 use jiff::Timestamp;
 
+pub use file::{PlanInputs, ReportFile, SaveError, Saved};
 pub use launcher::{PARENT_ENV, ProcessLauncher, ReportLauncher, RunningReport};
 pub use rename_dialog::{RenameAction, RenameReportDialog};
 pub use tab::{ReportView, show};
@@ -99,6 +99,8 @@ pub enum ReportAction {
     ChooseFolder(ReportName),
     /// Opens a file or folder with the system's own app.
     OpenPath(PathBuf),
+    /// Writes the report's file from its tab's text.
+    Save(ReportName),
     /// Deletes every run of the report the history keeps.
     ClearRuns(ReportName),
     /// Asks for a new name for the report's file, which its runs follow.
@@ -142,6 +144,8 @@ pub struct Listed {
     pub name: ReportName,
     pub path: PathBuf,
     pub read: Result<Report, Vec<String>>,
+    /// The file's text, and when it was last modified; `None` if it couldn't be read.
+    pub text: Option<(String, Option<SystemTime>)>,
 }
 
 impl Listed {
@@ -154,7 +158,18 @@ impl Listed {
             name: found.name.clone(),
             path: found.path.clone(),
             read,
+            text: found
+                .text
+                .as_ref()
+                .ok()
+                .map(|text| (text.clone(), found.modified)),
         }
+    }
+
+    /// The file as its tab just wrote it.
+    fn written(&mut self, text: String, modified: Option<SystemTime>) {
+        self.read = read_report(&text);
+        self.text = Some((text, modified));
     }
 
     /// The name in `[report]`, or the file's when it can't be read.
@@ -186,6 +201,30 @@ pub struct ReportState {
     pub last_run: Option<RunRecord>,
     /// Whether **Clear history** is asking to be sure.
     pub confirm_clear: bool,
+    /// The file as the tab edits it, once the tab has read it.
+    pub file: Option<ReportFile>,
+    /// **Hide the file**: the tab shows the run's inputs and results only.
+    pub file_hidden: bool,
+    /// The run panel's tab the user picked last; `None` follows the report's runs.
+    pub run_panel: Option<RunPanel>,
+}
+
+/// The run panel's tabs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunPanel {
+    LastRun,
+    Preview,
+    Runs,
+}
+
+/// What the app does after the reports took in an event.
+#[derive(Debug, Default)]
+pub struct Applied {
+    /// A report just created, whose tab to open.
+    pub open: Option<ReportName>,
+    pub command: Option<Command>,
+    /// A report saved by **Save and run**, to run now.
+    pub run: Option<ReportName>,
 }
 
 /// One run, as its events have told it so far.
@@ -546,29 +585,35 @@ impl Reports {
         Some(self.setup.as_ref()?.files.dir())
     }
 
-    /// Takes in what the engine read. Returns a report to open, once one just created is
-    /// listed, and the command to list them again after one is created.
-    pub fn apply(&mut self, event: &Event) -> (Option<ReportName>, Option<Command>) {
+    /// Takes in what the engine read or wrote.
+    pub fn apply(&mut self, event: &Event) -> Applied {
         match event {
             Event::ReportsListed(Ok(found)) => {
                 let listed: Vec<Listed> = found.iter().map(Listed::new).collect();
                 let created = self
                     .to_open
                     .take_if(|name| listed.iter().any(|listed| &listed.name == name));
+                self.follow_files(&listed);
                 self.listing = Listing::Loaded(listed);
-                (created, None)
+                Applied {
+                    open: created,
+                    ..Applied::default()
+                }
             }
             Event::ReportsListed(Err(error)) => {
                 self.listing = Listing::Unavailable(error.clone());
-                (None, None)
+                Applied::default()
             }
             Event::ReportCreated(Ok(name)) => {
                 self.to_open = Some(name.clone());
-                (None, self.reload())
+                Applied {
+                    command: self.reload(),
+                    ..Applied::default()
+                }
             }
             Event::ReportCreated(Err(error)) => {
                 tracing::error!("could not create a report: {error}");
-                (None, None)
+                Applied::default()
             }
             Event::ReportRenamed {
                 from,
@@ -578,16 +623,114 @@ impl Reports {
                     self.states.insert(to.clone(), state);
                 }
                 self.runs.remove(from);
-                (None, self.reload())
+                Applied {
+                    command: self.reload(),
+                    ..Applied::default()
+                }
             }
             Event::ReportRunsFound { report, result } => {
                 if let Err(error) = result {
                     tracing::warn!("could not read the runs of {report}: {error}");
                 }
                 self.runs.insert(report.clone(), result.clone());
-                (None, None)
+                Applied::default()
             }
-            _ => (None, None),
+            Event::ReportSaved { name, result } => self.saved(name, result),
+            _ => Applied::default(),
+        }
+    }
+
+    /// Shows each open tab the file as listed, where nothing typed in it would be lost.
+    fn follow_files(&mut self, listed: &[Listed]) {
+        for found in listed {
+            let file = self
+                .states
+                .get_mut(&found.name)
+                .and_then(|state| state.file.as_mut());
+            if let (Some(file), Some((text, modified))) = (file, &found.text) {
+                file.read_again(text, *modified);
+            }
+        }
+    }
+
+    /// Takes in a save's answer: the listing holds the text written, and **Save and run** runs.
+    fn saved(
+        &mut self,
+        name: &ReportName,
+        result: &Result<Option<SystemTime>, ReportSaveFailure>,
+    ) -> Applied {
+        let Some(file) = self
+            .states
+            .get_mut(name)
+            .and_then(|state| state.file.as_mut())
+        else {
+            return Applied::default();
+        };
+        let Saved::Written { text, then_run } = file.saved(result) else {
+            return Applied::default();
+        };
+        if let Listing::Loaded(listed) = &mut self.listing
+            && let Some(found) = listed.iter_mut().find(|listed| &listed.name == name)
+        {
+            let modified = result.as_ref().ok().copied().flatten();
+            found.written(text, modified);
+        }
+        Applied {
+            run: then_run.then(|| name.clone()),
+            ..Applied::default()
+        }
+    }
+
+    /// The file `name`'s tab edits, read from the listing the first time it is asked for.
+    pub fn file_mut(&mut self, name: &ReportName) -> Option<&mut ReportFile> {
+        let read = self
+            .find(name)
+            .and_then(|listed| listed.text.clone())
+            .map(|(text, modified)| ReportFile::new(text, modified));
+        let state = self.state_mut(name);
+        if state.file.is_none() {
+            state.file = read;
+        }
+        state.file.as_mut()
+    }
+
+    /// The command that writes `name`'s file from its tab's text, if there is one to send.
+    pub fn save(&mut self, name: &ReportName) -> Option<Command> {
+        let files = self.setup.as_ref()?.files.clone();
+        self.file_mut(name)?.save(&files, name)
+    }
+
+    /// Saves `name`'s file, then runs it once written.
+    pub fn save_and_run(&mut self, name: &ReportName) -> Option<Command> {
+        let files = self.setup.as_ref()?.files.clone();
+        self.file_mut(name)?.save_and_run(&files, name)
+    }
+
+    /// Whether `name`'s tab has text its file doesn't.
+    pub fn is_unsaved(&self, name: &ReportName) -> bool {
+        self.state(name)
+            .and_then(|state| state.file.as_ref())
+            .is_some_and(ReportFile::is_unsaved)
+    }
+
+    /// Each report whose tab has unsaved changes, and its title.
+    pub fn unsaved(&self) -> Vec<(ReportName, String)> {
+        self.states
+            .iter()
+            .filter(|(_, state)| state.file.as_ref().is_some_and(ReportFile::is_unsaved))
+            .map(|(name, _)| {
+                let title = self
+                    .find(name)
+                    .map_or_else(|| name.to_string(), |listed| listed.title().to_owned());
+                (name.clone(), title)
+            })
+            .collect()
+    }
+
+    /// Forgets the text of `name`'s tab, which is closing.
+    pub fn close(&mut self, name: &ReportName) {
+        if let Some(state) = self.states.get_mut(name) {
+            state.file = None;
         }
     }
 
@@ -681,7 +824,10 @@ impl Reports {
                 )));
             }
         }
-        self.state_mut(name).last_run = Some(record);
+        let state = self.state_mut(name);
+        state.last_run = Some(record);
+        // The run panel follows the run, whichever tab was picked before.
+        state.run_panel = None;
     }
 
     pub fn cancel(&mut self) {
@@ -739,29 +885,34 @@ pub fn staging_name() -> String {
     format!(".dbrover-report-{}-{nanos}", std::process::id())
 }
 
-/// Opens a file or folder with the system's own app, as a `file://` address.
-pub fn open_path(ctx: &egui::Context, path: &Path) {
-    ctx.open_url(egui::OpenUrl::new_tab(file_url(path)));
+/// Opens a file or folder with the system's own app, as double-clicking it would: a
+/// workbook in its spreadsheet app, a folder in the file manager.
+///
+/// Not `egui`'s `open_url` with a `file://` address: that hands the address to the default
+/// browser, which on macOS opened a report's TOML, and its written files, in the browser.
+pub fn open_path(path: &Path) {
+    let mut command = opener(path);
+    match command.spawn() {
+        // Waited for on a thread of its own, so the exited opener leaves no zombie behind.
+        Ok(mut child) => {
+            std::thread::spawn(move || child.wait());
+        }
+        Err(error) => tracing::warn!("could not open {}: {error}", path.display()),
+    }
 }
 
-/// `path` as a `file://` address, with what an address can't hold percent-encoded:
-/// `/Users/me/My Reports` as `file:///Users/me/My%20Reports`, `C:\Reports` as
-/// `file:///C:/Reports`.
-fn file_url(path: &Path) -> String {
-    let text = path.to_string_lossy().replace('\\', "/");
-    let mut url = String::from("file://");
-    if !text.starts_with('/') {
-        url.push('/');
-    }
-    for byte in text.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b'-' | b'_' | b'.' | b'~' | b':' => {
-                url.push(char::from(byte));
-            }
-            other => url.push_str(&format!("%{other:02X}")),
-        }
-    }
-    url
+/// The platform's command that opens `path` with its app.
+fn opener(path: &Path) -> std::process::Command {
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(windows) {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    let mut command = std::process::Command::new(program);
+    command.arg(path);
+    command
 }
 
 #[cfg(test)]
@@ -769,18 +920,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn writes_paths_as_file_addresses() {
-        let cases = [
-            ("/Users/me/My Reports", "file:///Users/me/My%20Reports"),
-            ("/tmp/a#b%c.csv", "file:///tmp/a%23b%25c.csv"),
-            ("C:\\Reports\\tb.xlsx", "file:///C:/Reports/tb.xlsx"),
-        ];
-        for (path, url) in cases {
-            assert_eq!(file_url(Path::new(path)), url, "{path}");
-        }
+    fn opens_a_path_with_the_platforms_opener() {
+        let command = opener(Path::new("/Users/ada/My Reports/sales.xlsx"));
+        let expected = if cfg!(target_os = "macos") {
+            "open"
+        } else if cfg!(windows) {
+            "explorer"
+        } else {
+            "xdg-open"
+        };
+        assert_eq!(command.get_program(), expected);
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args, ["/Users/ada/My Reports/sales.xlsx"]);
     }
 
-    /// A run of one source and one output, ended by `end`, as the history keeps it.
     #[test]
     fn keeps_a_run_however_it_ends() {
         let failure = RunFailure::new(Step::Combine, "no memory");

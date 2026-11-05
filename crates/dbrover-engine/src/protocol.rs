@@ -358,6 +358,14 @@ pub enum Command {
     /// Lists the report files in `reports/`, with their text. Answered by
     /// [`Event::ReportsListed`].
     ListReports(ReportFiles),
+    /// Writes `text` over the report `name`, unless its file changed since `read_at`, when it
+    /// was read. Answered by [`Event::ReportSaved`].
+    SaveReport {
+        files: ReportFiles,
+        name: ReportName,
+        text: String,
+        read_at: Option<SystemTime>,
+    },
     /// Writes `text` as a new report named after `name`, or `name-2`, … if that is taken.
     /// Answered by [`Event::ReportCreated`].
     CreateReport {
@@ -589,6 +597,11 @@ pub enum Event {
     },
     /// The report files [`Command::ListReports`] found, or why the folder couldn't be read.
     ReportsListed(Result<Vec<ReportText>, String>),
+    /// The answer to [`Command::SaveReport`]: the file's new modification time.
+    ReportSaved {
+        name: ReportName,
+        result: Result<Option<SystemTime>, ReportSaveFailure>,
+    },
     /// The name [`Command::CreateReport`] wrote the new report under, or why it couldn't.
     ReportCreated(Result<ReportName, String>),
     /// What [`Command::RenameReport`] renamed, or why it couldn't.
@@ -1086,4 +1099,14 @@ pub struct ReportText {
     pub name: ReportName,
     pub path: PathBuf,
     pub text: Result<String, String>,
+    /// When the file was last modified, for a save to check it hasn't changed since.
+    pub modified: Option<SystemTime>,
+}
+
+/// Why a report wasn't saved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReportSaveFailure {
+    /// Another program changed the file since it was read.
+    ChangedOnDisk,
+    Failed(String),
 }

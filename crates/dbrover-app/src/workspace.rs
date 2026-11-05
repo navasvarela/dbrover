@@ -229,6 +229,13 @@ pub fn open_report_tab(layout: &mut DockState<Tab>, name: ReportName) {
     }
 }
 
+/// Closes the report's tab, if it is open.
+pub fn close_report_tab(layout: &mut DockState<Tab>, name: &ReportName) {
+    if let Some(path) = layout.find_tab(&Tab::Report(name.clone())) {
+        layout.remove_tab(path);
+    }
+}
+
 /// Points the tab of the report `from`, if one is open, at `to`, its new name, where it is.
 pub fn rename_report_tab(layout: &mut DockState<Tab>, from: &ReportName, to: &ReportName) {
     for (_, tab) in layout.iter_all_tabs_mut() {
@@ -329,6 +336,8 @@ pub struct Panels<'a> {
     /// Consoles whose tabs the user asked to close this frame. The tabs stay until the app
     /// closes them, which may first ask about rolling back an open transaction.
     pub close_requests: &'a mut Vec<ConsoleKey>,
+    /// Report tabs asked to close with unsaved text, which the app asks about first.
+    pub report_close_requests: &'a mut Vec<ReportName>,
     pub settings_tab: &'a mut SettingsTab,
     pub settings: &'a AppSettings,
     pub mcp_defaults: &'a mut McpDefaultsEditor,
@@ -399,10 +408,13 @@ impl TabViewer for Panels<'_> {
                 FontId::proportional(TAB_TITLE_SIZE),
             ),
             Tab::Report(name) => {
-                let title = self
+                let mut title = self
                     .reports
                     .find(name)
                     .map_or_else(|| name.to_string(), |listed| listed.title().to_owned());
+                if self.reports.is_unsaved(name) {
+                    title.push_str(" \u{2022}");
+                }
                 tab_title(
                     palette,
                     Icon {
@@ -476,6 +488,13 @@ impl TabViewer for Panels<'_> {
         }
     }
 
+    /// A report's tab fills its height with panes that scroll on their own (its file, its
+    /// inputs, its run); a scroll bar around them all would scroll the toolbar away.
+    fn scroll_bars(&self, tab: &Tab) -> [bool; 2] {
+        let scrolls = !matches!(tab, Tab::Report(_));
+        [scrolls, scrolls]
+    }
+
     fn tab_style_override(&self, tab: &Tab, global_style: &TabStyle) -> Option<TabStyle> {
         let Tab::QueryConsole(key) = tab else {
             return None;
@@ -526,6 +545,7 @@ impl TabViewer for Panels<'_> {
                     data_sources: self.report_sources,
                     presets: self.custom_formats,
                     defaults: &reports::limit_defaults(&self.settings.settings().reports),
+                    keymap: self.keymap,
                 },
                 self.report_actions,
             ),
@@ -633,6 +653,14 @@ impl TabViewer for Panels<'_> {
             }
             Tab::History(data_source) => {
                 self.history.close(*data_source);
+                OnCloseResponse::Close
+            }
+            Tab::Report(name) if self.reports.is_unsaved(name) => {
+                self.report_close_requests.push(name.clone());
+                OnCloseResponse::Ignore
+            }
+            Tab::Report(name) => {
+                self.reports.close(name);
                 OnCloseResponse::Close
             }
             Tab::Definition(id) => {
