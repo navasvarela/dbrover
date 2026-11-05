@@ -76,7 +76,8 @@ impl Default for LintOptions {
 }
 
 impl LintOptions {
-    fn allows(&self, problem: &Problem) -> bool {
+    /// Whether the settings show `problem`: not a lint rule switched off.
+    pub fn allows(&self, problem: &Problem) -> bool {
         match problem.source {
             ProblemSource::Lint(rule) => !self.disabled.contains(&rule),
             ProblemSource::Syntax | ProblemSource::Database => true,

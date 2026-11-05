@@ -226,6 +226,10 @@ tokio-postgres-rustls = { version = "0.14.0", features = ["ring"] }
 # aws-lc-rs, where dbrover-tls's configuration names ring.
 tokio-rustls = { version = "0.26.6", default-features = false }
 toml = "1.1.8"
+# Edits a report file in place, keeping its comments and order, for Quiet this hint
+# (docs/report-editor.md, RP8f). Already in the lock through proc-macro-crate; VC1c and CH1d plan
+# to use it for the same reason.
+toml_edit = "0.25.17"
 # A report file's TOML lexed for highlighting in the app (docs/report-editor.md, RP8d): the
 # lexer toml itself parses with, so nothing new is built.
 toml_parser = "1.1.5"

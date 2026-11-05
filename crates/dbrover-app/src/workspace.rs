@@ -546,6 +546,7 @@ impl TabViewer for Panels<'_> {
                     presets: self.custom_formats,
                     defaults: &reports::limit_defaults(&self.settings.settings().reports),
                     keymap: self.keymap,
+                    lint: self.lint,
                 },
                 self.report_actions,
             ),

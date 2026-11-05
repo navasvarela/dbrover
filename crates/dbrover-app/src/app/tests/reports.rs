@@ -774,7 +774,19 @@ fn shows_the_runs_side_by_side_with_the_step_that_dominates_and_the_hints() {
     harness.get_by_label("Output 1");
     assert_eq!(harness.query_all_by_label("0.9 s · 2 rows").count(), 2);
     harness.get_by_label("Combine takes the most time in every run listed: 90% of the newest.");
-    harness.get_by_label_contains("Combine spilled 3.2 GB to disk, past its memory_limit.");
+    // In the runs' hints, and beside the file once it is checked again with the new run.
+    step_until(
+        &mut harness,
+        "the hint by the runs and by the file",
+        |harness| {
+            harness
+                .query_all_by_label_contains(
+                    "Combine spilled 3.2 GB to disk, past its memory_limit.",
+                )
+                .count()
+                == 2
+        },
+    );
 
     harness.get_by_label("Clear history").click();
     harness.run();
@@ -872,6 +884,34 @@ fn a_save_never_replaces_a_change_made_on_disk_unasked() {
     harness.get_by_label("Save over it").click();
     step_until(&mut harness, "the file saved over", |_| {
         std::fs::read_to_string(&file).is_ok_and(|text| text.contains("# Mine."))
+    });
+}
+
+#[test]
+fn a_runs_hint_shows_by_its_table_and_quiet_writes_it_into_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let launcher = StandIn::new(spilling_run(&dir.path().join("out")));
+    let mut harness = start_with_reports(dir.path(), COMBINED, launcher);
+    open_and_fill(&mut harness, "2026-10-01");
+    harness.get_by_label("Run").click();
+    step_until(&mut harness, "the hint by its table", |harness| {
+        harness.query_by_label("Quiet").is_some()
+    });
+    harness.get_by_label("Quiet").click();
+    // The text changed, and isn't saved yet.
+    step_until_visible(&mut harness, "Save and run");
+    let text = harness
+        .get_by_role(Role::MultilineTextInput)
+        .accesskit_node()
+        .value()
+        .unwrap_or_default();
+    assert!(
+        text.contains("quiet_hints = [\"combine-spilled\"]"),
+        "{text}"
+    );
+    // Checked again once typing would have paused.
+    step_until(&mut harness, "the hint quiet", |harness| {
+        harness.query_by_label("Quiet").is_none()
     });
 }
 

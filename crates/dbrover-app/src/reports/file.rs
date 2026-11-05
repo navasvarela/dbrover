@@ -3,15 +3,21 @@
 //! as typed.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use dbrover_core::DataSource;
 use dbrover_engine::{Command, ReportSaveFailure};
 use dbrover_export::CustomFormat;
 use dbrover_report::{LimitDefaults, Plan, ReportProblem, plan_text};
-use dbrover_store::{ReportFiles, ReportName};
+use dbrover_store::{ReportFiles, ReportName, ReportRun};
 
+use super::problems::{ProblemInputs, TextProblem, text_problems};
 use crate::code_editor::CodeEditor;
+use crate::console::LintOptions;
+
+/// How long typing must pause before the text is checked again: the console's, long enough
+/// not to flag every half-typed key, short enough to feel live.
+const DEBOUNCE: Duration = Duration::from_millis(300);
 
 /// The text a report's tab edits, and how it stands against its file.
 #[derive(Debug)]
@@ -28,8 +34,10 @@ pub struct ReportFile {
     pub save_error: Option<SaveError>,
     /// Run once the save in flight is written: **Save and run**.
     run_after_save: bool,
-    /// The plan of the text, and the fingerprint of what it was planned from.
-    checked: Option<(u64, Result<Plan, Vec<ReportProblem>>)>,
+    /// The text's plan and problems, and the fingerprint of what they were found from.
+    checked: Option<(u64, Checked)>,
+    /// The fingerprint of a text not checked yet, and when it was first seen.
+    changed: Option<(u64, Instant)>,
     /// The last plan the text had without problems, which the parameters keep showing
     /// (greyed) while a typo is being fixed.
     last_plan: Option<Plan>,
@@ -54,11 +62,21 @@ pub enum Saved {
     NotWritten,
 }
 
-/// What the plan is checked against besides the text.
-pub struct PlanInputs<'a> {
+/// What the text is checked against besides itself.
+pub struct CheckInputs<'a> {
     pub data_sources: &'a [DataSource],
     pub presets: &'a [CustomFormat],
     pub defaults: &'a LimitDefaults,
+    pub lint: &'a LintOptions,
+    /// The report's newest runs, newest first, which the hints come from.
+    pub runs: &'a [ReportRun],
+}
+
+/// The text's plan and every problem it has.
+#[derive(Debug, Clone)]
+pub struct Checked {
+    pub plan: Result<Plan, Vec<ReportProblem>>,
+    pub problems: Vec<TextProblem>,
 }
 
 impl ReportFile {
@@ -72,6 +90,7 @@ impl ReportFile {
             save_error: None,
             run_after_save: false,
             checked: None,
+            changed: None,
             last_plan: None,
         }
     }
@@ -145,27 +164,47 @@ impl ReportFile {
         self.editor.replace_keeping_cursor(text.to_owned());
     }
 
-    /// The text's plan against `inputs`, planned again only when the text or the inputs
-    /// change.
-    pub fn plan(&mut self, inputs: &PlanInputs<'_>) -> &Result<Plan, Vec<ReportProblem>> {
+    /// The text's plan and problems against `inputs`, found again once typing has paused
+    /// for [`DEBOUNCE`] or the inputs change; until then the last ones, and how long to wait
+    /// before drawing again to check.
+    pub fn check(
+        &mut self,
+        inputs: &CheckInputs<'_>,
+        now: Instant,
+    ) -> (&Checked, Option<Duration>) {
         let fingerprint = fingerprint(&self.editor.text, inputs);
-        let stale = self
+        let current = self
             .checked
             .as_ref()
-            .is_none_or(|(checked, _)| *checked != fingerprint);
-        if stale {
-            self.checked = None;
+            .is_some_and(|(checked, _)| *checked == fingerprint);
+        let mut wait = None;
+        if !current {
+            let since = match self.changed {
+                Some((changed, since)) if changed == fingerprint => since,
+                _ => now,
+            };
+            self.changed = Some((fingerprint, since));
+            let paused = now.saturating_duration_since(since);
+            if self.checked.is_none() || paused >= DEBOUNCE {
+                self.checked = Some((fingerprint, self.found(inputs)));
+                self.changed = None;
+            } else {
+                wait = Some(DEBOUNCE - paused);
+            }
         }
         let text = &self.editor.text;
-        let last_plan = &mut self.last_plan;
-        let (_, planned) = self.checked.get_or_insert_with(|| {
-            let planned = plan_text(text, inputs.data_sources, inputs.presets, inputs.defaults);
-            if let Ok(plan) = &planned {
-                *last_plan = Some(plan.clone());
-            }
-            (fingerprint, planned)
-        });
-        planned
+        let (_, checked) = self
+            .checked
+            .get_or_insert_with(|| (fingerprint, found(text, inputs)));
+        (checked, wait)
+    }
+
+    fn found(&mut self, inputs: &CheckInputs<'_>) -> Checked {
+        let checked = found(&self.editor.text, inputs);
+        if let Ok(plan) = &checked.plan {
+            self.last_plan = Some(plan.clone());
+        }
+        checked
     }
 
     /// The last plan the text had without problems.
@@ -174,9 +213,24 @@ impl ReportFile {
     }
 }
 
-/// A hash of what a plan depends on: the text, and the names, ids and kinds of the data
-/// sources and presets it may name, with the limits' defaults.
-fn fingerprint(text: &str, inputs: &PlanInputs<'_>) -> u64 {
+/// The text's plan and problems.
+fn found(text: &str, inputs: &CheckInputs<'_>) -> Checked {
+    let plan = plan_text(text, inputs.data_sources, inputs.presets, inputs.defaults);
+    let problems = text_problems(
+        text,
+        &plan,
+        &ProblemInputs {
+            data_sources: inputs.data_sources,
+            lint: inputs.lint,
+            runs: inputs.runs,
+        },
+    );
+    Checked { plan, problems }
+}
+
+/// A hash of what the check depends on: the text, the names, ids and kinds of the data
+/// sources and presets it may name, the limits' defaults, the lint rules, and the newest run.
+fn fingerprint(text: &str, inputs: &CheckInputs<'_>) -> u64 {
     let mut hasher = DefaultHasher::new();
     text.hash(&mut hasher);
     for data_source in inputs.data_sources {
@@ -188,6 +242,11 @@ fn fingerprint(text: &str, inputs: &PlanInputs<'_>) -> u64 {
         format!("{preset:?}").hash(&mut hasher);
     }
     format!("{:?}", inputs.defaults).hash(&mut hasher);
+    format!("{:?}", inputs.lint).hash(&mut hasher);
+    inputs.runs.len().hash(&mut hasher);
+    if let Some(newest) = inputs.runs.first() {
+        newest.started_at.to_string().hash(&mut hasher);
+    }
     hasher.finish()
 }
 
@@ -254,6 +313,39 @@ mod tests {
             file.saved(&Ok(read_at)),
             Saved::Written { then_run: true, .. }
         ));
+    }
+
+    #[test]
+    fn checks_again_once_typing_pauses() {
+        let lint = LintOptions::default();
+        let defaults = LimitDefaults::default();
+        let inputs = CheckInputs {
+            data_sources: &[],
+            presets: &[],
+            defaults: &defaults,
+            lint: &lint,
+            runs: &[],
+        };
+        let start = Instant::now();
+        let mut file = ReportFile::new("[report]\nname = \"R\"\n".to_owned(), None);
+        let (first, wait) = file.check(&inputs, start);
+        let first_problems = first.problems.len();
+        assert_eq!(wait, None, "the first check is at once");
+
+        file.editor.text.push_str("oops = \n");
+        let (stale, wait) = file.check(&inputs, start + Duration::from_millis(100));
+        assert_eq!(stale.problems.len(), first_problems, "still typing");
+        assert_eq!(wait, Some(DEBOUNCE));
+        let (fresh, wait) = file.check(&inputs, start + Duration::from_millis(100) + DEBOUNCE);
+        assert_eq!(wait, None);
+        assert!(
+            fresh
+                .problems
+                .iter()
+                .any(|problem| problem.message.starts_with("line 3")),
+            "{:?}",
+            fresh.problems
+        );
     }
 
     #[test]

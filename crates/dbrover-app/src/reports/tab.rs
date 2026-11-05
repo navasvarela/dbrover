@@ -2,25 +2,26 @@
 //! **Run**; its file, edited in place, beside what a run needs (parameters, output, problems);
 //! and under both, the last run, its preview and the runs the history keeps.
 
-use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use dbrover_core::{ByteCount, DataSource};
 use dbrover_export::{ColumnType, CustomFormat};
 use dbrover_report::{
-    Batch, LimitDefaults, LimitHit, LimitSetIn, Locator, Plan, Preview, ReportProblem, Step,
-    TypedValues, WrittenFile, embedded_code, grouped,
+    Batch, HintId, LimitDefaults, LimitHit, LimitSetIn, Plan, Preview, Step, TypedValues,
+    WrittenFile, embedded_code, grouped,
 };
 use dbrover_store::ReportName;
 use egui::{CollapsingHeader, Grid, Id, RichText, ScrollArea, TextEdit, Ui, vec2};
 
 use super::highlight::ReportHighlighter;
+use super::problems::{TextProblem, quiet_hint};
 use super::{
-    PlanInputs, ReportAction, ReportFile, Reports, RunEnd, RunPanel, RunRecord, SaveError,
+    CheckInputs, ReportAction, ReportFile, Reports, RunEnd, RunPanel, RunRecord, SaveError,
     StepRecord, StepState, runs_table,
 };
 use crate::code_editor::highlight::Marks;
-use crate::code_editor::{self, EditorProblem, EditorView, Severity, find_bar};
+use crate::code_editor::{self, EditorView, Severity, find_bar};
+use crate::console::LintOptions;
 use crate::form;
 use crate::icons;
 use crate::keymap::{Action, Keymap};
@@ -44,47 +45,34 @@ pub struct ReportView<'a> {
     /// The limits where a report's file leaves one out, from Settings › Reports.
     pub defaults: &'a LimitDefaults,
     pub keymap: &'a Keymap,
+    /// The lint rules switched off in `settings.toml`, for the SQL steps.
+    pub lint: &'a LintOptions,
 }
 
 /// What the keys do while the report's editor has focus.
-const EDITOR_ACTIONS: [Action; 6] = [
+const EDITOR_ACTIONS: [Action; 8] = [
     Action::Save,
     Action::RunCurrent,
+    Action::NextProblem,
+    Action::PreviousProblem,
     Action::Find,
     Action::Replace,
     Action::FindNext,
     Action::FindPrevious,
 ];
 
-/// A problem of the text, where the editor underlines it.
-struct Placed {
-    range: Range<usize>,
-    line: usize,
-    message: String,
-}
-
-impl EditorProblem for Placed {
-    fn range(&self) -> Range<usize> {
-        self.range.clone()
-    }
-
-    fn severity(&self) -> Severity {
-        Severity::Error
-    }
-
-    fn message(&self) -> &str {
-        &self.message
-    }
-
-    fn note(&self) -> Option<String> {
-        None
-    }
+/// What the tab does to the text once it has drawn: where to put the cursor, a hint to quiet.
+#[derive(Default)]
+struct After {
+    go_to: Option<usize>,
+    quiet: Option<HintId>,
 }
 
 /// How the text stands, as the toolbar's chip says it.
 enum Standing {
     Running(String),
     Problems(usize),
+    Warnings(usize),
     Unsaved,
     Ready,
 }
@@ -97,7 +85,8 @@ struct Seen {
     plan: Option<Plan>,
     /// The plan is of an earlier text: this one has problems.
     plan_is_stale: bool,
-    problems: Vec<Placed>,
+    /// Every problem of the text, hints too, in the file's order.
+    problems: Vec<TextProblem>,
     unsaved: bool,
     saving: bool,
     save_error: Option<SaveError>,
@@ -115,15 +104,23 @@ pub fn show(
     view: &ReportView<'_>,
     actions: &mut Vec<ReportAction>,
 ) {
-    let Some(seen) = see(reports, name, view) else {
+    let Some(seen) = see(ui.ctx(), reports, name, view) else {
         missing(ui, reports, name);
         return;
     };
     let palette = Palette::for_visuals(ui.visuals());
     let editor_id = Id::new(("report_editor", name.as_str()));
-    let mut go_to = None;
+    let mut after = After::default();
     if let Some(file) = reports.state_mut(name).file.as_mut() {
-        shortcuts(ui, file, view.keymap, editor_id, name, actions);
+        shortcuts(
+            ui,
+            file,
+            &seen.problems,
+            view.keymap,
+            editor_id,
+            name,
+            actions,
+        );
     }
     toolbar(
         ui,
@@ -133,7 +130,7 @@ pub fn show(
         &seen,
         view.keymap,
         actions,
-        &mut go_to,
+        &mut after,
     );
     if let Some(description) = &seen.description {
         ui.add(egui::Label::new(RichText::new(description).weak()).truncate());
@@ -148,22 +145,33 @@ pub fn show(
     let width = ui.available_width();
     ui.allocate_ui(vec2(width, top_height), |ui| {
         file_and_inputs(
-            ui, reports, name, &seen, view, editor_id, actions, &mut go_to,
+            ui, reports, name, &seen, view, editor_id, actions, &mut after,
         );
     });
     split.splitter(ui);
     ui.allocate_ui(vec2(width, bottom_height), |ui| {
         run_panel(ui, reports, name, &seen, actions);
     });
-    if let Some(offset) = go_to
-        && let Some(file) = reports.state_mut(name).file.as_mut()
-    {
-        file.editor.put_cursor(offset);
+    if let Some(file) = reports.state_mut(name).file.as_mut() {
+        if let Some(offset) = after.go_to {
+            file.editor.put_cursor(offset);
+        }
+        if let Some(text) = after
+            .quiet
+            .and_then(|hint| quiet_hint(&file.editor.text, hint))
+        {
+            file.editor.replace_keeping_cursor(text);
+        }
     }
 }
 
 /// Reads what the tab draws from: the listing, the text's plan and problems, the run.
-fn see(reports: &mut Reports, name: &ReportName, view: &ReportView<'_>) -> Option<Seen> {
+fn see(
+    ctx: &egui::Context,
+    reports: &mut Reports,
+    name: &ReportName,
+    view: &ReportView<'_>,
+) -> Option<Seen> {
     let listed = reports.find(name)?;
     let title = listed.title().to_owned();
     let description = listed
@@ -187,17 +195,24 @@ fn see(reports: &mut Reports, name: &ReportName, view: &ReportView<'_>) -> Optio
                 .find(other)
                 .map_or_else(|| other.to_string(), |listed| listed.title().to_owned())
         });
-    let inputs = PlanInputs {
+    let runs = match reports.runs(name) {
+        Some(Ok(runs)) => runs.clone(),
+        Some(Err(_)) | None => Vec::new(),
+    };
+    let inputs = CheckInputs {
         data_sources: view.data_sources,
         presets: view.presets,
         defaults: view.defaults,
+        lint: view.lint,
+        runs: &runs,
     };
     let file = reports.file_mut(name)?;
-    let (plan, problems) = match file.plan(&inputs) {
-        Ok(plan) => (Some(plan.clone()), Vec::new()),
-        Err(problems) => (None, problems.clone()),
-    };
-    let problems = placed(&file.editor.text, &problems);
+    let (checked, wait) = file.check(&inputs, std::time::Instant::now());
+    if let Some(wait) = wait {
+        crate::repaint::request_repaint_after_pause(ctx, wait);
+    }
+    let plan = checked.plan.as_ref().ok().cloned();
+    let problems = checked.problems.clone();
     let plan_is_stale = plan.is_none();
     let plan = plan.or_else(|| file.last_plan().cloned());
     Some(Seen {
@@ -215,23 +230,6 @@ fn see(reports: &mut Reports, name: &ReportName, view: &ReportView<'_>) -> Optio
         running_other,
         progress,
     })
-}
-
-/// Each problem with the bytes it underlines and the line they start on.
-fn placed(text: &str, problems: &[ReportProblem]) -> Vec<Placed> {
-    let locator = Locator::new(text);
-    problems
-        .iter()
-        .map(|problem| {
-            let range = locator.locate(&problem.place);
-            let line = text[..range.start.min(text.len())].matches('\n').count() + 1;
-            Placed {
-                range,
-                line,
-                message: problem.message.clone(),
-            }
-        })
-        .collect()
 }
 
 /// A tab whose report isn't listed, or whose file can't be read.
@@ -267,6 +265,7 @@ fn missing(ui: &mut Ui, reports: &Reports, name: &ReportName) {
 fn shortcuts(
     ui: &mut Ui,
     file: &mut ReportFile,
+    problems: &[TextProblem],
     keymap: &Keymap,
     editor_id: Id,
     name: &ReportName,
@@ -279,12 +278,35 @@ fn shortcuts(
         match action {
             Action::Save => actions.push(ReportAction::Save(name.clone())),
             Action::RunCurrent => actions.push(ReportAction::Run(name.clone())),
+            Action::NextProblem => jump(file, problems, true),
+            Action::PreviousProblem => jump(file, problems, false),
             Action::Find => file.editor.open_find(false),
             Action::Replace => file.editor.open_find(true),
             Action::FindNext => file.editor.find_next(true),
             Action::FindPrevious => file.editor.find_next(false),
             _ => {}
         }
+    }
+}
+
+/// Moves the cursor to the next problem after it, or the previous one before it, wrapping
+/// around.
+fn jump(file: &mut ReportFile, problems: &[TextProblem], forward: bool) {
+    let (start, end) = file.editor.ordered_selection();
+    let next = if forward {
+        problems
+            .iter()
+            .find(|problem| problem.range.start > end)
+            .or_else(|| problems.first())
+    } else {
+        problems
+            .iter()
+            .rev()
+            .find(|problem| problem.range.start < start)
+            .or_else(|| problems.last())
+    };
+    if let Some(problem) = next {
+        file.editor.put_cursor(problem.range.start);
     }
 }
 
@@ -301,7 +323,7 @@ fn toolbar(
     seen: &Seen,
     keymap: &Keymap,
     actions: &mut Vec<ReportAction>,
-    go_to: &mut Option<usize>,
+    after: &mut After,
 ) {
     let ready = can_run(reports, name, seen);
     ui.horizontal(|ui| {
@@ -317,7 +339,7 @@ fn toolbar(
         };
         ui.heading(title)
             .on_hover_text(seen.path.display().to_string());
-        chip(ui, palette, seen, go_to);
+        chip(ui, palette, seen, after);
         if let Some(plan) = &seen.plan
             && !seen.plan_is_stale
         {
@@ -344,12 +366,26 @@ fn hint(ui: &Ui, keymap: &Keymap, action: Action, description: &str) -> String {
 }
 
 /// Ready, how many problems, unsaved, or what the run is doing.
-fn chip(ui: &mut Ui, palette: &Palette, seen: &Seen, go_to: &mut Option<usize>) {
-    let standing = match (&seen.progress, seen.problems.len(), seen.unsaved) {
-        (Some(progress), _, _) if seen.running_here => Standing::Running(progress.clone()),
-        (_, problems, _) if problems > 0 => Standing::Problems(problems),
-        (_, _, true) => Standing::Unsaved,
+fn chip(ui: &mut Ui, palette: &Palette, seen: &Seen, after: &mut After) {
+    let count = |severity| {
+        seen.problems
+            .iter()
+            .filter(|problem| problem.severity == severity)
+            .count()
+    };
+    let (errors, warnings) = (count(Severity::Error), count(Severity::Warning));
+    let standing = match &seen.progress {
+        Some(progress) if seen.running_here => Standing::Running(progress.clone()),
+        _ if errors > 0 => Standing::Problems(errors),
+        _ if warnings > 0 => Standing::Warnings(warnings),
+        _ if seen.unsaved => Standing::Unsaved,
         _ => Standing::Ready,
+    };
+    let first = |severity| {
+        seen.problems
+            .iter()
+            .find(|problem| problem.severity == severity)
+            .map(|problem| problem.range.start)
     };
     match standing {
         Standing::Running(progress) => {
@@ -359,17 +395,15 @@ fn chip(ui: &mut Ui, palette: &Palette, seen: &Seen, go_to: &mut Option<usize>) 
                 .request_repaint_after(std::time::Duration::from_secs(1));
         }
         Standing::Problems(count) => {
-            let text = match count {
-                1 => "1 problem".to_owned(),
-                n => format!("{n} problems"),
-            };
-            let job = widgets::icon_text(ui, icons::X_CIRCLE, palette.error, &text);
-            let response = ui
-                .add(egui::Button::new(job).frame(false))
-                .on_hover_text("Go to the first problem");
-            let response = widgets::name(response, egui::WidgetType::Button, &text, true);
-            if response.clicked() {
-                *go_to = seen.problems.first().map(|problem| problem.range.start);
+            let text = counted(count, "problem", "problems");
+            if chip_button(ui, icons::X_CIRCLE, palette.error, &text) {
+                after.go_to = first(Severity::Error);
+            }
+        }
+        Standing::Warnings(count) => {
+            let text = counted(count, "warning", "warnings");
+            if chip_button(ui, icons::WARNING, palette.warning, &text) {
+                after.go_to = first(Severity::Warning);
             }
         }
         Standing::Unsaved => {
@@ -384,6 +418,24 @@ fn chip(ui: &mut Ui, palette: &Palette, seen: &Seen, go_to: &mut Option<usize>) 
             ));
         }
     }
+}
+
+/// `1 problem`, `2 problems`.
+fn counted(count: usize, one: &str, many: &str) -> String {
+    match count {
+        1 => format!("1 {one}"),
+        n => format!("{n} {many}"),
+    }
+}
+
+/// The chip as a button that goes to the first problem it counts. Returns whether it was
+/// clicked.
+fn chip_button(ui: &mut Ui, glyph: &str, color: egui::Color32, text: &str) -> bool {
+    let job = widgets::icon_text(ui, glyph, color, text);
+    let response = ui
+        .add(egui::Button::new(job).frame(false))
+        .on_hover_text("Go to the first one (F8 goes to the next)");
+    widgets::name(response, egui::WidgetType::Button, text, true).clicked()
 }
 
 /// `1 source · 2 files`.
@@ -547,14 +599,14 @@ fn file_and_inputs(
     view: &ReportView<'_>,
     editor_id: Id,
     actions: &mut Vec<ReportAction>,
-    go_to: &mut Option<usize>,
+    after: &mut After,
 ) {
     let hidden = reports.state(name).is_some_and(|state| state.file_hidden);
     if hidden {
         ScrollArea::vertical()
             .id_salt(("report_inputs", name.as_str()))
             .auto_shrink(false)
-            .show(ui, |ui| inputs(ui, reports, name, seen, actions, go_to));
+            .show(ui, |ui| inputs(ui, reports, name, seen, actions, after));
         return;
     }
     if ui.available_width() < NARROW_WIDTH {
@@ -562,7 +614,7 @@ fn file_and_inputs(
         ScrollArea::vertical()
             .id_salt(("report_inputs", name.as_str()))
             .max_height(inputs_height)
-            .show(ui, |ui| inputs(ui, reports, name, seen, actions, go_to));
+            .show(ui, |ui| inputs(ui, reports, name, seen, actions, after));
         ui.separator();
         editor(ui, reports, name, seen, view, editor_id);
         return;
@@ -575,7 +627,7 @@ fn file_and_inputs(
             ScrollArea::vertical()
                 .id_salt(("report_inputs", name.as_str()))
                 .auto_shrink(false)
-                .show(ui, |ui| inputs(ui, reports, name, seen, actions, go_to));
+                .show(ui, |ui| inputs(ui, reports, name, seen, actions, after));
         });
     editor(ui, reports, name, seen, view, editor_id);
 }
@@ -623,17 +675,19 @@ fn editor(
         });
 }
 
-/// What a run needs, as the text says it: the parameters' values, where its files go and
-/// which they are; and the text's problems.
+/// The text's problems, then what a run needs, as the text says it: the parameters' values,
+/// where its files go and which they are.
 fn inputs(
     ui: &mut Ui,
     reports: &mut Reports,
     name: &ReportName,
     seen: &Seen,
     actions: &mut Vec<ReportAction>,
-    go_to: &mut Option<usize>,
+    after: &mut After,
 ) {
     let palette = Palette::for_visuals(ui.visuals());
+    // First when there are any: they are what is read first.
+    problems(ui, &palette, seen, after);
     if let Some(plan) = &seen.plan {
         ui.add_enabled_ui(!seen.plan_is_stale, |ui| {
             let state = reports.state_mut(name);
@@ -641,7 +695,6 @@ fn inputs(
             output(ui, &palette, &state.values, seen, name, plan, actions);
         });
     }
-    problems(ui, &palette, seen, go_to);
 }
 
 fn section(ui: &mut Ui, title: &str) {
@@ -723,24 +776,41 @@ fn output(
     }
 }
 
-/// Each problem on a line of its own, its line number first; a click goes to it.
-fn problems(ui: &mut Ui, palette: &Palette, seen: &Seen, go_to: &mut Option<usize>) {
+/// Each problem on a line of its own, its line number first, a hint with **Quiet**; a click
+/// goes to it.
+fn problems(ui: &mut Ui, palette: &Palette, seen: &Seen, after: &mut After) {
     if seen.problems.is_empty() {
         return;
     }
     section(ui, "Problems");
     for problem in &seen.problems {
-        let text = format!("line {}  {}", problem.line, problem.message);
-        let response = ui
-            .add(
-                egui::Label::new(RichText::new(text).color(palette.error))
-                    .truncate()
-                    .sense(egui::Sense::click()),
-            )
-            .on_hover_text(&problem.message);
-        if response.clicked() {
-            *go_to = Some(problem.range.start);
-        }
+        let (glyph, color) = match problem.severity {
+            Severity::Error => (icons::X_CIRCLE, palette.error),
+            Severity::Warning => (icons::WARNING, palette.warning),
+            Severity::Hint => (icons::LIGHTBULB, palette.primary),
+        };
+        ui.horizontal(|ui| {
+            ui.label(widgets::glyph(glyph).color(color));
+            if let Some(hint) = problem.hint
+                && ui
+                    .small_button("Quiet")
+                    .on_hover_text(format!("Add \"{hint}\" to [report] quiet_hints"))
+                    .clicked()
+            {
+                after.quiet = Some(hint);
+            }
+            let text = format!("line {}  {}", problem.line, problem.message);
+            let response = ui
+                .add(
+                    egui::Label::new(RichText::new(text).color(color))
+                        .truncate()
+                        .sense(egui::Sense::click()),
+                )
+                .on_hover_text(&problem.message);
+            if response.clicked() {
+                after.go_to = Some(problem.range.start);
+            }
+        });
     }
 }
 

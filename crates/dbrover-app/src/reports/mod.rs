@@ -11,6 +11,7 @@ mod file;
 mod highlight;
 mod insights;
 mod launcher;
+mod problems;
 mod rename_dialog;
 mod runs_table;
 mod tab;
@@ -34,7 +35,7 @@ use dbrover_store::{
 };
 use jiff::Timestamp;
 
-pub use file::{PlanInputs, ReportFile, SaveError, Saved};
+pub use file::{CheckInputs, ReportFile, SaveError, Saved};
 pub use launcher::{PARENT_ENV, ProcessLauncher, ReportLauncher, RunningReport};
 pub use rename_dialog::{RenameAction, RenameReportDialog};
 pub use tab::{ReportView, show};
