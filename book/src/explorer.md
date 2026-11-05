@@ -264,6 +264,8 @@ Right-click an object for what you can do with it:
 | **Export data…** | Tables, views | Writes every row to a file, in any export format; see [A whole table, from the explorer](exporting.md#a-whole-table-from-the-explorer). |
 | **Diagram…** | Schemas, on engines with foreign keys | Picks tables of the schema for an ER diagram; see [ER diagrams](diagrams.md). |
 | **Diagram with related tables** | Tables, on engines with foreign keys | Opens a diagram of the table and every table its keys join. |
+| **Compare schema…** | Schemas, on PostgreSQL | Compares the schema with another, or with a snapshot; see [Comparing schemas](schema-compare.md). |
+| **Save schema snapshot…** | Schemas, on PostgreSQL | Writes the schema to a snapshot file; see [Schema snapshots](schema-compare.md#schema-snapshots). |
 | **Import CSV…** | Tables | Asks for a CSV file and imports it into the table; see [Importing a CSV file](table-data.md#importing-a-csv-file). |
 | **Copy name** | Objects inside a schema | Copies the name to use in SQL: schema-qualified for tables, views, sequences, indexes and functions (`main."Order Items"`), bare for columns, constraints and triggers. Quoted where needed. |
 | **Show definition** | Objects whose source the database keeps (see below) | Opens the source in a tab. |

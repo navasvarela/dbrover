@@ -116,7 +116,8 @@ no Git client in the app. Then build three milestones, none of which links a Git
 2. **VC2 — A folder of queries (S–M).** Folders of `.sql` files you add, as a tree in the
    explorer, opened and saved in place through W6.
 3. **VC3 — Schema snapshots (S–M), with W13.** A schema saved as a diffable file, and W13
-   comparing a live schema with one. It waits for W13.
+   comparing a live schema with one. Built with W13 on 2026-11-05; see
+   [Comparing schemas](schema-compare.md#snapshot-files-vc3).
 
 All three are planned, not scheduled, after CI fixes, the reports track and W13. VC1 and VC2
 don't depend on each other or on W13. VC1's lost-update layer (VC1b) is a bug fix that may be

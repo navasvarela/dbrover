@@ -1,6 +1,7 @@
 # Comparing schemas
 
-Status: **designed on 2026-11-05, being built.** The [roadmap](roadmap.md) tracks it as
+Status: **designed and built on 2026-11-05**, in one stack of pull requests, #483 to #498;
+the manual's chapter is [Comparing schemas](../book/src/schema-compare.md). The [roadmap](roadmap.md) tracks it as
 W13 in the [well-rounded track](roadmap.md#well-rounded-track) and the Version control track's
 [VC3](roadmap.md#version-control-track), built together in one stack. It starts with
 PostgreSQL. Each layer's decisions are confirmed as it is built, and departures go in the demo
