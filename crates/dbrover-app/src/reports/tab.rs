@@ -50,8 +50,9 @@ pub struct ReportView<'a> {
 }
 
 /// What the keys do while the report's editor has focus.
-const EDITOR_ACTIONS: [Action; 8] = [
+const EDITOR_ACTIONS: [Action; 9] = [
     Action::Save,
+    Action::Format,
     Action::RunCurrent,
     Action::NextProblem,
     Action::PreviousProblem,
@@ -90,6 +91,7 @@ struct Seen {
     unsaved: bool,
     saving: bool,
     save_error: Option<SaveError>,
+    format_note: Option<String>,
     folder: Option<PathBuf>,
     running_here: bool,
     /// Another report's title, while it runs.
@@ -134,6 +136,9 @@ pub fn show(
     );
     if let Some(description) = &seen.description {
         ui.add(egui::Label::new(RichText::new(description).weak()).truncate());
+    }
+    if let Some(note) = &seen.format_note {
+        widgets::status(ui, icons::MAGIC_WAND, palette.text_weak, note);
     }
     save_problem(ui, &palette, &seen, name, actions);
     ui.separator();
@@ -225,6 +230,7 @@ fn see(
         unsaved: file.is_unsaved(),
         saving: file.is_saving(),
         save_error: file.save_error.clone(),
+        format_note: file.format_note().map(str::to_owned),
         folder,
         running_here: running.as_ref() == Some(name),
         running_other,
@@ -277,6 +283,7 @@ fn shortcuts(
     for action in ui.input_mut(|input| keymap.consume(input, &EDITOR_ACTIONS)) {
         match action {
             Action::Save => actions.push(ReportAction::Save(name.clone())),
+            Action::Format => actions.push(ReportAction::Format(name.clone())),
             Action::RunCurrent => actions.push(ReportAction::Run(name.clone())),
             Action::NextProblem => jump(file, problems, true),
             Action::PreviousProblem => jump(file, problems, false),
@@ -349,6 +356,15 @@ fn toolbar(
             more_menu(ui, reports, name, seen, actions);
             run_button(ui, seen, &ready, keymap, name, actions);
             let save = ui.add_enabled(seen.unsaved && !seen.saving, egui::Button::new("Save"));
+            let format = ui.button("Format").on_hover_text(hint(
+                ui,
+                keymap,
+                Action::Format,
+                "Lay out the file and its SQL",
+            ));
+            if format.clicked() {
+                actions.push(ReportAction::Format(name.clone()));
+            }
             let save = save.on_hover_text(hint(ui, keymap, Action::Save, "Write the file"));
             if save.clicked() {
                 actions.push(ReportAction::Save(name.clone()));

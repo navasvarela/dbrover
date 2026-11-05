@@ -8,7 +8,8 @@ use std::time::{Duration, Instant, SystemTime};
 use dbrover_core::DataSource;
 use dbrover_engine::{Command, ReportSaveFailure};
 use dbrover_export::CustomFormat;
-use dbrover_report::{LimitDefaults, Plan, ReportProblem, plan_text};
+use dbrover_report::{LimitDefaults, Plan, ReportProblem, format_report, plan_text};
+use dbrover_sql::FormatOptions;
 use dbrover_store::{ReportFiles, ReportName, ReportRun};
 
 use super::problems::{ProblemInputs, TextProblem, text_problems};
@@ -41,6 +42,9 @@ pub struct ReportFile {
     /// The last plan the text had without problems, which the parameters keep showing
     /// (greyed) while a typo is being fixed.
     last_plan: Option<Plan>,
+    /// What the last **Format** left as written, or why it formatted nothing, with the text it
+    /// is about: shown until the text changes.
+    format_note: Option<(String, String)>,
 }
 
 /// Why a save failed.
@@ -92,6 +96,7 @@ impl ReportFile {
             checked: None,
             changed: None,
             last_plan: None,
+            format_note: None,
         }
     }
 
@@ -205,6 +210,30 @@ impl ReportFile {
             self.last_plan = Some(plan.clone());
         }
         checked
+    }
+
+    /// Formats the text as one undo step, unsaved until saved. What wasn't formatted, and why,
+    /// is the format note.
+    pub fn format(&mut self, data_sources: &[DataSource], options: &FormatOptions) {
+        let note = match format_report(&self.editor.text, data_sources, options) {
+            Ok(formatted) => {
+                if formatted.text != self.editor.text {
+                    self.editor.replace_keeping_cursor(formatted.text);
+                }
+                (!formatted.left_as_written.is_empty())
+                    .then(|| formatted.left_as_written.join("; "))
+            }
+            Err(error) => Some(error.to_string()),
+        };
+        self.format_note = note.map(|note| (self.editor.text.clone(), note));
+    }
+
+    /// What the last **Format** said, while the text is what it formatted.
+    pub fn format_note(&self) -> Option<&str> {
+        self.format_note
+            .as_ref()
+            .filter(|(text, _)| *text == self.editor.text)
+            .map(|(_, note)| note.as_str())
     }
 
     /// The last plan the text had without problems.

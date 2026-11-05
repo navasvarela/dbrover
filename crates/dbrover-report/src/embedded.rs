@@ -21,6 +21,8 @@ pub enum StepLanguage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Embedded {
     pub range: Range<usize>,
+    /// The whole string, its quotes too.
+    pub string: Range<usize>,
     pub language: StepLanguage,
 }
 
@@ -82,8 +84,13 @@ fn code(text: &str, table: &DeTable<'_>, key: &str, language: StepLanguage) -> O
     if !matches!(value.get_ref(), DeValue::String(_)) {
         return None;
     }
-    let range = string_content(text, value.span())?;
-    Some(Embedded { range, language })
+    let string = value.span();
+    let range = string_content(text, string.clone())?;
+    Some(Embedded {
+        range,
+        string,
+        language,
+    })
 }
 
 /// The bytes between a string's quotes, leaving out the line break TOML drops after a

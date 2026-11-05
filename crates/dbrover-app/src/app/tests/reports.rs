@@ -916,6 +916,23 @@ fn a_runs_hint_shows_by_its_table_and_quiet_writes_it_into_the_file() {
 }
 
 #[test]
+fn format_lays_out_the_file_and_its_sql_as_one_unsaved_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut harness = start_with_reports(dir.path(), TRIAL_BALANCE, StandIn::new(Vec::new()));
+    open_and_fill(&mut harness, "2026-10-01");
+    harness.get_by_label("Format").click();
+    step_until_visible(&mut harness, "Save and run");
+    let text = harness
+        .get_by_role(Role::MultilineTextInput)
+        .accesskit_node()
+        .value()
+        .unwrap_or_default();
+    assert!(text.contains("query = \"\"\"\nSELECT\n"), "{text}");
+    let saved = std::fs::read_to_string(dir.path().join("reports/trial-balance.toml")).unwrap();
+    assert_eq!(saved, TRIAL_BALANCE, "nothing is written until saved");
+}
+
+#[test]
 fn renaming_a_report_keeps_its_runs() {
     let dir = tempfile::tempdir().unwrap();
     let history = HistoryFile::new(dir.path().join("history.sqlite"));

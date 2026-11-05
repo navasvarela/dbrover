@@ -25,6 +25,8 @@ serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 toml.workspace = true
+# Lays out a report file's TOML for Format (docs/report-editor.md, RP8g), token by token.
+toml_parser.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

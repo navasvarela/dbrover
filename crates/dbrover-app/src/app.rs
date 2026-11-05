@@ -1179,6 +1179,7 @@ impl DbRoverApp {
                 let save = self.reports.save(&name);
                 self.send_if(save);
             }
+            ReportAction::Format(name) => self.format_report(&name),
             ReportAction::Cancel => self.reports.cancel(),
             ReportAction::ChooseFolder(name) => {
                 let current = self.reports.output_folder(&name).unwrap_or_default();
@@ -2224,6 +2225,9 @@ impl DbRoverApp {
             AppCommand::Save => {
                 if let Some(console) = self.focused_console() {
                     self.save_console(&console);
+                } else if let Some(name) = self.focused_report() {
+                    let save = self.reports.save(&name);
+                    self.send_if(save);
                 }
             }
             AppCommand::SaveAs => {
@@ -2243,6 +2247,11 @@ impl DbRoverApp {
             AppCommand::ResetLayout => {
                 self.dock = workspace::default_layout();
                 tracing::info!("layout reset");
+            }
+            AppCommand::Format | AppCommand::FormatAll if self.focused_report().is_some() => {
+                if let Some(name) = self.focused_report() {
+                    self.format_report(&name);
+                }
             }
             AppCommand::Format => self.format_focused_console(FormatScope::Current),
             AppCommand::RunToFile => {
@@ -2279,6 +2288,19 @@ impl DbRoverApp {
             self.import_dialog = Some(dialog);
             self.send(read);
         }
+    }
+
+    /// Formats a report's text, its SQL laid out as the settings say.
+    fn format_report(&mut self, name: &dbrover_store::ReportName) {
+        let data_sources: Vec<dbrover_core::DataSource> = self
+            .state
+            .data_sources
+            .entries()
+            .iter()
+            .map(|entry| entry.data_source.clone())
+            .collect();
+        let options = self.settings.format_options();
+        self.reports.format(name, &data_sources, &options);
     }
 
     fn format_focused_console(&mut self, scope: FormatScope) {
@@ -2617,6 +2639,13 @@ impl DbRoverApp {
     }
 
     /// The console in the dock's focused tab, if that is a console.
+    fn focused_report(&mut self) -> Option<dbrover_store::ReportName> {
+        match self.dock.find_active_focused() {
+            Some((_, Tab::Report(name))) => Some(name.clone()),
+            _ => None,
+        }
+    }
+
     fn focused_console(&mut self) -> Option<ConsoleKey> {
         match self.dock.find_active_focused() {
             Some((_, Tab::QueryConsole(key))) => Some(key.clone()),
