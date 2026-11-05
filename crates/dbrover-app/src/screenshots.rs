@@ -383,6 +383,22 @@ const SCENES: &[Scene] = &[
         needs: &[POSTGRES_URL],
     },
     Scene {
+        name: "report-page",
+        data_sources: FixtureSources::Shop,
+        play: report_page,
+        keeps_pointer: false,
+        region: whole_window,
+        needs: &[],
+    },
+    Scene {
+        name: "report-problems",
+        data_sources: FixtureSources::Shop,
+        play: report_problems,
+        keeps_pointer: false,
+        region: whole_window,
+        needs: &[],
+    },
+    Scene {
         name: "report-runs",
         data_sources: FixtureSources::Shop,
         play: report_runs,
@@ -1621,8 +1637,56 @@ fn settings_actions(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixtur
 }
 
 /// Opens the Settings tab on its page `category`.
-/// The manual's first report, run three times: from the tab, from cron, and once past a limit.
+/// The manual's first report's tab, its runs in the run panel's Past runs, made tall enough to
+/// show them all.
 fn report_runs(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
+    report_page(harness, fixture);
+    let height = egui::Id::new(("report_run_panel_height", "sales-by-category"));
+    harness
+        .ctx
+        .data_mut(|data| data.insert_temp(height, RUNS_PANEL_HEIGHT));
+    harness.run_steps(SETTLE_STEPS);
+}
+
+/// The run panel's height in the report-runs picture: as much as the window lets it have.
+const RUNS_PANEL_HEIGHT: f32 = 480.0;
+
+/// A report's tab with problems: a data source misspelt and a key an output doesn't have,
+/// underlined in the file and listed in the side panel.
+fn report_problems(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
+    use dbrover_store::{ReportFiles, ReportName};
+
+    let files = ReportFiles::new(fixture.dir.path().join("reports"));
+    std::fs::create_dir_all(files.dir()).unwrap();
+    let text = include_str!("../../../examples/reports/sales-by-category.toml")
+        .replace("data_source = \"shop\"", "data_source = \"shops\"")
+        .replace("format = \"csv\"", "format = \"csv\"\nsheet = \"Sales\"");
+    std::fs::write(
+        files.path(&ReportName::new("sales-by-category").unwrap()),
+        text,
+    )
+    .unwrap();
+    harness
+        .state_mut()
+        .use_reports(crate::reports::ReportsSetup {
+            files,
+            launcher: Box::new(crate::reports::ProcessLauncher {
+                executable: PathBuf::from("dbrover"),
+                settings_folder: fixture.dir.path().to_owned(),
+            }),
+            default_folder: PathBuf::from("/Users/ada/Downloads"),
+        });
+    harness.state_mut().close_log_console();
+    step_until_visible(harness, "sales-by-category");
+    harness.get_by_label("sales-by-category").click();
+    step_until_visible(harness, "2 problems");
+    // The chip goes to the first problem, so its underline is in view.
+    harness.get_by_label("2 problems").click();
+    harness.run_steps(SETTLE_STEPS);
+}
+
+/// The manual's first report, run three times: from the tab, from cron, and once past a limit.
+fn report_page(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
     use dbrover_store::{
         CombineMetrics, OutputMetrics, ReportFiles, ReportName, ReportRun, RunError, RunOrigin,
         RunOutcome, SourceMetrics, StepMetrics,
@@ -1729,16 +1793,6 @@ fn report_runs(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
         harness.run_ok();
     }
     harness.key_press(egui::Key::Escape);
-    harness.run_ok();
-    // Down to the runs, which the window is too short to show under the parameters.
-    let over_the_tab = harness.get_by_label("Parameters").rect().center();
-    harness.event(egui::Event::PointerMoved(over_the_tab));
-    harness.event(egui::Event::MouseWheel {
-        unit: egui::MouseWheelUnit::Point,
-        delta: egui::vec2(0.0, -400.0),
-        modifiers: egui::Modifiers::NONE,
-        phase: egui::TouchPhase::Move,
-    });
     harness.run_steps(SETTLE_STEPS);
 }
 
@@ -1753,10 +1807,13 @@ fn report_runs_region(harness: &Harness<'static, DbRoverApp>) -> Option<egui::Re
     let last = harness
         .query_by_label_contains("takes the most time in every run listed")
         .map_or(note, |line| line.rect());
-    // The table's last column ends with its widest date, a start or a parameter's value.
+    // The table's last column ends with its widest date, a start or a parameter's value. The
+    // side panel above the run panel names files with dates too, which are left out.
     let table = harness
         .query_all_by_label_contains("2026-")
-        .map(|node| node.rect().max.x)
+        .map(|node| node.rect())
+        .filter(|rect| rect.min.y > heading.min.y)
+        .map(|rect| rect.max.x)
         .fold(note.max.x.max(last.max.x), f32::max);
     Some(egui::Rect::from_min_max(
         egui::pos2(heading.min.x - MARGIN, heading.min.y - MARGIN),

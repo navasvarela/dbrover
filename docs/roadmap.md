@@ -2155,8 +2155,8 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   "What's next" is gone. The MCP chapter lists `list_reports` and `run_report`, and **Run
   reports** among the permissions. `DBROVER_SCREENSHOTS_ONLY=report-runs cargo test -p
   dbrover-app regenerate_screenshots -- --ignored` renders the picture alone.
-- **RP8 — The report's page, and its file edited in it (M):** proposed on 2026-11-05, waiting
-  for review, in [The report's page and its editor](report-editor.md). The tab laid out as a
+- **RP8 — The report's page, and its file edited in it (M)** (built, in nine layers,
+  2026-11-05, after RP7): planned in [The report's page and its editor](report-editor.md). The tab laid out as a
   workspace (a toolbar with the report's state and **Run**, the file beside its parameters and
   output, the last run, preview and runs in a panel under them), and the report's TOML edited
   in it with the console's editor: TOML highlighted with each step's SQL or PRQL in its own
@@ -2178,6 +2178,22 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   - **RP8g — Format:** TOML layout and the SQL steps, checked to mean the same.
   - **RP8h — Changes on disk:** report files watched, W6's banner, a check before writing.
   - **RP8i — Manual,** two new pictures and the demo note.
+
+  Built in #484, #487, #490, #491, #494, #496, #499, #500 and RP8i; what was built differently is
+  in the design's [As built](report-editor.md#as-built).
+
+  **Demo note:** add the SQLite **shop** and `sales-by-category.toml` as the manual's
+  [Your first report](../book/src/reports.md#your-first-report) says, and click the report. Its
+  file shows beside its parameters, the source's SQL highlighted as SQLite's and the combine's
+  as DuckDB's. Type `shops` for `data_source`: within half a second it is underlined, the
+  toolbar says *1 problem* and **Run** is off; put it back. Add `sheet = 2` under the CSV output
+  and the side panel lists it by line; click it to go there. Indent a few keys and click
+  **Format** (⌥⌘L): the file is laid out and its SQL formatted, unsaved. **Run** now reads **Save
+  and run**: it saves, then runs. Change the file in another editor while the tab is clean and
+  the change shows; type in the tab, change it again outside, and the bar offers **Reload** or
+  **Keep mine**. **⋯ › Open in another app** opens a text editor, not the browser. `cargo test -p
+  dbrover-app regenerate_screenshots -- --ignored` with `DBROVER_SCREENSHOTS_ONLY=report-page,
+  report-problems,report-runs` renders the manual's three pictures.
 
   **Exit:** `sales-by-category` opens with its SQL highlighted in each step's dialect; `sheet = 2`
   in an output is underlined within half a second and turns **Run** off; **Format** gives the

@@ -1,7 +1,8 @@
 # The report's page and its editor
 
-Status: **proposed on 2026-11-05, waiting for review before it is built.** The
-[roadmap](roadmap.md#reports-track) tracks it as RP8 in the Reports track, after RP7. It doesn't
+Status: **built on 2026-11-05, in nine layers (#484, #487, #490, #491, #494, #496, #499, #500 and
+RP8i).** The [roadmap](roadmap.md#reports-track) tracks it as RP8 in the Reports track, after
+RP7. What was built differently from this plan is under [As built](#as-built). It doesn't
 touch W13 schema compare (designed in its own pull request) and leaves room for
 [Charts as code](charts-as-code.md)'s `[[chart]]`. Each layer's decisions are confirmed as it
 is built, and departures go in the demo notes.
@@ -414,6 +415,38 @@ the banner; **Open in another app** opens a text editor, not the browser.
 - **Two programs writing the file.** The check before writing catches a change made since the
   read; one made within the same second on a file system with coarse modification times isn't
   seen. W6 has the same limit.
+
+## As built
+
+Each layer's pull request says what it did differently; together:
+
+- **Problems' places** are a table and an optional key (`Place::Key { table, key }`), or a byte
+  range for a TOML syntax error, rather than a key path with a part to underline. A key
+  underlines the key; a key the table doesn't have, the table's header. That covered every
+  problem the reader and the planner find. A PRQL error underlines the `prql` key, not the
+  place inside the PRQL.
+- **`read_report` and `Plan::new` keep their signatures**, as thin wrappers over
+  `read_with_places` and `Plan::with_places`, so the command line, the worker, MCP and their
+  tests didn't change. `plan_text` is the editor's one call.
+- **The TOML is lexed for highlighting in the app**, beside the other highlighters, so
+  `toml_parser` is the app's dependency as well as `dbrover-report`'s (for Format).
+- **Saving uses its own command**, `SaveReport`, which checks the file's modification time
+  before writing; W6's `*SqlFile` commands were not renamed. Watching uses W6's `CheckSqlFiles`
+  as it is, its answers routed by path.
+- **The run panel's third tab is Past runs**, beside the table's own *Runs* heading. The
+  compiled SQL of a PRQL combine is at the top of **Last run**, where it is always in reach.
+- **The side panel lists problems first**, then the parameters and the output: when there are
+  problems, they are what is read first, and **Quiet** for a hint sits there, since a tooltip
+  that follows the pointer can't hold a button.
+- **Hide the file** and the panels' sizes last while the app runs, not in the dock layout.
+- **The preview** keeps its grid inside the run panel, which scrolls both ways.
+- **Format's exit test**: laying out leaves every example as it is, and formatting is idempotent
+  and undoes indentation added by hand; formatting also re-lays the examples' hand-written SQL,
+  so a formatted example isn't byte for byte the original.
+- **Moving the cursor from outside the editor scrolls to it** in consoles too (RP8i): going to a
+  problem from the chip, the list or F8 left it out of view before.
+- **Measured** (RP8f): a check of the slowest example, `sales-by-week.toml` with its PRQL, takes
+  1.5 ms in a release build, so checking stays on the UI thread.
 
 ## What stays out
 

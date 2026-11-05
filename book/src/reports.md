@@ -22,7 +22,8 @@ run on made-up data:
    in its console (**File → Open…**) and run it all. It makes a bike shop's products and three
    months of order lines.
 3. Right-click **Reports** at the bottom of the explorer and choose **Open the reports folder**.
-   Copy `sales-by-category.toml` into it, then choose **Reload**.
+   Copy `sales-by-category.toml` into it, then come back to DbRover, which lists the folder
+   again when its window comes to the front (**Reload** does it too).
 4. Click **Sales by category**. Its tab opens.
 5. Type `2026-10-01` for **since** and `2026-11-01` for **until**, and click **Run**.
 
@@ -91,26 +92,73 @@ one for all your projects, so a report can read data sources from any of them.
 
 ## A report's tab
 
-Click a report to open its tab:
+Click a report to open its tab: the report's file, edited in place, beside what a run needs, and
+under both, its runs.
 
-- its name, what it is for, and its file, with **Edit file** to open it in your editor and
-  **Reload** to read it again;
-- what is wrong with it, if anything, in which case it can't run until you fix the file;
-- a field for each parameter, checked as you type: a date that isn't one says so beside it;
-- **Save to**: the folder its files go in, Downloads until you **Choose…** another; and the
-  names of the files the values make;
-- **Run**, and while it runs, **Cancel**.
+![The tab of Sales by category: a toolbar with its name, Ready, Format, Save and Run; the file,
+its TOML and SQL highlighted; beside it the parameters, the folder and the two files a run
+writes; and under both, the report's four past runs.](images/report-page.png)
 
-While a report runs, the tab shows a line for each source and, if it has one, for the combine
-step: what each has read so far, and for how long, with a check once it is done. A source loaded
-into DuckDB folds out its columns and the types they were given. Only one report runs at a
-time; the other tabs say which one. When it ends, the tab shows each file it wrote
-with its rows and size, and the preview; or the step that failed and why. Nothing is written
-unless every file is: a run that fails or is cancelled leaves the folder as it was, an older
-file of the same name included.
+- **The toolbar** names the report, with a dot after the name while the file has unsaved
+  changes, and says how it stands: *Ready*, *2 problems* or *1 warning* (click it to go to the
+  first), *Unsaved*, or what the run is doing. Then **Format**, **Save** and **Run**, and **⋯**
+  for **Rename…**, **Show in folder**, **Open in another app**, **Copy path** and **Hide the
+  file**.
+- **The file**, in the editor consoles use (see [Editing a report](#editing-a-report)).
+- **Beside it**, the problems, if there are any, then a field for each parameter, checked as
+  you type, and **Output**: the folder its files go in, Downloads until you **Choose…** another,
+  and the files the values make. Drag the panel's edge to widen it.
+- **Under both**, the run panel: **Last run**, **Preview** and **Past runs** (see
+  [Runs](#runs)). Drag the line above it to make it taller.
 
-The values and the folder are remembered for each report until you quit DbRover. Under the run,
-**Runs** lists the report's last runs side by side (see [Runs](#runs)).
+While a report runs, **Last run** shows a line for each source and, if it has one, for the
+combine step: what each has read so far, and for how long, with a check once it is done. A
+source loaded into DuckDB folds out its columns and the types they were given. Only one report
+runs at a time; the other tabs say which one. When it ends, **Last run** shows each file it
+wrote with its rows and size, and **Preview** the first rows; or the step that failed and why.
+Nothing is written unless every file is: a run that fails or is cancelled leaves the folder as
+it was, an older file of the same name included.
+
+The values and the folder are remembered for each report until you quit DbRover. Someone who
+runs a report every month and never edits it can choose **⋯ › Hide the file**, which leaves the
+inputs and the runs.
+
+### Editing a report
+
+The file is highlighted as TOML, and each step's code in its own language: a source's query in
+its data source's (PostgreSQL's SQL, PartiQL, MongoDB's syntax, …), `[combine]`'s query in
+DuckDB's SQL, its `prql` in PRQL. Code sits on a faint band, so where it starts and stops shows.
+Find and replace (**⌘F**, **⌥⌘F**) work as in a console.
+
+![A report with two problems: a misspelt data source underlined in the file at line 16, and both
+problems listed beside it by line.](images/report-problems.png)
+
+Problems are underlined where they are, once you stop typing, and listed beside the file by
+line; click one, or the toolbar's count, to go to it, and **F8** goes to the next:
+
+- mistakes in the TOML, every one of them;
+- what the report's file has wrong: a key a table doesn't have, a value of the wrong kind, a
+  data source or preset there isn't, a parameter a query uses but `params` doesn't declare,
+  PRQL that doesn't compile. These turn **Run** off;
+- the SQL steps checked as a console checks a statement, with the lint rules you have switched
+  on in [Settings](settings.md). These are warnings, and don't stop a run;
+- the newest finished run's [hints](#runs), under the source or `[combine]` they are about,
+  dotted. **Quiet** beside one adds it to `quiet_hints`.
+
+**Format** (**⌥⌘L**, or **Code › Format**) lays out the file: one space around each `=`, no
+indentation before keys and tables, one blank line before each table and the comments above it.
+Lists and inline tables are left as you aligned them. It formats each SQL step as a console
+formats SQL, and leaves PRQL as written. If formatting would change anything the report does, it
+changes nothing and says so.
+
+**Save** (**⌘S**) writes the file; a file with problems can be saved, to finish later. **Run**
+reads **Save and run** while there are unsaved changes: the run reads the saved file, so it
+saves first. Closing the tab or quitting with unsaved changes asks first.
+
+When another program changes the file, a clean tab shows the change. One with unsaved changes
+says so, with **Reload** to take the file's text or **Keep mine** to save over it. A file
+deleted from the folder keeps its tab, and **Save** writes it again. **⋯ › Open in another app**
+opens the file in the app your system opens `.toml` files with.
 
 ## Runs
 
@@ -119,11 +167,11 @@ failed, each step's time and rows, and the step that takes the most time named u
 them.](images/report-runs.png)
 
 Every run of a report is kept, finished, failed or cancelled, with what each of its steps
-measured. Under the last run, **Runs** shows the newest five side by side, a column each, newest
-first:
+measured. The run panel's **Past runs** shows the newest five side by side, a column each,
+newest first:
 
-- when the run started, *from the command line* or *from MCP* when it wasn't started from the
-  tab, how it ended (hover over *failed* for the step and the error), its total time and the
+- when the run started, with a terminal or a plug beside it when it was started from the
+  command line or from MCP rather than the tab (hover over it to see which), how it ended (hover over *failed* for the step and the error), its total time and the
   parameters it ran with;
 - a row for each source, the combine step and each output: its time and its rows, or for an
   output the file's size. Hover over a cell for everything the step measured: the bytes it read,
@@ -153,7 +201,7 @@ Under it, hints from the newest finished run say what to try:
 Each hint has an id: `source-reads-more` for the first, `combine-spilled` for the second; hover
 over a hint to see it. A report that reads far more than it writes on purpose, such as one that
 adds up a year of lines into twelve, can silence a hint in its file, and the tab then says how
-many it silences:
+many it silences. **Quiet** beside a hint in the file does it for you:
 
 ```toml
 [report]
