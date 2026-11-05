@@ -10,7 +10,7 @@ use std::fmt;
 
 use crate::{
     ClickHouseConfig, CloudProvider, CloudSignIn, ConnectionConfig, DriverKind, MysqlConfig, Port,
-    PostgresConfig, ServerConfig, SqlServerConfig, TlsMode,
+    PostgresConfig, ServerConfig, SqlServerConfig, TlsMode, TrinoConfig, TrinoProtocol,
 };
 
 /// A managed service of one of the engines DbRover has, in the providers' order (AWS, Google
@@ -38,6 +38,8 @@ pub enum ManagedService {
     Neon,
     Supabase,
     ClickHouseCloud,
+    /// Starburst's hosted Trino, on AWS, Google Cloud or Azure (C3).
+    StarburstGalaxy,
 }
 
 /// Whose cloud a service runs in, for grouping services in menus.
@@ -83,6 +85,7 @@ pub enum ServiceEngine {
     Mysql,
     SqlServer,
     ClickHouse,
+    Trino,
 }
 
 impl ServiceEngine {
@@ -92,6 +95,7 @@ impl ServiceEngine {
             Self::Mysql => DriverKind::Mysql,
             Self::SqlServer => DriverKind::SqlServer,
             Self::ClickHouse => DriverKind::ClickHouse,
+            Self::Trino => DriverKind::Trino,
         }
     }
 }
@@ -114,7 +118,7 @@ pub struct ServiceAddress<'a> {
 }
 
 impl ManagedService {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::RdsPostgres,
         Self::RdsMysql,
         Self::Redshift,
@@ -130,6 +134,7 @@ impl ManagedService {
         Self::Neon,
         Self::Supabase,
         Self::ClickHouseCloud,
+        Self::StarburstGalaxy,
     ];
 
     pub fn display_name(self) -> &'static str {
@@ -149,6 +154,7 @@ impl ManagedService {
             Self::Neon => "Neon",
             Self::Supabase => "Supabase",
             Self::ClickHouseCloud => "ClickHouse Cloud",
+            Self::StarburstGalaxy => "Starburst Galaxy",
         }
     }
 
@@ -164,7 +170,9 @@ impl ManagedService {
             | Self::SynapseDedicated
             | Self::SynapseServerless
             | Self::Fabric => ServiceVendor::Azure,
-            Self::Neon | Self::Supabase | Self::ClickHouseCloud => ServiceVendor::Independent,
+            Self::Neon | Self::Supabase | Self::ClickHouseCloud | Self::StarburstGalaxy => {
+                ServiceVendor::Independent
+            }
         }
     }
 
@@ -283,6 +291,16 @@ impl ManagedService {
                     "abc123xyz.eu-west-1.aws.clickhouse.cloud",
                 )
             },
+            // A cluster's HTTPS address, with a user that names the user and its role
+            // (`ada@example.com/accountadmin`) and the user's password; no catalog is chosen
+            // for it.
+            Self::StarburstGalaxy => preset(
+                ServiceEngine::Trino,
+                TrinoConfig::DEFAULT_TLS_PORT,
+                VerifyFull,
+                Password,
+                "mycluster.trino.galaxy.starburst.io",
+            ),
         }
     }
 
@@ -308,6 +326,7 @@ impl ManagedService {
             Self::Neon => &[".neon.tech"],
             Self::Supabase => &[".supabase.co", ".supabase.com"],
             Self::ClickHouseCloud => &[".clickhouse.cloud"],
+            Self::StarburstGalaxy => &[".galaxy.starburst.io"],
         }
     }
 
@@ -366,6 +385,11 @@ impl ManagedService {
             ServiceEngine::ClickHouse => ConnectionConfig::ClickHouse(ClickHouseConfig {
                 server,
                 read_only: false,
+            }),
+            ServiceEngine::Trino => ConnectionConfig::Trino(TrinoConfig {
+                server,
+                schema: String::new(),
+                protocol: TrinoProtocol::Trino,
             }),
         }
     }
@@ -436,7 +460,7 @@ mod tests {
     use super::*;
     use crate::{DataSource, DataSourceId, SafetyLevel};
 
-    use DriverKind::{ClickHouse, Mysql, Postgres, SqlServer};
+    use DriverKind::{ClickHouse, Mysql, Postgres, SqlServer, Trino};
     use ServiceSignIn::{Only, Password, PasswordOr};
     use ServiceTls::{Require, VerifyFull};
 
@@ -506,6 +530,13 @@ mod tests {
                 ManagedService::ClickHouseCloud,
                 ClickHouse,
                 8443,
+                VerifyFull,
+                Password,
+            ),
+            (
+                ManagedService::StarburstGalaxy,
+                Trino,
+                443,
                 VerifyFull,
                 Password,
             ),
@@ -624,6 +655,12 @@ mod tests {
                 "abc123xyz.eu-west-1.aws.clickhouse.cloud",
                 Some(ManagedService::ClickHouseCloud),
             ),
+            (
+                Trino,
+                "mycluster-free.trino.galaxy.starburst.io",
+                Some(ManagedService::StarburstGalaxy),
+            ),
+            (Trino, "trino.internal.example.com", None),
             // Another engine's host, a look-alike, a bare suffix and a plain server.
             (Mysql, "myserver.postgres.database.azure.com", None),
             (Postgres, "myserver.database.windows.net", None),

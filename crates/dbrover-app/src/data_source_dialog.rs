@@ -448,6 +448,10 @@ fn service_note(service: ManagedService) -> &'static str {
         ManagedService::ClickHouseCloud => {
             "An idle service wakes on the first connection, which can take many seconds."
         }
+        ManagedService::StarburstGalaxy => {
+            "The user is your email and a role, as user@example.com/accountadmin. A suspended \
+             cluster starts on the first query, which can take a minute."
+        }
     }
 }
 
