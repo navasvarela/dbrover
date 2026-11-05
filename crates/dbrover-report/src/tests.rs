@@ -1130,3 +1130,115 @@ fn says_whether_the_file_or_settings_set_a_limit() {
         )
     );
 }
+
+/// What each problem of `text` underlines, by its message's start, after planning it against
+/// the ledger and the presets.
+fn underlined(text: &str) -> Vec<(String, String)> {
+    let problems = plan_text(
+        text,
+        &[sqlite("ledger")],
+        &presets(),
+        &LimitDefaults::default(),
+    )
+    .expect_err(text);
+    let locator = Locator::new(text);
+    problems
+        .into_iter()
+        .map(|problem| {
+            let range = locator.locate(&problem.place);
+            (problem.message, text[range].to_owned())
+        })
+        .collect()
+}
+
+#[test]
+fn places_each_problem_where_it_is() {
+    let base = |replace: &str, with: &str| TRIAL_BALANCE.replacen(replace, with, 1);
+    let cases = [
+        (
+            base("sheet_name = \"Trial balance\"", "sheet = 2"),
+            vec![("output 1: \"sheet\" is not part of an output", "sheet")],
+        ),
+        (
+            base("max_rows = 100000", "max_rows = \"many\""),
+            vec![("source \"balances\": max_rows must be", "max_rows")],
+        ),
+        (
+            base("data_source = \"ledger\"", "data_source = \"ledgr\""),
+            vec![(
+                "source \"balances\": there is no data source",
+                "data_source",
+            )],
+        ),
+        (
+            base("[[output]]\npreset", "[[output]]\nsheet = 1\npreset"),
+            vec![(
+                "output 2: \"sheet\" can't be set on an output with a preset",
+                "sheet",
+            )],
+        ),
+        (
+            base(
+                "params = { since = \"date\", until = \"date\" }",
+                "params = { since = \"date\" }",
+            ),
+            vec![("source \"balances\": the query uses :until", "query")],
+        ),
+        (
+            base("description = ", "descripton = "),
+            vec![(
+                "[report]: \"descripton\" is not part of [report]",
+                "descripton",
+            )],
+        ),
+        (
+            base(
+                "[[output]]\nformat = \"xlsx\"",
+                "[[output]]\nformat = \"xlsx\"\nformat2 = 1",
+            ),
+            vec![("output 1: \"format2\" is not part of an output", "format2")],
+        ),
+        (
+            format!("colour = \"red\"\n{TRIAL_BALANCE}"),
+            vec![("\"colour\" is not part of a report file", "colour")],
+        ),
+    ];
+    for (text, expected) in cases {
+        let found = underlined(&text);
+        assert_eq!(found.len(), expected.len(), "{found:#?}");
+        for ((message, place), (start, wanted)) in found.iter().zip(&expected) {
+            assert!(message.starts_with(start), "{message:?} for {start:?}");
+            assert_eq!(place, wanted, "{message}");
+        }
+    }
+}
+
+#[test]
+fn names_a_missing_data_source_beside_the_problems_that_stop_the_read() {
+    let text = TRIAL_BALANCE
+        .replacen("data_source = \"ledger\"", "data_source = \"ledgr\"", 1)
+        .replacen("sheet_name = \"Trial balance\"", "sheet = 2", 1);
+    let found = underlined(&text);
+    let places: Vec<&str> = found.iter().map(|(_, place)| place.as_str()).collect();
+    assert_eq!(places, ["sheet", "data_source"], "{found:#?}");
+    assert!(found[1].0.contains("there is no data source \"ledgr\""));
+}
+
+#[test]
+fn places_every_syntax_error_and_keeps_the_messages_callers_print() {
+    let text = format!("{TRIAL_BALANCE}\noops = \nmore = ]\n");
+    let found = underlined(&text);
+    assert_eq!(found.len(), 2, "{found:#?}");
+    assert!(
+        found
+            .iter()
+            .all(|(message, _)| message.starts_with("line "))
+    );
+    assert_eq!(
+        read_report(&text).expect_err("broken"),
+        found
+            .into_iter()
+            .map(|(message, _)| message)
+            .collect::<Vec<_>>()
+    );
+}

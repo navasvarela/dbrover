@@ -10,6 +10,7 @@ use dbrover_export::{ColumnType, CustomFormatId, ExportFormat, IfInvalid, Preset
 
 use dbrover_driver_duckdb::DuckDbType;
 
+use crate::problem::{Place, ReportProblem, Table, messages, syntax_problems};
 use crate::{
     ByteSize, Combine, CombineLimitsSet, CombineQuery, FileName, HintId, Lookup, Output,
     OutputColumns, OutputLimitsSet, OutputWriter, Param, Report, Source, SourceColumn,
@@ -33,11 +34,27 @@ const RESERVED_IDS: [&str; 4] = ["main", "memory", "system", "temp"];
 ///
 /// Every problem found, each a sentence naming where it is.
 pub fn read_report(text: &str) -> Result<Report, Vec<String>> {
+    read_with_places(text).map_err(messages)
+}
+
+/// Reads a report file's text, as [`read_report`] does.
+///
+/// # Errors
+///
+/// Every problem found, each with its place in the file: every TOML syntax error, or else
+/// what the file's tables have wrong.
+pub fn read_with_places(text: &str) -> Result<Report, Vec<ReportProblem>> {
+    let syntax = syntax_problems(text);
+    if !syntax.is_empty() {
+        return Err(syntax);
+    }
+    let table = toml::from_str::<toml::Table>(text).map_err(|error| {
+        vec![ReportProblem::new(
+            error.message().trim(),
+            Place::Text(error.span().unwrap_or(0..0)),
+        )]
+    })?;
     let mut problems = Vec::new();
-    let table = match toml::from_str::<toml::Table>(text) {
-        Ok(table) => table,
-        Err(error) => return Err(vec![toml_problem(text, &error)]),
-    };
     let mut file = Fields::new(table);
     let header = file.table("report");
     let sources = file.tables("source");
@@ -45,22 +62,28 @@ pub fn read_report(text: &str) -> Result<Report, Vec<String>> {
     let outputs = file.tables("output");
     for (key, place) in MISPLACED_REPORT_KEYS {
         if file.take(key).is_some() {
-            problems.push(place.to_owned());
+            problems.push(at_file(Found::at(key, place)));
         }
     }
-    problems.extend(file.unknown(
-        "a report file",
-        "[report], [[source]], [combine] and [[output]]",
-    ));
+    problems.extend(
+        file.unknown(
+            "a report file",
+            "[report], [[source]], [combine] and [[output]]",
+        )
+        .into_iter()
+        .map(at_file),
+    );
 
     let header = match header {
         Ok(Some(header)) => read_header(header, &mut problems),
         Ok(None) => {
-            problems.push("the file has no [report] table, with the report's name".to_owned());
+            problems.push(at_file(Found::from(
+                "the file has no [report] table, with the report's name",
+            )));
             None
         }
         Err(problem) => {
-            problems.push(problem);
+            problems.push(at_file(problem));
             None
         }
     };
@@ -75,32 +98,32 @@ pub fn read_report(text: &str) -> Result<Report, Vec<String>> {
         })
         .unwrap_or_default();
 
-    let sources = match sources {
+    let (sources, positions) = match sources {
         Ok(sources) => read_sources(sources, &mut problems),
         Err(problem) => {
-            problems.push(problem);
-            Vec::new()
+            problems.push(at_file(problem));
+            (Vec::new(), Vec::new())
         }
     };
-    check_lookups(&sources, &params, &mut problems);
+    check_lookups(&sources, &positions, &params, &mut problems);
     let combine = match combine {
         Ok(Some(combine)) => read_combine(combine, &mut problems),
         Ok(None) => None,
         Err(problem) => {
-            problems.push(problem);
+            problems.push(at_file(problem));
             None
         }
     };
-    if !problems
+    let combine_problems = problems
         .iter()
-        .any(|problem| problem.starts_with("[combine]"))
-    {
-        check_shape(&sources, combine.is_some(), &mut problems);
+        .any(|problem| in_table(problem, |table| *table == Table::Combine));
+    if !combine_problems {
+        check_shape(&sources, &positions, combine.is_some(), &mut problems);
     }
     let outputs = match outputs {
         Ok(outputs) => read_outputs(outputs, &params, &mut problems),
         Err(problem) => {
-            problems.push(problem);
+            problems.push(at_file(problem));
             Vec::new()
         }
     };
@@ -120,15 +143,70 @@ pub fn read_report(text: &str) -> Result<Report, Vec<String>> {
     }
 }
 
-/// What a TOML error says, with the line it is on.
-fn toml_problem(text: &str, error: &toml::de::Error) -> String {
-    let line = error
-        .span()
-        .map(|span| text[..span.start.min(text.len())].matches('\n').count() + 1);
-    match line {
-        Some(line) => format!("line {line}: {}", error.message().trim()),
-        None => error.message().trim().to_owned(),
+/// A problem found in one of the file's tables, and the key it is about when one is known.
+#[derive(Debug)]
+struct Found {
+    key: Option<String>,
+    message: String,
+}
+
+impl Found {
+    fn at(key: &str, message: impl Into<String>) -> Self {
+        Self {
+            key: Some(key.to_owned()),
+            message: message.into(),
+        }
     }
+}
+
+impl From<String> for Found {
+    fn from(message: String) -> Self {
+        Self { key: None, message }
+    }
+}
+
+impl From<&str> for Found {
+    fn from(message: &str) -> Self {
+        Self::from(message.to_owned())
+    }
+}
+
+/// `found` in `table`, each message after `label` (`source "lines": …`) when there is one.
+fn placed(
+    table: Table,
+    label: Option<&str>,
+    found: Vec<Found>,
+) -> impl Iterator<Item = ReportProblem> + '_ {
+    found.into_iter().map(move |found| {
+        let message = match label {
+            Some(label) => format!("{label}: {}", found.message),
+            None => found.message,
+        };
+        let place = Place::Key {
+            table: table.clone(),
+            key: found.key,
+        };
+        ReportProblem::new(message, place)
+    })
+}
+
+/// What `found` says, for the readers of lists inside a table, which name their item.
+fn message(found: Found) -> String {
+    found.message
+}
+
+/// A problem of the file as a whole.
+fn at_file(found: Found) -> ReportProblem {
+    let place = Place::Key {
+        table: Table::File,
+        key: found.key,
+    };
+    ReportProblem::new(found.message, place)
+}
+
+/// Whether `problem` is placed in a table that `which` picks.
+fn in_table(problem: &ReportProblem, which: impl Fn(&Table) -> bool) -> bool {
+    matches!(&problem.place, Place::Key { table, .. } if which(table))
 }
 
 struct Header {
@@ -139,13 +217,13 @@ struct Header {
     quiet_hints: Vec<HintId>,
 }
 
-fn read_header(table: toml::Table, problems: &mut Vec<String>) -> Option<Header> {
+fn read_header(table: toml::Table, problems: &mut Vec<ReportProblem>) -> Option<Header> {
     let mut fields = Fields::new(table);
     let label = "[report]";
     let mut found = Vec::new();
     let name = fields.string("name").and_then(|name| {
         name.filter(|name| !name.trim().is_empty())
-            .ok_or_else(|| "needs a name, as name = \"Trial balance\"".to_owned())
+            .ok_or_else(|| Found::at("name", "needs a name, as name = \"Trial balance\""))
     });
     let description = fields.string("description");
     let params = fields.table("params").map(Option::unwrap_or_default);
@@ -153,7 +231,7 @@ fn read_header(table: toml::Table, problems: &mut Vec<String>) -> Option<Header>
     let quiet_hints = read_quiet_hints(fields.take("quiet_hints"));
     for (key, place) in MISPLACED_REPORT_KEYS {
         if fields.take(key).is_some() {
-            found.push(place.to_owned());
+            found.push(Found::at(key, place));
         }
     }
     found.extend(fields.unknown(
@@ -174,15 +252,17 @@ fn read_header(table: toml::Table, problems: &mut Vec<String>) -> Option<Header>
             found.extend(description.err());
             found.extend(params.err());
             found.extend(timeout.err());
-            found.extend(quiet_hints.err().into_iter().flatten());
+            found.extend(
+                quiet_hints
+                    .err()
+                    .into_iter()
+                    .flatten()
+                    .map(|problem| Found::at("quiet_hints", problem)),
+            );
             None
         }
     };
-    problems.extend(
-        found
-            .into_iter()
-            .map(|problem| format!("{label}: {problem}")),
-    );
+    problems.extend(placed(Table::Report, Some(label), found));
     header
 }
 
@@ -217,25 +297,26 @@ fn read_quiet_hints(value: Option<toml::Value>) -> Result<Vec<HintId>, Vec<Strin
     }
 }
 
-fn read_params(table: toml::Table, problems: &mut Vec<String>) -> Vec<Param> {
+fn read_params(table: toml::Table, problems: &mut Vec<Found>) -> Vec<Param> {
     let mut params = Vec::new();
+    let mut problem = |message: String| problems.push(Found::at("params", message));
     for (name, value) in table {
         if !is_param_name(&name) {
-            problems.push(format!(
+            problem(format!(
                 "params: {name:?} can't be a parameter's name, which is letters, digits and _, \
                  starting with a letter"
             ));
             continue;
         }
         let toml::Value::String(type_name) = value else {
-            problems.push(format!(
+            problem(format!(
                 "params: {name}'s type is a string, as {name} = \"date\""
             ));
             continue;
         };
         match type_name.parse::<ColumnType>() {
             Ok(param_type) => params.push(Param { name, param_type }),
-            Err(error) => problems.push(format!("params: {name}: {error}")),
+            Err(error) => problem(format!("params: {name}: {error}")),
         }
     }
     params
@@ -251,55 +332,83 @@ fn is_param_name(name: &str) -> bool {
 }
 
 /// Each source, with a problem for each id that can't name a table or that another source
-/// already has. A source with a problem is left out, and its problems listed.
-fn read_sources(sources: Vec<toml::Table>, problems: &mut Vec<String>) -> Vec<Source> {
+/// already has. A source with a problem is left out, and its problems listed. Also returns
+/// each source's position among the file's `[[source]]` tables.
+fn read_sources(
+    sources: Vec<toml::Table>,
+    problems: &mut Vec<ReportProblem>,
+) -> (Vec<Source>, Vec<usize>) {
     let mut read: Vec<Source> = Vec::new();
-    for table in sources {
-        let Some(source) = read_source(table, problems) else {
+    let mut positions = Vec::new();
+    for (position, table) in sources.into_iter().enumerate() {
+        let Some(source) = read_source(table, position, problems) else {
             continue;
         };
         if read
             .iter()
             .any(|kept| kept.id.eq_ignore_ascii_case(&source.id))
         {
-            problems.push(format!(
-                "source {:?}: another source already has this id; each source's id names its \
-                 table, so each is different",
-                source.id
+            problems.push(ReportProblem::new(
+                format!(
+                    "source {:?}: another source already has this id; each source's id names \
+                     its table, so each is different",
+                    source.id
+                ),
+                Place::key(Table::Source(position), "id"),
             ));
             continue;
         }
         read.push(source);
+        positions.push(position);
     }
-    read
+    (read, positions)
 }
 
 /// What only the whole list of sources shows: whether there is one, and whether the sources
 /// need a combine step they don't have.
-fn check_shape(sources: &[Source], combined: bool, problems: &mut Vec<String>) {
+fn check_shape(
+    sources: &[Source],
+    positions: &[usize],
+    combined: bool,
+    problems: &mut Vec<ReportProblem>,
+) {
     let source_problems = problems
         .iter()
-        .any(|problem| problem.starts_with("source ") || problem.starts_with("[[source]]"));
-    match sources {
-        [] if !source_problems => problems.push(
-            "the file has no [[source]] table, with the query whose rows the report writes"
-                .to_owned(),
-        ),
-        [one] if !combined && one.read == SourceRead::Attach => problems.push(format!(
-            "source {:?}: an attached source is read in place by a [combine] query; add \
-             one, or give the source a query",
-            one.id
+        .any(|problem| in_table(problem, |table| matches!(table, Table::Source(_))));
+    let problem = match sources {
+        [] if !source_problems => Some(ReportProblem::new(
+            "the file has no [[source]] table, with the query whose rows the report writes",
+            Place::table(Table::File),
         )),
-        [_, _, ..] if !combined => problems.push(format!(
-            "the file has {} [[source]] tables; several sources are combined by a [combine] \
-             query over their tables",
-            sources.len()
+        [one] if !combined && one.read == SourceRead::Attach => Some(ReportProblem::new(
+            format!(
+                "source {:?}: an attached source is read in place by a [combine] query; add \
+                 one, or give the source a query",
+                one.id
+            ),
+            Place::key(
+                Table::Source(positions.first().copied().unwrap_or(0)),
+                "attach",
+            ),
         )),
-        _ => {}
-    }
+        [_, _, ..] if !combined => Some(ReportProblem::new(
+            format!(
+                "the file has {} [[source]] tables; several sources are combined by a \
+                 [combine] query over their tables",
+                sources.len()
+            ),
+            Place::key(Table::File, "source"),
+        )),
+        _ => None,
+    };
+    problems.extend(problem);
 }
 
-fn read_source(table: toml::Table, problems: &mut Vec<String>) -> Option<Source> {
+fn read_source(
+    table: toml::Table,
+    position: usize,
+    problems: &mut Vec<ReportProblem>,
+) -> Option<Source> {
     let mut fields = Fields::new(table);
     let id = fields.string("id");
     let label = match &id {
@@ -310,12 +419,17 @@ fn read_source(table: toml::Table, problems: &mut Vec<String>) -> Option<Source>
     let id = id.and_then(|id| {
         let id = id
             .filter(|id| !id.trim().is_empty())
-            .ok_or_else(|| "needs an id, as id = \"balances\"".to_owned())?;
-        check_id(&id).map(|()| id)
+            .ok_or_else(|| Found::at("id", "needs an id, as id = \"balances\""))?;
+        check_id(&id)
+            .map(|()| id)
+            .map_err(|problem| Found::at("id", problem))
     });
     let data_source = fields.string("data_source").and_then(|name| {
         name.filter(|name| !name.trim().is_empty()).ok_or_else(|| {
-            "needs the data source it reads, by name: data_source = \"ledger\"".to_owned()
+            Found::at(
+                "data_source",
+                "needs the data source it reads, by name: data_source = \"ledger\"",
+            )
         })
     });
     let attach = fields.boolean("attach");
@@ -332,11 +446,11 @@ fn read_source(table: toml::Table, problems: &mut Vec<String>) -> Option<Source>
     let read = match (attach, query, max_rows, max_bytes, timeout, lookup, columns) {
         (Ok(Some(true)), query, max_rows, max_bytes, timeout, lookup, columns) => {
             if !matches!(query, Ok(None)) {
-                found.push(
+                found.push(Found::at(
+                    "query",
                     "an attached source has no query: the [combine] query reads its tables in \
-                     place"
-                        .to_owned(),
-                );
+                     place",
+                ));
             }
             let limits = [
                 ("max_rows", max_rows.map(|value| value.is_some())),
@@ -345,9 +459,12 @@ fn read_source(table: toml::Table, problems: &mut Vec<String>) -> Option<Source>
             ];
             for (key, set) in limits {
                 if !matches!(set, Ok(false)) {
-                    found.push(format!(
-                        "{key} bounds what a source's query copies, and an attached source \
-                         copies nothing; [combine] sets the limits of what reads it"
+                    found.push(Found::at(
+                        key,
+                        format!(
+                            "{key} bounds what a source's query copies, and an attached source \
+                             copies nothing; [combine] sets the limits of what reads it"
+                        ),
                     ));
                 }
             }
@@ -357,9 +474,12 @@ fn read_source(table: toml::Table, problems: &mut Vec<String>) -> Option<Source>
             ];
             for (key, set) in query_keys {
                 if !matches!(set, Ok(false)) {
-                    found.push(format!(
-                        "{key} is for a source's query, and an attached source has none; \
-                         [combine] reads its tables as they are"
+                    found.push(Found::at(
+                        key,
+                        format!(
+                            "{key} is for a source's query, and an attached source has none; \
+                             [combine] reads its tables as they are"
+                        ),
                     ));
                 }
             }
@@ -379,9 +499,10 @@ fn read_source(table: toml::Table, problems: &mut Vec<String>) -> Option<Source>
                     columns,
                 })
                 .ok_or_else(|| {
-                    vec![
-                        "needs a query, or attach = true to read a DuckDB file in place".to_owned(),
-                    ]
+                    vec![Found::at(
+                        "query",
+                        "needs a query, or attach = true to read a DuckDB file in place",
+                    )]
                 })
         }
         (attach, query, max_rows, max_bytes, timeout, lookup, columns) => {
@@ -391,8 +512,20 @@ fn read_source(table: toml::Table, problems: &mut Vec<String>) -> Option<Source>
             errors.extend(max_rows.err());
             errors.extend(max_bytes.err());
             errors.extend(timeout.err());
-            errors.extend(lookup.err().into_iter().flatten());
-            errors.extend(columns.err().into_iter().flatten());
+            errors.extend(
+                lookup
+                    .err()
+                    .into_iter()
+                    .flatten()
+                    .map(|problem| Found::at("lookup", problem)),
+            );
+            errors.extend(
+                columns
+                    .err()
+                    .into_iter()
+                    .flatten()
+                    .map(|problem| Found::at("columns", problem)),
+            );
             Err(errors)
         }
     };
@@ -410,11 +543,7 @@ fn read_source(table: toml::Table, problems: &mut Vec<String>) -> Option<Source>
         }
     };
     let source = source.filter(|_| found.is_empty());
-    problems.extend(
-        found
-            .into_iter()
-            .map(|problem| format!("{label}: {problem}")),
-    );
+    problems.extend(placed(Table::Source(position), Some(&label), found));
     source
 }
 
@@ -429,10 +558,13 @@ fn read_lookup(value: toml::Value) -> Result<Lookup, Vec<String>> {
     };
     let mut fields = Fields::new(table);
     let mut named = |key: &str, example: &str| {
-        fields.string(key).and_then(|text| {
-            text.filter(|text| !text.trim().is_empty())
-                .ok_or_else(|| format!("lookup needs {key}, {example}"))
-        })
+        fields
+            .string(key)
+            .map_err(|found| found.message)
+            .and_then(|text| {
+                text.filter(|text| !text.trim().is_empty())
+                    .ok_or_else(|| format!("lookup needs {key}, {example}"))
+            })
     };
     let from = named("from", "the earlier source it reads, as from = \"tx\"");
     let column = named(
@@ -453,14 +585,17 @@ fn read_lookup(value: toml::Value) -> Result<Lookup, Vec<String>> {
             ))
         }
     });
-    let batch_size = fields.count("batch_size").map(|size| {
-        size.and_then(|size| usize::try_from(size).ok())
-            .and_then(NonZeroUsize::new)
-    });
+    let batch_size = fields
+        .count("batch_size")
+        .map(|size| {
+            size.and_then(|size| usize::try_from(size).ok())
+                .and_then(NonZeroUsize::new)
+        })
+        .map_err(|found| found.message);
     let mut problems: Vec<String> = fields
         .unknown("a lookup", "from, column, as and batch_size")
         .into_iter()
-        .map(|problem| format!("lookup: {problem}"))
+        .map(|problem| format!("lookup: {}", problem.message))
         .collect();
     match (from, column, parameter, batch_size) {
         (Ok(from), Ok(column), Ok(parameter), Ok(batch_size)) if problems.is_empty() => {
@@ -532,7 +667,9 @@ fn read_source_columns(value: toml::Value) -> Result<Vec<SourceColumn>, Vec<Stri
 /// One declared column, or its label (its name, quoted) and the first problem it has.
 fn read_source_column(table: toml::Table) -> Result<SourceColumn, (Option<String>, String)> {
     let mut fields = Fields::new(table);
-    let name = fields.string("name").map_err(|problem| (None, problem))?;
+    let name = fields
+        .string("name")
+        .map_err(|problem| (None, problem.message))?;
     let label = name.as_ref().map(|name| format!("{name:?}"));
     let fail = |problem: String| (label.clone(), problem);
     let name = name.filter(|name| !name.trim().is_empty()).ok_or_else(|| {
@@ -540,11 +677,13 @@ fn read_source_column(table: toml::Table) -> Result<SourceColumn, (Option<String
     })?;
     let from = fields
         .string("from")
+        .map_err(message)
         .map_err(fail)?
         .filter(|from| !from.is_empty())
         .unwrap_or_else(|| name.clone());
     let column_type = fields
         .string("type")
+        .map_err(message)
         .map_err(fail)?
         .map(|type_name| type_name.parse::<ColumnType>())
         .transpose()
@@ -582,7 +721,7 @@ fn read_source_column(table: toml::Table) -> Result<SourceColumn, (Option<String
         .into_iter()
         .next()
     {
-        return Err(fail(problem));
+        return Err(fail(problem.message));
     }
     Ok(SourceColumn {
         name,
@@ -596,10 +735,12 @@ fn read_source_column(table: toml::Table) -> Result<SourceColumn, (Option<String
 /// it that has a query, and its parameter isn't one of the report's.
 fn check_lookups(
     sources: &[Source],
+    positions: &[usize],
     params: &BTreeMap<&str, ColumnType>,
-    problems: &mut Vec<String>,
+    problems: &mut Vec<ReportProblem>,
 ) {
     for (index, source) in sources.iter().enumerate() {
+        let place = || Place::key(Table::Source(positions[index]), "lookup");
         let SourceRead::Query {
             lookup: Some(lookup),
             ..
@@ -609,10 +750,13 @@ fn check_lookups(
         };
         let label = format!("source {:?}", source.id);
         if params.contains_key(lookup.parameter.as_str()) {
-            problems.push(format!(
-                "{label}: lookup: :{} is one of [report] params; a lookup's values need a name \
-                 of their own",
-                lookup.parameter
+            problems.push(ReportProblem::new(
+                format!(
+                    "{label}: lookup: :{} is one of [report] params; a lookup's values need a \
+                     name of their own",
+                    lookup.parameter
+                ),
+                place(),
             ));
         }
         let above = sources[..index]
@@ -643,7 +787,7 @@ fn check_lookups(
                 lookup.from
             )),
         };
-        problems.extend(problem);
+        problems.extend(problem.map(|message| ReportProblem::new(message, place())));
     }
 }
 
@@ -669,7 +813,7 @@ fn check_id(id: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn read_combine(table: toml::Table, problems: &mut Vec<String>) -> Option<Combine> {
+fn read_combine(table: toml::Table, problems: &mut Vec<ReportProblem>) -> Option<Combine> {
     let mut fields = Fields::new(table);
     let mut found = Vec::new();
     let sql = fields.string("query");
@@ -707,65 +851,68 @@ fn read_combine(table: toml::Table, problems: &mut Vec<String>) -> Option<Combin
         }
     };
     let combine = combine.filter(|_| found.is_empty());
-    problems.extend(
-        found
-            .into_iter()
-            .map(|problem| format!("[combine]: {problem}")),
-    );
+    problems.extend(placed(Table::Combine, Some("[combine]"), found));
     combine
 }
 
 /// The combine step's query from its `query` and `prql` keys, of which it has one; PRQL
 /// compiled. A PRQL that doesn't compile can give several problems.
 fn combine_query(
-    sql: Result<Option<String>, String>,
-    prql: Result<Option<String>, String>,
-) -> Result<CombineQuery, Vec<String>> {
+    sql: Result<Option<String>, Found>,
+    prql: Result<Option<String>, Found>,
+) -> Result<CombineQuery, Vec<Found>> {
     let given = |text: Option<String>| text.filter(|text| !text.trim().is_empty());
     match (sql.map(given), prql.map(given)) {
         (Err(problem), _) | (_, Err(problem)) => Err(vec![problem]),
-        (Ok(Some(_)), Ok(Some(_))) => Err(vec![
-            "has both a query and prql; it runs one, so keep the one you mean".to_owned(),
-        ]),
+        (Ok(Some(_)), Ok(Some(_))) => Err(vec![Found::at(
+            "prql",
+            "has both a query and prql; it runs one, so keep the one you mean",
+        )]),
         (Ok(Some(sql)), Ok(None)) => Ok(CombineQuery::Sql(sql)),
-        (Ok(None), Ok(Some(prql))) => {
-            crate::prql::compile(&prql).map(|compiled| CombineQuery::Prql { prql, compiled })
-        }
-        (Ok(None), Ok(None)) => Err(vec![
+        (Ok(None), Ok(Some(prql))) => crate::prql::compile(&prql)
+            .map(|compiled| CombineQuery::Prql { prql, compiled })
+            .map_err(|problems| {
+                problems
+                    .into_iter()
+                    .map(|problem| Found::at("prql", problem))
+                    .collect()
+            }),
+        (Ok(None), Ok(None)) => Err(vec![Found::from(
             "needs a query, the DuckDB SQL that combines the sources' tables, or prql, the same \
-             in PRQL"
-                .to_owned(),
-        ]),
+             in PRQL",
+        )]),
     }
 }
 
 fn read_outputs(
     outputs: Vec<toml::Table>,
     params: &BTreeMap<&str, ColumnType>,
-    problems: &mut Vec<String>,
+    problems: &mut Vec<ReportProblem>,
 ) -> Vec<Output> {
     if outputs.is_empty() {
-        problems.push("the file has no [[output]] table, for a file to write".to_owned());
+        problems.push(ReportProblem::new(
+            "the file has no [[output]] table, for a file to write",
+            Place::table(Table::File),
+        ));
     }
     let mut read = Vec::new();
     for (index, table) in outputs.into_iter().enumerate() {
         let label = format!("output {}", index + 1);
         let mut found = Vec::new();
         let output = read_output(table, params, index == 0, &mut found);
-        problems.extend(
-            found
-                .into_iter()
-                .map(|problem| format!("{label}: {problem}")),
-        );
+        problems.extend(placed(Table::Output(index), Some(&label), found));
         if let Some(output) = output {
             if read
                 .iter()
                 .any(|kept: &Output| kept.file.as_str() == output.file.as_str())
             {
-                problems.push(format!(
-                    "{label}: another output already writes {:?}; several outputs in one \
-                     file, as sheets of one workbook, come after RP1",
-                    output.file.as_str()
+                problems.push(ReportProblem::new(
+                    format!(
+                        "{label}: another output already writes {:?}; several outputs in one \
+                         file, as sheets of one workbook, come after RP1",
+                        output.file.as_str()
+                    ),
+                    Place::key(Table::Output(index), "file"),
                 ));
             }
             read.push(output);
@@ -788,7 +935,7 @@ fn read_output(
     table: toml::Table,
     params: &BTreeMap<&str, ColumnType>,
     first: bool,
-    problems: &mut Vec<String>,
+    problems: &mut Vec<Found>,
 ) -> Option<Output> {
     let mut fields = Fields::new(table);
     let format = fields.string("format");
@@ -801,32 +948,37 @@ fn read_output(
         (Ok(Some(format)), Ok(None)) => read_format(&format, fields, problems),
         (Ok(None), Ok(Some(id))) => {
             problems.extend(fields.0.keys().map(|key| {
-                format!(
-                    "{key:?} can't be set on an output with a preset, whose options are set in \
-                     exports.toml"
+                Found::at(
+                    key,
+                    format!(
+                        "{key:?} can't be set on an output with a preset, whose options are set \
+                         in exports.toml"
+                    ),
                 )
             }));
             match CustomFormatId::new(&id) {
                 Some(id) => Some(OutputWriter::Preset(id)),
                 None => {
-                    problems.push(format!(
-                        "{id:?} can't be the id of a preset in exports.toml"
+                    problems.push(Found::at(
+                        "preset",
+                        format!("{id:?} can't be the id of a preset in exports.toml"),
                     ));
                     None
                 }
             }
         }
         (Ok(Some(_)), Ok(Some(_))) => {
-            problems
-                .push("an output has a format or a preset from exports.toml, not both".to_owned());
+            problems.push(Found::at(
+                "preset",
+                "an output has a format or a preset from exports.toml, not both",
+            ));
             None
         }
         (Ok(None), Ok(None)) => {
-            problems.push(
+            problems.push(Found::from(
                 "needs a format, as format = \"xlsx\" or \"csv\", or a preset from exports.toml, \
-                 as preset = \"semicolon-csv\""
-                    .to_owned(),
-            );
+                 as preset = \"semicolon-csv\"",
+            ));
             None
         }
         (format, preset) => {
@@ -838,16 +990,27 @@ fn read_output(
     let file = match file {
         Ok(Some(file)) => FileName::parse(&file)
             .and_then(|name| name.check(params).map(|()| name))
-            .map_err(|problem| format!("file: {problem}")),
-        Ok(None) => Err("needs a file name, as file = \"trial-balance.xlsx\"".to_owned()),
+            .map_err(|problem| Found::at("file", format!("file: {problem}"))),
+        Ok(None) => Err(Found::at(
+            "file",
+            "needs a file name, as file = \"trial-balance.xlsx\"",
+        )),
         Err(problem) => Err(problem),
     };
-    let columns = read_columns(columns, first);
+    let columns = read_columns(columns, first).map_err(|problems| {
+        problems
+            .into_iter()
+            .map(|problem| Found::at("columns", problem))
+            .collect::<Vec<_>>()
+    });
     let output = match (writer, file, columns, max_size, continue_on_new_sheet) {
         (Some(writer), Ok(file), Ok(columns), Ok(max_size), Ok(continue_on_new_sheet)) => {
             let continue_on_new_sheet = continue_on_new_sheet.unwrap_or(false);
             if continue_on_new_sheet && !writes_excel(&writer) {
-                problems.push("continue_on_new_sheet is for Excel outputs".to_owned());
+                problems.push(Found::at(
+                    "continue_on_new_sheet",
+                    "continue_on_new_sheet is for Excel outputs",
+                ));
             }
             Some(Output {
                 writer,
@@ -878,19 +1041,23 @@ fn writes_excel(writer: &OutputWriter) -> bool {
 }
 
 /// `format = "csv"` or `"xlsx"`, with the output's other keys as that format's options.
-fn read_format(format: &str, fields: Fields, problems: &mut Vec<String>) -> Option<OutputWriter> {
+fn read_format(format: &str, fields: Fields, problems: &mut Vec<Found>) -> Option<OutputWriter> {
     let format = match ExportFormat::from_id(format) {
         Some(format @ (ExportFormat::Csv | ExportFormat::Xlsx)) => format,
         Some(other) => {
-            problems.push(format!(
-                "a report writes CSV or Excel files in RP1, not {}",
-                other.name()
+            problems.push(Found::at(
+                "format",
+                format!(
+                    "a report writes CSV or Excel files in RP1, not {}",
+                    other.name()
+                ),
             ));
             return None;
         }
         None => {
-            problems.push(format!(
-                "{format:?} is not a format; a report writes \"csv\" or \"xlsx\""
+            problems.push(Found::at(
+                "format",
+                format!("{format:?} is not a format; a report writes \"csv\" or \"xlsx\""),
             ));
             return None;
         }
@@ -902,11 +1069,14 @@ fn read_format(format: &str, fields: Fields, problems: &mut Vec<String>) -> Opti
         .filter(|(key, _)| {
             let known = names.contains(key);
             if !known {
-                problems.push(format!(
-                    "{key:?} is not part of an output; an output has {}, and {}'s options {}",
-                    OUTPUT_KEYS.join(", "),
-                    format.name(),
-                    names.join(", ")
+                problems.push(Found::at(
+                    key,
+                    format!(
+                        "{key:?} is not part of an output; an output has {}, and {}'s options {}",
+                        OUTPUT_KEYS.join(", "),
+                        format.name(),
+                        names.join(", ")
+                    ),
                 ));
             }
             known
@@ -915,7 +1085,7 @@ fn read_format(format: &str, fields: Fields, problems: &mut Vec<String>) -> Opti
     match Preset::read(format, toml::Value::Table(options)) {
         Ok(preset) => Some(OutputWriter::Format(preset)),
         Err(error) => {
-            problems.push(error.message().trim().to_owned());
+            problems.push(Found::from(error.message().trim()));
             None
         }
     }
@@ -964,22 +1134,26 @@ fn read_columns(value: Option<toml::Value>, first: bool) -> Result<OutputColumns
 /// One column, or its label (its name, quoted) and the first problem it has.
 fn read_column(table: toml::Table) -> Result<SchemaColumn, (Option<String>, String)> {
     let mut fields = Fields::new(table);
-    let name = fields.string("name").map_err(|problem| (None, problem))?;
+    let name = fields
+        .string("name")
+        .map_err(|problem| (None, problem.message))?;
     let label = name.as_ref().map(|name| format!("{name:?}"));
     let fail = |problem: String| (label.clone(), problem);
     let name = name
         .filter(|name| !name.is_empty())
         .ok_or_else(|| fail("needs a name, the header it writes".to_owned()))?;
-    let from = fields.string("from").map_err(fail)?;
+    let from = fields.string("from").map_err(message).map_err(fail)?;
     let column_type = fields
         .string("type")
+        .map_err(message)
         .map_err(fail)?
         .map(|type_name| type_name.parse::<ColumnType>())
         .transpose()
         .map_err(|error| fail(error.to_string()))?;
-    let excel_format = fields.string("format").map_err(fail)?;
+    let excel_format = fields.string("format").map_err(message).map_err(fail)?;
     let time_zone = fields
         .string("time_zone")
+        .map_err(message)
         .map_err(fail)?
         .map(|zone| {
             jiff::tz::TimeZone::get(&zone)
@@ -991,6 +1165,7 @@ fn read_column(table: toml::Table) -> Result<SchemaColumn, (Option<String>, Stri
     }
     let if_invalid = fields
         .string("if_invalid")
+        .map_err(message)
         .map_err(fail)?
         .map(|text| text.parse::<IfInvalid>())
         .transpose()
@@ -1004,7 +1179,7 @@ fn read_column(table: toml::Table) -> Result<SchemaColumn, (Option<String>, Stri
         .into_iter()
         .next()
     {
-        return Err(fail(problem));
+        return Err(fail(problem.message));
     }
     Ok(SchemaColumn {
         from: from.unwrap_or_else(|| name.clone()),
@@ -1017,6 +1192,7 @@ fn read_column(table: toml::Table) -> Result<SchemaColumn, (Option<String>, Stri
 }
 
 /// A table's keys, taken one at a time, so that what is left is what the table doesn't know.
+/// Each problem it finds is about the key it was asked for.
 struct Fields(toml::Table);
 
 impl Fields {
@@ -1028,40 +1204,48 @@ impl Fields {
         self.0.remove(key)
     }
 
-    fn string(&mut self, key: &str) -> Result<Option<String>, String> {
+    fn string(&mut self, key: &str) -> Result<Option<String>, Found> {
         match self.take(key) {
             None => Ok(None),
             Some(toml::Value::String(text)) => Ok(Some(text)),
-            Some(other) => Err(format!(
-                "{key} must be a string, not a {}",
-                other.type_str()
+            Some(other) => Err(Found::at(
+                key,
+                format!("{key} must be a string, not a {}", other.type_str()),
             )),
         }
     }
 
-    fn boolean(&mut self, key: &str) -> Result<Option<bool>, String> {
+    fn boolean(&mut self, key: &str) -> Result<Option<bool>, Found> {
         match self.take(key) {
             None => Ok(None),
             Some(toml::Value::Boolean(value)) => Ok(Some(value)),
-            Some(other) => Err(format!(
-                "{key} must be true or false, not a {}",
-                other.type_str()
+            Some(other) => Err(Found::at(
+                key,
+                format!("{key} must be true or false, not a {}", other.type_str()),
             )),
         }
     }
 
     /// A whole number greater than zero.
-    fn count(&mut self, key: &str) -> Result<Option<u64>, String> {
+    fn count(&mut self, key: &str) -> Result<Option<u64>, Found> {
         match self.take(key) {
             None => Ok(None),
             Some(toml::Value::Integer(number)) if number > 0 => Ok(u64::try_from(number).ok()),
-            Some(_) => Err(format!("{key} must be a whole number greater than zero")),
+            Some(_) => Err(Found::at(
+                key,
+                format!("{key} must be a whole number greater than zero"),
+            )),
         }
     }
 
     /// A size, as `"500 MB"`, or a number of bytes.
-    fn byte_size(&mut self, key: &str) -> Result<Option<ByteSize>, String> {
-        let invalid = || format!("{key} must be a size such as \"500 MB\" or \"1 GiB\"");
+    fn byte_size(&mut self, key: &str) -> Result<Option<ByteSize>, Found> {
+        let invalid = || {
+            Found::at(
+                key,
+                format!("{key} must be a size such as \"500 MB\" or \"1 GiB\""),
+            )
+        };
         match self.take(key) {
             None => Ok(None),
             Some(toml::Value::String(text)) => ByteSize::parse(&text)
@@ -1076,8 +1260,13 @@ impl Fields {
     }
 
     /// A duration, as `"30s"`, `"10m"` or `"1h 30m"`.
-    fn duration(&mut self, key: &str) -> Result<Option<Duration>, String> {
-        let invalid = || format!("{key} must be a duration such as \"30s\" or \"10m\"");
+    fn duration(&mut self, key: &str) -> Result<Option<Duration>, Found> {
+        let invalid = || {
+            Found::at(
+                key,
+                format!("{key} must be a duration such as \"30s\" or \"10m\""),
+            )
+        };
         match self.take(key) {
             None => Ok(None),
             Some(toml::Value::String(text)) => text
@@ -1092,18 +1281,21 @@ impl Fields {
     }
 
     /// A table, if the key is there.
-    fn table(&mut self, key: &str) -> Result<Option<toml::Table>, String> {
+    fn table(&mut self, key: &str) -> Result<Option<toml::Table>, Found> {
         match self.take(key) {
             None => Ok(None),
             Some(toml::Value::Table(table)) => Ok(Some(table)),
-            Some(_) if key == "report" => Err("report must be a [report] table".to_owned()),
-            Some(_) => Err(format!("{key} must be a table, as {key} = {{ … }}")),
+            Some(_) if key == "report" => Err(Found::at(key, "report must be a [report] table")),
+            Some(_) => Err(Found::at(
+                key,
+                format!("{key} must be a table, as {key} = {{ … }}"),
+            )),
         }
     }
 
     /// The `[[key]]` tables; none if the key isn't there.
-    fn tables(&mut self, key: &str) -> Result<Vec<toml::Table>, String> {
-        let not_tables = || format!("{key} must be a list of [[{key}]] tables");
+    fn tables(&mut self, key: &str) -> Result<Vec<toml::Table>, Found> {
+        let not_tables = || Found::at(key, format!("{key} must be a list of [[{key}]] tables"));
         match self.take(key) {
             None => Ok(Vec::new()),
             Some(toml::Value::Array(items)) => items
@@ -1118,10 +1310,15 @@ impl Fields {
     }
 
     /// A problem for each key left, which `what` doesn't have; it has `has`.
-    fn unknown(&self, what: &str, has: &str) -> Vec<String> {
+    fn unknown(&self, what: &str, has: &str) -> Vec<Found> {
         self.0
             .keys()
-            .map(|key| format!("{key:?} is not part of {what}, which has {has}"))
+            .map(|key| {
+                Found::at(
+                    key,
+                    format!("{key:?} is not part of {what}, which has {has}"),
+                )
+            })
             .collect()
     }
 }
