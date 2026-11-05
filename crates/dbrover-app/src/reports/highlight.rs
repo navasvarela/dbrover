@@ -39,7 +39,7 @@ impl Highlighter for ReportHighlighter<'_> {
 }
 
 /// The language of the data source a source names, by name or by id, as the plan finds it.
-fn language_of(wanted: &str, data_sources: &[DataSource]) -> Option<QueryLanguage> {
+pub(super) fn language_of(wanted: &str, data_sources: &[DataSource]) -> Option<QueryLanguage> {
     data_sources
         .iter()
         .find(|data_source| data_source.name == wanted)

@@ -17,6 +17,8 @@ use crate::theme::Palette;
 pub enum Severity {
     Error,
     Warning,
+    /// Advice rather than a mistake, such as a hint from a report's runs.
+    Hint,
 }
 
 /// A problem the editor underlines: where it is, how bad, and what it says on hover.
@@ -120,8 +122,9 @@ fn move_cursor(ui: &Ui, editor: &mut CodeEditor, editor_id: Id) -> Option<CCurso
 const SQUIGGLE_AMPLITUDE: f32 = 1.5;
 const SQUIGGLE_STEP: f32 = 2.5;
 
-/// Underlines each problem with a wave, red for errors and amber for warnings. Returns where,
-/// with each problem's index, so hovering can show the message.
+/// Underlines each problem with a wave, red for errors and amber for warnings, and each hint
+/// with dots in the accent colour. Returns where, with each problem's index, so hovering can
+/// show the message.
 fn squiggles<P: EditorProblem>(
     ui: &Ui,
     text: &str,
@@ -132,9 +135,11 @@ fn squiggles<P: EditorProblem>(
     let origin = output.galley_pos;
     let mut rects = Vec::new();
     for (index, problem) in problems.iter().enumerate() {
-        let color = match problem.severity() {
+        let severity = problem.severity();
+        let color = match severity {
             Severity::Error => palette.error,
             Severity::Warning => palette.warning,
+            Severity::Hint => palette.primary,
         };
         let range = problem.range();
         let start = char_index(text, range.start);
@@ -155,7 +160,10 @@ fn squiggles<P: EditorProblem>(
                         origin.y + row.max_y(),
                     ),
                 );
-                ui.painter().add(wave(rect, color));
+                ui.painter().add(match severity {
+                    Severity::Hint => dots(rect, color),
+                    Severity::Error | Severity::Warning => wave(rect, color),
+                });
                 rects.push((rect, index));
             }
             row_start = row_end;
@@ -180,6 +188,18 @@ fn wave(rect: egui::Rect, color: egui::Color32) -> egui::Shape {
         up = !up;
     }
     egui::Shape::line(points, egui::Stroke::new(1.0, color))
+}
+
+/// A dotted line along the bottom of `rect`, quieter than a wave.
+fn dots(rect: egui::Rect, color: egui::Color32) -> egui::Shape {
+    let y = rect.bottom() - SQUIGGLE_AMPLITUDE;
+    let mut dots = Vec::new();
+    let mut x = rect.left();
+    while x <= rect.right() {
+        dots.push(egui::Shape::circle_filled(egui::pos2(x, y), 1.0, color));
+        x += 2.0 * SQUIGGLE_STEP;
+    }
+    egui::Shape::Vec(dots)
 }
 
 /// Shows the message of the problem under the pointer, and its note.

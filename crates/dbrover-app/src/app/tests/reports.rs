@@ -876,6 +876,34 @@ fn a_save_never_replaces_a_change_made_on_disk_unasked() {
 }
 
 #[test]
+fn a_runs_hint_shows_by_its_table_and_quiet_writes_it_into_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let launcher = StandIn::new(spilling_run(&dir.path().join("out")));
+    let mut harness = start_with_reports(dir.path(), COMBINED, launcher);
+    open_and_fill(&mut harness, "2026-10-01");
+    harness.get_by_label("Run").click();
+    step_until(&mut harness, "the hint by its table", |harness| {
+        harness.query_by_label("Quiet").is_some()
+    });
+    harness.get_by_label("Quiet").click();
+    // The text changed, and isn't saved yet.
+    step_until_visible(&mut harness, "Save and run");
+    let text = harness
+        .get_by_role(Role::MultilineTextInput)
+        .accesskit_node()
+        .value()
+        .unwrap_or_default();
+    assert!(
+        text.contains("quiet_hints = [\"combine-spilled\"]"),
+        "{text}"
+    );
+    // Checked again once typing would have paused.
+    step_until(&mut harness, "the hint quiet", |harness| {
+        harness.query_by_label("Quiet").is_none()
+    });
+}
+
+#[test]
 fn renaming_a_report_keeps_its_runs() {
     let dir = tempfile::tempdir().unwrap();
     let history = HistoryFile::new(dir.path().join("history.sqlite"));
