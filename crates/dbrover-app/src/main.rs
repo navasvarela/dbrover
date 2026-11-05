@@ -60,6 +60,7 @@ mod report_worker;
 mod reports;
 mod rollback_dialog;
 mod schema_command;
+mod schema_compare;
 #[cfg(test)]
 mod screenshots;
 mod settings;

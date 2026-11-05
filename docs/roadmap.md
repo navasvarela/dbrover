@@ -1624,7 +1624,9 @@ three to five, **L** a track of its own).
   - **W13d — The script:** built; the nine phases, with E4's `AlterTable` staged around
     foreign keys and `SET LOCAL search_path` to the left's schema, since the definitions it
     copies name the schema's own objects without it.
-  - **W13e — The tab:** **Compare schema…** on a schema in the explorer.
+  - **W13e — The tab:** built; **Compare schema…** on a schema in the explorer, the sides,
+    the differences, the definitions side by side with their differing lines marked, **Open
+    script in console** and **Copy script**.
   - **W13f — Manual and demo notes,** with VC3's.
 
   **Exit:** comparing two PostgreSQL schemas that differ by a column and an index lists both

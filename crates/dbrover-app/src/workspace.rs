@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::command_runs::CommandRuns;
 use dbrover_export::CustomFormat;
+use dbrover_language::QueryLanguage;
 
 use crate::console::{
     self, CellMenuItems, ConsoleAction, ConsoleContext, LintOptions, QueryConsole,
@@ -35,6 +36,7 @@ use crate::keymap::Keymap;
 use crate::log_console::LogConsole;
 use crate::mcp_settings::McpDefaultsEditor;
 use crate::reports::{self, ReportAction, ReportView, Reports};
+use crate::schema_compare::{Candidate, CompareAction, CompareId, SchemaCompares};
 use crate::settings::AppSettings;
 use crate::settings_tab::{SettingsAction, SettingsTab, SettingsView};
 use crate::state::DataSources;
@@ -76,8 +78,10 @@ pub enum Tab {
     /// A data source's query history. Restored at start-up once the data sources are read;
     /// see [`restore_history`].
     History(DataSourceId),
-    /// A catalog object's definition. Not restored; see [`forget_definitions`].
+    /// A catalog object's definition. Not restored; see [`forget_transient_tabs`].
     Definition(DefinitionId),
+    /// Two schemas compared (W13). Not restored; see [`forget_transient_tabs`].
+    SchemaCompare(CompareId),
 }
 
 /// The consoles whose tabs the layout holds, so they can be reopened at start-up.
@@ -195,17 +199,25 @@ pub fn close_definition_tab(layout: &mut DockState<Tab>, id: DefinitionId) {
     }
 }
 
-/// Drops a saved layout's definition tabs, whose keys mean nothing to this run.
-pub fn forget_definitions(layout: &mut DockState<Tab>) {
-    let ids: Vec<DefinitionId> = layout
+/// Drops a saved layout's definition and compare tabs, whose keys mean nothing to this run.
+pub fn forget_transient_tabs(layout: &mut DockState<Tab>) {
+    let transient: Vec<Tab> = layout
         .iter_all_tabs()
-        .filter_map(|(_, tab)| match tab {
-            Tab::Definition(id) => Some(*id),
-            _ => None,
-        })
+        .filter(|(_, tab)| matches!(tab, Tab::Definition(_) | Tab::SchemaCompare(_)))
+        .map(|(_, tab)| tab.clone())
         .collect();
-    for id in ids {
-        close_definition_tab(layout, id);
+    for tab in transient {
+        if let Some(path) = layout.find_tab(&tab) {
+            layout.remove_tab(path);
+        }
+    }
+}
+
+/// Brings a compare tab to the front, opening it next to the consoles if it isn't open.
+pub fn open_compare_tab(layout: &mut DockState<Tab>, id: CompareId) {
+    let tab = Tab::SchemaCompare(id);
+    if !focus_tab(layout, &tab) {
+        open_in_main_area(layout, tab);
     }
 }
 
@@ -248,6 +260,7 @@ fn open_in_main_area(layout: &mut DockState<Tab>, tab: Tab) {
                 | Tab::Report(_)
                 | Tab::History(_)
                 | Tab::Definition(_)
+                | Tab::SchemaCompare(_)
         )
     };
     match tree.find_tab_from(in_main_area) {
@@ -336,6 +349,9 @@ pub struct Panels<'a> {
     pub definitions: &'a mut DefinitionTabs,
     /// What the user asked of the definition tabs this frame.
     pub definition_actions: &'a mut Vec<DefinitionAction>,
+    pub compares: &'a mut SchemaCompares,
+    /// What the user asked of the compare tabs this frame.
+    pub compare_actions: &'a mut Vec<CompareAction>,
 }
 
 impl TabViewer for Panels<'_> {
@@ -423,6 +439,15 @@ impl TabViewer for Panels<'_> {
                     role: Role::Primary,
                 },
                 self.definitions.title(*id).unwrap_or("Definition"),
+                FontId::proportional(TAB_TITLE_SIZE),
+            ),
+            Tab::SchemaCompare(id) => tab_title(
+                palette,
+                Icon {
+                    glyph: icons::GIT_DIFF,
+                    role: Role::Primary,
+                },
+                &self.compares.title(*id),
                 FontId::proportional(TAB_TITLE_SIZE),
             ),
             Tab::QueryConsole(key) => {
@@ -518,6 +543,11 @@ impl TabViewer for Panels<'_> {
             Tab::Definition(id) => self
                 .definition_actions
                 .extend(self.definitions.show(ui, *id)),
+            Tab::SchemaCompare(id) => {
+                let candidates = compare_candidates(self.data_sources);
+                self.compare_actions
+                    .extend(self.compares.show(ui, *id, &candidates));
+            }
             Tab::QueryConsole(key) => match self.consoles.get_mut(key) {
                 Some(query_console) => {
                     let data_source = query_console.data_source();
@@ -587,6 +617,7 @@ impl TabViewer for Panels<'_> {
                 | Tab::Report(_)
                 | Tab::History(_)
                 | Tab::Definition(_)
+                | Tab::SchemaCompare(_)
         )
     }
 
@@ -608,6 +639,10 @@ impl TabViewer for Panels<'_> {
                 self.definitions.close(*id);
                 OnCloseResponse::Close
             }
+            Tab::SchemaCompare(id) => {
+                self.compares.close(*id);
+                OnCloseResponse::Close
+            }
             _ => OnCloseResponse::Close,
         }
     }
@@ -620,6 +655,23 @@ impl Panels<'_> {
         let data_source = self.consoles.get(key)?.data_source();
         self.data_sources.color_of(data_source)
     }
+}
+
+/// The data sources a compare tab's sides may read: those whose schemas can be compared.
+fn compare_candidates(data_sources: &DataSources) -> Vec<Candidate> {
+    data_sources
+        .entries()
+        .iter()
+        .filter_map(|entry| {
+            let dialect = QueryLanguage::from(entry.data_source.config.driver()).dialect()?;
+            let capabilities = dialect.capabilities_on(entry.service())?;
+            capabilities.schema_compare.then(|| Candidate {
+                id: entry.data_source.id,
+                name: entry.data_source.name.clone(),
+                dialect,
+            })
+        })
+        .collect()
 }
 
 /// An icon in its palette colour, then the title in the tab's own text colour.

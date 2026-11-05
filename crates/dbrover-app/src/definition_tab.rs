@@ -4,7 +4,7 @@
 //! The tabs aren't restored after a restart: loading a definition needs a live connection, and
 //! reconnecting at start-up could ask for passwords before the user did anything. Their keys
 //! are numbers handed out while the app runs, which mean nothing to the next run, so
-//! [`crate::workspace::forget_definitions`] drops them from a saved layout as it loads.
+//! [`crate::workspace::forget_transient_tabs`] drops them from a saved layout as it loads.
 
 use std::collections::BTreeMap;
 
