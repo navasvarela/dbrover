@@ -2726,6 +2726,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "toml",
+ "toml_parser",
  "tracing",
 ]
 

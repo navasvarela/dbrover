@@ -29,6 +29,7 @@ use dbrover_report::{
     RunEvent, RunFailure, RunRequest, SourceLimits, SourceStart, Step, TypedValues, WrittenFile,
     read_report,
 };
+use dbrover_sql::FormatOptions;
 use dbrover_store::{
     CombineMetrics, DEFAULT_RUNS_KEPT, OutputMetrics, ReportFiles, ReportName, ReportRun,
     ReportSettings, RunError, RunOrigin, RunOutcome, SourceMetrics, StepMetrics,
@@ -102,6 +103,8 @@ pub enum ReportAction {
     OpenPath(PathBuf),
     /// Writes the report's file from its tab's text.
     Save(ReportName),
+    /// Formats the report's text in its tab.
+    Format(ReportName),
     /// Deletes every run of the report the history keeps.
     ClearRuns(ReportName),
     /// Asks for a new name for the report's file, which its runs follow.
@@ -705,6 +708,18 @@ impl Reports {
     pub fn save_and_run(&mut self, name: &ReportName) -> Option<Command> {
         let files = self.setup.as_ref()?.files.clone();
         self.file_mut(name)?.save_and_run(&files, name)
+    }
+
+    /// Formats `name`'s text, the SQL in each source's dialect among `data_sources`.
+    pub fn format(
+        &mut self,
+        name: &ReportName,
+        data_sources: &[DataSource],
+        options: &FormatOptions,
+    ) {
+        if let Some(file) = self.file_mut(name) {
+            file.format(data_sources, options);
+        }
     }
 
     /// Whether `name`'s tab has text its file doesn't.

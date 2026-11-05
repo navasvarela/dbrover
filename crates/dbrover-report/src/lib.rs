@@ -20,6 +20,7 @@ mod declared;
 mod embedded;
 mod events;
 mod file_name;
+mod format;
 mod hints;
 mod limits;
 mod plan;
@@ -39,6 +40,7 @@ pub use events::{
     WrittenFile,
 };
 pub use file_name::FileName;
+pub use format::{FormatReportError, FormattedReport, format_report};
 pub use hints::{HintId, UnknownHint};
 pub use limits::{
     ByteSize, CombineLimits, CombineLimitsSet, DEFAULT_COMBINE_TIMEOUT, DEFAULT_MAX_BYTES,
