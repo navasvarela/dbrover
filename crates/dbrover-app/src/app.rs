@@ -126,6 +126,9 @@ pub struct DbRoverApp {
     rename_report_dialog: Option<RenameReportDialog>,
     /// Reports **Save and run** saved, to run once the frame can start a worker.
     reports_to_run: Vec<dbrover_store::ReportName>,
+    /// Whether the window had focus last frame, to list the reports folder again when it
+    /// regains it: another program may have added a report.
+    window_focused: bool,
     /// View › Settings › MCP's draft, kept while the window is closed.
     mcp_defaults: McpDefaultsEditor,
     settings_tab: SettingsTab,
@@ -272,6 +275,7 @@ impl DbRoverApp {
             project_dialog: None,
             rename_report_dialog: None,
             reports_to_run: Vec::new(),
+            window_focused: true,
             mcp_defaults: McpDefaultsEditor::new(&McpPermissions::default()),
             settings_tab: SettingsTab::default(),
             delete_project_confirmation: None,
@@ -748,12 +752,17 @@ impl DbRoverApp {
 
     /// Looks at the open files for changes other programs made, when it is time to.
     fn check_sql_files(&mut self, ctx: &egui::Context) {
-        let files = self.consoles.watched_files();
+        // A window whose focus isn't known (in tests) counts as focused.
+        let focused = ctx.input(|input| input.viewport().focused.unwrap_or(true));
+        if focused && !self.window_focused {
+            self.send_if(self.reports.reload());
+        }
+        self.window_focused = focused;
+        let mut files = self.consoles.watched_files();
+        files.extend(self.reports.watched_files());
         if files.is_empty() {
             return;
         }
-        // A window whose focus isn't known (in tests) counts as focused.
-        let focused = ctx.input(|input| input.viewport().focused.unwrap_or(true));
         if self.sql_files.check_due(Instant::now(), focused) {
             self.send(Command::CheckSqlFiles(files));
         }
