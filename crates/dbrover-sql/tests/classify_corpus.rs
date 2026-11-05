@@ -65,3 +65,8 @@ fn sql_server() {
 fn cql() {
     check_corpus(Dialect::Cassandra, include_str!("classify/cql.sql"));
 }
+
+#[test]
+fn trino() {
+    check_corpus(Dialect::Trino, include_str!("classify/trino.sql"));
+}

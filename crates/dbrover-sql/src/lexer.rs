@@ -315,7 +315,7 @@ mod tests {
     #[test]
     fn recognises_dialect_specific_quoting() {
         use TokenKind::*;
-        let cases: [Case; 13] = [
+        let cases: [Case; 14] = [
             (
                 "$fn$ a; $x$ b $fn$ ;",
                 Dialect::Postgres,
@@ -437,6 +437,25 @@ mod tests {
                     (Punctuation, ","),
                     (String, "$$x;y$$"),
                     (LineComment, "# note"),
+                ],
+            ),
+            // Trino's names in `"…"`, Athena's DDL's in backquotes, and no `$` in names, no
+            // backslash escapes and no nested comments.
+            (
+                "select `a b`, \"c\", 'it''s\\', x$ /* /* */ 1",
+                Dialect::Trino,
+                vec![
+                    (Word, "select"),
+                    (QuotedIdentifier, "`a b`"),
+                    (Punctuation, ","),
+                    (QuotedIdentifier, "\"c\""),
+                    (Punctuation, ","),
+                    (String, "'it''s\\'"),
+                    (Punctuation, ","),
+                    (Word, "x"),
+                    (Punctuation, "$"),
+                    (BlockComment, "/* /* */"),
+                    (Number, "1"),
                 ],
             ),
             // Only Transact-SQL has `@` names; elsewhere `@p` is a parameter marker's sign.

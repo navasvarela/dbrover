@@ -576,6 +576,45 @@ const CQL: Capabilities = Capabilities {
     schema_compare: false,
 };
 
+/// Trino and Athena: what DDL a table takes is each connector's (Hive, Iceberg, the memory
+/// catalog), so nothing is offered; [`Dialect::writes_ddl`] keeps the helpers away.
+const TRINO: Capabilities = Capabilities {
+    transactional_ddl: false,
+    drop_cascade: false,
+    unique_keys: false,
+    foreign_keys: false,
+    referential_actions: &[],
+    indexes: false,
+    index_methods: &[],
+    table_changes: &[],
+    rebuilds_tables: false,
+    foreign_key_switch: None,
+    converts_with_using: false,
+    restricted_add_column: false,
+    rebuilds_table_ddl: false,
+    common_types: &[
+        "integer",
+        "bigint",
+        "double",
+        "decimal(18, 4)",
+        "boolean",
+        "varchar",
+        "date",
+        "timestamp(3)",
+        "timestamp(3) with time zone",
+        "array(varchar)",
+        "map(varchar, varchar)",
+    ],
+    materialized_views: false,
+    view_replacement: ViewReplacement::OrReplace,
+    renames_views: false,
+    schema_creation: SchemaCreation::Unsupported,
+    schema_owner: false,
+    drop_schema_cascade: false,
+    users: UserModel::Unsupported,
+    schema_compare: false,
+};
+
 impl Dialect {
     /// What the dialect's DDL can do.
     pub fn capabilities(self) -> &'static Capabilities {
@@ -587,14 +626,17 @@ impl Dialect {
             Self::DuckDb => &DUCKDB,
             Self::ClickHouse => &CLICKHOUSE,
             Self::Cassandra => &CQL,
+            Self::Trino => &TRINO,
         }
     }
 
     /// Whether the object helpers write this dialect's DDL. Not CQL's: a table there is
     /// designed around the queries that read it, its primary key can't change afterwards, and
     /// a keyspace's replication is chosen per cluster, none of which the helpers' forms ask.
+    /// Nor Trino's: what a table can be is each catalog's connector's to say, and Athena's
+    /// tables are Hive's, over files in S3 whose format and location the forms don't ask.
     pub fn writes_ddl(self) -> bool {
-        self != Self::Cassandra
+        !matches!(self, Self::Cassandra | Self::Trino)
     }
 
     /// What the object helpers may write on a server of this dialect that said it is

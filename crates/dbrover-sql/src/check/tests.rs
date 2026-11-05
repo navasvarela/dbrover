@@ -171,6 +171,81 @@ select a from t final;
 select count() from system.tables format JSON;
 "#;
 
+/// Trino's statements, each accepted by Trino 484's parser, then Athena's, whose DDL is Hive's
+/// and which Trino's parser refuses.
+const VALID_TRINO: &str = r#"
+select orderkey, totalprice from tpch.tiny.orders where orderdate >= date '1995-01-01' order by 2 desc limit 10;
+select "order key", 'it''s', X'1F', 1e3, -0.5 from t;
+select count(*) filter (where x > 1), approx_distinct(y), approx_percentile(z, 0.5) from t;
+select * from t cross join unnest(arr) as u(x);
+select * from t cross join unnest(arr) with ordinality as u(x, n);
+select transform(arr, x -> x + 1), filter(arr, x -> x > 0), reduce(arr, 0, (s, x) -> s + x, s -> s) from t;
+select cast(a as varchar), try_cast(b as integer), typeof(c) from t;
+select date_trunc('month', ts), ts at time zone 'UTC', current_timestamp - interval '7' day from t;
+with recent as (select * from orders where ts > now() - interval '1' hour) select * from recent;
+select a, row_number() over (partition by b order by c) from t;
+select * from t order by a offset 10 limit 5;
+select * from t offset 10 rows fetch next 5 rows only;
+select * from t tablesample bernoulli (10);
+insert into memory.default.t select * from u;
+create table memory.default.t (id bigint, name varchar);
+create table t with (format = 'PARQUET', partitioned_by = array['ds']) as select * from u;
+show catalogs;
+show schemas from tpch;
+show tables from tpch.tiny like 'o%';
+show columns from t;
+describe t;
+show create table t;
+show create view v;
+show functions like 'array%';
+use tpch.tiny;
+set session query_max_run_time = '1h';
+reset session query_max_run_time;
+explain select 1;
+explain (type distributed) select 1;
+explain analyze select 1;
+explain (type validate) select 1;
+prepare q from select * from t where id = ?;
+execute q using 1;
+deallocate prepare q;
+delete from t where id = 1;
+update t set a = 1 where id = 2;
+merge into t using s on t.id = s.id when matched then update set a = s.a when not matched then insert (id) values (s.id);
+select map(array['a'], array[1])['a'], row(1, 'a'), array[1, 2][1], element_at(m, 'k') from t;
+select json_extract_scalar(j, '$.a'), json_format(json_parse(j)) from t;
+select a, count(*) from t group by grouping sets ((a), ());
+select * from (values (1, 'a'), (2, 'b')) as v(n, s);
+select if(a > 1, 'big', 'small'), case when a > 0 then 1 end, coalesce(a, 0) from t;
+select a from t where a in (select b from u) and exists (select 1 from v) and b like 'x!%' escape '!';
+call system.sync_partition_metadata('db', 't', 'ADD');
+analyze t;
+comment on table t is 'orders';
+alter table t add column c varchar;
+drop table if exists t;
+create or replace view v security invoker as select 1 as a;
+start transaction;
+commit;
+rollback;
+select listagg(name, ', ') within group (order by name) from t;
+select date '2026-01-01', timestamp '2026-01-01 00:00:00', time '01:02:03', interval '1' day, decimal '1.5';
+values 1, 2, 3;
+select * from t for version as of 3;
+select * from t for timestamp as of timestamp '2026-01-01 00:00:00 UTC';
+select a from t where a is distinct from b;
+select regexp_extract(url, 'https?://([^/]+)', 1) from logs;
+select a.* from t a left join u b on a.id = b.id full outer join w c on c.id = a.id;
+create external table if not exists `sales`.`orders` (`id` bigint, `amount` decimal(10,2), `tags` array<string>, `props` struct<a:int,b:string>) partitioned by (`dt` string) row format serde 'org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe' stored as parquet location 's3://bucket/orders/' tblproperties ('parquet.compression'='SNAPPY');
+msck repair table orders;
+alter table orders add if not exists partition (dt = '2026-01-01') location 's3://bucket/orders/dt=2026-01-01/';
+show partitions orders;
+create table iceberg_orders with (table_type = 'ICEBERG', location = 's3://bucket/iceberg/', format = 'PARQUET') as select * from orders;
+unload (select * from orders) to 's3://bucket/out/' with (format = 'PARQUET');
+create database if not exists sales;
+drop table `sales`.`orders`;
+optimize iceberg_orders rewrite data using bin_pack;
+vacuum iceberg_orders;
+"#;
+
 fn syntax_errors(corpus: &str, dialect: Dialect) -> Vec<(String, Problem)> {
     split_statements(corpus, dialect)
         .into_iter()
@@ -192,6 +267,7 @@ fn valid_statements_get_no_syntax_error() {
     assert_eq!(syntax_errors(VALID_SQL_SERVER, Dialect::SqlServer), []);
     assert_eq!(syntax_errors(VALID_DUCKDB, Dialect::DuckDb), []);
     assert_eq!(syntax_errors(VALID_CLICKHOUSE, Dialect::ClickHouse), []);
+    assert_eq!(syntax_errors(VALID_TRINO, Dialect::Trino), []);
 }
 
 #[test]
@@ -348,6 +424,7 @@ fn still_reports_syntax_errors_around_the_dialects_gaps() {
             (sql, Dialect::SqlServer),
             (sql, Dialect::DuckDb),
             (sql, Dialect::ClickHouse),
+            (sql, Dialect::Trino),
         ]
     });
     // DuckDB accepts a trailing comma in a select list, `select a, from t`. `**` is its power
@@ -355,11 +432,19 @@ fn still_reports_syntax_errors_around_the_dialects_gaps() {
     let duckdb = [
         ("select a * * 2 from t", Dialect::DuckDb),
         ("select a,, b from t", Dialect::DuckDb),
+        // Trino's gaps leave a `FOR UPDATE` it doesn't have, and a `VALUES` row's own
+        // mistakes, checked.
+        ("select * from t for for update", Dialect::Trino),
+        ("insert into t values (1,, 2)", Dialect::Trino),
     ];
     for (sql, dialect) in everywhere
         .filter(|&(sql, dialect)| {
-            // DuckDB and ClickHouse accept a trailing comma in a select list.
-            !(matches!(dialect, Dialect::DuckDb | Dialect::ClickHouse) && sql == "select a, from t")
+            // DuckDB and ClickHouse accept a trailing comma in a select list. Trino doesn't,
+            // but `sqlparser`'s generic dialect does, so Trino's own error says so on running.
+            !(matches!(
+                dialect,
+                Dialect::DuckDb | Dialect::ClickHouse | Dialect::Trino
+            ) && sql == "select a, from t")
         })
         .chain(duckdb)
     {
