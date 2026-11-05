@@ -9,7 +9,7 @@ use dbrover_store::redact_secrets;
 use egui::{Id, ScrollArea, TextEdit, Ui};
 
 use super::Target;
-use crate::console::highlight::{self, Marks};
+use crate::code_editor::highlight::{self, Marks};
 use crate::dialog::{self, DialogSize};
 use crate::form;
 use crate::theme::Palette;
@@ -272,7 +272,8 @@ fn execute_disabled_reason(target: &Target, confirmed: bool, running: bool) -> S
 /// The SQL, highlighted as the console highlights it, selectable but not editable.
 fn sql(ui: &mut Ui, target: &Target, text: &str) {
     let marks = Marks::default();
-    let mut layouter = highlight::layouter(QueryLanguage::Sql(target.dialect), &marks);
+    let language = QueryLanguage::Sql(target.dialect);
+    let mut layouter = highlight::layouter(&language, &marks);
     ScrollArea::vertical()
         .id_salt("object_dialog_sql")
         .max_height(SQL_HEIGHT)

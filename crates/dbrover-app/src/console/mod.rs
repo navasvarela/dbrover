@@ -13,10 +13,7 @@ mod completion_popup;
 mod documents;
 mod edit;
 mod file;
-mod find;
-mod find_bar;
 mod grid;
-pub(crate) mod highlight;
 mod keys;
 mod plan;
 mod problems;
@@ -52,6 +49,7 @@ use dbrover_store::{ConsoleKey, Snippet, SnippetBody, SqlFileContents};
 use edit::{EditTarget, Editability};
 use grid::CellPos;
 
+use crate::code_editor::{CodeEditor, highlight};
 use crate::custom_actions::{GridCells, GridTable};
 use crate::picture::PictureFormat;
 use file::{ConfigFile, Reload, SqlFile, Storage};
@@ -59,7 +57,6 @@ use file::{ConfigFile, Reload, SqlFile, Storage};
 pub use clipboard::{ClipboardCopy, ClipboardFormat};
 pub use edit::ChangeCount;
 pub use file::Disk;
-pub use find::Found;
 pub use keys::RowsToOpen;
 pub use results::CellMenuItems;
 
@@ -183,9 +180,8 @@ pub struct QueryConsole {
     key: ConsoleKey,
     title: String,
     language: QueryLanguage,
-    text: String,
-    /// The editor's cursor or selection as byte offsets into `text`, in either order.
-    selection: Range<usize>,
+    /// The statements' text, and the editor's state.
+    editor: CodeEditor,
     /// The state of the console's own connection.
     session: SessionState,
     transactions: TransactionMode,
@@ -195,23 +191,10 @@ pub struct QueryConsole {
     run: Option<RunView>,
     /// Where the last failure points in `text`; underlined until the text changes.
     error_marker: Option<Range<usize>>,
-    /// A byte offset to move the editor's cursor to on the next frame, after the text was
-    /// changed from outside the editor.
-    pending_cursor: Option<usize>,
-    /// A range to select in the editor and scroll to on the next frame, leaving the keyboard
-    /// focus where it is: a match the find bar went to.
-    pending_selection: Option<Range<usize>>,
-    find: find::FindBar,
-    /// The text before it was replaced from outside the editor (formatted, or reloaded from
-    /// its file), for the editor to record as an undo point next to the new text, so one
-    /// undo takes the whole change back.
-    replaced_text: Option<String>,
     /// Why the last format was refused, until the text changes.
     format_error: Option<String>,
     /// Syntax errors and lint warnings, kept up to date while typing.
     problems: problems::Problems,
-    /// Where each shown problem's squiggle was drawn last frame (with its index), for hovering.
-    problem_rects: Vec<(egui::Rect, usize)>,
     /// The cell shown in full in the cell viewer window.
     value_panel: cell_viewer::ValuePanel,
     /// The completion list, while it is open.
@@ -592,21 +575,15 @@ impl QueryConsole {
             key,
             title,
             language,
-            text,
-            selection: 0..0,
+            editor: CodeEditor::new(text),
             session: SessionState::Disconnected,
             transactions: TransactionMode::Auto,
             transaction: TransactionStatus::Idle,
             transaction_ended: None,
             run: None,
             error_marker: None,
-            pending_cursor: None,
-            pending_selection: None,
-            find: find::FindBar::default(),
-            replaced_text: None,
             format_error: None,
             problems: problems::Problems::new(Instant::now()),
-            problem_rects: Vec::new(),
             value_panel: cell_viewer::ValuePanel::default(),
             completion: None,
             accepted_completion: None,
@@ -692,13 +669,13 @@ impl QueryConsole {
     }
 
     pub fn text(&self) -> &str {
-        &self.text
+        &self.editor.text
     }
 
     /// Where each problem's squiggle was drawn last frame, for tests to hover over.
     #[cfg(test)]
     pub fn squiggle_rects(&self) -> impl Iterator<Item = egui::Rect> + '_ {
-        self.problem_rects.iter().map(|(rect, _)| *rect)
+        self.editor.squiggle_rects()
     }
 
     /// Decides, for each result that hasn't been looked at, whether it may be editable, and
@@ -1169,7 +1146,7 @@ impl QueryConsole {
                 self.completion = Some(Completion {
                     explicit,
                     candidates: Vec::new(),
-                    replace: self.selection.end..self.selection.end,
+                    replace: self.editor.selection.end..self.editor.selection.end,
                     selected: 0,
                     rect: None,
                     loading: false,
@@ -1195,9 +1172,9 @@ impl QueryConsole {
         let Some(open) = &self.completion else {
             return Vec::new();
         };
-        let (start, end) = ordered(&self.selection);
+        let (start, end) = self.editor.ordered_selection();
         let point = (start == end)
-            .then(|| completion::completion_point(&self.text, end, self.language))
+            .then(|| completion::completion_point(&self.editor.text, end, self.language))
             .flatten();
         let Some(point) = point else {
             self.completion = None;
@@ -1208,7 +1185,7 @@ impl QueryConsole {
         let (statement, statement_start) = self
             .current_statement()
             .filter(|range| point.replace.start <= range.end)
-            .and_then(|range| Some((self.text.get(range.clone())?, range.start)))
+            .and_then(|range| Some((self.editor.text.get(range.clone())?, range.start)))
             .unwrap_or_default();
         let (references, mut candidates) = match self.language.dialect() {
             Some(dialect) => (
@@ -1292,14 +1269,14 @@ impl QueryConsole {
         let Some(candidate) = open.candidates.get(open.selected) else {
             return;
         };
-        if self.text.get(open.replace.clone()).is_none() {
+        if self.editor.text.get(open.replace.clone()).is_none() {
             return;
         }
-        self.text
+        self.editor
+            .text
             .replace_range(open.replace.clone(), &candidate.insert);
         let cursor = open.replace.start + candidate.insert.len() - candidate.cursor_back;
-        self.selection = cursor..cursor;
-        self.pending_cursor = Some(cursor);
+        self.editor.put_cursor(cursor);
         self.accepted_completion = Some(candidate.clone());
         if candidate.kind == completion::CandidateKind::Snippet
             && let Some((_, body)) = open
@@ -1315,7 +1292,7 @@ impl QueryConsole {
     /// Selects the first field of a snippet just inserted at `at`, or places the cursor where
     /// it ends if it has none.
     fn start_snippet(&mut self, body: &SnippetBody, at: usize) {
-        self.snippet_fields = snippet::SnippetFields::start(body, at, self.text.len());
+        self.snippet_fields = snippet::SnippetFields::start(body, at, self.editor.text.len());
         let first = match &self.snippet_fields {
             Some(fields) => fields.current(),
             None => {
@@ -1328,9 +1305,7 @@ impl QueryConsole {
 
     /// Selects `range` in the editor, focusing it.
     fn select(&mut self, range: Range<usize>) {
-        self.selection = range.clone();
-        self.pending_cursor = Some(range.end);
-        self.pending_selection = Some(range);
+        self.editor.select(range);
     }
 
     /// Whether Tab moves through a snippet's fields right now: there are fields, and no
@@ -1369,9 +1344,9 @@ impl QueryConsole {
             return;
         };
         let still_in = if changed {
-            fields.follow_edit(self.text.len(), self.selection.end)
+            fields.follow_edit(self.editor.text.len(), self.editor.selection.end)
         } else {
-            !clicked || fields.holds(&self.selection)
+            !clicked || fields.holds(&self.editor.selection)
         };
         if !still_in {
             self.snippet_fields = None;
@@ -1386,10 +1361,10 @@ impl QueryConsole {
     /// Puts `sql` at the cursor, replacing the selection, as a statement on a line of its own,
     /// and moves the cursor past it.
     pub fn insert_statement(&mut self, sql: &str, now: Instant) {
-        let (start, end) = ordered(&self.selection);
+        let (start, end) = self.editor.ordered_selection();
         let sql = sql.trim_end();
         let mut inserted = String::new();
-        if !self.text[..start].is_empty() && !self.text[..start].ends_with('\n') {
+        if !self.editor.text[..start].is_empty() && !self.editor.text[..start].ends_with('\n') {
             inserted.push('\n');
         }
         inserted.push_str(sql);
@@ -1397,10 +1372,8 @@ impl QueryConsole {
             inserted.push(';');
         }
         inserted.push('\n');
-        self.text.replace_range(start..end, &inserted);
-        let cursor = start + inserted.len();
-        self.selection = cursor..cursor;
-        self.pending_cursor = Some(cursor);
+        self.editor.text.replace_range(start..end, &inserted);
+        self.editor.put_cursor(start + inserted.len());
         self.edited(now);
     }
 
@@ -1415,7 +1388,7 @@ impl QueryConsole {
             return;
         };
         let ranges = self.ranges_to_format(scope);
-        let formatted = match format_ranges(&self.text, &ranges, dialect, options) {
+        let formatted = match format_ranges(&self.editor.text, &ranges, dialect, options) {
             Ok(formatted) => formatted,
             Err(error) => {
                 self.format_error = Some(error.to_string());
@@ -1423,13 +1396,11 @@ impl QueryConsole {
             }
         };
         self.format_error = None;
-        if formatted.text() == self.text {
+        if formatted.text() == self.editor.text {
             return;
         }
-        let cursor = formatted.map_offset(self.selection.end);
-        self.replaced_text = Some(std::mem::replace(&mut self.text, formatted.into_text()));
-        self.selection = cursor..cursor;
-        self.pending_cursor = Some(cursor);
+        let cursor = formatted.map_offset(self.editor.selection.end);
+        self.editor.replace_text(formatted.into_text(), cursor);
         self.edited(now);
     }
 
@@ -1437,8 +1408,8 @@ impl QueryConsole {
     /// it, and split where statements end, so a selection that starts or ends inside a
     /// string never formats half of it.
     fn ranges_to_format(&self, scope: FormatScope) -> Vec<Range<usize>> {
-        let statements = self.language.split(&self.text);
-        let (start, end) = ordered(&self.selection);
+        let statements = self.language.split(&self.editor.text);
+        let (start, end) = self.editor.ordered_selection();
         match scope {
             FormatScope::All => statements,
             FormatScope::Current if start == end => command_at(&statements, end)
@@ -1448,7 +1419,7 @@ impl QueryConsole {
             FormatScope::Current => {
                 let inside: Vec<Range<usize>> = self
                     .language
-                    .tokens(&self.text)
+                    .tokens(&self.editor.text)
                     .into_iter()
                     .filter(|token| {
                         !token.kind.is_trivia()
@@ -1483,7 +1454,7 @@ impl QueryConsole {
             return problems::CheckOutcome::default();
         };
         let input = problems::CheckInput {
-            text: &self.text,
+            text: &self.editor.text,
             dialect,
             catalog: match catalog {
                 Some(catalog) => catalog,
@@ -1498,12 +1469,11 @@ impl QueryConsole {
     /// Moves the cursor to the next problem after it (or the previous one before it),
     /// wrapping around.
     pub fn jump_to_problem(&mut self, forward: bool) {
-        let (start, end) = ordered(&self.selection);
+        let (start, end) = self.editor.ordered_selection();
         let from = if forward { end } else { start };
         if let Some(problem) = self.problems.next_from(from, forward) {
             let at = problem.range.start;
-            self.selection = at..at;
-            self.pending_cursor = Some(at);
+            self.editor.put_cursor(at);
         }
     }
 
@@ -1538,7 +1508,7 @@ impl QueryConsole {
         file.save_error = None;
         Ok(Command::SaveConsole {
             key: self.key.clone(),
-            text: self.text.clone(),
+            text: self.editor.text.clone(),
         })
     }
 
@@ -1549,7 +1519,7 @@ impl QueryConsole {
         let Storage::Config(file) = &self.storage else {
             return None;
         };
-        if !file.keep || self.text.trim().is_empty() {
+        if !file.keep || self.editor.text.trim().is_empty() {
             return Some(Command::DeleteConsoleFile(self.key.clone()));
         }
         self.take_save(Instant::now(), Duration::ZERO).ok()
@@ -1559,7 +1529,7 @@ impl QueryConsole {
     /// reopened from the explorer.
     pub fn keeps_file(&self) -> bool {
         match &self.storage {
-            Storage::Config(file) => file.keep && !self.text.trim().is_empty(),
+            Storage::Config(file) => file.keep && !self.editor.text.trim().is_empty(),
             Storage::File(_) => false,
         }
     }
@@ -1581,7 +1551,7 @@ impl QueryConsole {
 
     /// Whether the console shows a `.sql` file and has changes not written to it.
     pub fn has_unsaved_file(&self) -> bool {
-        matches!(&self.storage, Storage::File(file) if file.is_unsaved(&self.text))
+        matches!(&self.storage, Storage::File(file) if file.is_unsaved(&self.editor.text))
     }
 
     /// What another program did to the console's `.sql` file, if anything.
@@ -1598,11 +1568,11 @@ impl QueryConsole {
         let Storage::File(file) = &mut self.storage else {
             return None;
         };
-        file.saving(self.text.clone());
+        file.saving(self.editor.text.clone());
         Some(Command::SaveSqlFile {
             console: self.key.clone(),
             path: file.path().to_owned(),
-            text: self.text.clone(),
+            text: self.editor.text.clone(),
         })
     }
 
@@ -1619,13 +1589,13 @@ impl QueryConsole {
                 },
             ),
         };
-        file.saving(self.text.clone());
+        file.saving(self.editor.text.clone());
         self.title = file.file_name();
         self.storage = Storage::File(file);
         Command::SaveSqlFile {
             console: self.key.clone(),
             path,
-            text: self.text.clone(),
+            text: self.editor.text.clone(),
         }
     }
 
@@ -1644,7 +1614,7 @@ impl QueryConsole {
         let Storage::File(file) = &mut self.storage else {
             return;
         };
-        if let Reload::Replaced(text) = file.changed_on_disk(contents, &self.text) {
+        if let Reload::Replaced(text) = file.changed_on_disk(contents, &self.editor.text) {
             self.replace_text(text);
         }
     }
@@ -1681,8 +1651,8 @@ impl QueryConsole {
         let shown = run.statements.get(run.selected)?;
         let read = then.read();
         let mut range = shown.range.clone();
-        if shown.sql != read && self.text.get(range.clone()) == Some(shown.sql.as_str()) {
-            let mut text = self.text.clone();
+        if shown.sql != read && self.editor.text.get(range.clone()) == Some(shown.sql.as_str()) {
+            let mut text = self.editor.text.clone();
             text.replace_range(range.clone(), &read);
             range = range.start..range.start + read.len();
             self.replace_text(text);
@@ -1707,14 +1677,7 @@ impl QueryConsole {
     /// Replaces the whole text from outside the editor, as one undo step, keeping the cursor
     /// where it was if the new text is long enough.
     fn replace_text(&mut self, text: String) {
-        let (_, end) = ordered(&self.selection);
-        let mut cursor = end.min(text.len());
-        while !text.is_char_boundary(cursor) {
-            cursor -= 1;
-        }
-        self.replaced_text = Some(std::mem::replace(&mut self.text, text));
-        self.selection = cursor..cursor;
-        self.pending_cursor = Some(cursor);
+        self.editor.replace_keeping_cursor(text);
         self.error_marker = None;
         self.problems.edited(Instant::now());
     }
@@ -1832,18 +1795,18 @@ impl QueryConsole {
     }
 
     pub fn current_statement(&self) -> Option<Range<usize>> {
-        let (start, end) = ordered(&self.selection);
+        let (start, end) = self.editor.ordered_selection();
         if start != end {
             return None;
         }
-        let ranges = self.language.split(&self.text);
+        let ranges = self.language.split(&self.editor.text);
         command_at(&ranges, end).map(|index| ranges[index].clone())
     }
 
     /// What `scope` would run right now. Empty if there is nothing but whitespace and
     /// comments.
     pub fn statements_to_run(&self, scope: RunScope) -> Vec<SubmittedStatement> {
-        let (start, end) = ordered(&self.selection);
+        let (start, end) = self.editor.ordered_selection();
         let submit = |offset: usize, ranges: Vec<Range<usize>>, source: &str| {
             ranges
                 .into_iter()
@@ -1858,15 +1821,15 @@ impl QueryConsole {
         };
         match scope {
             RunScope::Current if start != end => {
-                let selected = &self.text[start..end];
+                let selected = &self.editor.text[start..end];
                 submit(start, self.language.split(selected), selected)
             }
             RunScope::Current => {
-                let ranges = self.language.split(&self.text);
+                let ranges = self.language.split(&self.editor.text);
                 let current = command_at(&ranges, end).map(|index| ranges[index].clone());
-                submit(0, current.into_iter().collect(), &self.text)
+                submit(0, current.into_iter().collect(), &self.editor.text)
             }
-            RunScope::All => submit(0, self.language.split(&self.text), &self.text),
+            RunScope::All => submit(0, self.language.split(&self.editor.text), &self.editor.text),
             RunScope::Explain(depth) => {
                 let server = self.server();
                 self.statements_to_run(RunScope::Current)
@@ -2190,7 +2153,11 @@ impl QueryConsole {
             let offset = (statement_view.range.start
                 + position.saturating_sub(statement_view.prefix_len))
             .min(statement_view.range.end);
-            self.error_marker = Some(highlight::error_marker(&self.text, self.language, offset));
+            self.error_marker = Some(highlight::error_marker(
+                &self.editor.text,
+                self.language,
+                offset,
+            ));
         }
         if result.is_err() {
             view.selected = statement;
@@ -2242,9 +2209,5 @@ impl QueryConsole {
 }
 
 /// A selection's ends in text order.
-fn ordered(range: &Range<usize>) -> (usize, usize) {
-    (range.start.min(range.end), range.start.max(range.end))
-}
-
 #[cfg(test)]
 mod tests;

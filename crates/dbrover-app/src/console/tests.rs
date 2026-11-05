@@ -1,4 +1,5 @@
 use super::*;
+use crate::code_editor::Found;
 
 fn console(text: &str) -> QueryConsole {
     console_with(text, Dialect::Postgres)
@@ -46,7 +47,7 @@ fn runs_the_selection_the_statement_under_the_cursor_or_everything() {
 
     for (selection, scope, expected) in cases {
         let mut console = console(text);
-        console.selection = selection.clone();
+        console.editor.selection = selection.clone();
         let statements = console.statements_to_run(scope);
         assert_eq!(sqls(&statements), expected, "{selection:?} {scope:?}");
         for statement in &statements {
@@ -143,12 +144,15 @@ fn inserts_a_statement_on_a_line_of_its_own_at_the_cursor() {
     ];
     for (text, selection, sql, expected) in cases {
         let mut console = console(text);
-        console.selection = selection;
+        console.editor.selection = selection;
 
         console.insert_statement(sql, Instant::now());
 
-        assert_eq!(console.text, expected, "{text:?}");
-        assert_eq!(console.pending_cursor, Some(console.selection.end));
+        assert_eq!(console.editor.text, expected, "{text:?}");
+        assert_eq!(
+            console.editor.pending_cursor(),
+            Some(console.editor.selection.end)
+        );
         assert!(
             matches!(&console.storage, file::Storage::Config(file) if file.unsaved_since.is_some())
         );
@@ -160,7 +164,7 @@ fn explains_the_statement_at_the_cursor_and_marks_errors_in_it() {
     let text = "select 1;\nselect broken from;";
     let second = text.find("select broken").unwrap();
     let mut console = console(text);
-    console.selection = second..second;
+    console.editor.selection = second..second;
 
     let statements = console.statements_to_run(RunScope::Explain(ExplainDepth::Estimated));
 
@@ -249,17 +253,17 @@ fn shades_the_statement_at_the_cursor_unless_text_is_selected() {
     let second = text.find("select 2").unwrap();
     let mut console = console(text);
 
-    console.selection = second + 3..second + 3;
+    console.editor.selection = second + 3..second + 3;
     assert_eq!(console.current_statement(), Some(second..text.len() - 1));
 
-    console.selection = 0..4;
+    console.editor.selection = 0..4;
     assert_eq!(console.current_statement(), None);
 }
 
 #[test]
 fn completion_replaces_the_typed_prefix_and_closes() {
     let mut console = console("select * from t where SEL");
-    console.selection = console.text.len()..console.text.len();
+    console.editor.selection = console.editor.text.len()..console.editor.text.len();
 
     let recent = RecentCompletions::default();
     console.open_completion(false);
@@ -270,9 +274,12 @@ fn completion_replaces_the_typed_prefix_and_closes() {
     );
     console.accept_completion(Instant::now());
 
-    assert_eq!(console.text, "select * from t where SELECT");
+    assert_eq!(console.editor.text, "select * from t where SELECT");
     assert!(console.completion.is_none());
-    assert_eq!(console.pending_cursor, Some(console.text.len()));
+    assert_eq!(
+        console.editor.pending_cursor(),
+        Some(console.editor.text.len())
+    );
 
     console.open_completion(false);
     let _ = console.refresh_completion(None, &recent, &[]);
@@ -287,7 +294,7 @@ fn formats_the_statement_at_the_cursor_and_keeps_the_cursor_on_its_token() {
     let text = "select 1;\nselect a,b from t where x=1;";
     let mut console = console(text);
     let cursor = text.find("from").unwrap() + 2;
-    console.selection = cursor..cursor;
+    console.editor.selection = cursor..cursor;
 
     console.format(
         FormatScope::Current,
@@ -296,11 +303,11 @@ fn formats_the_statement_at_the_cursor_and_keeps_the_cursor_on_its_token() {
     );
 
     let expected = "select 1;\nSELECT\n    a,\n    b\nFROM t\nWHERE x = 1;";
-    assert_eq!(console.text, expected);
+    assert_eq!(console.editor.text, expected);
     let moved = expected.find("FROM").unwrap() + 2;
-    assert_eq!(console.selection, moved..moved);
-    assert_eq!(console.pending_cursor, Some(moved));
-    assert_eq!(console.replaced_text.as_deref(), Some(text));
+    assert_eq!(console.editor.selection, moved..moved);
+    assert_eq!(console.editor.pending_cursor(), Some(moved));
+    assert_eq!(console.editor.replaced_text(), Some(text));
     assert!(
         matches!(&console.storage, file::Storage::Config(file) if file.unsaved_since.is_some())
     );
@@ -312,7 +319,7 @@ fn formats_everything_or_only_whole_tokens_of_the_selection() {
     let mut console = console(text);
     console.format(FormatScope::All, &FormatOptions::default(), Instant::now());
     assert_eq!(
-        console.text,
+        console.editor.text,
         "SELECT\n    'a,  b',\n    c\nFROM t; SELECT\n    d,\n    e\nFROM u"
     );
 
@@ -320,13 +327,16 @@ fn formats_everything_or_only_whole_tokens_of_the_selection() {
     // that isn't a whole query only has its keywords' case changed.
     let mut console = console_with(text, Dialect::Postgres);
     let start = text.find("  b").unwrap();
-    console.selection = start..text.find(';').unwrap();
+    console.editor.selection = start..text.find(';').unwrap();
     console.format(
         FormatScope::Current,
         &FormatOptions::default(),
         Instant::now(),
     );
-    assert_eq!(console.text, "select 'a,  b', c FROM t; select d,e from u");
+    assert_eq!(
+        console.editor.text,
+        "select 'a,  b', c FROM t; select d,e from u"
+    );
 }
 
 #[test]
@@ -334,23 +344,26 @@ fn a_format_that_changes_nothing_leaves_no_undo_point() {
     let text = "SELECT 1";
     let mut console = console(text);
     console.format(FormatScope::All, &FormatOptions::default(), Instant::now());
-    assert_eq!(console.text, text);
-    assert!(console.replaced_text.is_none());
-    assert!(console.pending_cursor.is_none());
+    assert_eq!(console.editor.text, text);
+    assert!(console.editor.replaced_text().is_none());
+    assert!(console.editor.pending_cursor().is_none());
 }
 
 #[test]
 fn accepting_a_function_puts_the_cursor_inside_its_parentheses_and_reports_it() {
     let mut console = console("select coal");
-    console.selection = console.text.len()..console.text.len();
+    console.editor.selection = console.editor.text.len()..console.editor.text.len();
     let recent = RecentCompletions::default();
 
     console.open_completion(false);
     let _ = console.refresh_completion(None, &recent, &[]);
     console.accept_completion(Instant::now());
 
-    assert_eq!(console.text, "select coalesce()");
-    assert_eq!(console.pending_cursor, Some(console.text.len() - 1));
+    assert_eq!(console.editor.text, "select coalesce()");
+    assert_eq!(
+        console.editor.pending_cursor(),
+        Some(console.editor.text.len() - 1)
+    );
     let accepted = console.take_accepted_completion().unwrap();
     assert_eq!(accepted.label, "coalesce");
     assert!(console.take_accepted_completion().is_none());
@@ -467,31 +480,35 @@ fn runs_a_statement_again_wrapped_and_keeps_it_as_typed() {
 #[test]
 fn finds_from_the_selection_and_replaces_one_match_at_a_time() {
     let mut console = console("select id from orders; select id from order_items;");
-    console.selection = 7..9;
-    console.open_find(false);
+    console.editor.selection = 7..9;
+    console.editor.open_find(false);
     assert_eq!(
-        console.find_bar().query,
+        console.editor.find_bar().query,
         "id",
         "the selection is searched for"
     );
 
-    console.find_next(true);
-    assert_eq!(console.selection, 30..32);
-    assert_eq!(console.found().current, Some(1));
-    console.find_next(true);
-    assert_eq!(console.selection, 7..9, "wraps around");
+    console.editor.find_next(true);
+    assert_eq!(console.editor.selection, 30..32);
+    assert_eq!(console.editor.found().current, Some(1));
+    console.editor.find_next(true);
+    assert_eq!(console.editor.selection, 7..9, "wraps around");
 
-    let bar = console.find_bar_mut();
+    let bar = console.editor.find_bar_mut();
     bar.replacement = "order_id".to_owned();
     bar.options.whole_word = true;
-    console.replace_current(Instant::now());
+    console.editor.replace_current();
     assert_eq!(
         console.text(),
         "select order_id from orders; select id from order_items;"
     );
-    assert_eq!(console.selection, 36..38, "the next match is selected");
     assert_eq!(
-        console.replaced_text.as_deref(),
+        console.editor.selection,
+        36..38,
+        "the next match is selected"
+    );
+    assert_eq!(
+        console.editor.replaced_text(),
         Some("select id from orders; select id from order_items;"),
         "one undo step"
     );
@@ -500,20 +517,20 @@ fn finds_from_the_selection_and_replaces_one_match_at_a_time() {
 #[test]
 fn replaces_every_match_with_regular_expression_groups() {
     let mut console = console("select a1, b2 from t");
-    console.open_find(true);
-    let bar = console.find_bar_mut();
+    console.editor.open_find(true);
+    let bar = console.editor.find_bar_mut();
     bar.query = r"([a-z])(\d)".to_owned();
     bar.replacement = "$2$1".to_owned();
     bar.options.regex = true;
 
-    assert_eq!(console.replace_all(Instant::now()), 2);
+    assert_eq!(console.editor.replace_all(), 2);
     assert_eq!(console.text(), "select 1a, 2b from t");
 
-    console.find_bar_mut().query = "(".to_owned();
-    assert!(console.found().error.is_some());
-    assert_eq!(console.replace_all(Instant::now()), 0);
-    console.close_find();
-    assert_eq!(console.found(), Found::default());
+    console.editor.find_bar_mut().query = "(".to_owned();
+    assert!(console.editor.found().error.is_some());
+    assert_eq!(console.editor.replace_all(), 0);
+    console.editor.close_find();
+    assert_eq!(console.editor.found(), Found::default());
 }
 
 /// A console in the test language, which has no SQL dialect: what a Redis or MongoDB console
@@ -524,12 +541,12 @@ fn replaces_every_match_with_regular_expression_groups() {
 fn a_cql_console_completes_its_words_and_has_no_explain() {
     let text = "CREATE KEYSP";
     let mut console = console_with(text, Dialect::Cassandra);
-    console.selection = text.len()..text.len();
+    console.editor.selection = text.len()..text.len();
     let recent = RecentCompletions::default();
     console.open_completion(false);
     let _ = console.refresh_completion(None, &recent, &[]);
     console.accept_completion(Instant::now());
-    assert_eq!(console.text, "CREATE KEYSPACE");
+    assert_eq!(console.editor.text, "CREATE KEYSPACE");
     assert!(
         console
             .statements_to_run(RunScope::Explain(ExplainDepth::Estimated))
@@ -654,7 +671,7 @@ mod test_language {
             ["get a", "set b \"x y\"", "keys *"]
         );
         let second = text.find("set").unwrap();
-        console.selection = second + 2..second + 2;
+        console.editor.selection = second + 2..second + 2;
         assert_eq!(
             sqls(&console.statements_to_run(RunScope::Current)),
             ["set b \"x y\""]
@@ -668,18 +685,18 @@ mod test_language {
     #[test]
     fn completes_the_languages_own_words() {
         let mut console = console_in("ge", QueryLanguage::Test);
-        console.selection = 2..2;
+        console.editor.selection = 2..2;
         let recent = RecentCompletions::default();
         console.open_completion(false);
         let _ = console.refresh_completion(None, &recent, &[]);
         console.accept_completion(Instant::now());
-        assert_eq!(console.text, "get");
+        assert_eq!(console.editor.text, "get");
     }
 
     #[test]
     fn completes_redis_commands_with_their_arguments() {
         let mut console = console_in("HSE", QueryLanguage::Redis);
-        console.selection = 3..3;
+        console.editor.selection = 3..3;
         let recent = RecentCompletions::default();
         console.open_completion(false);
         let _ = console.refresh_completion(None, &recent, &[]);
@@ -707,7 +724,7 @@ mod test_language {
             "db.orders.countDocuments()\ndb.orders.find({a: 1})",
             QueryLanguage::Mongo,
         );
-        console.selection = 40..40;
+        console.editor.selection = 40..40;
         let explained: Vec<String> = console
             .statements_to_run(RunScope::Explain(ExplainDepth::Estimated))
             .into_iter()
@@ -717,7 +734,7 @@ mod test_language {
             explained,
             ["db.orders.find({a: 1}).explain(\"executionStats\")"]
         );
-        console.selection = 3..3;
+        console.editor.selection = 3..3;
         assert!(
             console
                 .statements_to_run(RunScope::Explain(ExplainDepth::Estimated))
@@ -733,7 +750,7 @@ mod test_language {
             "GET /orders/_count\nGET /orders/_search\n{ \"size\": 5 }",
             QueryLanguage::Search,
         );
-        console.selection = 30..30;
+        console.editor.selection = 30..30;
         let explained: Vec<String> = console
             .statements_to_run(RunScope::Explain(ExplainDepth::Estimated))
             .into_iter()
@@ -743,7 +760,7 @@ mod test_language {
             explained,
             ["GET /orders/_search\n{ \"size\": 5, \"profile\": true }"]
         );
-        console.selection = 3..3;
+        console.editor.selection = 3..3;
         assert!(
             console
                 .statements_to_run(RunScope::Explain(ExplainDepth::Estimated))
@@ -754,7 +771,7 @@ mod test_language {
     #[test]
     fn completes_mongodb_methods_as_written_whatever_the_case_typed() {
         let mut console = console_in("db.orders.insertO", QueryLanguage::Mongo);
-        console.selection = 17..17;
+        console.editor.selection = 17..17;
         let recent = RecentCompletions::default();
         console.open_completion(false);
         let _ = console.refresh_completion(None, &recent, &[]);
@@ -786,7 +803,7 @@ mod test_language {
         ];
         for (text, word, detail) in cases {
             let mut console = console_in(text, QueryLanguage::Search);
-            console.selection = text.len()..text.len();
+            console.editor.selection = text.len()..text.len();
             console.open_completion(false);
             let _ = console.refresh_completion(None, &recent, &[]);
             let found = console
@@ -814,7 +831,7 @@ mod test_language {
         );
 
         console.format(FormatScope::All, &FormatOptions::default(), Instant::now());
-        assert_eq!(console.text, "get a");
+        assert_eq!(console.editor.text, "get a");
         assert!(console.format_error.is_some());
 
         let outcome = console.check_problems(None, &LintOptions::default(), Instant::now());
@@ -1305,7 +1322,7 @@ mod redis_keys {
             sqls(&run.statements),
             ["RENAMENX greeting welcome", "GET welcome"]
         );
-        assert_eq!(console.text, "GET welcome");
+        assert_eq!(console.editor.text, "GET welcome");
     }
 }
 

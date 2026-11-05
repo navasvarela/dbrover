@@ -1,5 +1,9 @@
-//! Syntax highlighting for the console editor, from the same lexer that splits statements, so
-//! what looks like a string is exactly what the splitter treats as one.
+//! Syntax highlighting for the code editor. A [`Highlighter`] says what each piece of the text
+//! is; this module alone decides how each role is drawn, and adds the marks (an error, the
+//! current statement, the find bar's matches) over it.
+//!
+//! A console's language highlights from the same lexer that splits statements, so what looks
+//! like a string is exactly what the splitter treats as one.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -32,21 +36,80 @@ pub struct Marks {
 /// enough to spot every match, while the selected one stands out at full strength.
 const MATCH_STRENGTH: f32 = 0.45;
 
-/// A `TextEdit` layouter that highlights the console's language as [`layout_job`] does,
-/// wrapping at the editor's width.
-pub fn layouter(
-    language: QueryLanguage,
-    marks: &Marks,
-) -> impl FnMut(&Ui, &dyn TextBuffer, f32) -> Arc<Galley> + '_ {
+/// What a piece of code is, which decides its colour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyntaxRole {
+    Keyword,
+    String,
+    Number,
+    Comment,
+    /// A quoted name, such as a SQL identifier in double quotes.
+    Identifier,
+    Plain,
+}
+
+/// A byte range of the text and what it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Span {
+    pub range: Range<usize>,
+    pub role: SyntaxRole,
+}
+
+/// Says what each piece of a text is: a query language's lexer, or a report file's.
+pub trait Highlighter {
+    /// Spans in order, not overlapping. Text they leave out is drawn plain.
+    fn spans(&self, text: &str) -> Vec<Span>;
+}
+
+impl Highlighter for QueryLanguage {
+    fn spans(&self, text: &str) -> Vec<Span> {
+        self.tokens(text)
+            .into_iter()
+            .map(|token| {
+                let keyword =
+                    token.kind == TokenKind::Word && self.is_keyword(&text[token.range.clone()]);
+                Span {
+                    role: role_of(token.kind, keyword),
+                    range: token.range,
+                }
+            })
+            .collect()
+    }
+}
+
+fn role_of(kind: TokenKind, keyword: bool) -> SyntaxRole {
+    match kind {
+        TokenKind::Word if keyword => SyntaxRole::Keyword,
+        TokenKind::String => SyntaxRole::String,
+        TokenKind::Number => SyntaxRole::Number,
+        TokenKind::LineComment | TokenKind::BlockComment => SyntaxRole::Comment,
+        TokenKind::QuotedIdentifier => SyntaxRole::Identifier,
+        TokenKind::Word | TokenKind::Whitespace | TokenKind::Semicolon | TokenKind::Punctuation => {
+            SyntaxRole::Plain
+        }
+    }
+}
+
+/// A `TextEdit` layouter that highlights as [`layout_job`] does, wrapping at the editor's
+/// width.
+pub fn layouter<'a>(
+    highlighter: &'a dyn Highlighter,
+    marks: &'a Marks,
+) -> impl FnMut(&Ui, &dyn TextBuffer, f32) -> Arc<Galley> + 'a {
     move |ui, text, wrap_width| {
-        let mut job = layout_job(text.as_str(), language, marks, ui.style());
+        let mut job = layout_job(text.as_str(), highlighter, marks, ui.style());
         job.wrap.max_width = wrap_width;
         ui.fonts_mut(|fonts| fonts.layout_job(job))
     }
 }
 
-/// Lays out `text` with its language's colours and the `marks`.
-pub fn layout_job(text: &str, language: QueryLanguage, marks: &Marks, style: &Style) -> LayoutJob {
+/// Lays out `text` with the highlighter's colours and the `marks`.
+pub fn layout_job(
+    text: &str,
+    highlighter: &dyn Highlighter,
+    marks: &Marks,
+    style: &Style,
+) -> LayoutJob {
     let font = TextStyle::Monospace.resolve(style);
     let colors = SyntaxColors::for_visuals(&style.visuals);
     let error_stroke = Stroke::new(ERROR_UNDERLINE_WIDTH, style.visuals.error_fg_color);
@@ -63,14 +126,12 @@ pub fn layout_job(text: &str, language: QueryLanguage, marks: &Marks, style: &St
     let current_match_background = style.visuals.selection.bg_fill;
 
     let mut job = LayoutJob::default();
-    for token in language.tokens(text) {
-        let fragment = &text[token.range.clone()];
-        let keyword = token.kind == TokenKind::Word && language.is_keyword(fragment);
-        let token_format = format_for(token.kind, keyword, &font, &colors);
-        // A match can start or end inside a token (part of a word), so the token is split
-        // where matches begin and end.
-        for piece in pieces(&token.range, &marks.matches) {
-            let mut format = token_format.clone();
+    for span in covering(highlighter.spans(text), text.len()) {
+        let span_format = format_for(span.role, &font, &colors);
+        // A match can start or end inside a span (part of a word), so the span is split where
+        // matches begin and end.
+        for piece in pieces(&span.range, &marks.matches) {
+            let mut format = span_format.clone();
             if marks
                 .error
                 .as_ref()
@@ -101,6 +162,31 @@ pub fn layout_job(text: &str, language: QueryLanguage, marks: &Marks, style: &St
     job
 }
 
+/// `spans` with the text they leave out (and any that overlap or run past the end) filled in
+/// as plain, so the layout holds every byte of the text exactly once.
+fn covering(spans: Vec<Span>, len: usize) -> Vec<Span> {
+    let plain = |range| Span {
+        range,
+        role: SyntaxRole::Plain,
+    };
+    let mut covered = Vec::with_capacity(spans.len());
+    let mut at = 0;
+    for span in spans {
+        if span.range.start < at || span.range.end > len || span.range.is_empty() {
+            continue;
+        }
+        if span.range.start > at {
+            covered.push(plain(at..span.range.start));
+        }
+        at = span.range.end;
+        covered.push(span);
+    }
+    if at < len {
+        covered.push(plain(at..len));
+    }
+    covered
+}
+
 /// `range` cut where any of `matches` starts or ends inside it.
 fn pieces(range: &Range<usize>, matches: &[Range<usize>]) -> Vec<Range<usize>> {
     let mut cuts: Vec<usize> = matches
@@ -120,19 +206,17 @@ fn pieces(range: &Range<usize>, matches: &[Range<usize>]) -> Vec<Range<usize>> {
     pieces
 }
 
-fn format_for(kind: TokenKind, keyword: bool, font: &FontId, colors: &SyntaxColors) -> TextFormat {
-    let color = match kind {
-        TokenKind::Word if keyword => colors.keyword,
-        TokenKind::String => colors.string,
-        TokenKind::Number => colors.number,
-        TokenKind::LineComment | TokenKind::BlockComment => colors.comment,
-        TokenKind::QuotedIdentifier => colors.identifier,
-        TokenKind::Word | TokenKind::Whitespace | TokenKind::Semicolon | TokenKind::Punctuation => {
-            colors.plain
-        }
+fn format_for(role: SyntaxRole, font: &FontId, colors: &SyntaxColors) -> TextFormat {
+    let color = match role {
+        SyntaxRole::Keyword => colors.keyword,
+        SyntaxRole::String => colors.string,
+        SyntaxRole::Number => colors.number,
+        SyntaxRole::Comment => colors.comment,
+        SyntaxRole::Identifier => colors.identifier,
+        SyntaxRole::Plain => colors.plain,
     };
     let mut format = TextFormat::simple(font.clone(), color);
-    format.italics = matches!(kind, TokenKind::LineComment | TokenKind::BlockComment);
+    format.italics = role == SyntaxRole::Comment;
     format
 }
 
@@ -167,7 +251,7 @@ mod tests {
     #[test]
     fn colours_each_languages_own_words() {
         let colors_of = |text: &str, language: QueryLanguage| -> Vec<(String, egui::Color32)> {
-            layout_job(text, language, &Marks::default(), &Style::default())
+            layout_job(text, &language, &Marks::default(), &Style::default())
                 .sections
                 .iter()
                 .map(|section| {
@@ -205,7 +289,7 @@ mod tests {
 
         let job = layout_job(
             text,
-            QueryLanguage::Sql(Dialect::Postgres),
+            &QueryLanguage::Sql(Dialect::Postgres),
             &marks,
             &Style::default(),
         );
@@ -236,7 +320,7 @@ mod tests {
         };
         let style = Style::default();
 
-        let job = layout_job(text, QueryLanguage::Sql(Dialect::Postgres), &marks, &style);
+        let job = layout_job(text, &QueryLanguage::Sql(Dialect::Postgres), &marks, &style);
 
         let section_text = |section: &egui::text::LayoutSection| {
             &text[section.byte_range.start.0..section.byte_range.end.0]
@@ -256,6 +340,32 @@ mod tests {
         assert_eq!(with_background(selection), ["order"]);
         let all: String = job.sections.iter().map(section_text).collect();
         assert_eq!(all, text);
+    }
+
+    #[test]
+    fn fills_what_the_spans_leave_out_as_plain() {
+        let span = |range: Range<usize>, role| Span { range, role };
+        let keyword = SyntaxRole::Keyword;
+        let plain = SyntaxRole::Plain;
+        let cases = [
+            (vec![], vec![span(0..6, plain)]),
+            (
+                vec![span(1..3, keyword)],
+                vec![span(0..1, plain), span(1..3, keyword), span(3..6, plain)],
+            ),
+            (
+                vec![
+                    span(0..3, keyword),
+                    span(2..4, keyword),
+                    span(4..9, keyword),
+                ],
+                vec![span(0..3, keyword), span(3..6, plain)],
+            ),
+            (vec![span(2..2, keyword)], vec![span(0..6, plain)]),
+        ];
+        for (spans, expected) in cases {
+            assert_eq!(covering(spans.clone(), 6), expected, "{spans:?}");
+        }
     }
 
     #[test]

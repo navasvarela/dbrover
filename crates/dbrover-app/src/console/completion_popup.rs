@@ -51,7 +51,8 @@ pub fn follow_editor(ui: &Ui, console: &mut QueryConsole, output: &TextEditOutpu
         return;
     }
     if output.response.changed() {
-        let typed = console.text[..console.selection.end.min(console.text.len())]
+        let typed = console.editor.text
+            [..console.editor.selection.end.min(console.editor.text.len())]
             .chars()
             .next_back();
         match typed {

@@ -1,13 +1,12 @@
-//! Find and replace in a console's text: what is searched for, the matches, and the text a
+//! Find and replace in an editor's text: what is searched for, the matches, and the text a
 //! replacement makes. Every search is a regular expression underneath: plain text is escaped
 //! first, so match case and whole word mean the same in both modes.
 
 use std::ops::Range;
-use std::time::Instant;
 
 use regex::{NoExpand, Regex, RegexBuilder};
 
-use super::{QueryConsole, ordered};
+use super::{CodeEditor, ordered};
 
 /// How the find bar's text is read.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -128,7 +127,7 @@ pub struct Found {
     pub error: Option<String>,
 }
 
-impl QueryConsole {
+impl CodeEditor {
     pub fn find_bar(&self) -> &FindBar {
         &self.find
     }
@@ -193,43 +192,39 @@ impl QueryConsole {
         let (start, end) = ordered(&self.selection);
         let from = if forward { end } else { start };
         if let Some(index) = next_match(&matches, from, forward) {
-            self.select_match(matches[index].clone());
+            self.select_without_focus(matches[index].clone());
         }
     }
 
-    fn select_match(&mut self, range: Range<usize>) {
-        self.selection = range.clone();
-        self.pending_selection = Some(range);
-    }
-
     /// Replaces the selected match and goes to the next one; with no match selected, only goes
-    /// to the next one. One undo step takes the replacement back.
-    pub fn replace_current(&mut self, now: Instant) {
+    /// to the next one. One undo step takes the replacement back. Returns whether the text
+    /// changed.
+    pub fn replace_current(&mut self) -> bool {
         let Ok(Some(search)) = self.search() else {
-            return;
+            return false;
         };
         let Found {
             current, matches, ..
         } = self.found();
         let Some(range) = current.map(|index| matches[index].clone()) else {
             self.find_next(true);
-            return;
+            return false;
         };
         let with = search.replacement(&self.text, range.clone(), &self.find.replacement);
         let mut text = self.text.clone();
         text.replace_range(range.clone(), &with);
         self.replaced_text = Some(std::mem::replace(&mut self.text, text));
-        self.edited(now);
         let after = range.start + with.len();
         self.selection = after..after;
         self.find_next(true);
         if self.pending_selection.is_none() {
             self.pending_selection = Some(after..after);
         }
+        true
     }
 
     /// Replaces every match, as one undo step. Returns how many there were.
-    pub fn replace_all(&mut self, now: Instant) -> usize {
+    pub fn replace_all(&mut self) -> usize {
         let Ok(Some(search)) = self.search() else {
             return 0;
         };
@@ -238,9 +233,7 @@ impl QueryConsole {
             return 0;
         }
         self.replaced_text = Some(std::mem::replace(&mut self.text, text));
-        self.edited(now);
-        self.selection = 0..0;
-        self.pending_selection = Some(0..0);
+        self.select_without_focus(0..0);
         count
     }
 }

@@ -20,7 +20,8 @@ use dbrover_sql::{
 
 use super::catalog_lint;
 use super::completion::CatalogSource;
-use super::highlight::error_marker;
+use crate::code_editor::highlight::error_marker;
+use crate::code_editor::{self, EditorProblem};
 
 /// How long typing must pause before the text is checked: long enough not to flag every
 /// half-typed word, short enough to feel live.
@@ -30,6 +31,33 @@ const DEBOUNCE: Duration = Duration::from_millis(300);
 /// check, and a console of 1,000 statements (78 KB) checks from cold in about 13 ms, spread
 /// over four frames.
 const FRAME_BUDGET: Duration = Duration::from_millis(4);
+
+impl EditorProblem for Problem {
+    fn range(&self) -> Range<usize> {
+        self.range.clone()
+    }
+
+    fn severity(&self) -> code_editor::Severity {
+        match self.severity {
+            Severity::Error => code_editor::Severity::Error,
+            Severity::Warning => code_editor::Severity::Warning,
+        }
+    }
+
+    fn message(&self) -> &str {
+        &self.message
+    }
+
+    fn note(&self) -> Option<String> {
+        match self.source {
+            ProblemSource::Lint(rule) => Some(format!(
+                "{} · can be switched off in View → Settings",
+                rule.id()
+            )),
+            ProblemSource::Syntax | ProblemSource::Database => None,
+        }
+    }
+}
 
 /// Which checks are on, from `settings.toml`.
 #[derive(Debug, Clone, PartialEq, Eq)]
