@@ -1602,11 +1602,27 @@ three to five, **L** a track of its own).
 
   **Exit:** a `GROUP BY` result of months and totals charts as bars and lines, and exports as an
   SVG a browser shows.
-- **W13 — Schema compare (L, later):** two schemas, on one data source or two of the same
-  engine, side by side with what differs (tables, columns, keys, indexes, views), and the script
-  that turns one into the other, opened in a console to read and run by hand. It starts with
-  PostgreSQL and reuses the object helpers' DDL (E-track). It was a non-goal in
-  [Vision](vision.md) until 2026-10-29, and comes after the others here and after ER1.
+- **W13 — Schema compare (L):** being built; designed on 2026-11-05 in
+  [Comparing schemas](schema-compare.md), together with the Version control track's VC3. Two
+  schemas, on one data source or two of the same engine, side by side with what differs
+  (tables, columns, keys, indexes, views), and the script that turns one into the other, opened
+  in a console to read and run by hand. It starts with PostgreSQL and reuses the object
+  helpers' DDL (E-track). It was a non-goal in [Vision](vision.md) until 2026-10-29.
+  - **Compared by name:** tables, columns (type, nullability, default, identity), primary,
+    unique and foreign keys, checks, indexes and views; owners, grants, comments, storage and
+    column order never. Renames aren't guessed.
+  - **Read with the search path set to the schema,** so the same object in `staging` and
+    `public` reads the same inside views, defaults and checks.
+  - **The script** turns the left into the right in phases (views, indexes and foreign keys
+    dropped first; tables dropped, created and changed through E4's `AlterTable`; foreign keys,
+    views and indexes added last), in one transaction, and is never run by DbRover.
+  - **W13a — The plan:** the design and this entry.
+  - **W13b — The model and the comparison:** a new crate, `dbrover-schema`.
+  - **W13c — Reading a PostgreSQL schema:** `Connection::describe_schema` and
+    `Command::DescribeSchema`.
+  - **W13d — The script.**
+  - **W13e — The tab:** **Compare schema…** on a schema in the explorer.
+  - **W13f — Manual and demo notes,** with VC3's.
 
   **Exit:** comparing two PostgreSQL schemas that differ by a column and an index lists both
   differences, and running the script on one makes the comparison come back empty.
@@ -2185,9 +2201,15 @@ after CI fixes, the reports track and W13, and links no Git library.
   **Exit:** a clone with `queries/sales.sql` and `queries/admin/users.sql` shows both and not
   `.git`; saving `sales.sql` shows in `git diff`; checking out a branch that adds a file shows
   it once the window is in front.
-- **VC3 — Schema snapshots (S–M), with W13:** a schema saved as a deterministic, diffable file
-  (in the app and as `dbrover schema snapshot`), and W13 comparing a live schema with one, so
-  Git's history of the file is the schema's history. Its format is decided when W13 starts.
+- **VC3 — Schema snapshots (S–M), with W13:** being built; designed on 2026-11-05 in
+  [Comparing schemas](schema-compare.md#snapshot-files-vc3), in W13's stack. A schema saved as
+  a deterministic, diffable file (in the app and as `dbrover schema snapshot`), and W13
+  comparing a live schema with one, so Git's history of the file is the schema's history. The
+  format is TOML from DbRover's own writer, one column per line, with nothing volatile in it;
+  `dbrover schema compare` exits as `diff` does, for CI.
+  - **VC3a — Snapshot files:** the writer and reader, `dbrover schema snapshot`.
+  - **VC3b — Comparing with a snapshot:** a snapshot as a side in the tab, **Save schema
+    snapshot…**, and `dbrover schema compare`.
 
   **Exit:** a snapshot of `public` on the PostgreSQL test server taken twice is identical; after
   adding a column and an index, comparing the live schema with the first snapshot lists both.
