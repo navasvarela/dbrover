@@ -9,6 +9,8 @@ mod script;
 mod snapshot;
 mod summary;
 
+pub use summary::field_details;
+
 pub use compare::{
     Change, ColumnField, CompareError, Comparison, ConstraintDifference, ConstraintKind,
     Difference, FieldChange, IndexField, TableDifferences, ViewField, compare,

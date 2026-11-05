@@ -2,17 +2,24 @@
 //! selected object's definitions side by side on the right.
 
 use dbrover_schema::{
-    Change, Comparison, Difference, FieldChange, ObjectKind, Script, TableDifferences, side_by_side,
+    Change, Comparison, Difference, ObjectKind, Script, TableDifferences, field_details,
+    side_by_side,
 };
 use egui::{CentralPanel, Color32, ComboBox, Frame, Panel, RichText, ScrollArea, TextEdit, Ui};
 
-use super::{Candidate, CompareAction, CompareId, CompareTab, Outcome, Side, SideState};
-use crate::widgets::IconButton;
+use dbrover_core::DataSourceId;
+use dbrover_sql::Dialect;
+
+use super::{
+    Candidate, CompareAction, CompareId, CompareTab, Outcome, Side, SideIndex, SideState, Source,
+};
+use crate::widgets::{self, IconButton};
 use crate::{form, icons};
 
 /// The differences list's starting width; it can be dragged.
 const LIST_WIDTH: f32 = 340.0;
 const SCHEMA_FIELD_WIDTH: f32 = 140.0;
+const SNAPSHOT_ITEM: &str = "Snapshot file\u{2026}";
 const KINDS: [ObjectKind; 3] = [ObjectKind::Table, ObjectKind::Index, ObjectKind::View];
 
 pub(super) fn show(
@@ -37,8 +44,8 @@ pub(super) fn show(
             return action;
         }
         Some(Outcome::Compared { comparison, script }) => {
-            let left = tab.sides[0].data_source;
-            action = action.or(toolbar(ui, comparison, script.as_ref(), left));
+            let targets = script_targets(tab, candidates);
+            action = action.or(toolbar(ui, comparison, script.as_ref(), &targets));
         }
     }
     Panel::left(egui::Id::new(("compare_differences", id)))
@@ -52,8 +59,8 @@ pub(super) fn show(
     action
 }
 
-/// **Left** and **Right**, each a data source and a schema, **⇄** between them, then
-/// **Compare** or **Compare again**.
+/// **Left** and **Right**, each a data source and a schema or a snapshot file, **Swap sides**
+/// between them, then **Compare** or **Compare again**.
 fn sides_bar(
     ui: &mut Ui,
     id: CompareId,
@@ -61,23 +68,20 @@ fn sides_bar(
     candidates: &[Candidate],
 ) -> Option<CompareAction> {
     ui.horizontal(|ui| {
-        let left_dialect = tab.sides[0]
-            .data_source
-            .and_then(|source| candidates.iter().find(|candidate| candidate.id == source))
-            .map(|candidate| candidate.dialect);
-        let mut changed = side_picker(ui, (id, "left"), "Left", &mut tab.sides[0], candidates);
+        let left_dialect = side_dialect(&tab.sides[0], candidates);
+        let (mut changed, mut action) =
+            side_picker(ui, id, SideIndex::Left, &mut tab.sides[0], candidates);
         let swap = IconButton::new(icons::ARROWS_LEFT_RIGHT, "Swap sides")
             .tooltip("Swap the sides: the script then turns the right into the left".to_owned())
             .show(ui);
         if swap.clicked() {
             tab.swap();
         }
-        let same_engine: Vec<Candidate> = candidates
-            .iter()
-            .filter(|candidate| left_dialect.is_none_or(|dialect| candidate.dialect == dialect))
-            .cloned()
-            .collect();
-        changed |= side_picker(ui, (id, "right"), "Right", &mut tab.sides[1], &same_engine);
+        let same_engine = of_dialect(candidates, left_dialect);
+        let (right_changed, right_action) =
+            side_picker(ui, id, SideIndex::Right, &mut tab.sides[1], &same_engine);
+        changed |= right_changed;
+        action = action.or(right_action);
         if changed {
             tab.outcome = None;
             tab.selected = None;
@@ -91,57 +95,130 @@ fn sides_bar(
         } else {
             "Compare"
         };
-        let enabled = tab.picked().is_some() && !reading;
-        form::primary_button(ui, label, enabled)
+        let enabled = tab.readings().is_some() && !reading;
+        let compare = form::primary_button(ui, label, enabled)
             .on_hover_text("Read both schemas and compare them")
-            .clicked()
-            .then(|| tab.start_reading())
-            .flatten()
+            .clicked();
+        action.or_else(|| compare.then(|| tab.start_reading()).flatten())
     })
     .inner
 }
 
-/// A side's data source and schema. Returns whether either changed.
+/// The engine a side is known to be of: its data source's, or a snapshot's once read.
+fn side_dialect(side: &Side, candidates: &[Candidate]) -> Option<Dialect> {
+    side.data_source()
+        .and_then(|source| candidates.iter().find(|candidate| candidate.id == source))
+        .map(|candidate| candidate.dialect)
+        .or_else(|| side.schema().map(|schema| schema.dialect))
+}
+
+fn of_dialect(candidates: &[Candidate], dialect: Option<Dialect>) -> Vec<Candidate> {
+    candidates
+        .iter()
+        .filter(|candidate| dialect.is_none_or(|dialect| candidate.dialect == dialect))
+        .cloned()
+        .collect()
+}
+
+/// What a side's picker chose this frame.
+enum Pick {
+    DataSource(DataSourceId),
+    Snapshot,
+}
+
+/// A side's data source and schema, or its snapshot file, and **Save snapshot…** for a live
+/// side. Returns whether the side changed, and what to ask the app for.
 fn side_picker(
     ui: &mut Ui,
-    salt: (CompareId, &str),
-    label: &str,
+    id: CompareId,
+    which: SideIndex,
     side: &mut Side,
     candidates: &[Candidate],
-) -> bool {
-    let label_id = ui.label(label).id;
-    let before = side.data_source;
-    let shown = side
-        .data_source
-        .and_then(|id| candidates.iter().find(|candidate| candidate.id == id))
-        .map_or("Pick a data source", |candidate| candidate.name.as_str());
-    ComboBox::from_id_salt(("compare_data_source", salt.0, salt.1))
+) -> (bool, Option<CompareAction>) {
+    let noun = which.label().to_lowercase();
+    let label_id = ui.label(which.label()).id;
+    let current = side.data_source();
+    let shown = match &side.source {
+        Source::Snapshot(_) => "Snapshot file",
+        Source::Live { .. } => current
+            .and_then(|id| candidates.iter().find(|candidate| candidate.id == id))
+            .map_or("Pick a data source", |candidate| candidate.name.as_str()),
+    };
+    let mut pick = None;
+    ComboBox::from_id_salt(("compare_data_source", id, which.label()))
         .selected_text(shown)
         .show_ui(ui, |ui| {
             for candidate in candidates {
-                ui.selectable_value(
-                    &mut side.data_source,
-                    Some(candidate.id),
-                    candidate.name.as_str(),
-                );
+                if ui
+                    .selectable_label(current == Some(candidate.id), candidate.name.as_str())
+                    .clicked()
+                {
+                    pick = Some(Pick::DataSource(candidate.id));
+                }
+            }
+            ui.separator();
+            let snapshot = matches!(side.source, Source::Snapshot(_));
+            if ui.selectable_label(snapshot, SNAPSHOT_ITEM).clicked() {
+                pick = Some(Pick::Snapshot);
             }
         })
         .response
-        .on_hover_text(format!("The {} side's data source", label.to_lowercase()));
-    let edited = ui
-        .add(
-            TextEdit::singleline(&mut side.schema)
-                .hint_text("schema")
-                .desired_width(SCHEMA_FIELD_WIDTH),
-        )
-        .labelled_by(label_id)
-        .on_hover_text(format!("The {} side's schema", label.to_lowercase()))
-        .changed();
-    let changed = edited || before != side.data_source;
+        .on_hover_text(format!("The {noun} side's data source, or a snapshot file"));
+    let mut changed = false;
+    let mut action = None;
+    match pick {
+        Some(Pick::DataSource(data_source)) => {
+            let schema = match &side.source {
+                Source::Live { schema, .. } => schema.clone(),
+                Source::Snapshot(_) => String::new(),
+            };
+            side.source = Source::Live {
+                data_source: Some(data_source),
+                schema,
+            };
+            changed = current != Some(data_source);
+        }
+        Some(Pick::Snapshot) => {
+            action = Some(CompareAction::PickSnapshot {
+                tab: id,
+                side: which,
+            })
+        }
+        None => {}
+    }
+    match &mut side.source {
+        Source::Live { schema, .. } => {
+            changed |= ui
+                .add(
+                    TextEdit::singleline(schema)
+                        .hint_text("schema")
+                        .desired_width(SCHEMA_FIELD_WIDTH),
+                )
+                .labelled_by(label_id)
+                .on_hover_text(format!("The {noun} side's schema"))
+                .changed();
+        }
+        Source::Snapshot(path) => {
+            ui.label(super::file_name(path))
+                .on_hover_text(path.display().to_string());
+        }
+    }
+    let live = side.live_schema();
+    let save = IconButton::new(
+        icons::FLOPPY_DISK,
+        &format!("Save a snapshot of the {noun} side"),
+    )
+    .enabled(live.is_some())
+    .show(ui);
+    if save.clicked()
+        && let Some(live) = live
+    {
+        action = action.or(Some(CompareAction::SaveSnapshot(live)));
+    }
     if changed {
         side.state = SideState::Unread;
     }
-    changed
+    (changed, action)
 }
 
 /// A side that couldn't be read says why, under the bar; the other side still loads.
@@ -153,17 +230,30 @@ fn side_errors(ui: &mut Ui, tab: &CompareTab) {
     }
 }
 
+/// The data sources the script may open on: the left's own when it is live; when it is a
+/// snapshot, any of the same engine, for the user to pick.
+fn script_targets(tab: &CompareTab, candidates: &[Candidate]) -> ScriptTarget {
+    let left = &tab.sides[0];
+    match left.data_source() {
+        Some(data_source) => ScriptTarget::Left(data_source),
+        None => ScriptTarget::Pick(of_dialect(candidates, side_dialect(left, candidates))),
+    }
+}
+
+enum ScriptTarget {
+    Left(DataSourceId),
+    Pick(Vec<Candidate>),
+}
+
 /// **Open script in console**, **Copy script**, and how many objects differ.
 fn toolbar(
     ui: &mut Ui,
     comparison: &Comparison,
     script: Option<&Script>,
-    left: Option<dbrover_core::DataSourceId>,
+    target: &ScriptTarget,
 ) -> Option<CompareAction> {
     ui.horizontal(|ui| {
-        let can_open = script.is_some() && left.is_some();
-        let open = form::primary_button(ui, "Open script in console", can_open)
-            .on_hover_text("Put the script that turns the left into the right in a new console of the left's data source, to read and run there");
+        let opened = open_script(ui, script, target);
         if ui
             .add_enabled(script.is_some(), egui::Button::new("Copy script"))
             .clicked()
@@ -190,14 +280,49 @@ fn toolbar(
             );
         }
         let text = script.map(|script| script.sql.clone());
-        match (open.clicked(), left, text) {
-            (true, Some(data_source), Some(text)) => {
-                Some(CompareAction::OpenInConsole { data_source, text })
-            }
-            _ => None,
-        }
+        Some(CompareAction::OpenInConsole {
+            data_source: opened?,
+            text: text?,
+        })
     })
     .inner
+}
+
+/// **Open script in console**: a button opening on the left's data source, or, when the left
+/// is a snapshot, a menu of the data sources it may open on. The data source picked, if any.
+fn open_script(
+    ui: &mut Ui,
+    script: Option<&Script>,
+    target: &ScriptTarget,
+) -> Option<DataSourceId> {
+    const OPEN: &str = "Open script in console";
+    match target {
+        ScriptTarget::Left(data_source) => form::primary_button(ui, OPEN, script.is_some())
+            .on_hover_text(
+                "Put the script that turns the left into the right in a new console of the \
+                 left's data source, to read and run there",
+            )
+            .clicked()
+            .then_some(*data_source),
+        ScriptTarget::Pick(candidates) => {
+            let enabled = script.is_some() && !candidates.is_empty();
+            ui.add_enabled_ui(enabled, |ui| {
+                widgets::menu_button(ui, OPEN, |ui| {
+                    let mut chosen = None;
+                    for candidate in candidates {
+                        if ui.button(candidate.name.as_str()).clicked() {
+                            chosen = Some(candidate.id);
+                            ui.close();
+                        }
+                    }
+                    chosen
+                })
+                .inner
+                .flatten()
+            })
+            .inner
+        }
+    }
 }
 
 /// The differences, grouped by kind, each with its mark and summary; a changed table lists
@@ -229,15 +354,15 @@ fn differences(ui: &mut Ui, tab: &mut CompareTab) {
             let lists = [
                 (
                     ObjectKind::Table,
-                    rows_of(&comparison.tables, table_summary),
+                    rows_of(&comparison.tables, TableDifferences::details),
                 ),
                 (
                     ObjectKind::Index,
-                    rows_of(&comparison.indexes, |fields| fields_summary(fields)),
+                    rows_of(&comparison.indexes, |fields| field_details(fields)),
                 ),
                 (
                     ObjectKind::View,
-                    rows_of(&comparison.views, |fields| fields_summary(fields)),
+                    rows_of(&comparison.views, |fields| field_details(fields)),
                 ),
             ];
             for (kind, rows) in lists {
@@ -292,33 +417,6 @@ fn rows_of<'a, D>(
             },
         })
         .collect()
-}
-
-/// "2 columns added, 1 changed", then each column and constraint that differs.
-fn table_summary(table: &TableDifferences) -> Vec<String> {
-    let mut lines = vec![table.summary()];
-    for column in &table.columns {
-        match &column.change {
-            Change::Differs(fields) => {
-                for field in fields {
-                    lines.push(format!("~ {}: {field}", column.name));
-                }
-            }
-            change => lines.push(format!("{} column {}", change.mark(), column.name)),
-        }
-    }
-    for constraint in &table.constraints {
-        let line = match &constraint.change {
-            Change::Differs(change) => format!("~ {change}"),
-            change => format!("{} {} {}", change.mark(), constraint.kind, constraint.name),
-        };
-        lines.push(line);
-    }
-    lines
-}
-
-fn fields_summary<F: std::fmt::Display + Copy + 'static>(fields: &[FieldChange<F>]) -> Vec<String> {
-    fields.iter().map(ToString::to_string).collect()
 }
 
 /// The selected object's definition from each side, side by side, the lines that differ

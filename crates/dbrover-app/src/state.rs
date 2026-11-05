@@ -209,6 +209,7 @@ impl AppState {
             | Event::TableLoaded { .. }
             | Event::SchemaDescribed { .. }
             | Event::SchemaSnapshotSaved { .. }
+            | Event::SchemaSnapshotRead { .. }
             | Event::TransactionChanged { .. }
             | Event::TransactionEnded { .. }
             | Event::ConsoleSaveFailed { .. }

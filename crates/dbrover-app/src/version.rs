@@ -31,6 +31,7 @@ Usage: dbrover [--config-dir <folder>] [--version | --help] [FILE.sql …]
                           [--config-dir <folder>]
        dbrover report-worker [--config-dir <folder>]
        dbrover schema snapshot <data source> <schema> [-o <file>] [--config-dir <folder>]
+       dbrover schema compare <left> <right> [--script] [--config-dir <folder>]
 
 Starts the DbRover desktop app, opening each FILE.sql given in a console. With --version (-V),
 prints the version and exits.
@@ -43,7 +44,8 @@ over standard input and output, without opening a window. An MCP client starts i
 code that says how it ended; `dbrover report run --help` says more.
 
 `dbrover schema snapshot` writes a schema's tables, indexes and views as a TOML file that is
-the same each time it is taken of an unchanged schema; `dbrover schema --help` says more.
+the same each time it is taken of an unchanged schema, and `dbrover schema compare` compares
+two schemas, live or snapshots, exiting as diff does; `dbrover schema --help` says more.
 
 `dbrover report-worker` runs one report for the app, in a process of its own: it reads the
 request from standard input and writes the run's progress to standard output as JSON Lines.

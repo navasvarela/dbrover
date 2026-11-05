@@ -81,6 +81,8 @@ pub enum ExplorerAction {
     DiagramRelated(DataSourceId, CatalogPath),
     /// Compare schema…: a compare tab with the schema at the path on its left (W13).
     CompareSchema(DataSourceId, CatalogPath),
+    /// Save schema snapshot…: the schema at the path written to a file the user picks (VC3).
+    SaveSchemaSnapshot(DataSourceId, CatalogPath),
     /// Reopens a saved diagram, or brings its tab to the front.
     OpenDiagram(DiagramKey),
     /// Something asked of the **Reports** section.
@@ -1088,7 +1090,8 @@ fn diagram_items(
     }
 }
 
-/// **Compare schema…** on a schema, where its data source's schemas can be read whole.
+/// **Compare schema…** and **Save schema snapshot…** on a schema, where its data source's
+/// schemas can be read whole.
 fn compare_items(
     ui: &mut Ui,
     tree: &TreeView<'_>,
@@ -1098,11 +1101,17 @@ fn compare_items(
     let comparable = tree
         .capabilities
         .is_some_and(|capabilities| capabilities.schema_compare);
-    if comparable
-        && node.kind() == Some(NodeKind::Schema)
-        && widgets::menu_item(ui, icons::GIT_DIFF, "Compare schema\u{2026}").clicked()
-    {
+    if !comparable || node.kind() != Some(NodeKind::Schema) {
+        return;
+    }
+    if widgets::menu_item(ui, icons::GIT_DIFF, "Compare schema\u{2026}").clicked() {
         actions.push(ExplorerAction::CompareSchema(tree.id, node.path.clone()));
+    }
+    if widgets::menu_item(ui, icons::FLOPPY_DISK, "Save schema snapshot\u{2026}").clicked() {
+        actions.push(ExplorerAction::SaveSchemaSnapshot(
+            tree.id,
+            node.path.clone(),
+        ));
     }
 }
 
