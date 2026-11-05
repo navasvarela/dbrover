@@ -434,7 +434,8 @@ mod tests {
     #[test]
     fn keeps_crlf_line_breaks() {
         let example = include_str!("../../../examples/reports/sales-by-category.toml");
-        let crlf = example.replace('\n', "\r\n");
+        // Already CRLF where Git on Windows checked it out: made LF first, then CRLF.
+        let crlf = example.replace("\r\n", "\n").replace('\n', "\r\n");
         assert_eq!(lay_out(&crlf), crlf);
         let formatted = format(&crlf);
         assert_eq!(format(&formatted), formatted);
