@@ -73,7 +73,7 @@ pub(crate) async fn describe_table(
             data_type: column.try_get(2).map_err(connection_error)?,
             nullable: column.try_get(3).map_err(connection_error)?,
             default: column.try_get(4).map_err(connection_error)?,
-            identity: identity(column)?,
+            identity: identity_from(column, 5)?,
         });
     }
     key.sort();
@@ -91,10 +91,14 @@ pub(crate) async fn describe_table(
 }
 
 /// An identity column's `attidentity` (`a` for `ALWAYS`, `d` for `BY DEFAULT`, empty for a
-/// column that isn't one) and its sequence's start and increment.
-fn identity(column: &tokio_postgres::Row) -> Result<Option<Identity>, DriverError> {
-    let generation = match column
-        .try_get::<_, String>(5)
+/// column that isn't one) at `index`, and its sequence's start and increment in the two
+/// columns after it.
+pub(crate) fn identity_from(
+    row: &tokio_postgres::Row,
+    index: usize,
+) -> Result<Option<Identity>, DriverError> {
+    let generation = match row
+        .try_get::<_, String>(index)
         .map_err(connection_error)?
         .as_str()
     {
@@ -102,8 +106,8 @@ fn identity(column: &tokio_postgres::Row) -> Result<Option<Identity>, DriverErro
         "d" => IdentityGeneration::ByDefault,
         _ => return Ok(None),
     };
-    let start: Option<i64> = column.try_get(6).map_err(connection_error)?;
-    let increment: Option<i64> = column.try_get(7).map_err(connection_error)?;
+    let start: Option<i64> = row.try_get(index + 1).map_err(connection_error)?;
+    let increment: Option<i64> = row.try_get(index + 2).map_err(connection_error)?;
     let counting = Identity::counting(generation);
     Ok(Some(Identity {
         start: start.unwrap_or(counting.start),
@@ -195,36 +199,47 @@ pub(crate) async fn describe_constraints(
         .map_err(connection_error)?;
     let mut constraints = TableConstraints::default();
     for row in &rows {
-        let text = |index| {
-            row.try_get::<_, Option<String>>(index)
-                .map_err(connection_error)
-        };
-        let name: String = row.try_get(0).map_err(connection_error)?;
-        let columns: Vec<String> = row.try_get(2).map_err(connection_error)?;
-        match text(1)?.as_deref() {
-            Some("p") => constraints.primary_key_name = Some(name),
-            Some("u") => constraints.unique_keys.push(UniqueConstraint {
-                name: Some(name),
-                columns,
-            }),
-            Some("f") => constraints.foreign_keys.push(ForeignKeyConstraint {
-                name: Some(name),
-                columns,
-                referenced: TableName {
-                    schema: text(3)?.unwrap_or_default(),
-                    name: text(4)?.unwrap_or_default(),
-                },
-                referenced_columns: row.try_get(5).map_err(connection_error)?,
-                on_delete: referential_action(text(6)?.as_deref()),
-                on_update: referential_action(text(7)?.as_deref()),
-            }),
-            _ => constraints.checks.push(CheckConstraint {
-                name: Some(name),
-                expression: text(8)?.unwrap_or_default(),
-            }),
-        }
+        constraint_from_row(row, &mut constraints)?;
     }
     Ok(constraints)
+}
+
+/// Adds the constraint a row describes to `constraints`. The row's first nine columns are
+/// [`describe_constraints`]'s: name, kind, columns, the referenced table's schema, name and
+/// columns, the actions on delete and on update, and a check's condition.
+pub(crate) fn constraint_from_row(
+    row: &tokio_postgres::Row,
+    constraints: &mut TableConstraints,
+) -> Result<(), DriverError> {
+    let text = |index| {
+        row.try_get::<_, Option<String>>(index)
+            .map_err(connection_error)
+    };
+    let name: String = row.try_get(0).map_err(connection_error)?;
+    let columns: Vec<String> = row.try_get(2).map_err(connection_error)?;
+    match text(1)?.as_deref() {
+        Some("p") => constraints.primary_key_name = Some(name),
+        Some("u") => constraints.unique_keys.push(UniqueConstraint {
+            name: Some(name),
+            columns,
+        }),
+        Some("f") => constraints.foreign_keys.push(ForeignKeyConstraint {
+            name: Some(name),
+            columns,
+            referenced: TableName {
+                schema: text(3)?.unwrap_or_default(),
+                name: text(4)?.unwrap_or_default(),
+            },
+            referenced_columns: row.try_get(5).map_err(connection_error)?,
+            on_delete: referential_action(text(6)?.as_deref()),
+            on_update: referential_action(text(7)?.as_deref()),
+        }),
+        _ => constraints.checks.push(CheckConstraint {
+            name: Some(name),
+            expression: text(8)?.unwrap_or_default(),
+        }),
+    }
+    Ok(())
 }
 
 /// `pg_constraint`'s one-letter code for a foreign key's action.

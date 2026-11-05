@@ -204,9 +204,9 @@ impl ToolError {
                 | DriverError::Connection(_)
                 | DriverError::Lost(_)),
             ) => Self::plain("connection", describe_error(&error)),
-            RunError::Driver(error @ DriverError::InvalidPath(_)) => {
-                Self::invalid(describe_error(&error))
-            }
+            RunError::Driver(
+                error @ (DriverError::InvalidPath(_) | DriverError::Unsupported(_)),
+            ) => Self::invalid(describe_error(&error)),
             error @ RunError::TimedOut(_) => Self::plain("timeout", describe_error(&error)),
             error @ (RunError::NoTransaction(_) | RunError::Cost(_)) => {
                 Self::refused(error.to_string())

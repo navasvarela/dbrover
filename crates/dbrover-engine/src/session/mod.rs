@@ -13,6 +13,7 @@ mod import;
 mod loss;
 mod parameters;
 mod query;
+mod schema;
 mod transaction;
 mod validate;
 
@@ -61,6 +62,7 @@ pub(crate) enum SessionRequest {
     ApplyDdl(Vec<String>),
     Ddl(CatalogPath),
     LoadTable(CatalogPath),
+    DescribeSchema(String),
     /// Prepares statements without running them; see [`crate::Command::ValidateStatements`].
     Validate(Vec<String>),
     ExportAll(ExportAll),
@@ -654,6 +656,10 @@ impl Worker<'_> {
             }
             SessionRequest::LoadTable(path) => {
                 let work = ddl::load_table(self.context, &mut *self.connection, path);
+                self.signals.guard(work, None, self.cancel_handle).await
+            }
+            SessionRequest::DescribeSchema(schema) => {
+                let work = schema::describe(self.context, &mut *self.connection, schema);
                 self.signals.guard(work, None, self.cancel_handle).await
             }
             SessionRequest::FetchMore(_) | SessionRequest::Validate(_) => Ok(()),

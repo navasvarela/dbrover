@@ -7,6 +7,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod common;
+#[path = "ddl/schema_compare.rs"]
+mod schema_compare;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;

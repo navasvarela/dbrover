@@ -6,6 +6,7 @@ mod catalog;
 mod execution;
 mod redshift;
 mod roles;
+mod schema;
 mod table;
 mod tls;
 
@@ -18,8 +19,8 @@ use async_trait::async_trait;
 use dbrover_core::{
     CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, ChildrenPage,
     ChildrenQuery, Connection, DriverError, ManagedService, NodeKind, Password, PostgresConfig,
-    Rejection, RelationName, ResultCursor, RoleDescription, Route, ServerInfo, TableConstraints,
-    TableDescription, TableName, TransactionStatus,
+    Rejection, RelationName, ResultCursor, RoleDescription, Route, SchemaDescription, ServerInfo,
+    TableConstraints, TableDescription, TableName, TransactionStatus,
 };
 use tokio::task::{JoinError, JoinHandle};
 use tokio_postgres::tls::MakeTlsConnect;
@@ -362,6 +363,20 @@ impl Connection for PostgresConnection {
         }
     }
 
+    /// Always on the configured database, the one consoles run on. Redshift's catalog has
+    /// none of what the schema is read from (C1d).
+    async fn describe_schema(
+        &mut self,
+        schema: &str,
+    ) -> Result<Option<SchemaDescription>, DriverError> {
+        match self.catalog {
+            Catalog::Postgres => schema::describe_schema(&mut self.primary.client, schema).await,
+            Catalog::Redshift => Err(DriverError::Unsupported(
+                "Redshift's schemas can't be compared yet.",
+            )),
+        }
+    }
+
     async fn validate(&mut self, sql: &str) -> Result<Option<Rejection>, DriverError> {
         execution::validate(&self.primary.client, sql).await
     }
@@ -411,7 +426,7 @@ mod tests {
     /// `docker-compose.yml`, e.g. `postgres://dbrover:dbrover@localhost:55443/dbrover`.
     const TLS_TEST_URL_VAR: &str = "DBROVER_TEST_POSTGRES_TLS_URL";
 
-    fn test_server() -> Option<(PostgresConfig, Option<Password>)> {
+    pub(crate) fn test_server() -> Option<(PostgresConfig, Option<Password>)> {
         server_from(TEST_URL_VAR)
     }
 

@@ -7,8 +7,8 @@ use async_trait::async_trait;
 use dbrover_core::{
     CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, Cell, ChildrenPage,
     ChildrenQuery, ColumnInfo, Connection, CostEstimate, DriverError, ProgressHandle, Rejection,
-    RelationName, ResultCursor, ResultShape, RoleDescription, Row, ServerInfo, TableConstraints,
-    TableDescription, TableName, TransactionStatus, describe_error,
+    RelationName, ResultCursor, ResultShape, RoleDescription, Row, SchemaDescription, ServerInfo,
+    TableConstraints, TableDescription, TableName, TransactionStatus, describe_error,
 };
 
 use super::{SessionContext, SessionOwner, SessionRequest};
@@ -130,6 +130,14 @@ impl Connection for Watched {
 
     async fn describe_role(&mut self, path: &CatalogPath) -> Result<RoleDescription, DriverError> {
         self.loss.watch(self.connection.describe_role(path).await)
+    }
+
+    async fn describe_schema(
+        &mut self,
+        schema: &str,
+    ) -> Result<Option<SchemaDescription>, DriverError> {
+        self.loss
+            .watch(self.connection.describe_schema(schema).await)
     }
 
     async fn validate(&mut self, sql: &str) -> Result<Option<Rejection>, DriverError> {
@@ -297,6 +305,11 @@ pub(super) fn refuse(context: &SessionContext, request: SessionRequest, reason: 
         (SessionRequest::LoadTable(path), _) => Event::TableLoaded {
             data_source: id,
             path,
+            result: Err(message),
+        },
+        (SessionRequest::DescribeSchema(schema), _) => Event::SchemaDescribed {
+            data_source: id,
+            schema,
             result: Err(message),
         },
         // Rows to fetch were the lost connection's; the explorer never edits or ends a

@@ -1617,9 +1617,10 @@ three to five, **L** a track of its own).
     dropped first; tables dropped, created and changed through E4's `AlterTable`; foreign keys,
     views and indexes added last), in one transaction, and is never run by DbRover.
   - **W13a — The plan:** the design and this entry.
-  - **W13b — The model and the comparison:** a new crate, `dbrover-schema`.
-  - **W13c — Reading a PostgreSQL schema:** `Connection::describe_schema` and
-    `Command::DescribeSchema`.
+  - **W13b — The model and the comparison:** built; a new crate, `dbrover-schema`.
+  - **W13c — Reading a PostgreSQL schema:** built; `Connection::describe_schema` and
+    `Command::DescribeSchema`. Serial columns read as `serial`; an index's key keeps its
+    ordering and operator class; partitions and extensions' objects are left out.
   - **W13d — The script.**
   - **W13e — The tab:** **Compare schema…** on a schema in the explorer.
   - **W13f — Manual and demo notes,** with VC3's.

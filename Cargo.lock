@@ -2531,6 +2531,8 @@ version = "0.27.0"
 dependencies = [
  "async-trait",
  "dbrover-core",
+ "dbrover-schema",
+ "dbrover-sql",
  "dbrover-tls",
  "futures-util",
  "tempfile",
@@ -2612,6 +2614,7 @@ dependencies = [
  "dbrover-picture",
  "dbrover-plan",
  "dbrover-report",
+ "dbrover-schema",
  "dbrover-sql",
  "dbrover-ssh",
  "dbrover-store",
