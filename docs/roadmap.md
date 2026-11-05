@@ -594,7 +594,39 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
     `az login`, a private endpoint and a public container; Iceberg and Delta tables written by
     Spark, Glue, Snowflake or Databricks; and a MotherDuck database with a token, read-only
     too.
-- **C3 — Athena and Trino**, over AWS's Athena API and then Trino's HTTP protocol.
+- **C3 — Athena and Trino** (started 2026-11-05, after C2): Athena over AWS's API with C0's
+  AWS sign-in, the Glue Data Catalog in the explorer, the bytes each query scanned and a
+  per-query limit; then Trino over its HTTP protocol, for Starburst and Presto too, with the
+  same dialect. Planned in [Cloud and big data](cloud-data.md#c3--athena-and-trino). Rows come
+  as text through today's cursors; RS6's batches aren't needed first (see
+  [Rows and columnar batches](cloud-data.md#rows-and-columnar-batches)). In layers, one PR
+  each:
+  - **C3a — Plan:** C3's layers, decisions and risks, this entry, and RS6's.
+  - **C3b — The Trino dialect:** quoting, functions, `EXPLAIN`, system schemas and a corpus of
+    Trino's and Athena's statements, shared by both engines.
+  - **C3c — Athena: settings and queries as jobs:** a data source with a profile, region,
+    workgroup, catalog, database and output location, run through C0's `JobService` on
+    `aws-sdk-athena`; tested against exchanges replayed on this machine.
+  - **C3d — The Glue Data Catalog in the explorer:** catalogs, databases, tables and views a
+    page at a time, columns and partition keys, **Show definition**.
+  - **C3e — Athena in the data source dialog:** **Amazon Athena** under **Amazon Web
+    Services**, its logo, and the MCP server's read-only mode.
+  - **C3f — Bytes scanned and the per-query limit:** what each statement scanned, in the
+    console and the history; the data source's limit as the workgroup's cutoff where it has
+    none.
+  - **C3g — Trino:** a driver over Trino's HTTP protocol (submit, then follow `nextUri`), with
+    session headers, cancel, progress and catalogs on top; Presto's header spelling; Trino's
+    container in the nightly job.
+  - **C3h — Trino in the data source dialog:** **Trino**, with Starburst Galaxy as a service.
+  - **C3i — Manual:** a page on Athena and Trino, and the demo note.
+
+  Nothing is tried against a real AWS account while building C3: Athena is tested against
+  exchanges written from its API reference and replayed on this machine, Trino against its
+  container (nightly) and a small server answering its protocol (every pull request); the live
+  checks are listed in the demo note, with a test the user runs by hand against Athena.
+
+  **Exit:** Athena tested with replayed exchanges in CI and tried live by the user; the
+  conformance suite against Trino's container in the nightly job.
 - **C4 — BigQuery**, over its jobs API, with a dry run showing the bytes a query will scan.
 - **C5 — Snowflake**, over its SQL API.
 - **C6 — Databricks SQL**, over the Statement Execution API and Unity Catalog.
@@ -2220,7 +2252,10 @@ measurement.
 - **RS5 — Resume:** large runs keep a work folder and resume after a crash or a kill from the
   last finished range or job page; pause; incremental sources with a lookback.
 - **RS6 — Columnar sources:** Arrow batches from engines that give them (DuckDB, ClickHouse,
-  then C3 to C6), appended to DuckDB without text; ADR 0007. Before C3.
+  then C4 to C6), appended to DuckDB without text; ADR 0007. Before C5 and C6, whose services
+  answer in Arrow. C3 started first (2026-11-05) and delivers rows as text: Athena's and
+  Trino's APIs give no columnar answer, and their large results reach a report as files,
+  through RS7's handoff ([C3's note](cloud-data.md#rows-and-columnar-batches)).
 - **RS7 — Lakes and warehouses in the combine:** C2's buckets attached with DuckDB's pruning,
   and large warehouse results handed over through a bucket the user names.
 - **RS8 — Reports over MCP:** read-only tools to list, explain and compare reports and their

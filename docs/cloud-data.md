@@ -1,8 +1,8 @@
 # Cloud and big data
 
 Status: **C0 built** (2026-11-02); **C1 built** (2026-11-03), tried only against local
-stand-ins; **C2 built** (2026-11-04), tried only against local stand-ins; C3 to C6 planned,
-not scheduled. Proposed on
+stand-ins; **C2 built** (2026-11-04), tried only against local stand-ins; **C3 started**
+(2026-11-05); C4 to C6 planned, not scheduled. Proposed on
 2026-10-27; the order and the decisions below are confirmed as each milestone starts. The
 providers' priority was set on 2026-10-28: AWS, then Google Cloud, then Azure. On 2026-11-01
 DynamoDB was moved ahead of the track, as the NoSQL track's [N5](nosql.md#n5--dynamodb), with
@@ -585,14 +585,193 @@ were.
 
 ### C3 — Athena and Trino
 
-- Athena, through AWS's API with C0's AWS credentials and its workgroup's output location:
-  the Glue Data Catalog's databases and tables in the explorer, the bytes each query scanned,
-  and C0's cost limit as the workgroup's per-query limit where one isn't set.
-- Then a driver over Trino's HTTP protocol, with catalogs as the top level, sharing Athena's
-  dialect.
-- **Exit:** Athena tested with recorded exchanges and tried live; the conformance suite against
-  Trino's container, in a job that runs nightly if the container is too large for every pull
-  request.
+Started on 2026-11-05, after C2 and the work the user put ahead of it (CI fixes, reports, W13).
+Two engines with one dialect: Athena, AWS's query service, through AWS's API with C0's AWS
+sign-in; then Trino, over its own HTTP protocol, which also covers Starburst and Presto.
+Athena's engine is Trino's (engine version 3), so its queries are Trino's SQL; its DDL is
+Hive's, with backquoted names.
+
+#### What the two services do, from their documentation
+
+Read from AWS's Athena API reference and Trino's client protocol documentation on 2026-11-05.
+Trino's answers were tried against its container (`trinodb/trino:484`); Athena's can't be tried
+without an account, so nothing below about Athena has been seen working.
+
+| Question | Athena | Trino |
+| --- | --- | --- |
+| Running a statement | `StartQueryExecution` with the workgroup, the catalog and database, and the output location, answering with an id at once; `GetQueryExecution` says where it is (`QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`); `StopQueryExecution` stops it. | `POST /v1/statement` with the statement as the body, then `GET` each answer's `nextUri` until there is none; `DELETE` on `nextUri` stops it. A query finishes only once its client has read its result. |
+| Results | `GetQueryResults`, up to 1,000 rows a page with a `NextToken`, every value as text (`VarCharValue`), a `NULL` as no value at all; a `SELECT`'s first row repeats the column names. The whole result is also a CSV file under the output location. | Pages of JSON arrays inside the same answers, as the query produces them: numbers as JSON numbers, decimals and `NaN` as strings, arrays and rows as JSON. Tried: `9223372036854775807` keeps every digit, `'1.50'` its zero. |
+| Where results go | An S3 location, the workgroup's or the request's; a workgroup that enforces its own ignores the request's. Workgroups with managed query results need none. | Nowhere: the coordinator hands them over. Its newer spooled protocol, which writes them to object storage, is used only by clients that ask for it. |
+| What a query read | `Statistics.DataScannedInBytes`, which Athena bills at $5 a TB with 10 MB at least; failed queries and DDL cost nothing, a cancelled query what it scanned. Whether it grows while the query runs, as Athena's console suggests, is to be seen live. | `stats.processedRows` and `stats.processedBytes` in every answer. Trino bills nothing itself; Starburst Galaxy bills a cluster's time. |
+| Limits | A workgroup's `BytesScannedCutoffPerQuery` cancels any query that scans more; no request can set one of its own. | None. |
+| Catalog | `ListDataCatalogs`, `ListDatabases`, `ListTableMetadata` (50 a page, with a regular expression on names) and `GetTableMetadata`: the Glue Data Catalog and federated catalogs, with columns, partition keys and the table's kind, through Athena's own API. | `SHOW CATALOGS`, then each catalog's `information_schema`: schemata, tables (`BASE TABLE`, `VIEW`) and columns; `SHOW CREATE TABLE`, `SHOW CREATE VIEW`. |
+| Session | None: each query names its catalog and database. | Headers, sent back and forth: `X-Trino-User`, the catalog and schema (changed by `USE`), session properties (`SET SESSION`), prepared statements and the transaction's id. Presto spells them `X-Presto-…`. |
+| Errors | A message, with `line 1:8:` before Trino's own when the query couldn't be read, and a category (system, user, other). | A message, a name and an `errorLocation` (line and column). |
+| Checking without running | Only by running something: `EXPLAIN` is itself a query in the workgroup's history. | `EXPLAIN (TYPE VALIDATE)` plans without running. |
+| Sign-in | SigV4, from C0's AWS sign-in. | A user always; a password (HTTP basic) or a JWT only over HTTPS. Starburst Galaxy takes a user and a password, over HTTPS on 443. |
+| A local server | None. LocalStack's Athena is in its paid edition, and Moto answers the API without running SQL. | `trinodb/trino:484`: 1.04 GB to download, 2.4 GB on disk, accepting queries 7 s after `docker run` on a laptop, with about 1 GB of memory, and the `memory`, `tpch` and `tpcds` catalogs built in. |
+
+#### How the pieces fit
+
+- **Athena runs on C0's jobs.** Its four calls are `JobService`'s (C0f): submit, poll, page,
+  cancel. `Jobs` does the polling, and the cursor, cancel and progress handles come with it.
+- **Trino doesn't.** A Trino query ends only once its result has been read, so it can't be
+  polled until done and then paged. Its cursor follows `nextUri` itself, a page as the console
+  asks for one, as the ClickHouse driver reads its stream; its cancel and progress come from
+  the same answers.
+- **One dialect.** `Dialect::Trino` in `dbrover-sql`, for both: Trino's quoting, functions,
+  `EXPLAIN` and system schemas. The lexer also takes backquoted names, which Athena's DDL uses
+  and Trino refuses with its own error.
+- **Catalogs on top.** Both explorers start with catalogs: Athena's `AwsDataCatalog` and any
+  federated ones, Trino's `SHOW CATALOGS`. Under a catalog come its databases (Athena) or
+  schemas (Trino), then tables and views, then columns, with Athena's partition keys marked.
+  A level is paged where it can grow large (Athena's tables, 50 a request).
+- **Rows as text, as today.** Neither API gives Arrow: Athena's values are text already, and
+  Trino's JSON reads as text the way ClickHouse's does. See [RS6](#rows-and-columnar-batches).
+
+#### Rows and columnar batches
+
+The roadmap's RS6 (columnar sources, [Reports at scale](reports-at-scale.md)) was to come
+before C3, so C3 to C6 would give Arrow batches from the start. RS6 isn't built, and the user
+chose on 2026-11-05 to start C3 now. C3 doesn't need it:
+
+- Athena's `GetQueryResults` and Trino's JSON protocol are row-shaped text. Neither has a
+  columnar answer to give, so a `next_batch` on their cursors would only convert text.
+- Their fast paths for large results are files, not batches: Athena writes every result to S3
+  as CSV (or Parquet with `UNLOAD`), and Trino's spooled protocol writes to object storage.
+  Reading those is RS7's handoff through a bucket, with C2's DuckDB, not RS6's.
+
+So C3 delivers rows through `ResultCursor::next_page`, as every engine does today. The seam RS6
+fills later is the cursor itself: RS6 adds `next_batch` beside `next_page`, answering `None` by
+default, so C3's cursors need no change, and RS7's handoff can read an Athena job's result file
+from the output location its `GetQueryExecution` names. RS6's entry now says it comes before
+C5 and C6, whose services do answer in Arrow (Snowflake's result chunks, Databricks's
+`ARROW_STREAM`), and before C4 if BigQuery's Storage Read API is chosen.
+
+#### Bytes scanned and the cost limit
+
+C0e left the byte limit (`ask_above_bytes`) without a field until an engine reported bytes.
+Athena reports them only once a query runs, so the limit can't be asked about before; it
+becomes the per-query limit the workgroup would otherwise set:
+
+- When the connection opens, `GetWorkGroup` reads the workgroup's own
+  `BytesScannedCutoffPerQuery`. If it has one, Athena enforces it, and the data source's
+  limit isn't used; the dialog's hint says so.
+- If it has none and the data source has a limit, DbRover stops a query (`StopQueryExecution`)
+  at the first poll that finds it past the limit, and the statement fails with what it scanned
+  and the limit. Polls are at most two seconds apart (C0f), so a query may scan up to two
+  seconds more than the limit before it stops, and Athena bills what it scanned; the manual
+  says to set the workgroup's limit where that matters.
+- Every finished statement shows what it scanned beside its rows and time, in the console and
+  the history, from the job's last poll: a summary gains the job's progress. Trino shows its
+  `processedBytes` the same way, with no limit, since Trino doesn't bill by them.
+- Nothing that DbRover runs by itself on Athena scans a table: the explorer reads Athena's
+  catalog API, which is free, and **Open data** adds a `LIMIT`. **Show definition** runs
+  `SHOW CREATE TABLE`, which is DDL and free. A row count, an export or Run to file is the
+  user's own statement, held by the limit like any other.
+
+#### Testing without an account
+
+- **Athena: exchanges replayed by a server on this machine.** A test server on `127.0.0.1`
+  answers the AWS SDK's requests from files of exchanges, each a request (Athena's operation,
+  from `X-Amz-Target`, and the parts of its JSON body that matter) and the answer to give,
+  checking that each request came in the order and with the body the file says. The data
+  source points at it as an endpoint and signs in with made-up keys, as DynamoDB's tests do
+  with DynamoDB Local. The files are written from Athena's API reference, since there is no
+  account here to record them from: the request and answer shapes are AWS's documented ones,
+  and what they don't show (the header row, an error's text, bytes while running) is listed
+  for the live check. A test marked `#[ignore]` runs the same scenarios against real Athena
+  when `DBROVER_TEST_ATHENA_LIVE` names a profile, a region and a workgroup, for the user to
+  run by hand; CI never sets it, and nothing reads the machine's AWS files otherwise.
+- **Trino: its container, nightly.** At 1.04 GB to download and about a gigabyte of memory,
+  Trino is too large for every pull request's Linux check, whose test servers already take
+  most of its 30 minutes on a cold cache. It joins `docker-compose.yml` under the `nightly`
+  profile, as Cassandra did (N4), and the nightly workflow gains a `trino` job that runs the
+  conformance suite and the engine's tests against it: about a minute to pull and start on a
+  runner, plus the build. On every pull request, the protocol's handling (headers, `nextUri`,
+  errors, retries on 503, cancel) is tested against a small server on `127.0.0.1` that answers
+  with JSON taken from the container, so the driver's code is covered without it.
+- **Presto and Starburst:** Presto's headers (`X-Presto-…`) are checked against the same small
+  server, and Starburst Galaxy's preset in a table test, as C1's presets are. Presto's image
+  (1.2 GB) isn't in CI; both are tried by hand, as the demo note lists.
+
+#### Layers
+
+Each layer is one pull request in a stack, useful and tested on its own, with no cloud account.
+Athena comes first, then Trino.
+
+- **C3a — Plan:** this section, C3's rows in [Decisions](#decisions) and [Risks](#risks), the
+  roadmap's entry in layers, and RS6's entry.
+- **C3b — The Trino dialect:** `Dialect::Trino` in `dbrover-sql`: double-quoted names and
+  backquoted ones for Athena's DDL, Trino's functions for completion, `EXPLAIN` for ⌥⌘E,
+  `information_schema` and Trino's `system` catalog hidden unless **System** is ticked, the
+  verbs that write, and `sqlparser`'s generic dialect for the syntax check (it has no Trino
+  one), with a corpus of Trino's and Athena's statements and the gaps it rejects wrongly.
+  **Exit:** the corpus passes or names its gaps; a script with Athena's DDL and Trino's queries
+  splits and formats as the engines read them.
+- **C3c — Athena: settings and queries as jobs:** `ConnectionConfig::Athena` and
+  `DriverKind::Athena` with the sign-in (C0's AWS profile or default chain), region,
+  workgroup (`primary` by default), catalog (`AwsDataCatalog`), database, an output location
+  for workgroups without one, an endpoint for the test server, and C0's cost guard; a
+  `dbrover-driver-athena` crate on `aws-sdk-athena` (without default features, on ring, as
+  DynamoDB's SDK crate is) implementing `JobService`; the engine's connect arm, and the app's
+  arms the compiler asks for, with no dialog yet; the replay server.
+  **Exit:** replayed, a query is submitted with the workgroup, catalog, database and output
+  location, polled, and paged past 1,000 rows without its header row; `NULL` and empty text
+  stay apart; a failed query's message reaches the console with its position; cancel stops the
+  job by its id; a workgroup without an output location, and a data source without one, is an
+  error that says to set one; the settings round-trip through `data_sources.toml`.
+- **C3d — The Glue Data Catalog in the explorer:** catalogs, databases, then tables and views
+  (fifty a request, the explorer's filter sent as Athena's expression), then columns, with
+  partition keys marked; **Show definition** from `SHOW CREATE TABLE` or `SHOW CREATE VIEW`;
+  **Open data** with a `LIMIT`.
+  **Exit:** replayed, the conformance walk visits every node of a catalog with two databases, a
+  partitioned table and a view; a level of 120 tables pages in three requests; the filter
+  reaches Athena as an expression; nothing the explorer does starts a query except
+  **Show definition**.
+- **C3e — Athena in the data source dialog:** **New data source › Amazon Web Services ›
+  Amazon Athena**, with **Sign in with** (AWS's default chain or a profile), **Region**,
+  **Workgroup**, **Catalog**, **Database** and **Output location**, each taking `${NAME}`
+  placeholders; Athena's logo; the MCP server's read-only mode (statements classified, as for
+  MotherDuck, with an MCP login being another profile, as for DynamoDB).
+  **Exit:** a kittest adds an Athena data source from the menu and it saves as typed; with the
+  replay server, it connects and browses.
+- **C3f — Bytes scanned and the per-query limit:** a statement's summary gains its job's last
+  progress, shown after each statement and kept in the history; `GetWorkGroup` when connecting;
+  the data source's limit as the workgroup's cutoff where it has none, stopping the query at
+  the poll that passes it; the limit's field in Athena's dialog (**Stop queries above**), with
+  the workgroup's own limit named in its hint once a connection has read it.
+  **Exit:** replayed, a finished query shows `1.2 GB scanned`; with a 1 GB limit and a
+  workgroup without one, a query whose second poll reports 1.4 GB is stopped by its id and
+  fails naming both; with the workgroup's own limit, DbRover stops nothing; the limit
+  round-trips as `ask_above_bytes`.
+- **C3g — Trino:** `ConnectionConfig::Trino` and `DriverKind::Trino` on the shared server
+  settings (host, port 8080, user, password, TLS, SSH), with the catalog and schema a console
+  starts in and the protocol's spelling (Trino's, or Presto's `X-Presto-…` headers); a
+  `dbrover-driver-trino` crate over hyper and rustls, as the Elasticsearch driver's requests
+  go: the cursor that follows `nextUri`, the session headers kept between statements (`USE`,
+  `SET SESSION`, prepared statements, the transaction's id), cancel by `DELETE`, progress from
+  `stats`, `EXPLAIN (TYPE VALIDATE)` as the statement check, errors with their position, and
+  the catalog with catalogs on top; the `trino` compose service under the `nightly` profile,
+  with its job in `nightly.yml`.
+  **Exit:** against the container, nightly: `check_lifecycle`, `check_connect_failure`,
+  `walk_catalog`, `check_invalid_path`, `check_execution` (in the `memory` catalog, as Trino
+  has no temporary tables) and `check_cancel` (a count over `tpch.sf1000.lineitem`);
+  `check_transactions` and `check_describe_table` are skipped and say why (connectors decide
+  transactions; no table has a key). On every pull request, against the small server: each
+  header's round trip, a 503 retried, Presto's headers, and a result's values in their text form.
+- **C3h — Trino in the data source dialog:** a **Trino** data source with **Catalog**,
+  **Schema** and **Protocol** (Trino or Presto), Trino's logo, Starburst Galaxy in C1's table
+  of services (`*.galaxy.starburst.io`, 443, `verify-full`) and in **Other cloud services**,
+  and the MCP server's read-only mode as Athena's.
+  **Exit:** a kittest adds a Trino data source and a Starburst Galaxy one, each saving as typed;
+  Galaxy's host is recognised.
+- **C3i — Manual and demo note:** a page in the manual's Data sources part, **Athena and
+  Trino**, and the C3 demo note in the roadmap, with the live checks.
+
+**Exit:** Athena tested with exchanges replayed in CI and tried live by the user (the demo
+note's list, and the ignored live test); the conformance suite against Trino's container in the
+nightly job; Starburst and Presto tried by hand.
 
 ### C4 — BigQuery
 
@@ -665,6 +844,22 @@ C2's own decisions, taken on 2026-11-04 when it started; each can be overturned 
 | Iceberg without a catalog | **The newest `*.metadata.json` in the table's `metadata/` folder,** found by listing it, rather than DuckDB's version guessing. | Tables written by any catalog open; a table whose metadata folder holds many thousands of files takes a request per thousand to open. Iceberg REST catalogs (Glue, Polaris, S3 Tables) come later, through DuckDB's `ATTACH … (TYPE iceberg)`. |
 | S3 stand-in | **MinIO, as the `pgsty/minio` build,** pinned to a release, since MinIO's own images are gone from Docker Hub and Quay. | The server the plan named, maintained by a third party; swapping in another S3-compatible server (versitygw, SeaweedFS) changes only the compose file. |
 
+C3's own decisions, taken on 2026-11-05 when it started; each can be overturned in review.
+
+| Question | Chosen | Consequence |
+| --- | --- | --- |
+| RS6 before C3 | **Not needed: C3 delivers rows as text,** through `next_page` as every engine does, and RS6's `next_batch` comes later with a default that C3's cursors keep. RS6 moves to before C5 and C6. | C3 starts now, as the user chose. Athena's and Trino's APIs answer in text anyway; their fast path for large results is a file in a bucket, which is RS7's handoff. |
+| Athena's client | **`aws-sdk-athena`,** without default features and on ring, beside DynamoDB's SDK crate, as C0's decision on AWS's SDKs says. Glue's own SDK crate isn't needed: Athena's API lists the Glue Data Catalog's databases and tables itself. | AWS's signing, retries and credential refresh are AWS's code. One SDK crate more to build (measured in C3c); federated catalogs come for free. |
+| Athena on jobs | **`JobService`,** so `Jobs` polls with C0f's growing pause and gives the cursor, cancel and progress. | Athena's driver is its four calls and its catalog. A poll every two seconds at most is also how often the byte limit is checked. |
+| Trino's cursor | **Its own, following `nextUri` as pages are asked for,** not `JobService`, since a Trino query ends only once its result is read. | A result is read only as far as the console pages; an abandoned cursor is cancelled with `DELETE`, as the protocol asks. |
+| Athena's byte limit | **The data source's limit acts as the workgroup's per-query cutoff when the workgroup has none,** stopping a query at the poll that finds it past the limit. The workgroup's own cutoff, when set, wins. No estimate before running: `EXPLAIN (TYPE IO)` estimates only from table statistics, which Glue tables seldom have. | A limit that holds without changing the workgroup (DbRover never writes to AWS's settings). It overshoots by up to a poll's worth of scanning, billed; the manual says to set the workgroup's limit for an exact one. BigQuery's dry run (C4) will ask before instead, under the same setting. |
+| Checking Athena statements as they are typed | **Not done:** Athena can only check a statement by running one (`EXPLAIN` is a query in the workgroup's history, with a second or more of polling), so `validate` answers `None` and the syntax check alone runs as the user types. Trino checks with `EXPLAIN (TYPE VALIDATE)`. | No query history filling with checks; Athena's own errors show when the statement runs. |
+| Athena's header row | **Dropped when the first row of a `SELECT`'s first page equals the column names,** as PyAthena does, since Athena marks it nowhere. | A query whose first real row equals its column names loses it; the live check confirms which statements have the header. |
+| Testing Athena | **Exchanges written from Athena's API reference, replayed by a server on `127.0.0.1`,** and an ignored test the user runs against real Athena. There is no account here to record from, and no free emulator that runs SQL. | CI covers DbRover's requests and its reading of documented answers; what only Athena shows waits for the live run, which the demo note lists. |
+| Trino in CI | **Its container nightly, under the compose file's `nightly` profile,** with a small server on `127.0.0.1` answering the protocol on every pull request. | Pull requests stay as fast as they are; a change that breaks the real protocol shows the next morning rather than on the pull request. |
+| Presto and Starburst | **One driver, with Presto's header spelling as a setting** (`protocol = "presto"`), and Starburst Galaxy as one of C1's services. | Presto's and Starburst's servers aren't in CI: their headers and preset are tested, and connecting is tried by hand. |
+| Read-only and MCP | **Statements classified before they are sent** (W11's check), as for MotherDuck: neither service has a read-only session to open. An MCP login is another AWS profile for Athena, as for DynamoDB, and another user for Trino. | IAM policies and Trino's access control remain what really limits a login. |
+
 ## Risks
 
 - **Surprise bills.** A missed automatic query on a large table costs the user money. Every
@@ -702,6 +897,19 @@ C2's own decisions, taken on 2026-11-04 when it started; each can be overturned 
   running*). An error making the secret is reported without the statement, which holds it.
 - **Stand-ins for buckets.** MinIO, fake-gcs-server and documented XML answers aren't S3,
   Google Cloud Storage and Azure. C2's demo note lists what to try with real accounts.
+- **Athena's answers written from its documentation.** The replayed exchanges show DbRover's
+  requests are well formed and that it reads AWS's documented answers, not that real Athena
+  answers that way: the header row, errors' text, and whether bytes scanned grow while a query
+  runs are unknown until the live run. The ignored live test and the demo note's list are how
+  the user finds out, and the exchanges are corrected from what they show.
+- **A byte limit that overshoots.** DbRover's limit for Athena stops a query at a poll, up to
+  two seconds after it passes, and Athena bills what it scanned until then. The workgroup's own
+  limit is exact; the manual and the dialog's hint point at it.
+- **Trino's protocol tested nightly only.** A change that breaks the real protocol passes the
+  pull request's small server and fails the next nightly run. The small server's answers are
+  copied from the container's, and are updated when the nightly job shows they drifted.
+- **Starburst and Presto untried.** Their servers aren't in CI and need accounts or a gigabyte
+  more of images; the demo note lists them to try by hand before release.
 - **Session state behind a transaction pooler.** A console's `SET`, temporary table or
   `LISTEN` lasts only for its transaction's server connection, and the next statement may get
   another. DbRover sets nothing of its own on the session; the manual's Neon and Supabase

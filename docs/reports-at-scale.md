@@ -122,7 +122,7 @@ a columnar format that reads into Arrow without text:
 | Snowflake | Arrow result chunks from the SQL API | C5. |
 | Databricks SQL | `ARROW_STREAM` results, inline or as external links | C6. |
 | BigQuery | Arrow from the Storage Read API (gRPC) | C4, if gRPC is accepted (below). |
-| Trino and Athena | Trino's spooled results; Athena's results are files in S3 (CSV, or Parquet through `UNLOAD`) | C3, through C2's object storage. |
+| Trino and Athena | None in their APIs (text rows); Trino's spooled results and Athena's result files in S3 (CSV, or Parquet through `UNLOAD`) are files | C3 delivers text rows; the files are RS7's handoff, through C2's object storage. |
 | PostgreSQL, MySQL, SQL Server | None. PostgreSQL's `COPY (query) TO STDOUT` streams text faster than the simple protocol, inside the read-only transaction. | A later layer of this plan, if RS1 measures it worthwhile. |
 
 The proposal: an optional capability on `ResultCursor`, `next_batch`, that returns an Arrow
@@ -134,8 +134,10 @@ natively.** Arrow's `Decimal128` holds 38 digits, so exact decimals stay exact; 
 already in the build through the `duckdb` crate, so the arrays cost nothing new, and
 `arrow-ipc` (for ClickHouse and Databricks streams) is a small pure-Rust addition.
 
-C3 to C6 come after this plan's first milestones, so their drivers implement `next_batch` from
-the start rather than adding it later.
+C4 to C6 come after this plan's first milestones, so their drivers implement `next_batch` from
+the start rather than adding it later. C3 started first (2026-11-05) and doesn't need it:
+Athena's and Trino's APIs answer in text, so their cursors keep `next_page`, and `next_batch`'s
+default (`None`) leaves them unchanged ([C3's note](cloud-data.md#rows-and-columnar-batches)).
 
 **Backpressure.** A source's reader and its loader are joined by a bounded queue of a few
 batches, so a fast network never piles up rows in the worker, and the time each side waits is
@@ -650,7 +652,8 @@ runs the small cases.
   only, and writes files equal to an uninterrupted run's.
 - **RS6 — Columnar sources:** ADR 0007, `ResultCursor::next_batch`, Arrow batches appended to
   the workspace, DuckDB sources with a query and ClickHouse's `ArrowStream` first. To land
-  before C3, so C3 to C6 implement it from the start.
+  before C5 and C6, so their drivers implement it from the start. C3 started before it
+  (2026-11-05) with text rows, which `next_batch`'s default keeps.
   **Exit:** the RS1 benchmark shows the columnar path ahead of the text path on ClickHouse, and
   the four accounting examples still match to the last digit.
 - **RS7 — Lakes and warehouses in the combine:** C2's buckets attached to the workspace, with
@@ -680,7 +683,7 @@ runs the small cases.
    for which engines, and by how much. The benchmark in RS1g is the baseline.
 2. **RS3 next:** a workspace on disk, typed loading and Parquet outputs remove today's hardest
    ceilings (memory, the double copy, rows through Rust) with DuckDB features already built.
-3. **RS6 before C3:** the batch capability is cheaper designed into the warehouse drivers than
+3. **RS6 before C5:** the batch capability is cheaper designed into the warehouse drivers than
    added to them later.
 4. **RS4 and RS5** once runs are long enough to need them, which RS1's history will show.
 5. **RS7** after C2 is merged for the lake, and with each of C3 to C5 for handoff.
