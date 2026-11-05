@@ -32,11 +32,15 @@ style, the query history and definitions as tabs, a value panel beside the grid,
 and imports that run on in the status bar), v0.26.0 (each report run's steps kept in the
 history, runs side by side with hints, Settings › Reports, `dbrover report run` on the command
 line, and managed databases as presets in the data source dialog: RDS, Aurora, Redshift, Cloud
-SQL, Azure SQL, Synapse, Fabric, Neon, Supabase and ClickHouse Cloud) and v0.27.0 (Parquet, CSV
+SQL, Azure SQL, Synapse, Fabric, Neon, Supabase and ClickHouse Cloud), v0.27.0 (Parquet, CSV
 and JSON files in S3, Google Cloud Storage and Azure Blob Storage, Iceberg and Delta tables in a
 bucket and MotherDuck databases, all through DuckDB; PRQL in a report's combine step with the
 SQL it compiles to; hints a report can silence, renaming a report with its runs, `dbrover report
-list` and `--progress`, and reports listed and run over MCP).
+list` and `--progress`, and reports listed and run over MCP) and v0.28.0 (schema compare: two
+PostgreSQL schemas side by side with the script that turns one into the other, schema snapshots
+as diffable files, and `dbrover schema snapshot` and `dbrover schema compare`; a report's page
+with its file edited in place, highlighted, checked as you type and formatted, and following
+the file on disk).
 R3's update notice is built, ahead of R2 (see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
