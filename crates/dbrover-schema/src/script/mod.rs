@@ -20,6 +20,8 @@ mod order;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use index::create as create_index;
+
 use std::collections::BTreeSet;
 
 use dbrover_sql::{

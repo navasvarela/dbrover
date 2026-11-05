@@ -8,7 +8,7 @@ use dbrover_sql::{Dialect, ObjectName, quote_name};
 
 use crate::Index;
 
-pub(super) fn create(name: &str, index: &Index, table: &ObjectName, dialect: Dialect) -> String {
+pub(crate) fn create(name: &str, index: &Index, table: &ObjectName, dialect: Dialect) -> String {
     let unique = if index.unique { "UNIQUE " } else { "" };
     let mut sql = format!(
         "CREATE {unique}INDEX {} ON {} USING {} ({})",

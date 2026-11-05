@@ -64,6 +64,7 @@ use crate::project_dialog::{
 };
 use crate::reports::{self, RenameAction, RenameReportDialog, ReportAction, Reports, ReportsSetup};
 use crate::rollback_dialog::{Closing, RollbackChoice, RollbackConfirmation};
+use crate::schema_compare::{CompareAction, LiveSchema, SchemaCompares};
 use crate::settings::AppSettings;
 use crate::settings_tab::{Page, SettingsAction, SettingsTab};
 use crate::sql_files::{self, Destination, OpenFileAction, OpenFileDialog, SqlFiles};
@@ -132,6 +133,7 @@ pub struct DbRoverApp {
     /// Text to put on the clipboard on the next frame, from an engine event.
     clipboard: Option<String>,
     definitions: DefinitionTabs,
+    compares: SchemaCompares,
     history: HistoryTabs,
     rollback_confirmation: Option<RollbackConfirmation>,
     password_prompt: Option<PasswordPrompt>,
@@ -231,7 +233,7 @@ impl DbRoverApp {
         // window rather than keep the small default size.
         let maximize_window = saved_layout.is_none();
         let mut dock = saved_layout.unwrap_or_else(workspace::default_layout);
-        workspace::forget_definitions(&mut dock);
+        workspace::forget_transient_tabs(&mut dock);
         let export_choices = cc
             .storage
             .and_then(|storage| eframe::get_value(storage, export_dialog::STORAGE_KEY))
@@ -266,6 +268,7 @@ impl DbRoverApp {
             copying_ddl: None,
             clipboard: None,
             definitions: DefinitionTabs::default(),
+            compares: SchemaCompares::default(),
             history: HistoryTabs::default(),
             rollback_confirmation: None,
             password_prompt: None,
@@ -516,6 +519,7 @@ impl DbRoverApp {
             None => {}
         }
         self.definitions.apply(event);
+        self.compares.apply(event);
         let searches = self.history.apply(event);
         self.send_all(searches);
         self.apply_to_password_prompt(event);
@@ -1369,6 +1373,7 @@ impl DbRoverApp {
             ExplorerAction::ImportCsv(id, path) => self.open_csv_import(id, &path),
             ExplorerAction::ExportData(id, path) => self.open_table_export(id, &path),
             ExplorerAction::Diagram(id, path) => self.open_diagram_dialog(id, &path),
+            ExplorerAction::CompareSchema(id, path) => self.open_schema_compare(id, &path),
             ExplorerAction::Report(action) => self.handle_report_action(action, ctx),
             ExplorerAction::OpenDiagram(key) => {
                 let first = self.diagrams.reopen(&key);
@@ -1943,6 +1948,37 @@ impl DbRoverApp {
             id: data_source,
             path,
         });
+    }
+
+    /// A compare tab with the schema at `path` on its left, the right still to pick.
+    fn open_schema_compare(&mut self, data_source: DataSourceId, path: &CatalogPath) {
+        let Some(schema) = path.name_of(NodeKind::Schema) else {
+            return;
+        };
+        let tab = self.compares.open(LiveSchema {
+            data_source,
+            schema: schema.to_owned(),
+        });
+        workspace::open_compare_tab(&mut self.dock, tab);
+    }
+
+    fn handle_compare_action(&mut self, action: CompareAction) {
+        match action {
+            CompareAction::Read(sides) => {
+                for side in sides {
+                    self.send(Command::DescribeSchema {
+                        data_source: side.data_source,
+                        schema: side.schema,
+                    });
+                }
+            }
+            CompareAction::OpenInConsole { data_source, text } => {
+                if let Some(entry) = self.state.data_source(data_source) {
+                    let console = self.consoles.open(&entry.data_source, text);
+                    workspace::open_console_tab(&mut self.dock, console);
+                }
+            }
+        }
     }
 
     fn handle_definition_action(&mut self, action: DefinitionAction) {
@@ -2745,6 +2781,7 @@ impl eframe::App for DbRoverApp {
         let mut report_actions = Vec::new();
         let mut history_actions = Vec::new();
         let mut definition_actions = Vec::new();
+        let mut compare_actions = Vec::new();
         let report_sources: Vec<dbrover_core::DataSource> = self
             .state
             .data_sources
@@ -2798,6 +2835,8 @@ impl eframe::App for DbRoverApp {
                     history_actions: &mut history_actions,
                     definitions: &mut self.definitions,
                     definition_actions: &mut definition_actions,
+                    compares: &mut self.compares,
+                    compare_actions: &mut compare_actions,
                 },
             );
         if let Some(text) = self.clipboard.take() {
@@ -2820,6 +2859,9 @@ impl eframe::App for DbRoverApp {
         }
         for action in definition_actions {
             self.handle_definition_action(action);
+        }
+        for action in compare_actions {
+            self.handle_compare_action(action);
         }
         for (console, action) in console_actions {
             match action {
@@ -2939,6 +2981,7 @@ mod tests {
     mod password_commands;
     mod plans;
     mod reports;
+    mod schema_compare;
     mod settings;
     mod title_bar;
 

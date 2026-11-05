@@ -79,6 +79,8 @@ pub enum ExplorerAction {
     Diagram(DataSourceId, CatalogPath),
     /// Diagram with related tables: the table at the path and every table its keys join.
     DiagramRelated(DataSourceId, CatalogPath),
+    /// Compare schema…: a compare tab with the schema at the path on its left (W13).
+    CompareSchema(DataSourceId, CatalogPath),
     /// Reopens a saved diagram, or brings its tab to the front.
     OpenDiagram(DiagramKey),
     /// Something asked of the **Reports** section.
@@ -1021,6 +1023,7 @@ fn node_menu(
         actions.push(ExplorerAction::ExportData(id, node.path.clone()));
     }
     diagram_items(ui, tree, node, actions);
+    compare_items(ui, tree, node, actions);
     if node.kind() == Some(NodeKind::Table)
         && tree.capabilities.is_some()
         && tree.can_change(&node.path)
@@ -1082,6 +1085,24 @@ fn diagram_items(
     };
     if widgets::menu_item(ui, icons::GRAPH, label).clicked() {
         actions.push(action);
+    }
+}
+
+/// **Compare schema…** on a schema, where its data source's schemas can be read whole.
+fn compare_items(
+    ui: &mut Ui,
+    tree: &TreeView<'_>,
+    node: &CatalogNode,
+    actions: &mut Vec<ExplorerAction>,
+) {
+    let comparable = tree
+        .capabilities
+        .is_some_and(|capabilities| capabilities.schema_compare);
+    if comparable
+        && node.kind() == Some(NodeKind::Schema)
+        && widgets::menu_item(ui, icons::GIT_DIFF, "Compare schema\u{2026}").clicked()
+    {
+        actions.push(ExplorerAction::CompareSchema(tree.id, node.path.clone()));
     }
 }
 

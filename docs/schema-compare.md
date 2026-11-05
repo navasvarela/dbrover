@@ -345,6 +345,11 @@ on the left, beside the ER diagram's entry. The tab has three parts:
   with the lines that differ marked, aligned by a line diff. An object on one side only shows
   an empty pane opposite it.
 
+As built in W13e, a side's schema is typed beside its data source rather than picked from a
+list, so a schema the explorer hasn't loaded yet can be named; the definitions name objects
+without their schema, so the two sides' first lines don't differ only because the schemas
+are named differently; and the tab's title reads `staging → public`, the script's direction.
+
 The toolbar has **Open script in console**, **Copy script**, and the number of differences.
 Reading a large schema shows a spinner on its side; a side that fails shows the database's
 error in its place, and the other side still loads.
