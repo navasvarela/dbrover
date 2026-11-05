@@ -2155,6 +2155,34 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   "What's next" is gone. The MCP chapter lists `list_reports` and `run_report`, and **Run
   reports** among the permissions. `DBROVER_SCREENSHOTS_ONLY=report-runs cargo test -p
   dbrover-app regenerate_screenshots -- --ignored` renders the picture alone.
+- **RP8 — The report's page, and its file edited in it (M):** proposed on 2026-11-05, waiting
+  for review, in [The report's page and its editor](report-editor.md). The tab laid out as a
+  workspace (a toolbar with the report's state and **Run**, the file beside its parameters and
+  output, the last run, preview and runs in a panel under them), and the report's TOML edited
+  in it with the console's editor: TOML highlighted with each step's SQL or PRQL in its own
+  language, problems underlined where they are (TOML syntax, the report's rules, the SQL inside,
+  the runs' hints), **Format**, **Save** and **Save and run**, and the file watched for changes
+  made elsewhere. **Edit file** no longer opens the browser. No crate new to the lock. In layers,
+  one PR each:
+  - **RP8a — The plan:** the design and this entry.
+  - **RP8b — One code editor:** the console's editor as a module the console and reports share,
+    behaviour unchanged.
+  - **RP8c — Problems with places:** each report problem with its key path, resolved to a span;
+    every TOML syntax error; plan problems beside read problems. The CLI's and MCP's sentences
+    unchanged.
+  - **RP8d — Highlighting a report:** TOML, and each step in its own language.
+  - **RP8e — The page:** toolbar, editor and side panel, run panel, saving, **Save and run**,
+    and the platform's opener for **Open in another app** and the written files.
+  - **RP8f — Live problems:** inline, in the side panel and the chip; hints with **Quiet this
+    hint**.
+  - **RP8g — Format:** TOML layout and the SQL steps, checked to mean the same.
+  - **RP8h — Changes on disk:** report files watched, W6's banner, a check before writing.
+  - **RP8i — Manual,** two new pictures and the demo note.
+
+  **Exit:** `sales-by-category` opens with its SQL highlighted in each step's dialect; `sheet = 2`
+  in an output is underlined within half a second and turns **Run** off; **Format** gives the
+  example back byte for byte; **Save and run** writes and runs it; a change made in another
+  editor shows in a clean tab and raises the banner in an unsaved one.
 
 Reports over sources of terabytes, and tools to see and tune a report's performance: planned,
 not scheduled, after RP5, in [Reports at scale](reports-at-scale.md). Terabytes stay in their
