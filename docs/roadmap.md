@@ -1621,7 +1621,9 @@ three to five, **L** a track of its own).
   - **W13c — Reading a PostgreSQL schema:** built; `Connection::describe_schema` and
     `Command::DescribeSchema`. Serial columns read as `serial`; an index's key keeps its
     ordering and operator class; partitions and extensions' objects are left out.
-  - **W13d — The script.**
+  - **W13d — The script:** built; the nine phases, with E4's `AlterTable` staged around
+    foreign keys and `SET LOCAL search_path` to the left's schema, since the definitions it
+    copies name the schema's own objects without it.
   - **W13e — The tab:** **Compare schema…** on a schema in the explorer.
   - **W13f — Manual and demo notes,** with VC3's.
 

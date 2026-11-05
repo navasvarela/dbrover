@@ -4,6 +4,7 @@
 
 mod compare;
 mod model;
+mod script;
 mod summary;
 
 pub use compare::{
@@ -11,3 +12,4 @@ pub use compare::{
     Difference, FieldChange, IndexField, TableDifferences, ViewField, compare,
 };
 pub use model::{Index, Schema, Table, View};
+pub use script::{NotWritten, Script, Sides, script};
