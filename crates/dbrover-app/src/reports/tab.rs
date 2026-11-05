@@ -1,27 +1,41 @@
-//! A report's tab: what it is, what is wrong with it, its parameters and output folder,
-//! **Run** and **Cancel**, and its last run: a line per step with its progress, then its
-//! files, preview or error.
+//! A report's tab (`docs/report-editor.md`, RP8e): a toolbar with the report's state and
+//! **Run**; its file, edited in place, beside what a run needs (parameters, output, problems);
+//! and under both, the last run, its preview and the runs the history keeps.
 
-use std::path::Path;
+use std::ops::Range;
+use std::path::{Path, PathBuf};
 
 use dbrover_core::{ByteCount, DataSource};
 use dbrover_export::{ColumnType, CustomFormat};
 use dbrover_report::{
-    Batch, LimitDefaults, LimitHit, LimitSetIn, Plan, Preview, Step, WrittenFile, grouped,
+    Batch, LimitDefaults, LimitHit, LimitSetIn, Locator, Plan, Preview, ReportProblem, Step,
+    TypedValues, WrittenFile, embedded_code, grouped,
 };
 use dbrover_store::ReportName;
-use egui::{CollapsingHeader, Grid, RichText, ScrollArea, TextEdit, Ui, vec2};
+use egui::{CollapsingHeader, Grid, Id, RichText, ScrollArea, TextEdit, Ui, vec2};
 
-use super::{ReportAction, Reports, RunEnd, RunRecord, StepRecord, StepState, runs_table};
+use super::highlight::ReportHighlighter;
+use super::{
+    PlanInputs, ReportAction, ReportFile, Reports, RunEnd, RunPanel, RunRecord, SaveError,
+    StepRecord, StepState, runs_table,
+};
+use crate::code_editor::highlight::Marks;
+use crate::code_editor::{self, EditorProblem, EditorView, Severity, find_bar};
 use crate::form;
 use crate::icons;
+use crate::keymap::{Action, Keymap};
+use crate::split::VerticalSplit;
 use crate::theme::Palette;
 use crate::widgets;
 
-/// Room for a date and time in each parameter's field.
-const VALUE_WIDTH: f32 = 220.0;
-/// How tall the preview grows before it scrolls.
-const PREVIEW_HEIGHT: f32 = 320.0;
+/// The side panel's width when the tab first opens; dragging its edge changes it.
+const SIDE_PANEL_WIDTH: f32 = 300.0;
+/// Narrower than this, the parameters' fields and the problems' lines are cut short.
+const SIDE_PANEL_MIN_WIDTH: f32 = 240.0;
+/// Below this width the inputs go above the file, which would be too narrow beside them.
+const NARROW_WIDTH: f32 = 720.0;
+/// The run panel's height when the tab first opens; dragging the line above it changes it.
+const RUN_PANEL_HEIGHT: f32 = 260.0;
 
 /// What the tab draws from, besides the reports.
 pub struct ReportView<'a> {
@@ -29,6 +43,69 @@ pub struct ReportView<'a> {
     pub presets: &'a [CustomFormat],
     /// The limits where a report's file leaves one out, from Settings › Reports.
     pub defaults: &'a LimitDefaults,
+    pub keymap: &'a Keymap,
+}
+
+/// What the keys do while the report's editor has focus.
+const EDITOR_ACTIONS: [Action; 6] = [
+    Action::Save,
+    Action::RunCurrent,
+    Action::Find,
+    Action::Replace,
+    Action::FindNext,
+    Action::FindPrevious,
+];
+
+/// A problem of the text, where the editor underlines it.
+struct Placed {
+    range: Range<usize>,
+    line: usize,
+    message: String,
+}
+
+impl EditorProblem for Placed {
+    fn range(&self) -> Range<usize> {
+        self.range.clone()
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self) -> &str {
+        &self.message
+    }
+
+    fn note(&self) -> Option<String> {
+        None
+    }
+}
+
+/// How the text stands, as the toolbar's chip says it.
+enum Standing {
+    Running(String),
+    Problems(usize),
+    Unsaved,
+    Ready,
+}
+
+/// What the tab knows of a report this frame, read before it draws.
+struct Seen {
+    title: String,
+    description: Option<String>,
+    path: PathBuf,
+    plan: Option<Plan>,
+    /// The plan is of an earlier text: this one has problems.
+    plan_is_stale: bool,
+    problems: Vec<Placed>,
+    unsaved: bool,
+    saving: bool,
+    save_error: Option<SaveError>,
+    folder: Option<PathBuf>,
+    running_here: bool,
+    /// Another report's title, while it runs.
+    running_other: Option<String>,
+    progress: Option<String>,
 }
 
 pub fn show(
@@ -38,149 +115,693 @@ pub fn show(
     view: &ReportView<'_>,
     actions: &mut Vec<ReportAction>,
 ) {
-    ScrollArea::vertical()
-        .auto_shrink(false)
-        .show(ui, |ui| report(ui, reports, name, view, actions));
-}
-
-fn report(
-    ui: &mut Ui,
-    reports: &mut Reports,
-    name: &ReportName,
-    view: &ReportView<'_>,
-    actions: &mut Vec<ReportAction>,
-) {
-    let palette = Palette::for_visuals(ui.visuals());
-    let Some(listed) = reports.find(name) else {
-        if reports.listed().is_empty() && reports.unavailable().is_none() {
-            ui.weak("Loading…");
-        } else {
-            ui.weak(format!(
-                "There is no {name}.toml in the reports folder any more."
-            ));
-        }
+    let Some(seen) = see(reports, name, view) else {
+        missing(ui, reports, name);
         return;
     };
-    let path = listed.path.clone();
+    let palette = Palette::for_visuals(ui.visuals());
+    let editor_id = Id::new(("report_editor", name.as_str()));
+    let mut go_to = None;
+    if let Some(file) = reports.state_mut(name).file.as_mut() {
+        shortcuts(ui, file, view.keymap, editor_id, name, actions);
+    }
+    toolbar(
+        ui,
+        &palette,
+        reports,
+        name,
+        &seen,
+        view.keymap,
+        actions,
+        &mut go_to,
+    );
+    if let Some(description) = &seen.description {
+        ui.add(egui::Label::new(RichText::new(description).weak()).truncate());
+    }
+    save_problem(ui, &palette, &seen, name, actions);
+    ui.separator();
+    let split = VerticalSplit {
+        id: Id::new(("report_run_panel_height", name.as_str())),
+        bottom_height: RUN_PANEL_HEIGHT,
+    };
+    let (top_height, bottom_height) = split.heights(ui);
+    let width = ui.available_width();
+    ui.allocate_ui(vec2(width, top_height), |ui| {
+        file_and_inputs(
+            ui, reports, name, &seen, view, editor_id, actions, &mut go_to,
+        );
+    });
+    split.splitter(ui);
+    ui.allocate_ui(vec2(width, bottom_height), |ui| {
+        run_panel(ui, reports, name, &seen, actions);
+    });
+    if let Some(offset) = go_to
+        && let Some(file) = reports.state_mut(name).file.as_mut()
+    {
+        file.editor.put_cursor(offset);
+    }
+}
+
+/// Reads what the tab draws from: the listing, the text's plan and problems, the run.
+fn see(reports: &mut Reports, name: &ReportName, view: &ReportView<'_>) -> Option<Seen> {
+    let listed = reports.find(name)?;
     let title = listed.title().to_owned();
     let description = listed
         .read
         .as_ref()
         .ok()
         .and_then(|report| report.description.clone());
-    let plan = listed.plan(view.data_sources, view.presets, view.defaults);
+    let path = listed.path.clone();
+    let folder = reports.output_folder(name);
+    let running = reports.running().cloned();
+    let progress = reports
+        .state(name)
+        .and_then(|state| state.last_run.as_ref())
+        .filter(|record| record.end.is_none())
+        .map(progress);
+    let running_other = running
+        .as_ref()
+        .filter(|other| *other != name)
+        .map(|other| {
+            reports
+                .find(other)
+                .map_or_else(|| other.to_string(), |listed| listed.title().to_owned())
+        });
+    let inputs = PlanInputs {
+        data_sources: view.data_sources,
+        presets: view.presets,
+        defaults: view.defaults,
+    };
+    let file = reports.file_mut(name)?;
+    let (plan, problems) = match file.plan(&inputs) {
+        Ok(plan) => (Some(plan.clone()), Vec::new()),
+        Err(problems) => (None, problems.clone()),
+    };
+    let problems = placed(&file.editor.text, &problems);
+    let plan_is_stale = plan.is_none();
+    let plan = plan.or_else(|| file.last_plan().cloned());
+    Some(Seen {
+        title,
+        description,
+        path,
+        plan_is_stale,
+        plan,
+        problems,
+        unsaved: file.is_unsaved(),
+        saving: file.is_saving(),
+        save_error: file.save_error.clone(),
+        folder,
+        running_here: running.as_ref() == Some(name),
+        running_other,
+        progress,
+    })
+}
 
+/// Each problem with the bytes it underlines and the line they start on.
+fn placed(text: &str, problems: &[ReportProblem]) -> Vec<Placed> {
+    let locator = Locator::new(text);
+    problems
+        .iter()
+        .map(|problem| {
+            let range = locator.locate(&problem.place);
+            let line = text[..range.start.min(text.len())].matches('\n').count() + 1;
+            Placed {
+                range,
+                line,
+                message: problem.message.clone(),
+            }
+        })
+        .collect()
+}
+
+/// A tab whose report isn't listed, or whose file can't be read.
+fn missing(ui: &mut Ui, reports: &Reports, name: &ReportName) {
+    let palette = Palette::for_visuals(ui.visuals());
+    match reports.find(name) {
+        Some(listed) => {
+            widgets::status(
+                ui,
+                icons::WARNING,
+                palette.error,
+                &format!("{} can't be read.", listed.path.display()),
+            );
+            if let Err(problems) = &listed.read {
+                for problem in problems {
+                    ui.colored_label(palette.error, problem);
+                }
+            }
+        }
+        None if reports.listed().is_empty() && reports.unavailable().is_none() => {
+            ui.weak("Loading…");
+        }
+        None => {
+            ui.weak(format!(
+                "There is no {name}.toml in the reports folder any more."
+            ));
+        }
+    }
+}
+
+/// The keymap's actions while the editor has focus, taken before the editor sees them, so ⌘↵
+/// runs instead of breaking the line.
+fn shortcuts(
+    ui: &mut Ui,
+    file: &mut ReportFile,
+    keymap: &Keymap,
+    editor_id: Id,
+    name: &ReportName,
+    actions: &mut Vec<ReportAction>,
+) {
+    if !ui.memory(|memory| memory.has_focus(editor_id)) {
+        return;
+    }
+    for action in ui.input_mut(|input| keymap.consume(input, &EDITOR_ACTIONS)) {
+        match action {
+            Action::Save => actions.push(ReportAction::Save(name.clone())),
+            Action::RunCurrent => actions.push(ReportAction::Run(name.clone())),
+            Action::Find => file.editor.open_find(false),
+            Action::Replace => file.editor.open_find(true),
+            Action::FindNext => file.editor.find_next(true),
+            Action::FindPrevious => file.editor.find_next(false),
+            _ => {}
+        }
+    }
+}
+
+/// The report's name and state, and what can be done with it.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a toolbar's parts, each drawn from a different part of the tab's state"
+)]
+fn toolbar(
+    ui: &mut Ui,
+    palette: &Palette,
+    reports: &mut Reports,
+    name: &ReportName,
+    seen: &Seen,
+    keymap: &Keymap,
+    actions: &mut Vec<ReportAction>,
+    go_to: &mut Option<usize>,
+) {
+    let ready = can_run(reports, name, seen);
     ui.horizontal(|ui| {
         ui.label(
             widgets::glyph(icons::CLIPBOARD_TEXT)
                 .size(20.0)
                 .color(palette.primary),
         );
-        ui.heading(&title);
-    });
-    if let Some(description) = description {
-        ui.label(description);
-    }
-    ui.horizontal(|ui| {
-        ui.weak(path.display().to_string());
-        if ui.button("Edit file").clicked() {
-            actions.push(ReportAction::OpenPath(path.clone()));
+        let title = if seen.unsaved {
+            format!("{} \u{2022}", seen.title)
+        } else {
+            seen.title.clone()
+        };
+        ui.heading(title)
+            .on_hover_text(seen.path.display().to_string());
+        chip(ui, palette, seen, go_to);
+        if let Some(plan) = &seen.plan
+            && !seen.plan_is_stale
+        {
+            ui.weak(summary(plan));
         }
-        if ui.button("Reload").clicked() {
-            actions.push(ReportAction::Reload);
-        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            more_menu(ui, reports, name, seen, actions);
+            run_button(ui, seen, &ready, keymap, name, actions);
+            let save = ui.add_enabled(seen.unsaved && !seen.saving, egui::Button::new("Save"));
+            let save = save.on_hover_text(hint(ui, keymap, Action::Save, "Write the file"));
+            if save.clicked() {
+                actions.push(ReportAction::Save(name.clone()));
+            }
+        });
     });
-    ui.add_space(8.0);
+}
 
-    let plan = match plan {
-        Ok(plan) => plan,
-        Err(problems) => {
-            problems_box(ui, &palette, &problems);
-            last_run(ui, reports, name, actions);
-            runs_table::show(ui, reports, name, actions);
-            return;
-        }
+/// `description`, with the action's shortcut when it has one.
+fn hint(ui: &Ui, keymap: &Keymap, action: Action, description: &str) -> String {
+    match keymap.hint(ui.ctx(), action) {
+        Some(shortcut) => format!("{description} ({shortcut})"),
+        None => description.to_owned(),
+    }
+}
+
+/// Ready, how many problems, unsaved, or what the run is doing.
+fn chip(ui: &mut Ui, palette: &Palette, seen: &Seen, go_to: &mut Option<usize>) {
+    let standing = match (&seen.progress, seen.problems.len(), seen.unsaved) {
+        (Some(progress), _, _) if seen.running_here => Standing::Running(progress.clone()),
+        (_, problems, _) if problems > 0 => Standing::Problems(problems),
+        (_, _, true) => Standing::Unsaved,
+        _ => Standing::Ready,
     };
-    let ready = parameters(ui, &palette, reports, name, &plan);
-    if let Some(sql) = plan.compiled_combine() {
-        compiled_sql(ui, sql, "Combine SQL, compiled from PRQL", false);
-    }
-    ui.add_space(6.0);
-    output_folder(ui, reports, name, actions);
-    let files = plan.values(&reports.state_mut(name).values);
-    if let Ok(values) = &files {
-        ui.horizontal_wrapped(|ui| {
-            ui.weak("Writes");
-            ui.label(values.files.join(", "));
-        });
-    }
-    ui.add_space(6.0);
-    run_buttons(ui, &palette, reports, name, ready && files.is_ok(), actions);
-    if let Err(problems) = &files
-        && ready
-    {
-        for problem in problems {
-            ui.colored_label(palette.error, problem);
+    match standing {
+        Standing::Running(progress) => {
+            ui.spinner();
+            ui.label(progress);
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs(1));
+        }
+        Standing::Problems(count) => {
+            let text = match count {
+                1 => "1 problem".to_owned(),
+                n => format!("{n} problems"),
+            };
+            let job = widgets::icon_text(ui, icons::X_CIRCLE, palette.error, &text);
+            let response = ui
+                .add(egui::Button::new(job).frame(false))
+                .on_hover_text("Go to the first problem");
+            let response = widgets::name(response, egui::WidgetType::Button, &text, true);
+            if response.clicked() {
+                *go_to = seen.problems.first().map(|problem| problem.range.start);
+            }
+        }
+        Standing::Unsaved => {
+            ui.weak("Unsaved");
+        }
+        Standing::Ready => {
+            ui.label(widgets::icon_text(
+                ui,
+                icons::CHECK_CIRCLE,
+                palette.success,
+                "Ready",
+            ));
         }
     }
-    ui.separator();
-    last_run(ui, reports, name, actions);
-    runs_table::show(ui, reports, name, actions);
 }
 
-fn problems_box(ui: &mut Ui, palette: &Palette, problems: &[String]) {
-    widgets::status(
-        ui,
-        icons::WARNING,
-        palette.error,
-        "This report can't run until its file is fixed:",
-    );
-    for problem in problems {
-        ui.horizontal_wrapped(|ui| {
-            ui.add_space(20.0);
-            ui.colored_label(palette.error, problem);
+/// `1 source · 2 files`.
+fn summary(plan: &Plan) -> String {
+    let sources = plan.source_starts().len();
+    let outputs = plan.outputs.len();
+    let count = |n: usize, one: &str, many: &str| match n {
+        1 => format!("1 {one}"),
+        n => format!("{n} {many}"),
+    };
+    format!(
+        "{} · {}",
+        count(sources, "source", "sources"),
+        count(outputs, "file", "files")
+    )
+}
+
+/// Whether the report can run now, or why not.
+fn can_run(reports: &Reports, name: &ReportName, seen: &Seen) -> Result<(), String> {
+    if let Some(other) = &seen.running_other {
+        return Err(format!("{other:?} is running; one report runs at a time."));
+    }
+    if seen.running_here {
+        return Err("It is running.".to_owned());
+    }
+    if seen.saving {
+        return Err("Its file is being saved.".to_owned());
+    }
+    let Some(plan) = seen.plan.as_ref().filter(|_| !seen.plan_is_stale) else {
+        return Err("Its file has problems to fix first.".to_owned());
+    };
+    let values = reports
+        .state(name)
+        .map(|state| state.values.clone())
+        .unwrap_or_default();
+    if plan.params.iter().any(|param| {
+        check(
+            param.param_type,
+            values.get(&param.name).map_or("", String::as_str),
+        )
+        .is_err()
+    }) {
+        return Err("A parameter's value isn't right yet.".to_owned());
+    }
+    plan.values(&values)
+        .map(drop)
+        .map_err(|problems| problems.join("; "))
+}
+
+/// **Run**, or **Save and run** while the text is unsaved, or **Cancel** while it runs.
+fn run_button(
+    ui: &mut Ui,
+    seen: &Seen,
+    ready: &Result<(), String>,
+    keymap: &Keymap,
+    name: &ReportName,
+    actions: &mut Vec<ReportAction>,
+) {
+    if seen.running_here {
+        if ui.button("Cancel").clicked() {
+            actions.push(ReportAction::Cancel);
+        }
+        return;
+    }
+    let label = if seen.unsaved { "Save and run" } else { "Run" };
+    let response = form::primary_button(ui, label, ready.is_ok());
+    let response = match ready {
+        Ok(()) => response.on_hover_text(hint(ui, keymap, Action::RunCurrent, "Run the report")),
+        Err(reason) => response.on_disabled_hover_text(reason),
+    };
+    if response.clicked() {
+        actions.push(ReportAction::Run(name.clone()));
+    }
+}
+
+/// What is done to the report as a whole, and to its file.
+fn more_menu(
+    ui: &mut Ui,
+    reports: &mut Reports,
+    name: &ReportName,
+    seen: &Seen,
+    actions: &mut Vec<ReportAction>,
+) {
+    let hidden = reports.state(name).is_some_and(|state| state.file_hidden);
+    widgets::menu_button(ui, widgets::glyph(icons::DOTS_THREE), |ui| {
+        if ui.button("Rename…").clicked() {
+            actions.push(ReportAction::Rename(name.clone()));
+        }
+        if let Some(folder) = seen.path.parent()
+            && ui.button("Show in folder").clicked()
+        {
+            actions.push(ReportAction::OpenPath(folder.to_owned()));
+        }
+        if ui.button("Open in another app").clicked() {
+            actions.push(ReportAction::OpenPath(seen.path.clone()));
+        }
+        if ui.button("Copy path").clicked() {
+            ui.ctx().copy_text(seen.path.display().to_string());
+        }
+        ui.separator();
+        let toggle = if hidden {
+            "Show the file"
+        } else {
+            "Hide the file"
+        };
+        if ui.button(toggle).clicked() {
+            reports.state_mut(name).file_hidden = !hidden;
+        }
+    });
+}
+
+/// Why the last save failed, until one succeeds.
+fn save_problem(
+    ui: &mut Ui,
+    palette: &Palette,
+    seen: &Seen,
+    name: &ReportName,
+    actions: &mut Vec<ReportAction>,
+) {
+    match &seen.save_error {
+        None => {}
+        Some(SaveError::ChangedOnDisk) => {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(widgets::icon_text(
+                    ui,
+                    icons::WARNING,
+                    palette.warning,
+                    "The file changed on disk since it was read, so it wasn't saved.",
+                ));
+                if ui
+                    .button("Save over it")
+                    .on_hover_text("Replace what the file holds now with your text")
+                    .clicked()
+                {
+                    actions.push(ReportAction::Save(name.clone()));
+                }
+            });
+        }
+        Some(SaveError::Failed(error)) => {
+            widgets::status(
+                ui,
+                icons::X_CIRCLE,
+                palette.error,
+                &format!("The file couldn't be saved: {error}"),
+            );
+        }
+    }
+}
+
+/// The file beside the run's inputs, or above them in a narrow tab, or the inputs alone when
+/// the file is hidden.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the editor and the inputs, drawn from different parts of the tab's state"
+)]
+fn file_and_inputs(
+    ui: &mut Ui,
+    reports: &mut Reports,
+    name: &ReportName,
+    seen: &Seen,
+    view: &ReportView<'_>,
+    editor_id: Id,
+    actions: &mut Vec<ReportAction>,
+    go_to: &mut Option<usize>,
+) {
+    let hidden = reports.state(name).is_some_and(|state| state.file_hidden);
+    if hidden {
+        ScrollArea::vertical()
+            .id_salt(("report_inputs", name.as_str()))
+            .auto_shrink(false)
+            .show(ui, |ui| inputs(ui, reports, name, seen, actions, go_to));
+        return;
+    }
+    if ui.available_width() < NARROW_WIDTH {
+        let inputs_height = ui.available_height() * 0.4;
+        ScrollArea::vertical()
+            .id_salt(("report_inputs", name.as_str()))
+            .max_height(inputs_height)
+            .show(ui, |ui| inputs(ui, reports, name, seen, actions, go_to));
+        ui.separator();
+        editor(ui, reports, name, seen, view, editor_id);
+        return;
+    }
+    egui::Panel::right(Id::new(("report_side_panel", name.as_str())))
+        .resizable(true)
+        .default_size(SIDE_PANEL_WIDTH)
+        .min_size(SIDE_PANEL_MIN_WIDTH)
+        .show(ui, |ui| {
+            ScrollArea::vertical()
+                .id_salt(("report_inputs", name.as_str()))
+                .auto_shrink(false)
+                .show(ui, |ui| inputs(ui, reports, name, seen, actions, go_to));
+        });
+    editor(ui, reports, name, seen, view, editor_id);
+}
+
+/// The report's file, with the find bar over it.
+fn editor(
+    ui: &mut Ui,
+    reports: &mut Reports,
+    name: &ReportName,
+    seen: &Seen,
+    view: &ReportView<'_>,
+    editor_id: Id,
+) {
+    let Some(file) = reports.state_mut(name).file.as_mut() else {
+        return;
+    };
+    let find = find_bar::show(ui, &mut file.editor, view.keymap, editor_id);
+    let marks = Marks {
+        code_blocks: embedded_code(&file.editor.text)
+            .into_iter()
+            .map(|code| code.range)
+            .collect(),
+        current_match: find
+            .found
+            .current
+            .map(|index| find.found.matches[index].clone()),
+        matches: find.found.matches.clone(),
+        ..Marks::default()
+    };
+    let highlighter = ReportHighlighter {
+        data_sources: view.data_sources,
+    };
+    ScrollArea::vertical()
+        .id_salt(("report_editor_scroll", name.as_str()))
+        .auto_shrink(false)
+        .show(ui, |ui| {
+            let view = EditorView {
+                id: editor_id,
+                hint_text: "[report]",
+                highlighter: &highlighter,
+                marks: &marks,
+                problems: &seen.problems,
+            };
+            code_editor::edit(ui, &mut file.editor, &view);
+        });
+}
+
+/// What a run needs, as the text says it: the parameters' values, where its files go and
+/// which they are; and the text's problems.
+fn inputs(
+    ui: &mut Ui,
+    reports: &mut Reports,
+    name: &ReportName,
+    seen: &Seen,
+    actions: &mut Vec<ReportAction>,
+    go_to: &mut Option<usize>,
+) {
+    let palette = Palette::for_visuals(ui.visuals());
+    if let Some(plan) = &seen.plan {
+        ui.add_enabled_ui(!seen.plan_is_stale, |ui| {
+            let state = reports.state_mut(name);
+            parameters(ui, &palette, &mut state.values, name, plan);
+            output(ui, &palette, &state.values, seen, name, plan, actions);
         });
     }
-    ui.weak("Edit the file, save it, then Reload.");
+    problems(ui, &palette, seen, go_to);
 }
 
-/// A field per parameter, each checked as typed. Returns whether every value is fine.
+fn section(ui: &mut Ui, title: &str) {
+    ui.add_space(6.0);
+    ui.label(RichText::new(title).strong());
+    ui.add_space(2.0);
+}
+
+/// A field per parameter, each checked as typed.
 fn parameters(
     ui: &mut Ui,
     palette: &Palette,
-    reports: &mut Reports,
+    values: &mut TypedValues,
     name: &ReportName,
     plan: &Plan,
-) -> bool {
+) {
     if plan.params.is_empty() {
-        return true;
+        return;
     }
-    ui.label(RichText::new("Parameters").strong());
-    let state = reports.state_mut(name);
-    let mut ready = true;
+    section(ui, "Parameters");
+    let width = (ui.available_width() - 120.0).max(80.0);
     Grid::new(("report_parameters", name.as_str()))
-        .num_columns(3)
+        .num_columns(2)
         .spacing([8.0, 6.0])
         .show(ui, |ui| {
             for param in &plan.params {
                 let label = ui.label(&param.name);
-                let value = state.values.entry(param.name.clone()).or_default();
-                let size = vec2(VALUE_WIDTH, ui.spacing().interact_size.y);
-                ui.add_sized(
-                    size,
-                    TextEdit::singleline(value).hint_text(example(param.param_type)),
-                )
-                .labelled_by(label.id);
-                let check = check(param.param_type, value);
-                match &check {
-                    Ok(()) => ui.weak(param.param_type.to_string()),
-                    Err(problem) => ui.colored_label(palette.error, problem),
-                };
-                ready &= check.is_ok();
+                let value = values.entry(param.name.clone()).or_default();
+                ui.vertical(|ui| {
+                    let size = vec2(width, ui.spacing().interact_size.y);
+                    ui.add_sized(
+                        size,
+                        TextEdit::singleline(value).hint_text(example(param.param_type)),
+                    )
+                    .labelled_by(label.id);
+                    match check(param.param_type, value) {
+                        Ok(()) => ui.weak(param.param_type.to_string()),
+                        Err(problem) => ui.colored_label(palette.error, problem),
+                    };
+                });
                 ui.end_row();
             }
         });
-    ready
+}
+
+/// The folder the files go in, and the files this run writes.
+fn output(
+    ui: &mut Ui,
+    palette: &Palette,
+    values: &TypedValues,
+    seen: &Seen,
+    name: &ReportName,
+    plan: &Plan,
+    actions: &mut Vec<ReportAction>,
+) {
+    section(ui, "Output");
+    ui.horizontal_wrapped(|ui| {
+        ui.weak("Folder");
+        match &seen.folder {
+            Some(folder) => ui.label(folder.display().to_string()),
+            None => ui.weak("no folder"),
+        };
+        if ui.button("Choose…").clicked() {
+            actions.push(ReportAction::ChooseFolder(name.clone()));
+        }
+    });
+    match plan.values(values) {
+        Ok(run) => {
+            for file in &run.files {
+                ui.horizontal(|ui| {
+                    ui.label(widgets::glyph(file_icon(Path::new(file))).color(palette.primary));
+                    ui.label(file);
+                });
+            }
+        }
+        Err(_) => {
+            ui.weak("The files are named once the parameters have values.");
+        }
+    }
+}
+
+/// Each problem on a line of its own, its line number first; a click goes to it.
+fn problems(ui: &mut Ui, palette: &Palette, seen: &Seen, go_to: &mut Option<usize>) {
+    if seen.problems.is_empty() {
+        return;
+    }
+    section(ui, "Problems");
+    for problem in &seen.problems {
+        let text = format!("line {}  {}", problem.line, problem.message);
+        let response = ui
+            .add(
+                egui::Label::new(RichText::new(text).color(palette.error))
+                    .truncate()
+                    .sense(egui::Sense::click()),
+            )
+            .on_hover_text(&problem.message);
+        if response.clicked() {
+            *go_to = Some(problem.range.start);
+        }
+    }
+}
+
+/// The last run, its preview, and the runs the history keeps, a tab each.
+fn run_panel(
+    ui: &mut Ui,
+    reports: &mut Reports,
+    name: &ReportName,
+    seen: &Seen,
+    actions: &mut Vec<ReportAction>,
+) {
+    let state = reports.state(name);
+    let has_run = state.is_some_and(|state| state.last_run.is_some());
+    let shown = state
+        .and_then(|state| state.run_panel)
+        .unwrap_or(if has_run {
+            RunPanel::LastRun
+        } else {
+            RunPanel::Runs
+        });
+    let past = match reports.runs(name) {
+        Some(Ok(runs)) if !runs.is_empty() => format!("Past runs {}", runs.len()),
+        _ => "Past runs".to_owned(),
+    };
+    ui.horizontal(|ui| {
+        for (panel, label) in [
+            (RunPanel::LastRun, "Last run"),
+            (RunPanel::Preview, "Preview"),
+            (RunPanel::Runs, past.as_str()),
+        ] {
+            if ui.selectable_label(shown == panel, label).clicked() {
+                reports.state_mut(name).run_panel = Some(panel);
+            }
+        }
+    });
+    ScrollArea::both()
+        .id_salt(("report_run_panel", name.as_str()))
+        .auto_shrink(false)
+        .show(ui, |ui| match shown {
+            RunPanel::LastRun => {
+                // What the next run sends, beside what the last one did.
+                if let Some(sql) = seen.plan.as_ref().and_then(Plan::compiled_combine) {
+                    compiled_sql(ui, sql, "Combine SQL, compiled from PRQL", false);
+                }
+                last_run(ui, reports, name, actions);
+            }
+            RunPanel::Preview => preview(ui, reports, name),
+            RunPanel::Runs => runs_table::show(ui, reports, name, actions),
+        });
+}
+
+fn preview(ui: &mut Ui, reports: &Reports, name: &ReportName) {
+    let record = reports
+        .state(name)
+        .and_then(|state| state.last_run.as_ref());
+    match record.and_then(|record| Some((record.preview.as_ref()?, record.combines()))) {
+        Some((preview, combined)) => preview_grid(ui, preview, combined),
+        None => {
+            ui.weak("A run's first rows show here once it writes them.");
+        }
+    }
 }
 
 fn example(param_type: ColumnType) -> &'static str {
@@ -202,63 +823,12 @@ fn check(param_type: ColumnType, value: &str) -> Result<(), String> {
     param_type.plain_form(value.trim()).map(drop)
 }
 
-fn output_folder(
-    ui: &mut Ui,
-    reports: &Reports,
-    name: &ReportName,
-    actions: &mut Vec<ReportAction>,
-) {
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("Save to").strong());
-        match reports.output_folder(name) {
-            Some(folder) => ui.label(folder.display().to_string()),
-            None => ui.weak("no folder"),
-        };
-        if ui.button("Choose…").clicked() {
-            actions.push(ReportAction::ChooseFolder(name.clone()));
-        }
-    });
-}
-
-fn run_buttons(
-    ui: &mut Ui,
-    palette: &Palette,
-    reports: &Reports,
-    name: &ReportName,
-    ready: bool,
-    actions: &mut Vec<ReportAction>,
-) {
-    let running = reports.running();
-    ui.horizontal(|ui| {
-        let free = running.is_none();
-        if form::primary_button(ui, "Run", ready && free).clicked() {
-            actions.push(ReportAction::Run(name.clone()));
-        }
-        match running {
-            Some(other) if other == name => {
-                if ui.button("Cancel").clicked() {
-                    actions.push(ReportAction::Cancel);
-                }
-            }
-            Some(other) => {
-                let title = reports
-                    .find(other)
-                    .map_or(other.as_str(), |listed| listed.title());
-                ui.colored_label(
-                    palette.text_weak,
-                    format!("{title:?} is running; one report runs at a time."),
-                );
-            }
-            None => {}
-        }
-    });
-}
-
 fn last_run(ui: &mut Ui, reports: &Reports, name: &ReportName, actions: &mut Vec<ReportAction>) {
     let Some(record) = reports
         .state(name)
         .and_then(|state| state.last_run.as_ref())
     else {
+        ui.weak("No run since DbRover started. Run the report to see each step here.");
         return;
     };
     let palette = Palette::for_visuals(ui.visuals());
@@ -312,10 +882,6 @@ fn last_run(ui: &mut Ui, reports: &Reports, name: &ReportName, actions: &mut Vec
     steps(ui, &palette, record);
     if matches!(record.end, Some(RunEnd::Finished { .. })) {
         files(ui, &palette, &record.files, actions);
-    }
-    if let Some(preview) = &record.preview {
-        ui.add_space(8.0);
-        preview_grid(ui, preview, record.combines());
     }
 }
 
@@ -553,28 +1119,23 @@ fn preview_grid(ui: &mut Ui, preview: &Preview, combined: bool) {
         "the source"
     };
     ui.label(RichText::new(format!("Preview: {shown}, as {from} returned them")).strong());
-    ScrollArea::both()
-        .id_salt("report_preview")
-        .max_height(PREVIEW_HEIGHT)
-        .auto_shrink([false, true])
+    // The run panel scrolls both ways, so the grid takes the room its rows need.
+    Grid::new("report_preview_grid")
+        .striped(true)
+        .spacing([16.0, 4.0])
         .show(ui, |ui| {
-            Grid::new("report_preview_grid")
-                .striped(true)
-                .spacing([16.0, 4.0])
-                .show(ui, |ui| {
-                    for column in &preview.columns {
-                        ui.label(RichText::new(column).strong());
-                    }
-                    ui.end_row();
-                    for row in &preview.rows {
-                        for cell in row {
-                            match cell {
-                                Some(value) => ui.label(RichText::new(value).monospace()),
-                                None => ui.weak(RichText::new("NULL").monospace()),
-                            };
-                        }
-                        ui.end_row();
-                    }
-                });
+            for column in &preview.columns {
+                ui.label(RichText::new(column).strong());
+            }
+            ui.end_row();
+            for row in &preview.rows {
+                for cell in row {
+                    match cell {
+                        Some(value) => ui.label(RichText::new(value).monospace()),
+                        None => ui.weak(RichText::new("NULL").monospace()),
+                    };
+                }
+                ui.end_row();
+            }
         });
 }

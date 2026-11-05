@@ -214,7 +214,9 @@ fn runs_a_report_from_its_tab_and_shows_its_files_and_preview() {
     let mut harness = start_with_reports(dir.path(), TRIAL_BALANCE, launcher);
 
     open_and_fill(&mut harness, "2026-10-01");
-    harness.get_by_label_contains("trial-balance-2026-10.xlsx, trial-balance-2026-10.csv");
+    // The side panel names the files the run will write.
+    harness.get_by_label("trial-balance-2026-10.xlsx");
+    harness.get_by_label("trial-balance-2026-10.csv");
     harness.get_by_label("Run").click();
     step_until_visible(&mut harness, "Finished in 1.2 s: 2 rows read.");
 
@@ -232,8 +234,12 @@ fn runs_a_report_from_its_tab_and_shows_its_files_and_preview() {
         request.values.get("since").map(String::as_str),
         Some("2026-10-01")
     );
-    harness.get_by_label("trial-balance-2026-10.xlsx");
-    harness.get_by_label("trial-balance-2026-10.csv");
+    // Once in the side panel's files to write, and once as the file written.
+    for file in ["trial-balance-2026-10.xlsx", "trial-balance-2026-10.csv"] {
+        assert_eq!(harness.get_all_by_label(file).count(), 2, "{file}");
+    }
+    harness.get_by_label("Preview").click();
+    harness.run();
     harness.get_by_label("Preview: All 2 rows, as the source returned them");
     harness.get_by_label("150.375");
     harness.get_by_label("NULL");
@@ -358,6 +364,8 @@ fn shows_each_source_and_the_combine_step_of_a_combined_run() {
             .count(),
         2
     );
+    harness.get_by_label("Preview").click();
+    harness.run();
     harness.get_by_label("Preview: The first 1 rows, as the combine step returned them");
 }
 
@@ -383,6 +391,9 @@ fn shows_the_sql_a_prql_combine_step_compiled_to() {
     )));
     let mut harness = start_with_reports(dir.path(), &combined_in_prql(), StandIn::new(script));
     open_and_fill(&mut harness, "2026-10-01");
+    // The run panel's Last run shows what the next run sends.
+    harness.get_by_label("Last run").click();
+    harness.run();
     harness
         .get_by_label("Combine SQL, compiled from PRQL")
         .click();
@@ -675,7 +686,10 @@ fn cancel_stops_the_running_report() {
     harness.get_by_label("Run").click();
     // A run in progress shows a spinner, which repaints every frame: step rather than run.
     step_until_visible(&mut harness, "Reading the source");
-    assert!(harness.get_by_label("Run").accesskit_node().is_disabled());
+    assert!(
+        harness.query_by_label("Run").is_none(),
+        "Cancel takes Run's place"
+    );
     harness.get_by_label("Cancel").click();
     step_until_visible(&mut harness, "Cancelled. No file was written.");
     harness.run();
@@ -689,12 +703,10 @@ fn a_report_with_problems_says_what_they_are_and_cant_run() {
     let mut harness = start_with_reports(dir.path(), &broken, StandIn::new(Vec::new()));
 
     harness.get_by_label("Trial balance").click();
-    step_until_visible(
-        &mut harness,
-        "This report can't run until its file is fixed:",
-    );
+    step_until_visible(&mut harness, "1 problem");
+    // Listed in the side panel by its line, and underlined in the file.
     harness.get_by_label_contains("there is no data source \"books\"; there are shop");
-    assert!(harness.query_by_label("Run").is_none());
+    assert!(harness.get_by_label("Run").accesskit_node().is_disabled());
 }
 
 #[test]
@@ -747,14 +759,17 @@ fn shows_the_runs_side_by_side_with_the_step_that_dominates_and_the_hints() {
         |harness: &Harness<'_, DbRoverApp>| harness.query_all_by_label("finished").count();
     for run in 1..=2 {
         harness.get_by_label("Run").click();
+        step_until_visible(&mut harness, "Last run");
+        // A run shows itself in the run panel; the runs kept are a click away.
+        harness.get_by_label_contains("Past runs").click();
         step_until(&mut harness, &format!("run {run} listed"), |harness| {
             finished_runs(harness) == run
         });
     }
     assert_eq!(
         harness.query_all_by_label("Source entries").count(),
-        2,
-        "in the last run, and as a row of the runs"
+        1,
+        "as a row of the runs"
     );
     harness.get_by_label("Output 1");
     assert_eq!(harness.query_all_by_label("0.9 s · 2 rows").count(), 2);
@@ -781,6 +796,8 @@ fn a_report_that_silences_a_hint_says_so_instead() {
     let mut harness = start_with_reports(dir.path(), &quiet, launcher);
     open_and_fill(&mut harness, "2026-10-01");
     harness.get_by_label("Run").click();
+    step_until_visible(&mut harness, "Last run");
+    harness.get_by_label_contains("Past runs").click();
     step_until(&mut harness, "the run listed", |harness| {
         harness.query_all_by_label("finished").count() == 1
     });
@@ -789,6 +806,73 @@ fn a_report_that_silences_a_hint_says_so_instead() {
         "the hint is silenced"
     );
     harness.get_by_label("1 hint is silenced by the file's quiet_hints.");
+}
+
+/// Types `text` where the cursor is in the report's file.
+fn type_in_file(harness: &mut Harness<'_, DbRoverApp>, text: &str) {
+    harness.get_by_role(Role::MultilineTextInput).focus();
+    harness.run();
+    harness
+        .get_by_role(Role::MultilineTextInput)
+        .type_text(text);
+    harness.run();
+}
+
+#[test]
+fn edits_the_file_in_its_tab_then_saves_and_runs_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let launcher = StandIn::new(finished_run(&dir.path().join("out")));
+    let requests = Arc::clone(&launcher.requests);
+    let mut harness = start_with_reports(dir.path(), TRIAL_BALANCE, launcher);
+    open_and_fill(&mut harness, "2026-10-01");
+
+    type_in_file(&mut harness, "# Checked each month.\n");
+    harness.get_by_label("Unsaved");
+    harness.get_by_label("Save and run").click();
+    step_until_visible(&mut harness, "Finished in 1.2 s: 2 rows read.");
+
+    let file = dir.path().join("reports/trial-balance.toml");
+    let saved = std::fs::read_to_string(file).unwrap();
+    assert!(saved.contains("# Checked each month."), "{saved}");
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        1,
+        "run once, after the save"
+    );
+    assert!(
+        harness.query_by_label("Save and run").is_none(),
+        "nothing unsaved"
+    );
+}
+
+#[test]
+fn a_save_never_replaces_a_change_made_on_disk_unasked() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut harness = start_with_reports(dir.path(), TRIAL_BALANCE, StandIn::new(Vec::new()));
+    open_and_fill(&mut harness, "2026-10-01");
+    type_in_file(&mut harness, "# Mine.\n");
+
+    let file = dir.path().join("reports/trial-balance.toml");
+    let theirs = TRIAL_BALANCE.replace("Debits and credits", "Credits and debits");
+    std::fs::write(&file, &theirs).unwrap();
+    let later = std::time::SystemTime::now() + Duration::from_secs(5);
+    std::fs::File::options()
+        .write(true)
+        .open(&file)
+        .unwrap()
+        .set_modified(later)
+        .unwrap();
+    harness.get_by_label("Save").click();
+    step_until_visible(
+        &mut harness,
+        "The file changed on disk since it was read, so it wasn't saved.",
+    );
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), theirs);
+
+    harness.get_by_label("Save over it").click();
+    step_until(&mut harness, "the file saved over", |_| {
+        std::fs::read_to_string(&file).is_ok_and(|text| text.contains("# Mine."))
+    });
 }
 
 #[test]

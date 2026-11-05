@@ -216,6 +216,7 @@ impl AppState {
             | Event::SqlFileRead { .. }
             | Event::SqlFileSaved { .. }
             | Event::SqlFileChanged { .. }
+            | Event::ReportSaved { .. }
             | Event::ConnectionTested { .. }
             | Event::PasswordNeeded { .. }
             | Event::HostKeyUnknown { .. }

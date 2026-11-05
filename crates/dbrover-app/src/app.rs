@@ -72,7 +72,7 @@ use crate::state::{AppState, DataSources, EngineStatus};
 use crate::system_look::SystemLook;
 use crate::theme::{self, Palette};
 use crate::title_bar;
-use crate::unsaved_dialog::{UnsavedChoice, UnsavedConfirmation};
+use crate::unsaved_dialog::{UnsavedChoice, UnsavedConfirmation, UnsavedFile};
 use crate::update_dialog::{self, UpdateAction};
 use crate::updates::Updates;
 use crate::workspace::{self, Panels, Tab};
@@ -124,6 +124,8 @@ pub struct DbRoverApp {
     delete_confirmation: Option<DeleteConfirmation>,
     project_dialog: Option<ProjectNameDialog>,
     rename_report_dialog: Option<RenameReportDialog>,
+    /// Reports **Save and run** saved, to run once the frame can start a worker.
+    reports_to_run: Vec<dbrover_store::ReportName>,
     /// View › Settings › MCP's draft, kept while the window is closed.
     mcp_defaults: McpDefaultsEditor,
     settings_tab: SettingsTab,
@@ -203,7 +205,7 @@ pub struct DbRoverApp {
     files_to_open: Vec<PathBuf>,
     unsaved_confirmation: Option<UnsavedConfirmation>,
     /// A close waiting for these consoles' files to be written; a failed save cancels it.
-    closing_after_saves: Option<(Closing, Vec<ConsoleKey>)>,
+    closing_after_saves: Option<(Closing, Vec<UnsavedFile>)>,
     /// Ask for a SQL file to open, and where to save a console. The platform's file dialogs,
     /// except in tests.
     pub(crate) pick_sql_file: Box<dyn Fn() -> Option<PathBuf>>,
@@ -269,6 +271,7 @@ impl DbRoverApp {
             delete_confirmation: None,
             project_dialog: None,
             rename_report_dialog: None,
+            reports_to_run: Vec::new(),
             mcp_defaults: McpDefaultsEditor::new(&McpPermissions::default()),
             settings_tab: SettingsTab::default(),
             delete_project_confirmation: None,
@@ -473,11 +476,12 @@ impl DbRoverApp {
 
     fn apply(&mut self, event: &Event) {
         self.state.apply(event);
-        let (open, command) = self.reports.apply(event);
-        if let Some(name) = open {
+        let applied = self.reports.apply(event);
+        if let Some(name) = applied.open {
             self.open_report_tab(name);
         }
-        self.send_if(command);
+        self.send_if(applied.command);
+        self.reports_to_run.extend(applied.run);
         match event {
             Event::ProjectsLoaded(projects) => self.mcp_defaults.follow(&projects.mcp_defaults),
             Event::McpDefaultsSaved(defaults) => self.mcp_defaults.follow(defaults),
@@ -601,7 +605,10 @@ impl DbRoverApp {
             Event::SqlFileRead { path, result } => self.sql_file_read(path, result),
             Event::SqlFileSaved {
                 console, result, ..
-            } => self.close_once_saved(console, result.is_ok()),
+            } => self.close_once_saved(&UnsavedFile::Console(console.clone()), result.is_ok()),
+            Event::ReportSaved { name, result } => {
+                self.close_once_saved(&UnsavedFile::Report(name.clone()), result.is_ok());
+            }
             _ => {}
         }
     }
@@ -1160,10 +1167,18 @@ impl DbRoverApp {
                     if let Err(error) = std::fs::create_dir_all(folder) {
                         tracing::warn!("could not make {}: {error}", folder.display());
                     }
-                    reports::open_path(ctx, folder);
+                    reports::open_path(folder);
                 }
             }
+            ReportAction::Run(name) if self.reports.is_unsaved(&name) => {
+                let save = self.reports.save_and_run(&name);
+                self.send_if(save);
+            }
             ReportAction::Run(name) => self.run_report(&name, ctx),
+            ReportAction::Save(name) => {
+                let save = self.reports.save(&name);
+                self.send_if(save);
+            }
             ReportAction::Cancel => self.reports.cancel(),
             ReportAction::ChooseFolder(name) => {
                 let current = self.reports.output_folder(&name).unwrap_or_default();
@@ -1171,10 +1186,17 @@ impl DbRoverApp {
                     self.reports.state_mut(&name).folder = Some(folder);
                 }
             }
-            ReportAction::OpenPath(path) => reports::open_path(ctx, &path),
+            ReportAction::OpenPath(path) => reports::open_path(&path),
             ReportAction::ClearRuns(name) => self.send(Command::ClearReportRuns(name)),
             ReportAction::OpenSettings => self.open_settings_page(Page::REPORTS),
             ReportAction::Rename(name) => {
+                // The engine writes the file before it renames it: commands run in order.
+                let save = self
+                    .reports
+                    .is_unsaved(&name)
+                    .then(|| self.reports.save(&name))
+                    .flatten();
+                self.send_if(save);
                 self.rename_report_dialog = Some(RenameReportDialog::new(name));
             }
         }
@@ -1717,13 +1739,29 @@ impl DbRoverApp {
     /// Does what `closing` asks, first asking whether to save the files it would close with
     /// unsaved changes, then whether to roll back the transactions it would end.
     fn request_close(&mut self, closing: Closing, ctx: &egui::Context) {
-        let unsaved = self.consoles.unsaved_files(&closing);
+        let mut unsaved: Vec<(UnsavedFile, String)> = self
+            .consoles
+            .unsaved_files(&closing)
+            .into_iter()
+            .map(|(key, title)| (UnsavedFile::Console(key), title))
+            .collect();
+        unsaved.extend(
+            self.reports
+                .unsaved()
+                .into_iter()
+                .filter(|(name, _)| match &closing {
+                    Closing::Quit => true,
+                    Closing::Report(closed) => closed == name,
+                    Closing::Console(_) | Closing::Disconnect(_) => false,
+                })
+                .map(|(name, title)| (UnsavedFile::Report(name), title)),
+        );
         if unsaved.is_empty() {
             self.close_connections(closing, ctx);
         } else if self.unsaved_confirmation.is_none() && self.closing_after_saves.is_none() {
             self.unsaved_confirmation = Some(UnsavedConfirmation {
                 closing,
-                consoles: unsaved,
+                files: unsaved,
             });
         }
     }
@@ -1742,10 +1780,14 @@ impl DbRoverApp {
         match choice {
             UnsavedChoice::Save => {
                 let mut waiting = Vec::new();
-                for (key, _) in confirmation.consoles {
-                    if let Some(save) = self.consoles.save_file(&key) {
+                for (file, _) in confirmation.files {
+                    let save = match &file {
+                        UnsavedFile::Console(key) => self.consoles.save_file(key),
+                        UnsavedFile::Report(name) => self.reports.save(name),
+                    };
+                    if let Some(save) = save {
                         self.send(save);
-                        waiting.push(key);
+                        waiting.push(file);
                     }
                 }
                 self.closing_after_saves = Some((confirmation.closing, waiting));
@@ -1761,11 +1803,11 @@ impl DbRoverApp {
 
     /// Takes in a save that a close may be waiting for: a failure cancels the close, so the
     /// text stays open with its error showing.
-    fn close_once_saved(&mut self, console: &ConsoleKey, saved: bool) {
+    fn close_once_saved(&mut self, file: &UnsavedFile, saved: bool) {
         let Some((closing, waiting)) = &mut self.closing_after_saves else {
             return;
         };
-        if !waiting.contains(console) {
+        if !waiting.contains(file) {
             return;
         }
         if !saved {
@@ -1775,7 +1817,7 @@ impl DbRoverApp {
             self.closing_after_saves = None;
             return;
         }
-        waiting.retain(|key| key != console);
+        waiting.retain(|waited| waited != file);
     }
 
     fn close_once_saved_all(&mut self, ctx: &egui::Context) {
@@ -1807,6 +1849,10 @@ impl DbRoverApp {
                 self.send_all(commands);
                 workspace::close_console_tab(&mut self.dock, &key);
             }
+            Closing::Report(name) => {
+                self.reports.close(&name);
+                workspace::close_report_tab(&mut self.dock, &name);
+            }
             Closing::Disconnect(id) => self.send(Command::Disconnect(id)),
             Closing::Quit => {
                 self.quit_confirmed = true;
@@ -1823,6 +1869,7 @@ impl DbRoverApp {
         }
         if !self.consoles.rolled_back_by(&Closing::Quit).is_empty()
             || !self.consoles.unsaved_files(&Closing::Quit).is_empty()
+            || !self.reports.unsaved().is_empty()
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.request_close(Closing::Quit, ctx);
@@ -2838,6 +2885,7 @@ impl eframe::App for DbRoverApp {
         let mut explorer_actions = Vec::new();
         let mut console_actions = Vec::new();
         let mut close_requests = Vec::new();
+        let mut report_close_requests = Vec::new();
         let mut settings_actions = Vec::new();
         let mut diagram_actions = Vec::new();
         let mut report_actions = Vec::new();
@@ -2883,6 +2931,7 @@ impl eframe::App for DbRoverApp {
                     recent_completions,
                     console_actions: &mut console_actions,
                     close_requests: &mut close_requests,
+                    report_close_requests: &mut report_close_requests,
                     settings_tab: &mut self.settings_tab,
                     settings: &self.settings,
                     mcp_defaults: &mut self.mcp_defaults,
@@ -2910,7 +2959,11 @@ impl eframe::App for DbRoverApp {
         for action in settings_actions {
             self.handle_settings_action(action, &ctx);
         }
-        for action in report_actions {
+        let saved_to_run = std::mem::take(&mut self.reports_to_run);
+        for action in report_actions
+            .into_iter()
+            .chain(saved_to_run.into_iter().map(ReportAction::Run))
+        {
             self.handle_report_action(action, &ctx);
         }
         for action in diagram_actions {
@@ -2949,6 +3002,9 @@ impl eframe::App for DbRoverApp {
         }
         for console in close_requests {
             self.request_close(Closing::Console(console), &ctx);
+        }
+        for report in report_close_requests {
+            self.request_close(Closing::Report(report), &ctx);
         }
         self.show_unsaved_confirmation(&ctx);
         self.close_once_saved_all(&ctx);

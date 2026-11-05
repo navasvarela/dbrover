@@ -2,11 +2,14 @@
 //! **New report**. What a file says is read by `dbrover-report` in the app; this only finds
 //! the files and their text.
 
-use dbrover_store::{ReportFiles, ReportName};
+use std::time::SystemTime;
+
+use dbrover_core::describe_error;
+use dbrover_store::{ReportFiles, ReportName, ReportSaveError};
 
 use crate::Event;
 use crate::config_files::blocking;
-use crate::protocol::ReportText;
+use crate::protocol::{ReportSaveFailure, ReportText};
 
 /// Every report in the folder, with its text or why it couldn't be read.
 pub(crate) async fn list(files: ReportFiles) -> Event {
@@ -15,11 +18,15 @@ pub(crate) async fn list(files: ReportFiles) -> Event {
             names
                 .into_iter()
                 .map(|name| {
-                    let text = files.read(&name).map_err(|error| error.to_string());
+                    let read = files.read_with_time(&name);
+                    let modified = read.as_ref().ok().and_then(|contents| contents.modified);
                     ReportText {
                         path: files.path(&name),
+                        text: read
+                            .map(|contents| contents.text)
+                            .map_err(|error| error.to_string()),
                         name,
-                        text,
+                        modified,
                     }
                 })
                 .collect()
@@ -30,6 +37,36 @@ pub(crate) async fn list(files: ReportFiles) -> Event {
         tracing::error!("could not list the reports: {error}");
     }
     Event::ReportsListed(listed)
+}
+
+/// Writes `text` over the report `name`, unless it changed on disk since `read_at`.
+pub(crate) async fn save(
+    files: ReportFiles,
+    name: ReportName,
+    text: String,
+    read_at: Option<SystemTime>,
+) -> Event {
+    let saving = name.clone();
+    let saved = tokio::task::spawn_blocking(move || files.save(&saving, &text, read_at)).await;
+    let result = match saved {
+        Ok(Ok(modified)) => {
+            tracing::info!("saved the report {name}");
+            Ok(modified)
+        }
+        Ok(Err(ReportSaveError::ChangedOnDisk)) => {
+            tracing::info!("did not save the report {name}: it changed on disk");
+            Err(ReportSaveFailure::ChangedOnDisk)
+        }
+        Ok(Err(error)) => Err(failed(&name, &error)),
+        Err(error) => Err(failed(&name, &error)),
+    };
+    Event::ReportSaved { name, result }
+}
+
+fn failed(name: &ReportName, error: &(dyn std::error::Error + 'static)) -> ReportSaveFailure {
+    let described = describe_error(error);
+    tracing::error!("could not save the report {name}: {described}");
+    ReportSaveFailure::Failed(described)
 }
 
 /// Writes `text` as a new report named after `name`, under a name no report has.

@@ -2,7 +2,7 @@
 //! database then rolls back.
 
 use dbrover_core::DataSourceId;
-use dbrover_store::ConsoleKey;
+use dbrover_store::{ConsoleKey, ReportName};
 use egui::Id;
 
 use crate::dialog::{self, DialogSize};
@@ -13,6 +13,8 @@ use crate::icons;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Closing {
     Console(ConsoleKey),
+    /// A report's tab, which has no connection: only its unsaved text is asked about.
+    Report(ReportName),
     /// Disconnecting a data source closes its consoles' connections too.
     Disconnect(DataSourceId),
     Quit,
@@ -23,6 +25,7 @@ impl Closing {
     pub fn affects(&self, console: &ConsoleKey) -> bool {
         match self {
             Self::Console(key) => key == console,
+            Self::Report(_) => false,
             Self::Disconnect(data_source) => console.data_source == *data_source,
             Self::Quit => true,
         }
@@ -30,7 +33,7 @@ impl Closing {
 
     fn verb(&self) -> &'static str {
         match self {
-            Self::Console(_) => "close",
+            Self::Console(_) | Self::Report(_) => "close",
             Self::Disconnect(_) => "disconnect",
             Self::Quit => "quit",
         }

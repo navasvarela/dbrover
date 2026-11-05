@@ -67,6 +67,7 @@ mod screenshots;
 mod settings;
 mod settings_folder;
 mod settings_tab;
+mod split;
 mod sql_files;
 mod startup_failure;
 mod state;

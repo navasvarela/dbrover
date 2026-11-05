@@ -57,7 +57,7 @@ pub use projects::{
     InvalidSchemaScope, InvalidSlug, InvalidTimeout, McpOverrides, McpPermissions, Project,
     ProjectFile, ProjectSlug, ProjectStoreError, Projects, SchemaScope, StatementTimeout,
 };
-pub use reports::{ReportFiles, ReportName};
+pub use reports::{ReportFiles, ReportName, ReportSaveError};
 pub use secrets::{Secret, SecretError, SecretStore, os_keychain};
 pub use settings::{
     FormatSettings, HistorySettings, KeywordCase, LintSettings, ReportSettings, Settings,

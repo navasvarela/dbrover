@@ -5,10 +5,12 @@
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
 use crate::config_text::create_new;
+use crate::sql_files::{SqlFileContents, SqlFileError, modified, read_sql_file, write_sql_file};
 
 const EXTENSION: &str = "toml";
 
@@ -62,6 +64,18 @@ impl fmt::Display for ReportName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
+}
+
+/// Why [`ReportFiles::save`] didn't write a report.
+#[derive(Debug, thiserror::Error)]
+pub enum ReportSaveError {
+    /// Another program changed the file since it was read, so writing would undo its change.
+    #[error("the file changed on disk since it was read")]
+    ChangedOnDisk,
+    #[error("could not look at the file before writing it")]
+    Look(#[source] io::Error),
+    #[error(transparent)]
+    Write(#[from] SqlFileError),
 }
 
 /// The `reports/` folder.
@@ -124,6 +138,41 @@ impl ReportFiles {
     /// If the file can't be read.
     pub fn read(&self, name: &ReportName) -> io::Result<String> {
         std::fs::read_to_string(self.path(name))
+    }
+
+    /// The report's text, and when its file was last modified, to save over it later.
+    ///
+    /// # Errors
+    ///
+    /// If the file can't be read, or isn't UTF-8.
+    pub fn read_with_time(&self, name: &ReportName) -> Result<SqlFileContents, SqlFileError> {
+        read_sql_file(&self.path(name))
+    }
+
+    /// Writes `text` over the report `name` in one step, and returns the file's new
+    /// modification time. Refuses when the file was modified since `read_at`, the time it was
+    /// read, so a change another program made isn't undone unseen; writes the file again when
+    /// it is gone, and without the check where the file system keeps no times.
+    ///
+    /// # Errors
+    ///
+    /// [`ReportSaveError::ChangedOnDisk`], or why the file can't be looked at or written.
+    pub fn save(
+        &self,
+        name: &ReportName,
+        text: &str,
+        read_at: Option<SystemTime>,
+    ) -> Result<Option<SystemTime>, ReportSaveError> {
+        let path = self.path(name);
+        match modified(&path) {
+            Ok(now) if read_at.is_some() && now != read_at => {
+                return Err(ReportSaveError::ChangedOnDisk);
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(ReportSaveError::Look(error)),
+        }
+        Ok(write_sql_file(&path, text)?)
     }
 
     /// Writes `text` as a new report, under the first of `name`, `name-2`, `name-3`, … that
@@ -194,6 +243,38 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(files.read(&name("monthly-sales")).unwrap(), "sales");
         assert!(files.rename(&name("missing"), &name("other")).is_err());
+    }
+
+    #[test]
+    fn saves_over_a_report_unless_it_changed_since_it_was_read() {
+        let folder = tempfile::tempdir().unwrap();
+        let files = ReportFiles::new(folder.path().join("reports"));
+        let name = ReportName::new("sales").unwrap();
+        files.create(&name, "first").unwrap();
+        let read = files.read_with_time(&name).unwrap();
+
+        let saved = files.save(&name, "second", read.modified).unwrap();
+        assert_eq!(files.read(&name).unwrap(), "second");
+
+        // Another program writes it, at a later time than the save's.
+        std::fs::write(files.path(&name), "theirs").unwrap();
+        let later = saved.unwrap() + std::time::Duration::from_secs(5);
+        std::fs::File::options()
+            .write(true)
+            .open(files.path(&name))
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        let refused = files.save(&name, "mine", saved).unwrap_err();
+        assert!(
+            matches!(refused, ReportSaveError::ChangedOnDisk),
+            "{refused:?}"
+        );
+        assert_eq!(files.read(&name).unwrap(), "theirs");
+
+        std::fs::remove_file(files.path(&name)).unwrap();
+        files.save(&name, "again", saved).unwrap();
+        assert_eq!(files.read(&name).unwrap(), "again");
     }
 
     #[test]

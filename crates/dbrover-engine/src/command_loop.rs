@@ -428,6 +428,15 @@ impl Engine {
                     .send(config_files::create_custom(&self.custom_files, kind, text).await);
             }
             Command::ListReports(files) => self.events.send(report_files::list(files).await),
+            Command::SaveReport {
+                files,
+                name,
+                text,
+                read_at,
+            } => {
+                self.events
+                    .send(report_files::save(files, name, text, read_at).await);
+            }
             Command::CreateReport { files, name, text } => {
                 self.events
                     .send(report_files::create(files, name, text).await);

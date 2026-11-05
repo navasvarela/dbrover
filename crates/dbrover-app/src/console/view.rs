@@ -15,6 +15,7 @@ use crate::code_editor::{self, EditorView, Found, find_bar};
 use crate::icons::{self, Role};
 use crate::keymap::{Action, Keymap};
 use crate::picture::PictureFormat;
+use crate::split::VerticalSplit;
 use crate::theme::Palette;
 use crate::widgets::{self, IconButton};
 use dbrover_core::{CatalogPath, RelationName};
@@ -55,10 +56,6 @@ const EDITOR_ACTIONS: [Action; 18] = [
 
 /// Height the results start at; the user can drag the line above them.
 const RESULTS_HEIGHT: f32 = 280.0;
-/// The editor and the results each keep at least this share of the console's height, so
-/// neither can be dragged (or squeezed by a small window) out of reach.
-const MIN_SHARE: f32 = 0.2;
-const SPLITTER_HEIGHT: f32 = 6.0;
 /// The value panel's width when it first opens, beside the grid; dragging its edge changes it.
 const VALUE_PANEL_WIDTH: f32 = 320.0;
 
@@ -141,12 +138,13 @@ pub fn show(
     }
     let found = find.found;
     ui.separator();
-    let (editor_height, results_height) = split_heights(ui, console);
+    let split = split(console);
+    let (editor_height, results_height) = split.heights(ui);
     let width = ui.available_width();
     ui.allocate_ui(vec2(width, editor_height), |ui| {
         editor(ui, console, editor_id, &found, context, actions);
     });
-    splitter(ui, console);
+    split.splitter(ui);
     ui.allocate_ui(vec2(width, results_height), |ui| {
         if console.value_panel.is_open() {
             let id = Id::new(("value_panel", console.id.0));
@@ -166,43 +164,12 @@ pub fn show(
     );
 }
 
-/// The editor's and the results' heights, from the results height the user last dragged to.
-///
-/// Laid out by hand rather than with a resizable `egui::Panel`: a panel lays its contents out
-/// at full size even when the console is too short for it, and the editor below then covers
-/// (and takes the clicks of) the results' summary line.
-fn split_heights(ui: &Ui, console: &QueryConsole) -> (f32, f32) {
-    let total = (ui.available_height() - SPLITTER_HEIGHT).max(0.0);
-    let wanted = ui.data(|data| {
-        data.get_temp(results_height_id(console))
-            .unwrap_or(RESULTS_HEIGHT)
-    });
-    let results = wanted.clamp(total * MIN_SHARE, total * (1.0 - MIN_SHARE));
-    (total - results, results)
-}
-
-fn results_height_id(console: &QueryConsole) -> Id {
-    Id::new(("console_results_height", console.id.0))
-}
-
-/// The line between editor and results, dragged to resize them.
-fn splitter(ui: &mut Ui, console: &QueryConsole) {
-    let (rect, response) = ui.allocate_exact_size(
-        vec2(ui.available_width(), SPLITTER_HEIGHT),
-        egui::Sense::drag(),
-    );
-    let response = response.on_hover_cursor(egui::CursorIcon::ResizeVertical);
-    if response.dragged() {
-        let id = results_height_id(console);
-        let height = ui.data(|data| data.get_temp(id).unwrap_or(RESULTS_HEIGHT));
-        ui.data_mut(|data| data.insert_temp(id, height - response.drag_delta().y));
+/// The editor over the results, the results' height kept per console.
+fn split(console: &QueryConsole) -> VerticalSplit {
+    VerticalSplit {
+        id: Id::new(("console_results_height", console.id.0)),
+        bottom_height: RESULTS_HEIGHT,
     }
-    let stroke = if response.hovered() || response.dragged() {
-        ui.visuals().widgets.hovered.fg_stroke
-    } else {
-        ui.visuals().widgets.noninteractive.bg_stroke
-    };
-    ui.painter().hline(rect.x_range(), rect.center().y, stroke);
 }
 
 /// Shortcuts act only while this console's editor has focus, and are consumed before the
