@@ -476,7 +476,7 @@ impl From<DriverKind> for QueryLanguage {
             DriverKind::Elasticsearch => Self::Search,
             DriverKind::Cassandra => Self::Sql(Dialect::Cassandra),
             DriverKind::DynamoDb => Self::PartiQl,
-            DriverKind::Athena => Self::Sql(Dialect::Trino),
+            DriverKind::Athena | DriverKind::Trino => Self::Sql(Dialect::Trino),
         }
     }
 }
@@ -598,6 +598,7 @@ mod tests {
                 None,
                 Some(Dialect::Cassandra),
                 None,
+                Some(Dialect::Trino),
                 Some(Dialect::Trino),
             ]
         );

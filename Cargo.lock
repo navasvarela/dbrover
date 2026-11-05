@@ -2628,6 +2628,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "dbrover-driver-trino"
+version = "0.28.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "dbrover-core",
+ "dbrover-tls",
+ "form_urlencoded",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "rustls",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "dbrover-engine"
 version = "0.28.0"
 dependencies = [
@@ -2649,6 +2669,7 @@ dependencies = [
  "dbrover-driver-redis",
  "dbrover-driver-sqlite",
  "dbrover-driver-sqlserver",
+ "dbrover-driver-trino",
  "dbrover-export",
  "dbrover-language",
  "dbrover-picture",

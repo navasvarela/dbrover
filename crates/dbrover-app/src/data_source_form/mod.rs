@@ -10,6 +10,7 @@ mod mongo;
 mod server;
 mod service;
 mod ssh;
+mod trino;
 
 use dbrover_core::{
     ClickHouseConfig, CloudProvider, ConnectionConfig, DataSource, DataSourceId, DriverKind,
@@ -30,6 +31,7 @@ pub use server::{
     CloudFields, DatabaseField, ServerDefaults, ServerFields, TlsChoice, TlsOffer, UserField,
 };
 pub use ssh::{SshFields, SshLoginChoice};
+pub use trino::TrinoFields;
 
 const POSTGRES_DEFAULTS: ServerDefaults = ServerDefaults {
     host: "localhost",
@@ -200,6 +202,7 @@ pub enum DriverFields {
     Cassandra(CassandraFields),
     DynamoDb(DynamoDbFields),
     Athena(AthenaFields),
+    Trino(TrinoFields),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -295,6 +298,7 @@ impl DriverFields {
             DriverKind::Cassandra => Self::Cassandra(CassandraFields::new()),
             DriverKind::DynamoDb => Self::DynamoDb(DynamoDbFields::default()),
             DriverKind::Athena => Self::Athena(AthenaFields::default()),
+            DriverKind::Trino => Self::Trino(TrinoFields::new()),
         }
     }
 
@@ -361,6 +365,7 @@ impl DriverFields {
                 Self::DynamoDb(DynamoDbFields::from_config(config))
             }
             ConnectionConfig::Athena(config) => Self::Athena(AthenaFields::from_config(config)),
+            ConnectionConfig::Trino(config) => Self::Trino(TrinoFields::from_config(config)),
         }
     }
 
@@ -378,6 +383,7 @@ impl DriverFields {
             Self::Cassandra(_) => DriverKind::Cassandra,
             Self::DynamoDb(_) => DriverKind::DynamoDb,
             Self::Athena(_) => DriverKind::Athena,
+            Self::Trino(_) => DriverKind::Trino,
         }
     }
 
@@ -392,6 +398,7 @@ impl DriverFields {
             Self::Mongo(fields) => Some(&fields.server),
             Self::Elasticsearch(fields) => Some(&fields.server),
             Self::Cassandra(fields) => Some(&fields.server),
+            Self::Trino(fields) => Some(&fields.server),
             Self::Sqlite(_) | Self::DuckDb(_) | Self::DynamoDb(_) | Self::Athena(_) => None,
         }
     }
@@ -422,6 +429,7 @@ impl DriverFields {
             Self::Cassandra(fields) => ConnectionConfig::Cassandra(fields.to_config()?),
             Self::DynamoDb(fields) => ConnectionConfig::DynamoDb(fields.to_config()?),
             Self::Athena(fields) => ConnectionConfig::Athena(fields.to_config()?),
+            Self::Trino(fields) => ConnectionConfig::Trino(fields.to_config()?),
         })
     }
 }

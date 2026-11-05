@@ -27,6 +27,7 @@ dbrover-driver-postgres = { path = "crates/dbrover-driver-postgres" }
 dbrover-driver-redis = { path = "crates/dbrover-driver-redis" }
 dbrover-driver-sqlite = { path = "crates/dbrover-driver-sqlite" }
 dbrover-driver-sqlserver = { path = "crates/dbrover-driver-sqlserver" }
+dbrover-driver-trino = { path = "crates/dbrover-driver-trino" }
 dbrover-document = { path = "crates/dbrover-document" }
 dbrover-engine = { path = "crates/dbrover-engine" }
 dbrover-export = { path = "crates/dbrover-export" }

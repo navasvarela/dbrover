@@ -453,6 +453,13 @@ fn data_source_settings(data_source: &DataSource, names: &ProjectNames) -> Setti
                 settings.push(("Signs in with", "an API key".to_owned()));
             }
         }
+        ConnectionConfig::Trino(config) => {
+            server_settings(&config.server, &mut settings);
+            if !config.schema.is_empty() {
+                settings.push(("Schema", config.schema.clone()));
+            }
+            settings.push(("Protocol", config.protocol.product().to_owned()));
+        }
         ConnectionConfig::Cassandra(config) => {
             server_settings(&config.server, &mut settings);
             if !config.local_datacenter.is_empty() {
@@ -616,6 +623,7 @@ fn paths(config: &ConnectionConfig) -> Vec<(&'static str, &Path)> {
         ConnectionConfig::Mongo(config) => &config.server,
         ConnectionConfig::Elasticsearch(config) => &config.server,
         ConnectionConfig::Cassandra(config) => &config.server,
+        ConnectionConfig::Trino(config) => &config.server,
     };
     let ca_file = match &server.tls {
         TlsMode::VerifyFull {

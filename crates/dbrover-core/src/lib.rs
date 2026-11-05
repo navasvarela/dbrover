@@ -46,7 +46,7 @@ pub use data_source::{
     DataSourceId, DriverKind, DuckDbConfig, DuckDbDatabase, DynamoDbConfig, ElasticsearchAuth,
     ElasticsearchConfig, McpLogin, MongoConfig, MysqlConfig, Port, PostgresConfig, ProjectId,
     RedisConfig, Route, SafetyLevel, ServerConfig, SourceColor, SqlServerConfig, SqliteConfig,
-    SshConfig, SshLogin, TlsMode,
+    SshConfig, SshLogin, TlsMode, TrinoConfig, TrinoProtocol,
 };
 pub use error::{BoxError, DriverError, describe_error, position_at};
 pub use execution::{

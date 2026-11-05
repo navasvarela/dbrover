@@ -5,7 +5,7 @@ use std::path::Path;
 use dbrover_core::{
     AthenaConfig, AwsSignInKind, AzureTool, CloudProvider, DataSource, DataSourceId, DriverKind,
     DuckDbConfig, ElasticsearchAuth, ManagedService, MongoConfig, SafetyLevel, ScanGuard,
-    ServerInfo, SourceColor, StorageProvider, expand, expand_path, has_placeholder,
+    ServerInfo, SourceColor, StorageProvider, TrinoProtocol, expand, expand_path, has_placeholder,
 };
 use dbrover_engine::read_only::{self, Guard};
 use dbrover_engine::{DatabaseFile, Event, PasswordUpdate, ProcessEnvironment};
@@ -18,7 +18,7 @@ use crate::data_source_form::{
     AthenaFields, BucketFields, BucketSignIn, CassandraFields, CloudFields, DataSourceForm,
     DatabaseField, DriverFields, DuckDbFields, DuckDbLocation, DynamoDbFields, ElasticsearchFields,
     FormError, McpLoginFields, McpPasswordChange, MongoFields, MongoTarget, ServerFields,
-    SshFields, SshLoginChoice, TlsChoice,
+    SshFields, SshLoginChoice, TlsChoice, TrinoFields,
 };
 use crate::dialog::{self, DialogSize};
 use crate::file_picker::{self, FileEngine};
@@ -209,6 +209,7 @@ impl DataSourceDialog {
             DriverFields::ClickHouse(fields) => Some(&mut fields.server),
             DriverFields::Redis(fields) => Some(&mut fields.server),
             DriverFields::Cassandra(fields) => Some(&mut fields.server),
+            DriverFields::Trino(fields) => Some(&mut fields.server),
             DriverFields::Mongo(fields) => {
                 mongo_rows(ui, fields, password_hint);
                 None
@@ -243,6 +244,9 @@ impl DataSourceDialog {
         }
         if let DriverFields::Cassandra(fields) = &mut self.form.fields {
             cassandra_rows(ui, fields);
+        }
+        if let DriverFields::Trino(fields) = &mut self.form.fields {
+            trino_rows(ui, fields);
         }
         None
     }
@@ -579,6 +583,22 @@ fn dynamodb_rows(ui: &mut Ui, fields: &mut DynamoDbFields) {
             false => ScanGuard::Off,
         };
     }
+    ui.end_row();
+}
+
+/// Trino's own rows, after the shared server rows: the schema a console starts in, and the
+/// protocol's spelling.
+fn trino_rows(ui: &mut Ui, fields: &mut TrinoFields) {
+    text_row(ui, "Schema", &mut fields.schema, "none");
+    ui.label("Protocol");
+    ui.horizontal(|ui| {
+        for protocol in TrinoProtocol::ALL {
+            ui.radio_value(&mut fields.protocol, protocol, protocol.product());
+        }
+    });
+    ui.end_row();
+    ui.label("");
+    ui.weak("Trino and Starburst take Trino's headers; Presto takes its own.");
     ui.end_row();
 }
 

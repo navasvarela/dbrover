@@ -357,6 +357,9 @@ async fn connect(
         }
         // The same for Athena: its API is AWS's, reached directly.
         ConnectionConfig::Athena(config) => Box::new(dbrover_driver_athena::connect(config).await?),
+        ConnectionConfig::Trino(config) => {
+            Box::new(dbrover_driver_trino::connect(config, password, route).await?)
+        }
     })
 }
 

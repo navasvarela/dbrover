@@ -26,6 +26,7 @@ dbrover-driver-mysql.workspace = true
 dbrover-driver-postgres.workspace = true
 dbrover-driver-sqlite.workspace = true
 dbrover-driver-sqlserver.workspace = true
+dbrover-driver-trino.workspace = true
 dbrover-export.workspace = true
 dbrover-language.workspace = true
 dbrover-report.workspace = true

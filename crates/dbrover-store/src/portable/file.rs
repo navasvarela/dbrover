@@ -15,7 +15,8 @@ use dbrover_core::{
     DataSourceId, DuckDbConfig, DuckDbDatabase, DynamoDbConfig, ElasticsearchAuth,
     ElasticsearchConfig, GcsBucket, GcsSignIn, McpLogin, MongoConfig, MysqlConfig, ObjectStorage,
     PasswordCommand, Port, PostgresConfig, ProjectId, RedisConfig, SafetyLevel, ServerConfig,
-    SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode,
+    SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode, TrinoConfig,
+    TrinoProtocol,
 };
 use serde::{Deserialize, Serialize};
 
@@ -173,6 +174,7 @@ enum PortableConfig {
     DynamoDb(DynamoDbConfig),
     /// As DynamoDB's: no secret or path in it.
     Athena(AthenaConfig),
+    Trino(PortableTrino),
 }
 
 impl PortableConfig {
@@ -224,6 +226,15 @@ impl PortableConfig {
             }),
             ConnectionConfig::DynamoDb(config) => Self::DynamoDb(config.clone()),
             ConnectionConfig::Athena(config) => Self::Athena(config.clone()),
+            ConnectionConfig::Trino(TrinoConfig {
+                server,
+                schema,
+                protocol,
+            }) => Self::Trino(PortableTrino {
+                server: PortableServer::export(server, path),
+                schema: schema.clone(),
+                protocol: *protocol,
+            }),
             ConnectionConfig::Sqlite(SqliteConfig {
                 path: file,
                 read_only,
@@ -301,6 +312,15 @@ impl PortableConfig {
             }),
             Self::DynamoDb(config) => ConnectionConfig::DynamoDb(config),
             Self::Athena(config) => ConnectionConfig::Athena(config),
+            Self::Trino(PortableTrino {
+                server,
+                schema,
+                protocol,
+            }) => ConnectionConfig::Trino(TrinoConfig {
+                server: server.import(path),
+                schema,
+                protocol,
+            }),
             Self::Sqlite(PortableSqlite {
                 path: file,
                 read_only,
@@ -375,6 +395,18 @@ struct PortableCassandra {
     local_datacenter: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     statement_timeout: Option<NonZeroU32>,
+}
+
+/// A Trino, Starburst or Presto coordinator, with the schema and the protocol's spelling
+/// written only when set.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PortableTrino {
+    #[serde(flatten)]
+    server: PortableServer,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    schema: String,
+    #[serde(default, skip_serializing_if = "TrinoProtocol::is_trino")]
+    protocol: TrinoProtocol,
 }
 
 fn default_separator() -> String {
