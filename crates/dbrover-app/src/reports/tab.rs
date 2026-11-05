@@ -16,7 +16,7 @@ use egui::{CollapsingHeader, Grid, Id, RichText, ScrollArea, TextEdit, Ui, vec2}
 use super::highlight::ReportHighlighter;
 use super::problems::{TextProblem, quiet_hint};
 use super::{
-    CheckInputs, ReportAction, ReportFile, Reports, RunEnd, RunPanel, RunRecord, SaveError,
+    CheckInputs, OnDisk, ReportAction, ReportFile, Reports, RunEnd, RunPanel, RunRecord, SaveError,
     StepRecord, StepState, runs_table,
 };
 use crate::code_editor::highlight::Marks;
@@ -67,6 +67,14 @@ const EDITOR_ACTIONS: [Action; 9] = [
 struct After {
     go_to: Option<usize>,
     quiet: Option<HintId>,
+    /// **Reload** or **Keep mine**, after the file changed on disk under unsaved text.
+    disk_choice: Option<DiskChoice>,
+}
+
+#[derive(Clone, Copy)]
+enum DiskChoice {
+    Reload,
+    KeepMine,
 }
 
 /// How the text stands, as the toolbar's chip says it.
@@ -91,6 +99,7 @@ struct Seen {
     unsaved: bool,
     saving: bool,
     save_error: Option<SaveError>,
+    disk: OnDisk,
     format_note: Option<String>,
     folder: Option<PathBuf>,
     running_here: bool,
@@ -140,6 +149,7 @@ pub fn show(
     if let Some(note) = &seen.format_note {
         widgets::status(ui, icons::MAGIC_WAND, palette.text_weak, note);
     }
+    disk_bar(ui, &palette, &seen, &mut after);
     save_problem(ui, &palette, &seen, name, actions);
     ui.separator();
     let split = VerticalSplit {
@@ -167,6 +177,11 @@ pub fn show(
         {
             file.editor.replace_keeping_cursor(text);
         }
+        match after.disk_choice {
+            Some(DiskChoice::Reload) => file.reload(),
+            Some(DiskChoice::KeepMine) => file.keep_mine(),
+            None => {}
+        }
     }
 }
 
@@ -177,14 +192,12 @@ fn see(
     name: &ReportName,
     view: &ReportView<'_>,
 ) -> Option<Seen> {
-    let listed = reports.find(name)?;
-    let title = listed.title().to_owned();
+    // A tab whose file left the reports folder keeps its text, under the file's name.
+    let listed = reports.find(name);
+    let title = listed.map_or_else(|| name.to_string(), |listed| listed.title().to_owned());
     let description = listed
-        .read
-        .as_ref()
-        .ok()
+        .and_then(|listed| listed.read.as_ref().ok())
         .and_then(|report| report.description.clone());
-    let path = listed.path.clone();
     let folder = reports.output_folder(name);
     let running = reports.running().cloned();
     let progress = reports
@@ -212,6 +225,8 @@ fn see(
         runs: &runs,
     };
     let file = reports.file_mut(name)?;
+    let path = file.path().to_owned();
+    let disk = file.disk.clone();
     let (checked, wait) = file.check(&inputs, std::time::Instant::now());
     if let Some(wait) = wait {
         crate::repaint::request_repaint_after_pause(ctx, wait);
@@ -224,6 +239,7 @@ fn see(
         title,
         description,
         path,
+        disk,
         plan_is_stale,
         plan,
         problems,
@@ -355,7 +371,12 @@ fn toolbar(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             more_menu(ui, reports, name, seen, actions);
             run_button(ui, seen, &ready, keymap, name, actions);
-            let save = ui.add_enabled(seen.unsaved && !seen.saving, egui::Button::new("Save"));
+            let can_save = match seen.disk {
+                OnDisk::Unchanged => seen.unsaved,
+                OnDisk::Changed { .. } => false,
+                OnDisk::Deleted => true,
+            };
+            let save = ui.add_enabled(can_save && !seen.saving, egui::Button::new("Save"));
             let format = ui.button("Format").on_hover_text(hint(
                 ui,
                 keymap,
@@ -480,6 +501,13 @@ fn can_run(reports: &Reports, name: &ReportName, seen: &Seen) -> Result<(), Stri
     if seen.saving {
         return Err("Its file is being saved.".to_owned());
     }
+    match seen.disk {
+        OnDisk::Unchanged => {}
+        OnDisk::Changed { .. } => {
+            return Err("Its file changed on disk: Reload or Keep mine first.".to_owned());
+        }
+        OnDisk::Deleted => return Err("Its file was deleted: Save writes it again.".to_owned()),
+    }
     let Some(plan) = seen.plan.as_ref().filter(|_| !seen.plan_is_stale) else {
         return Err("Its file has problems to fix first.".to_owned());
     };
@@ -561,6 +589,52 @@ fn more_menu(
             reports.state_mut(name).file_hidden = !hidden;
         }
     });
+}
+
+/// What another program did to the file, while that matters: changed under unsaved text
+/// (which to keep?), or deleted (Save writes it again). W6's bar for a console's file.
+fn disk_bar(ui: &mut Ui, palette: &Palette, seen: &Seen, after: &mut After) {
+    let file = seen.path.file_name().map_or_else(
+        || seen.title.clone(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    match &seen.disk {
+        OnDisk::Unchanged => {}
+        OnDisk::Changed { .. } => {
+            ui.horizontal_wrapped(|ui| {
+                let text = format!("{file} changed on disk, and you have unsaved changes");
+                ui.label(widgets::icon_text(
+                    ui,
+                    icons::WARNING,
+                    palette.warning,
+                    &text,
+                ));
+                if ui
+                    .button("Reload")
+                    .on_hover_text("Show what the file holds now, dropping your changes")
+                    .clicked()
+                {
+                    after.disk_choice = Some(DiskChoice::Reload);
+                }
+                if ui
+                    .button("Keep mine")
+                    .on_hover_text("Keep your text; saving it replaces the file")
+                    .clicked()
+                {
+                    after.disk_choice = Some(DiskChoice::KeepMine);
+                }
+            });
+        }
+        OnDisk::Deleted => {
+            let text = format!("{file} was deleted from the reports folder; Save writes it again");
+            ui.label(widgets::icon_text(
+                ui,
+                icons::WARNING,
+                palette.warning,
+                &text,
+            ));
+        }
+    }
 }
 
 /// Why the last save failed, until one succeeds.

@@ -858,30 +858,21 @@ fn edits_the_file_in_its_tab_then_saves_and_runs_it() {
 }
 
 #[test]
-fn a_save_never_replaces_a_change_made_on_disk_unasked() {
+fn keep_mine_then_save_replaces_a_change_made_on_disk() {
     let dir = tempfile::tempdir().unwrap();
     let mut harness = start_with_reports(dir.path(), TRIAL_BALANCE, StandIn::new(Vec::new()));
     open_and_fill(&mut harness, "2026-10-01");
     type_in_file(&mut harness, "# Mine.\n");
 
-    let file = dir.path().join("reports/trial-balance.toml");
     let theirs = TRIAL_BALANCE.replace("Debits and credits", "Credits and debits");
-    std::fs::write(&file, &theirs).unwrap();
-    let later = std::time::SystemTime::now() + Duration::from_secs(5);
-    std::fs::File::options()
-        .write(true)
-        .open(&file)
-        .unwrap()
-        .set_modified(later)
-        .unwrap();
-    harness.get_by_label("Save").click();
-    step_until_visible(
-        &mut harness,
-        "The file changed on disk since it was read, so it wasn't saved.",
-    );
+    change_on_disk(dir.path(), &theirs);
+    step_until_visible(&mut harness, "Keep mine");
+    let file = dir.path().join("reports/trial-balance.toml");
     assert_eq!(std::fs::read_to_string(&file).unwrap(), theirs);
 
-    harness.get_by_label("Save over it").click();
+    harness.get_by_label("Keep mine").click();
+    harness.run();
+    harness.get_by_label("Save").click();
     step_until(&mut harness, "the file saved over", |_| {
         std::fs::read_to_string(&file).is_ok_and(|text| text.contains("# Mine."))
     });
@@ -930,6 +921,75 @@ fn format_lays_out_the_file_and_its_sql_as_one_unsaved_change() {
     assert!(text.contains("query = \"\"\"\nSELECT\n"), "{text}");
     let saved = std::fs::read_to_string(dir.path().join("reports/trial-balance.toml")).unwrap();
     assert_eq!(saved, TRIAL_BALANCE, "nothing is written until saved");
+}
+
+/// Writes `text` to the report's file as another program would, with a later modification
+/// time than the tab read.
+fn change_on_disk(dir: &Path, text: &str) {
+    let file = dir.join("reports/trial-balance.toml");
+    std::fs::write(&file, text).unwrap();
+    let later = std::time::SystemTime::now() + Duration::from_secs(5);
+    std::fs::File::options()
+        .write(true)
+        .open(&file)
+        .unwrap()
+        .set_modified(later)
+        .unwrap();
+}
+
+fn file_text(harness: &Harness<'_, DbRoverApp>) -> String {
+    harness
+        .get_by_role(Role::MultilineTextInput)
+        .accesskit_node()
+        .value()
+        .unwrap_or_default()
+}
+
+#[test]
+fn a_tab_with_nothing_unsaved_follows_its_file_on_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut harness = start_with_reports(dir.path(), TRIAL_BALANCE, StandIn::new(Vec::new()));
+    open_and_fill(&mut harness, "2026-10-01");
+
+    change_on_disk(
+        dir.path(),
+        &TRIAL_BALANCE.replace("Debits and credits", "Credits and debits"),
+    );
+    step_until(&mut harness, "the file's change shown", |harness| {
+        file_text(harness).contains("Credits and debits")
+    });
+    assert!(
+        harness.query_by_label("Save and run").is_none(),
+        "nothing unsaved"
+    );
+}
+
+#[test]
+fn unsaved_text_asks_before_the_file_on_disk_replaces_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut harness = start_with_reports(dir.path(), TRIAL_BALANCE, StandIn::new(Vec::new()));
+    open_and_fill(&mut harness, "2026-10-01");
+    type_in_file(&mut harness, "# Mine.\n");
+
+    change_on_disk(
+        dir.path(),
+        &TRIAL_BALANCE.replace("Debits and credits", "Credits and debits"),
+    );
+    step_until_visible(
+        &mut harness,
+        "trial-balance.toml changed on disk, and you have unsaved changes",
+    );
+    assert!(
+        file_text(&harness).contains("# Mine."),
+        "nothing replaced unasked"
+    );
+    assert!(harness.get_by_label("Save").accesskit_node().is_disabled());
+
+    harness.get_by_label("Reload").click();
+    step_until(&mut harness, "the file's text shown", |harness| {
+        file_text(harness).contains("Credits and debits")
+    });
+    assert!(!file_text(&harness).contains("# Mine."));
 }
 
 #[test]

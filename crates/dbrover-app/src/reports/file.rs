@@ -3,14 +3,15 @@
 //! as typed.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use dbrover_core::DataSource;
-use dbrover_engine::{Command, ReportSaveFailure};
+use dbrover_engine::{Command, ReportSaveFailure, WatchedFile};
 use dbrover_export::CustomFormat;
 use dbrover_report::{LimitDefaults, Plan, ReportProblem, format_report, plan_text};
 use dbrover_sql::FormatOptions;
-use dbrover_store::{ReportFiles, ReportName, ReportRun};
+use dbrover_store::{ReportFiles, ReportName, ReportRun, SqlFileContents};
 
 use super::problems::{ProblemInputs, TextProblem, text_problems};
 use crate::code_editor::CodeEditor;
@@ -24,6 +25,9 @@ const DEBOUNCE: Duration = Duration::from_millis(300);
 #[derive(Debug)]
 pub struct ReportFile {
     pub editor: CodeEditor,
+    path: PathBuf,
+    /// What another program did to the file, while it matters.
+    pub disk: OnDisk,
     /// What the file holds, as last read or written. The text is unsaved while it differs, so
     /// undoing back to it counts as saved.
     saved_text: String,
@@ -45,6 +49,20 @@ pub struct ReportFile {
     /// What the last **Format** left as written, or why it formatted nothing, with the text it
     /// is about: shown until the text changes.
     format_note: Option<(String, String)>,
+}
+
+/// What another program did to a report's file since its tab last read or wrote it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OnDisk {
+    Unchanged,
+    /// Changed while the tab had unsaved text: what the file holds now, until the user picks
+    /// **Reload** or **Keep mine**.
+    Changed {
+        text: String,
+        modified: Option<SystemTime>,
+    },
+    /// Gone from the reports folder; **Save** writes it again.
+    Deleted,
 }
 
 /// Why a save failed.
@@ -84,10 +102,12 @@ pub struct Checked {
 }
 
 impl ReportFile {
-    /// A file just read: `text`, modified at `modified`.
-    pub fn new(text: String, modified: Option<SystemTime>) -> Self {
+    /// The file at `path`, just read: `text`, modified at `modified`.
+    pub fn new(path: PathBuf, text: String, modified: Option<SystemTime>) -> Self {
         Self {
             editor: CodeEditor::new(text.clone()),
+            path,
+            disk: OnDisk::Unchanged,
             saved_text: text,
             read_at: modified,
             saving: None,
@@ -97,6 +117,69 @@ impl ReportFile {
             changed: None,
             last_plan: None,
             format_note: None,
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The file to look at for changes, and when it was last seen modified: none once it is
+    /// gone, so its coming back is noticed.
+    pub fn watched(&self) -> WatchedFile {
+        let modified = match &self.disk {
+            OnDisk::Unchanged => self.read_at,
+            OnDisk::Changed { modified, .. } => *modified,
+            OnDisk::Deleted => None,
+        };
+        WatchedFile {
+            path: self.path.clone(),
+            modified,
+        }
+    }
+
+    /// Takes in what the file holds after another program changed it, or `None` if it is
+    /// gone. A tab with nothing unsaved shows the new text as one undo step; one with unsaved
+    /// text asks which to keep.
+    pub fn changed_on_disk(&mut self, contents: Option<&SqlFileContents>) {
+        let Some(contents) = contents else {
+            self.disk = OnDisk::Deleted;
+            return;
+        };
+        if contents.text == self.saved_text {
+            self.read_at = contents.modified;
+            self.disk = OnDisk::Unchanged;
+        } else if !self.is_unsaved() && self.saving.is_none() {
+            self.read_at = contents.modified;
+            contents.text.clone_into(&mut self.saved_text);
+            self.editor.replace_keeping_cursor(contents.text.clone());
+            self.disk = OnDisk::Unchanged;
+        } else {
+            self.disk = OnDisk::Changed {
+                text: contents.text.clone(),
+                modified: contents.modified,
+            };
+        }
+    }
+
+    /// **Reload**: the file's text in place of the unsaved one, as one undo step.
+    pub fn reload(&mut self) {
+        let OnDisk::Changed { text, modified } =
+            std::mem::replace(&mut self.disk, OnDisk::Unchanged)
+        else {
+            return;
+        };
+        self.read_at = modified;
+        self.saved_text.clone_from(&text);
+        self.editor.replace_keeping_cursor(text);
+    }
+
+    /// **Keep mine**: the unsaved text stays, and the next save replaces the file.
+    pub fn keep_mine(&mut self) {
+        if let OnDisk::Changed { modified, .. } =
+            std::mem::replace(&mut self.disk, OnDisk::Unchanged)
+        {
+            self.read_at = modified;
         }
     }
 
@@ -110,8 +193,10 @@ impl ReportFile {
 
     /// The save to send for the text as it is, unless one is in flight. After the file
     /// changed on disk, it saves over the change: the user saw it, and saved again.
+    /// While the file changed on disk under unsaved text, the save waits for **Reload** or
+    /// **Keep mine**.
     pub fn save(&mut self, files: &ReportFiles, name: &ReportName) -> Option<Command> {
-        if self.saving.is_some() {
+        if self.saving.is_some() || matches!(self.disk, OnDisk::Changed { .. }) {
             return None;
         }
         let read_at = match self.save_error {
@@ -145,6 +230,7 @@ impl ReportFile {
                 self.saved_text.clone_from(&text);
                 self.read_at = *modified;
                 self.save_error = None;
+                self.disk = OnDisk::Unchanged;
                 Saved::Written { text, then_run }
             }
             Err(ReportSaveFailure::ChangedOnDisk) => {
@@ -290,7 +376,11 @@ mod tests {
     #[test]
     fn saves_and_counts_undo_back_to_the_file_as_saved() {
         let files = ReportFiles::new("/tmp/reports");
-        let mut file = ReportFile::new("a".to_owned(), None);
+        let mut file = ReportFile::new(
+            PathBuf::from("/tmp/reports/sales.toml"),
+            "a".to_owned(),
+            None,
+        );
         assert!(!file.is_unsaved());
         file.editor.text.push('b');
         assert!(file.is_unsaved());
@@ -316,7 +406,11 @@ mod tests {
     fn runs_after_saving_and_saves_over_a_change_once_told_of_it() {
         let files = ReportFiles::new("/tmp/reports");
         let read_at = Some(SystemTime::UNIX_EPOCH);
-        let mut file = ReportFile::new("a".to_owned(), read_at);
+        let mut file = ReportFile::new(
+            PathBuf::from("/tmp/reports/sales.toml"),
+            "a".to_owned(),
+            read_at,
+        );
         file.editor.text.push('b');
 
         let save = file.save_and_run(&files, &name());
@@ -345,6 +439,61 @@ mod tests {
     }
 
     #[test]
+    fn follows_the_file_on_disk_and_asks_when_text_is_unsaved() {
+        let changed = |text: &str, second: u64| SqlFileContents {
+            text: text.to_owned(),
+            modified: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(second)),
+        };
+        let files = ReportFiles::new("/tmp/reports");
+        let mut file = ReportFile::new(
+            PathBuf::from("/tmp/reports/sales.toml"),
+            "a".to_owned(),
+            None,
+        );
+
+        file.changed_on_disk(Some(&changed("theirs", 1)));
+        assert_eq!(file.editor.text, "theirs", "nothing unsaved: shown");
+        assert_eq!(file.disk, OnDisk::Unchanged);
+
+        file.editor.text.push_str(" and mine");
+        file.changed_on_disk(Some(&changed("theirs again", 2)));
+        assert!(matches!(file.disk, OnDisk::Changed { .. }));
+        assert_eq!(file.editor.text, "theirs and mine");
+        assert!(
+            file.save(&files, &name()).is_none(),
+            "the save waits for a choice"
+        );
+        assert_eq!(
+            file.watched().modified,
+            Some(SystemTime::UNIX_EPOCH + Duration::from_secs(2))
+        );
+
+        file.keep_mine();
+        assert!(
+            matches!(
+                file.save(&files, &name()),
+                Some(Command::SaveReport {
+                    read_at: Some(_),
+                    ..
+                })
+            ),
+            "the save replaces the file, checked against the change it was told of"
+        );
+        file.saved(&Ok(None));
+
+        file.editor.text.push('!');
+        file.changed_on_disk(Some(&changed("theirs once more", 3)));
+        file.reload();
+        assert_eq!(file.editor.text, "theirs once more");
+        assert!(!file.is_unsaved());
+
+        file.changed_on_disk(None);
+        assert_eq!(file.disk, OnDisk::Deleted);
+        assert_eq!(file.watched().modified, None);
+        assert!(file.save(&files, &name()).is_some(), "Save writes it again");
+    }
+
+    #[test]
     fn checks_again_once_typing_pauses() {
         let lint = LintOptions::default();
         let defaults = LimitDefaults::default();
@@ -356,7 +505,11 @@ mod tests {
             runs: &[],
         };
         let start = Instant::now();
-        let mut file = ReportFile::new("[report]\nname = \"R\"\n".to_owned(), None);
+        let mut file = ReportFile::new(
+            PathBuf::from("/tmp/reports/r.toml"),
+            "[report]\nname = \"R\"\n".to_owned(),
+            None,
+        );
         let (first, wait) = file.check(&inputs, start);
         let first_problems = first.problems.len();
         assert_eq!(wait, None, "the first check is at once");
@@ -379,7 +532,11 @@ mod tests {
 
     #[test]
     fn shows_the_file_read_again_only_when_nothing_typed_is_lost() {
-        let mut file = ReportFile::new("a".to_owned(), None);
+        let mut file = ReportFile::new(
+            PathBuf::from("/tmp/reports/sales.toml"),
+            "a".to_owned(),
+            None,
+        );
         file.read_again("theirs", None);
         assert_eq!(file.editor.text, "theirs");
         assert!(!file.is_unsaved());

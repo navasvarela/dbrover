@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use dbrover_core::DataSource;
-use dbrover_engine::{Command, Event, ReportSaveFailure, ReportText};
+use dbrover_engine::{Command, Event, ReportSaveFailure, ReportText, WatchedFile};
 use dbrover_export::CustomFormat;
 use dbrover_report::{
     Batch, CombineLimits, LimitDefaults, LoadedColumn, OutputLimits, Plan, Preview, Report,
@@ -36,7 +36,7 @@ use dbrover_store::{
 };
 use jiff::Timestamp;
 
-pub use file::{CheckInputs, ReportFile, SaveError, Saved};
+pub use file::{CheckInputs, OnDisk, ReportFile, SaveError, Saved};
 pub use launcher::{PARENT_ENV, ProcessLauncher, ReportLauncher, RunningReport};
 pub use rename_dialog::{RenameAction, RenameReportDialog};
 pub use tab::{ReportView, show};
@@ -640,6 +640,18 @@ impl Reports {
                 Applied::default()
             }
             Event::ReportSaved { name, result } => self.saved(name, result),
+            Event::SqlFileChanged { path, contents } => {
+                for file in self
+                    .states
+                    .values_mut()
+                    .filter_map(|state| state.file.as_mut())
+                {
+                    if file.path() == path {
+                        file.changed_on_disk(contents.as_ref());
+                    }
+                }
+                Applied::default()
+            }
             _ => Applied::default(),
         }
     }
@@ -687,10 +699,10 @@ impl Reports {
 
     /// The file `name`'s tab edits, read from the listing the first time it is asked for.
     pub fn file_mut(&mut self, name: &ReportName) -> Option<&mut ReportFile> {
-        let read = self
-            .find(name)
-            .and_then(|listed| listed.text.clone())
-            .map(|(text, modified)| ReportFile::new(text, modified));
+        let read = self.find(name).and_then(|listed| {
+            let (text, modified) = listed.text.clone()?;
+            Some(ReportFile::new(listed.path.clone(), text, modified))
+        });
         let state = self.state_mut(name);
         if state.file.is_none() {
             state.file = read;
@@ -720,6 +732,15 @@ impl Reports {
         if let Some(file) = self.file_mut(name) {
             file.format(data_sources, options);
         }
+    }
+
+    /// The open tabs' files, to look at for changes other programs made.
+    pub fn watched_files(&self) -> Vec<WatchedFile> {
+        self.states
+            .values()
+            .filter_map(|state| state.file.as_ref())
+            .map(ReportFile::watched)
+            .collect()
     }
 
     /// Whether `name`'s tab has text its file doesn't.
