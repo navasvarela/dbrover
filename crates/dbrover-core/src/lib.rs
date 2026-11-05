@@ -42,8 +42,8 @@ pub use command_template::{CommandTemplate, DataSourceFields};
 pub use connection::{Connection, Rejection, RejectionKind, ServerInfo};
 pub use cost::{ByteCount, CostEstimate, CostGuard, FullScan, ReadPace, ScanGuard};
 pub use data_source::{
-    CassandraConfig, ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind,
-    DuckDbConfig, DuckDbDatabase, DynamoDbConfig, DynamoDbSignIn, ElasticsearchAuth,
+    AwsSignInKind, CassandraConfig, ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId,
+    DriverKind, DuckDbConfig, DuckDbDatabase, DynamoDbConfig, ElasticsearchAuth,
     ElasticsearchConfig, McpLogin, MongoConfig, MysqlConfig, Port, PostgresConfig, ProjectId,
     RedisConfig, Route, SafetyLevel, ServerConfig, SourceColor, SqlServerConfig, SqliteConfig,
     SshConfig, SshLogin, TlsMode,

@@ -477,10 +477,10 @@ fn data_source_settings(data_source: &DataSource, names: &ProjectNames) -> Setti
                 setting => setting.to_owned(),
             };
             let signs_in = match config.sign_in {
-                dbrover_core::DynamoDbSignIn::Profile => {
+                dbrover_core::AwsSignInKind::Profile => {
                     or_default(&config.profile, "AWS's default chain")
                 }
-                dbrover_core::DynamoDbSignIn::LocalEmulator => "a local emulator".to_owned(),
+                dbrover_core::AwsSignInKind::LocalEmulator => "a local emulator".to_owned(),
             };
             settings.push(("Signs in as", signs_in));
             settings.push(("Region", or_default(&config.region, "the profile's")));

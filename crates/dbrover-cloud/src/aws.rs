@@ -14,7 +14,7 @@ use aws_credential_types::provider::ProvideCredentials;
 use aws_credential_types::provider::error::CredentialsError;
 use aws_runtime::env_config::file::EnvConfigFiles;
 use aws_smithy_http_client::tls::{self, rustls_provider::CryptoMode};
-use dbrover_core::Password;
+use dbrover_core::{AwsSignInKind, Password};
 
 pub use aws_config::SdkConfig;
 
@@ -96,6 +96,22 @@ pub enum AwsError {
 }
 
 impl AwsSignIn {
+    /// The sign-in a data source's AWS settings name, as `data_sources.toml` keeps them: an
+    /// empty profile is AWS's default chain, and an empty region or endpoint is none.
+    pub fn from_settings(kind: AwsSignInKind, profile: &str, region: &str, endpoint: &str) -> Self {
+        let credentials = match (kind, profile) {
+            (AwsSignInKind::LocalEmulator, _) => AwsCredentials::LocalEmulator,
+            (AwsSignInKind::Profile, "") => AwsCredentials::DefaultChain,
+            (AwsSignInKind::Profile, profile) => AwsCredentials::Profile(profile.to_owned()),
+        };
+        let optional = |setting: &str| (!setting.is_empty()).then(|| setting.to_owned());
+        Self {
+            credentials,
+            region: optional(region),
+            endpoint: optional(endpoint),
+        }
+    }
+
     /// The SDK's configuration for this sign-in, with credentials checked: a missing profile or
     /// an expired IAM Identity Center session is an error here rather than on the first call.
     ///

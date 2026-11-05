@@ -6,7 +6,7 @@ use aws_sdk_dynamodb::types::{
     AttributeDefinition, AttributeValue, BillingMode, KeySchemaElement, KeyType, PutRequest,
     ScalarAttributeType, WriteRequest,
 };
-use dbrover_core::{NodeKind, ResultShape, Row, conformance, describe_error};
+use dbrover_core::{AwsSignInKind, NodeKind, ResultShape, Row, conformance, describe_error};
 use dbrover_document::Value;
 
 use super::*;
@@ -27,7 +27,7 @@ fn test_config() -> Option<DynamoDbConfig> {
 
 fn emulator(endpoint: &str) -> DynamoDbConfig {
     DynamoDbConfig {
-        sign_in: DynamoDbSignIn::LocalEmulator,
+        sign_in: AwsSignInKind::LocalEmulator,
         profile: String::new(),
         region: String::new(),
         endpoint: endpoint.to_owned(),

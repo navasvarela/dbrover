@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use dbrover_core::{
-    AzureTool, CloudProvider, DataSource, DataSourceId, DriverKind, DuckDbConfig, DynamoDbSignIn,
+    AwsSignInKind, AzureTool, CloudProvider, DataSource, DataSourceId, DriverKind, DuckDbConfig,
     ElasticsearchAuth, ManagedService, MongoConfig, SafetyLevel, ScanGuard, ServerInfo,
     SourceColor, StorageProvider, expand, expand_path, has_placeholder,
 };
@@ -518,16 +518,16 @@ fn cassandra_rows(ui: &mut Ui, fields: &mut CassandraFields) {
 fn dynamodb_rows(ui: &mut Ui, fields: &mut DynamoDbFields) {
     ui.label("Sign in with");
     ui.horizontal(|ui| {
-        ui.radio_value(&mut fields.sign_in, DynamoDbSignIn::Profile, "AWS profile");
+        ui.radio_value(&mut fields.sign_in, AwsSignInKind::Profile, "AWS profile");
         ui.radio_value(
             &mut fields.sign_in,
-            DynamoDbSignIn::LocalEmulator,
+            AwsSignInKind::LocalEmulator,
             "Local emulator",
         );
     });
     ui.end_row();
     match fields.sign_in {
-        DynamoDbSignIn::Profile => {
+        AwsSignInKind::Profile => {
             setting_row(ui, "Profile", &mut fields.profile, "default", Resolve::Text);
             ui.label("");
             ui.weak("From your AWS config and credentials files; DbRover keeps only its name.");
@@ -547,7 +547,7 @@ fn dynamodb_rows(ui: &mut Ui, fields: &mut DynamoDbFields) {
                 Resolve::Text,
             );
         }
-        DynamoDbSignIn::LocalEmulator => {
+        AwsSignInKind::LocalEmulator => {
             setting_row(
                 ui,
                 "Endpoint",

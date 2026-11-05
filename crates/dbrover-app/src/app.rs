@@ -3842,7 +3842,7 @@ mod tests {
         assert_eq!(
             saved.config,
             dbrover_core::ConnectionConfig::DynamoDb(dbrover_core::DynamoDbConfig {
-                sign_in: dbrover_core::DynamoDbSignIn::LocalEmulator,
+                sign_in: dbrover_core::AwsSignInKind::LocalEmulator,
                 profile: String::new(),
                 region: String::new(),
                 endpoint: "http://localhost:58000".to_owned(),

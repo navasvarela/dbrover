@@ -972,8 +972,8 @@ impl CassandraConfig {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DynamoDbConfig {
     /// Written only for an emulator.
-    #[serde(default, skip_serializing_if = "DynamoDbSignIn::is_profile")]
-    pub sign_in: DynamoDbSignIn,
+    #[serde(default, skip_serializing_if = "AwsSignInKind::is_profile")]
+    pub sign_in: AwsSignInKind,
     /// The profile of the shared AWS files to sign in with; empty for the default chain's.
     /// Unused by an emulator.
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -1020,33 +1020,34 @@ impl fmt::Display for DynamoDbConfig {
             region => region,
         };
         match (self.sign_in, self.endpoint.as_str(), self.profile.as_str()) {
-            (DynamoDbSignIn::LocalEmulator, endpoint, _) => {
+            (AwsSignInKind::LocalEmulator, endpoint, _) => {
                 write!(f, "{endpoint} (local emulator, {region})")
             }
-            (DynamoDbSignIn::Profile, "", "") => write!(f, "DynamoDB in {region}"),
-            (DynamoDbSignIn::Profile, "", profile) => {
+            (AwsSignInKind::Profile, "", "") => write!(f, "DynamoDB in {region}"),
+            (AwsSignInKind::Profile, "", profile) => {
                 write!(f, "DynamoDB in {region} as profile {profile}")
             }
-            (DynamoDbSignIn::Profile, endpoint, "") => write!(f, "{endpoint} ({region})"),
-            (DynamoDbSignIn::Profile, endpoint, profile) => {
+            (AwsSignInKind::Profile, endpoint, "") => write!(f, "{endpoint} ({region})"),
+            (AwsSignInKind::Profile, endpoint, profile) => {
                 write!(f, "{endpoint} ({region}) as profile {profile}")
             }
         }
     }
 }
 
-/// Whom a DynamoDB data source signs in as.
+/// Whom a data source on an AWS service (DynamoDB, Athena) signs in as.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum DynamoDbSignIn {
+pub enum AwsSignInKind {
     /// The data source's profile, or AWS's default chain when it names none.
     #[default]
     Profile,
-    /// Made-up credentials, which DynamoDB Local and LocalStack take and AWS never would.
+    /// Made-up credentials, which a local emulator (DynamoDB Local, LocalStack) or a test
+    /// server takes and AWS never would.
     LocalEmulator,
 }
 
-impl DynamoDbSignIn {
+impl AwsSignInKind {
     pub fn is_profile(&self) -> bool {
         *self == Self::Profile
     }
@@ -1362,7 +1363,7 @@ mod tests {
             ..DynamoDbConfig::default()
         };
         let emulator = DynamoDbConfig {
-            sign_in: DynamoDbSignIn::LocalEmulator,
+            sign_in: AwsSignInKind::LocalEmulator,
             endpoint: "http://localhost:8000".to_owned(),
             cost_guard: CostGuard {
                 whole_table: ScanGuard::Off,
