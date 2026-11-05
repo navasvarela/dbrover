@@ -5,6 +5,7 @@ mod app;
 mod background_runs;
 mod brand;
 mod catalog_tree;
+mod code_editor;
 mod command_runs;
 mod commands;
 mod console;

@@ -3,16 +3,15 @@
 
 use std::time::{Duration, Instant};
 
-use egui::text::{CCursor, CCursorRange};
-use egui::text_edit::TextEditState;
-use egui::{Id, Margin, ScrollArea, TextEdit, Ui, vec2};
+use egui::{Id, ScrollArea, Ui, vec2};
 
-use super::highlight::Marks;
 use super::{
-    Candidate, ClipboardCopy, Disk, FormatScope, Found, LintOptions, QueryConsole,
-    RecentCompletions, RowsToOpen, RunDestination, RunScope, RunState, SubmittedRun, TreeCatalog,
-    cell_viewer, completion_popup, find_bar, highlight, results,
+    Candidate, ClipboardCopy, Disk, FormatScope, LintOptions, QueryConsole, RecentCompletions,
+    RowsToOpen, RunDestination, RunScope, RunState, SubmittedRun, TreeCatalog, cell_viewer,
+    completion_popup, results,
 };
+use crate::code_editor::highlight::Marks;
+use crate::code_editor::{self, EditorView, Found, find_bar};
 use crate::icons::{self, Role};
 use crate::keymap::{Action, Keymap};
 use crate::picture::PictureFormat;
@@ -25,7 +24,7 @@ use dbrover_engine::{
 };
 use dbrover_language::ExplainDepth;
 use dbrover_language::redis::KeyView;
-use dbrover_sql::{Dialect, ProblemSource, Severity};
+use dbrover_sql::{Dialect, Severity};
 use dbrover_store::{ActionId, Snippet};
 
 use super::CellMenuItems;
@@ -136,7 +135,11 @@ pub fn show(
     if console.dialect().is_some_and(Dialect::has_transactions) {
         transaction_bar(ui, console, keymap, actions);
     }
-    let found = find_bar::show(ui, console, keymap);
+    let find = find_bar::show(ui, &mut console.editor, keymap, editor_id);
+    if find.edited {
+        console.edited(Instant::now());
+    }
+    let found = find.found;
     ui.separator();
     let (editor_height, results_height) = split_heights(ui, console);
     let width = ui.available_width();
@@ -221,10 +224,10 @@ fn shortcuts(
             Action::Complete => console.open_completion(true),
             Action::NextProblem => console.jump_to_problem(true),
             Action::PreviousProblem => console.jump_to_problem(false),
-            Action::Find => console.open_find(false),
-            Action::Replace => console.open_find(true),
-            Action::FindNext => console.find_next(true),
-            Action::FindPrevious => console.find_next(false),
+            Action::Find => console.editor.open_find(false),
+            Action::Replace => console.editor.open_find(true),
+            Action::FindNext => console.editor.find_next(true),
+            Action::FindPrevious => console.editor.find_next(false),
             action => perform(console, action, actions),
         }
     }
@@ -717,50 +720,6 @@ fn running_text(progress: Option<(JobProgress, Duration)>) -> String {
     }
 }
 
-/// Applies a cursor move or selection requested from outside the editor. A cursor move also
-/// focuses the editor; a selection (a match the find bar went to) leaves the focus where it
-/// is, and is returned so the editor can scroll to it. After the text was replaced (a format,
-/// a reload from its file, a replacement), also records the text before and after as undo
-/// points, so one undo restores it; egui would otherwise only record a point once the text
-/// had stayed the same for a second.
-fn move_cursor(ui: &Ui, console: &mut QueryConsole, editor_id: Id) -> Option<CCursorRange> {
-    let focus = console.pending_cursor.is_some();
-    let range = match (
-        console.pending_cursor.take(),
-        console.pending_selection.take(),
-    ) {
-        (_, Some(range)) => range,
-        (Some(offset), None) => offset..offset,
-        (None, None) => return None,
-    };
-    let char_at = |offset: usize| {
-        CCursor::new(
-            console
-                .text
-                .get(..offset)
-                .unwrap_or(&console.text)
-                .chars()
-                .count(),
-        )
-    };
-    let cursor = CCursorRange::two(char_at(range.start), char_at(range.end));
-    let mut state = TextEditState::load(ui.ctx(), editor_id).unwrap_or_default();
-    if let Some(before) = console.replaced_text.take() {
-        let mut undoer = state.undoer();
-        let cursor_before = state.cursor.char_range().unwrap_or(cursor);
-        undoer.add_undo(&(cursor_before, before));
-        undoer.add_undo(&(cursor, console.text.clone()));
-        state.set_undoer(undoer);
-    }
-    state.cursor.set_char_range(Some(cursor));
-    state.store(ui.ctx(), editor_id);
-    if focus {
-        ui.memory_mut(|memory| memory.request_focus(editor_id));
-        return None;
-    }
-    Some(cursor)
-}
-
 fn editor(
     ui: &mut Ui,
     console: &mut QueryConsole,
@@ -770,7 +729,6 @@ fn editor(
     actions: &mut Vec<ConsoleAction>,
 ) {
     let catalog = context.catalog.as_ref();
-    let reveal = move_cursor(ui, console, editor_id);
     let checked = console.check_problems(catalog, context.lint, Instant::now());
     if let Some(wait) = checked.repaint_after {
         crate::repaint::request_repaint_after_pause(ui.ctx(), wait);
@@ -784,40 +742,21 @@ fn editor(
         current_match: found.current.map(|index| found.matches[index].clone()),
         matches: found.matches.clone(),
     };
-    let mut layouter = highlight::layouter(console.language(), &marks);
-    let gutter_width = gutter_width(ui, &console.text);
+    let language = console.language();
     ScrollArea::vertical()
         .id_salt(("console_editor_scroll", console.id.0))
         .auto_shrink(false)
         .show(ui, |ui| {
-            let output = TextEdit::multiline(&mut console.text)
-                .id(editor_id)
-                .code_editor()
-                .hint_text("SELECT …")
-                // Fills the height given by `min_size`; one row keeps it from overflowing
-                // that height when the console is short.
-                .desired_rows(1)
-                .desired_width(f32::INFINITY)
-                .min_size(vec2(0.0, ui.available_height()))
-                .margin(Margin {
-                    left: gutter_width,
-                    ..TEXT_MARGIN
-                })
-                .layouter(&mut layouter)
-                .show(ui);
-            if let Some(cursor) = reveal {
-                let rect = output.galley.pos_from_cursor(cursor.primary);
-                let rect = rect.translate(output.galley_pos.to_vec2());
-                ui.scroll_to_rect(rect, Some(egui::Align::Center));
-            }
-            line_numbers(ui, &output);
-            squiggles(ui, console, &output);
-            problem_tooltip(ui, console, &output);
+            let view = EditorView {
+                id: editor_id,
+                hint_text: "SELECT …",
+                highlighter: &language,
+                marks: &marks,
+                problems: console.problems.shown(),
+            };
+            let output = code_editor::edit(ui, &mut console.editor, &view);
             if output.response.changed() {
                 console.edited(Instant::now());
-            }
-            if let Some(cursor) = output.cursor_range {
-                console.selection = byte_range(&console.text, &cursor);
             }
             console.follow_snippet(output.response.changed(), output.response.clicked());
             completion_popup::follow_editor(ui, console, &output);
@@ -827,157 +766,6 @@ fn editor(
             }
             completion_popup::show(ui, console, &output);
         });
-}
-
-/// How far a squiggle's wave rises and falls, and the length of one rise or fall.
-const SQUIGGLE_AMPLITUDE: f32 = 1.5;
-const SQUIGGLE_STEP: f32 = 2.5;
-
-/// Underlines each problem with a wave, red for errors and amber for warnings, and remembers
-/// where, so hovering can show the message.
-fn squiggles(ui: &Ui, console: &mut QueryConsole, output: &egui::text_edit::TextEditOutput) {
-    let palette = &Palette::for_visuals(ui.visuals());
-    let origin = output.galley_pos;
-    let mut rects = Vec::new();
-    for (index, problem) in console.problems.shown().iter().enumerate() {
-        let color = match problem.severity {
-            Severity::Error => palette.error,
-            Severity::Warning => palette.warning,
-        };
-        let start = char_index(&console.text, problem.range.start);
-        let end = char_index(&console.text, problem.range.end).max(start + 1);
-        let mut row_start = 0;
-        for row in &output.galley.rows {
-            let row_end = row_start + row.char_count_including_newline().0;
-            let (from, to) = (start.max(row_start), end.min(row_end));
-            if from < to {
-                let column =
-                    |char: usize| egui::text::CharIndex((char - row_start).min(row.glyphs.len()));
-                let left = origin.x + row.pos.x + row.x_offset(column(from));
-                let right = origin.x + row.pos.x + row.x_offset(column(to));
-                let rect = egui::Rect::from_min_max(
-                    egui::pos2(left, origin.y + row.min_y()),
-                    egui::pos2(
-                        right.max(left + 2.0 * SQUIGGLE_STEP),
-                        origin.y + row.max_y(),
-                    ),
-                );
-                ui.painter().add(wave(rect, color));
-                rects.push((rect, index));
-            }
-            row_start = row_end;
-        }
-    }
-    console.problem_rects = rects;
-}
-
-fn wave(rect: egui::Rect, color: egui::Color32) -> egui::Shape {
-    let baseline = rect.bottom() - SQUIGGLE_AMPLITUDE;
-    let mut points = Vec::new();
-    let mut x = rect.left();
-    let mut up = true;
-    while x <= rect.right() {
-        let offset = if up {
-            -SQUIGGLE_AMPLITUDE
-        } else {
-            SQUIGGLE_AMPLITUDE
-        };
-        points.push(egui::pos2(x, baseline + offset));
-        x += SQUIGGLE_STEP;
-        up = !up;
-    }
-    egui::Shape::line(points, egui::Stroke::new(1.0, color))
-}
-
-/// Shows the message of the problem under the pointer, and how to switch off a lint rule.
-fn problem_tooltip(ui: &Ui, console: &QueryConsole, output: &egui::text_edit::TextEditOutput) {
-    if !output.response.hovered() {
-        return;
-    }
-    let Some(pointer) = ui.ctx().pointer_hover_pos() else {
-        return;
-    };
-    let Some(problem) = console
-        .problem_rects
-        .iter()
-        .find(|(rect, _)| rect.contains(pointer))
-        .and_then(|(_, index)| console.problems.shown().get(*index))
-    else {
-        return;
-    };
-    output
-        .response
-        .response
-        .clone()
-        .on_hover_ui_at_pointer(|ui| {
-            ui.label(&problem.message);
-            if let ProblemSource::Lint(rule) = problem.source {
-                ui.weak(format!(
-                    "{} · can be switched off in View → Settings",
-                    rule.id()
-                ));
-            }
-        });
-}
-
-/// The character index of byte `offset`, as the editor's galley counts.
-fn char_index(text: &str, offset: usize) -> usize {
-    text.get(..offset).unwrap_or(text).chars().count()
-}
-
-/// The editor's own margin around the text; the line numbers widen its left side.
-const TEXT_MARGIN: Margin = Margin::symmetric(4, 2);
-/// Space between the line numbers and the text.
-const GUTTER_GAP: f32 = 12.0;
-
-/// The editor's left margin: room for the largest line number, so the text doesn't shift
-/// until a line count needs another digit.
-fn gutter_width(ui: &Ui, text: &str) -> i8 {
-    let lines = text.lines().count().max(1) + usize::from(text.ends_with('\n'));
-    let digits = lines.to_string().len();
-    let font = egui::TextStyle::Monospace.resolve(ui.style());
-    let digit_width = ui.fonts_mut(|fonts| fonts.glyph_width(&font, '0'));
-    let width = f32::from(TEXT_MARGIN.left) + digits as f32 * digit_width + GUTTER_GAP;
-    // Margins are whole points in an `i8`; 127 points hold over a dozen digits.
-    width.ceil().min(f32::from(i8::MAX)) as i8
-}
-
-/// Numbers each line of the editor's text in the gutter. A line that wraps is numbered on
-/// its first row only.
-fn line_numbers(ui: &Ui, output: &egui::text_edit::TextEditOutput) {
-    let font = egui::TextStyle::Monospace.resolve(ui.style());
-    let color = ui.visuals().weak_text_color();
-    let right_edge = output.galley_pos.x - GUTTER_GAP;
-    let rows = &output.galley.rows;
-    let ends: Vec<bool> = rows.iter().map(|row| row.ends_with_newline).collect();
-    for (line, row_index) in line_starts(&ends).into_iter().enumerate() {
-        let y = output.galley_pos.y + rows[row_index].rect().center().y;
-        ui.painter().text(
-            egui::pos2(right_edge, y),
-            egui::Align2::RIGHT_CENTER,
-            (line + 1).to_string(),
-            font.clone(),
-            color,
-        );
-    }
-}
-
-/// The indices of the rows that start a line, given whether each row ends with a line break
-/// (rather than wrapping onto the next).
-fn line_starts(ends_with_newline: &[bool]) -> Vec<usize> {
-    (0..ends_with_newline.len())
-        .filter(|&row| row == 0 || ends_with_newline[row - 1])
-        .collect()
-}
-
-/// Converts the editor's character-index cursor into byte offsets into `text`.
-fn byte_range(text: &str, cursor: &CCursorRange) -> std::ops::Range<usize> {
-    let byte = |char_index: usize| {
-        text.char_indices()
-            .nth(char_index)
-            .map_or(text.len(), |(byte, _)| byte)
-    };
-    byte(cursor.secondary.index.0)..byte(cursor.primary.index.0)
 }
 
 #[cfg(test)]
@@ -1006,14 +794,6 @@ mod tests {
             assert!(!is_enabled(&test, action), "{action:?}");
         }
         assert!(is_enabled(&test, Action::RunCurrent));
-    }
-
-    #[test]
-    fn numbers_only_the_first_row_of_a_wrapped_line() {
-        // Line 1 wraps onto a second row; lines 2 and 3 fit on one row each.
-        assert_eq!(line_starts(&[false, true, true, false]), [0, 2, 3]);
-        assert_eq!(line_starts(&[false]), [0]);
-        assert!(line_starts(&[]).is_empty());
     }
 
     #[test]

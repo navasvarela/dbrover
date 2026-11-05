@@ -14,7 +14,7 @@ use dbrover_language::QueryLanguage;
 use egui::{ScrollArea, TextEdit, Ui};
 use serde::{Deserialize, Serialize};
 
-use crate::console::highlight::{self, Marks};
+use crate::code_editor::highlight::{self, Marks};
 use crate::form;
 
 /// A definition tab's key in the dock, unique while the app runs.
@@ -164,7 +164,7 @@ impl DefinitionTab {
     /// The text, coloured as a console colours it, selectable but not editable.
     fn text(&self, ui: &mut Ui, text: &str) {
         let marks = Marks::default();
-        let mut layouter = highlight::layouter(self.language, &marks);
+        let mut layouter = highlight::layouter(&self.language, &marks);
         ScrollArea::both().auto_shrink(false).show(ui, |ui| {
             // A `&str` buffer makes the editor read-only but still selectable.
             ui.add(

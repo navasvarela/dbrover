@@ -1,11 +1,9 @@
 //! Draws the find bar above the editor, and turns its fields, buttons and keys into searches
 //! and replacements.
 
-use std::time::Instant;
-
 use egui::{Id, Key, Response, TextEdit, Ui, WidgetType};
 
-use super::{Found, QueryConsole};
+use super::{CodeEditor, Found};
 use crate::icons;
 use crate::keymap::{Action, Keymap};
 use crate::theme::Palette;
@@ -21,27 +19,40 @@ const FIELD_ACTIONS: [Action; 4] = [
 
 const FIELD_WIDTH: f32 = 240.0;
 
-/// Draws the bar, if it is open, and returns the matches it found, for the editor to highlight.
-pub(super) fn show(ui: &mut Ui, console: &mut QueryConsole, keymap: &Keymap) -> Found {
-    if !console.find_bar().open {
-        return Found::default();
+/// What the bar did this frame.
+#[derive(Debug, Default)]
+pub struct FindBarOutput {
+    /// The matches it found, for the editor to highlight.
+    pub found: Found,
+    /// A replacement changed the editor's text, which its owner checks again.
+    pub edited: bool,
+}
+
+/// Draws the bar, if it is open. `id` tells this editor's fields from another's.
+pub fn show(ui: &mut Ui, editor: &mut CodeEditor, keymap: &Keymap, id: Id) -> FindBarOutput {
+    if !editor.find_bar().open {
+        return FindBarOutput::default();
     }
-    let find_id = Id::new(("find_field", console.id.0));
-    let replace_id = Id::new(("replace_field", console.id.0));
-    field_shortcuts(ui, console, keymap, [find_id, replace_id]);
-    if !console.find_bar().open {
-        return Found::default();
+    let find_id = id.with("find_field");
+    let replace_id = id.with("replace_field");
+    field_shortcuts(ui, editor, keymap, [find_id, replace_id]);
+    if !editor.find_bar().open {
+        return FindBarOutput::default();
     }
-    ui.horizontal(|ui| find_row(ui, console, keymap, find_id));
-    if console.find_bar().replacing {
-        ui.horizontal(|ui| replace_row(ui, console, replace_id));
+    ui.horizontal(|ui| find_row(ui, editor, keymap, find_id));
+    let edited = editor.find_bar().replacing
+        && ui
+            .horizontal(|ui| replace_row(ui, editor, replace_id))
+            .inner;
+    FindBarOutput {
+        found: editor.found(),
+        edited,
     }
-    console.found()
 }
 
 /// The keymap's find shortcuts, while the find or replace field has focus: the editor's own
 /// shortcuts only act while it has focus.
-fn field_shortcuts(ui: &mut Ui, console: &mut QueryConsole, keymap: &Keymap, fields: [Id; 2]) {
+fn field_shortcuts(ui: &mut Ui, editor: &mut CodeEditor, keymap: &Keymap, fields: [Id; 2]) {
     if !fields
         .iter()
         .any(|id| ui.memory(|memory| memory.has_focus(*id)))
@@ -50,18 +61,18 @@ fn field_shortcuts(ui: &mut Ui, console: &mut QueryConsole, keymap: &Keymap, fie
     }
     for action in ui.input_mut(|input| keymap.consume(input, &FIELD_ACTIONS)) {
         match action {
-            Action::Find => console.open_find(false),
-            Action::Replace => console.open_find(true),
-            Action::FindNext => console.find_next(true),
-            Action::FindPrevious => console.find_next(false),
+            Action::Find => editor.open_find(false),
+            Action::Replace => editor.open_find(true),
+            Action::FindNext => editor.find_next(true),
+            Action::FindPrevious => editor.find_next(false),
             _ => {}
         }
     }
 }
 
-fn find_row(ui: &mut Ui, console: &mut QueryConsole, keymap: &Keymap, find_id: Id) {
+fn find_row(ui: &mut Ui, editor: &mut CodeEditor, keymap: &Keymap, find_id: Id) {
     let palette = &Palette::for_visuals(ui.visuals());
-    let bar = console.find_bar_mut();
+    let bar = editor.find_bar_mut();
     let field = ui.add(
         TextEdit::singleline(&mut bar.query)
             .id(find_id)
@@ -101,41 +112,41 @@ fn find_row(ui: &mut Ui, console: &mut QueryConsole, keymap: &Keymap, find_id: I
         )
     });
     if field.lost_focus() && escape || close.clicked() {
-        console.close_find();
+        editor.close_find();
         return;
     }
     if field.lost_focus() && enter {
-        console.find_next(!shift);
+        editor.find_next(!shift);
         field.request_focus();
     }
     if previous.clicked() {
-        console.find_next(false);
+        editor.find_next(false);
     }
     if next.clicked() {
-        console.find_next(true);
+        editor.find_next(true);
     }
     if clicked || previous.clicked() || next.clicked() {
-        console.find_bar_mut().focus = true;
+        editor.find_bar_mut().focus = true;
     }
-    status(ui, console, palette);
+    status(ui, editor, palette);
 }
 
 /// "3 of 12", "No results", how many were replaced, or why the regular expression is invalid.
-fn status(ui: &mut Ui, console: &QueryConsole, palette: &Palette) {
-    let found = console.found();
+fn status(ui: &mut Ui, editor: &CodeEditor, palette: &Palette) {
+    let found = editor.found();
     if let Some(error) = &found.error {
         ui.colored_label(palette.error, "Invalid regular expression")
             .on_hover_text(error);
         return;
     }
-    if let Some(count) = console.find_bar().replaced {
+    if let Some(count) = editor.find_bar().replaced {
         ui.weak(match count {
             1 => "Replaced 1".to_owned(),
             n => format!("Replaced {n}"),
         });
         return;
     }
-    if console.find_bar().query.is_empty() {
+    if editor.find_bar().query.is_empty() {
         return;
     }
     match (found.current, found.matches.len()) {
@@ -146,8 +157,9 @@ fn status(ui: &mut Ui, console: &QueryConsole, palette: &Palette) {
     };
 }
 
-fn replace_row(ui: &mut Ui, console: &mut QueryConsole, replace_id: Id) {
-    let bar = console.find_bar_mut();
+/// Returns whether a replacement changed the text.
+fn replace_row(ui: &mut Ui, editor: &mut CodeEditor, replace_id: Id) -> bool {
+    let bar = editor.find_bar_mut();
     let field = ui.add(
         TextEdit::singleline(&mut bar.replacement)
             .id(replace_id)
@@ -168,19 +180,22 @@ fn replace_row(ui: &mut Ui, console: &mut QueryConsole, replace_id: Id) {
         )
     });
     if field.lost_focus() && escape {
-        console.close_find();
-        return;
+        editor.close_find();
+        return false;
     }
+    let mut edited = false;
     if replace.clicked() || field.lost_focus() && enter {
-        console.replace_current(Instant::now());
+        edited |= editor.replace_current();
         if !replace.clicked() {
             field.request_focus();
         }
     }
     if replace_all.clicked() {
-        let count = console.replace_all(Instant::now());
-        console.find_bar_mut().replaced = Some(count);
+        let count = editor.replace_all();
+        editor.find_bar_mut().replaced = Some(count);
+        edited |= count > 0;
     }
+    edited
 }
 
 /// An icon button for `action`, with its shortcut in the tooltip.
