@@ -28,6 +28,7 @@
 - [Views and schemas](views-schemas.md)
 - [Users and roles](users-roles.md)
 - [ER diagrams](diagrams.md)
+- [Comparing schemas](schema-compare.md)
 
 # Querying
 

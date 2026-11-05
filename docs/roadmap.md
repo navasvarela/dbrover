@@ -1602,7 +1602,7 @@ three to five, **L** a track of its own).
 
   **Exit:** a `GROUP BY` result of months and totals charts as bars and lines, and exports as an
   SVG a browser shows.
-- **W13 — Schema compare (L):** being built; designed on 2026-11-05 in
+- **W13 — Schema compare (L):** built; designed on 2026-11-05 in
   [Comparing schemas](schema-compare.md), together with the Version control track's VC3. Two
   schemas, on one data source or two of the same engine, side by side with what differs
   (tables, columns, keys, indexes, views), and the script that turns one into the other, opened
@@ -1627,7 +1627,27 @@ three to five, **L** a track of its own).
   - **W13e — The tab:** built; **Compare schema…** on a schema in the explorer, the sides,
     the differences, the definitions side by side with their differing lines marked, **Open
     script in console** and **Copy script**.
-  - **W13f — Manual and demo notes,** with VC3's.
+  - **W13f — Manual and demo notes,** with VC3's: built; a chapter,
+    [Comparing schemas](../book/src/schema-compare.md), with `dbrover schema` in it.
+
+  **W13 demo note:** built in #483, #485, #489, #492, #495 and #498, with VC3 in #493 and
+  #497. On PostgreSQL, right-click `staging` → **Compare schema…**, pick the same data source
+  and `public` on the right and **Compare**: the list shows `~ orders` ("1 column added") and
+  `+ orders_customer_id_idx`; selecting `orders` shows both `CREATE TABLE`s side by side with
+  the new column's line marked. **Open script in console** opens a script that sets the search
+  path to `staging`, adds the column and creates the index in one transaction; run it, then
+  **Compare again**: "The schemas are the same." Departures from the design: the script sets
+  `SET LOCAL search_path` to the left's schema, since the definitions it copies name the
+  schema's own objects without it; a primary key keeps the right's name through `RENAME
+  CONSTRAINT`; a side's schema is typed rather than picked from a list; the definitions name
+  objects without their schema, so only real differences are marked; and the tab's title reads
+  `staging → public`. Covered by `dbrover-schema`'s unit and golden tests, driver tests reading
+  two schemas built alike as the same, kittest tests of the tab, a whole-app test from the
+  explorer to the script in a console, and the exit as an engine test on the PostgreSQL test
+  server, with a schema written from nothing and emptied again by the script. Still to come, if
+  asked: sequences, functions, triggers, types and partitions; other engines' reading
+  (MySQL, SQL Server, DuckDB, whose `ALTER TABLE` E4 already writes); a picture of the tab in
+  the manual.
 
   **Exit:** comparing two PostgreSQL schemas that differ by a column and an index lists both
   differences, and running the script on one makes the comparison come back empty.
@@ -2206,7 +2226,7 @@ after CI fixes, the reports track and W13, and links no Git library.
   **Exit:** a clone with `queries/sales.sql` and `queries/admin/users.sql` shows both and not
   `.git`; saving `sales.sql` shows in `git diff`; checking out a branch that adds a file shows
   it once the window is in front.
-- **VC3 — Schema snapshots (S–M), with W13:** being built; designed on 2026-11-05 in
+- **VC3 — Schema snapshots (S–M), with W13:** built; designed on 2026-11-05 in
   [Comparing schemas](schema-compare.md#snapshot-files-vc3), in W13's stack. A schema saved as
   a deterministic, diffable file (in the app and as `dbrover schema snapshot`), and W13
   comparing a live schema with one, so Git's history of the file is the schema's history. The
@@ -2217,6 +2237,19 @@ after CI fixes, the reports track and W13, and links no Git library.
     tested on the PostgreSQL test server.
   - **VC3b — Comparing with a snapshot:** built; a snapshot as a side in the tab, **Save schema
     snapshot…**, and `dbrover schema compare`.
+
+  **VC3 demo note:** built in #493 and #497, in W13's stack. Right-click `public` → **Save
+  schema snapshot…** and save `public.schema.toml`; save it again and `git diff` shows nothing.
+  Add a column and an index, then in a compare tab pick **Snapshot file…** on the left and
+  `public` on the right: both are listed. On the command line, `dbrover schema snapshot shop
+  public -o public.schema.toml` writes the same file, and `dbrover schema compare
+  public.schema.toml shop:public` prints both differences and exits 1 (0 when the same, 2 on
+  trouble). Departures from the design: a foreign key into another schema writes
+  `references_schema` beside `references`, rather than `schema.name`, which a table named with
+  a dot would make ambiguous; a `compare` side ending in `.toml` or naming a file is a file.
+  Covered by golden and round-trip tests of the file, an engine test on the PostgreSQL test
+  server (taken twice, identical; after a column and an index, both listed), a whole-app test
+  saving from the explorer and comparing the file with a live schema, and tests of the binary.
 
   **Exit:** a snapshot of `public` on the PostgreSQL test server taken twice is identical; after
   adding a column and an index, comparing the live schema with the first snapshot lists both.
