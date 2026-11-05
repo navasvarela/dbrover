@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use async_trait::async_trait;
 use dbrover_core::{
     CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, Cell, ChildrenPage,
-    ChildrenQuery, ColumnInfo, Connection, CostEstimate, DriverError, ProgressHandle, Rejection,
-    RelationName, ResultCursor, ResultShape, RoleDescription, Row, SchemaDescription, ServerInfo,
-    TableConstraints, TableDescription, TableName, TransactionStatus, describe_error,
+    ChildrenQuery, ColumnInfo, Connection, CostEstimate, DriverError, JobProgress, ProgressHandle,
+    Rejection, RelationName, ResultCursor, ResultShape, RoleDescription, Row, SchemaDescription,
+    ServerInfo, TableConstraints, TableDescription, TableName, TransactionStatus, describe_error,
 };
 
 use super::{SessionContext, SessionOwner, SessionRequest};
@@ -190,6 +190,10 @@ impl ResultCursor for WatchedCursor {
 
     fn is_exhausted(&self) -> bool {
         self.cursor.is_exhausted()
+    }
+
+    fn progress(&self) -> Option<JobProgress> {
+        self.cursor.progress()
     }
 
     async fn finish(self: Box<Self>) -> Result<Option<u64>, DriverError> {

@@ -172,8 +172,8 @@ impl Jobs {
             progress: JobProgress::default(),
         }));
         let ended = self.wait(&job).await;
-        let rows_changed = match ended {
-            Ok(rows_changed) => rows_changed,
+        let (progress, rows_changed) = match ended {
+            Ok(ended) => ended,
             Err(error) => {
                 self.set_running(None);
                 return Err(error);
@@ -192,12 +192,13 @@ impl Jobs {
             buffered: first.rows,
             next: first.next,
             job,
+            progress,
             rows_changed: rows_changed.or(first.rows_changed),
         }))
     }
 
-    /// Polls `job` until it ends: the rows it changed, or why it failed.
-    async fn wait(&self, job: &JobId) -> Result<Option<u64>, DriverError> {
+    /// Polls `job` until it ends: what it did and the rows it changed, or why it failed.
+    async fn wait(&self, job: &JobId) -> Result<(JobProgress, Option<u64>), DriverError> {
         let mut pause = FIRST_POLL_PAUSE;
         loop {
             match self.service.poll(job).await? {
@@ -207,7 +208,7 @@ impl Jobs {
                     rows_changed,
                 } => {
                     self.record(job, progress);
-                    return Ok(rows_changed);
+                    return Ok((progress, rows_changed));
                 }
                 JobState::Failed(failure) => {
                     return Err(DriverError::Statement {
@@ -273,6 +274,8 @@ struct JobCursor {
     /// Rows of the service's last page not handed out yet.
     buffered: Vec<Row>,
     next: Option<PageToken>,
+    /// What the job had done when it ended.
+    progress: JobProgress,
     rows_changed: Option<u64>,
 }
 
@@ -302,6 +305,10 @@ impl ResultCursor for JobCursor {
 
     fn is_exhausted(&self) -> bool {
         self.buffered.is_empty() && self.next.is_none()
+    }
+
+    fn progress(&self) -> Option<JobProgress> {
+        Some(self.progress)
     }
 
     async fn finish(self: Box<Self>) -> Result<Option<u64>, DriverError> {
@@ -434,6 +441,14 @@ mod tests {
         assert!(cursor.is_exhausted());
         // The first page when the job ended, then the two after it.
         assert_eq!(fake.state().pages_asked, 3);
+        // What the last poll said, kept for the statement's summary once the job is over.
+        assert_eq!(
+            cursor.progress(),
+            Some(JobProgress {
+                rows_read: Some(60),
+                bytes_read: Some(ByteCount(6000)),
+            })
+        );
         assert_eq!(cursor.finish().await.unwrap(), None);
         assert_eq!(jobs.progress().await.unwrap(), None);
     }

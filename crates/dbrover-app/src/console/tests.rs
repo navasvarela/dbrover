@@ -219,6 +219,7 @@ fn reads_the_plan_an_explain_returns() {
                     rows_changed: None,
                     elapsed: Duration::from_millis(3),
                     truncated: false,
+                    progress: None,
                 }),
             },
         ] {

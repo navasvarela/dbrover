@@ -3,6 +3,7 @@
 
 use aws_sdk_athena::Client;
 use aws_sdk_athena::types::WorkGroupConfiguration;
+use dbrover_core::ByteCount;
 
 use crate::errors::Refused;
 
@@ -18,6 +19,8 @@ pub(crate) struct Workgroup {
     pub managed_results: bool,
     /// `Athena engine version 3`, as the workgroup names the engine its queries run on.
     pub engine: Option<String>,
+    /// The most a query may scan before Athena cancels it, when the workgroup sets a limit.
+    pub cutoff: Option<ByteCount>,
 }
 
 /// Why the data source's queries would have nowhere to put their results.
@@ -64,12 +67,27 @@ impl Workgroup {
         Err(NoOutputLocation)
     }
 
-    /// The server's version as Test connection shows it: the engine, and the region.
+    /// The server's version as Test connection shows it: the engine, the region, and the
+    /// workgroup's limit a query when it has one.
     pub(crate) fn describe_version(&self, region: &str) -> String {
-        match (&self.engine, region) {
-            (Some(engine), "") => engine.clone(),
-            (Some(engine), region) => format!("{engine}, {region}"),
-            (None, region) => region.to_owned(),
+        let parts: Vec<String> = [
+            self.engine.clone(),
+            (!region.is_empty()).then(|| region.to_owned()),
+            self.cutoff
+                .map(|cutoff| format!("the workgroup stops queries past {cutoff}")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        parts.join(", ")
+    }
+
+    /// The limit DbRover keeps a query to: the data source's, when the workgroup has none
+    /// of its own; Athena enforces the workgroup's, exactly.
+    pub(crate) fn limit_for(&self, configured: Option<ByteCount>) -> Option<ByteCount> {
+        match self.cutoff {
+            Some(_) => None,
+            None => configured,
         }
     }
 }
@@ -91,6 +109,10 @@ impl From<&WorkGroupConfiguration> for Workgroup {
                 .engine_version()
                 .and_then(|version| version.effective_engine_version())
                 .map(str::to_owned),
+            cutoff: configuration
+                .bytes_scanned_cutoff_per_query()
+                .and_then(|bytes| u64::try_from(bytes).ok())
+                .map(ByteCount),
         }
     }
 }

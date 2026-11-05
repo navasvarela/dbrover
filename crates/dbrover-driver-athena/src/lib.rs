@@ -64,7 +64,8 @@ pub async fn connect(config: &AthenaConfig) -> Result<AthenaConnection, DriverEr
         database: config.database.clone(),
         output_location,
     };
-    let jobs = Jobs::new(Arc::new(AthenaJobs::new(client.clone(), place)));
+    let limit = workgroup.limit_for(config.cost_guard.ask_above_bytes);
+    let jobs = Jobs::new(Arc::new(AthenaJobs::new(client.clone(), place, limit)));
     Ok(AthenaConnection {
         client,
         catalog: config.catalog.clone(),

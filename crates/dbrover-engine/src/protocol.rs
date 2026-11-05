@@ -904,6 +904,9 @@ pub struct StatementSummary {
     pub elapsed: Duration,
     /// Whether rows were left unread.
     pub truncated: bool,
+    /// What the statement did, as its engine reported it once it ended: the bytes an Athena
+    /// query scanned, which it is billed for (C3). `None` where the engine doesn't say.
+    pub progress: Option<JobProgress>,
 }
 
 /// What the database said about a statement it was asked to prepare.

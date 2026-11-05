@@ -115,6 +115,8 @@ pub enum FormError {
     EndpointMissing,
     #[error("Output location must be in S3: s3://bucket/prefix/.")]
     OutputLocationNotS3,
+    #[error("Stop queries above must be a number of gigabytes, such as 10 or 0.5.")]
+    InvalidByteLimit,
     #[error("SSH host is required.")]
     SshHostMissing,
     #[error("SSH port must be a number from 1 to 65535, or a ${{VARIABLE}}.")]

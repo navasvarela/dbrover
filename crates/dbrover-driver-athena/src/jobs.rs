@@ -33,16 +33,20 @@ pub(crate) struct QueryPlace {
 pub(crate) struct AthenaJobs {
     client: Client,
     place: QueryPlace,
+    /// The most a query may scan before DbRover stops it, where the workgroup sets no limit
+    /// of its own (`docs/cloud-data.md`, C3).
+    limit: Option<ByteCount>,
     /// Each running query's statement, to turn the line and column an error names into a
     /// position in it. Removed when the query ends.
     statements: Mutex<HashMap<JobId, String>>,
 }
 
 impl AthenaJobs {
-    pub(crate) fn new(client: Client, place: QueryPlace) -> Self {
+    pub(crate) fn new(client: Client, place: QueryPlace, limit: Option<ByteCount>) -> Self {
         Self {
             client,
             place,
+            limit,
             statements: Mutex::new(HashMap::new()),
         }
     }
@@ -127,8 +131,16 @@ impl JobService for AthenaJobs {
             Some(QueryExecutionState::Failed | QueryExecutionState::Cancelled) => {
                 JobState::Failed(self.failure(job, status))
             }
-            // Queued, running, and any state Athena adds later: asked again after a pause.
-            _ => JobState::Running(progress),
+            // Queued, running, and any state Athena adds later: asked again after a pause,
+            // unless it has scanned past the limit.
+            _ => match self.past_limit(progress) {
+                Some(stopped) => {
+                    self.cancel(job).await?;
+                    self.statements().remove(job);
+                    JobState::Failed(stopped)
+                }
+                None => JobState::Running(progress),
+            },
         })
     }
 
@@ -159,6 +171,19 @@ impl JobService for AthenaJobs {
             .await
             .map(drop)
             .map_err(|error| errors::connection(Refused::from(error)))
+    }
+}
+
+impl AthenaJobs {
+    /// Why a running query that has scanned `progress` is stopped: it is past the limit.
+    fn past_limit(&self, progress: JobProgress) -> Option<JobFailure> {
+        let limit = self.limit?;
+        let scanned = progress.bytes_read.filter(|scanned| *scanned > limit)?;
+        Some(JobFailure::new(format!(
+            "Stopped after scanning {scanned}, past this data source's limit of {limit} a \
+             query. Athena bills what was scanned. Raise the limit in the data source's \
+             settings, or set one in the workgroup, which Athena keeps to exactly."
+        )))
     }
 }
 

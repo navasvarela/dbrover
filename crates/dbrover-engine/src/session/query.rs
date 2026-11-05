@@ -369,6 +369,7 @@ async fn finish(
     if truncated {
         cancel_running_statement(worker.cancel_handle).await;
     }
+    let progress = cursor.progress();
     let finished = worker
         .signals
         .guard(cursor.finish(), Some(statement.run), worker.cancel_handle)
@@ -389,6 +390,7 @@ async fn finish(
             rows_changed,
             elapsed,
             truncated,
+            progress,
         },
     );
     Ok(StatementEnd::Completed)
@@ -431,6 +433,7 @@ pub(super) async fn fetch_more(
             elapsed,
         }));
     }
+    let progress = cursor.progress();
     let finished = worker
         .signals
         .guard(cursor.finish(), Some(run), worker.cancel_handle)
@@ -443,6 +446,7 @@ pub(super) async fn fetch_more(
                 rows_changed,
                 elapsed,
                 truncated: false,
+                progress,
             },
         ),
         Err(error) => report_failure(worker, &statement, elapsed, &error),
@@ -458,6 +462,7 @@ pub(super) async fn discard(
     cancel_handle: &dyn CancelHandle,
 ) {
     cancel_running_statement(cancel_handle).await;
+    let progress = parked.cursor.progress();
     // An error here is the cancellation just requested.
     let _ = parked.cursor.finish().await;
     report_success(
@@ -467,6 +472,7 @@ pub(super) async fn discard(
             rows_changed: None,
             elapsed: parked.elapsed,
             truncated: true,
+            progress,
         },
     );
 }
@@ -477,6 +483,7 @@ fn report_success(context: &SessionContext, statement: &StatementRef, summary: S
         elapsed_ms = summary.elapsed.as_millis(),
         rows = summary.rows_changed,
         truncated = summary.truncated,
+        progress = summary.progress.map(|progress| progress.to_string()),
         "statement {} finished",
         statement.index + 1
     );

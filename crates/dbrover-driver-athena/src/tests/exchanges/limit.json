@@ -1,0 +1,65 @@
+{
+  "doc": "The per-query limit: a workgroup without one, where DbRover stops a query whose second poll is past the data source's 1 GB; then a workgroup with its own 10 GB, which Athena keeps to, so DbRover lets the same query finish.",
+  "exchanges": [
+    {
+      "operation": "GetWorkGroup",
+      "request": {"WorkGroup": "primary"},
+      "response": {"WorkGroup": {"Name": "primary", "Configuration": {
+        "ResultConfiguration": {"OutputLocation": "s3://dbrover-results/athena/"}}}}
+    },
+    {
+      "operation": "StartQueryExecution",
+      "request": {"QueryString": "SELECT * FROM clicks"},
+      "response": {"QueryExecutionId": "q-big"}
+    },
+    {
+      "operation": "GetQueryExecution",
+      "request": {"QueryExecutionId": "q-big"},
+      "response": {"QueryExecution": {"QueryExecutionId": "q-big", "StatementType": "DML",
+        "Status": {"State": "RUNNING"}, "Statistics": {"DataScannedInBytes": 300000000}}}
+    },
+    {
+      "operation": "GetQueryExecution",
+      "request": {"QueryExecutionId": "q-big"},
+      "response": {"QueryExecution": {"QueryExecutionId": "q-big", "StatementType": "DML",
+        "Status": {"State": "RUNNING"}, "Statistics": {"DataScannedInBytes": 1400000000}}}
+    },
+    {
+      "operation": "StopQueryExecution",
+      "request": {"QueryExecutionId": "q-big"},
+      "response": {}
+    },
+    {
+      "operation": "GetWorkGroup",
+      "request": {"WorkGroup": "capped"},
+      "response": {"WorkGroup": {"Name": "capped", "Configuration": {
+        "ResultConfiguration": {"OutputLocation": "s3://dbrover-results/athena/"},
+        "BytesScannedCutoffPerQuery": 10000000000,
+        "EngineVersion": {"EffectiveEngineVersion": "Athena engine version 3"}}}}
+    },
+    {
+      "operation": "StartQueryExecution",
+      "request": {"QueryString": "SELECT * FROM clicks", "WorkGroup": "capped"},
+      "response": {"QueryExecutionId": "q-capped"}
+    },
+    {
+      "operation": "GetQueryExecution",
+      "request": {"QueryExecutionId": "q-capped"},
+      "response": {"QueryExecution": {"QueryExecutionId": "q-capped", "StatementType": "DML",
+        "Status": {"State": "RUNNING"}, "Statistics": {"DataScannedInBytes": 1400000000}}}
+    },
+    {
+      "operation": "GetQueryExecution",
+      "request": {"QueryExecutionId": "q-capped"},
+      "response": {"QueryExecution": {"QueryExecutionId": "q-capped", "StatementType": "DML",
+        "Status": {"State": "SUCCEEDED"}, "Statistics": {"DataScannedInBytes": 1500000000}}}
+    },
+    {
+      "operation": "GetQueryResults",
+      "request": {"QueryExecutionId": "q-capped"},
+      "response": {"ResultSet": {
+        "ResultSetMetadata": {"ColumnInfo": [{"Name": "n", "Type": "integer", "Precision": 10, "Scale": 0}]},
+        "Rows": [{"Data": [{"VarCharValue": "n"}]}, {"Data": [{"VarCharValue": "1"}]}]}}
+    }
+  ]
+}
