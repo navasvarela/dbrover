@@ -29,6 +29,7 @@ jobs:
         with:
           save-if: false
       # The engine links DuckDB; its prebuilt library, as in ci.yml.
+      - uses: ./.github/actions/duckdb
       - name: Fetch DuckDB's prebuilt library
         shell: bash
         run: |

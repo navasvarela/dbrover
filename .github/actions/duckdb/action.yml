@@ -1,0 +1,47 @@
+name: DuckDB's prebuilt library
+description: >-
+  Puts DuckDB's release archives for the given Rust targets in $RUNNER_TEMP/duckdb, from the
+  Actions cache when it has them and from GitHub's releases otherwise. A later
+  `packaging/duckdb/fetch.sh <target> "$RUNNER_TEMP/duckdb"` then finds its archive there and
+  only unpacks it.
+inputs:
+  targets:
+    description: Rust target triples, separated by spaces; the host's, from rustc, by default.
+    required: false
+runs:
+  using: composite
+  steps:
+    # Keyed on the DuckDB version, from Cargo.lock, and the targets. fetch.sh checks each
+    # archive against SHA256SUMS whether it came from the cache or not.
+    - id: key
+      shell: bash
+      env:
+        TARGETS: ${{ inputs.targets }}
+      run: |
+        targets=${TARGETS:-$(rustc -vV | sed -n 's/^host: //p')}
+        version=$(packaging/duckdb/fetch.sh --version)
+        echo "targets=$targets" >> "$GITHUB_OUTPUT"
+        echo "key=duckdb-v$version-${targets// /-}" >> "$GITHUB_OUTPUT"
+    # Only the zip archives, 13–30 MB each: unpacking one and merging its static libraries
+    # takes about a second, and caching the unpacked library would double the size.
+    - id: restore
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ runner.temp }}/duckdb/*.zip
+        key: ${{ steps.key.outputs.key }}
+    - if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        TARGETS: ${{ steps.key.outputs.targets }}
+      run: |
+        for target in $TARGETS; do
+          packaging/duckdb/fetch.sh "$target" "$RUNNER_TEMP/duckdb" > /dev/null
+        done
+    # Only main saves, as with the Rust caches: GitHub keeps 10 GB of cache per repository, and
+    # pull requests restore main's entries. Saving right after the download keeps it even when
+    # a later step fails.
+    - if: steps.restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ runner.temp }}/duckdb/*.zip
+        key: ${{ steps.key.outputs.key }}

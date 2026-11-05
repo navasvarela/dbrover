@@ -24,6 +24,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/release.yml
+      - .github/actions/duckdb/**
       - packaging/**
       - crates/dbrover-app/Cargo.toml
       - crates/dbrover-app/build.rs
@@ -101,6 +102,9 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-packager@${{ env.CARGO_PACKAGER_VERSION }}
+      - uses: ./.github/actions/duckdb
+        with:
+          targets: aarch64-apple-darwin x86_64-apple-darwin
       # One download for every Mac: both architectures, joined with lipo. Each links DuckDB's
       # static library for its own architecture.
       - name: Build a universal binary
@@ -189,6 +193,7 @@ jobs:
       - run: |
           sudo apt-get update
           sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev file
+      - uses: ./.github/actions/duckdb
       - run: packaging/duckdb/fetch.sh x86_64-unknown-linux-gnu "$RUNNER_TEMP/duckdb" | tee -a "$GITHUB_ENV"
       - run: cargo build --release --locked -p dbrover-app
       # With the signing key set, cargo-packager signs the AppImage, which the app installs as
@@ -244,6 +249,7 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-packager@${{ env.CARGO_PACKAGER_VERSION }}
+      - uses: ./.github/actions/duckdb
       - run: packaging/duckdb/fetch.sh x86_64-pc-windows-msvc "$RUNNER_TEMP/duckdb" | tee -a "$GITHUB_ENV"
       - run: cargo build --release --locked -p dbrover-app
       # dbrover.exe loads duckdb.dll, and both load the Visual C++ runtime, from its own folder:

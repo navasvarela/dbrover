@@ -47,6 +47,7 @@ jobs:
         with:
           tool: cargo-llvm-cov@0.9.1
       # From here to the database servers, as in ci.yml's `check` on Linux.
+      - uses: ./.github/actions/duckdb
       - name: Fetch DuckDB's prebuilt library
         run: |
           packaging/duckdb/fetch.sh "$(rustc -vV | sed -n 's/^host: //p')" "$RUNNER_TEMP/duckdb" \

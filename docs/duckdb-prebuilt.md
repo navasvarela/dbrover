@@ -286,7 +286,10 @@ recommended for 2 to 6 MB.
   or target with no pin, fails the build before anything is extracted.
 - **Script:** `packaging/duckdb/fetch.sh`, beside the other packaging scripts. It caches by
   version in the directory it is given, re-checks the zip on every run, and re-downloads if
-  the check fails.
+  the check fails. Its download retries for about 4 minutes before it gives up.
+- **CI cache:** `.github/actions/duckdb` keeps the zips in the Actions cache, keyed on the
+  DuckDB version and the targets, so a job with a cache hit makes no request to GitHub's
+  releases. Only main saves; the entries take 13–30 MB per target.
 - **Local builds:** `cargo build` with no flag still compiles DuckDB. Nothing to install, no
   network beyond crates.io. CONTRIBUTING.md shows how to use the prebuilt library locally.
 
