@@ -20,6 +20,9 @@ tracing.workspace = true
 
 [dev-dependencies]
 dbrover-core = { workspace = true, features = ["conformance"] }
+# Compares two schemas the driver read, which should come out the same.
+dbrover-schema.workspace = true
+dbrover-sql.workspace = true
 tempfile.workspace = true
 
 [lints]

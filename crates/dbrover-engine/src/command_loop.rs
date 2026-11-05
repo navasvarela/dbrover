@@ -351,6 +351,12 @@ impl Engine {
             Command::LoadDdl { data_source, path } => {
                 self.request(data_source, SessionRequest::Ddl(path));
             }
+            Command::DescribeSchema {
+                data_source,
+                schema,
+            } => {
+                self.request(data_source, SessionRequest::DescribeSchema(schema));
+            }
             Command::LoadTable { data_source, path } => {
                 self.request(data_source, SessionRequest::LoadTable(path));
             }

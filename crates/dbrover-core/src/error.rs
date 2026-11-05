@@ -37,6 +37,9 @@ pub enum DriverError {
     /// Points at a bug in the caller, or at a node that disappeared from the database.
     #[error("nothing to show for {0}")]
     InvalidPath(CatalogPath),
+    /// Something this driver can't do yet, which the app's menus should not have offered.
+    #[error("{0}")]
+    Unsupported(&'static str),
 }
 
 /// Formats an error and all its sources as one line, outermost first, e.g.

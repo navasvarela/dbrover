@@ -63,6 +63,10 @@ pub struct Capabilities {
     /// How the engine models the users who log in to it, which decides whether the explorer
     /// lists them and offers New user.
     pub users: UserModel,
+    /// Whether a schema can be compared with another and saved as a snapshot (W13, VC3): the
+    /// driver reads a whole schema (`Connection::describe_schema`), and the script between two
+    /// is this dialect's DDL.
+    pub schema_compare: bool,
 }
 
 /// The statements that switch foreign keys off for DDL and check them after, where a dialect
@@ -220,6 +224,7 @@ const POSTGRES: Capabilities = Capabilities {
     schema_owner: true,
     drop_schema_cascade: true,
     users: UserModel::Roles,
+    schema_compare: true,
 };
 
 /// SQLite enforces foreign keys only while switched on, and can't switch them inside a
@@ -261,6 +266,7 @@ const SQLITE: Capabilities = Capabilities {
     schema_owner: false,
     drop_schema_cascade: false,
     users: UserModel::Unsupported,
+    schema_compare: false,
 };
 
 /// InnoDB parses `SET DEFAULT` but refuses the table, so it isn't offered. `CASCADE` after
@@ -312,6 +318,7 @@ const MYSQL: Capabilities = Capabilities {
     schema_owner: false,
     drop_schema_cascade: false,
     users: UserModel::Unsupported,
+    schema_compare: false,
 };
 
 /// SQL Server has no `RESTRICT`: `NO ACTION` is what refuses. Its renames are `sp_rename`
@@ -363,6 +370,7 @@ const SQL_SERVER: Capabilities = Capabilities {
     schema_owner: true,
     drop_schema_cascade: false,
     users: UserModel::Unsupported,
+    schema_compare: false,
 };
 
 /// A Synapse dedicated SQL pool's part of SQL Server's DDL (C1e), from Microsoft's
@@ -460,6 +468,7 @@ const DUCKDB: Capabilities = Capabilities {
     schema_owner: false,
     drop_schema_cascade: true,
     users: UserModel::Unsupported,
+    schema_compare: false,
 };
 
 /// ClickHouse has no unique or foreign keys, only checks; its `PRIMARY KEY` is the sort
@@ -517,6 +526,7 @@ const CLICKHOUSE: Capabilities = Capabilities {
     schema_owner: false,
     drop_schema_cascade: false,
     users: UserModel::Unsupported,
+    schema_compare: false,
 };
 
 /// CQL's tables: a primary key that can't change, no other keys or constraints, and secondary
@@ -563,6 +573,7 @@ const CQL: Capabilities = Capabilities {
     schema_owner: false,
     drop_schema_cascade: false,
     users: UserModel::Unsupported,
+    schema_compare: false,
 };
 
 impl Dialect {

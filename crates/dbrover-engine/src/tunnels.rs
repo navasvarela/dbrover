@@ -9,8 +9,8 @@ use async_trait::async_trait;
 use dbrover_core::{
     CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, Cell, ChildrenPage,
     ChildrenQuery, Connection, CostEstimate, DataSourceId, DriverError, ProgressHandle, Rejection,
-    RelationName, ResultCursor, RoleDescription, ServerInfo, SshConfig, TableConstraints,
-    TableDescription, TableName, TransactionStatus,
+    RelationName, ResultCursor, RoleDescription, SchemaDescription, ServerInfo, SshConfig,
+    TableConstraints, TableDescription, TableName, TransactionStatus,
 };
 use dbrover_ssh::{SshError, Tunnel, TunnelRequest};
 
@@ -157,6 +157,13 @@ impl Connection for Tunnelled {
 
     async fn describe_role(&mut self, path: &CatalogPath) -> Result<RoleDescription, DriverError> {
         self.connection.describe_role(path).await
+    }
+
+    async fn describe_schema(
+        &mut self,
+        schema: &str,
+    ) -> Result<Option<SchemaDescription>, DriverError> {
+        self.connection.describe_schema(schema).await
     }
 
     async fn validate(&mut self, sql: &str) -> Result<Option<Rejection>, DriverError> {

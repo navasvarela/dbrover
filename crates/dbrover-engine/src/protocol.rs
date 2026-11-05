@@ -10,6 +10,7 @@ use dbrover_core::{
     TableDescription, TableName, TransactionStatus,
 };
 use dbrover_export::{ExportSpec, SqlTable};
+use dbrover_schema::Schema;
 use dbrover_sql::{ExistingTable, ParameterValues};
 use dbrover_store::{
     ActionId, ConsoleKey, CustomFile, CustomFileKind, DiagramFile, DiagramKey, HistoryEntry,
@@ -286,6 +287,13 @@ pub enum Command {
     LoadTable {
         data_source: DataSourceId,
         path: CatalogPath,
+    },
+    /// Reads every table, index and view of `schema` in the data source's configured database,
+    /// for schema compare and snapshots, on the explorer's connection. Answered by
+    /// [`Event::SchemaDescribed`].
+    DescribeSchema {
+        data_source: DataSourceId,
+        schema: String,
     },
     /// Inserts the rows of a CSV file into a table, on the explorer's connection to the data
     /// source, all in one transaction: in batches of several rows per `INSERT`, and rolled back
@@ -649,6 +657,13 @@ pub enum Event {
         data_source: DataSourceId,
         path: CatalogPath,
         result: Result<ExistingTable, String>,
+    },
+    /// The answer to [`Command::DescribeSchema`]: the schema normalised for comparing, or why
+    /// it couldn't be read (including that it doesn't exist).
+    SchemaDescribed {
+        data_source: DataSourceId,
+        schema: String,
+        result: Result<Schema, String>,
     },
     /// The answer to [`Command::ApplyEdits`].
     EditsApplied {

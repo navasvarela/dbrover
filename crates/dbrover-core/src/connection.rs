@@ -7,8 +7,8 @@ use async_trait::async_trait;
 use crate::{
     CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, Cell, ChildrenPage,
     ChildrenQuery, CostEstimate, DriverError, ManagedService, ProgressHandle, RelationName,
-    ResultCursor, RoleDescription, TableConstraints, TableDescription, TableName,
-    TransactionStatus,
+    ResultCursor, RoleDescription, SchemaDescription, TableConstraints, TableDescription,
+    TableName, TransactionStatus,
 };
 
 /// What a server reported about itself when the connection was opened.
@@ -181,6 +181,26 @@ pub trait Connection: Send {
         &mut self,
         table: &TableName,
     ) -> Result<TableConstraints, DriverError>;
+
+    /// Describes every table, index and view of `schema` in the configured database, for
+    /// comparing schemas and saving snapshots (see `docs/schema-compare.md`). Names inside
+    /// definitions are printed without `schema` and other schemas' names with theirs, so the
+    /// same objects described in two schemas read the same. `None` if there is no such schema.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError::Unsupported`] where the driver can't read a whole schema yet (see
+    /// `dbrover_sql::Capabilities::schema_compare`); [`DriverError::Connection`] if a catalog
+    /// query fails.
+    async fn describe_schema(
+        &mut self,
+        schema: &str,
+    ) -> Result<Option<SchemaDescription>, DriverError> {
+        let _ = schema;
+        Err(DriverError::Unsupported(
+            "This database's schemas can't be compared yet.",
+        ))
+    }
 
     /// Describes the role at `path`, a node the roles folder lists, on engines whose users
     /// are roles (see `dbrover_sql::Capabilities::users`).
