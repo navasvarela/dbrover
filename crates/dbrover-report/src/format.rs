@@ -237,11 +237,22 @@ fn format_steps(
         };
         let original = &text[code.string.clone()];
         if let Some(string) = multi_line_string(original, sql_formatted.trim()) {
-            formatted.replace_range(code.string.clone(), &string);
+            formatted.replace_range(code.string.clone(), &with_line_breaks(&string, text));
         }
     }
     left.reverse();
     (formatted, left)
+}
+
+/// `string` with the line breaks `file` uses: CRLF in a file that has them, as Git on Windows
+/// checks files out, so formatting never mixes the two.
+fn with_line_breaks(string: &str, file: &str) -> String {
+    let lines = string.replace("\r\n", "\n");
+    if file.contains("\r\n") {
+        lines.replace('\n', "\r\n")
+    } else {
+        lines
+    }
 }
 
 /// The SQL dialect of a step, if it is SQL in a dialect DbRover knows.
@@ -421,6 +432,19 @@ mod tests {
     }
 
     #[test]
+    fn keeps_crlf_line_breaks() {
+        let example = include_str!("../../../examples/reports/sales-by-category.toml");
+        let crlf = example.replace('\n', "\r\n");
+        assert_eq!(lay_out(&crlf), crlf);
+        let formatted = format(&crlf);
+        assert_eq!(format(&formatted), formatted);
+        assert!(
+            !formatted.replace("\r\n", "").contains('\n'),
+            "every line break is CRLF"
+        );
+    }
+
+    #[test]
     fn refuses_a_file_that_isnt_toml() {
         let refused = format_report("[report\nname = 1\n", &[], &FormatOptions::default());
         assert_eq!(refused, Err(FormatReportError::NotToml));
@@ -436,6 +460,12 @@ mod tests {
             include_str!("../../../examples/reports/sales-by-week.toml"),
         ];
         for example in examples {
+            // Git on Windows checks the examples out with CRLF, which Format keeps.
+            let line_break = if example.contains("\r\n") {
+                "\r\n"
+            } else {
+                "\n"
+            };
             let once = format(example);
             assert_eq!(format(&once), once, "formatting twice changes nothing");
             // An example indented by hand comes back as the example formatted.
@@ -448,11 +478,11 @@ mod tests {
                     // Spaces after a multi-line string's opening quotes are its value's.
                     let opens_string = line.ends_with("\"\"\"") || line.ends_with("'''");
                     if (key || line.starts_with('[')) && !opens_string {
-                        format!("    {line}   \n")
+                        format!("    {line}   {line_break}")
                     } else if key {
-                        format!("    {line}\n")
+                        format!("    {line}{line_break}")
                     } else {
-                        format!("{line}\n")
+                        format!("{line}{line_break}")
                     }
                 })
                 .collect();
