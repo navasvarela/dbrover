@@ -355,6 +355,8 @@ async fn connect(
         ConnectionConfig::DynamoDb(config) => {
             Box::new(dbrover_driver_dynamodb::connect(config).await?)
         }
+        // The same for Athena: its API is AWS's, reached directly.
+        ConnectionConfig::Athena(config) => Box::new(dbrover_driver_athena::connect(config).await?),
     })
 }
 

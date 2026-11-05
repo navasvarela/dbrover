@@ -15,6 +15,7 @@ dbrover-chart = { path = "crates/dbrover-chart" }
 dbrover-cloud = { path = "crates/dbrover-cloud" }
 dbrover-core = { path = "crates/dbrover-core" }
 dbrover-diagram = { path = "crates/dbrover-diagram" }
+dbrover-driver-athena = { path = "crates/dbrover-driver-athena" }
 dbrover-driver-cassandra = { path = "crates/dbrover-driver-cassandra" }
 dbrover-driver-mongodb = { path = "crates/dbrover-driver-mongodb" }
 dbrover-driver-mysql = { path = "crates/dbrover-driver-mysql" }
@@ -55,6 +56,9 @@ aws-runtime = { version = "~1.10.2", default-features = false }
 aws-sigv4 = "~1.6.4"
 aws-types = "~1.7.0"
 aws-sdk-dynamodb = { version = "~1.136.0", default-features = false, features = ["behavior-version-latest", "rt-tokio"] }
+# Amazon Athena (docs/cloud-data.md, C3), released with the DynamoDB crate above, so both build
+# on the same smithy runtime.
+aws-sdk-athena = { version = "~1.127.0", default-features = false, features = ["behavior-version-latest", "rt-tokio"] }
 aws-smithy-http-client = { version = "~1.5.2", default-features = false, features = ["rustls-ring"] }
 # Decodes the salts and hashes of hashed known_hosts entries, as russh does.
 data-encoding = "2.11.1"

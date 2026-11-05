@@ -237,6 +237,7 @@ pub fn driver_id(driver: DriverKind) -> &'static str {
         DriverKind::Elasticsearch => "elasticsearch",
         DriverKind::Cassandra => "cassandra",
         DriverKind::DynamoDb => "dynamodb",
+        DriverKind::Athena => "athena",
     }
 }
 

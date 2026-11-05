@@ -42,17 +42,19 @@ pub use command_template::{CommandTemplate, DataSourceFields};
 pub use connection::{Connection, Rejection, RejectionKind, ServerInfo};
 pub use cost::{ByteCount, CostEstimate, CostGuard, FullScan, ReadPace, ScanGuard};
 pub use data_source::{
-    AwsSignInKind, CassandraConfig, ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId,
-    DriverKind, DuckDbConfig, DuckDbDatabase, DynamoDbConfig, ElasticsearchAuth,
+    AthenaConfig, AwsSignInKind, CassandraConfig, ClickHouseConfig, ConnectionConfig, DataSource,
+    DataSourceId, DriverKind, DuckDbConfig, DuckDbDatabase, DynamoDbConfig, ElasticsearchAuth,
     ElasticsearchConfig, McpLogin, MongoConfig, MysqlConfig, Port, PostgresConfig, ProjectId,
     RedisConfig, Route, SafetyLevel, ServerConfig, SourceColor, SqlServerConfig, SqliteConfig,
     SshConfig, SshLogin, TlsMode,
 };
-pub use error::{BoxError, DriverError, describe_error};
+pub use error::{BoxError, DriverError, describe_error, position_at};
 pub use execution::{
     CancelHandle, Cell, ColumnInfo, ResultCursor, ResultShape, Row, TransactionStatus, ValueKind,
 };
-pub use job::{JobId, JobPage, JobProgress, JobService, JobState, Jobs, ProgressHandle};
+pub use job::{
+    JobFailure, JobId, JobPage, JobProgress, JobService, JobState, Jobs, ProgressHandle,
+};
 pub use managed_service::{
     ManagedService, ServiceAddress, ServiceEngine, ServicePreset, ServiceSignIn, ServiceTls,
     ServiceVendor,

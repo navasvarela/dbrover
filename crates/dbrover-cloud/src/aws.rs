@@ -12,7 +12,7 @@ use aws_config::{BehaviorVersion, ConfigLoader, Region};
 use aws_credential_types::Credentials;
 use aws_credential_types::provider::ProvideCredentials;
 use aws_credential_types::provider::error::CredentialsError;
-use aws_runtime::env_config::file::EnvConfigFiles;
+use aws_runtime::env_config::file::{EnvConfigFileKind, EnvConfigFiles};
 use aws_smithy_http_client::tls::{self, rustls_provider::CryptoMode};
 use dbrover_core::{AwsSignInKind, Password};
 
@@ -119,7 +119,19 @@ impl AwsSignIn {
     ///
     /// [`AwsError`] when the sign-in can't be used, saying why.
     pub async fn sdk_config(&self) -> Result<SdkConfig, AwsError> {
-        self.load(self.loader(EnvConfigFiles::default())?).await
+        self.load(self.loader(self.shared_files())?).await
+    }
+
+    /// The shared AWS files the SDK reads settings from: the machine's, except for a local
+    /// emulator, whose made-up keys need nothing from them. An emulator's tests then read no
+    /// file of the machine's at all.
+    fn shared_files(&self) -> EnvConfigFiles {
+        match self.credentials {
+            AwsCredentials::LocalEmulator => EnvConfigFiles::builder()
+                .with_contents(EnvConfigFileKind::Config, "")
+                .build(),
+            AwsCredentials::DefaultChain | AwsCredentials::Profile(_) => EnvConfigFiles::default(),
+        }
     }
 
     async fn load(&self, loader: ConfigLoader) -> Result<SdkConfig, AwsError> {
@@ -162,8 +174,7 @@ impl AwsSignIn {
     ///
     /// [`AwsError`] when the sign-in gives no credentials, saying why.
     pub async fn keys(&self) -> Result<AwsKeys, AwsError> {
-        self.keys_from(self.loader(EnvConfigFiles::default())?)
-            .await
+        self.keys_from(self.loader(self.shared_files())?).await
     }
 
     async fn keys_from(&self, loader: ConfigLoader) -> Result<AwsKeys, AwsError> {
@@ -230,7 +241,6 @@ impl AwsSignIn {
 mod tests {
     use std::path::Path;
 
-    use aws_runtime::env_config::file::EnvConfigFileKind;
     use aws_types::os_shim_internal::Env;
 
     use super::*;

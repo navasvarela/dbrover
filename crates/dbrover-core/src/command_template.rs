@@ -50,7 +50,7 @@ impl From<&ConnectionConfig> for DataSourceFields {
             | ConnectionConfig::Mongo(_)
             | ConnectionConfig::Elasticsearch(_)
             | ConnectionConfig::Cassandra(_) => None,
-            ConnectionConfig::DynamoDb(_) => None,
+            ConnectionConfig::DynamoDb(_) | ConnectionConfig::Athena(_) => None,
         };
         let server = config.server();
         Self {

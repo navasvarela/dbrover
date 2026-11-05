@@ -1,0 +1,33 @@
+{
+  "doc": "An INSERT, run with the data source's own output location: no columns, and the rows it wrote as UpdateCount.",
+  "exchanges": [
+    {
+      "operation": "GetWorkGroup",
+      "request": {"WorkGroup": "reports"},
+      "response": {"WorkGroup": {"Name": "reports", "State": "ENABLED", "Configuration": {
+        "EnforceWorkGroupConfiguration": false,
+        "EngineVersion": {"EffectiveEngineVersion": "Athena engine version 3"}}}}
+    },
+    {
+      "operation": "StartQueryExecution",
+      "request": {
+        "QueryString": "INSERT INTO archive SELECT * FROM orders WHERE year = 2025",
+        "QueryExecutionContext": {"Catalog": "AwsDataCatalog", "Database": "default"},
+        "WorkGroup": "reports",
+        "ResultConfiguration": {"OutputLocation": "s3://my-results/dbrover/"}
+      },
+      "response": {"QueryExecutionId": "q-insert"}
+    },
+    {
+      "operation": "GetQueryExecution",
+      "request": {"QueryExecutionId": "q-insert"},
+      "response": {"QueryExecution": {"QueryExecutionId": "q-insert", "StatementType": "DML",
+        "Status": {"State": "SUCCEEDED"}, "Statistics": {"DataScannedInBytes": 4096}}}
+    },
+    {
+      "operation": "GetQueryResults",
+      "request": {"QueryExecutionId": "q-insert"},
+      "response": {"UpdateCount": 3, "ResultSet": {"ResultSetMetadata": {"ColumnInfo": []}, "Rows": []}}
+    }
+  ]
+}

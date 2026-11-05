@@ -126,6 +126,17 @@ Each driver crate runs the suite against its own backend:
   too quickly to be stopped part-way, so cancel is tested against a server that takes a
   request and never answers. Besides: each attribute type as Extended JSON, a partition paged
   past 500 items, a filtered Scan's short pages, and writes with and without `RETURNING`.
+- **Athena**: no container, and no account. Each test starts a server on `127.0.0.1` that
+  answers AWS's SDK from a file of exchanges in `crates/dbrover-driver-athena/src/tests/exchanges/`,
+  in their order, and fails the test on any request the file doesn't expect or any exchange
+  never asked for. The files are written from Athena's API reference (their README says what
+  that can't show). The data source signs in to it as a local emulator, with made-up keys and
+  no AWS file read. The tests run `check_lifecycle`, `check_connect_failure` and `check_cancel`
+  (a query polled while it runs, stopped by its id); besides: a `SELECT` read in three pages
+  without its header row, `NULL` beside empty text, an `INSERT`'s row count, a failed query's
+  position from its `line L:C:`, and a workgroup without a place for results. `live_athena`,
+  ignored, runs the same against real Athena when `DBROVER_TEST_ATHENA_LIVE` names
+  `profile,region,workgroup[,output location]`; CI never sets it.
 - **SQL Server**: the `sqlserver` container (2022, port 51433), skipped when
   `DBROVER_TEST_SQLSERVER_URL` is unset. Its image is x86-64 only: native on CI's Linux runner,
   emulated (slowly, and it can crash) by Docker on an Apple-silicon Mac. The image can't

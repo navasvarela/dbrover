@@ -101,5 +101,13 @@ pub fn of(driver: DriverKind) -> DatabaseBrand {
             light: Color32::from_rgb(0x40, 0x53, 0xD6),
             dark: Color32::from_rgb(0x8C, 0x9B, 0xFF),
         },
+        // AWS's analytics purple, darkened on the light theme and lightened on the dark one.
+        // The glyph is DbRover's own, as DynamoDB's is.
+        DriverKind::Athena => DatabaseBrand {
+            logo_uri: "bytes://logos/athena.svg",
+            logo_svg: include_bytes!("../../../assets/icons/databases/athena.svg"),
+            light: Color32::from_rgb(0x6B, 0x3F, 0xD1),
+            dark: Color32::from_rgb(0xB4, 0x8C, 0xFF),
+        },
     }
 }

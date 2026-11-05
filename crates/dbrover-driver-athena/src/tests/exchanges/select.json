@@ -1,0 +1,95 @@
+{
+  "doc": "A SELECT queued, run and read in three pages; the first starts with the column names. NULL is a value-less datum, the empty string an empty one.",
+  "exchanges": [
+    {
+      "operation": "GetWorkGroup",
+      "request": {"WorkGroup": "primary"},
+      "response": {"WorkGroup": {"Name": "primary", "State": "ENABLED", "Configuration": {
+        "ResultConfiguration": {"OutputLocation": "s3://dbrover-results/athena/"},
+        "EngineVersion": {"EffectiveEngineVersion": "Athena engine version 3"}}}}
+    },
+    {
+      "operation": "StartQueryExecution",
+      "request": {
+        "QueryString": "SELECT id, name, total FROM orders",
+        "QueryExecutionContext": {"Catalog": "AwsDataCatalog", "Database": "sales"},
+        "WorkGroup": "primary"
+      },
+      "response": {"QueryExecutionId": "q-select"}
+    },
+    {
+      "operation": "GetQueryExecution",
+      "request": {"QueryExecutionId": "q-select"},
+      "response": {"QueryExecution": {"QueryExecutionId": "q-select", "StatementType": "DML",
+        "Status": {"State": "QUEUED", "SubmissionDateTime": 1.7e9}, "Statistics": {}}}
+    },
+    {
+      "operation": "GetQueryExecution",
+      "request": {"QueryExecutionId": "q-select"},
+      "response": {"QueryExecution": {"QueryExecutionId": "q-select", "StatementType": "DML",
+        "Status": {"State": "RUNNING", "SubmissionDateTime": 1.7e9},
+        "Statistics": {"DataScannedInBytes": 1048576, "EngineExecutionTimeInMillis": 300}}}
+    },
+    {
+      "operation": "GetQueryExecution",
+      "request": {"QueryExecutionId": "q-select"},
+      "response": {"QueryExecution": {"QueryExecutionId": "q-select", "StatementType": "DML",
+        "Status": {"State": "SUCCEEDED", "SubmissionDateTime": 1.7e9, "CompletionDateTime": 1.7e9},
+        "Statistics": {"DataScannedInBytes": 2500000, "EngineExecutionTimeInMillis": 900}}}
+    },
+    {
+      "operation": "GetQueryResults",
+      "request": {"QueryExecutionId": "q-select", "MaxResults": 500},
+      "response": {
+        "UpdateCount": 0,
+        "NextToken": "page-2",
+        "ResultSet": {
+          "ResultSetMetadata": {"ColumnInfo": [
+            {"CatalogName": "hive", "SchemaName": "", "TableName": "", "Name": "id", "Label": "id", "Type": "bigint", "Precision": 19, "Scale": 0, "Nullable": "UNKNOWN", "CaseSensitive": false},
+            {"CatalogName": "hive", "SchemaName": "", "TableName": "", "Name": "name", "Label": "name", "Type": "varchar", "Precision": 2147483647, "Scale": 0, "Nullable": "UNKNOWN", "CaseSensitive": true},
+            {"CatalogName": "hive", "SchemaName": "", "TableName": "", "Name": "total", "Label": "total", "Type": "decimal", "Precision": 10, "Scale": 2, "Nullable": "UNKNOWN", "CaseSensitive": false}
+          ]},
+          "Rows": [
+            {"Data": [{"VarCharValue": "id"}, {"VarCharValue": "name"}, {"VarCharValue": "total"}]},
+            {"Data": [{"VarCharValue": "1"}, {"VarCharValue": "Ada"}, {"VarCharValue": "10.50"}]},
+            {"Data": [{"VarCharValue": "2"}, {}, {"VarCharValue": "0.00"}]}
+          ]
+        }
+      }
+    },
+    {
+      "operation": "GetQueryResults",
+      "request": {"QueryExecutionId": "q-select", "NextToken": "page-2"},
+      "response": {
+        "NextToken": "page-3",
+        "ResultSet": {
+          "ResultSetMetadata": {"ColumnInfo": [
+            {"Name": "id", "Type": "bigint", "Precision": 19, "Scale": 0},
+            {"Name": "name", "Type": "varchar", "Precision": 2147483647, "Scale": 0},
+            {"Name": "total", "Type": "decimal", "Precision": 10, "Scale": 2}
+          ]},
+          "Rows": [
+            {"Data": [{"VarCharValue": "3"}, {"VarCharValue": ""}, {"VarCharValue": "7.25"}]},
+            {"Data": [{"VarCharValue": "4"}, {"VarCharValue": "id"}, {}]}
+          ]
+        }
+      }
+    },
+    {
+      "operation": "GetQueryResults",
+      "request": {"QueryExecutionId": "q-select", "NextToken": "page-3"},
+      "response": {
+        "ResultSet": {
+          "ResultSetMetadata": {"ColumnInfo": [
+            {"Name": "id", "Type": "bigint", "Precision": 19, "Scale": 0},
+            {"Name": "name", "Type": "varchar", "Precision": 2147483647, "Scale": 0},
+            {"Name": "total", "Type": "decimal", "Precision": 10, "Scale": 2}
+          ]},
+          "Rows": [
+            {"Data": [{"VarCharValue": "5"}, {"VarCharValue": "Grace"}, {"VarCharValue": "99.99"}]}
+          ]
+        }
+      }
+    }
+  ]
+}
