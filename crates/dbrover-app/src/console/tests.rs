@@ -1841,6 +1841,208 @@ mod charts {
             "other columns start afresh"
         );
     }
+
+    /// A statement with a chart block above it (CH1d).
+    const BY_MONTH: &str = "-- Totals by month.\n\
+                            -- [chart]\n\
+                            -- # Bars read best for a few months.\n\
+                            -- kind = \"bars\"\n\
+                            -- x = \"month\"\n\
+                            -- y = \"total\"\n\
+                            SELECT month, total FROM sales";
+
+    const MONTHS_ROWS: [&[Option<&str>]; 3] = [
+        &[Some("2026-01"), Some("120.50")],
+        &[Some("2026-02"), Some("80")],
+        &[Some("2026-03"), Some("200")],
+    ];
+
+    fn ran_with(text: &str) -> QueryConsole {
+        let mut console = console(text);
+        ran(&mut console, RunId(1), &["month", "total"], &MONTHS_ROWS);
+        console
+    }
+
+    /// Draws the console's result, and returns what its toolbar asked for.
+    fn show(
+        console: &mut QueryConsole,
+        steps: impl FnOnce(&mut egui_kittest::Harness<'_>),
+    ) -> Vec<ConsoleAction> {
+        let keymap = crate::keymap::Keymap::default();
+        let mut asked = Vec::new();
+        let mut harness = ui_harness(|ui| {
+            results::show(ui, console, &keymap, CellMenuItems::NONE, &mut asked);
+        });
+        harness.run();
+        steps(&mut harness);
+        drop(harness);
+        asked
+    }
+
+    #[test]
+    fn a_statement_with_a_block_opens_on_its_chart() {
+        let mut console = ran_with(&BY_MONTH.replace("bars", "lines"));
+        show(&mut console, |harness| {
+            harness.get_by_value("X: month");
+            harness.get_by_label("Charting 3 rows");
+            assert!(harness.query_by_label("Not in the query").is_none());
+        });
+        assert!(tab(&console).is_shown(), "opened without picking Chart");
+        assert_eq!(tab(&console).choice().unwrap().kind, ChartKind::Lines);
+        assert_eq!(series_marks(&console), (0, 1));
+    }
+
+    #[test]
+    fn save_to_query_rewrites_only_the_kind_in_one_undo_step() {
+        let mut console = ran_with(BY_MONTH);
+        let asked = show(&mut console, |harness| {
+            harness.get_by_label("Lines").click();
+            harness.run();
+            harness.get_by_label("Not in the query");
+            harness.get_by_label("Save to query").click();
+            harness.run();
+        });
+        assert!(
+            asked.contains(&ConsoleAction::SaveChartToQuery),
+            "{asked:?}"
+        );
+        console.save_chart_to_query(Instant::now());
+        assert_eq!(
+            console.text(),
+            BY_MONTH.replace("kind = \"bars\"", "kind = \"lines\"")
+        );
+        assert_eq!(
+            console.editor.replaced_text(),
+            Some(BY_MONTH),
+            "one undo step"
+        );
+        show(&mut console, |harness| {
+            assert!(harness.query_by_label("Not in the query").is_none());
+        });
+    }
+
+    #[test]
+    fn save_to_query_writes_a_block_above_a_statement_without_one() {
+        let mut console = ran_with("-- Totals.\nSELECT month, total FROM sales");
+        show(&mut console, |harness| {
+            harness.get_by_label("Chart").click();
+            harness.run();
+            harness.get_by_label("Save to query");
+        });
+        console.save_chart_to_query(Instant::now());
+        assert_eq!(
+            console.text(),
+            "-- Totals.\n-- [chart]\n-- kind = \"bars\"\n-- x = \"month\"\n-- y = \"total\"\nSELECT month, total FROM sales"
+        );
+        assert_eq!(
+            tab(&console).spec_text(),
+            Some("[chart]\nkind = \"bars\"\nx = \"month\"\ny = \"total\"")
+        );
+        let statements = console.statements_to_run(RunScope::All);
+        assert_eq!(
+            console.run.as_ref().unwrap().statements[0].range,
+            statements[0].range,
+            "the statement's place moved with the text"
+        );
+    }
+
+    #[test]
+    fn a_misspelt_column_shows_the_results_columns_over_the_starting_chart() {
+        let mut console = ran_with(&BY_MONTH.replace("y = \"total\"", "y = \"nett\""));
+        show(&mut console, |harness| {
+            harness
+                .get_by_label("chart: `y = \"nett\"` isn't a column of this result: month, total");
+            harness.get_by_label("Charting 3 rows");
+        });
+        assert_eq!(series_marks(&console), (3, 0), "the starting chart");
+    }
+
+    #[test]
+    fn a_blocks_key_problem_shows_in_place_of_the_chart_and_in_the_editor() {
+        let text = BY_MONTH.replace("kind = \"bars\"", "kind = \"area\"");
+        let mut console = ran_with(&text);
+        show(&mut console, |harness| {
+            harness.get_by_label("chart, line 4: `kind` is bars, lines or scatter, not \"area\"");
+            assert!(harness.query_by_label("Charting 3 rows").is_none());
+        });
+        assert_eq!(console.problem_counts(), (1, 0));
+        console.jump_to_problem(true);
+        assert_eq!(
+            console.editor.ordered_selection().0,
+            text.find("\"area\"").unwrap()
+        );
+    }
+
+    #[test]
+    fn sort_limit_and_title_in_the_block_shape_the_chart() {
+        let text = BY_MONTH.replace(
+            "-- y = \"total\"",
+            "-- y = \"total\"\n-- sort = \"total desc\"\n-- limit = 2\n-- title = \"Best months\"",
+        );
+        let mut console = ran_with(&text);
+        show(&mut console, |harness| {
+            harness.get_by_label("Charting 2 rows · sorted by total, largest first, the first 2");
+        });
+        let drawing = tab(&console).drawing().unwrap();
+        let texts: Vec<&str> = drawing
+            .marks
+            .iter()
+            .filter_map(|mark| match mark {
+                Mark::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(texts.contains(&"Best months"), "{texts:?}");
+        assert!(
+            texts.contains(&"2026-03") && !texts.contains(&"2026-02"),
+            "{texts:?}"
+        );
+    }
+
+    #[test]
+    fn a_toolbar_change_lasts_until_the_block_is_edited() {
+        let mut console = ran_with(BY_MONTH);
+        show(&mut console, |harness| {
+            harness.get_by_label("Lines").click();
+            harness.run();
+        });
+        ran(&mut console, RunId(2), &["month", "total"], &MONTHS_ROWS);
+        show(&mut console, |_| {});
+        assert_eq!(tab(&console).choice().unwrap().kind, ChartKind::Lines);
+
+        console
+            .editor
+            .replace_text(BY_MONTH.replace("Bars read best", "Bars"), 0);
+        ran(&mut console, RunId(3), &["month", "total"], &MONTHS_ROWS);
+        show(&mut console, |_| {});
+        assert_eq!(
+            tab(&console).choice().unwrap().kind,
+            ChartKind::Bars,
+            "the edited block wins"
+        );
+    }
+
+    #[test]
+    fn copies_the_chart_for_a_report() {
+        let mut console = ran_with(BY_MONTH);
+        show(&mut console, |harness| {
+            harness.get_by_label("Lines").click();
+            harness.run();
+        });
+        assert_eq!(
+            tab(&console).report_text().as_deref(),
+            Some(
+                "[[chart]]\nfile = \"total by month.svg\"\n# Bars read best for a few months.\n\
+                 kind = \"lines\"\nx = \"month\"\ny = \"total\"\n"
+            )
+        );
+    }
+
+    #[test]
+    fn a_block_that_belongs_to_no_statement_is_marked() {
+        let mut console = console("-- [chart]\n\nSELECT 1");
+        assert_eq!(console.problem_counts(), (0, 1));
+    }
 }
 
 /// A DynamoDB table's items are edited a statement per change, each found by its whole

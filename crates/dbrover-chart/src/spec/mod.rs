@@ -16,7 +16,7 @@ use std::ops::Range;
 
 pub use arrange::arrange;
 pub use resolve::{ColumnProblem, Resolved, SortBy};
-pub use write::{SavedChoice, WriteError, write_back};
+pub use write::{SavedChoice, WriteError, for_report, write_back};
 
 use crate::ChartKind;
 

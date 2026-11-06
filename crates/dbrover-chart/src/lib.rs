@@ -36,5 +36,5 @@ pub use layout::{
 pub use role::{Column, Role};
 pub use spec::{
     ChartSpec, ColumnProblem, Resolved, SPEC_TABLE, SavedChoice, Sort, SortBy, SpecProblem,
-    WriteError, arrange, write_back,
+    WriteError, arrange, for_report, write_back,
 };

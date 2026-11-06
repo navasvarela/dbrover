@@ -1,6 +1,6 @@
 //! Writing the chart tab's choice back into a spec's text.
 
-use toml_edit::{Array, DocumentMut, Item, Table, Value};
+use toml_edit::{Array, ArrayOfTables, DocumentMut, Item, Table, Value};
 
 use super::{Key, SPEC_TABLE};
 use crate::ChartKind;
@@ -53,6 +53,34 @@ pub fn write_back(text: Option<&str>, saved: &SavedChoice) -> Result<String, Wri
         names => Value::Array(names.iter().map(String::as_str).collect::<Array>()),
     };
     set(table, Key::Y, y);
+    Ok(document.to_string())
+}
+
+/// `text`, a spec's text, as a report's `[[chart]]` (CH3), writing `file` first: the form
+/// **Copy for a report** puts on the clipboard. Every key and comment of the spec is kept.
+///
+/// # Errors
+///
+/// [`WriteError`] when `text` isn't TOML, or its `chart` isn't a table.
+pub fn for_report(text: &str, file: &str) -> Result<String, WriteError> {
+    let mut document = text
+        .parse::<DocumentMut>()
+        .map_err(|error| WriteError::Unreadable(error.message().trim().to_owned()))?;
+    let spec = match document.remove(SPEC_TABLE) {
+        Some(Item::Table(spec)) => spec,
+        None => Table::new(),
+        Some(_) => return Err(WriteError::NotATable),
+    };
+    let mut chart = Table::new();
+    chart.insert("file", Item::Value(Value::from(file)));
+    for (key, item) in spec.iter() {
+        if let Some(key) = spec.key(key) {
+            chart.insert_formatted(key, item.clone());
+        }
+    }
+    let mut charts = ArrayOfTables::new();
+    charts.push(chart);
+    document.insert(SPEC_TABLE, Item::ArrayOfTables(charts));
     Ok(document.to_string())
 }
 
@@ -152,6 +180,22 @@ mod tests {
     }
 
     #[test]
+    fn copies_a_spec_as_a_reports_chart() {
+        let text =
+            "[chart]\n# Net sales by month.\nkind = \"bars\"  # bars read best\nx = \"month\"\n";
+        assert_eq!(
+            for_report(text, "net by month.svg").as_deref(),
+            Ok(
+                "[[chart]]\nfile = \"net by month.svg\"\n# Net sales by month.\nkind = \"bars\"  # bars read best\nx = \"month\"\n"
+            )
+        );
+        assert_eq!(
+            for_report("[chart]\n", "a \"quoted\" name.svg").as_deref(),
+            Ok("[[chart]]\nfile = 'a \"quoted\" name.svg'\n")
+        );
+    }
+
+    #[test]
     fn refuses_text_it_cant_keep() {
         let choice = saved(ChartKind::Bars, "month", &["net"]);
         assert!(matches!(
@@ -162,5 +206,6 @@ mod tests {
             write_back(Some("chart = 1"), &choice),
             Err(WriteError::NotATable)
         );
+        assert_eq!(for_report("chart = 1", "a.svg"), Err(WriteError::NotATable));
     }
 }

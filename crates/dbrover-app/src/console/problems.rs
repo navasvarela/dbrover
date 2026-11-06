@@ -19,6 +19,7 @@ use dbrover_sql::{
 };
 
 use super::catalog_lint;
+use super::chart::block::ChartProblem;
 use super::completion::CatalogSource;
 use crate::code_editor::highlight::error_marker;
 use crate::code_editor::{self, EditorProblem};
@@ -302,22 +303,68 @@ impl Problems {
         self.asking = !ask.is_empty();
         ask
     }
+}
 
-    /// The problem to jump to from byte `cursor`: the first one starting after it, or before
-    /// it going backwards, wrapping around.
-    pub fn next_from(&self, cursor: usize, forward: bool) -> Option<&Problem> {
-        if forward {
-            self.shown
-                .iter()
-                .find(|problem| problem.range.start > cursor)
-                .or(self.shown.first())
-        } else {
-            self.shown
-                .iter()
-                .rev()
-                .find(|problem| problem.range.start < cursor)
-                .or(self.shown.last())
+/// Where to jump from byte `cursor` among problems starting at `starts`, sorted: the first one
+/// starting after it, or before it going backwards, wrapping around.
+pub fn next_problem(starts: &[usize], cursor: usize, forward: bool) -> Option<usize> {
+    if forward {
+        starts
+            .iter()
+            .find(|&&start| start > cursor)
+            .or(starts.first())
+            .copied()
+    } else {
+        starts
+            .iter()
+            .rev()
+            .find(|&&start| start < cursor)
+            .or(starts.last())
+            .copied()
+    }
+}
+
+/// A problem the editor underlines: a statement's, or a chart block's.
+pub enum ShownProblem<'a> {
+    Statement(&'a Problem),
+    Chart(&'a ChartProblem),
+}
+
+impl ShownProblem<'_> {
+    /// `statements`' and `charts`' problems together, in the text's order.
+    pub fn all<'a>(statements: &'a [Problem], charts: &'a [ChartProblem]) -> Vec<ShownProblem<'a>> {
+        let mut all: Vec<ShownProblem<'a>> = statements
+            .iter()
+            .map(ShownProblem::Statement)
+            .chain(charts.iter().map(ShownProblem::Chart))
+            .collect();
+        all.sort_by_key(|problem| problem.range().start);
+        all
+    }
+
+    fn problem(&self) -> &dyn EditorProblem {
+        match self {
+            Self::Statement(problem) => *problem,
+            Self::Chart(problem) => *problem,
         }
+    }
+}
+
+impl EditorProblem for ShownProblem<'_> {
+    fn range(&self) -> Range<usize> {
+        self.problem().range()
+    }
+
+    fn severity(&self) -> code_editor::Severity {
+        self.problem().severity()
+    }
+
+    fn message(&self) -> &str {
+        self.problem().message()
+    }
+
+    fn note(&self) -> Option<String> {
+        self.problem().note()
     }
 }
 
@@ -476,11 +523,12 @@ mod tests {
         check(&mut problems, &input(text, &options, false), start);
 
         let second = text.rfind("delete").unwrap();
-        let next = |cursor, forward| {
-            problems
-                .next_from(cursor, forward)
-                .map(|problem| problem.range.start)
-        };
+        let starts: Vec<usize> = problems
+            .shown()
+            .iter()
+            .map(|problem| problem.range.start)
+            .collect();
+        let next = |cursor, forward| next_problem(&starts, cursor, forward);
         assert_eq!(next(0, true), Some(second));
         assert_eq!(next(second, true), Some(0));
         assert_eq!(next(second, false), Some(0));

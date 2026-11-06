@@ -49,7 +49,7 @@ use dbrover_store::{ConsoleKey, Snippet, SnippetBody, SqlFileContents};
 use edit::{EditTarget, Editability};
 use grid::CellPos;
 
-use crate::code_editor::{CodeEditor, highlight};
+use crate::code_editor::{self, CodeEditor, highlight};
 use crate::custom_actions::{GridCells, GridTable};
 use crate::picture::PictureFormat;
 use file::{ConfigFile, Reload, SqlFile, Storage};
@@ -195,6 +195,8 @@ pub struct QueryConsole {
     format_error: Option<String>,
     /// Syntax errors and lint warnings, kept up to date while typing.
     problems: problems::Problems,
+    /// The chart blocks' problems, kept up to date while typing.
+    chart_problems: chart::block::ChartProblems,
     /// The cell shown in full in the cell viewer window.
     value_panel: cell_viewer::ValuePanel,
     /// The completion list, while it is open.
@@ -299,6 +301,11 @@ fn selected_cells(
             name: target.table.name.clone(),
         }),
     })
+}
+
+/// `range` moved by `by` bytes, as text inserted or taken out before it moves it.
+fn shifted(range: &Range<usize>, by: isize) -> Range<usize> {
+    range.start.saturating_add_signed(by)..range.end.saturating_add_signed(by)
 }
 
 /// Whether a key's value, read by `view`'s command into `columns`, can be edited in the grid.
@@ -584,6 +591,7 @@ impl QueryConsole {
             error_marker: None,
             format_error: None,
             problems: problems::Problems::new(Instant::now()),
+            chart_problems: chart::block::ChartProblems::default(),
             value_panel: cell_viewer::ValuePanel::default(),
             completion: None,
             accepted_completion: None,
@@ -1471,10 +1479,77 @@ impl QueryConsole {
     pub fn jump_to_problem(&mut self, forward: bool) {
         let (start, end) = self.editor.ordered_selection();
         let from = if forward { end } else { start };
-        if let Some(problem) = self.problems.next_from(from, forward) {
-            let at = problem.range.start;
+        self.refresh_chart_problems();
+        let starts: Vec<usize> = self
+            .shown_problems()
+            .iter()
+            .map(|problem| code_editor::EditorProblem::range(problem).start)
+            .collect();
+        if let Some(at) = problems::next_problem(&starts, from, forward) {
             self.editor.put_cursor(at);
         }
+    }
+
+    /// Finds the chart blocks' problems again if the text changed.
+    fn refresh_chart_problems(&mut self) {
+        self.chart_problems
+            .refresh(self.language, &self.editor.text);
+    }
+
+    /// Every problem the editor underlines, in the text's order.
+    fn shown_problems(&self) -> Vec<problems::ShownProblem<'_>> {
+        problems::ShownProblem::all(self.problems.shown(), self.chart_problems.shown())
+    }
+
+    /// How many problems the editor underlines as errors, and as warnings.
+    pub fn problem_counts(&mut self) -> (usize, usize) {
+        self.refresh_chart_problems();
+        let chart = |severity| self.chart_problems.count(severity);
+        (
+            self.problems.count(dbrover_sql::Severity::Error) + chart(code_editor::Severity::Error),
+            self.problems.count(dbrover_sql::Severity::Warning)
+                + chart(code_editor::Severity::Warning),
+        )
+    }
+
+    /// **Save to query**: writes the shown chart's kind, X and Y into the block above its
+    /// statement, or a new block, as one undo step.
+    pub fn save_chart_to_query(&mut self, now: Instant) {
+        let Some(run) = &mut self.run else {
+            return;
+        };
+        let Some(statement) = run.statements.get_mut(run.selected) else {
+            return;
+        };
+        let Some(choice) = statement.chart.saved_choice() else {
+            return;
+        };
+        let ran = chart::block::Ran {
+            range: statement.range.clone(),
+            sql: &statement.sql,
+        };
+        let saved = match chart::block::save(self.language, &self.editor.text, &ran, &choice) {
+            Ok(saved) => saved,
+            Err(error) => {
+                statement.chart.save_failed(error);
+                return;
+            }
+        };
+        statement.chart.saved_to_query(saved.spec);
+        let moved = saved.written.cast_signed() - saved.replaced.len().cast_signed();
+        for statement in &mut run.statements {
+            if statement.range.start >= saved.replaced.end {
+                statement.range = shifted(&statement.range, moved);
+            }
+        }
+        let (cursor, _) = self.editor.ordered_selection();
+        let cursor = if cursor >= saved.replaced.end {
+            cursor.saturating_add_signed(moved)
+        } else {
+            cursor.min(saved.replaced.start)
+        };
+        self.editor.replace_text(saved.text, cursor);
+        self.edited(now);
     }
 
     /// Records that the user changed the text at `now`.
@@ -1853,6 +1928,7 @@ impl QueryConsole {
         self.to_file = None;
         self.error_marker = None;
         self.transaction_ended = None;
+        let blocks = chart::block::Blocks::of(self.language, &self.editor.text);
         let chart = self
             .run
             .as_ref()
@@ -1888,7 +1964,13 @@ impl QueryConsole {
                         wrapped: statement.in_database.is_some(),
                         documents: None,
                         plan: statement.plan.map(plan::PlanView::new),
-                        chart: chart.carried_over(),
+                        chart: chart.carried_over().with_spec(
+                            statement
+                                .plan
+                                .is_none()
+                                .then(|| blocks.spec_for(&statement.range))
+                                .flatten(),
+                        ),
                     }
                 })
                 .collect(),
