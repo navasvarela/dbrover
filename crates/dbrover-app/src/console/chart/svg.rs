@@ -165,6 +165,7 @@ mod tests {
         let data = ChartData::read(&columns, &[Role::Text, Role::Number], &borrowed, &choice);
         layout(
             &data,
+            &dbrover_chart::LayoutOptions::default(),
             Size {
                 width: 600.0,
                 height: 300.0,

@@ -22,6 +22,30 @@ impl ChartKind {
             Self::Scatter => "Scatter",
         }
     }
+
+    /// The kind's name in a chart spec: `kind = "bars"`.
+    pub fn spec_name(self) -> &'static str {
+        match self {
+            Self::Bars => "bars",
+            Self::Lines => "lines",
+            Self::Scatter => "scatter",
+        }
+    }
+
+    /// The kind a spec names, exactly as [`Self::spec_name`] writes it.
+    pub fn from_spec_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.spec_name() == name)
+    }
+
+    /// The kind a chart starts with over an X of `role`: lines over times, a scatter over
+    /// numbers, bars over text.
+    pub(crate) fn starting(role: Option<Role>) -> Self {
+        match role {
+            Some(Role::Time) => Self::Lines,
+            Some(Role::Number) => Self::Scatter,
+            Some(Role::Text) | None => Self::Bars,
+        }
+    }
 }
 
 /// A chart of some columns of a result: `x` along the bottom, and each of `ys` measured up
@@ -39,25 +63,12 @@ impl Choice {
     /// [`STARTING_SERIES`]. Lines over times, a scatter over numbers, bars over text. `None`
     /// when no column of numbers is left for Y.
     pub fn starting(roles: &[Role]) -> Option<Self> {
-        let x = roles
-            .iter()
-            .position(|role| *role != Role::Number)
-            .unwrap_or(0);
-        let ys: Vec<usize> = roles
-            .iter()
-            .enumerate()
-            .filter(|&(index, role)| index != x && *role == Role::Number)
-            .map(|(index, _)| index)
-            .take(STARTING_SERIES)
-            .collect();
+        let x = starting_x(roles, &[])?;
+        let ys = starting_ys(roles, x);
         if ys.is_empty() {
             return None;
         }
-        let kind = match roles.get(x) {
-            Some(Role::Time) => ChartKind::Lines,
-            Some(Role::Number) => ChartKind::Scatter,
-            Some(Role::Text) | None => ChartKind::Bars,
-        };
+        let kind = ChartKind::starting(roles.get(x).copied());
         Some(Self { kind, x, ys })
     }
 
@@ -77,6 +88,27 @@ impl Choice {
             self.ys.insert(position, y);
         }
     }
+}
+
+/// The X a chart starts with, among the columns not in `taken`: the first time or text column,
+/// else the first column. `None` when `taken` holds every column.
+pub(crate) fn starting_x(roles: &[Role], taken: &[usize]) -> Option<usize> {
+    let free = || (0..roles.len()).filter(|index| !taken.contains(index));
+    free()
+        .find(|&index| roles.get(index) != Some(&Role::Number))
+        .or_else(|| free().next())
+}
+
+/// The Ys a chart starts with over `x`: every other column of numbers, up to
+/// [`STARTING_SERIES`].
+pub(crate) fn starting_ys(roles: &[Role], x: usize) -> Vec<usize> {
+    roles
+        .iter()
+        .enumerate()
+        .filter(|&(index, role)| index != x && *role == Role::Number)
+        .map(|(index, _)| index)
+        .take(STARTING_SERIES)
+        .collect()
 }
 
 #[cfg(test)]

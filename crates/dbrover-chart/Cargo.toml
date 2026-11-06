@@ -11,6 +11,8 @@ publish.workspace = true
 [dependencies]
 dbrover-core.workspace = true
 jiff.workspace = true
+thiserror.workspace = true
+toml_edit.workspace = true
 
 [lints]
 workspace = true

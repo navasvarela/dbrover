@@ -139,6 +139,19 @@ pub trait TextMeasure {
     fn line_height(&self) -> f32;
 }
 
+/// What a chart spec sets of its look: titles, and the Y axis's start.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LayoutOptions {
+    /// A line above the chart.
+    pub title: Option<String>,
+    /// In place of the X column's name under the axis.
+    pub x_title: Option<String>,
+    /// In place of the Y column's name above the plot, or before the legend of several.
+    pub y_title: Option<String>,
+    /// Start the Y axis at zero for lines and scatters, as bars always do.
+    pub y_zero: bool,
+}
+
 /// A chart laid out: its marks in drawing order, and where each point went, for hovering.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Drawing {
@@ -199,14 +212,25 @@ impl Drawing {
     }
 }
 
-/// Lays `data` out in `size`, measuring text with `measure`.
-pub fn layout(data: &ChartData, size: Size, measure: &impl TextMeasure) -> Drawing {
+/// Lays `data` out in `size` as `options` say, measuring text with `measure`.
+pub fn layout(
+    data: &ChartData,
+    options: &LayoutOptions,
+    size: Size,
+    measure: &impl TextMeasure,
+) -> Drawing {
     let line = measure.line_height();
-    let top = PADDING + line + LABEL_GAP;
+    let title_room = if options.title.is_some() {
+        line + LABEL_GAP
+    } else {
+        0.0
+    };
+    let top = PADDING + title_room + line + LABEL_GAP;
     let bottom = size.height - PADDING - line - LABEL_GAP - line - LABEL_GAP;
+    let from_zero = options.y_zero || data.kind == ChartKind::Bars;
     let y_ticks = Ticks::nice(
-        y_low(data),
-        y_high(data),
+        y_low(data, from_zero),
+        y_high(data, from_zero),
         ((bottom - top) / Y_TICK_SPACING) as usize,
     );
     let y_labels: Vec<String> = y_ticks.values.iter().map(|v| y_ticks.label(*v)).collect();
@@ -245,7 +269,7 @@ pub fn layout(data: &ChartData, size: Size, measure: &impl TextMeasure) -> Drawi
         })
         .collect();
     series_marks(&mut drawing, data, y_scale);
-    titles(&mut drawing.marks, data, plot, size, measure);
+    titles(&mut drawing.marks, data, options, size, measure, plot);
     drawing
 }
 
@@ -285,23 +309,23 @@ fn values(data: &ChartData) -> impl Iterator<Item = f64> + '_ {
         .flat_map(|series| series.values.iter().flatten().copied())
 }
 
-/// The bottom of the Y axis: the lowest value, and never above zero for bars, which grow from
-/// it.
-fn y_low(data: &ChartData) -> f64 {
+/// The bottom of the Y axis: the lowest value, and never above zero `from_zero`, as for bars,
+/// which grow from it.
+fn y_low(data: &ChartData, from_zero: bool) -> f64 {
     let low = values(data).fold(f64::INFINITY, f64::min);
-    match (data.kind, low.is_finite()) {
+    match (from_zero, low.is_finite()) {
         (_, false) => 0.0,
-        (ChartKind::Bars, true) => low.min(0.0),
-        (_, true) => low,
+        (true, true) => low.min(0.0),
+        (false, true) => low,
     }
 }
 
-fn y_high(data: &ChartData) -> f64 {
+fn y_high(data: &ChartData, from_zero: bool) -> f64 {
     let high = values(data).fold(f64::NEG_INFINITY, f64::max);
-    match (data.kind, high.is_finite()) {
+    match (from_zero, high.is_finite()) {
         (_, false) => 1.0,
-        (ChartKind::Bars, true) => high.max(0.0),
-        (_, true) => high,
+        (true, true) => high.max(0.0),
+        (false, true) => high,
     }
 }
 
@@ -484,39 +508,72 @@ fn dots(drawing: &mut Drawing) {
     }
 }
 
-/// The X column's name under the axis, and above the plot the Y column's name, or a legend
-/// when there are several.
+/// The title above everything; the X column's name, or `x_title`, under the axis; and above the
+/// plot the Y column's name, or `y_title`, then a legend when there are several series.
 fn titles(
     marks: &mut Vec<Mark>,
     data: &ChartData,
-    plot: Rect,
+    options: &LayoutOptions,
     size: Size,
     measure: &impl TextMeasure,
+    plot: Rect,
 ) {
     let line = measure.line_height();
+    let mut y = PADDING + line / 2.0;
+    if let Some(title) = &options.title {
+        marks.push(Mark::Text {
+            at: Point::new(size.width / 2.0, y),
+            text: title.clone(),
+            anchor: Anchor::Middle,
+            paint: Paint::Title,
+        });
+        y += line + LABEL_GAP;
+    }
     marks.push(Mark::Text {
         at: Point::new(
             (plot.min.x + plot.max.x) / 2.0,
             size.height - PADDING - line / 2.0,
         ),
-        text: data.x_name.clone(),
+        text: options
+            .x_title
+            .clone()
+            .unwrap_or_else(|| data.x_name.clone()),
         anchor: Anchor::Middle,
         paint: Paint::Title,
     });
-    let y = PADDING + line / 2.0;
-    if let [only] = data.series.as_slice() {
+    let mut x = plot.min.x;
+    let y_name = match (&options.y_title, data.series.as_slice()) {
+        (Some(title), _) => Some(title.clone()),
+        (None, [only]) => Some(only.name.clone()),
+        (None, _) => None,
+    };
+    if let Some(name) = y_name {
+        x += measure.width(&name) + 2.0 * LABEL_GAP;
         marks.push(Mark::Text {
             at: Point::new(plot.min.x, y),
-            text: only.name.clone(),
+            text: name,
             anchor: Anchor::Start,
             paint: Paint::Title,
         });
-        return;
     }
-    let mut x = plot.min.x;
+    if data.series.len() > 1 {
+        legend(marks, data, x, y, plot.max.x, measure);
+    }
+}
+
+/// A swatch and a name for each series, from `x` along the line at `y`, cut with an ellipsis
+/// at `right`.
+fn legend(
+    marks: &mut Vec<Mark>,
+    data: &ChartData,
+    mut x: f32,
+    y: f32,
+    right: f32,
+    measure: &impl TextMeasure,
+) {
     for (index, series) in data.series.iter().enumerate() {
         let width = SWATCH + LABEL_GAP + measure.width(&series.name);
-        if x + width > plot.max.x {
+        if x + width > right {
             marks.push(Mark::Text {
                 at: Point::new(x, y),
                 text: "…".to_owned(),
@@ -633,7 +690,7 @@ mod tests {
             months(3),
             &[("total", &[Some(10.0), Some(30.0), Some(20.0)])],
         );
-        let drawing = layout(&chart, SIZE, &Fixed);
+        let drawing = layout(&chart, &LayoutOptions::default(), SIZE, &Fixed);
         let bars = rects(&drawing);
         assert_eq!(bars.len(), 3);
         let bottom = drawing.plot.max.y;
@@ -657,7 +714,7 @@ mod tests {
             months(2),
             &[("net", &[Some(-5.0), Some(5.0)])],
         );
-        let drawing = layout(&chart, SIZE, &Fixed);
+        let drawing = layout(&chart, &LayoutOptions::default(), SIZE, &Fixed);
         let bars = rects(&drawing);
         assert!((bars[0].0.min.y - bars[1].0.max.y).abs() < 0.01);
         assert!(drawing.marks.iter().any(|mark| matches!(
@@ -676,7 +733,7 @@ mod tests {
                 ("refunds", &[Some(1.0), None]),
             ],
         );
-        let drawing = layout(&chart, SIZE, &Fixed);
+        let drawing = layout(&chart, &LayoutOptions::default(), SIZE, &Fixed);
         let bars = rects(&drawing);
         assert_eq!(bars.len(), 3, "a gap draws no bar");
         let (first, second) = (bars[0], bars[2]);
@@ -694,7 +751,7 @@ mod tests {
             width: 300.0,
             height: 300.0,
         };
-        let drawing = layout(&chart, narrow, &Fixed);
+        let drawing = layout(&chart, &LayoutOptions::default(), narrow, &Fixed);
         let labels: Vec<String> = texts(&drawing, Paint::Label)
             .into_iter()
             .filter(|label| label.starts_with("2026"))
@@ -710,7 +767,7 @@ mod tests {
             XValues::Numbers(vec![1.0, 2.0, 3.0, 4.0, 5.0]),
             &[("total", &[Some(1.0), Some(2.0), None, Some(4.0), Some(5.0)])],
         );
-        let drawing = layout(&chart, SIZE, &Fixed);
+        let drawing = layout(&chart, &LayoutOptions::default(), SIZE, &Fixed);
         let lines: Vec<usize> = drawing
             .marks
             .iter()
@@ -737,7 +794,7 @@ mod tests {
             }),
             &[("total", &[Some(1.0), Some(3.0), Some(2.0), Some(4.0)])],
         );
-        let drawing = layout(&chart, SIZE, &Fixed);
+        let drawing = layout(&chart, &LayoutOptions::default(), SIZE, &Fixed);
         let labels = texts(&drawing, Paint::Label);
         assert!(labels.contains(&"Jan 2026".to_owned()), "{labels:?}");
     }
@@ -746,6 +803,7 @@ mod tests {
     fn hovering_finds_the_point_under_the_pointer() {
         let bars = layout(
             &data(ChartKind::Bars, months(4), &[("total", &[Some(1.0); 4])]),
+            &LayoutOptions::default(),
             SIZE,
             &Fixed,
         );
@@ -760,6 +818,7 @@ mod tests {
                 XValues::Numbers(vec![0.0, 10.0]),
                 &[("total", &[Some(0.0), Some(10.0)])],
             ),
+            &LayoutOptions::default(),
             SIZE,
             &Fixed,
         );
@@ -781,6 +840,7 @@ mod tests {
         );
         let drawing = layout(
             &chart,
+            &LayoutOptions::default(),
             Size {
                 width: 40.0,
                 height: 40.0,
@@ -788,6 +848,78 @@ mod tests {
             &Fixed,
         );
         assert!(drawing.marks.is_empty());
+    }
+
+    #[test]
+    fn a_specs_titles_take_the_columns_names_places() {
+        let chart = data(
+            ChartKind::Bars,
+            months(2),
+            &[("net", &[Some(1.0), Some(2.0)])],
+        );
+        let options = LayoutOptions {
+            title: Some("Net sales by month".to_owned()),
+            x_title: Some("Month".to_owned()),
+            y_title: Some("Euros".to_owned()),
+            y_zero: false,
+        };
+        let plain = layout(&chart, &LayoutOptions::default(), SIZE, &Fixed);
+        let titled = layout(&chart, &options, SIZE, &Fixed);
+        assert_eq!(
+            texts(&titled, Paint::Title),
+            ["Net sales by month", "Month", "Euros"]
+        );
+        assert!(
+            titled.plot.min.y > plain.plot.min.y,
+            "the title takes a line above the plot"
+        );
+    }
+
+    #[test]
+    fn a_y_title_comes_before_the_legend_of_several_series() {
+        let chart = data(
+            ChartKind::Bars,
+            months(2),
+            &[
+                ("orders", &[Some(1.0), Some(2.0)]),
+                ("refunds", &[Some(1.0), Some(0.0)]),
+            ],
+        );
+        let options = LayoutOptions {
+            y_title: Some("Count".to_owned()),
+            ..LayoutOptions::default()
+        };
+        let drawing = layout(&chart, &options, SIZE, &Fixed);
+        let at = |wanted: &str| {
+            drawing.marks.iter().find_map(|mark| match mark {
+                Mark::Text { at, text, .. } if text == wanted => Some(at.x),
+                _ => None,
+            })
+        };
+        let (Some(title), Some(orders)) = (at("Count"), at("orders")) else {
+            panic!("expected a Y title and a legend: {:?}", drawing.marks);
+        };
+        assert!(title < orders);
+    }
+
+    #[test]
+    fn y_zero_starts_lines_at_zero() {
+        let chart = data(
+            ChartKind::Lines,
+            XValues::Numbers(vec![1.0, 2.0]),
+            &[("total", &[Some(100.0), Some(120.0)])],
+        );
+        let lowest = |options: &LayoutOptions| {
+            texts(&layout(&chart, options, SIZE, &Fixed), Paint::Label)
+                .first()
+                .cloned()
+        };
+        assert_ne!(lowest(&LayoutOptions::default()).as_deref(), Some("0"));
+        let from_zero = LayoutOptions {
+            y_zero: true,
+            ..LayoutOptions::default()
+        };
+        assert_eq!(lowest(&from_zero).as_deref(), Some("0"));
     }
 
     #[test]

@@ -7,8 +7,8 @@ mod svg;
 use std::sync::Arc;
 
 use dbrover_chart::{
-    Anchor, ChartData, ChartKind, Choice, Column, Drawing, MAX_POINTS, Mark, Paint, Role, Size,
-    TextMeasure,
+    Anchor, ChartData, ChartKind, Choice, Column, Drawing, LayoutOptions, MAX_POINTS, Mark, Paint,
+    Role, Size, TextMeasure,
 };
 use dbrover_core::{ColumnInfo, Row, ValueKind};
 use dbrover_engine::Picture;
@@ -416,7 +416,12 @@ fn drawing(
     {
         return Arc::clone(&cached.drawing);
     }
-    let drawing = Arc::new(dbrover_chart::layout(data, size, measure));
+    let drawing = Arc::new(dbrover_chart::layout(
+        data,
+        &LayoutOptions::default(),
+        size,
+        measure,
+    ));
     *laid_out = Some(LaidOut {
         size,
         text_size,

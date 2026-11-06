@@ -11,6 +11,10 @@
 //! 4. [`layout`] places it all in a size, as [`Mark`]s in points: bars, lines, dots, axes,
 //!    labels and the legend.
 //!
+//! A chart can also be written down as a [`ChartSpec`], a few TOML keys under `[chart]`, which
+//! resolves against a result's columns into a [`Choice`], how its rows are sorted and cut
+//! ([`arrange`]), and the [`LayoutOptions`] its titles set.
+//!
 //! Whoever shows a chart only paints the marks, and an export writes the same marks, so a file
 //! shows the chart the screen shows. Nothing here draws or talks to a database.
 
@@ -18,6 +22,7 @@ mod choice;
 mod data;
 mod layout;
 mod role;
+mod spec;
 mod ticks;
 mod time;
 mod values;
@@ -25,6 +30,11 @@ mod values;
 pub use choice::{ChartKind, Choice, STARTING_SERIES};
 pub use data::{ChartData, MAX_BARS, MAX_POINTS, Series, Summary, Times, XValues};
 pub use layout::{
-    Anchor, Drawing, Mark, POINT_RADIUS, Paint, Point, Rect, Size, TextMeasure, layout,
+    Anchor, Drawing, LayoutOptions, Mark, POINT_RADIUS, Paint, Point, Rect, Size, TextMeasure,
+    layout,
 };
 pub use role::{Column, Role};
+pub use spec::{
+    ChartSpec, ColumnProblem, Resolved, SPEC_TABLE, SavedChoice, Sort, SortBy, SpecProblem,
+    WriteError, arrange, write_back,
+};
