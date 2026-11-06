@@ -129,7 +129,9 @@ fn identity_clause(identity: Identity, dialect: Dialect) -> String {
         Dialect::SqlServer => format!(" IDENTITY({}, {})", identity.start, identity.increment),
         Dialect::Mysql => " AUTO_INCREMENT".to_owned(),
         Dialect::Sqlite => " PRIMARY KEY AUTOINCREMENT".to_owned(),
-        Dialect::DuckDb | Dialect::ClickHouse | Dialect::Cassandra => String::new(),
+        Dialect::DuckDb | Dialect::ClickHouse | Dialect::Cassandra | Dialect::Trino => {
+            String::new()
+        }
     }
 }
 

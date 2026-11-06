@@ -177,6 +177,9 @@ impl<'a> Tokens<'a> {
             ParserGap::InfixOperator(operator) => {
                 current.as_deref() == Some(operator) && self.text(index + 1) != Some("(")
             }
+            ParserGap::BareValues => {
+                current.as_deref() == Some("values") && self.text(index + 1) != Some("(")
+            }
             ParserGap::IsAnyExpression => {
                 current.as_deref() == Some("is") && {
                     let next = if self.word(index + 1).as_deref() == Some("not") {

@@ -17,7 +17,8 @@ pub use capabilities::{
 use dbrover_core::{Quoting, ServerInfo};
 use dbrover_plan::PlanFormat;
 use sqlparser::dialect::{
-    ClickHouseDialect, DuckDbDialect, MsSqlDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect,
+    ClickHouseDialect, DuckDbDialect, GenericDialect, MsSqlDialect, MySqlDialect,
+    PostgreSqlDialect, SQLiteDialect,
 };
 
 use crate::ParameterBinding;
@@ -41,6 +42,9 @@ pub enum Dialect {
     /// splits like SQL, but `sqlparser` has no dialect for it, so its statements are classified
     /// by a reader of their own (`classify::cql`) and checked by the server alone.
     Cassandra,
+    /// Trino's SQL, which Starburst and Presto speak too, and Amazon Athena, whose engine is
+    /// Trino's (`docs/cloud-data.md`, C3). Athena's DDL is Hive's, with backquoted names.
+    Trino,
 }
 
 /// The lexical rules that differ between dialects. Strings in `'…'`, `--` line comments and
@@ -160,10 +164,12 @@ pub(crate) enum ParserGap {
     /// ClickHouse's `WITH 5 AS n`, which names an expression, rather than the standard
     /// `WITH n AS (SELECT …)`.
     WithExpressionAlias,
+    /// Trino's `VALUES 1, 2, 3`: rows of one value each, written without their parentheses.
+    BareValues,
 }
 
 impl Dialect {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Postgres,
         Self::Sqlite,
         Self::Mysql,
@@ -171,6 +177,7 @@ impl Dialect {
         Self::DuckDb,
         Self::ClickHouse,
         Self::Cassandra,
+        Self::Trino,
     ];
 
     /// The dialect's name in messages.
@@ -183,6 +190,7 @@ impl Dialect {
             Self::DuckDb => "DuckDB",
             Self::ClickHouse => "ClickHouse",
             Self::Cassandra => "CQL",
+            Self::Trino => "Trino",
         }
     }
 
@@ -287,6 +295,25 @@ impl Dialect {
                 national_strings: false,
                 sigil_identifiers: false,
             },
+            // Trino's grammar: `''` for a quote and no backslash escapes, block comments that
+            // end at the first `*/`, and no `$` in unquoted names. Its lexer reads a
+            // backquoted name only to refuse it, but Athena's DDL (Hive's) is written with
+            // them, so they are names here and Trino says what it thinks of them.
+            Self::Trino => LexicalRules {
+                escape_strings: false,
+                backslash_escapes: false,
+                double_quoted_strings: false,
+                dollar_quoting: false,
+                dollar_in_identifiers: false,
+                nested_block_comments: false,
+                hash_comments: false,
+                slash_comments: false,
+                dash_comments_need_space: false,
+                backtick_identifiers: true,
+                bracket_identifiers: false,
+                national_strings: false,
+                sigil_identifiers: false,
+            },
         }
     }
 
@@ -295,12 +322,14 @@ impl Dialect {
     /// `GO`, as SQL Server Management Studio and `sqlcmd` do.
     pub(crate) fn script_rules(self) -> ScriptRules {
         match self {
-            Self::Postgres | Self::Sqlite | Self::DuckDb | Self::ClickHouse => ScriptRules {
-                delimiter_command: false,
-                go_batches: false,
-                blocks_anywhere: false,
-                batches: false,
-            },
+            Self::Postgres | Self::Sqlite | Self::DuckDb | Self::ClickHouse | Self::Trino => {
+                ScriptRules {
+                    delimiter_command: false,
+                    go_batches: false,
+                    blocks_anywhere: false,
+                    batches: false,
+                }
+            }
             Self::Mysql => ScriptRules {
                 delimiter_command: true,
                 go_batches: false,
@@ -332,6 +361,9 @@ impl Dialect {
             Self::SqlServer => &MsSqlDialect {},
             Self::DuckDb => &DuckDbDialect {},
             Self::ClickHouse => &ClickHouseDialect {},
+            // `sqlparser` has no Trino dialect; its generic one reads Trino's queries and,
+            // with `CREATE EXTERNAL TABLE`, Athena's DDL, and the gaps below cover the rest.
+            Self::Trino => &GenericDialect {},
             Self::Cassandra => return None,
         })
     }
@@ -390,6 +422,7 @@ impl Dialect {
                 ParserGap::Operator("**"),
             ],
             Self::Cassandra => &[],
+            Self::Trino => TRINO_PARSER_GAPS,
         }
     }
 
@@ -401,7 +434,8 @@ impl Dialect {
             | Self::SqlServer
             | Self::DuckDb
             | Self::ClickHouse
-            | Self::Cassandra => &["insert"],
+            | Self::Cassandra
+            | Self::Trino => &["insert"],
             Self::Sqlite | Self::Mysql => &["insert", "replace"],
         }
     }
@@ -416,7 +450,8 @@ impl Dialect {
             | Self::SqlServer
             | Self::DuckDb
             | Self::ClickHouse
-            | Self::Cassandra => &[],
+            | Self::Cassandra
+            | Self::Trino => &[],
             Self::Mysql => &[
                 "alter", "create", "drop", "grant", "rename", "revoke", "truncate",
             ],
@@ -432,7 +467,7 @@ impl Dialect {
     /// [`explain_setting`](Self::explain_setting).
     pub fn explain_prefix(self, server: Option<&ServerInfo>) -> &'static str {
         match self {
-            Self::Postgres | Self::DuckDb | Self::ClickHouse => "EXPLAIN ",
+            Self::Postgres | Self::DuckDb | Self::ClickHouse | Self::Trino => "EXPLAIN ",
             Self::Sqlite => "EXPLAIN QUERY PLAN ",
             Self::Mysql if server.is_some_and(has_tree_explain) => "EXPLAIN FORMAT=TREE ",
             Self::Mysql => "EXPLAIN ",
@@ -475,7 +510,9 @@ impl Dialect {
                 Some(MysqlFlavour::QueryBlocks) | None => return None,
             },
             (Self::SqlServer, _) => "",
-            (Self::Sqlite | Self::DuckDb | Self::ClickHouse | Self::Cassandra, _) => return None,
+            (Self::Sqlite | Self::DuckDb | Self::ClickHouse | Self::Cassandra | Self::Trino, _) => {
+                return None;
+            }
         };
         let format = match self {
             Self::Mysql => PlanFormat::MysqlJson,
@@ -488,9 +525,10 @@ impl Dialect {
     /// Whether the database has transactions a console can open and end. ClickHouse's are
     /// experimental and off unless the server is configured for them, so a ClickHouse console
     /// has no manual commit mode. CQL has none: a batch applies its statements together, and a
-    /// lightweight transaction is one statement's condition.
+    /// lightweight transaction is one statement's condition. Athena has none, and Trino's
+    /// depend on each catalog's connector, most of which write outside them.
     pub fn has_transactions(self) -> bool {
-        !matches!(self, Self::ClickHouse | Self::Cassandra)
+        !matches!(self, Self::ClickHouse | Self::Cassandra | Self::Trino)
     }
 
     /// Opens a transaction. SQL Server needs the keyword: a bare `BEGIN` opens a block there.
@@ -498,6 +536,7 @@ impl Dialect {
         match self {
             Self::Postgres | Self::Sqlite | Self::Mysql | Self::DuckDb => "BEGIN",
             Self::SqlServer | Self::ClickHouse | Self::Cassandra => "BEGIN TRANSACTION",
+            Self::Trino => "START TRANSACTION",
         }
     }
 
@@ -513,7 +552,9 @@ impl Dialect {
             Self::SqlServer => {
                 format!("CHARINDEX({needle}, LOWER(CAST({value} AS NVARCHAR(MAX)))) > 0")
             }
-            Self::DuckDb => format!("strpos(lower(CAST({value} AS VARCHAR)), {needle}) > 0"),
+            Self::DuckDb | Self::Trino => {
+                format!("strpos(lower(CAST({value} AS VARCHAR)), {needle}) > 0")
+            }
             Self::ClickHouse => {
                 format!("positionUTF8(lowerUTF8(toString({value})), {needle}) > 0")
             }
@@ -534,6 +575,10 @@ impl Dialect {
             Self::Cassandra => {
                 Some("CQL has no transactions, so an import that failed halfway couldn't be undone")
             }
+            Self::Trino => Some(
+                "Athena and Trino have no transactions an import could run in, so an import that \
+                 failed halfway couldn't be undone",
+            ),
             Self::Postgres | Self::Sqlite | Self::Mysql | Self::SqlServer | Self::DuckDb => None,
         }
     }
@@ -547,6 +592,9 @@ impl Dialect {
             Self::Postgres | Self::Sqlite | Self::SqlServer | Self::DuckDb => "DEFAULT VALUES",
             // CQL has neither, and its grid inserts name every key column (N4·5).
             Self::Mysql | Self::ClickHouse | Self::Cassandra => "() VALUES ()",
+            // Trino has neither; never asked for, since the grid doesn't insert there (see
+            // `read_only_results`).
+            Self::Trino => "DEFAULT VALUES",
         }
     }
 
@@ -558,6 +606,9 @@ impl Dialect {
         match self {
             Self::ClickHouse => Some(
                 "ClickHouse tables have no key that tells their rows apart, so rows can't be edited here",
+            ),
+            Self::Trino => Some(
+                "Athena and Trino tables have no key that tells their rows apart, so rows can't be edited here",
             ),
             Self::Postgres
             | Self::Sqlite
@@ -580,7 +631,7 @@ impl Dialect {
     /// transaction ends. DuckDB has no savepoints at all, so `None`.
     pub fn edits_savepoint(self) -> Option<Savepoint> {
         Some(match self {
-            Self::DuckDb | Self::ClickHouse | Self::Cassandra => return None,
+            Self::DuckDb | Self::ClickHouse | Self::Cassandra | Self::Trino => return None,
             Self::Postgres | Self::Sqlite | Self::Mysql => Savepoint {
                 open: "SAVEPOINT dbrover_edits",
                 keep: &["RELEASE SAVEPOINT dbrover_edits"],
@@ -638,7 +689,8 @@ impl Dialect {
                 | Self::Mysql
                 | Self::DuckDb
                 | Self::ClickHouse
-                | Self::Cassandra,
+                | Self::Cassandra
+                | Self::Trino,
                 _,
             ) => None,
         }
@@ -657,6 +709,7 @@ impl Dialect {
             Self::DuckDb => functions::DUCKDB,
             Self::ClickHouse => functions::CLICKHOUSE,
             Self::Cassandra => functions::CQL,
+            Self::Trino => functions::TRINO,
         }
     }
 
@@ -673,7 +726,9 @@ impl Dialect {
     /// the session's `QUOTED_IDENTIFIER`.
     pub fn quoting(self) -> Quoting {
         match self {
-            Self::Postgres | Self::Sqlite | Self::DuckDb | Self::Cassandra => Quoting::STANDARD,
+            Self::Postgres | Self::Sqlite | Self::DuckDb | Self::Cassandra | Self::Trino => {
+                Quoting::STANDARD
+            }
             Self::Mysql | Self::ClickHouse => Quoting {
                 identifier_open: '`',
                 identifier_close: '`',
@@ -698,14 +753,17 @@ impl Dialect {
     /// context exactly as it would an untyped parameter. ClickHouse's own parameters need a
     /// type in the placeholder (`{name:String}`), and a `String` one doesn't compare with a
     /// number, where a literal is converted. CQL's bound values must be encoded in each
-    /// column's type, which an unprepared statement's driver doesn't know.
+    /// column's type, which an unprepared statement's driver doesn't know. Trino's take a
+    /// `PREPARE` and an `EXECUTE … USING` for every run, and Athena's an API call of their own.
     pub fn parameter_binding(self) -> ParameterBinding {
         match self {
             Self::Sqlite => ParameterBinding::Numbered("?"),
             Self::DuckDb => ParameterBinding::Numbered("$"),
             Self::SqlServer => ParameterBinding::Numbered("@P"),
             Self::Mysql => ParameterBinding::Positional,
-            Self::Postgres | Self::ClickHouse | Self::Cassandra => ParameterBinding::Literal,
+            Self::Postgres | Self::ClickHouse | Self::Cassandra | Self::Trino => {
+                ParameterBinding::Literal
+            }
         }
     }
 
@@ -713,7 +771,8 @@ impl Dialect {
     /// PostgreSQL's `pg_*` tables (always on the search path) and its catalog schemas,
     /// SQLite's `sqlite_*` tables, `pragma_*` functions and `temp` schema, MySQL's own
     /// databases, SQL Server's and DuckDB's catalog schemas, ClickHouse's `system` database,
-    /// and the keyspaces Cassandra and ScyllaDB keep for themselves. Names are compared
+    /// the keyspaces Cassandra and ScyllaDB keep for themselves, and each Trino catalog's
+    /// `information_schema` (Trino's own `system` catalog is hidden by its driver). Names are compared
     /// case-insensitively.
     pub fn is_system_name(self, schema: Option<&str>, table: &str) -> bool {
         let (table_prefixes, schemas): (&[&str], &[&str]) = match self {
@@ -727,6 +786,7 @@ impl Dialect {
             Self::DuckDb => (&[], &["information_schema", "pg_catalog"]),
             Self::ClickHouse => (&[], &["system", "information_schema"]),
             Self::Cassandra => (&[], CQL_SYSTEM_KEYSPACES),
+            Self::Trino => (&[], &["information_schema"]),
         };
         let table = table.to_ascii_lowercase();
         table_prefixes
@@ -739,6 +799,16 @@ impl Dialect {
             })
     }
 }
+
+/// What `sqlparser` 0.63's generic dialect rejects in valid Trino and Athena statements, from
+/// the corpus in `check::tests`.
+const TRINO_PARSER_GAPS: &[ParserGap] = &[
+    ParserGap::BareValues,
+    // An Iceberg or Delta table as it was: `FROM t FOR VERSION AS OF 3`, and the same with
+    // `TIMESTAMP`.
+    ParserGap::Words(&["for", "version", "as", "of"]),
+    ParserGap::Words(&["for", "timestamp", "as", "of"]),
+];
 
 /// The keyspaces Cassandra 5 and ScyllaDB 2026 create for themselves.
 pub(crate) const CQL_SYSTEM_KEYSPACES: &[&str] = &[
@@ -822,6 +892,8 @@ mod tests {
             (Dialect::DuckDb, Some("main"), "orders", false),
             (Dialect::ClickHouse, Some("system"), "tables", true),
             (Dialect::ClickHouse, Some("default"), "events", false),
+            (Dialect::Trino, Some("INFORMATION_SCHEMA"), "tables", true),
+            (Dialect::Trino, Some("tiny"), "orders", false),
         ];
         for (dialect, schema, table, expected) in cases {
             assert_eq!(

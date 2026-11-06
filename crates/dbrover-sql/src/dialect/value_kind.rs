@@ -17,6 +17,7 @@ impl Dialect {
             Self::Sqlite => sqlite_kind(&name),
             Self::ClickHouse => named_kind(unwrap_clickhouse(&name), self),
             Self::Cassandra => cql_kind(&name),
+            Self::Trino => trino_kind(&name),
             Self::Postgres | Self::Mysql | Self::SqlServer | Self::DuckDb => {
                 named_kind(&name, self)
             }
@@ -52,6 +53,16 @@ fn named_kind(name: &str, dialect: Dialect) -> ValueKind {
         }
         _ => ValueKind::Text,
     }
+}
+
+/// Trino's types, which Athena reports too, with Hive's names in Athena's DDL (`string`,
+/// `int`, `float`). A timestamp's precision comes before its zone,
+/// `timestamp(3) with time zone`, so the zone is looked for in the whole name.
+fn trino_kind(name: &str) -> ValueKind {
+    if name.starts_with("timestamp") && name.ends_with("with time zone") {
+        return ValueKind::TimestampWithZone;
+    }
+    named_kind(name, Dialect::Trino)
 }
 
 /// CQL's types. A `timestamp` is an instant, which the driver writes in UTC with its offset;
@@ -215,6 +226,26 @@ mod tests {
                     ("DateTime64(3, 'UTC')", Timestamp),
                     ("Nullable(LowCardinality(String))", Text),
                     ("UUID", Text),
+                ],
+            ),
+            (
+                Dialect::Trino,
+                &[
+                    ("tinyint", Integer),
+                    ("bigint", Integer),
+                    ("int", Integer),
+                    ("decimal(38,9)", Decimal),
+                    ("real", Float),
+                    ("double", Float),
+                    ("boolean", Boolean),
+                    ("date", Date),
+                    ("timestamp(3)", Timestamp),
+                    ("timestamp(6) with time zone", TimestampWithZone),
+                    ("time(3) with time zone", Text),
+                    ("varchar(10)", Text),
+                    ("string", Text),
+                    ("array(integer)", Text),
+                    ("row(a integer, b varchar)", Text),
                 ],
             ),
         ];

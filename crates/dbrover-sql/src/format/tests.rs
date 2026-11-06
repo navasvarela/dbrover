@@ -136,6 +136,19 @@ optimize table events final;
 system flush logs;
 "#;
 
+/// Trino's queries and Athena's DDL in one script, as an Athena console holds them: lambdas,
+/// `UNNEST`, typed literals, double-quoted names, then Hive's backquoted names and
+/// `struct<…>` types.
+const TRINO_CORPUS: &str = r#"
+select "order key", transform(arr, x -> x + 1), date '2026-01-01', interval '7' day from t cross join unnest(arr) with ordinality as u(x, n) where ts > now() - interval '1' hour;
+with recent as (select * from orders where ts > now() - interval '1' hour) select approx_percentile(total, 0.5) from recent group by grouping sets ((a), ());
+explain (type distributed) select * from t tablesample bernoulli (10) for version as of 3;
+values 1, 2, 3;
+create external table if not exists `sales`.`orders` (`id` bigint, `props` struct<a:int,b:string>) partitioned by (`dt` string) stored as parquet location 's3://bucket/orders/';
+msck repair table `sales`.`orders`;
+unload (select * from orders) to 's3://bucket/out/' with (format = 'PARQUET');
+"#;
+
 fn format_all(text: &str, dialect: Dialect, options: &FormatOptions) -> String {
     let ranges = split_statements(text, dialect);
     format_ranges(text, &ranges, dialect, options)
@@ -156,6 +169,7 @@ fn formatting_the_corpus_never_changes_a_token_and_is_stable() {
         (SQL_SERVER_CORPUS, Dialect::SqlServer),
         (DUCKDB_CORPUS, Dialect::DuckDb),
         (CLICKHOUSE_CORPUS, Dialect::ClickHouse),
+        (TRINO_CORPUS, Dialect::Trino),
     ] {
         for case in [
             KeywordCase::Upper,
@@ -187,6 +201,7 @@ fn formatting_keeps_every_statement_boundary() {
         (SQL_SERVER_CORPUS, Dialect::SqlServer),
         (DUCKDB_CORPUS, Dialect::DuckDb),
         (CLICKHOUSE_CORPUS, Dialect::ClickHouse),
+        (TRINO_CORPUS, Dialect::Trino),
     ] {
         let formatted = format_all(corpus, dialect, &FormatOptions::default());
         let before = split_statements(corpus, dialect);
@@ -246,6 +261,7 @@ fn every_statement_formats_on_its_own_too() {
         (SQL_SERVER_CORPUS, Dialect::SqlServer),
         (DUCKDB_CORPUS, Dialect::DuckDb),
         (CLICKHOUSE_CORPUS, Dialect::ClickHouse),
+        (TRINO_CORPUS, Dialect::Trino),
     ] {
         for range in split_statements(corpus, dialect) {
             let statement = &corpus[range];
