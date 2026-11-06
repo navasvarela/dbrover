@@ -1,0 +1,35 @@
+{
+  "doc": "A query Athena couldn't read: it starts, then fails with Trino's line and column in its reason.",
+  "exchanges": [
+    {
+      "operation": "GetWorkGroup",
+      "request": {"WorkGroup": "primary"},
+      "response": {"WorkGroup": {"Name": "primary", "Configuration": {
+        "ResultConfiguration": {"OutputLocation": "s3://dbrover-results/athena/"}}}}
+    },
+    {
+      "operation": "StartQueryExecution",
+      "request": {"QueryString": "SELECT *\nFORM orders"},
+      "response": {"QueryExecutionId": "q-failed"}
+    },
+    {
+      "operation": "GetQueryExecution",
+      "request": {"QueryExecutionId": "q-failed"},
+      "response": {"QueryExecution": {"QueryExecutionId": "q-failed", "StatementType": "DML",
+        "Status": {
+          "State": "FAILED",
+          "StateChangeReason": "line 2:1: mismatched input 'FORM'. Expecting: ',', 'EXCEPT', 'FROM', 'GROUP', 'HAVING', 'INTERSECT', 'LIMIT', 'OFFSET', 'ORDER', 'UNION', 'WHERE', 'WINDOW', <EOF>",
+          "AthenaError": {"ErrorCategory": 2, "ErrorType": 1004, "Retryable": false,
+            "ErrorMessage": "line 2:1: mismatched input 'FORM'. Expecting: ',', 'EXCEPT', 'FROM', <EOF>"}
+        },
+        "Statistics": {"DataScannedInBytes": 0}}}
+    },
+    {
+      "operation": "StartQueryExecution",
+      "request": {"QueryString": "SELECT * FROM t; SELECT 1"},
+      "status": 400,
+      "response": {"__type": "InvalidRequestException", "AthenaErrorCode": "MALFORMED_QUERY",
+        "Message": "line 1:16: mismatched input ';'. Expecting: <EOF>"}
+    }
+  ]
+}

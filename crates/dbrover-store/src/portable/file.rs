@@ -11,11 +11,11 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
 use dbrover_core::{
-    CassandraConfig, ClickHouseConfig, CloudSignIn, ConnectionConfig, DataSource, DataSourceId,
-    DuckDbConfig, DuckDbDatabase, DynamoDbConfig, ElasticsearchAuth, ElasticsearchConfig,
-    GcsBucket, GcsSignIn, McpLogin, MongoConfig, MysqlConfig, ObjectStorage, PasswordCommand, Port,
-    PostgresConfig, ProjectId, RedisConfig, SafetyLevel, ServerConfig, SourceColor,
-    SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode,
+    AthenaConfig, CassandraConfig, ClickHouseConfig, CloudSignIn, ConnectionConfig, DataSource,
+    DataSourceId, DuckDbConfig, DuckDbDatabase, DynamoDbConfig, ElasticsearchAuth,
+    ElasticsearchConfig, GcsBucket, GcsSignIn, McpLogin, MongoConfig, MysqlConfig, ObjectStorage,
+    PasswordCommand, Port, PostgresConfig, ProjectId, RedisConfig, SafetyLevel, ServerConfig,
+    SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode,
 };
 use serde::{Deserialize, Serialize};
 
@@ -171,6 +171,8 @@ enum PortableConfig {
     /// Nothing in it is a secret or a path, so it travels as `data_sources.toml` writes it.
     #[serde(rename = "dynamodb")]
     DynamoDb(DynamoDbConfig),
+    /// As DynamoDB's: no secret or path in it.
+    Athena(AthenaConfig),
 }
 
 impl PortableConfig {
@@ -221,6 +223,7 @@ impl PortableConfig {
                 statement_timeout: *statement_timeout,
             }),
             ConnectionConfig::DynamoDb(config) => Self::DynamoDb(config.clone()),
+            ConnectionConfig::Athena(config) => Self::Athena(config.clone()),
             ConnectionConfig::Sqlite(SqliteConfig {
                 path: file,
                 read_only,
@@ -297,6 +300,7 @@ impl PortableConfig {
                 statement_timeout,
             }),
             Self::DynamoDb(config) => ConnectionConfig::DynamoDb(config),
+            Self::Athena(config) => ConnectionConfig::Athena(config),
             Self::Sqlite(PortableSqlite {
                 path: file,
                 read_only,

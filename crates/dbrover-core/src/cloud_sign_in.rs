@@ -140,7 +140,8 @@ impl DriverKind {
             | Self::Mongo
             | Self::Elasticsearch
             | Self::Cassandra
-            | Self::DynamoDb => &[],
+            | Self::DynamoDb
+            | Self::Athena => &[],
         }
     }
 }

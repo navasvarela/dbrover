@@ -471,20 +471,32 @@ fn data_source_settings(data_source: &DataSource, names: &ProjectNames) -> Setti
                 settings.push(("Connection string", string.clone()));
             }
         }
-        ConnectionConfig::DynamoDb(config) => {
-            let or_default = |setting: &str, default: &str| match setting {
-                "" => default.to_owned(),
-                setting => setting.to_owned(),
-            };
-            let signs_in = match config.sign_in {
-                dbrover_core::DynamoDbSignIn::Profile => {
-                    or_default(&config.profile, "AWS's default chain")
-                }
-                dbrover_core::DynamoDbSignIn::LocalEmulator => "a local emulator".to_owned(),
-            };
-            settings.push(("Signs in as", signs_in));
-            settings.push(("Region", or_default(&config.region, "the profile's")));
-            settings.push(("Endpoint", or_default(&config.endpoint, "AWS's own")));
+        ConnectionConfig::DynamoDb(config) => aws_settings(
+            AwsSettings {
+                sign_in: config.sign_in,
+                profile: &config.profile,
+                region: &config.region,
+                endpoint: &config.endpoint,
+            },
+            &mut settings,
+        ),
+        ConnectionConfig::Athena(config) => {
+            aws_settings(
+                AwsSettings {
+                    sign_in: config.sign_in,
+                    profile: &config.profile,
+                    region: &config.region,
+                    endpoint: &config.endpoint,
+                },
+                &mut settings,
+            );
+            settings.push(("Workgroup", config.workgroup.clone()));
+            settings.push(("Catalog", config.catalog.clone()));
+            settings.push(("Database", config.database.clone()));
+            settings.push((
+                "Output location",
+                or_default(&config.output_location, "the workgroup's"),
+            ));
         }
         ConnectionConfig::Sqlite(config) => {
             settings.push(("File", config.path.display().to_string()));
@@ -547,6 +559,32 @@ fn server_settings(server: &ServerConfig, settings: &mut Settings) {
     settings.push(("SSH login", login));
 }
 
+/// An AWS service's sign-in, as DynamoDB's and Athena's settings hold it.
+struct AwsSettings<'a> {
+    sign_in: dbrover_core::AwsSignInKind,
+    profile: &'a str,
+    region: &'a str,
+    endpoint: &'a str,
+}
+
+fn aws_settings(aws: AwsSettings<'_>, settings: &mut Vec<(&'static str, String)>) {
+    let signs_in = match aws.sign_in {
+        dbrover_core::AwsSignInKind::Profile => or_default(aws.profile, "AWS's default chain"),
+        dbrover_core::AwsSignInKind::LocalEmulator => "a local emulator".to_owned(),
+    };
+    settings.push(("Signs in as", signs_in));
+    settings.push(("Region", or_default(aws.region, "the profile's")));
+    settings.push(("Endpoint", or_default(aws.endpoint, "AWS's own")));
+}
+
+/// `setting`, or what an empty one means.
+fn or_default(setting: &str, default: &str) -> String {
+    match setting {
+        "" => default.to_owned(),
+        setting => setting.to_owned(),
+    }
+}
+
 fn yes_no(value: bool) -> String {
     if value { "yes" } else { "no" }.to_owned()
 }
@@ -555,7 +593,7 @@ fn yes_no(value: bool) -> String {
 fn paths(config: &ConnectionConfig) -> Vec<(&'static str, &Path)> {
     let server = match config {
         ConnectionConfig::Sqlite(config) => return vec![("File", &config.path)],
-        ConnectionConfig::DynamoDb(_) => return Vec::new(),
+        ConnectionConfig::DynamoDb(_) | ConnectionConfig::Athena(_) => return Vec::new(),
         ConnectionConfig::DuckDb(config) => {
             let file = match &config.database {
                 DuckDbDatabase::File { path, .. } => Some(("File", path.as_path())),

@@ -55,9 +55,51 @@ pub fn describe_error(error: &(dyn Error + 'static)) -> String {
     description
 }
 
+/// The byte of `text` at a line and column, both counted from 1 and the column in characters,
+/// as Trino and Athena point into a statement (`line 1:8: …`). The column may be one past its
+/// line's end, where a statement that stops short is pointed at; `None` further on.
+pub fn position_at(text: &str, line: usize, column: usize) -> Option<usize> {
+    let line_start: usize = text
+        .split_inclusive('\n')
+        .take(line.checked_sub(1)?)
+        .map(str::len)
+        .sum();
+    let rest = text.get(line_start..)?;
+    let line_text = rest.split('\n').next().unwrap_or(rest);
+    let column = column.checked_sub(1)?;
+    line_text
+        .char_indices()
+        .map(|(at, _)| at)
+        .chain(std::iter::once(line_text.len()))
+        .nth(column)
+        .map(|at| line_start + at)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_the_byte_at_a_line_and_column() {
+        let text = "SELECT é\nFROM t WHERE";
+        let cases = [
+            (1, 1, Some(0)),
+            (1, 8, Some(7)),
+            // After the two-byte `é`.
+            (1, 9, Some(9)),
+            (2, 6, Some(15)),
+            // Just past the end, where a statement that stops short is pointed at.
+            (2, 13, Some(22)),
+            (2, 14, None),
+            // Within its line: past the end of the first line is no place at all.
+            (1, 10, None),
+            (0, 1, None),
+            (1, 0, None),
+        ];
+        for (line, column, expected) in cases {
+            assert_eq!(position_at(text, line, column), expected, "{line}:{column}");
+        }
+    }
 
     #[test]
     fn describes_the_whole_chain() {

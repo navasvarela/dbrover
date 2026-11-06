@@ -19,11 +19,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use aws_sdk_dynamodb::Client;
-use dbrover_cloud::aws::{AwsCredentials, AwsSignIn};
+use dbrover_cloud::aws::AwsSignIn;
 use dbrover_core::{
     CancelHandle, CatalogNode, CatalogPath, ChildrenPage, ChildrenQuery, Connection, CostEstimate,
-    DriverError, DynamoDbConfig, DynamoDbSignIn, FullScan, Rejection, RejectionKind, RelationName,
-    ResultCursor, ServerInfo, TableConstraints, TableDescription, TableName, TransactionStatus,
+    DriverError, DynamoDbConfig, FullScan, Rejection, RejectionKind, RelationName, ResultCursor,
+    ServerInfo, TableConstraints, TableDescription, TableName, TransactionStatus,
 };
 use dbrover_language::partiql::{self, Access, Verb};
 
@@ -70,19 +70,13 @@ pub async fn connect(config: &DynamoDbConfig) -> Result<DynamoConnection, Driver
     })
 }
 
-/// The SDK's sign-in for `config`: an empty profile is AWS's default chain.
 fn sign_in(config: &DynamoDbConfig) -> AwsSignIn {
-    let credentials = match (config.sign_in, config.profile.as_str()) {
-        (DynamoDbSignIn::LocalEmulator, _) => AwsCredentials::LocalEmulator,
-        (DynamoDbSignIn::Profile, "") => AwsCredentials::DefaultChain,
-        (DynamoDbSignIn::Profile, profile) => AwsCredentials::Profile(profile.to_owned()),
-    };
-    let optional = |setting: &str| (!setting.is_empty()).then(|| setting.to_owned());
-    AwsSignIn {
-        credentials,
-        region: optional(&config.region),
-        endpoint: optional(&config.endpoint),
-    }
+    AwsSignIn::from_settings(
+        config.sign_in,
+        &config.profile,
+        &config.region,
+        &config.endpoint,
+    )
 }
 
 /// A console's or the explorer's connection to DynamoDB in one region.

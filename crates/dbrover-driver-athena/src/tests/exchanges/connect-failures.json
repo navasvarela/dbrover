@@ -1,0 +1,17 @@
+{
+  "doc": "Connecting to a workgroup that doesn't exist, then to one that names no output location, as the data source names none either.",
+  "exchanges": [
+    {
+      "operation": "GetWorkGroup",
+      "request": {"WorkGroup": "nowhere"},
+      "status": 400,
+      "response": {"__type": "InvalidRequestException", "Message": "WorkGroup nowhere is not found."}
+    },
+    {
+      "operation": "GetWorkGroup",
+      "request": {"WorkGroup": "bare"},
+      "response": {"WorkGroup": {"Name": "bare", "State": "ENABLED", "Configuration": {
+        "EnforceWorkGroupConfiguration": false}}}
+    }
+  ]
+}

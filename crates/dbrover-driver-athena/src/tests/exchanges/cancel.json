@@ -1,0 +1,41 @@
+{
+  "doc": "A long query stopped by its id: polled while it runs, stopped, then reported cancelled. The workgroup is read again by the ping after.",
+  "exchanges": [
+    {
+      "operation": "GetWorkGroup",
+      "request": {"WorkGroup": "primary"},
+      "response": {"WorkGroup": {"Name": "primary", "Configuration": {
+        "ResultConfiguration": {"OutputLocation": "s3://dbrover-results/athena/"}}}}
+    },
+    {
+      "operation": "StartQueryExecution",
+      "request": {"QueryString": "SELECT count(*) FROM huge"},
+      "response": {"QueryExecutionId": "q-long"}
+    },
+    {
+      "operation": "GetQueryExecution",
+      "request": {"QueryExecutionId": "q-long"},
+      "repeat": true,
+      "response": {"QueryExecution": {"QueryExecutionId": "q-long", "StatementType": "DML",
+        "Status": {"State": "RUNNING"}, "Statistics": {"DataScannedInBytes": 500000000}}}
+    },
+    {
+      "operation": "StopQueryExecution",
+      "request": {"QueryExecutionId": "q-long"},
+      "response": {}
+    },
+    {
+      "operation": "GetQueryExecution",
+      "request": {"QueryExecutionId": "q-long"},
+      "response": {"QueryExecution": {"QueryExecutionId": "q-long", "StatementType": "DML",
+        "Status": {"State": "CANCELLED", "StateChangeReason": "Query cancelled by user"},
+        "Statistics": {"DataScannedInBytes": 600000000}}}
+    },
+    {
+      "operation": "GetWorkGroup",
+      "request": {"WorkGroup": "primary"},
+      "response": {"WorkGroup": {"Name": "primary", "Configuration": {
+        "ResultConfiguration": {"OutputLocation": "s3://dbrover-results/athena/"}}}}
+    }
+  ]
+}

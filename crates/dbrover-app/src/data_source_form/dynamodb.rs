@@ -1,13 +1,13 @@
 //! A DynamoDB data source's fields: a profile, a region and an endpoint, each empty for AWS's
 //! own choice, or a local emulator at an endpoint. Nothing secret is typed here.
 
-use dbrover_core::{CostGuard, DynamoDbConfig, DynamoDbSignIn};
+use dbrover_core::{AwsSignInKind, CostGuard, DynamoDbConfig};
 
 use super::FormError;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DynamoDbFields {
-    pub sign_in: DynamoDbSignIn,
+    pub sign_in: AwsSignInKind,
     pub profile: String,
     pub region: String,
     pub endpoint: String,
@@ -33,11 +33,11 @@ impl DynamoDbFields {
     pub fn to_config(&self) -> Result<DynamoDbConfig, FormError> {
         let endpoint = self.endpoint.trim().to_owned();
         let profile = match self.sign_in {
-            DynamoDbSignIn::Profile => self.profile.trim().to_owned(),
-            DynamoDbSignIn::LocalEmulator if endpoint.is_empty() => {
+            AwsSignInKind::Profile => self.profile.trim().to_owned(),
+            AwsSignInKind::LocalEmulator if endpoint.is_empty() => {
                 return Err(FormError::EndpointMissing);
             }
-            DynamoDbSignIn::LocalEmulator => String::new(),
+            AwsSignInKind::LocalEmulator => String::new(),
         };
         Ok(DynamoDbConfig {
             sign_in: self.sign_in,
@@ -56,7 +56,7 @@ mod tests {
     #[test]
     fn an_emulator_needs_an_endpoint_and_no_profile() {
         let mut fields = DynamoDbFields {
-            sign_in: DynamoDbSignIn::LocalEmulator,
+            sign_in: AwsSignInKind::LocalEmulator,
             profile: "dev".into(),
             region: " eu-west-1 ".into(),
             endpoint: String::new(),
@@ -69,7 +69,7 @@ mod tests {
             (config.profile.as_str(), config.region.as_str()),
             ("", "eu-west-1")
         );
-        fields.sign_in = DynamoDbSignIn::Profile;
+        fields.sign_in = AwsSignInKind::Profile;
         fields.endpoint.clear();
         let config = fields.to_config().unwrap();
         assert_eq!(config.profile, "dev");

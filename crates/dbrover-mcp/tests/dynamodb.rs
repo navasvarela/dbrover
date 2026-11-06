@@ -19,7 +19,7 @@ use aws_sdk_dynamodb::types::{
 };
 use dbrover_cloud::aws::{AwsCredentials, AwsSignIn};
 use dbrover_core::{
-    ConnectionConfig, CostGuard, DynamoDbConfig, DynamoDbSignIn, McpLogin, ProjectId,
+    AwsSignInKind, ConnectionConfig, CostGuard, DynamoDbConfig, McpLogin, ProjectId,
 };
 use dbrover_store::{McpOverrides, Project, ProjectSlug, Projects};
 use serde_json::json;
@@ -79,7 +79,7 @@ async fn reads_dynamodb_through_an_mcp_profile() {
     let dir = tempfile::tempdir().unwrap();
     let project_id = ProjectId::generate();
     let config = ConnectionConfig::DynamoDb(DynamoDbConfig {
-        sign_in: DynamoDbSignIn::LocalEmulator,
+        sign_in: AwsSignInKind::LocalEmulator,
         profile: String::new(),
         region: String::new(),
         endpoint,

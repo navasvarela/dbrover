@@ -16,6 +16,7 @@ the New data source menu and in the data source dialog.
 | `elasticsearch.svg` | Elasticsearch (also shown for OpenSearch, which the same driver serves; its teal is lightened on the dark theme) | `#005571` |
 | `apachecassandra.svg` | Apache Cassandra (also shown for ScyllaDB, which the same driver serves; its blue is lightened on the dark theme) | `#1287B1` |
 | `dynamodb.svg` | A database glyph with a bolt for Amazon DynamoDB, drawn for DbRover (see below) | `#4053D6` |
+| `athena.svg` | A database glyph with a magnifying glass for Amazon Athena, drawn for DbRover (see below) | `#8C4FFF` |
 
 ## Source and licence
 
@@ -37,7 +38,8 @@ database a data source connects to. See each project's policy, e.g.
 (its last release with it was 12.4.0), so it is a plain database cylinder drawn for DbRover,
 under the same licence as DbRover, in the colour SQL Server's logo uses. So is `dynamodb.svg`:
 Simple Icons carries no Amazon logo, so it is a cylinder with a bolt through it, drawn for
-DbRover under DbRover's licence, in the blue of AWS's database icons.
+DbRover under DbRover's licence, in the blue of AWS's database icons. `athena.svg` is the same
+cylinder with a magnifying glass, in the purple of AWS's analytics icons.
 
 ## Adding a database
 

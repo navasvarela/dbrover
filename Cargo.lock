@@ -858,6 +858,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-athena"
+version = "1.127.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23449ad15e39939f8f376bc56f264c564d7cc7aa91edec488e3d9bcb39ba810a"
+dependencies = [
+ "arc-swap",
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-schema",
+ "aws-smithy-types",
+ "aws-types",
+ "fastrand",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-dynamodb"
 version = "1.136.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2410,6 +2433,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dbrover-driver-athena"
+version = "0.28.0"
+dependencies = [
+ "async-trait",
+ "aws-sdk-athena",
+ "dbrover-cloud",
+ "dbrover-core",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "dbrover-driver-cassandra"
 version = "0.28.0"
 dependencies = [
@@ -2601,6 +2637,7 @@ dependencies = [
  "cargo-packager-updater",
  "dbrover-cloud",
  "dbrover-core",
+ "dbrover-driver-athena",
  "dbrover-driver-cassandra",
  "dbrover-driver-clickhouse",
  "dbrover-driver-duckdb",

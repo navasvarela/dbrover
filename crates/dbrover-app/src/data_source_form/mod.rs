@@ -1,6 +1,7 @@
 //! The editable fields behind the data source dialog, and their validation. No egui here, so
 //! the rules are testable without a UI.
 
+mod athena;
 mod bucket;
 mod cassandra;
 mod dynamodb;
@@ -19,6 +20,7 @@ use dbrover_core::{
 use dbrover_engine::PasswordUpdate;
 use dbrover_engine::read_only::Storage;
 
+pub use athena::AthenaFields;
 pub use bucket::{BucketFields, BucketSignIn};
 pub use cassandra::CassandraFields;
 pub use dynamodb::DynamoDbFields;
@@ -111,6 +113,8 @@ pub enum FormError {
     PathMissing,
     #[error("Endpoint is required to sign in as a local emulator.")]
     EndpointMissing,
+    #[error("Output location must be in S3: s3://bucket/prefix/.")]
+    OutputLocationNotS3,
     #[error("SSH host is required.")]
     SshHostMissing,
     #[error("SSH port must be a number from 1 to 65535, or a ${{VARIABLE}}.")]
@@ -193,6 +197,7 @@ pub enum DriverFields {
     Elasticsearch(ElasticsearchFields),
     Cassandra(CassandraFields),
     DynamoDb(DynamoDbFields),
+    Athena(AthenaFields),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -287,6 +292,7 @@ impl DriverFields {
             DriverKind::Elasticsearch => Self::Elasticsearch(ElasticsearchFields::new()),
             DriverKind::Cassandra => Self::Cassandra(CassandraFields::new()),
             DriverKind::DynamoDb => Self::DynamoDb(DynamoDbFields::default()),
+            DriverKind::Athena => Self::Athena(AthenaFields::default()),
         }
     }
 
@@ -352,6 +358,7 @@ impl DriverFields {
             ConnectionConfig::DynamoDb(config) => {
                 Self::DynamoDb(DynamoDbFields::from_config(config))
             }
+            ConnectionConfig::Athena(config) => Self::Athena(AthenaFields::from_config(config)),
         }
     }
 
@@ -368,6 +375,7 @@ impl DriverFields {
             Self::Elasticsearch(_) => DriverKind::Elasticsearch,
             Self::Cassandra(_) => DriverKind::Cassandra,
             Self::DynamoDb(_) => DriverKind::DynamoDb,
+            Self::Athena(_) => DriverKind::Athena,
         }
     }
 
@@ -382,7 +390,7 @@ impl DriverFields {
             Self::Mongo(fields) => Some(&fields.server),
             Self::Elasticsearch(fields) => Some(&fields.server),
             Self::Cassandra(fields) => Some(&fields.server),
-            Self::Sqlite(_) | Self::DuckDb(_) | Self::DynamoDb(_) => None,
+            Self::Sqlite(_) | Self::DuckDb(_) | Self::DynamoDb(_) | Self::Athena(_) => None,
         }
     }
 
@@ -411,6 +419,7 @@ impl DriverFields {
             Self::Elasticsearch(fields) => ConnectionConfig::Elasticsearch(fields.to_config()?),
             Self::Cassandra(fields) => ConnectionConfig::Cassandra(fields.to_config()?),
             Self::DynamoDb(fields) => ConnectionConfig::DynamoDb(fields.to_config()?),
+            Self::Athena(fields) => ConnectionConfig::Athena(fields.to_config()?),
         })
     }
 }

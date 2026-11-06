@@ -4,8 +4,8 @@
 use std::path::PathBuf;
 
 use dbrover_core::{
-    ConnectionConfig, CostGuard, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase,
-    DynamoDbConfig, DynamoDbSignIn, MongoConfig, PostgresConfig, SafetyLevel, ServerConfig,
+    AwsSignInKind, ConnectionConfig, CostGuard, DataSource, DataSourceId, DuckDbConfig,
+    DuckDbDatabase, DynamoDbConfig, MongoConfig, PostgresConfig, SafetyLevel, ServerConfig,
     TlsMode,
 };
 use dbrover_export::{ColumnType, DecimalSpec};
@@ -99,7 +99,7 @@ fn dynamodb(name: &str) -> DataSource {
     data_source(
         name,
         ConnectionConfig::DynamoDb(DynamoDbConfig {
-            sign_in: DynamoDbSignIn::LocalEmulator,
+            sign_in: AwsSignInKind::LocalEmulator,
             profile: String::new(),
             region: String::new(),
             endpoint: "http://localhost:8000".to_owned(),

@@ -56,6 +56,10 @@ pub enum Setting {
     Bucket,
     AccessKey,
     StorageAccount,
+    /// An Athena workgroup, catalog and query result location (C3).
+    Workgroup,
+    Catalog,
+    OutputLocation,
 }
 
 impl fmt::Display for Setting {
@@ -82,6 +86,9 @@ impl fmt::Display for Setting {
             Self::Bucket => "the bucket",
             Self::AccessKey => "the access key",
             Self::StorageAccount => "the storage account",
+            Self::Workgroup => "the workgroup",
+            Self::Catalog => "the catalog",
+            Self::OutputLocation => "the output location",
         })
     }
 }

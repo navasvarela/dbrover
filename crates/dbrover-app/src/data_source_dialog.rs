@@ -3,9 +3,9 @@
 use std::path::Path;
 
 use dbrover_core::{
-    AzureTool, CloudProvider, DataSource, DataSourceId, DriverKind, DuckDbConfig, DynamoDbSignIn,
-    ElasticsearchAuth, ManagedService, MongoConfig, SafetyLevel, ScanGuard, ServerInfo,
-    SourceColor, StorageProvider, expand, expand_path, has_placeholder,
+    AthenaConfig, AwsSignInKind, AzureTool, CloudProvider, DataSource, DataSourceId, DriverKind,
+    DuckDbConfig, ElasticsearchAuth, ManagedService, MongoConfig, SafetyLevel, ScanGuard,
+    ServerInfo, SourceColor, StorageProvider, expand, expand_path, has_placeholder,
 };
 use dbrover_engine::read_only::{self, Guard};
 use dbrover_engine::{DatabaseFile, Event, PasswordUpdate, ProcessEnvironment};
@@ -15,10 +15,10 @@ use egui::{
 };
 
 use crate::data_source_form::{
-    BucketFields, BucketSignIn, CassandraFields, CloudFields, DataSourceForm, DatabaseField,
-    DriverFields, DuckDbFields, DuckDbLocation, DynamoDbFields, ElasticsearchFields, FormError,
-    McpLoginFields, McpPasswordChange, MongoFields, MongoTarget, ServerFields, SshFields,
-    SshLoginChoice, TlsChoice,
+    AthenaFields, BucketFields, BucketSignIn, CassandraFields, CloudFields, DataSourceForm,
+    DatabaseField, DriverFields, DuckDbFields, DuckDbLocation, DynamoDbFields, ElasticsearchFields,
+    FormError, McpLoginFields, McpPasswordChange, MongoFields, MongoTarget, ServerFields,
+    SshFields, SshLoginChoice, TlsChoice,
 };
 use crate::dialog::{self, DialogSize};
 use crate::file_picker::{self, FileEngine};
@@ -219,6 +219,10 @@ impl DataSourceDialog {
             }
             DriverFields::DynamoDb(fields) => {
                 dynamodb_rows(ui, fields);
+                None
+            }
+            DriverFields::Athena(fields) => {
+                athena_rows(ui, fields);
                 None
             }
             DriverFields::Sqlite(fields) => {
@@ -518,16 +522,16 @@ fn cassandra_rows(ui: &mut Ui, fields: &mut CassandraFields) {
 fn dynamodb_rows(ui: &mut Ui, fields: &mut DynamoDbFields) {
     ui.label("Sign in with");
     ui.horizontal(|ui| {
-        ui.radio_value(&mut fields.sign_in, DynamoDbSignIn::Profile, "AWS profile");
+        ui.radio_value(&mut fields.sign_in, AwsSignInKind::Profile, "AWS profile");
         ui.radio_value(
             &mut fields.sign_in,
-            DynamoDbSignIn::LocalEmulator,
+            AwsSignInKind::LocalEmulator,
             "Local emulator",
         );
     });
     ui.end_row();
     match fields.sign_in {
-        DynamoDbSignIn::Profile => {
+        AwsSignInKind::Profile => {
             setting_row(ui, "Profile", &mut fields.profile, "default", Resolve::Text);
             ui.label("");
             ui.weak("From your AWS config and credentials files; DbRover keeps only its name.");
@@ -547,7 +551,7 @@ fn dynamodb_rows(ui: &mut Ui, fields: &mut DynamoDbFields) {
                 Resolve::Text,
             );
         }
-        DynamoDbSignIn::LocalEmulator => {
+        AwsSignInKind::LocalEmulator => {
             setting_row(
                 ui,
                 "Endpoint",
@@ -575,6 +579,79 @@ fn dynamodb_rows(ui: &mut Ui, fields: &mut DynamoDbFields) {
             false => ScanGuard::Off,
         };
     }
+    ui.end_row();
+}
+
+/// The AWS sign-in as DynamoDB's, then where Athena runs the data source's queries.
+fn athena_rows(ui: &mut Ui, fields: &mut AthenaFields) {
+    ui.label("Sign in with");
+    ui.horizontal(|ui| {
+        ui.radio_value(&mut fields.sign_in, AwsSignInKind::Profile, "AWS profile");
+        ui.radio_value(
+            &mut fields.sign_in,
+            AwsSignInKind::LocalEmulator,
+            "Local emulator",
+        );
+    });
+    ui.end_row();
+    match fields.sign_in {
+        AwsSignInKind::Profile => {
+            setting_row(ui, "Profile", &mut fields.profile, "default", Resolve::Text);
+            ui.label("");
+            ui.weak("From your AWS config and credentials files; DbRover keeps only its name.");
+            ui.end_row();
+            setting_row(
+                ui,
+                "Region",
+                &mut fields.region,
+                "the profile's",
+                Resolve::Text,
+            );
+        }
+        AwsSignInKind::LocalEmulator => {
+            setting_row(
+                ui,
+                "Endpoint",
+                &mut fields.endpoint,
+                "http://localhost:4566",
+                Resolve::Text,
+            );
+            ui.label("");
+            ui.weak("LocalStack's Athena, which takes made-up credentials.");
+            ui.end_row();
+            setting_row(ui, "Region", &mut fields.region, "us-east-1", Resolve::Text);
+        }
+    }
+    setting_row(
+        ui,
+        "Workgroup",
+        &mut fields.workgroup,
+        AthenaConfig::DEFAULT_WORKGROUP,
+        Resolve::Text,
+    );
+    setting_row(
+        ui,
+        "Catalog",
+        &mut fields.catalog,
+        AthenaConfig::DEFAULT_CATALOG,
+        Resolve::Text,
+    );
+    setting_row(
+        ui,
+        "Database",
+        &mut fields.database,
+        AthenaConfig::DEFAULT_DATABASE,
+        Resolve::Text,
+    );
+    setting_row(
+        ui,
+        "Output location",
+        &mut fields.output_location,
+        "the workgroup's",
+        Resolve::Text,
+    );
+    ui.label("");
+    ui.weak("Where query results go in S3, for a workgroup that doesn't say.");
     ui.end_row();
 }
 

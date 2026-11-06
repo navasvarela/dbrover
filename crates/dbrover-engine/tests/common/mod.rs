@@ -13,9 +13,9 @@ use std::time::Duration;
 use std::str::FromStr;
 
 use dbrover_core::{
-    CassandraConfig, ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind,
-    DynamoDbConfig, DynamoDbSignIn, ElasticsearchAuth, ElasticsearchConfig, MongoConfig,
-    MysqlConfig, Password, PostgresConfig, RedisConfig, SafetyLevel, ServerConfig, SqlServerConfig,
+    AwsSignInKind, CassandraConfig, ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId,
+    DriverKind, DynamoDbConfig, ElasticsearchAuth, ElasticsearchConfig, MongoConfig, MysqlConfig,
+    Password, PostgresConfig, RedisConfig, SafetyLevel, ServerConfig, SqlServerConfig,
     SqliteConfig, SshConfig, SshLogin, TlsMode,
 };
 use dbrover_engine::{
@@ -558,7 +558,7 @@ pub fn dynamodb_test_config() -> Option<DynamoDbConfig> {
         return None;
     };
     Some(DynamoDbConfig {
-        sign_in: DynamoDbSignIn::LocalEmulator,
+        sign_in: AwsSignInKind::LocalEmulator,
         profile: String::new(),
         region: String::new(),
         endpoint,

@@ -212,6 +212,8 @@ pub enum ConnectionConfig {
     /// Amazon DynamoDB, on AWS or an emulator of it.
     #[serde(rename = "dynamodb")]
     DynamoDb(DynamoDbConfig),
+    /// Amazon Athena, through AWS's API (C3).
+    Athena(AthenaConfig),
 }
 
 impl ConnectionConfig {
@@ -223,6 +225,10 @@ impl ConnectionConfig {
             user.clone_into(&mut dynamodb.profile);
             return Some(config);
         }
+        if let Self::Athena(athena) = &mut config {
+            user.clone_into(&mut athena.profile);
+            return Some(config);
+        }
         let server = config.server_mut()?;
         user.clone_into(&mut server.user);
         Some(config)
@@ -232,6 +238,7 @@ impl ConnectionConfig {
     pub fn cost_guard(&self) -> Option<CostGuard> {
         match self {
             Self::DynamoDb(config) => Some(config.cost_guard),
+            Self::Athena(config) => Some(config.cost_guard),
             Self::Postgres(_)
             | Self::Sqlite(_)
             | Self::Mysql(_)
@@ -274,7 +281,7 @@ impl ConnectionConfig {
             Self::Mongo(config) => Some(&config.server),
             Self::Elasticsearch(config) => Some(&config.server),
             Self::Cassandra(config) => Some(&config.server),
-            Self::Sqlite(_) | Self::DuckDb(_) | Self::DynamoDb(_) => None,
+            Self::Sqlite(_) | Self::DuckDb(_) | Self::DynamoDb(_) | Self::Athena(_) => None,
         }
     }
 
@@ -288,7 +295,7 @@ impl ConnectionConfig {
             Self::Mongo(config) => Some(&mut config.server),
             Self::Elasticsearch(config) => Some(&mut config.server),
             Self::Cassandra(config) => Some(&mut config.server),
-            Self::Sqlite(_) | Self::DuckDb(_) | Self::DynamoDb(_) => None,
+            Self::Sqlite(_) | Self::DuckDb(_) | Self::DynamoDb(_) | Self::Athena(_) => None,
         }
     }
 
@@ -305,6 +312,7 @@ impl ConnectionConfig {
             Self::Elasticsearch(_) => DriverKind::Elasticsearch,
             Self::Cassandra(_) => DriverKind::Cassandra,
             Self::DynamoDb(_) => DriverKind::DynamoDb,
+            Self::Athena(_) => DriverKind::Athena,
         }
     }
 
@@ -312,7 +320,8 @@ impl ConnectionConfig {
     /// schemas; the explorer lists that database's schemas. MySQL's and ClickHouse's databases
     /// are their schemas, so they have no such level, Redis's numbered databases hold keys,
     /// MongoDB's hold collections, and Elasticsearch and DynamoDB have none. Cassandra's
-    /// keyspaces are its schemas.
+    /// keyspaces are its schemas. Athena's catalogs are above its databases, which are its
+    /// schemas, and the explorer lists every catalog.
     pub fn database(&self) -> Option<&str> {
         match self {
             Self::Postgres(config) => Some(&config.server.database),
@@ -325,7 +334,7 @@ impl ConnectionConfig {
             | Self::Mongo(_)
             | Self::Elasticsearch(_)
             | Self::Cassandra(_) => None,
-            Self::DynamoDb(_) => None,
+            Self::DynamoDb(_) | Self::Athena(_) => None,
         }
     }
 
@@ -353,6 +362,8 @@ impl ConnectionConfig {
             Self::Cassandra(config) => &config.server.database,
             // Tables belong to an account's region, not to a database or schema.
             Self::DynamoDb(_) => "",
+            // The database each query names in its context, in the data source's catalog.
+            Self::Athena(config) => &config.database,
         }
     }
 
@@ -406,6 +417,7 @@ impl ConnectionConfig {
                 statement_timeout: config.statement_timeout,
             }),
             Self::DynamoDb(config) => Self::DynamoDb(config.resolve(variables)?),
+            Self::Athena(config) => Self::Athena(config.resolve(variables)?),
             Self::Sqlite(config) => Self::Sqlite(SqliteConfig {
                 path: expand_path(&config.path, variables)
                     .map_err(PlaceholderError::in_setting(Setting::File))?,
@@ -452,6 +464,7 @@ impl ConnectionConfig {
             }
             Self::Cassandra(config) => config.server.default_name(),
             Self::DynamoDb(config) => config.default_name(),
+            Self::Athena(config) => config.default_name(),
             Self::Sqlite(config) => file_name(&config.path),
             Self::DuckDb(config) => match &config.database {
                 DuckDbDatabase::File { path, .. } => file_name(path),
@@ -464,10 +477,11 @@ impl ConnectionConfig {
 
 impl DriverKind {
     /// Whether a data source signs in as someone whose grants the database enforces: a user
-    /// with a password, or, on DynamoDB, an AWS profile whose IAM policy AWS enforces. Such an
-    /// engine without a read-only mode is served to MCP clients through an MCP login.
+    /// with a password, or, on DynamoDB and Athena, an AWS profile whose IAM policy AWS
+    /// enforces. Such an engine without a read-only mode is served to MCP clients through an
+    /// MCP login.
     pub fn has_logins(self) -> bool {
-        self.uses_password() || self == Self::DynamoDb
+        self.uses_password() || matches!(self, Self::DynamoDb | Self::Athena)
     }
 
     /// Whether connections authenticate with a password, so the keychain is worth asking.
@@ -482,8 +496,8 @@ impl DriverKind {
             | Self::Mongo
             | Self::Elasticsearch
             | Self::Cassandra => true,
-            // AWS's SDK signs DynamoDB's requests with what the profile names.
-            Self::Sqlite | Self::DuckDb | Self::DynamoDb => false,
+            // AWS's SDK signs DynamoDB's and Athena's requests with what the profile names.
+            Self::Sqlite | Self::DuckDb | Self::DynamoDb | Self::Athena => false,
         }
     }
 }
@@ -504,6 +518,7 @@ impl fmt::Display for ConnectionConfig {
             Self::Elasticsearch(config) => config.server.fmt(f),
             Self::Cassandra(config) => config.server.fmt(f),
             Self::DynamoDb(config) => config.fmt(f),
+            Self::Athena(config) => config.fmt(f),
             Self::Sqlite(config) if config.read_only => {
                 write!(f, "{} (read-only)", config.path.display())
             }
@@ -972,8 +987,8 @@ impl CassandraConfig {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DynamoDbConfig {
     /// Written only for an emulator.
-    #[serde(default, skip_serializing_if = "DynamoDbSignIn::is_profile")]
-    pub sign_in: DynamoDbSignIn,
+    #[serde(default, skip_serializing_if = "AwsSignInKind::is_profile")]
+    pub sign_in: AwsSignInKind,
     /// The profile of the shared AWS files to sign in with; empty for the default chain's.
     /// Unused by an emulator.
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -1020,33 +1035,154 @@ impl fmt::Display for DynamoDbConfig {
             region => region,
         };
         match (self.sign_in, self.endpoint.as_str(), self.profile.as_str()) {
-            (DynamoDbSignIn::LocalEmulator, endpoint, _) => {
+            (AwsSignInKind::LocalEmulator, endpoint, _) => {
                 write!(f, "{endpoint} (local emulator, {region})")
             }
-            (DynamoDbSignIn::Profile, "", "") => write!(f, "DynamoDB in {region}"),
-            (DynamoDbSignIn::Profile, "", profile) => {
+            (AwsSignInKind::Profile, "", "") => write!(f, "DynamoDB in {region}"),
+            (AwsSignInKind::Profile, "", profile) => {
                 write!(f, "DynamoDB in {region} as profile {profile}")
             }
-            (DynamoDbSignIn::Profile, endpoint, "") => write!(f, "{endpoint} ({region})"),
-            (DynamoDbSignIn::Profile, endpoint, profile) => {
+            (AwsSignInKind::Profile, endpoint, "") => write!(f, "{endpoint} ({region})"),
+            (AwsSignInKind::Profile, endpoint, profile) => {
                 write!(f, "{endpoint} ({region}) as profile {profile}")
             }
         }
     }
 }
 
-/// Whom a DynamoDB data source signs in as.
+/// Amazon Athena in one region and workgroup (`docs/cloud-data.md`, C3). Like DynamoDB's, nothing
+/// in it is secret: the profile names an entry of the shared AWS files, which AWS's SDK reads,
+/// and an empty profile or region leaves the choice to AWS's default chain.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AthenaConfig {
+    /// Written only for a test server.
+    #[serde(default, skip_serializing_if = "AwsSignInKind::is_profile")]
+    pub sign_in: AwsSignInKind,
+    /// The profile of the shared AWS files to sign in with; empty for the default chain's.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub profile: String,
+    /// Empty for the profile's or the environment's region.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub region: String,
+    /// The workgroup queries run in, which may set where results go and a limit per query.
+    #[serde(default = "AthenaConfig::default_workgroup")]
+    pub workgroup: String,
+    /// The catalog unqualified names resolve in: the Glue Data Catalog, or a federated one.
+    #[serde(default = "AthenaConfig::default_catalog")]
+    pub catalog: String,
+    /// The database unqualified names resolve in.
+    #[serde(default = "AthenaConfig::default_database")]
+    pub database: String,
+    /// Where in S3 query results go (`s3://bucket/prefix/`), for a workgroup that names no
+    /// location of its own. A workgroup that enforces its own ignores it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub output_location: String,
+    /// An address instead of AWS's own: a VPC endpoint, or a test server. A test server
+    /// needs one.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub endpoint: String,
+    /// Written only where it differs from the default (C0e).
+    #[serde(flatten)]
+    pub cost_guard: CostGuard,
+}
+
+impl Default for AthenaConfig {
+    fn default() -> Self {
+        Self {
+            sign_in: AwsSignInKind::default(),
+            profile: String::new(),
+            region: String::new(),
+            workgroup: Self::default_workgroup(),
+            catalog: Self::default_catalog(),
+            database: Self::default_database(),
+            output_location: String::new(),
+            endpoint: String::new(),
+            cost_guard: CostGuard::default(),
+        }
+    }
+}
+
+impl AthenaConfig {
+    /// The workgroup every account has.
+    pub const DEFAULT_WORKGROUP: &str = "primary";
+    /// The Glue Data Catalog's name in Athena.
+    pub const DEFAULT_CATALOG: &str = "AwsDataCatalog";
+    /// The database Athena's console starts in, which Glue creates.
+    pub const DEFAULT_DATABASE: &str = "default";
+
+    fn default_workgroup() -> String {
+        Self::DEFAULT_WORKGROUP.to_owned()
+    }
+
+    fn default_catalog() -> String {
+        Self::DEFAULT_CATALOG.to_owned()
+    }
+
+    fn default_database() -> String {
+        Self::DEFAULT_DATABASE.to_owned()
+    }
+
+    fn resolve(&self, variables: &dyn Variables) -> Result<Self, PlaceholderError> {
+        let expand_setting = |text: &str, setting| {
+            expand(text, variables).map_err(PlaceholderError::in_setting(setting))
+        };
+        Ok(Self {
+            sign_in: self.sign_in,
+            profile: expand_setting(&self.profile, Setting::Profile)?,
+            region: expand_setting(&self.region, Setting::Region)?,
+            workgroup: expand_setting(&self.workgroup, Setting::Workgroup)?,
+            catalog: expand_setting(&self.catalog, Setting::Catalog)?,
+            database: expand_setting(&self.database, Setting::Database)?,
+            output_location: expand_setting(&self.output_location, Setting::OutputLocation)?,
+            endpoint: expand_setting(&self.endpoint, Setting::Endpoint)?,
+            cost_guard: self.cost_guard,
+        })
+    }
+
+    /// `workgroup@region`, or the workgroup alone when the region is the profile's.
+    fn default_name(&self) -> String {
+        match self.region.as_str() {
+            "" => format!("Athena {}", self.workgroup),
+            region => format!("{}@{region}", self.workgroup),
+        }
+    }
+}
+
+/// `Athena workgroup primary in eu-west-1 as profile analytics`, or what of it is set.
+impl fmt::Display for AthenaConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let region = match self.region.as_str() {
+            "" => "the profile's region",
+            region => region,
+        };
+        write!(f, "Athena workgroup {} in {region}", self.workgroup)?;
+        match (self.sign_in, self.profile.as_str(), self.endpoint.as_str()) {
+            (AwsSignInKind::LocalEmulator, _, endpoint) => {
+                write!(f, " at {endpoint} (test server)")
+            }
+            (AwsSignInKind::Profile, "", "") => Ok(()),
+            (AwsSignInKind::Profile, profile, "") => write!(f, " as profile {profile}"),
+            (AwsSignInKind::Profile, "", endpoint) => write!(f, " at {endpoint}"),
+            (AwsSignInKind::Profile, profile, endpoint) => {
+                write!(f, " at {endpoint} as profile {profile}")
+            }
+        }
+    }
+}
+
+/// Whom a data source on an AWS service (DynamoDB, Athena) signs in as.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum DynamoDbSignIn {
+pub enum AwsSignInKind {
     /// The data source's profile, or AWS's default chain when it names none.
     #[default]
     Profile,
-    /// Made-up credentials, which DynamoDB Local and LocalStack take and AWS never would.
+    /// Made-up credentials, which a local emulator (DynamoDB Local, LocalStack) or a test
+    /// server takes and AWS never would.
     LocalEmulator,
 }
 
-impl DynamoDbSignIn {
+impl AwsSignInKind {
     pub fn is_profile(&self) -> bool {
         *self == Self::Profile
     }
@@ -1164,10 +1300,11 @@ pub enum DriverKind {
     Elasticsearch,
     Cassandra,
     DynamoDb,
+    Athena,
 }
 
 impl DriverKind {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Postgres,
         Self::Sqlite,
         Self::Mysql,
@@ -1179,6 +1316,7 @@ impl DriverKind {
         Self::Elasticsearch,
         Self::Cassandra,
         Self::DynamoDb,
+        Self::Athena,
     ];
 
     pub fn display_name(self) -> &'static str {
@@ -1194,6 +1332,7 @@ impl DriverKind {
             Self::Elasticsearch => "Elasticsearch / OpenSearch",
             Self::Cassandra => "Cassandra / ScyllaDB",
             Self::DynamoDb => "DynamoDB",
+            Self::Athena => "Amazon Athena",
         }
     }
 }
@@ -1345,6 +1484,83 @@ mod tests {
     }
 
     #[test]
+    fn an_athena_data_source_round_trips_with_its_defaults_filled_in() {
+        let data_source = |config| DataSource {
+            id: DataSourceId::generate(),
+            name: "lake".to_owned(),
+            color: None,
+            safety: SafetyLevel::Normal,
+            project: None,
+            mcp_login: None,
+            config: ConnectionConfig::Athena(config),
+        };
+        let profile = AthenaConfig {
+            profile: "analytics".to_owned(),
+            region: "eu-west-1".to_owned(),
+            database: "sales".to_owned(),
+            output_location: "s3://results/athena/".to_owned(),
+            cost_guard: CostGuard {
+                whole_table: ScanGuard::AskBeforeScans,
+                ask_above_bytes: Some(ByteCount(1_000_000_000)),
+            },
+            ..AthenaConfig::default()
+        };
+        let test_server = AthenaConfig {
+            sign_in: AwsSignInKind::LocalEmulator,
+            workgroup: "reports".to_owned(),
+            endpoint: "http://127.0.0.1:4000".to_owned(),
+            ..AthenaConfig::default()
+        };
+        for (config, written, name, shown) in [
+            (
+                profile,
+                "driver = \"athena\"\nprofile = \"analytics\"\nregion = \"eu-west-1\"\n\
+                 workgroup = \"primary\"\ncatalog = \"AwsDataCatalog\"\ndatabase = \"sales\"\n\
+                 output_location = \"s3://results/athena/\"\nask_above_bytes = 1000000000",
+                "primary@eu-west-1",
+                "Athena workgroup primary in eu-west-1 as profile analytics",
+            ),
+            (
+                test_server,
+                "sign_in = \"local-emulator\"\nworkgroup = \"reports\"",
+                "Athena reports",
+                "Athena workgroup reports in the profile's region at http://127.0.0.1:4000 \
+                 (test server)",
+            ),
+        ] {
+            let file = File {
+                data_source: vec![data_source(config)],
+            };
+            let text = toml::to_string(&file).unwrap();
+            assert!(text.contains(written), "{text}");
+            assert_eq!(toml::from_str::<File>(&text).unwrap(), file);
+            let config = &file.data_source[0].config;
+            assert_eq!(config.default_name(), name);
+            assert_eq!(config.to_string(), shown);
+            assert_eq!(config.driver(), DriverKind::Athena);
+            assert!(!config.uses_password());
+            assert!(config.driver().has_logins());
+        }
+        // Written by hand with only a region: every default is filled in.
+        let text = "[[data_source]]\nid = \"00000000-0000-0000-0000-000000000001\"\n\
+                    name = \"lake\"\ndriver = \"athena\"\nregion = \"us-east-1\"\n";
+        let file: File = toml::from_str(text).unwrap();
+        let ConnectionConfig::Athena(config) = &file.data_source[0].config else {
+            panic!("not Athena: {file:?}");
+        };
+        assert_eq!(
+            (config.workgroup.as_str(), config.catalog.as_str()),
+            ("primary", "AwsDataCatalog")
+        );
+        assert_eq!(file.data_source[0].config.default_schema(), "default");
+        // An MCP login is another profile.
+        let as_reader = file.data_source[0].config.with_user("reader").unwrap();
+        assert!(
+            matches!(&as_reader, ConnectionConfig::Athena(athena) if athena.profile == "reader")
+        );
+    }
+
+    #[test]
     fn a_dynamodb_data_source_writes_only_what_it_sets() {
         let data_source = |config| DataSource {
             id: DataSourceId::generate(),
@@ -1362,7 +1578,7 @@ mod tests {
             ..DynamoDbConfig::default()
         };
         let emulator = DynamoDbConfig {
-            sign_in: DynamoDbSignIn::LocalEmulator,
+            sign_in: AwsSignInKind::LocalEmulator,
             endpoint: "http://localhost:8000".to_owned(),
             cost_guard: CostGuard {
                 whole_table: ScanGuard::Off,

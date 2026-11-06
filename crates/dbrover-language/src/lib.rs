@@ -474,6 +474,7 @@ impl From<DriverKind> for QueryLanguage {
             DriverKind::Elasticsearch => Self::Search,
             DriverKind::Cassandra => Self::Sql(Dialect::Cassandra),
             DriverKind::DynamoDb => Self::PartiQl,
+            DriverKind::Athena => Self::Sql(Dialect::Trino),
         }
     }
 }
@@ -547,6 +548,7 @@ mod tests {
                 None,
                 Some(Dialect::Cassandra),
                 None,
+                Some(Dialect::Trino),
             ]
         );
         assert_eq!(QueryLanguage::from(DriverKind::Redis), QueryLanguage::Redis);

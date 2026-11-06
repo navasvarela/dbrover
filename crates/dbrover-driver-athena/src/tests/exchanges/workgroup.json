@@ -1,0 +1,27 @@
+{
+  "doc": "A workgroup that names where results go, read when connecting and on each ping.",
+  "exchanges": [
+    {
+      "operation": "GetWorkGroup",
+      "request": {"WorkGroup": "primary"},
+      "repeat": true,
+      "response": {
+        "WorkGroup": {
+          "Name": "primary",
+          "State": "ENABLED",
+          "Configuration": {
+            "ResultConfiguration": {"OutputLocation": "s3://dbrover-results/athena/"},
+            "EnforceWorkGroupConfiguration": false,
+            "PublishCloudWatchMetricsEnabled": true,
+            "RequesterPaysEnabled": false,
+            "EngineVersion": {
+              "SelectedEngineVersion": "AUTO",
+              "EffectiveEngineVersion": "Athena engine version 3"
+            }
+          },
+          "CreationTime": 1.7e9
+        }
+      }
+    }
+  ]
+}

@@ -68,8 +68,26 @@ pub enum JobState {
         /// The rows a statement without a result changed, when the service says.
         rows_changed: Option<u64>,
     },
-    /// The job failed, or was cancelled: the service's message.
-    Failed(String),
+    /// The job failed, or was cancelled.
+    Failed(JobFailure),
+}
+
+/// Why a job failed, as the service says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobFailure {
+    pub message: String,
+    /// The byte of the statement the service's message points at, when it points at one.
+    pub position: Option<usize>,
+}
+
+impl JobFailure {
+    /// A failure that points at no part of the statement.
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            position: None,
+        }
+    }
 }
 
 /// One page of a finished job's result.
@@ -80,6 +98,9 @@ pub struct JobPage {
     pub rows: Vec<Row>,
     /// Where the next page starts; `None` on the last.
     pub next: Option<PageToken>,
+    /// The rows a statement without a result changed, where the service says so with the
+    /// result rather than when the job ends (Athena's `UpdateCount`). Read from the first page.
+    pub rows_changed: Option<u64>,
 }
 
 /// A service that runs statements as jobs: Athena, BigQuery, Snowflake and Databricks (C3 to
@@ -171,7 +192,7 @@ impl Jobs {
             buffered: first.rows,
             next: first.next,
             job,
-            rows_changed,
+            rows_changed: rows_changed.or(first.rows_changed),
         }))
     }
 
@@ -188,10 +209,10 @@ impl Jobs {
                     self.record(job, progress);
                     return Ok(rows_changed);
                 }
-                JobState::Failed(message) => {
+                JobState::Failed(failure) => {
                     return Err(DriverError::Statement {
-                        source: message.into(),
-                        position: None,
+                        source: failure.message.into(),
+                        position: failure.position,
                         sqlstate: None,
                     });
                 }
@@ -302,7 +323,9 @@ mod tests {
         polls_needed: usize,
         page_size: usize,
         rows: Vec<Row>,
-        failure: Option<String>,
+        failure: Option<JobFailure>,
+        /// What the first page says the statement changed.
+        rows_changed: Option<u64>,
         state: Mutex<FakeState>,
     }
 
@@ -331,7 +354,7 @@ mod tests {
         async fn poll(&self, job: &JobId) -> Result<JobState, DriverError> {
             let mut state = self.state();
             if state.cancelled.iter().any(|id| id == job.as_str()) {
-                return Ok(JobState::Failed("Job cancelled".to_owned()));
+                return Ok(JobState::Failed(JobFailure::new("Job cancelled")));
             }
             let polls = state.polls.entry(job.as_str().to_owned()).or_default();
             *polls += 1;
@@ -343,7 +366,7 @@ mod tests {
                 return Ok(JobState::Running(progress));
             }
             Ok(match &self.failure {
-                Some(message) => JobState::Failed(message.clone()),
+                Some(failure) => JobState::Failed(failure.clone()),
                 None => JobState::Done {
                     progress,
                     rows_changed: None,
@@ -367,6 +390,7 @@ mod tests {
                 }],
                 rows: self.rows[start..end].to_vec(),
                 next: (end < self.rows.len()).then(|| PageToken::new(end.to_string())),
+                rows_changed: self.rows_changed.filter(|_| start == 0),
             })
         }
 
@@ -430,7 +454,10 @@ mod tests {
     async fn a_failed_job_says_why() {
         let fake = Arc::new(Fake {
             polls_needed: 2,
-            failure: Some("Syntax error: Unexpected keyword FORM at [1:10]".to_owned()),
+            failure: Some(JobFailure {
+                message: "Syntax error: Unexpected keyword FORM at [1:10]".to_owned(),
+                position: Some(9),
+            }),
             ..Fake::default()
         });
         let jobs = Jobs::new(fake);
@@ -441,7 +468,31 @@ mod tests {
             crate::describe_error(&error).contains("Unexpected keyword FORM"),
             "{error}"
         );
+        assert!(
+            matches!(
+                error,
+                DriverError::Statement {
+                    position: Some(9),
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
         assert_eq!(jobs.progress().await.unwrap(), None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn rows_changed_may_come_with_the_result() {
+        let fake = Arc::new(Fake {
+            polls_needed: 1,
+            rows_changed: Some(42),
+            ..Fake::default()
+        });
+        let cursor = Jobs::new(fake)
+            .execute("INSERT INTO t SELECT …")
+            .await
+            .unwrap();
+        assert_eq!(cursor.finish().await.unwrap(), Some(42));
     }
 
     #[tokio::test(start_paused = true)]

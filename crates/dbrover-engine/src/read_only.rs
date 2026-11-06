@@ -84,8 +84,9 @@ pub fn mode(driver: DriverKind, storage: Storage) -> Option<ReadOnlyMode> {
         }
         // DuckDB refuses to open a database in memory read-only, and a MotherDuck database
         // isn't opened read-only (see `Storage::Hosted`). SQL Server has no read-only
-        // transaction, and Redis, MongoDB, Elasticsearch, Cassandra and DynamoDB no read-only
-        // session at all: a user who may only read is their guard (docs/nosql.md, N0a to N5).
+        // transaction, and Redis, MongoDB, Elasticsearch, Cassandra, DynamoDB and Athena no
+        // read-only session at all: a user who may only read is their guard (docs/nosql.md,
+        // N0a to N5; docs/cloud-data.md, C3).
         (DriverKind::DuckDb, Storage::InMemory | Storage::Hosted)
         | (
             DriverKind::SqlServer
@@ -93,7 +94,8 @@ pub fn mode(driver: DriverKind, storage: Storage) -> Option<ReadOnlyMode> {
             | DriverKind::Mongo
             | DriverKind::Elasticsearch
             | DriverKind::Cassandra
-            | DriverKind::DynamoDb,
+            | DriverKind::DynamoDb
+            | DriverKind::Athena,
             _,
         ) => None,
     }
@@ -136,6 +138,10 @@ pub fn read_only_login(driver: DriverKind) -> &'static str {
         DriverKind::DynamoDb => {
             "a profile whose IAM policy allows only dynamodb:PartiQLSelect, \
              dynamodb:DescribeTable and dynamodb:ListTables"
+        }
+        DriverKind::Athena => {
+            "a profile whose IAM policy allows Athena's queries and reading Glue's catalog and \
+             the tables' S3 data, and writes nothing but query results"
         }
         DriverKind::Postgres
         | DriverKind::Sqlite
@@ -382,7 +388,8 @@ mod tests {
                 | DriverKind::Mongo
                 | DriverKind::Elasticsearch
                 | DriverKind::Cassandra
-                | DriverKind::DynamoDb => guard == Guard::Login,
+                | DriverKind::DynamoDb
+                | DriverKind::Athena => guard == Guard::Login,
             };
             assert!(expected, "{driver:?}: {guard:?}");
         }
