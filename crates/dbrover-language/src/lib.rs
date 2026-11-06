@@ -11,6 +11,7 @@
 //! variants, so a language added for a new engine changes no other crate (see
 //! `docs/nosql.md`, N0a).
 
+mod chart_block;
 mod documents;
 pub mod mongo;
 mod parameters;
@@ -22,6 +23,7 @@ mod test_language;
 
 use std::ops::Range;
 
+pub use chart_block::ChartBlock;
 use dbrover_core::{
     CatalogPath, DriverKind, NodeKind, Quoting, ResultShape, ServerInfo, object_source,
 };
