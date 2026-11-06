@@ -278,6 +278,11 @@ pub struct Spelling {
     temporary_tables: TemporaryTables,
     /// Opens a transaction.
     begin: &'static str,
+    /// The type of a column of text.
+    text_type: &'static str,
+    /// The type a number is cast to before `concat` joins it to text, on an engine whose
+    /// `concat` takes only text; `None` where it converts numbers itself.
+    concat_cast: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -286,6 +291,9 @@ enum TemporaryTables {
     Keyword,
     /// `CREATE TABLE #name`, and `#name` wherever it is used.
     HashPrefix,
+    /// An ordinary table, in the schema the connection starts in, which the check drops
+    /// itself: for an engine without temporary tables (Trino, in its `memory` catalog).
+    Plain,
 }
 
 impl Spelling {
@@ -293,18 +301,32 @@ impl Spelling {
     pub const STANDARD: Self = Self {
         temporary_tables: TemporaryTables::Keyword,
         begin: "BEGIN",
+        text_type: "text",
+        concat_cast: None,
     };
 
     /// SQL Server, where `BEGIN` alone opens a block, not a transaction.
     pub const SQL_SERVER: Self = Self {
         temporary_tables: TemporaryTables::HashPrefix,
         begin: "BEGIN TRANSACTION",
+        text_type: "text",
+        concat_cast: None,
+    };
+
+    /// Trino, which has no temporary tables, calls text `varchar`, and whose `concat` takes
+    /// only text. The connection must start in a schema that takes tables, such as
+    /// `memory.default`.
+    pub const TRINO: Self = Self {
+        temporary_tables: TemporaryTables::Plain,
+        begin: "START TRANSACTION",
+        text_type: "varchar",
+        concat_cast: Some("varchar"),
     };
 
     /// What statements call the temporary table `name`.
     fn temporary(self, name: &str) -> String {
         match self.temporary_tables {
-            TemporaryTables::Keyword => name.to_owned(),
+            TemporaryTables::Keyword | TemporaryTables::Plain => name.to_owned(),
             TemporaryTables::HashPrefix => format!("#{name}"),
         }
     }
@@ -314,6 +336,15 @@ impl Spelling {
         match self.temporary_tables {
             TemporaryTables::Keyword => format!("CREATE TEMPORARY TABLE {name} {columns}"),
             TemporaryTables::HashPrefix => format!("CREATE TABLE #{name} {columns}"),
+            TemporaryTables::Plain => format!("CREATE TABLE {name} {columns}"),
+        }
+    }
+
+    /// `number` as `concat` takes it.
+    fn concat_operand(self, number: &str) -> String {
+        match self.concat_cast {
+            Some(text) => format!("CAST({number} AS {text})"),
+            None => number.to_owned(),
         }
     }
 }
@@ -344,13 +375,17 @@ pub async fn check_execution(connection: &mut dyn Connection, spelling: Spelling
     let table = spelling.temporary("dbrover_conformance");
     run_to_end(
         connection,
-        &spelling.create_temporary("dbrover_conformance", "(id integer, name text)"),
+        &spelling.create_temporary(
+            "dbrover_conformance",
+            &format!("(id integer, name {})", spelling.text_type),
+        ),
     )
     .await;
+    let row_name = spelling.concat_operand("n.n");
     let inserted = run_to_end(
         connection,
         &format!(
-            "INSERT INTO {table} SELECT n.n, concat('row ', n.n) FROM \
+            "INSERT INTO {table} SELECT n.n, concat('row ', {row_name}) FROM \
              (SELECT a.d + 10 * b.d + 100 * c.d + 1000 * e.d + 1 AS n \
              FROM {DIGITS} a CROSS JOIN {DIGITS} b CROSS JOIN {DIGITS} c \
              CROSS JOIN {DIGITS} e) n WHERE n.n <= {TABLE_ROWS}"

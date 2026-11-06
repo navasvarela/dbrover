@@ -49,7 +49,8 @@ impl From<&ConnectionConfig> for DataSourceFields {
             | ConnectionConfig::Redis(_)
             | ConnectionConfig::Mongo(_)
             | ConnectionConfig::Elasticsearch(_)
-            | ConnectionConfig::Cassandra(_) => None,
+            | ConnectionConfig::Cassandra(_)
+            | ConnectionConfig::Trino(_) => None,
             ConnectionConfig::DynamoDb(_) | ConnectionConfig::Athena(_) => None,
         };
         let server = config.server();

@@ -137,6 +137,24 @@ Each driver crate runs the suite against its own backend:
   position from its `line L:C:`, and a workgroup without a place for results. `live_athena`,
   ignored, runs the same against real Athena when `DBROVER_TEST_ATHENA_LIVE` names
   `profile,region,workgroup[,output location]`; CI never sets it.
+- **Trino**: the `trino` container (Trino 484, port 58080, with only the `memory` and `tpch`
+  catalogs of `docker/trino/`), only under the compose file's `nightly` profile, which
+  `.github/workflows/nightly.yml` starts once a day: its image is 1.04 GB to download and the
+  server takes about a gigabyte of memory. Skipped when `DBROVER_TEST_TRINO_URL` is unset
+  (`trino://dbrover@localhost:58080/memory/default`). It runs `check_lifecycle`,
+  `check_connect_failure`, `check_execution` with `Spelling::TRINO` (plain tables in
+  `memory.default`, as Trino has no temporary ones; `varchar`; numbers cast before `concat`),
+  `check_cancel` (a sum over `tpch.sf1000.lineitem`, which the catalog makes up as it is read)
+  and `check_invalid_path`, and walks a schema of its own with a table and a view. Besides: the
+  session kept between statements (`USE`, `SET SESSION`, `PREPARE`, `START TRANSACTION`),
+  values in their text form, progress, and `EXPLAIN (TYPE VALIDATE)` as the statement check.
+  `check_transactions` doesn't apply (the `memory` connector writes outside transactions), nor
+  `check_describe_table` (no key tells a table's rows apart, so rows are never edited), nor
+  `check_validate` (the `memory` connector refuses `DELETE`). On every pull request, the
+  protocol is tried against a coordinator on `127.0.0.1` that answers from a list shaped as
+  Trino 484's answers: each header's round trip, `nextUri` followed to this machine's address,
+  a busy coordinator asked again, Presto's header names, an `INSERT`'s count, an error's
+  position, and a result left unread cancelled with `DELETE`.
 - **SQL Server**: the `sqlserver` container (2022, port 51433), skipped when
   `DBROVER_TEST_SQLSERVER_URL` is unset. Its image is x86-64 only: native on CI's Linux runner,
   emulated (slowly, and it can crash) by Docker on an Apple-silicon Mac. The image can't

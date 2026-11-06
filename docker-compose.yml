@@ -372,6 +372,25 @@ services:
       timeout: 10s
       retries: 60
 
+  # Trino 484 as one coordinator, with the `memory` and `tpch` catalogs of docker/trino (C3).
+  # Its image is 1.04 GB to download and the server takes about a gigabyte of memory, so, as
+  # Cassandra, it isn't started with the others: the nightly job starts it
+  # (`docker compose --profile nightly up -d --wait trino`) to run the conformance suite. The
+  # image's own health check asks `/v1/info` whether the server has finished starting; it is
+  # run every 2 s rather than every 10.
+  trino:
+    image: trinodb/trino:484
+    profiles: [nightly]
+    ports:
+      - "58080:8080"
+    volumes:
+      - ./docker/trino/catalog:/etc/trino/catalog:ro
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/lib/trino/bin/health-check"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+
   # DynamoDB Local, AWS's own emulator, in memory: the DynamoDB tests sign in to it as a local
   # emulator, with made-up credentials, so they need no AWS account. It answers any request
   # once it listens, with an error to one that isn't signed, which is all the check needs.

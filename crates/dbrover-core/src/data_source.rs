@@ -214,6 +214,8 @@ pub enum ConnectionConfig {
     DynamoDb(DynamoDbConfig),
     /// Amazon Athena, through AWS's API (C3).
     Athena(AthenaConfig),
+    /// Trino, Starburst and Presto, over Trino's HTTP protocol (C3).
+    Trino(TrinoConfig),
 }
 
 impl ConnectionConfig {
@@ -248,7 +250,8 @@ impl ConnectionConfig {
             | Self::Redis(_)
             | Self::Mongo(_)
             | Self::Elasticsearch(_)
-            | Self::Cassandra(_) => None,
+            | Self::Cassandra(_)
+            | Self::Trino(_) => None,
         }
     }
 
@@ -281,6 +284,7 @@ impl ConnectionConfig {
             Self::Mongo(config) => Some(&config.server),
             Self::Elasticsearch(config) => Some(&config.server),
             Self::Cassandra(config) => Some(&config.server),
+            Self::Trino(config) => Some(&config.server),
             Self::Sqlite(_) | Self::DuckDb(_) | Self::DynamoDb(_) | Self::Athena(_) => None,
         }
     }
@@ -295,6 +299,7 @@ impl ConnectionConfig {
             Self::Mongo(config) => Some(&mut config.server),
             Self::Elasticsearch(config) => Some(&mut config.server),
             Self::Cassandra(config) => Some(&mut config.server),
+            Self::Trino(config) => Some(&mut config.server),
             Self::Sqlite(_) | Self::DuckDb(_) | Self::DynamoDb(_) | Self::Athena(_) => None,
         }
     }
@@ -313,6 +318,7 @@ impl ConnectionConfig {
             Self::Cassandra(_) => DriverKind::Cassandra,
             Self::DynamoDb(_) => DriverKind::DynamoDb,
             Self::Athena(_) => DriverKind::Athena,
+            Self::Trino(_) => DriverKind::Trino,
         }
     }
 
@@ -334,7 +340,8 @@ impl ConnectionConfig {
             | Self::Mongo(_)
             | Self::Elasticsearch(_)
             | Self::Cassandra(_) => None,
-            Self::DynamoDb(_) | Self::Athena(_) => None,
+            // Trino's catalogs are its top level, listed whole, as Athena's are.
+            Self::DynamoDb(_) | Self::Athena(_) | Self::Trino(_) => None,
         }
     }
 
@@ -364,6 +371,8 @@ impl ConnectionConfig {
             Self::DynamoDb(_) => "",
             // The database each query names in its context, in the data source's catalog.
             Self::Athena(config) => &config.database,
+            // The schema a console starts in, in the catalog its server settings name.
+            Self::Trino(config) => &config.schema,
         }
     }
 
@@ -418,6 +427,12 @@ impl ConnectionConfig {
             }),
             Self::DynamoDb(config) => Self::DynamoDb(config.resolve(variables)?),
             Self::Athena(config) => Self::Athena(config.resolve(variables)?),
+            Self::Trino(config) => Self::Trino(TrinoConfig {
+                server: config.server.resolve(variables)?,
+                schema: expand(&config.schema, variables)
+                    .map_err(PlaceholderError::in_setting(Setting::Schema))?,
+                protocol: config.protocol,
+            }),
             Self::Sqlite(config) => Self::Sqlite(SqliteConfig {
                 path: expand_path(&config.path, variables)
                     .map_err(PlaceholderError::in_setting(Setting::File))?,
@@ -465,6 +480,9 @@ impl ConnectionConfig {
             Self::Cassandra(config) => config.server.default_name(),
             Self::DynamoDb(config) => config.default_name(),
             Self::Athena(config) => config.default_name(),
+            // `catalog@host`, or the host alone when no catalog is chosen.
+            Self::Trino(config) if config.server.database.is_empty() => config.server.host.clone(),
+            Self::Trino(config) => config.server.default_name(),
             Self::Sqlite(config) => file_name(&config.path),
             Self::DuckDb(config) => match &config.database {
                 DuckDbDatabase::File { path, .. } => file_name(path),
@@ -495,7 +513,8 @@ impl DriverKind {
             | Self::Redis
             | Self::Mongo
             | Self::Elasticsearch
-            | Self::Cassandra => true,
+            | Self::Cassandra
+            | Self::Trino => true,
             // AWS's SDK signs DynamoDB's and Athena's requests with what the profile names.
             Self::Sqlite | Self::DuckDb | Self::DynamoDb | Self::Athena => false,
         }
@@ -519,6 +538,7 @@ impl fmt::Display for ConnectionConfig {
             Self::Cassandra(config) => config.server.fmt(f),
             Self::DynamoDb(config) => config.fmt(f),
             Self::Athena(config) => config.fmt(f),
+            Self::Trino(config) => config.server.fmt(f),
             Self::Sqlite(config) if config.read_only => {
                 write!(f, "{} (read-only)", config.path.display())
             }
@@ -1050,6 +1070,55 @@ impl fmt::Display for DynamoDbConfig {
     }
 }
 
+/// A Trino, Starburst or Presto cluster, reached through its coordinator. Its `database` is the
+/// catalog a console starts in and its `schema` the schema, either of which may be empty: then
+/// only qualified names resolve until `USE` picks them. Its user is required, as Trino asks for
+/// one on every request, and its password is used only over HTTPS.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrinoConfig {
+    #[serde(flatten)]
+    pub server: ServerConfig,
+    /// Written only when set.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub schema: String,
+    /// Written only for Presto.
+    #[serde(default, skip_serializing_if = "TrinoProtocol::is_trino")]
+    pub protocol: TrinoProtocol,
+}
+
+impl TrinoConfig {
+    /// The coordinator's HTTP port, as Trino's own configuration sets it.
+    pub const DEFAULT_PORT: u16 = 8080;
+    /// The HTTPS port Starburst Galaxy and most clusters behind a load balancer take.
+    pub const DEFAULT_TLS_PORT: u16 = 443;
+}
+
+/// How the protocol's headers are spelt: Trino's (and Starburst's), or Presto's, which Trino
+/// forked from and which names them `X-Presto-…`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TrinoProtocol {
+    #[default]
+    Trino,
+    Presto,
+}
+
+impl TrinoProtocol {
+    pub const ALL: [Self; 2] = [Self::Trino, Self::Presto];
+
+    pub fn is_trino(&self) -> bool {
+        *self == Self::Trino
+    }
+
+    /// What the server is called, in messages and on Test connection.
+    pub fn product(self) -> &'static str {
+        match self {
+            Self::Trino => "Trino",
+            Self::Presto => "Presto",
+        }
+    }
+}
+
 /// Amazon Athena in one region and workgroup (`docs/cloud-data.md`, C3). Like DynamoDB's, nothing
 /// in it is secret: the profile names an entry of the shared AWS files, which AWS's SDK reads,
 /// and an empty profile or region leaves the choice to AWS's default chain.
@@ -1301,10 +1370,11 @@ pub enum DriverKind {
     Cassandra,
     DynamoDb,
     Athena,
+    Trino,
 }
 
 impl DriverKind {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Postgres,
         Self::Sqlite,
         Self::Mysql,
@@ -1317,6 +1387,7 @@ impl DriverKind {
         Self::Cassandra,
         Self::DynamoDb,
         Self::Athena,
+        Self::Trino,
     ];
 
     pub fn display_name(self) -> &'static str {
@@ -1333,6 +1404,7 @@ impl DriverKind {
             Self::Cassandra => "Cassandra / ScyllaDB",
             Self::DynamoDb => "DynamoDB",
             Self::Athena => "Amazon Athena",
+            Self::Trino => "Trino / Presto",
         }
     }
 }

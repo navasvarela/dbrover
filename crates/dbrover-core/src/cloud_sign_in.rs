@@ -141,7 +141,8 @@ impl DriverKind {
             | Self::Elasticsearch
             | Self::Cassandra
             | Self::DynamoDb
-            | Self::Athena => &[],
+            | Self::Athena
+            | Self::Trino => &[],
         }
     }
 }

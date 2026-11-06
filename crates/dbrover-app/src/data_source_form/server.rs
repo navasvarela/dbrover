@@ -41,6 +41,8 @@ pub enum DatabaseField {
     Absent,
     /// The keyspace a Cassandra console starts in, which may be left empty.
     Keyspace,
+    /// The catalog a Trino console starts in, which may be left empty.
+    Catalog,
 }
 
 impl DatabaseField {
@@ -50,13 +52,14 @@ impl DatabaseField {
             Self::Number => "Database number",
             Self::Absent => "",
             Self::Keyspace => "Keyspace",
+            Self::Catalog => "Catalog",
         }
     }
 
     fn parse(self, text: &str) -> Result<String, FormError> {
         match self {
             Self::Absent => return Ok(String::new()),
-            Self::Keyspace => return Ok(text.trim().to_owned()),
+            Self::Keyspace | Self::Catalog => return Ok(text.trim().to_owned()),
             Self::Name | Self::Number => {}
         }
         let database = required(text, FormError::DatabaseMissing)?;
@@ -66,7 +69,7 @@ impl DatabaseField {
                 Ok(database)
             }
             Self::Number => Err(FormError::InvalidDatabaseNumber),
-            Self::Absent | Self::Keyspace => Ok(database),
+            Self::Absent | Self::Keyspace | Self::Catalog => Ok(database),
         }
     }
 }

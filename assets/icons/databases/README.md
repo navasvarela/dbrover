@@ -16,6 +16,7 @@ the New data source menu and in the data source dialog.
 | `elasticsearch.svg` | Elasticsearch (also shown for OpenSearch, which the same driver serves; its teal is lightened on the dark theme) | `#005571` |
 | `apachecassandra.svg` | Apache Cassandra (also shown for ScyllaDB, which the same driver serves; its blue is lightened on the dark theme) | `#1287B1` |
 | `dynamodb.svg` | A database glyph with a bolt for Amazon DynamoDB, drawn for DbRover (see below) | `#4053D6` |
+| `trino.svg` | Trino (also shown for Starburst and Presto, which the same driver serves; its magenta is darkened on the light theme) | `#DD00A1` |
 | `athena.svg` | A database glyph with a magnifying glass for Amazon Athena, drawn for DbRover (see below) | `#8C4FFF` |
 
 ## Source and licence

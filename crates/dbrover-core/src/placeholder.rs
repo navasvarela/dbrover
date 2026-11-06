@@ -60,6 +60,8 @@ pub enum Setting {
     Workgroup,
     Catalog,
     OutputLocation,
+    /// The schema a Trino console starts in (C3).
+    Schema,
 }
 
 impl fmt::Display for Setting {
@@ -89,6 +91,7 @@ impl fmt::Display for Setting {
             Self::Workgroup => "the workgroup",
             Self::Catalog => "the catalog",
             Self::OutputLocation => "the output location",
+            Self::Schema => "the schema",
         })
     }
 }

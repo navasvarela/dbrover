@@ -1,8 +1,11 @@
 name: Nightly
 
-# Tests against servers too slow to start with every pull request. Each pull request runs the CQL
-# tests on ScyllaDB, which is healthy within seconds; Apache Cassandra takes about 40 seconds more
-# on a runner (docs/nosql.md, N4), so its run of the same tests is here, once a day and on demand.
+# Tests against servers too slow or too large to start with every pull request, once a day and
+# on demand. Each pull request runs the CQL tests on ScyllaDB, which is healthy within seconds;
+# Apache Cassandra takes about 40 seconds more on a runner (docs/nosql.md, N4), so its run of the
+# same tests is here. Trino's image is 1.04 GB to download and its server takes about a gigabyte
+# of memory (docs/cloud-data.md, C3); each pull request tries the driver against a stand-in
+# coordinator in its tests instead, and the conformance suite runs against Trino here.
 on:
   schedule:
     - cron: "17 3 * * *"
@@ -45,3 +48,30 @@ jobs:
         run: |
           cargo test -p dbrover-driver-cassandra -p dbrover-engine
           cargo test -p dbrover-mcp --test cassandra
+
+  trino:
+    runs-on: ubuntu-latest
+    # A cold Rust cache builds the driver's and the engine's tests in about 15 minutes.
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      # Restores main's cache, and saves none of its own, as the job above.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
+      # The engine links DuckDB; its prebuilt library, as in ci.yml.
+      - uses: ./.github/actions/duckdb
+      - name: Fetch DuckDB's prebuilt library
+        shell: bash
+        run: |
+          packaging/duckdb/fetch.sh "$(rustc -vV | sed -n 's/^host: //p')" "$RUNNER_TEMP/duckdb" \
+            | tee -a "$GITHUB_ENV"
+      - name: Start Trino
+        run: |
+          docker compose --profile nightly up -d --wait trino \
+            || { docker compose --profile nightly logs --tail 40 trino; exit 1; }
+      - name: Run the Trino tests
+        env:
+          DBROVER_TEST_TRINO_URL: trino://dbrover@localhost:58080/memory/default
+        run: cargo test -p dbrover-driver-trino

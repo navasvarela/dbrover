@@ -109,5 +109,14 @@ pub fn of(driver: DriverKind) -> DatabaseBrand {
             light: Color32::from_rgb(0x6B, 0x3F, 0xD1),
             dark: Color32::from_rgb(0xB4, 0x8C, 0xFF),
         },
+        // Trino's magenta on the light theme, darkened a little to read on white; a lighter
+        // pink on the dark one. Also shown for Starburst and Presto, which the same driver
+        // serves.
+        DriverKind::Trino => DatabaseBrand {
+            logo_uri: "bytes://logos/trino.svg",
+            logo_svg: include_bytes!("../../../assets/icons/databases/trino.svg"),
+            light: Color32::from_rgb(0xC0, 0x00, 0x8C),
+            dark: Color32::from_rgb(0xFF, 0x6E, 0xD2),
+        },
     }
 }
