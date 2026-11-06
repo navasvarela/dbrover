@@ -5,11 +5,12 @@
 use std::fmt::{self, Write as _};
 
 use dbrover_core::TableDescription;
+use dbrover_picture::{BASELINE_DROP, Escaped, MONO, SANS};
 use egui::{Color32, Pos2, Rect, Vec2, vec2};
 
 use super::geometry::{self, Curve, HEADER_HEIGHT, MARK_WIDTH, PADDING, arrowhead};
 use super::model::{Diagram, DiagramTable, TableState};
-use crate::picture::{BASELINE_DROP, Escaped, MONO, SANS, hex};
+use crate::picture::hex;
 use crate::theme::Palette;
 
 /// Around the diagram, inside the picture.
@@ -358,7 +359,7 @@ mod tests {
     fn draws_as_a_png_with_the_bundled_fonts() {
         let svg = svg(&diagram()).unwrap();
 
-        let png = dbrover_picture::png(&svg, 2.0, &crate::fonts::bundled_files());
+        let png = dbrover_picture::png(&svg, 2.0, &dbrover_picture::Fonts::bundled());
 
         assert!(png.is_ok(), "{png:?}");
     }

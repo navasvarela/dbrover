@@ -4,16 +4,17 @@
 //! and **Save to query** writes the toolbar's choice into the block (CH1d).
 
 pub mod block;
-mod svg;
 
 use std::sync::Arc;
 
 use dbrover_chart::{
-    Anchor, ChartData, ChartKind, Choice, Column, Drawing, LayoutOptions, MAX_POINTS, Mark, Paint,
-    Resolved, Role, STARTING_SERIES, SavedChoice, Size, Summary, TextMeasure,
+    Anchor, BAR_ROUNDING, ChartData, ChartKind, Choice, Column, Drawing, LINE_WIDTH, LayoutOptions,
+    MAX_POINTS, Mark, Paint, ROUNDED_BAR_WIDTH, Resolved, Role, SERIES_DARK, SERIES_LIGHT,
+    SavedChoice, Size, TextMeasure,
 };
 use dbrover_core::{ColumnInfo, Row, ValueKind};
 use dbrover_engine::Picture;
+use dbrover_picture::Rgb;
 use dbrover_sql::Dialect;
 use egui::{Align2, Color32, FontId, Galley, Painter, Pos2, Sense, Stroke, TextStyle, Ui, Vec2};
 
@@ -21,34 +22,6 @@ use self::block::QuerySpec;
 use crate::picture::PictureFormat;
 use crate::theme::Palette;
 use crate::widgets;
-
-/// The series' colours, in the order series take them, for the light theme and the dark one:
-/// eight hues whose neighbours stay apart for colour-blind readers, each stepped for its
-/// theme's background. A ninth series takes the first colour again.
-const SERIES_LIGHT: [Color32; 8] = [
-    Color32::from_rgb(0x2a, 0x78, 0xd6),
-    Color32::from_rgb(0xeb, 0x68, 0x34),
-    Color32::from_rgb(0x1b, 0xaf, 0x7a),
-    Color32::from_rgb(0xed, 0xa1, 0x00),
-    Color32::from_rgb(0xe8, 0x7b, 0xa4),
-    Color32::from_rgb(0x00, 0x83, 0x00),
-    Color32::from_rgb(0x62, 0x50, 0xd6),
-    Color32::from_rgb(0xe3, 0x49, 0x48),
-];
-const SERIES_DARK: [Color32; 8] = [
-    Color32::from_rgb(0x39, 0x87, 0xe5),
-    Color32::from_rgb(0xd9, 0x59, 0x26),
-    Color32::from_rgb(0x19, 0x9e, 0x70),
-    Color32::from_rgb(0xc9, 0x85, 0x00),
-    Color32::from_rgb(0xd5, 0x51, 0x81),
-    Color32::from_rgb(0x00, 0x83, 0x00),
-    Color32::from_rgb(0x90, 0x85, 0xe9),
-    Color32::from_rgb(0xe6, 0x67, 0x67),
-];
-const LINE_WIDTH: f32 = 2.0;
-/// Bars this wide or wider get rounded ends; narrower ones would round into slivers.
-const ROUNDED_BAR_WIDTH: f32 = 8.0;
-const BAR_ROUNDING: u8 = 2;
 
 /// Whether the chart is shown in place of the grid, and the chart itself once it has been.
 #[derive(Default)]
@@ -188,13 +161,13 @@ impl ChartTab {
     /// The chart as it was last drawn, as `format`; `None` until it has been drawn.
     pub fn picture(&self, format: PictureFormat) -> Option<Picture> {
         let laid_out = self.laid_out()?;
-        let svg = svg::svg(&laid_out.drawing, laid_out.text_size);
+        let svg = dbrover_chart::svg(&laid_out.drawing, laid_out.text_size);
         Some(match format {
             PictureFormat::Svg => Picture::Svg(svg),
             PictureFormat::Png { scale } => Picture::Png {
                 svg,
                 scale: f32::from(scale),
-                fonts: crate::fonts::bundled_files(),
+                fonts: dbrover_picture::Fonts::bundled(),
             },
         })
     }
@@ -405,8 +378,8 @@ impl ChartView {
             .resolved()
             .and_then(|resolved| resolved.arrangement(&self.columns));
         match arranged {
-            Some(arranged) => format!("{} · {arranged}", summary(data)),
-            None => summary(data),
+            Some(arranged) => format!("{} · {arranged}", data.note()),
+            None => data.note(),
         }
     }
 }
@@ -739,7 +712,8 @@ impl Paints {
                 SERIES_DARK
             } else {
                 SERIES_LIGHT
-            },
+            }
+            .map(color32),
             axis: palette.text_weak,
             grid: palette.border,
             label: palette.text_weak,
@@ -757,6 +731,10 @@ impl Paints {
             Paint::Title => self.title,
         }
     }
+}
+
+fn color32(rgb: Rgb) -> Color32 {
+    Color32::from_rgb(rgb.0, rgb.1, rgb.2)
 }
 
 fn paint(painter: &Painter, origin: Pos2, drawing: &Drawing, paints: &Paints, font: &FontId) {
@@ -915,115 +893,11 @@ fn number_text(value: f64) -> String {
     }
 }
 
-/// What was charted out of the rows, and what was left out, for the line under the chart:
-/// "Charting 12 rows · 1 row left out: no month value".
-pub fn summary(data: &ChartData) -> String {
-    let summary = &data.summary;
-    if summary.rows == 0 {
-        return "No rows to chart".to_owned();
-    }
-    let mut parts = vec![match summary.limit {
-        Some(limit) => format!(
-            "Charting the first {limit} of {} rows; group them in the query to chart them all",
-            summary.rows
-        ),
-        None => format!("Charting {}", rows(summary.rows)),
-    }];
-    if summary.without_x > 0 {
-        parts.push(format!(
-            "{} left out: no {} value",
-            rows(summary.without_x),
-            data.x_name
-        ));
-    }
-    if let Some(split_by) = &data.split_by {
-        parts.extend(split_left_out(summary, split_by, &data.x_name));
-    }
-    let why = match data.split_by {
-        Some(_) => "no row, null or not a number",
-        None => "null or not a number",
-    };
-    for series in &data.series {
-        let gaps = series.gaps();
-        if gaps > 0 {
-            let noun = if gaps == 1 { "gap" } else { "gaps" };
-            parts.push(format!("{gaps} {noun} in {}: {why}", series.name));
-        }
-    }
-    parts.join(" · ")
-}
-
-/// What a chart split by `split_by` left out: values past the palette's colours, and rows whose
-/// X and series an earlier row had.
-fn split_left_out(summary: &Summary, split_by: &str, x_name: &str) -> Vec<String> {
-    let mut parts = Vec::new();
-    if !summary.series_left_out.is_empty() {
-        let count = summary.series_left_out.len();
-        let noun = if count == 1 { "value" } else { "values" };
-        parts.push(format!(
-            "{count} {noun} of {split_by} left out, past {STARTING_SERIES} colours: {}",
-            summary.series_left_out.join(", ")
-        ));
-    }
-    if summary.repeated > 0 {
-        parts.push(format!(
-            "{} left out: an earlier row has the same {x_name} and {split_by}",
-            rows(summary.repeated)
-        ));
-    }
-    parts
-}
-
-fn rows(count: usize) -> String {
-    match count {
-        1 => "1 row".to_owned(),
-        count => format!("{count} rows"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use dbrover_chart::{Series, XValues};
+    use dbrover_chart::FILE_COLOURS;
 
     use super::*;
-
-    fn data(summary: Summary, gaps: usize) -> ChartData {
-        ChartData {
-            kind: ChartKind::Bars,
-            x_name: "month".to_owned(),
-            x: XValues::Categories(Vec::new()),
-            series: vec![Series {
-                name: "total".to_owned(),
-                values: vec![None; gaps],
-                rows: vec![None; gaps],
-            }],
-            split_by: None,
-            rows: Vec::new(),
-            stacked: false,
-            summary,
-        }
-    }
-
-    #[test]
-    fn says_what_was_charted_and_what_was_left_out() {
-        let all = Summary {
-            rows: 12,
-            ..Summary::default()
-        };
-        assert_eq!(summary(&data(all, 0)), "Charting 12 rows");
-        let some = Summary {
-            rows: 1200,
-            limit: Some(250),
-            without_x: 1,
-            ..Summary::default()
-        };
-        assert_eq!(
-            summary(&data(some, 2)),
-            "Charting the first 250 of 1200 rows; group them in the query to chart them all \
-             · 1 row left out: no month value · 2 gaps in total: null or not a number"
-        );
-        assert_eq!(summary(&data(Summary::default(), 0)), "No rows to chart");
-    }
 
     #[test]
     fn writes_a_stacks_total_without_float_noise() {
@@ -1039,28 +913,6 @@ mod tests {
     }
 
     #[test]
-    fn says_what_a_split_left_out() {
-        let split = ChartData {
-            split_by: Some("category".to_owned()),
-            ..data(
-                Summary {
-                    rows: 30,
-                    series_left_out: vec!["helmets".to_owned(), "tyres".to_owned()],
-                    repeated: 1,
-                    ..Summary::default()
-                },
-                1,
-            )
-        };
-        assert_eq!(
-            summary(&split),
-            "Charting 30 rows · 2 values of category left out, past 8 colours: helmets, tyres \
-             · 1 row left out: an earlier row has the same month and category \
-             · 1 gap in total: no row, null or not a number"
-        );
-    }
-
-    #[test]
     fn names_the_y_columns_in_its_menu() {
         let columns: Vec<Column> = ["month", "total", "refunds"]
             .into_iter()
@@ -1072,5 +924,80 @@ mod tests {
         assert_eq!(y_label(&columns, &[]), "Y: none");
         assert_eq!(y_label(&columns, &[1]), "Y: total");
         assert_eq!(y_label(&columns, &[1, 2]), "Y: total and 1 more");
+    }
+
+    /// A file's chart is drawn in `dbrover_chart`'s colours, which must stay the light theme's,
+    /// so **Export ›** writes what the tab shows in the light theme.
+    #[test]
+    fn a_files_colours_are_the_light_themes() {
+        let light = Paints::of(&Palette::LIGHT);
+        let paints = [
+            Paint::Axis,
+            Paint::Grid,
+            Paint::Label,
+            Paint::Title,
+            Paint::Series(0),
+            Paint::Series(7),
+        ];
+        for paint in paints {
+            assert_eq!(
+                light.colour(paint),
+                color32(FILE_COLOURS.of(paint)),
+                "{paint:?}"
+            );
+        }
+        assert_eq!(color32(FILE_COLOURS.background), Palette::LIGHT.field);
+    }
+
+    /// The tab measures labels with egui and a report's file with the font file's advances
+    /// (`docs/charts-as-code.md`, "Drawing without a window"): they differ by egui's kerning
+    /// and rounding, within a point on most labels and a few percent on one of kerned capitals
+    /// such as "WAVY".
+    #[test]
+    fn the_font_files_measure_is_close_to_eguis() {
+        let labels = [
+            "Net sales by category",
+            "accessories",
+            "1,250,000",
+            "2026-10",
+            "Charting 4 rows",
+            "WAVY TOWEL",
+            "Ag",
+        ];
+        // How much narrower kerning may make a label than its advances, as a share of it.
+        const KERNING_SHARE: f32 = 0.03;
+        let font = FontId::proportional(dbrover_chart::FILE_TEXT_SIZE);
+        let measured = std::cell::RefCell::new(Vec::new());
+        let harness = crate::test_support::ui_harness(|ui| {
+            let sizes = ui.fonts_mut(|fonts| {
+                labels.map(|label| {
+                    fonts
+                        .layout_no_wrap(label.to_owned(), font.clone(), Color32::PLACEHOLDER)
+                        .size()
+                })
+            });
+            *measured.borrow_mut() = sizes.to_vec();
+        });
+        drop(harness);
+        let file = dbrover_picture::FontMeasure::inter(font.size).unwrap();
+        let measured = measured.into_inner();
+        assert_eq!(measured.len(), labels.len());
+        for (label, size) in labels.iter().zip(&measured) {
+            let gap = (size.x - file.width(label)).abs();
+            let bound = f32::max(1.0, KERNING_SHARE * size.x);
+            assert!(
+                gap < bound,
+                "{label}: egui {} against {}",
+                size.x,
+                file.width(label)
+            );
+        }
+        let line = measured.last().map_or(0.0, |size| size.y);
+        let gap = (line - file.line_height()).abs();
+        assert!(
+            gap < 1.0,
+            "a line: egui {line} against {}",
+            file.line_height()
+        );
     }
 }
