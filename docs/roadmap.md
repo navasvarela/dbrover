@@ -2369,16 +2369,18 @@ after CI fixes, the reports track and W13, and links no Git library.
 
 ## Charts as code track
 
-Planned, not scheduled. Proposed on 2026-11-04 in [Charts as code](charts-as-code.md), after
+CH1 started on 2026-11-06. Proposed on 2026-11-04 in [Charts as code](charts-as-code.md), after
 asking for a simple syntax for charts of queries and reports. W12's chart, written down as a few
 TOML keys (`kind`, `x`, `y`, `series`, `title`, `sort`, `limit`, …): in a comment block above a
 statement, which opens its result on that chart and which the tab writes back, and as a report's
 `[[chart]]`, written each run as an SVG or PNG file beside its other files. No charting library
-is added. It comes after CI fixes, the reports track and W13.
+is added. It came after CI fixes, the reports track and W13.
 
-- **CH1 — A chart in a query's text (M):** planned in
-  [Charts as code](charts-as-code.md#ch1--a-chart-in-a-querys-text-m). In layers, one PR each:
-  - **CH1a — The plan:** the design and this entry.
+- **CH1 — A chart in a query's text (M):** started on 2026-11-06; planned in
+  [Charts as code](charts-as-code.md#ch1--a-chart-in-a-querys-text-m), its decisions
+  [confirmed](charts-as-code.md#ch1-confirmed). In layers, one PR each:
+  - **CH1a — The plan:** the design and this entry, and the decisions confirmed against the
+    code.
   - **CH1b — The spec:** its types in `dbrover-chart`, read from TOML with every problem as a
     sentence, resolved against a result's columns, `sort`, `limit` and the titles in the layout,
     and written back.

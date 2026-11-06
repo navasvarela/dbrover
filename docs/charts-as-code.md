@@ -1,9 +1,9 @@
 # Charts as code
 
-Status: **proposed on 2026-11-04, planned, not scheduled.** The
-[roadmap](roadmap.md#charts-as-code-track) tracks it as CH1 to CH4. It doesn't move CI fixes,
-the reports track (RP5 and what it left for later) or W13 schema compare, which come first.
-Each milestone's decisions are confirmed when it starts, as in [Reports](reporting.md).
+Status: **proposed on 2026-11-04; CH1 started on 2026-11-06.** The
+[roadmap](roadmap.md#charts-as-code-track) tracks it as CH1 to CH4. CI fixes, the reports track
+and W13 schema compare came first. Each milestone's decisions are confirmed when it starts, as in
+[Reports](reporting.md): CH1's [below](#ch1-confirmed).
 
 W12 gave every result a **Chart** tab: bars, lines or a scatter of the rows the grid holds,
 picked in the toolbar and exported as SVG or PNG ([Charts](../book/src/consoles.md#charts)).
@@ -382,6 +382,35 @@ synthetic data only (the SQLite shop of `examples/reports/shop.sql`).
 opens as that chart; switching to lines and **Save to query** rewrites only `kind`, keeping a
 comment inside the block; undo restores it; `y = "nett"` shows the problem with the result's
 columns.
+
+#### CH1 confirmed
+
+Started on 2026-11-06, after the reports track, W13 and C3. The decisions above stand as
+proposed; checking them against the code settled these details:
+
+- **The comment marker** is the language's own line comment, and every language has one: `--`
+  in SQL and PartiQL, `//` in MongoDB's shell syntax, and `#` for Redis and Elasticsearch, which
+  is what **Save to query** writes. A block is read after any line comment the language's lexer
+  knows, so MySQL's `#` and CQL's `//` work too. `dbrover-language` lexes them already, but
+  names none: CH1c adds `QueryLanguage::line_comment` and the block's finder.
+- **A comment line** is a line comment alone on its line, as the lexer finds it, so
+  `-- [chart]` inside a string or a `/* … */` comment is no block. A second `[chart]` line ends
+  the block before it, which then belongs to no statement.
+- **Lines in problems** are the console's: "chart, line 4: …" points at the line the editor
+  shows, not the block's fourth.
+- **`series` and `stack`** are refused as keys that don't exist until CH2 draws them, rather
+  than read and ignored.
+- **More than eight Ys** is a column problem, one colour per series, as the toolbar starts with
+  at most eight.
+- **`sort`** puts a row whose value is null or doesn't read as its column's role last, whichever
+  the direction, so the first ten rows of a chart are rows with something to draw.
+- **`y_title`** stands where Y's name does, above the plot, and before the legend when there are
+  several series: W12's layout writes no turned text, and a title beside the axis would need it.
+- **Save to query** on a statement that shares its first line with another (`SELECT 1; SELECT
+  2`) writes nothing and says to put it on a line of its own, since a block above the line would
+  belong to the first. A statement that moved since it ran is found again by its text.
+- **`toml_edit`** came into the build with RP8f's Quiet this hint, not VC1c; CH1b's spec is read
+  with it too, so a problem points at the bytes of the key or value it is about.
 
 ### CH2 — Series and stacked bars (S–M)
 
