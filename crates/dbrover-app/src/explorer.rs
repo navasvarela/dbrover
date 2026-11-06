@@ -468,19 +468,9 @@ fn toolbar(ui: &mut Ui, options: &mut ExplorerOptions, actions: &mut Vec<Explore
 
 /// One entry per driver, each with its icon. Also used by the Welcome tab.
 pub fn new_data_source_menu(ui: &mut Ui, actions: &mut Vec<ExplorerAction>) {
-    let palette = &Palette::for_visuals(ui.visuals());
     let logo_size = ui.text_style_height(&TextStyle::Button);
     for driver in DriverKind::ALL {
-        let logo = icons::driver_logo_sized(driver, palette, logo_size);
-        let response = widgets::name(
-            ui.add(egui::Button::image_and_text(logo, driver.display_name())),
-            WidgetType::Button,
-            driver.display_name(),
-            true,
-        );
-        if response.clicked() {
-            actions.push(ExplorerAction::New(driver));
-        }
+        new_driver_item(ui, driver, logo_size, actions);
     }
     ui.separator();
     for vendor in ServiceVendor::ALL {
@@ -490,12 +480,39 @@ pub fn new_data_source_menu(ui: &mut Ui, actions: &mut Vec<ExplorerAction>) {
     }
 }
 
-/// The managed services that run in `vendor`'s cloud (C1f), each with its engine's icon. A
-/// submenu per cloud rather than one for them all: fifteen services and their headings made a
-/// submenu taller than a laptop's window.
+/// The menu's entry for a new data source of `driver`, with its logo.
+fn new_driver_item(
+    ui: &mut Ui,
+    driver: DriverKind,
+    logo_size: f32,
+    actions: &mut Vec<ExplorerAction>,
+) {
+    let palette = &Palette::for_visuals(ui.visuals());
+    let logo = icons::driver_logo_sized(driver, palette, logo_size);
+    let response = widgets::name(
+        ui.add(egui::Button::image_and_text(logo, driver.display_name())),
+        WidgetType::Button,
+        driver.display_name(),
+        true,
+    );
+    if response.clicked() {
+        actions.push(ExplorerAction::New(driver));
+    }
+}
+
+/// The managed services that run in `vendor`'s cloud (C1f), each with its engine's icon, then
+/// the engines only that cloud runs (DynamoDB, Athena). A submenu per cloud rather than one
+/// for them all: fifteen services and their headings made a submenu taller than a laptop's
+/// window.
 fn cloud_service_items(ui: &mut Ui, vendor: ServiceVendor, actions: &mut Vec<ExplorerAction>) {
     let palette = &Palette::for_visuals(ui.visuals());
     let logo_size = ui.text_style_height(&TextStyle::Button);
+    if !vendor.engines().is_empty() {
+        for &driver in vendor.engines() {
+            new_driver_item(ui, driver, logo_size, actions);
+        }
+        ui.separator();
+    }
     for service in vendor.services() {
         let logo = icons::driver_logo_sized(service.driver(), palette, logo_size);
         let response = widgets::name(
