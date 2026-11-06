@@ -2378,6 +2378,8 @@ version = "0.28.0"
 dependencies = [
  "dbrover-core",
  "jiff",
+ "thiserror 2.0.21",
+ "toml_edit",
 ]
 
 [[package]]
