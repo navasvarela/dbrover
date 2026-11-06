@@ -55,8 +55,8 @@ pub use plan::{
 pub use problem::{Locator, Place, ReportProblem, Table};
 pub use read::{read_report, read_with_places};
 pub use report::{
-    Combine, CombineQuery, Lookup, Output, OutputColumns, OutputWriter, Param, Report, Source,
-    SourceColumn, SourceRead,
+    Chart, ChartPicture, Combine, CombineQuery, Lookup, Output, OutputColumns, OutputWriter, Param,
+    Report, Source, SourceColumn, SourceRead,
 };
 pub use request::RunRequest;
 pub use run::{
@@ -65,6 +65,8 @@ pub use run::{
 };
 pub use text::plan_text;
 
+#[cfg(test)]
+mod chart_tests;
 #[cfg(test)]
 mod combine_tests;
 #[cfg(test)]

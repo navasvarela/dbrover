@@ -45,7 +45,7 @@ pub use palette::{
 };
 pub use role::{Column, Role};
 pub use spec::{
-    ChartSpec, ColumnProblem, Resolved, SPEC_TABLE, SavedChoice, Sort, SortBy, SpecProblem,
-    WriteError, arrange, for_report, write_back,
+    ChartSpec, ColumnProblem, KeyProblem, Resolved, SPEC_TABLE, SavedChoice, Sort, SortBy,
+    SpecProblem, WriteError, arrange, for_report, write_back,
 };
 pub use svg::svg;

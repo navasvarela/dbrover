@@ -13,6 +13,8 @@ dbrover-core.workspace = true
 dbrover-picture.workspace = true
 jiff.workspace = true
 thiserror.workspace = true
+# Reads a report's [[chart]] from the table dbrover-report parsed (CH3c).
+toml.workspace = true
 toml_edit.workspace = true
 
 [lints]

@@ -1,4 +1,6 @@
-//! Reading a spec's text into a [`ChartSpec`], with every problem it has.
+//! Reading a spec into a [`ChartSpec`], with every problem it has: from a block's text, whose
+//! problems are placed at their bytes, or from a report's `[[chart]]` table, whose problems are
+//! placed at their keys. The keys are read by one [`Reader`], whichever TOML library read them.
 
 use std::ops::Range;
 
@@ -10,6 +12,14 @@ use crate::ChartKind;
 /// A misspelt key is suggested when it is at most this many letters' edits from a key: `ys`
 /// and `kinds` are one away. Three would suggest `x` for any key of up to three letters.
 const MAX_SUGGESTION_DISTANCE: usize = 2;
+
+/// A problem with a key of a report's `[[chart]]`: the key it is about, and what is wrong, as a
+/// sentence without the chart it is in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyProblem {
+    pub key: String,
+    pub detail: String,
+}
 
 impl ChartSpec {
     /// Reads a spec's text: a `[chart]` table of the spec's keys, the header included.
@@ -25,12 +35,13 @@ impl ChartSpec {
             let span = error.span().unwrap_or(0..0);
             vec![SpecProblem::new(text, span, error.message().trim())]
         })?;
-        let mut reader = Reader {
-            text,
-            problems: Vec::new(),
-        };
-        let spec = reader.document(&document);
-        let mut problems = reader.problems;
+        let mut reader = Reader::default();
+        let spec = document_spec(text, &document, &mut reader);
+        let mut problems: Vec<SpecProblem> = reader
+            .problems
+            .into_iter()
+            .map(|(span, detail)| SpecProblem::new(text, span, detail))
+            .collect();
         if problems.is_empty() {
             Ok(spec)
         } else {
@@ -38,49 +49,219 @@ impl ChartSpec {
             Err(problems)
         }
     }
-}
 
-struct Reader<'a> {
-    text: &'a str,
-    problems: Vec<SpecProblem>,
-}
-
-impl Reader<'_> {
-    fn document(&mut self, document: &Document<&str>) -> ChartSpec {
-        let mut spec = ChartSpec::default();
-        for (name, item) in document.iter() {
-            match (name, item) {
-                (SPEC_TABLE, Item::Table(table)) => spec = self.table(table),
-                _ => {
-                    let span = self.key_span(document.as_table(), name, item);
-                    self.problem(
-                        span,
-                        format!("a chart is the keys under `[{SPEC_TABLE}]`, not `{name}`"),
-                    );
-                }
+    /// Reads a spec from the keys of a report's `[[chart]]` table, leaving `others`, the keys
+    /// the report reads itself (`file`, `width`, …), to the report. A misspelt key is suggested
+    /// from both sets.
+    ///
+    /// # Errors
+    ///
+    /// Every problem the keys have, by key: keys that are neither the spec's nor `others`, and
+    /// values of the wrong kind.
+    pub fn from_table(table: &toml::Table, others: &[&str]) -> Result<Self, Vec<KeyProblem>> {
+        let mut reader = Reader::default();
+        let mut spec = Self::default();
+        for (name, value) in table {
+            if others.contains(&name.as_str()) {
+                continue;
             }
-        }
-        spec
-    }
-
-    fn table(&mut self, table: &Table) -> ChartSpec {
-        let mut spec = ChartSpec::default();
-        for (name, item) in table.iter() {
-            let key_span = self.key_span(table, name, item);
             let Some(key) = Key::named(name) else {
-                self.problem(key_span, unknown_key(name));
+                reader.problem(name.clone(), unknown_key(name, others));
                 continue;
             };
-            let value = ValueAt {
-                item,
-                span: item.span().unwrap_or_else(|| key_span.clone()),
-            };
-            self.key(&mut spec, key, &value);
+            reader.key(&mut spec, key, &TomlValue { value, key: name });
         }
-        spec
+        if reader.problems.is_empty() {
+            Ok(spec)
+        } else {
+            Err(reader
+                .problems
+                .into_iter()
+                .map(|(key, detail)| KeyProblem { key, detail })
+                .collect())
+        }
+    }
+}
+
+/// The spec in a block's document: the keys of its `[chart]` table, and a problem for anything
+/// beside it.
+fn document_spec(
+    text: &str,
+    document: &Document<&str>,
+    reader: &mut Reader<Range<usize>>,
+) -> ChartSpec {
+    let mut spec = ChartSpec::default();
+    for (name, item) in document.iter() {
+        match (name, item) {
+            (SPEC_TABLE, Item::Table(table)) => spec = table_spec(text, table, reader),
+            _ => {
+                let span = key_span(text, document.as_table(), name, item);
+                reader.problem(
+                    span,
+                    format!("a chart is the keys under `[{SPEC_TABLE}]`, not `{name}`"),
+                );
+            }
+        }
+    }
+    spec
+}
+
+fn table_spec(text: &str, table: &Table, reader: &mut Reader<Range<usize>>) -> ChartSpec {
+    let mut spec = ChartSpec::default();
+    for (name, item) in table.iter() {
+        let key_span = key_span(text, table, name, item);
+        let Some(key) = Key::named(name) else {
+            reader.problem(key_span, unknown_key(name, &[]));
+            continue;
+        };
+        let value = EditValue {
+            value: item.as_value(),
+            span: item.span().unwrap_or(key_span),
+            text,
+        };
+        reader.key(&mut spec, key, &value);
+    }
+    spec
+}
+
+fn key_span(text: &str, table: &Table, name: &str, item: &Item) -> Range<usize> {
+    table
+        .key(name)
+        .and_then(toml_edit::Key::span)
+        .or_else(|| item.span())
+        .unwrap_or(0..text.len())
+}
+
+/// A key's value as the [`Reader`] checks it, and where a problem with it is placed.
+trait KeyValue: Sized {
+    type Place;
+
+    fn place(&self) -> Self::Place;
+    fn text(&self) -> Option<&str>;
+    fn flag(&self) -> Option<bool>;
+    fn integer(&self) -> Option<i64>;
+    /// An array's items; `None` for a value that isn't an array.
+    fn items(&self) -> Option<Vec<Self>>;
+    /// The value as the file writes it, for "not …": `"area"`, `3`, or `a table`.
+    fn written(&self) -> String;
+}
+
+/// A value of a block's document, with the bytes it was read from.
+struct EditValue<'a> {
+    /// `None` for a table.
+    value: Option<&'a Value>,
+    span: Range<usize>,
+    text: &'a str,
+}
+
+impl KeyValue for EditValue<'_> {
+    type Place = Range<usize>;
+
+    fn place(&self) -> Range<usize> {
+        self.span.clone()
     }
 
-    fn key(&mut self, spec: &mut ChartSpec, key: Key, value: &ValueAt<'_>) {
+    fn text(&self) -> Option<&str> {
+        self.value.and_then(Value::as_str)
+    }
+
+    fn flag(&self) -> Option<bool> {
+        self.value.and_then(Value::as_bool)
+    }
+
+    fn integer(&self) -> Option<i64> {
+        self.value.and_then(Value::as_integer)
+    }
+
+    fn items(&self) -> Option<Vec<Self>> {
+        let Some(Value::Array(items)) = self.value else {
+            return None;
+        };
+        Some(
+            items
+                .iter()
+                .map(|item| EditValue {
+                    value: Some(item),
+                    span: item.span().unwrap_or_else(|| self.span.clone()),
+                    text: self.text,
+                })
+                .collect(),
+        )
+    }
+
+    fn written(&self) -> String {
+        match self.value {
+            Some(_) => self
+                .text
+                .get(self.span.clone())
+                .map_or("", str::trim)
+                .to_owned(),
+            None => "a table".to_owned(),
+        }
+    }
+}
+
+/// A value of a report's `[[chart]]`, placed at its key.
+struct TomlValue<'a> {
+    value: &'a toml::Value,
+    key: &'a str,
+}
+
+impl KeyValue for TomlValue<'_> {
+    type Place = String;
+
+    fn place(&self) -> String {
+        self.key.to_owned()
+    }
+
+    fn text(&self) -> Option<&str> {
+        self.value.as_str()
+    }
+
+    fn flag(&self) -> Option<bool> {
+        self.value.as_bool()
+    }
+
+    fn integer(&self) -> Option<i64> {
+        self.value.as_integer()
+    }
+
+    fn items(&self) -> Option<Vec<Self>> {
+        let items = self.value.as_array()?;
+        Some(
+            items
+                .iter()
+                .map(|value| TomlValue {
+                    value,
+                    key: self.key,
+                })
+                .collect(),
+        )
+    }
+
+    fn written(&self) -> String {
+        match self.value {
+            toml::Value::Table(_) => "a table".to_owned(),
+            value => value.to_string(),
+        }
+    }
+}
+
+/// Reads a spec's keys, collecting a problem, placed by `P`, for each one it can't.
+struct Reader<P> {
+    problems: Vec<(P, String)>,
+}
+
+impl<P> Default for Reader<P> {
+    fn default() -> Self {
+        Self {
+            problems: Vec::new(),
+        }
+    }
+}
+
+impl<P> Reader<P> {
+    fn key<V: KeyValue<Place = P>>(&mut self, spec: &mut ChartSpec, key: Key, value: &V) {
         match key {
             Key::Kind => spec.kind = self.kind(value),
             Key::X => spec.x = self.text_value(value, "`x` is a column's name, in quotes"),
@@ -98,8 +279,8 @@ impl Reader<'_> {
         }
     }
 
-    fn kind(&mut self, value: &ValueAt<'_>) -> Option<ChartKind> {
-        let kind = value.as_str().and_then(ChartKind::from_spec_name);
+    fn kind<V: KeyValue<Place = P>>(&mut self, value: &V) -> Option<ChartKind> {
+        let kind = value.text().and_then(ChartKind::from_spec_name);
         if kind.is_none() {
             let names: Vec<&str> = ChartKind::ALL.map(ChartKind::spec_name).to_vec();
             let detail = format!("`kind` is {}", or_list(&names));
@@ -108,8 +289,8 @@ impl Reader<'_> {
         kind
     }
 
-    fn text_value(&mut self, value: &ValueAt<'_>, what: &str) -> Option<String> {
-        let text = value.as_str().map(str::to_owned);
+    fn text_value<V: KeyValue<Place = P>>(&mut self, value: &V, what: &str) -> Option<String> {
+        let text = value.text().map(str::to_owned);
         if text.is_none() {
             self.wrong(value, what);
         }
@@ -117,46 +298,42 @@ impl Reader<'_> {
     }
 
     /// `y`: one column's name, or a list of them.
-    fn columns(&mut self, value: &ValueAt<'_>) -> Vec<String> {
+    fn columns<V: KeyValue<Place = P>>(&mut self, value: &V) -> Vec<String> {
         const WHAT: &str = "`y` is a column's name, or a list of them, in quotes";
-        if let Some(name) = value.as_str() {
+        if let Some(name) = value.text() {
             return vec![name.to_owned()];
         }
-        let Some(Value::Array(items)) = value.item.as_value() else {
+        let Some(items) = value.items() else {
             self.wrong(value, WHAT);
             return Vec::new();
         };
         if items.is_empty() {
             self.problem(
-                value.span.clone(),
+                value.place(),
                 "`y = []` names no column; leave `y` out to chart every column of numbers",
             );
             return Vec::new();
         }
         let mut names = Vec::new();
         for item in items {
-            match item.as_str() {
+            match item.text() {
                 Some(name) => names.push(name.to_owned()),
-                None => {
-                    let span = item.span().unwrap_or_else(|| value.span.clone());
-                    let detail = format!("{WHAT}, not {}", self.raw(&span));
-                    self.problem(span, detail);
-                }
+                None => self.wrong(&item, WHAT),
             }
         }
         names
     }
 
-    fn flag(&mut self, value: &ValueAt<'_>, what: &str) -> bool {
-        let flag = value.item.as_value().and_then(Value::as_bool);
+    fn flag<V: KeyValue<Place = P>>(&mut self, value: &V, what: &str) -> bool {
+        let flag = value.flag();
         if flag.is_none() {
             self.wrong(value, what);
         }
         flag.unwrap_or_default()
     }
 
-    fn sort(&mut self, value: &ValueAt<'_>) -> Option<Sort> {
-        let Some(text) = value.as_str() else {
+    fn sort<V: KeyValue<Place = P>>(&mut self, value: &V) -> Option<Sort> {
+        let Some(text) = value.text() else {
             self.wrong(
                 value,
                 "`sort` is a column's name, then asc or desc, in quotes",
@@ -167,18 +344,16 @@ impl Reader<'_> {
         if sort.is_none() {
             let detail = format!(
                 "`sort = {}`: write a column, then `asc` or `desc`",
-                self.raw(&value.span)
+                value.written()
             );
-            self.problem(value.span.clone(), detail);
+            self.problem(value.place(), detail);
         }
         sort
     }
 
-    fn limit(&mut self, value: &ValueAt<'_>) -> Option<usize> {
+    fn limit<V: KeyValue<Place = P>>(&mut self, value: &V) -> Option<usize> {
         let limit = value
-            .item
-            .as_value()
-            .and_then(Value::as_integer)
+            .integer()
             .and_then(|rows| usize::try_from(rows).ok())
             .filter(|rows| *rows > 0);
         if limit.is_none() {
@@ -188,41 +363,12 @@ impl Reader<'_> {
     }
 
     /// A value of the wrong kind: what the key takes, and what it was given.
-    fn wrong(&mut self, value: &ValueAt<'_>, what: &str) {
-        let given = match value.item {
-            Item::Value(_) => self.raw(&value.span).to_owned(),
-            Item::Table(_) | Item::ArrayOfTables(_) | Item::None => "a table".to_owned(),
-        };
-        self.problem(value.span.clone(), format!("{what}, not {given}"));
+    fn wrong<V: KeyValue<Place = P>>(&mut self, value: &V, what: &str) {
+        self.problem(value.place(), format!("{what}, not {}", value.written()));
     }
 
-    fn raw(&self, span: &Range<usize>) -> &str {
-        self.text.get(span.clone()).map_or("", str::trim)
-    }
-
-    fn key_span(&self, table: &Table, name: &str, item: &Item) -> Range<usize> {
-        table
-            .key(name)
-            .and_then(toml_edit::Key::span)
-            .or_else(|| item.span())
-            .unwrap_or(0..self.text.len())
-    }
-
-    fn problem(&mut self, span: Range<usize>, detail: impl Into<String>) {
-        self.problems
-            .push(SpecProblem::new(self.text, span, detail.into()));
-    }
-}
-
-/// An item with the bytes it was read from.
-struct ValueAt<'a> {
-    item: &'a Item,
-    span: Range<usize>,
-}
-
-impl ValueAt<'_> {
-    fn as_str(&self) -> Option<&str> {
-        self.item.as_value().and_then(Value::as_str)
+    fn problem(&mut self, place: P, detail: impl Into<String>) {
+        self.problems.push((place, detail.into()));
     }
 }
 
@@ -249,21 +395,24 @@ impl Sort {
     }
 }
 
-/// "no key `ys`; did you mean `y`?", or the keys there are when none is near.
-fn unknown_key(name: &str) -> String {
+/// "no key `ys`; did you mean `y`?", or the keys there are when none is near. `others` are keys
+/// a report's `[[chart]]` takes beside the spec's.
+fn unknown_key<'a>(name: &str, others: &[&'a str]) -> String {
     let lowered = name.to_lowercase();
-    let nearest = Key::ALL
+    let known: Vec<&'a str> = Key::ALL
         .into_iter()
-        .map(|key| (distance(&lowered, key.name()), key.name()))
+        .map(|key| -> &'a str { key.name() })
+        .chain(others.iter().copied())
+        .collect();
+    let nearest = known
+        .iter()
+        .map(|known| (distance(&lowered, known), *known))
         .filter(|(distance, _)| *distance <= MAX_SUGGESTION_DISTANCE)
         .min_by_key(|(distance, _)| *distance);
     match nearest {
         Some((_, suggestion)) => format!("no key `{name}`; did you mean `{suggestion}`?"),
         None => {
-            let names: Vec<String> = Key::ALL
-                .into_iter()
-                .map(|key| format!("`{}`", key.name()))
-                .collect();
+            let names: Vec<String> = known.iter().map(|known| format!("`{known}`")).collect();
             format!("no key `{name}`; a chart's keys are {}", names.join(", "))
         }
     }
@@ -500,6 +649,67 @@ limit = 10
         }
         let sort = Sort::parse("net sales DESC").unwrap();
         assert_eq!(sort.written(), "net sales desc");
+    }
+
+    fn from_table(keys: &str) -> Result<ChartSpec, Vec<KeyProblem>> {
+        let table: toml::Table = toml::from_str(keys).unwrap();
+        ChartSpec::from_table(&table, &["file", "width"])
+    }
+
+    #[test]
+    fn reads_a_report_charts_keys_and_leaves_the_reports_own() {
+        let spec = from_table(
+            "file = \"net.svg\"\nwidth = 600\nkind = \"bars\"\nx = \"category\"\ny = [\"net\"]\nlimit = 10",
+        );
+        assert_eq!(
+            spec,
+            Ok(ChartSpec {
+                kind: Some(ChartKind::Bars),
+                x: Some("category".to_owned()),
+                y: vec!["net".to_owned()],
+                limit: Some(10),
+                ..ChartSpec::default()
+            })
+        );
+    }
+
+    #[test]
+    fn places_a_report_charts_problems_at_their_keys() {
+        let problem = |key: &str, detail: &str| KeyProblem {
+            key: key.to_owned(),
+            detail: detail.to_owned(),
+        };
+        let cases = [
+            (
+                "fiel = \"net.svg\"",
+                problem("fiel", "no key `fiel`; did you mean `file`?"),
+            ),
+            (
+                "kind = \"area\"",
+                problem("kind", "`kind` is bars, lines or scatter, not \"area\""),
+            ),
+            (
+                "y = [\"net\", 3]",
+                problem(
+                    "y",
+                    "`y` is a column's name, or a list of them, in quotes, not 3",
+                ),
+            ),
+            (
+                "sort = \"net up\"",
+                problem(
+                    "sort",
+                    "`sort = \"net up\"`: write a column, then `asc` or `desc`",
+                ),
+            ),
+            (
+                "x = { name = \"month\" }",
+                problem("x", "`x` is a column's name, in quotes, not a table"),
+            ),
+        ];
+        for (keys, expected) in cases {
+            assert_eq!(from_table(keys), Err(vec![expected]), "{keys}");
+        }
     }
 
     #[test]

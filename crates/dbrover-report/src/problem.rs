@@ -18,6 +18,8 @@ pub enum Table {
     Combine,
     /// The `[[output]]` table at this position in the file, counted from 0.
     Output(usize),
+    /// The `[[chart]]` table at this position in the file, counted from 0.
+    Chart(usize),
 }
 
 /// Where a problem is.
@@ -136,6 +138,7 @@ impl<'a> Locator<'a> {
             Table::Combine => ("combine", None),
             Table::Source(index) => ("source", Some(*index)),
             Table::Output(index) => ("output", Some(*index)),
+            Table::Chart(index) => ("chart", Some(*index)),
         };
         let (_, value) = self
             .table

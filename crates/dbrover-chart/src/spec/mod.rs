@@ -15,6 +15,7 @@ use std::fmt;
 use std::ops::Range;
 
 pub use arrange::arrange;
+pub use read::KeyProblem;
 pub use resolve::{ColumnProblem, Resolved, SortBy};
 pub use write::{SavedChoice, WriteError, for_report, write_back};
 

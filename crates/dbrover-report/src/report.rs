@@ -3,6 +3,7 @@
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
+use dbrover_chart::ChartSpec;
 use dbrover_export::{ColumnType, CustomFormatId, Preset, SchemaColumn};
 
 use crate::{CombineLimitsSet, FileName, HintId, OutputLimitsSet, SourceLimitsSet};
@@ -24,6 +25,8 @@ pub struct Report {
     /// The query that combines the sources' tables into the rows the outputs write.
     pub combine: Option<Combine>,
     pub outputs: Vec<Output>,
+    /// The charts its runs draw, as the file lists them (`docs/charts-as-code.md`, CH3).
+    pub charts: Vec<Chart>,
 }
 
 /// A parameter the report's queries and file names take, and its type.
@@ -147,4 +150,26 @@ pub enum OutputColumns {
     Declared(Vec<SchemaColumn>),
     /// The first output's (`columns = "same"`).
     Same,
+}
+
+/// A chart a run draws of its rows, written as a picture file beside the outputs'.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Chart {
+    /// The chart's keys, as a block above a statement holds them.
+    pub spec: ChartSpec,
+    pub file: FileName,
+    pub picture: ChartPicture,
+    /// In points.
+    pub width: u32,
+    pub height: u32,
+}
+
+/// The picture a chart's file holds, from its name's extension.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChartPicture {
+    Svg,
+    /// Drawn from the SVG at this many pixels a point: 1, 2 or 3.
+    Png {
+        scale: u8,
+    },
 }

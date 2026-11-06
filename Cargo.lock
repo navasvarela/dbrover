@@ -2380,6 +2380,7 @@ dependencies = [
  "dbrover-picture",
  "jiff",
  "thiserror 2.0.21",
+ "toml",
  "toml_edit",
 ]
 
@@ -2773,11 +2774,13 @@ name = "dbrover-report"
 version = "0.29.0"
 dependencies = [
  "calamine",
+ "dbrover-chart",
  "dbrover-core",
  "dbrover-document",
  "dbrover-driver-duckdb",
  "dbrover-export",
  "dbrover-language",
+ "dbrover-picture",
  "dbrover-sql",
  "futures-util",
  "jiff",
