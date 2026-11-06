@@ -288,6 +288,8 @@ mod tests {
             kind: ChartKind::Lines,
             x: "month".to_owned(),
             y: vec!["net".to_owned()],
+            series: None,
+            stack: false,
         }
     }
 

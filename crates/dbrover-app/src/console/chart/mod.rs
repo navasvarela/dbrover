@@ -128,6 +128,10 @@ impl ChartTab {
                 .iter()
                 .map(|&y| column_name(&view.columns, y).to_owned())
                 .collect(),
+            series: choice
+                .series
+                .map(|series| column_name(&view.columns, series).to_owned()),
+            stack: choice.stacked(),
         })
     }
 
@@ -464,32 +468,13 @@ pub fn controls(ui: &mut Ui, tab: &mut ChartTab, source: &Source<'_>) -> Option<
         ui.selectable_value(&mut choice.kind, kind, kind.label());
     }
     ui.separator();
-    let mut x = choice.x;
-    egui::ComboBox::from_id_salt("chart_x")
-        .selected_text(format!("X: {}", column_name(&view.columns, choice.x)))
-        .show_ui(ui, |ui| {
-            for (index, column) in view.columns.iter().enumerate() {
-                ui.selectable_value(&mut x, index, &column.name);
-            }
-        });
-    if x != choice.x {
-        choice.set_x(x);
-    }
-    let numbers: Vec<usize> = (0..view.columns.len())
-        .filter(|&index| index != choice.x && view.roles.get(index) == Some(&Role::Number))
-        .collect();
-    widgets::menu_button(ui, y_label(&view.columns, &choice.ys), |ui| {
-        if numbers.is_empty() {
-            ui.weak("No other column holds numbers");
-        }
-        for index in numbers {
-            let mut ticked = choice.ys.contains(&index);
-            let name = column_name(&view.columns, index);
-            if ui.checkbox(&mut ticked, name).changed() {
-                choice.toggle_y(index);
-            }
-        }
-    });
+    x_picker(ui, choice, &view.columns);
+    y_menu(ui, choice, &view.columns, &view.roles);
+    series_picker(ui, choice, &view.columns);
+    let stackable = choice.kind == ChartKind::Bars && choice.has_series();
+    ui.add_enabled(stackable, egui::Checkbox::new(&mut choice.stack, "Stacked"))
+        .on_hover_text("Stack the series' bars, a bar per X")
+        .on_disabled_hover_text("Bars of several series stack: pick Bars, and a series or two Ys");
     ui.separator();
     let in_query = view.in_query();
     let mut action = save_to_query(ui, has_block, in_query, save_error.as_deref());
@@ -524,7 +509,7 @@ fn save_to_query(
         ui.weak("Not in the query");
     }
     let hover = if has_block {
-        "Write the kind, X and Y into the chart block above the statement; Undo takes it back"
+        "Write the kind, X, Y, series and stacking into the chart block above the statement; Undo takes it back"
     } else {
         "Write this chart as a block above the statement, so it opens as this chart next time"
     };
@@ -532,6 +517,65 @@ fn save_to_query(
         .on_hover_text(hover)
         .clicked()
         .then_some(ChartAction::SaveToQuery)
+}
+
+/// **X**: any column along the bottom.
+fn x_picker(ui: &mut Ui, choice: &mut Choice, columns: &[Column]) {
+    let mut x = choice.x;
+    egui::ComboBox::from_id_salt("chart_x")
+        .selected_text(format!("X: {}", column_name(columns, choice.x)))
+        .show_ui(ui, |ui| {
+            for (index, column) in columns.iter().enumerate() {
+                ui.selectable_value(&mut x, index, &column.name);
+            }
+        });
+    if x != choice.x {
+        choice.set_x(x);
+    }
+}
+
+/// **Y**: the columns of numbers measured up the side; one of them while split by a series.
+fn y_menu(ui: &mut Ui, choice: &mut Choice, columns: &[Column], roles: &[Role]) {
+    let numbers: Vec<usize> = (0..columns.len())
+        .filter(|&index| {
+            index != choice.x
+                && Some(index) != choice.series
+                && roles.get(index) == Some(&Role::Number)
+        })
+        .collect();
+    widgets::menu_button(ui, y_label(columns, &choice.ys), |ui| {
+        if numbers.is_empty() {
+            ui.weak("No other column holds numbers");
+        }
+        for index in numbers {
+            let mut ticked = choice.ys.contains(&index);
+            let name = column_name(columns, index);
+            if ui.checkbox(&mut ticked, name).changed() {
+                choice.toggle_y(index);
+            }
+        }
+    });
+}
+
+/// **Series**: a column whose values split the one Y into a series each, or none.
+fn series_picker(ui: &mut Ui, choice: &mut Choice, columns: &[Column]) {
+    let mut series = choice.series;
+    let shown = series.map_or("none", |index| column_name(columns, index));
+    egui::ComboBox::from_id_salt("chart_series")
+        .selected_text(format!("Series: {shown}"))
+        .show_ui(ui, |ui| {
+            ui.selectable_value(&mut series, None, "None");
+            for (index, column) in columns.iter().enumerate() {
+                if index != choice.x {
+                    ui.selectable_value(&mut series, Some(index), &column.name);
+                }
+            }
+        })
+        .response
+        .on_hover_text("Split Y into a series per value of a column, as GROUP BY returns them");
+    if series != choice.series {
+        choice.set_series(series);
+    }
 }
 
 /// **Export ›**: the picture formats, offered once the chart has been drawn.

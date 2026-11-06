@@ -11,6 +11,10 @@ pub struct SavedChoice {
     pub kind: ChartKind,
     pub x: String,
     pub y: Vec<String>,
+    /// The column splitting Y into a series per value, if one does.
+    pub series: Option<String>,
+    /// The bars are stacked.
+    pub stack: bool,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -23,11 +27,12 @@ pub enum WriteError {
     NotATable,
 }
 
-/// `text`, a spec's text, with `saved`'s `kind`, `x` and `y` written in it; or a new spec of
-/// those keys when `text` is `None`.
+/// `text`, a spec's text, with `saved`'s `kind`, `x`, `y`, `series` and `stack` written in it;
+/// or a new spec of those keys when `text` is `None`.
 ///
-/// Every key is written, even one the spec left to the starting choice, so a later change of
-/// the result's columns can't change the chart silently. A key whose value is already the one
+/// `kind`, `x` and `y` are always written, even when the spec left them to the starting
+/// choice, so a later change of the result's columns can't change the chart silently. `series`
+/// and `stack` are written only when set, and taken out when not, as their absence means none. A key whose value is already the one
 /// saved is left as it is, and every other key, comment and blank line is kept: a key that
 /// changes keeps its place and the comment after it.
 ///
@@ -53,6 +58,15 @@ pub fn write_back(text: Option<&str>, saved: &SavedChoice) -> Result<String, Wri
         names => Value::Array(names.iter().map(String::as_str).collect::<Array>()),
     };
     set(table, Key::Y, y);
+    match &saved.series {
+        Some(series) => set(table, Key::Series, Value::from(series.as_str())),
+        None => drop(table.remove(Key::Series.name())),
+    }
+    if saved.stack {
+        set(table, Key::Stack, Value::from(true));
+    } else {
+        table.remove(Key::Stack.name());
+    }
     Ok(document.to_string())
 }
 
@@ -102,6 +116,7 @@ fn set(table: &mut Table, key: Key, mut value: Value) {
 fn same(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::String(a), Value::String(b)) => a.value() == b.value(),
+        (Value::Boolean(a), Value::Boolean(b)) => a.value() == b.value(),
         (Value::Array(a), Value::Array(b)) => {
             a.len() == b.len() && a.iter().zip(b.iter()).all(|(a, b)| same(a, b))
         }
@@ -119,7 +134,30 @@ mod tests {
             kind,
             x: x.to_owned(),
             y: y.iter().map(|name| (*name).to_owned()).collect(),
+            series: None,
+            stack: false,
         }
+    }
+
+    #[test]
+    fn writes_a_series_and_stacking_only_while_set() {
+        let stacked = SavedChoice {
+            series: Some("category".to_owned()),
+            stack: true,
+            ..saved(ChartKind::Bars, "month", &["net"])
+        };
+        let text = "[chart]\nkind = \"bars\"\nx = \"month\"\ny = \"net\"\n";
+        let written = write_back(Some(text), &stacked).unwrap();
+        assert_eq!(
+            written,
+            format!("{text}series = \"category\"\nstack = true\n")
+        );
+        assert_eq!(
+            write_back(Some(&written), &stacked).as_deref(),
+            Ok(written.as_str())
+        );
+        let plain = saved(ChartKind::Bars, "month", &["net"]);
+        assert_eq!(write_back(Some(&written), &plain).as_deref(), Ok(text));
     }
 
     #[test]

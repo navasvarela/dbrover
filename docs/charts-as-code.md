@@ -1,6 +1,6 @@
 # Charts as code
 
-Status: **proposed on 2026-11-04; CH1 built on 2026-11-06.** The
+Status: **proposed on 2026-11-04; CH1 and CH2 built on 2026-11-06.** The
 [roadmap](roadmap.md#charts-as-code-track) tracks it as CH1 to CH4. CI fixes, the reports track
 and W13 schema compare came first. Each milestone's decisions are confirmed when it starts, as in
 [Reports](reporting.md): CH1's [below](#ch1-confirmed).
@@ -422,6 +422,28 @@ proposed; checking them against the code settled these details:
 
 **Exit:** `GROUP BY month, category` on the shop draws as stacked bars per category with no pivot
 in the query, on screen and exported.
+
+#### CH2 confirmed
+
+Started on 2026-11-06, after CH1. The plan stands; building it settled these details:
+
+- **Rows of a split chart** become a point per X value, in the order the X values first come
+  (sorted by value for lines over numbers and dates, as without a series). A second row with the
+  same X and series value is left out and counted under the chart, rather than added: a sum
+  belongs in the query's `GROUP BY`.
+- **Past eight values** of the series column, the tab charts the first eight and names the rest
+  under the chart; a report's chart (CH3) fails instead, as planned. A null series value is a
+  series named `NULL`, as the grid shows it.
+- **Y with `series`** is one column; left out, it is the first column of numbers that isn't X or
+  the series. A column can't be the series and X or Y at once, and `series` with several Ys is a
+  problem.
+- **`stack`** stacks the series of two Ys or more as well as a split one, since both are series.
+  It applies to bars only: a spec that stacks lines or a scatter is a problem, and the toolbar's
+  **Stacked** is off for them.
+- **Stacked pieces** are drawn square, on screen and in the SVG, so they meet without notches;
+  bars standing alone keep their rounded corners.
+- **Save to query** writes `series` and `stack = true` while the chart has them, and takes them
+  out when it doesn't, so a block of CH1 saved again gains no `stack = false`.
 
 ### CH3 — Charts from reports (M)
 

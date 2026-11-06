@@ -2117,6 +2117,45 @@ mod charts {
     }
 
     #[test]
+    fn the_toolbar_splits_and_stacks_and_save_to_query_writes_both() {
+        let mut console = by_category("-- Net sales by month and category.");
+        show(&mut console, |harness| {
+            harness.get_by_label("Chart").click();
+            harness.run();
+            harness.get_by_label("Bars").click();
+            harness.run();
+            harness.get_by_value("Series: none").click();
+            harness.run();
+            harness.get_by_label("category").click();
+            harness.run();
+            harness.get_by_value("Series: category");
+            harness
+                .get_by_role_and_label(egui::accesskit::Role::CheckBox, "Stacked")
+                .click();
+            harness.run();
+            harness.get_by_label("Save to query");
+        });
+        let choice = tab(&console).choice().unwrap().clone();
+        assert_eq!(
+            (choice.series, choice.stack, choice.ys),
+            (Some(1), true, vec![2])
+        );
+        console.save_chart_to_query(Instant::now());
+        assert_eq!(
+            console.text(),
+            "-- Net sales by month and category.\n-- [chart]\n-- kind = \"bars\"\n\
+             -- x = \"month\"\n-- y = \"net\"\n-- series = \"category\"\n-- stack = true\n\
+             SELECT month, category, net FROM sales"
+        );
+        show(&mut console, |harness| {
+            assert!(
+                harness.query_by_label("Save to query").is_none(),
+                "the chart is the block's"
+            );
+        });
+    }
+
+    #[test]
     fn a_block_that_belongs_to_no_statement_is_marked() {
         let mut console = console("-- [chart]\n\nSELECT 1");
         assert_eq!(console.problem_counts(), (0, 1));
