@@ -3444,6 +3444,121 @@ mod tests {
         );
     }
 
+    /// A Trino data source (C3): the catalog in the database's place, a schema, and Presto's
+    /// headers chosen.
+    #[test]
+    fn adds_a_trino_data_source_with_a_catalog_schema_and_protocol() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "No data sources yet.");
+
+        harness
+            .get_all_by_label("New data source")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("Trino / Presto").click();
+        harness.run();
+        harness.get_by_label_contains("New Trino / Presto data source");
+        for (field, text) in [("Catalog", "hive"), ("Schema", "sales")] {
+            harness.get_by_label(field).focus();
+            harness.run();
+            harness.get_by_label(field).type_text(text);
+            harness.run();
+        }
+        harness.get_by_label("Presto").click();
+        harness.run();
+        harness.get_by_label("Save").click();
+
+        step_until_visible(&mut harness, "Expand hive@localhost");
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        let [saved] = saved.as_slice() else {
+            panic!("expected one data source, got {saved:?}");
+        };
+        let dbrover_core::ConnectionConfig::Trino(config) = &saved.config else {
+            panic!("expected a Trino data source, got {saved:?}");
+        };
+        assert_eq!(
+            (
+                config.server.port.clone(),
+                config.server.database.as_str(),
+                config.server.user.as_str(),
+                config.schema.as_str(),
+                config.protocol,
+            ),
+            (
+                8080.into(),
+                "hive",
+                "trino",
+                "sales",
+                dbrover_core::TrinoProtocol::Presto
+            )
+        );
+    }
+
+    /// Starburst Galaxy from **New data source › Other cloud services** (C3): Trino's dialog on
+    /// HTTPS's port with `verify-full`, the host naming the service.
+    #[test]
+    fn adds_a_starburst_galaxy_data_source_from_its_preset() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "No data sources yet.");
+
+        harness
+            .get_all_by_label("New data source")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness
+            .get_by_label_contains("Other cloud services")
+            .hover();
+        step_until_visible(&mut harness, "Starburst Galaxy");
+        // The submenu opens below the window's edge and is moved up to fit on the next frame:
+        // click it where it settles.
+        harness.run();
+        harness.get_by_label("Starburst Galaxy").click();
+        harness.run();
+        harness.get_by_label_contains("New Trino / Presto data source");
+        for (field, text) in [
+            ("Host", "analytics.trino.galaxy.starburst.io"),
+            ("User", "ada@example.com/accountadmin"),
+        ] {
+            harness
+                .get_by_role_and_label(Role::TextInput, field)
+                .focus();
+            harness.run();
+            harness
+                .get_by_role_and_label(Role::TextInput, field)
+                .type_text(text);
+            harness.run();
+        }
+        harness.get_by_label_contains("The user is your email and a role");
+        harness.get_by_label("Save").click();
+
+        step_until_visible(&mut harness, "Expand analytics.trino.galaxy.starburst.io");
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        let [saved] = saved.as_slice() else {
+            panic!("expected one data source, got {saved:?}");
+        };
+        let dbrover_core::ConnectionConfig::Trino(config) = &saved.config else {
+            panic!("expected a Trino data source, got {saved:?}");
+        };
+        assert_eq!(config.server.port, 443.into());
+        assert_eq!(
+            config.server.tls,
+            dbrover_core::TlsMode::VerifyFull { ca_file: None }
+        );
+        assert_eq!(config.server.user, "ada@example.com/accountadmin");
+    }
+
     #[test]
     fn adds_a_mysql_data_source_with_the_servers_defaults() {
         let dir = tempfile::tempdir().unwrap();
