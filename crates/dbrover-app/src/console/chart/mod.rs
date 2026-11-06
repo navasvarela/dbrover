@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use dbrover_chart::{
     Anchor, ChartData, ChartKind, Choice, Column, Drawing, LayoutOptions, MAX_POINTS, Mark, Paint,
-    Resolved, Role, SavedChoice, Size, TextMeasure,
+    Resolved, Role, STARTING_SERIES, SavedChoice, Size, Summary, TextMeasure,
 };
 use dbrover_core::{ColumnInfo, Row, ValueKind};
 use dbrover_engine::Picture;
@@ -815,33 +815,42 @@ fn point_values(
     point: usize,
 ) -> Option<Vec<(String, String)>> {
     let charted = view.data.as_ref()?;
-    let row = charted
-        .data
-        .rows
-        .get(point)
-        .and_then(|&index| charted.order.get(index))
-        .and_then(|&index| source.rows.get(index))?;
-    let line = |column: usize| {
-        let name = column_name(&view.columns, column).to_owned();
-        let value = row
-            .get(column)
+    let row = |charted_row: usize| {
+        charted
+            .order
+            .get(charted_row)
+            .and_then(|&index| source.rows.get(index))
+    };
+    let cell = |charted_row: usize, column: usize| {
+        row(charted_row)
+            .and_then(|row| row.get(column))
             .and_then(Option::as_deref)
             .unwrap_or("NULL")
-            .to_owned();
-        (name, value)
+            .to_owned()
     };
-    Some(
-        std::iter::once(charted.choice.x)
-            .chain(charted.choice.ys.iter().copied())
-            .map(line)
-            .collect(),
-    )
+    let choice = &charted.choice;
+    let first = *charted.data.rows.get(point)?;
+    let mut lines = vec![(
+        column_name(&view.columns, choice.x).to_owned(),
+        cell(first, choice.x),
+    )];
+    for (position, series) in charted.data.series.iter().enumerate() {
+        let y = match choice.series {
+            Some(_) => choice.ys.first(),
+            None => choice.ys.get(position),
+        };
+        let at = series.rows.get(point).copied().flatten();
+        if let (Some(&y), Some(at)) = (y, at) {
+            lines.push((series.name.clone(), cell(at, y)));
+        }
+    }
+    Some(lines)
 }
 
 /// What was charted out of the rows, and what was left out, for the line under the chart:
 /// "Charting 12 rows · 1 row left out: no month value".
 pub fn summary(data: &ChartData) -> String {
-    let summary = data.summary;
+    let summary = &data.summary;
     if summary.rows == 0 {
         return "No rows to chart".to_owned();
     }
@@ -859,17 +868,42 @@ pub fn summary(data: &ChartData) -> String {
             data.x_name
         ));
     }
+    if let Some(split_by) = &data.split_by {
+        parts.extend(split_left_out(summary, split_by, &data.x_name));
+    }
+    let why = match data.split_by {
+        Some(_) => "no row, null or not a number",
+        None => "null or not a number",
+    };
     for series in &data.series {
         let gaps = series.gaps();
         if gaps > 0 {
             let noun = if gaps == 1 { "gap" } else { "gaps" };
-            parts.push(format!(
-                "{gaps} {noun} in {}: null or not a number",
-                series.name
-            ));
+            parts.push(format!("{gaps} {noun} in {}: {why}", series.name));
         }
     }
     parts.join(" · ")
+}
+
+/// What a chart split by `split_by` left out: values past the palette's colours, and rows whose
+/// X and series an earlier row had.
+fn split_left_out(summary: &Summary, split_by: &str, x_name: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    if !summary.series_left_out.is_empty() {
+        let count = summary.series_left_out.len();
+        let noun = if count == 1 { "value" } else { "values" };
+        parts.push(format!(
+            "{count} {noun} of {split_by} left out, past {STARTING_SERIES} colours: {}",
+            summary.series_left_out.join(", ")
+        ));
+    }
+    if summary.repeated > 0 {
+        parts.push(format!(
+            "{} left out: an earlier row has the same {x_name} and {split_by}",
+            rows(summary.repeated)
+        ));
+    }
+    parts
 }
 
 fn rows(count: usize) -> String {
@@ -881,7 +915,7 @@ fn rows(count: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use dbrover_chart::{Series, Summary, XValues};
+    use dbrover_chart::{Series, XValues};
 
     use super::*;
 
@@ -893,8 +927,11 @@ mod tests {
             series: vec![Series {
                 name: "total".to_owned(),
                 values: vec![None; gaps],
+                rows: vec![None; gaps],
             }],
+            split_by: None,
             rows: Vec::new(),
+            stacked: false,
             summary,
         }
     }
@@ -903,26 +940,43 @@ mod tests {
     fn says_what_was_charted_and_what_was_left_out() {
         let all = Summary {
             rows: 12,
-            limit: None,
-            without_x: 0,
+            ..Summary::default()
         };
         assert_eq!(summary(&data(all, 0)), "Charting 12 rows");
         let some = Summary {
             rows: 1200,
             limit: Some(250),
             without_x: 1,
+            ..Summary::default()
         };
         assert_eq!(
             summary(&data(some, 2)),
             "Charting the first 250 of 1200 rows; group them in the query to chart them all \
              · 1 row left out: no month value · 2 gaps in total: null or not a number"
         );
-        let none = Summary {
-            rows: 0,
-            limit: None,
-            without_x: 0,
+        assert_eq!(summary(&data(Summary::default(), 0)), "No rows to chart");
+    }
+
+    #[test]
+    fn says_what_a_split_left_out() {
+        let split = ChartData {
+            split_by: Some("category".to_owned()),
+            ..data(
+                Summary {
+                    rows: 30,
+                    series_left_out: vec!["helmets".to_owned(), "tyres".to_owned()],
+                    repeated: 1,
+                    ..Summary::default()
+                },
+                1,
+            )
         };
-        assert_eq!(summary(&data(none, 0)), "No rows to chart");
+        assert_eq!(
+            summary(&split),
+            "Charting 30 rows · 2 values of category left out, past 8 colours: helmets, tyres \
+             · 1 row left out: an earlier row has the same month and category \
+             · 1 gap in total: no row, null or not a number"
+        );
     }
 
     #[test]

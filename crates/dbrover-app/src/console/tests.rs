@@ -2038,6 +2038,54 @@ mod charts {
         );
     }
 
+    /// Net sales by month and category, in a result's usual `GROUP BY` shape (CH2).
+    const BY_CATEGORY: [&[Option<&str>]; 5] = [
+        &[Some("2026-09"), Some("bikes"), Some("1290")],
+        &[Some("2026-09"), Some("parts"), Some("42")],
+        &[Some("2026-10"), Some("bikes"), Some("649")],
+        &[Some("2026-10"), Some("parts"), Some("18")],
+        &[Some("2026-11"), Some("parts"), Some("24")],
+    ];
+
+    fn by_category(block: &str) -> QueryConsole {
+        let mut console = console(&format!("{block}\nSELECT month, category, net FROM sales"));
+        ran(
+            &mut console,
+            RunId(1),
+            &["month", "category", "net"],
+            &BY_CATEGORY,
+        );
+        console
+    }
+
+    #[test]
+    fn a_series_column_splits_net_by_category_without_a_pivot() {
+        let mut console = by_category(
+            "-- [chart]\n-- kind = \"bars\"\n-- x = \"month\"\n-- y = \"net\"\n-- series = \"category\"",
+        );
+        show(&mut console, |harness| {
+            harness.get_by_label("Charting 5 rows · 1 gap in bikes: no row, null or not a number");
+        });
+        let drawing = tab(&console).drawing().unwrap();
+        let labels: Vec<&str> = drawing
+            .marks
+            .iter()
+            .filter_map(|mark| match mark {
+                Mark::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            labels.contains(&"bikes") && labels.contains(&"parts"),
+            "{labels:?}"
+        );
+        assert_eq!(
+            series_marks(&console),
+            (5, 0),
+            "a bar per month and category with a row"
+        );
+    }
+
     #[test]
     fn a_block_that_belongs_to_no_statement_is_marked() {
         let mut console = console("-- [chart]\n\nSELECT 1");

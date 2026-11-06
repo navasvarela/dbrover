@@ -55,6 +55,11 @@ pub struct Choice {
     pub kind: ChartKind,
     pub x: usize,
     pub ys: Vec<usize>,
+    /// A column whose values split the one Y into a series each (CH2): `GROUP BY month,
+    /// category` charted with a series per category. `ys` then holds one column.
+    pub series: Option<usize>,
+    /// Stack the series' bars rather than set them side by side. Only bars stack.
+    pub stack: bool,
 }
 
 impl Choice {
@@ -69,24 +74,70 @@ impl Choice {
             return None;
         }
         let kind = ChartKind::starting(roles.get(x).copied());
-        Some(Self { kind, x, ys })
+        Some(Self::of(kind, x, ys))
     }
 
-    /// Picks `x` for the X axis, and stops measuring it on Y.
+    /// A chart of `ys` over `x`, neither split into series nor stacked.
+    pub fn of(kind: ChartKind, x: usize, ys: Vec<usize>) -> Self {
+        Self {
+            kind,
+            x,
+            ys,
+            series: None,
+            stack: false,
+        }
+    }
+
+    /// Picks `x` for the X axis, and stops measuring it on Y or splitting by it.
     pub fn set_x(&mut self, x: usize) {
         self.x = x;
         self.ys.retain(|&y| y != x);
+        if self.series == Some(x) {
+            self.series = None;
+        }
     }
 
     /// Adds `y` to the series, or takes it away, keeping them in the result's column order. The
-    /// X column is never a series.
+    /// X column is never a series. While the chart is split by a column, `y` replaces the one Y
+    /// instead.
     pub fn toggle_y(&mut self, y: usize) {
-        if let Some(position) = self.ys.iter().position(|&shown| shown == y) {
+        if y == self.x || Some(y) == self.series {
+            return;
+        }
+        if self.series.is_some() {
+            self.ys = vec![y];
+        } else if let Some(position) = self.ys.iter().position(|&shown| shown == y) {
             self.ys.remove(position);
-        } else if y != self.x {
+        } else {
             let position = self.ys.partition_point(|&shown| shown < y);
             self.ys.insert(position, y);
         }
+    }
+
+    /// Splits the one Y by `series`'s values, or stops splitting. Splitting keeps the first Y
+    /// only, and never the X column or the series column itself.
+    pub fn set_series(&mut self, series: Option<usize>) {
+        let Some(column) = series else {
+            self.series = None;
+            return;
+        };
+        if column == self.x {
+            return;
+        }
+        self.ys.retain(|&y| y != column);
+        self.ys.truncate(1);
+        self.series = Some(column);
+    }
+
+    /// Whether the chart draws more than one series from its columns: several Ys, or one split
+    /// by a column. Only then is there anything to stack.
+    pub fn has_series(&self) -> bool {
+        self.series.is_some() || self.ys.len() > 1
+    }
+
+    /// Whether its bars are drawn stacked: asked for, and bars.
+    pub fn stacked(&self) -> bool {
+        self.stack && self.kind == ChartKind::Bars
     }
 }
 
@@ -121,35 +172,19 @@ mod tests {
         let cases: [(&[Role], Option<Choice>); 6] = [
             (
                 &[Text, Number],
-                Some(Choice {
-                    kind: ChartKind::Bars,
-                    x: 0,
-                    ys: vec![1],
-                }),
+                Some(Choice::of(ChartKind::Bars, 0, vec![1])),
             ),
             (
                 &[Time, Number, Text, Number],
-                Some(Choice {
-                    kind: ChartKind::Lines,
-                    x: 0,
-                    ys: vec![1, 3],
-                }),
+                Some(Choice::of(ChartKind::Lines, 0, vec![1, 3])),
             ),
             (
                 &[Number, Text, Number],
-                Some(Choice {
-                    kind: ChartKind::Bars,
-                    x: 1,
-                    ys: vec![0, 2],
-                }),
+                Some(Choice::of(ChartKind::Bars, 1, vec![0, 2])),
             ),
             (
                 &[Number, Number],
-                Some(Choice {
-                    kind: ChartKind::Scatter,
-                    x: 0,
-                    ys: vec![1],
-                }),
+                Some(Choice::of(ChartKind::Scatter, 0, vec![1])),
             ),
             (&[Text, Time], None),
             (&[Number], None),
@@ -169,11 +204,7 @@ mod tests {
 
     #[test]
     fn the_x_column_is_never_a_series() {
-        let mut choice = Choice {
-            kind: ChartKind::Bars,
-            x: 0,
-            ys: vec![1, 2],
-        };
+        let mut choice = Choice::of(ChartKind::Bars, 0, vec![1, 2]);
         choice.set_x(2);
         assert_eq!(choice.ys, vec![1]);
         choice.toggle_y(2);
@@ -181,12 +212,35 @@ mod tests {
     }
 
     #[test]
+    fn a_split_chart_has_one_y_and_never_splits_by_x() {
+        let mut choice = Choice::of(ChartKind::Bars, 0, vec![2, 3]);
+        choice.set_series(Some(0));
+        assert_eq!(choice.series, None, "X can't split itself");
+        choice.set_series(Some(1));
+        assert_eq!((choice.series, choice.ys.clone()), (Some(1), vec![2]));
+        assert!(choice.has_series());
+        choice.toggle_y(3);
+        assert_eq!(choice.ys, vec![3], "Y is one column while split");
+        choice.toggle_y(1);
+        assert_eq!(choice.ys, vec![3], "the series column is never Y");
+        choice.set_x(1);
+        assert_eq!(choice.series, None, "X can't be the series column");
+        choice.set_series(Some(3));
+        assert_eq!((choice.series, choice.ys.clone()), (Some(3), vec![]));
+    }
+
+    #[test]
+    fn only_bars_stack() {
+        let mut choice = Choice::of(ChartKind::Bars, 0, vec![1, 2]);
+        choice.stack = true;
+        assert!(choice.stacked());
+        choice.kind = ChartKind::Lines;
+        assert!(!choice.stacked());
+    }
+
+    #[test]
     fn series_toggle_in_column_order() {
-        let mut choice = Choice {
-            kind: ChartKind::Bars,
-            x: 0,
-            ys: vec![3],
-        };
+        let mut choice = Choice::of(ChartKind::Bars, 0, vec![3]);
         choice.toggle_y(1);
         choice.toggle_y(4);
         assert_eq!(choice.ys, vec![1, 3, 4]);
