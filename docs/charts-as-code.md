@@ -1,6 +1,6 @@
 # Charts as code
 
-Status: **proposed on 2026-11-04; CH1 started on 2026-11-06.** The
+Status: **proposed on 2026-11-04; CH1 built on 2026-11-06.** The
 [roadmap](roadmap.md#charts-as-code-track) tracks it as CH1 to CH4. CI fixes, the reports track
 and W13 schema compare came first. Each milestone's decisions are confirmed when it starts, as in
 [Reports](reporting.md): CH1's [below](#ch1-confirmed).

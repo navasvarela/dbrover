@@ -2376,7 +2376,7 @@ statement, which opens its result on that chart and which the tab writes back, a
 `[[chart]]`, written each run as an SVG or PNG file beside its other files. No charting library
 is added. It came after CI fixes, the reports track and W13.
 
-- **CH1 — A chart in a query's text (M):** started on 2026-11-06; planned in
+- **CH1 — A chart in a query's text (M):** built; started on 2026-11-06; planned in
   [Charts as code](charts-as-code.md#ch1--a-chart-in-a-querys-text-m), its decisions
   [confirmed](charts-as-code.md#ch1-confirmed). In layers, one PR each:
   - **CH1a — The plan:** the design and this entry, and the decisions confirmed against the
@@ -2393,6 +2393,27 @@ is added. It came after CI fixes, the reports track and W13.
   **Exit:** a console whose statement has a block of bars by month opens as that chart; **Save
   to query** after switching to lines rewrites only `kind`, keeping the block's comments; a
   misspelt column shows the result's columns.
+
+  **CH1 demo note:** built in #515 to #518 and the manual's layer, with a section, [A chart in
+  the query](../book/src/consoles.md#a-chart-in-the-query), in Query consoles. Make the shop
+  from `examples/reports/shop.sql` in a SQLite data source, and run, in its console, net sales
+  by month with a block above it: `-- [chart]`, `-- # Bars read best for three months.`,
+  `-- kind = "bars"`, `-- x = "month"`, `-- y = "net"`. The result opens on **Chart** as three
+  bars, September to November 2026, with no click on **Chart**. Click **Lines**: "Not in the
+  query" and **Save to query** appear; **Save to query** turns `kind = "bars"` into
+  `kind = "lines"` and touches no other line, the comment included, and ⌘Z puts the block back.
+  `y = "nett"` shows "chart: `y = "nett"` isn't a column of this result: month, net" over the
+  starting chart; `kind = "area"` is underlined in the editor, counted with the console's
+  problems, and shown in the tab in place of the chart; a blank line between the block and its
+  statement marks the block as belonging to none. `sort = "net desc"` and `limit = 2` chart the
+  two best months, and the line under the chart says so. **Copy for a report** puts the chart
+  on the clipboard as a `[[chart]]` with `file = "net by month.svg"`. Departures from the design:
+  `y_title` stands above the plot where Y's name goes, since the layout writes no turned text;
+  `series` and `stack` are refused as unknown keys until CH2; a statement sharing its line with
+  another can't have a block written above it. Each is in
+  [CH1 confirmed](charts-as-code.md#ch1-confirmed). Covered by `dbrover-chart`'s table tests of
+  every problem, `dbrover-language`'s of finding and rewriting blocks, kittest tests of the tab,
+  and a whole-app test of the exit on the shop.
 - **CH2 — Series and stacked bars (S–M):** `series` splits one Y by a column's values, so
   `GROUP BY month, category` charts without a pivot, and `stack = true` stacks the bars.
   Horizontal bars and area wait until asked; histograms stay a `GROUP BY` in the query.

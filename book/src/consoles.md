@@ -556,6 +556,93 @@ For documents, **Chart** comes after **Tree** and **JSON**.
   name from the chart's columns, such as `total by month.svg`, and the toolbar then says
   where it went.
 
+#### A chart in the query
+
+A chart can be written above its statement, so the query opens as that chart on any machine,
+after any edit to its `WHERE`, and the chart is reviewed in a pull request with the query. It is
+a block of comment lines starting with `[chart]`, the rest of each line after the comment marker
+being TOML:
+
+```sql
+-- Net sales by month.
+-- [chart]
+-- # Bars read best for three months.
+-- kind = "bars"
+-- x = "month"
+-- y = "net"
+SELECT strftime('%Y-%m', ordered_on) AS month, SUM(amount) AS net
+FROM order_lines
+GROUP BY month
+ORDER BY month;
+```
+
+Running the statement opens its result on **Chart** rather than **Grid**, drawn as the block
+says.
+
+- **The block** runs from the `[chart]` line to the last comment line before the statement, and
+  belongs to the statement directly below it. Prose comments go above it, and TOML's own `#`
+  comments go inside it. A blank line, or a line that isn't a comment, between the block and the
+  statement leaves the block belonging to no statement: the editor underlines it, and the
+  statement opens on **Grid** as any other.
+- **The comment marker** is the console's own: `--` for SQL and PartiQL, `//` for MongoDB, `#`
+  for Redis and Elasticsearch. MySQL's `#` and CQL's `//` work too.
+- **Every key is optional.** A key left out takes the value the chart would start with, given
+  the keys that are there: with only `x = "month"`, Y is every other column of numbers, and a
+  month of dates draws lines. An empty `[chart]` is the chart **Chart** would show.
+
+| Key | Takes | Left out |
+| --- | --- | --- |
+| `kind` | `"bars"`, `"lines"` or `"scatter"` | lines over dates, a scatter over numbers, bars over text |
+| `x` | a column's name | the first column of dates or text |
+| `y` | a column's name, or a list of them: `["net", "refunds"]` | every other column of numbers, up to eight |
+| `title` | text above the chart | none |
+| `x_title`, `y_title` | text under the chart, and above it where Y's name goes | X's name; Y's name, or none before the legend |
+| `y_zero` | `true` to start the Y axis at zero for lines and scatters; bars always do | `false` |
+| `sort` | a column's name, then `asc` or `desc`: `"net desc"` | the grid's order |
+| `limit` | the number of rows to chart, after `sort` | every row, up to the kind's limit |
+
+- **Column names are exact,** since databases differ on case: `y = "Net"` doesn't find `net`,
+  and says so, suggesting it.
+- **`sort` and `limit`** sort and cut the rows the grid holds, through its filter, before they
+  are charted, and the line under the chart says so: `Charting 10 rows · sorted by net, largest
+  first, the first 10`. A row whose value is null comes last. In a console, `ORDER BY` and
+  `LIMIT` in the query do the same and are the better way; the keys are there so that a chart
+  copies to a report unchanged.
+
+**Problems** are said where they are found. A misspelt key, a value of the wrong kind or TOML
+that doesn't read is underlined in the editor, and shown in the tab in place of the chart, with
+**Grid** one click away: "chart, line 4: `kind` is bars, lines or scatter, not "area"". A column
+the result doesn't have is known once the result's columns arrive, and shown over the chart
+**Chart** would start with, so the result is still seen: "chart: `y = "nett"` isn't a column of
+this result: month, net".
+
+**The toolbar writes the block.** A click on **Lines** or a new X or Y is often a look at the
+data from another side, so it changes no text: it shows "Not in the query" and **Save to
+query**. **Save to query** writes `kind`, `x` and `y` into the block, explicitly, so a later change
+of columns can't change the chart without anyone seeing; a key that already says the same is
+left as it is, and every other key, comment and blank line stays as it was. A statement without
+a block gets one above it. The write is an edit of the console's text: ⌘Z takes it
+back, and it is saved as the console saves. Running the statement again keeps a choice changed
+in the toolbar while the block is unchanged; once the block is edited, the block wins.
+
+**Copy for a report** puts the chart on the clipboard as a report's `[[chart]]` table, with a
+`file` named as **Export ›** names it:
+
+```toml
+[[chart]]
+file = "net by month.svg"
+# Bars read best for three months.
+kind = "bars"
+x = "month"
+y = "net"
+```
+
+A report doesn't draw charts yet; the form is the one it will read.
+
+**Other tools** see an ordinary comment. A formatter that keeps comments with the statement
+below them keeps the block; check one that reflows or joins comments, since a block moved away
+from its statement belongs to nothing.
+
 ## Editing data
 
 You can change values in the grid when the result is a `SELECT` from a single table (no joins,
