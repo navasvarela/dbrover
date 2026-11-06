@@ -2,7 +2,8 @@
 //! (`docs/reporting.md`, RP3f), run on the data their scripts make: the SQLite shop of
 //! `shop.sql` and, on the test servers, the MongoDB customers of `shop-customers.js`, the
 //! PostgreSQL energy flows of `energy-postgres.sql`, the DynamoDB batteries of
-//! `energy-batteries.partiql` and the DuckDB prices of `energy-prices.sql`. Their CSV files are compared with the ones checked in beside them,
+//! `energy-batteries.partiql` and the DuckDB prices of `energy-prices.sql`. Their CSV files, and
+//! the sales-by-category chart's SVG, are compared with the ones checked in beside them,
 //! so the manual's examples keep working. Set `DBROVER_UPDATE_EXPECTED=1` to write the
 //! checked-in files from this run instead, after a change that is meant to change them.
 
@@ -145,6 +146,26 @@ fn compare(out: &Path, file: &str) {
     );
 }
 
+/// Whether the chart `file` in `out` is, byte for byte, the SVG checked in under `expected/`:
+/// the same rows make the same picture on every platform (`docs/charts-as-code.md`, CH3).
+fn compare_chart(out: &Path, file: &str) {
+    let written = std::fs::read_to_string(out.join(file)).unwrap();
+    let expected_path = examples().join("expected").join(file);
+    if std::env::var_os("DBROVER_UPDATE_EXPECTED").is_some() {
+        std::fs::write(&expected_path, &written).unwrap();
+        return;
+    }
+    // Git may have checked the file out with the platform's line endings; the chart's are LF.
+    let expected = std::fs::read_to_string(&expected_path)
+        .unwrap()
+        .replace("\r\n", "\n");
+    assert!(
+        written == expected,
+        "{file} differs from {}; run with DBROVER_UPDATE_EXPECTED=1 if that is meant",
+        expected_path.display()
+    );
+}
+
 #[tokio::test]
 async fn the_sales_by_category_example_matches_its_checked_in_file() {
     let folder = tempfile::tempdir().unwrap();
@@ -158,6 +179,7 @@ async fn the_sales_by_category_example_matches_its_checked_in_file() {
     )
     .await;
     compare(folder.path(), "sales-by-category-2026-10.csv");
+    compare_chart(folder.path(), "sales-by-category-2026-10.svg");
     assert!(
         folder
             .path()

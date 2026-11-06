@@ -1574,6 +1574,7 @@ Source lines: 246 rows, 6.5 KB in 0.0 s
 Combine: 13 rows, 509 bytes in 0.0 s
 /home/me/sales-by-category-2026-10.xlsx
 /home/me/sales-by-category-2026-10.csv
+/home/me/sales-by-category-2026-10.svg
 Finished in 0.0 s.
 ```
 

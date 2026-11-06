@@ -144,7 +144,8 @@ fn runs_a_report_for_an_mcp_client() {
         .iter()
         .map(|file| PathBuf::from(file["path"].as_str().unwrap()))
         .collect();
-    assert_eq!(files.len(), 2, "{answer}");
+    // The Excel and CSV files, and the chart's SVG.
+    assert_eq!(files.len(), 3, "{answer}");
     for file in &files {
         assert!(file.exists(), "{}", file.display());
         assert!(file.starts_with(home.path()), "{}", file.display());

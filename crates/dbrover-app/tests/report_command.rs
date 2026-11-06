@@ -181,6 +181,8 @@ mod runs {
         );
     }
 
+    /// CH3's exit (`docs/charts-as-code.md`): the example writes its Excel, CSV and SVG files,
+    /// the SVG byte for byte the one checked in.
     #[test]
     fn runs_a_report_by_name_and_lists_its_files() {
         let settings = Settings::new();
@@ -190,10 +192,20 @@ mod runs {
             files_in(&settings.out()),
             [
                 "sales-by-category-2026-10.csv",
+                "sales-by-category-2026-10.svg",
                 "sales-by-category-2026-10.xlsx"
             ]
         );
         assert_matches_expected(&settings.out(), "sales-by-category-2026-10.csv");
+        let chart = std::fs::read(settings.out().join("sales-by-category-2026-10.svg")).unwrap();
+        let expected =
+            std::fs::read_to_string(examples().join("expected/sales-by-category-2026-10.svg"))
+                .unwrap()
+                .replace("\r\n", "\n");
+        assert!(
+            chart == expected.as_bytes(),
+            "the chart differs from the checked-in one"
+        );
         let listed: Vec<PathBuf> = String::from_utf8(output.stdout)
             .unwrap()
             .lines()
@@ -204,6 +216,7 @@ mod runs {
             [
                 settings.out().join("sales-by-category-2026-10.xlsx"),
                 settings.out().join("sales-by-category-2026-10.csv"),
+                settings.out().join("sales-by-category-2026-10.svg"),
             ]
         );
         let stderr = String::from_utf8(output.stderr).unwrap();
@@ -273,6 +286,18 @@ mod runs {
             "[report]\nname = \"Products\"\n{report}\n\n[[source]]\nid = \"products\"\n\
              data_source = \"shop\"\n{source}\n\n[[output]]\nformat = \"csv\"\n\
              file = \"products.csv\"\n"
+        )
+    }
+
+    /// A source of `rows` numbered products, and a chart of them as bars, `chart` saying more.
+    fn bars(rows: u32, chart: &str) -> String {
+        let source = format!(
+            "query = \"\"\"\nWITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n \
+             WHERE x < {rows}) SELECT 'p' || x AS product, x AS units FROM n\n\"\"\""
+        );
+        format!(
+            "{}\n[[chart]]\nfile = \"bars.svg\"\nkind = \"bars\"\n{chart}\n",
+            one_source("", &source)
         )
     }
 
@@ -347,6 +372,21 @@ mod runs {
                 code: 5,
                 says: "It stopped at max_rows = 2 rows, set in the [[source]] \"products\" of the \
                        report's file.",
+            },
+            Case {
+                what: "a chart of more bars than it draws, without limit",
+                report: bars(251, ""),
+                args: vec!["products"],
+                code: 5,
+                says: "Failed in chart 1 (bars.svg): it draws bars, at most 250 rows, and the \
+                       result has 251",
+            },
+            Case {
+                what: "a chart naming a column the result doesn't have",
+                report: bars(3, "y = \"unitz\""),
+                args: vec!["products"],
+                code: 1,
+                says: "`y = \"unitz\"` isn't a column of this result: product, units",
             },
             Case {
                 what: "the run passing its time limit",
@@ -637,7 +677,7 @@ mod runs {
                         .iter()
                         .filter(|event| matches!(event, RunEvent::OutputWritten(_)))
                         .count();
-                    assert_eq!(written, 2);
+                    assert_eq!(written, 3);
                     assert!(matches!(events.first(), Some(RunEvent::Started { .. })));
                 }
                 (3, RunEvent::Failed(failure)) => {
@@ -682,7 +722,8 @@ mod runs {
                 StepMetrics::Output(_) => "output",
             })
             .collect();
-        assert_eq!(steps, ["source", "combine", "output", "output"]);
+        // The chart is recorded as an output, after the two files.
+        assert_eq!(steps, ["source", "combine", "output", "output", "output"]);
 
         let failed = settings.run(&["products"]);
         assert_eq!(failed.status.code(), Some(5), "{}", describe(&failed));

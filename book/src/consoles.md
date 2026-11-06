@@ -650,7 +650,8 @@ x = "month"
 y = "net"
 ```
 
-A report doesn't draw charts yet; the form is the one it will read.
+Paste it into a report file, and each run writes the chart as a picture beside the report's other
+files (see [Charts](reports.md#charts) in Reports).
 
 **Other tools** see an ordinary comment. A formatter that keeps comments with the statement
 below them keeps the block; check one that reflows or joins comments, since a block moved away

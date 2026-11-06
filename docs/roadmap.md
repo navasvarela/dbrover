@@ -2369,7 +2369,7 @@ after CI fixes, the reports track and W13, and links no Git library.
 
 ## Charts as code track
 
-CH1 and CH2 built on 2026-11-06. Proposed on 2026-11-04 in [Charts as code](charts-as-code.md), after
+CH1, CH2 and CH3 built on 2026-11-06. Proposed on 2026-11-04 in [Charts as code](charts-as-code.md), after
 asking for a simple syntax for charts of queries and reports. W12's chart, written down as a few
 TOML keys (`kind`, `x`, `y`, `series`, `title`, `sort`, `limit`, …): in a comment block above a
 statement, which opens its result on that chart and which the tab writes back, and as a report's
@@ -2440,7 +2440,7 @@ is added. It came after CI fixes, the reports track and W13.
   Covered by `dbrover-chart`'s tests of reading a split, stacking and the spec's problems,
   kittest tests of the toolbar and of blocks with `series` and `stack`, an SVG test, and a
   whole-app test of the exit on the shop: stacked bars on screen and in the exported SVG.
-- **CH3 — Charts from reports (M):** started on 2026-11-06, its decisions
+- **CH3 — Charts from reports (M):** built; started on 2026-11-06, its decisions
   [confirmed](charts-as-code.md#ch3-confirmed). A report's `[[chart]]`, drawn from its result
   or its own DuckDB `query`, written through the staging folder with the other files. Past a
   kind's row limit a run fails rather than draw part of the data, unless the chart sets
@@ -2466,6 +2466,29 @@ is added. It came after CI fixes, the reports track and W13.
   **Exit:** `dbrover report run sales-by-category` writes Excel, CSV and an SVG equal byte for
   byte to a checked-in one; 251 bars without `limit` exit with 5 and leave no file; the
   report's tab lists the chart with the other files.
+
+  **CH3 demo note:** built in #526 to #530 and the manual's layer, with a section,
+  [Charts](../book/src/reports.md#charts), in Reports. Make the shop from
+  `examples/reports/shop.sql` in a SQLite data source named `shop`, copy
+  `examples/reports/sales-by-category.toml` into the reports folder and run it for October
+  2026 (`2026-10-01` to `2026-11-01`). The tab names three files before the run, the Excel, the
+  CSV and `sales-by-category-2026-10.svg` with a chart icon, under "1 source · 3 files", and lists
+  all three once it finishes. The SVG is four bars, bikes, clothing, parts and accessories, the
+  largest first, titled "Net sales by category", with "Charting 4 rows" under them, drawn from
+  the chart's own `query` rather than the result's product and subtotal rows. `dbrover report
+  run sales-by-category -p since=2026-10-01 -p until=2026-11-01` prints the three paths and
+  writes an SVG equal byte for byte to `examples/reports/expected/sales-by-category-2026-10.svg`.
+  A chart of 251 bars without `limit` fails with "Failed in chart 1 (bars.svg): it draws bars, at
+  most 250 rows, and the result has 251", exits with 5 and leaves the output folder empty;
+  `limit = 250` draws the first 250 and says so. `fiel = "x.svg"` is underlined in the editor as
+  "chart 1: no key `fiel`; did you mean `file`?", and `query` in a report without `[combine]`
+  says to add one. Departures from the design: the font file's advances leave out kerning, so a
+  label of kerned capitals may sit up to 3% from where egui puts it; `query` was refused as an
+  unknown key until CH3e. Each is in [CH3 confirmed](charts-as-code.md#ch3-confirmed). Covered
+  by `dbrover-report`'s chart tests (reading, every problem, runs past each limit, no rows, a
+  chart's own query), `dbrover-chart`'s and `dbrover-picture`'s tests of the writer, the measure
+  and the number formatting, an app test of the tab, the engine's test of the example against
+  its checked-in SVG on every platform, and `dbrover report run`'s exit tests.
 - **CH4 — A chart for MCP clients (S):** a read-only `chart` tool that runs one query as `query`
   does, under its row limit, and returns a PNG (or SVG) of it.
 
