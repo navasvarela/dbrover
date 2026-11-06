@@ -1,0 +1,104 @@
+{
+  "doc": "The conformance walk of a Glue catalog with one database (and information_schema, hidden), a partitioned table and a view: listings from Athena's catalog API, and a query only for each definition.",
+  "exchanges": [
+    {
+      "operation": "GetWorkGroup",
+      "request": {"WorkGroup": "primary"},
+      "response": {"WorkGroup": {"Name": "primary", "Configuration": {
+        "ResultConfiguration": {"OutputLocation": "s3://dbrover-results/athena/"}}}}
+    },
+    {
+      "operation": "ListDataCatalogs",
+      "request": {"MaxResults": 50},
+      "response": {"DataCatalogsSummary": [
+        {"CatalogName": "AwsDataCatalog", "Type": "GLUE", "Status": "CREATE_COMPLETE"}
+      ]}
+    },
+    {
+      "operation": "ListDatabases",
+      "request": {"CatalogName": "AwsDataCatalog", "MaxResults": 50},
+      "response": {"DatabaseList": [
+        {"Name": "information_schema"},
+        {"Name": "sales", "Description": "Orders by day"}
+      ]}
+    },
+    {
+      "operation": "ListTableMetadata",
+      "request": {"CatalogName": "AwsDataCatalog", "DatabaseName": "sales", "MaxResults": 50},
+      "response": {"TableMetadataList": [
+        {"Name": "orders", "TableType": "EXTERNAL_TABLE", "CreateTime": 1.7e9,
+          "Columns": [{"Name": "id", "Type": "bigint"}, {"Name": "total", "Type": "decimal(10,2)"}],
+          "PartitionKeys": [{"Name": "dt", "Type": "string"}],
+          "Parameters": {"classification": "parquet", "EXTERNAL": "TRUE"}},
+        {"Name": "monthly", "TableType": "VIRTUAL_VIEW", "CreateTime": 1.7e9,
+          "Columns": [{"Name": "month", "Type": "varchar"}, {"Name": "total", "Type": "decimal(38,2)"}],
+          "PartitionKeys": [],
+          "Parameters": {"presto_view": "true"}}
+      ]}
+    },
+    {
+      "operation": "StartQueryExecution",
+      "request": {"QueryString": "SHOW CREATE TABLE sales.orders",
+        "QueryExecutionContext": {"Catalog": "AwsDataCatalog", "Database": "default"}},
+      "response": {"QueryExecutionId": "q-show-table"}
+    },
+    {
+      "operation": "GetQueryExecution",
+      "request": {"QueryExecutionId": "q-show-table"},
+      "response": {"QueryExecution": {"QueryExecutionId": "q-show-table", "StatementType": "DDL",
+        "Status": {"State": "SUCCEEDED"}, "Statistics": {"DataScannedInBytes": 0}}}
+    },
+    {
+      "operation": "GetQueryResults",
+      "request": {"QueryExecutionId": "q-show-table"},
+      "response": {"ResultSet": {
+        "ResultSetMetadata": {"ColumnInfo": [{"Name": "createtab_stmt", "Type": "string", "Precision": 0, "Scale": 0}]},
+        "Rows": [
+          {"Data": [{"VarCharValue": "CREATE EXTERNAL TABLE `sales`.`orders`("}]},
+          {"Data": [{"VarCharValue": "  `id` bigint, "}]},
+          {"Data": [{"VarCharValue": "  `total` decimal(10,2))"}]},
+          {"Data": [{"VarCharValue": "PARTITIONED BY ( "}]},
+          {"Data": [{"VarCharValue": "  `dt` string)"}]},
+          {"Data": [{"VarCharValue": "STORED AS PARQUET"}]},
+          {"Data": [{"VarCharValue": "LOCATION"}]},
+          {"Data": [{"VarCharValue": "  's3://dbrover-lake/sales/orders'"}]}
+        ]}}
+    },
+    {
+      "operation": "StartQueryExecution",
+      "request": {"QueryString": "SHOW CREATE VIEW sales.monthly"},
+      "response": {"QueryExecutionId": "q-show-view"}
+    },
+    {
+      "operation": "GetQueryExecution",
+      "request": {"QueryExecutionId": "q-show-view"},
+      "response": {"QueryExecution": {"QueryExecutionId": "q-show-view", "StatementType": "DDL",
+        "Status": {"State": "SUCCEEDED"}, "Statistics": {"DataScannedInBytes": 0}}}
+    },
+    {
+      "operation": "GetQueryResults",
+      "request": {"QueryExecutionId": "q-show-view"},
+      "response": {"ResultSet": {
+        "ResultSetMetadata": {"ColumnInfo": [{"Name": "Create View", "Type": "varchar", "Precision": 0, "Scale": 0}]},
+        "Rows": [
+          {"Data": [{"VarCharValue": "CREATE VIEW \"sales\".\"monthly\" AS"}]},
+          {"Data": [{"VarCharValue": "SELECT substr(dt, 1, 7) month, sum(total) total FROM sales.orders GROUP BY 1"}]}
+        ]}}
+    },
+    {
+      "operation": "GetTableMetadata",
+      "request": {"CatalogName": "AwsDataCatalog", "DatabaseName": "sales", "TableName": "orders"},
+      "response": {"TableMetadata": {"Name": "orders", "TableType": "EXTERNAL_TABLE",
+        "Columns": [{"Name": "id", "Type": "bigint"}, {"Name": "total", "Type": "decimal(10,2)", "Comment": "with tax"}],
+        "PartitionKeys": [{"Name": "dt", "Type": "string"}],
+        "Parameters": {"classification": "parquet"}}}
+    },
+    {
+      "operation": "GetTableMetadata",
+      "request": {"CatalogName": "AwsDataCatalog", "DatabaseName": "sales", "TableName": "monthly"},
+      "response": {"TableMetadata": {"Name": "monthly", "TableType": "VIRTUAL_VIEW",
+        "Columns": [{"Name": "month", "Type": "varchar"}, {"Name": "total", "Type": "decimal(38,2)"}],
+        "PartitionKeys": []}}
+    }
+  ]
+}

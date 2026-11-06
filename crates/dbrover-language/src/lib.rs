@@ -357,13 +357,15 @@ impl QueryLanguage {
 
     /// What **Open data** runs on the catalog object at `path`, for a language that reads a
     /// table or index whole in its own words: PartiQL's `SELECT *` of a DynamoDB table or of
-    /// one of its indexes, and DuckDB's of a file in a bucket (C2), by its address. `None` for
-    /// any other object, and for the languages whose objects the app reads by their kind
-    /// (SQL's tables, Redis's keys, MongoDB's collections and search indices).
+    /// one of its indexes, DuckDB's of a file in a bucket (C2), by its address, and Trino's of
+    /// a table by its catalog, schema and name, limited (C3). `None` for any other object, and
+    /// for the languages whose objects the app reads by their kind (SQL's tables, Redis's keys,
+    /// MongoDB's collections and search indices).
     pub fn read_all(self, path: &CatalogPath) -> Option<String> {
         match self {
             Self::PartiQl => partiql::read_all(path),
             Self::Sql(Dialect::DuckDb) => read_object(path),
+            Self::Sql(Dialect::Trino) => read_catalog_table(path),
             Self::Sql(_) | Self::Redis | Self::Mongo | Self::Search => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
@@ -491,11 +493,59 @@ fn read_object(path: &CatalogPath) -> Option<String> {
     Some(format!("SELECT * FROM {};", object_source(path)?))
 }
 
+/// How many rows **Open data** asks Athena or Trino for: two of the console's pages. Athena
+/// runs a query to its end whatever the console reads, and bills what it scanned, so a table's
+/// rows are never read whole unasked (`docs/cloud-data.md`, C3); a `LIMIT` also lets it stop
+/// reading files early. Trino would stop when the console stops reading, but both engines
+/// share the dialect, and the limit is as useful to see what a table holds.
+const OPEN_DATA_LIMIT: usize = 1000;
+
+/// `SELECT *` of the table or view at `path` by its catalog, schema and name, as Athena's and
+/// Trino's explorers list them, with [`OPEN_DATA_LIMIT`].
+fn read_catalog_table(path: &CatalogPath) -> Option<String> {
+    let object = path.last()?;
+    if !matches!(object.kind, NodeKind::Table | NodeKind::View) {
+        return None;
+    }
+    let quoting = Dialect::Trino.quoting();
+    let name = [
+        path.name_of(NodeKind::Database)?,
+        path.name_of(NodeKind::Schema)?,
+        &object.name,
+    ]
+    .map(|name| quoting.identifier_if_needed(name))
+    .join(".");
+    Some(format!("SELECT * FROM {name} LIMIT {OPEN_DATA_LIMIT};"))
+}
+
 #[cfg(test)]
 mod tests {
     use dbrover_core::{ObjectKind, TableFormat};
 
     use super::*;
+
+    #[test]
+    fn trino_opens_a_table_by_its_three_names_and_a_limit() {
+        let schema = CatalogPath::root()
+            .child(NodeKind::Database, "AwsDataCatalog")
+            .child(NodeKind::Schema, "sales");
+        let trino = QueryLanguage::Sql(Dialect::Trino);
+        let cases = [
+            (
+                schema.child(NodeKind::Table, "orders"),
+                Some("SELECT * FROM \"AwsDataCatalog\".sales.orders LIMIT 1000;"),
+            ),
+            (
+                schema.child(NodeKind::View, "Monthly Totals"),
+                Some("SELECT * FROM \"AwsDataCatalog\".sales.\"Monthly Totals\" LIMIT 1000;"),
+            ),
+            (schema.child(NodeKind::Column, "id"), None),
+            (schema.clone(), None),
+        ];
+        for (path, expected) in cases {
+            assert_eq!(trino.read_all(&path).as_deref(), expected, "{path}");
+        }
+    }
 
     #[test]
     fn duckdb_opens_a_file_or_table_in_a_bucket_by_its_address() {

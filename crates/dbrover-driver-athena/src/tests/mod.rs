@@ -4,8 +4,8 @@
 mod replay;
 
 use dbrover_core::{
-    AthenaConfig, AwsSignInKind, ByteCount, Connection, DriverError, JobProgress, conformance,
-    describe_error,
+    AthenaConfig, AwsSignInKind, ByteCount, CatalogPath, ChildrenQuery, Connection, DriverError,
+    JobProgress, NodeKind, PageToken, conformance, describe_error,
 };
 
 use self::replay::Replay;
@@ -201,6 +201,78 @@ async fn connecting_says_what_is_missing() {
         describe_error(&error).contains("set an output location"),
         "{error:?}"
     );
+    replay.finish();
+}
+
+#[tokio::test]
+async fn the_explorer_walks_the_glue_catalog_from_athenas_catalog_api() {
+    let replay = Replay::start(include_str!("exchanges/catalog.json")).await;
+    let mut connection = connected(&config(&replay)).await;
+    let visited = conformance::walk_catalog(&mut connection, 4).await;
+    let shown: Vec<(String, Option<&str>, bool)> = visited
+        .iter()
+        .map(|node| (node.path.to_string(), node.detail.as_deref(), node.system))
+        .collect();
+    let lines: Vec<String> = shown
+        .iter()
+        .map(|(path, detail, system)| format!("{path} {detail:?} {system}"))
+        .collect();
+    let expected = [
+        "/AwsDataCatalog Some(\"Glue\") false",
+        "/AwsDataCatalog/information_schema None true",
+        "/AwsDataCatalog/sales None false",
+        "/AwsDataCatalog/sales/orders Some(\"parquet\") false",
+        "/AwsDataCatalog/sales/monthly None false",
+        "/AwsDataCatalog/sales/orders/id Some(\"bigint\") false",
+        "/AwsDataCatalog/sales/orders/total Some(\"decimal(10,2)\") false",
+        "/AwsDataCatalog/sales/orders/dt Some(\"string, partition key\") false",
+        "/AwsDataCatalog/sales/monthly/month Some(\"varchar\") false",
+        "/AwsDataCatalog/sales/monthly/total Some(\"decimal(38,2)\") false",
+    ];
+    assert_eq!(lines, expected);
+    assert_eq!(visited[4].kind(), Some(NodeKind::View));
+    conformance::check_invalid_path(&mut connection).await;
+    replay.finish();
+}
+
+#[tokio::test]
+async fn a_level_of_tables_pages_and_filters_on_athena() {
+    let replay = Replay::start(include_str!("exchanges/tables-paged.json")).await;
+    let mut connection = connected(&config(&replay)).await;
+    let sales = CatalogPath::root()
+        .child(NodeKind::Database, "AwsDataCatalog")
+        .child(NodeKind::Schema, "sales");
+    let labels = |page: &dbrover_core::ChildrenPage| -> Vec<String> {
+        page.nodes.iter().map(|node| node.label.clone()).collect()
+    };
+
+    // The explorer's first page: every request of fifty until Athena has no more.
+    let whole = connection
+        .children_page(&sales, &ChildrenQuery::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        labels(&whole),
+        ["customers", "events", "orders", "order_lines", "returns"]
+    );
+    assert_eq!(whole.next, None);
+    assert_eq!(whole.nodes[1].detail.as_deref(), Some("Iceberg"));
+
+    // Three at a time: the second request asks only for what is still wanted.
+    let three = ChildrenQuery {
+        limit: Some(3),
+        ..ChildrenQuery::default()
+    };
+    let page = connection.children_page(&sales, &three).await.unwrap();
+    assert_eq!(labels(&page), ["customers", "events", "orders"]);
+    assert_eq!(page.next, Some(PageToken::new("t2b")));
+
+    // The filter goes to Athena as an expression.
+    let filtered = connection
+        .children_page(&sales, &ChildrenQuery::first_page(Some("ORDER".to_owned())))
+        .await
+        .unwrap();
+    assert_eq!(labels(&filtered), ["orders", "order_lines"]);
     replay.finish();
 }
 

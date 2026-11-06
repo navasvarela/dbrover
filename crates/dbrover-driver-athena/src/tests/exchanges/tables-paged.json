@@ -1,0 +1,57 @@
+{
+  "doc": "A database's tables in pages Athena ends early, as it may: the explorer's thousand in three requests, then three at a time, then filtered by Athena's expression.",
+  "exchanges": [
+    {
+      "operation": "GetWorkGroup",
+      "request": {"WorkGroup": "primary"},
+      "response": {"WorkGroup": {"Name": "primary", "Configuration": {
+        "ResultConfiguration": {"OutputLocation": "s3://dbrover-results/athena/"}}}}
+    },
+    {
+      "operation": "ListTableMetadata",
+      "request": {"CatalogName": "AwsDataCatalog", "DatabaseName": "sales", "MaxResults": 50},
+      "response": {"NextToken": "t2", "TableMetadataList": [
+        {"Name": "customers", "TableType": "EXTERNAL_TABLE", "Parameters": {"classification": "csv"}},
+        {"Name": "events", "TableType": "EXTERNAL_TABLE", "Parameters": {"table_type": "ICEBERG"}}
+      ]}
+    },
+    {
+      "operation": "ListTableMetadata",
+      "request": {"CatalogName": "AwsDataCatalog", "DatabaseName": "sales", "MaxResults": 50, "NextToken": "t2"},
+      "response": {"NextToken": "t3", "TableMetadataList": [
+        {"Name": "orders", "TableType": "EXTERNAL_TABLE", "Parameters": {"classification": "parquet"}},
+        {"Name": "order_lines", "TableType": "EXTERNAL_TABLE", "Parameters": {"classification": "parquet"}}
+      ]}
+    },
+    {
+      "operation": "ListTableMetadata",
+      "request": {"CatalogName": "AwsDataCatalog", "DatabaseName": "sales", "MaxResults": 50, "NextToken": "t3"},
+      "response": {"TableMetadataList": [
+        {"Name": "returns", "TableType": "EXTERNAL_TABLE"}
+      ]}
+    },
+    {
+      "operation": "ListTableMetadata",
+      "request": {"CatalogName": "AwsDataCatalog", "DatabaseName": "sales", "MaxResults": 3},
+      "response": {"NextToken": "t2", "TableMetadataList": [
+        {"Name": "customers", "TableType": "EXTERNAL_TABLE"},
+        {"Name": "events", "TableType": "EXTERNAL_TABLE"}
+      ]}
+    },
+    {
+      "operation": "ListTableMetadata",
+      "request": {"CatalogName": "AwsDataCatalog", "DatabaseName": "sales", "MaxResults": 1, "NextToken": "t2"},
+      "response": {"NextToken": "t2b", "TableMetadataList": [
+        {"Name": "orders", "TableType": "EXTERNAL_TABLE"}
+      ]}
+    },
+    {
+      "operation": "ListTableMetadata",
+      "request": {"CatalogName": "AwsDataCatalog", "DatabaseName": "sales", "Expression": ".*order.*"},
+      "response": {"TableMetadataList": [
+        {"Name": "orders", "TableType": "EXTERNAL_TABLE"},
+        {"Name": "order_lines", "TableType": "EXTERNAL_TABLE"}
+      ]}
+    }
+  ]
+}

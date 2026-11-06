@@ -6,6 +6,7 @@
 //! progress handles are [`Jobs`]'s. Athena keeps no session and runs no transactions, so a
 //! connection is a client, signed in through `dbrover-cloud`'s AWS sign-in.
 
+mod catalog;
 mod errors;
 mod jobs;
 mod results;
@@ -19,10 +20,12 @@ use async_trait::async_trait;
 use aws_sdk_athena::Client;
 use dbrover_cloud::aws::AwsSignIn;
 use dbrover_core::{
-    AthenaConfig, CancelHandle, CatalogNode, CatalogPath, Connection, DriverError, Jobs,
-    ProgressHandle, Rejection, RelationName, ResultCursor, ServerInfo, TableConstraints,
-    TableDescription, TableName, TransactionStatus,
+    AthenaConfig, CancelHandle, CatalogNode, CatalogPath, ChildrenPage, ChildrenQuery, Connection,
+    DriverError, Jobs, ProgressHandle, Rejection, RelationName, ResultCursor, ServerInfo,
+    TableConstraints, TableDescription, TableName, TransactionStatus,
 };
+
+use crate::catalog::Lister;
 
 use crate::jobs::{AthenaJobs, QueryPlace};
 use crate::workgroup::Workgroup;
@@ -64,6 +67,7 @@ pub async fn connect(config: &AthenaConfig) -> Result<AthenaConnection, DriverEr
     let jobs = Jobs::new(Arc::new(AthenaJobs::new(client.clone(), place)));
     Ok(AthenaConnection {
         client,
+        catalog: config.catalog.clone(),
         workgroup_name: config.workgroup.clone(),
         server_info,
         jobs,
@@ -79,12 +83,26 @@ fn sign_in(config: &AthenaConfig) -> AwsSignIn {
     )
 }
 
+/// How many lines of a definition to read a page: as many as `GetQueryResults` returns.
+const DEFINITION_PAGE_ROWS: usize = 1000;
+
 /// A console's or the explorer's connection to Athena in one region and workgroup.
 pub struct AthenaConnection {
     client: Client,
+    /// The catalog the data source's queries run in.
+    catalog: String,
     workgroup_name: String,
     server_info: ServerInfo,
     jobs: Arc<Jobs>,
+}
+
+impl AthenaConnection {
+    fn lister(&self) -> Lister<'_> {
+        Lister {
+            client: &self.client,
+            own_catalog: &self.catalog,
+        }
+    }
 }
 
 #[async_trait]
@@ -101,18 +119,36 @@ impl Connection for AthenaConnection {
             .map_err(errors::connection)
     }
 
-    // TODO(C3d): the Glue Data Catalog's catalogs, databases, tables and columns. Until then
-    // the explorer shows the data source with nothing under it.
+    /// The level's first thousand nodes, which is twenty of Athena's requests: the explorer
+    /// pages through the rest with [`Connection::children_page`].
     async fn children(&mut self, path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError> {
-        if path.segments().is_empty() {
-            Ok(Vec::new())
-        } else {
-            Err(DriverError::InvalidPath(path.clone()))
-        }
+        let page = self.children_page(path, &ChildrenQuery::default()).await?;
+        Ok(page.nodes)
     }
 
+    async fn children_page(
+        &mut self,
+        path: &CatalogPath,
+        query: &ChildrenQuery,
+    ) -> Result<ChildrenPage, DriverError> {
+        self.lister().page(path, query).await
+    }
+
+    /// `SHOW CREATE TABLE` or `SHOW CREATE VIEW`, run as a query, whose rows are the lines of
+    /// the definition.
     async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError> {
-        Err(DriverError::InvalidPath(path.clone()))
+        let statement = catalog::definition_statement(path, &self.catalog)?;
+        let mut cursor = self.jobs.execute(&statement).await?;
+        let mut lines = Vec::new();
+        while !cursor.is_exhausted() {
+            let rows = cursor.next_page(DEFINITION_PAGE_ROWS).await?;
+            lines.extend(
+                rows.into_iter()
+                    .filter_map(|row| row.into_iter().next().flatten()),
+            );
+        }
+        cursor.finish().await?;
+        Ok(lines.join("\n"))
     }
 
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError> {
