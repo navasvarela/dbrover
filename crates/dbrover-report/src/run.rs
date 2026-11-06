@@ -3,12 +3,14 @@
 //! "Guardrails in RP1").
 //!
 //! 1. Map each output's schema onto the source's columns, and start its file under a partial
-//!    name in the run's staging folder.
+//!    name in the run's staging folder; start each chart.
 //! 2. For each page: count it against the source's caps, keep the preview's rows, convert it
-//!    for each output and count that against the output's caps, then write it.
-//! 3. Once the source has no more rows, complete every file, and only then put them all in
-//!    place, so a run that fails anywhere leaves no file behind and replaces none. The staging
-//!    folder goes with the run, and whoever started a run that was killed removes it.
+//!    for each output and count that against the output's caps, then write it; give it to each
+//!    chart, which keeps what it may draw.
+//! 3. Once the source has no more rows, complete every file, draw every chart into the staging
+//!    folder, and only then put them all in place, so a run that fails anywhere leaves no file
+//!    behind and replaces none. The staging folder goes with the run, and whoever started a run
+//!    that was killed removes it.
 
 use std::future::Future;
 use std::path::Path;
@@ -21,6 +23,7 @@ use dbrover_export::{
 
 use dbrover_sql::ParameterValues;
 
+use crate::chart::ChartRun;
 use crate::declared::Shaped;
 use crate::statement::Statements;
 use crate::{
@@ -237,6 +240,7 @@ impl<'a> Outputs<'a> {
             folders,
         } = self;
         let mut outputs = start_outputs(plan, values, reader.columns(), folders)?;
+        let mut charts = start_charts(plan, values, reader.columns());
         let step = feed.step();
         let mut read = Count::default();
         let mut preview = Preview {
@@ -270,6 +274,9 @@ impl<'a> Outputs<'a> {
             {
                 break Err(failure);
             }
+            if let Err(failure) = charts.iter_mut().try_for_each(|chart| chart.add(&page)) {
+                break Err(failure);
+            }
             if last_progress.elapsed() >= PROGRESS_EVERY {
                 last_progress = Instant::now();
                 events(RunEvent::Progress {
@@ -287,25 +294,41 @@ impl<'a> Outputs<'a> {
         }
         Ok(Streamed {
             outputs,
+            charts,
+            folders,
             read,
             preview,
         })
     }
 }
 
-/// Every row written to every output, whose files wait under their partial names.
+/// Every row written to every output, whose files wait under their partial names, and given
+/// to every chart.
 pub(crate) struct Streamed<'a> {
     outputs: Vec<OutputRun<'a>>,
+    charts: Vec<ChartRun<'a>>,
+    folders: RunFolders<'a>,
     /// What the feed returned.
     pub(crate) read: Count,
     preview: Preview,
 }
 
 impl Streamed<'_> {
-    /// Completes every file and puts them all in place, sending the preview and each file.
+    /// Completes every file, draws every chart, and puts them all in place, sending the preview
+    /// and each file.
     pub(crate) fn finish(self, events: &mut dyn FnMut(RunEvent)) -> Result<RunSummary, RunFailure> {
         events(RunEvent::Preview(self.preview));
-        let files = put_in_place(complete_outputs(self.outputs)?)?;
+        let mut completed = complete_outputs(self.outputs)?;
+        for chart in self.charts {
+            match chart.draw(self.folders) {
+                Ok(drawn) => completed.push(drawn),
+                Err(failure) => {
+                    completed.into_iter().for_each(|done| done.file.abandon());
+                    return Err(failure);
+                }
+            }
+        }
+        let files = put_in_place(completed)?;
         for file in &files {
             events(RunEvent::OutputWritten(file.clone()));
         }
@@ -491,6 +514,20 @@ fn start_outputs<'a>(
     Ok(started)
 }
 
+/// A chart for each `[[chart]]`, reading the rows with `columns`.
+fn start_charts<'a>(
+    plan: &'a Plan,
+    values: &RunValues,
+    columns: &[ExportColumn],
+) -> Vec<ChartRun<'a>> {
+    plan.charts
+        .iter()
+        .zip(&values.charts)
+        .enumerate()
+        .map(|(index, (chart, file))| ChartRun::new(index + 1, chart, file, columns))
+        .collect()
+}
+
 impl OutputRun<'_> {
     fn step(&self) -> Step {
         Step::Output {
@@ -581,14 +618,14 @@ impl OutputRun<'_> {
     }
 }
 
-/// An output whose file is complete, still under its partial name.
-struct Completed {
-    step: Step,
-    rows: u64,
-    warnings: Vec<String>,
+/// An output's or a chart's file, complete, still under its partial name.
+pub(crate) struct Completed {
+    pub(crate) step: Step,
+    pub(crate) rows: u64,
+    pub(crate) warnings: Vec<String>,
     /// The time spent in its writer, completing the file included.
-    busy: Duration,
-    file: CompletedFile,
+    pub(crate) busy: Duration,
+    pub(crate) file: CompletedFile,
 }
 
 fn complete_outputs(outputs: Vec<OutputRun<'_>>) -> Result<Vec<Completed>, RunFailure> {
@@ -640,6 +677,6 @@ fn put_in_place(completed: Vec<Completed>) -> Result<Vec<WrittenFile>, RunFailur
 }
 
 /// An error and its causes, as one sentence.
-fn describe(error: &(dyn std::error::Error + 'static)) -> String {
+pub(crate) fn describe(error: &(dyn std::error::Error + 'static)) -> String {
     dbrover_core::describe_error(error)
 }

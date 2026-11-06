@@ -205,6 +205,13 @@ pub enum Step {
         number: usize,
         file: String,
     },
+    /// A `[[chart]]`: reading its rows, drawing it and writing its file
+    /// (`docs/charts-as-code.md`, CH3).
+    Chart {
+        /// Counted from 1, as the report's problems count them.
+        number: usize,
+        file: String,
+    },
     /// The worker process itself: it couldn't start, ran out of time, or stopped.
     Worker,
 }
@@ -216,6 +223,7 @@ impl std::fmt::Display for Step {
             Self::Source { id } => write!(f, "source {id:?}"),
             Self::Combine => f.write_str("the combine step"),
             Self::Output { number, file } => write!(f, "output {number} ({file})"),
+            Self::Chart { number, file } => write!(f, "chart {number} ({file})"),
             Self::Worker => f.write_str("the worker"),
         }
     }
@@ -250,6 +258,13 @@ pub enum LimitSetIn {
 /// The key a run stops at past an Excel sheet's rows, which is Excel's limit, not DbRover's.
 const EXCEL_ROWS_KEY: &str = "continue_on_new_sheet";
 
+/// The key a run stops at past the rows a chart's kind draws, which `limit` cuts to the first
+/// ones; no default in Settings raises it.
+pub(crate) const CHART_ROWS_KEY: &str = "limit";
+
+/// The key a run stops at past a chart's colours, one a series; nothing raises it.
+pub(crate) const CHART_SERIES_KEY: &str = "series";
+
 impl LimitHit {
     /// What to change to let the run go further, as the report's tab and `dbrover report run`
     /// say it.
@@ -260,6 +275,19 @@ impl LimitHit {
             raise_in,
             set_in,
         } = self;
+        if key == CHART_ROWS_KEY {
+            return format!(
+                "It stopped at {value}, the most a chart of its kind draws. Group the rows in \
+                 the query, or set limit in {raise_in} of the report's file to draw the first \
+                 ones."
+            );
+        }
+        if key == CHART_SERIES_KEY {
+            return format!(
+                "It stopped at {value}, one a colour. Group or filter the series' values in \
+                 the query, so {raise_in} has fewer."
+            );
+        }
         if key == EXCEL_ROWS_KEY {
             return format!(
                 "It stopped at {value}. To go on in a new sheet, set {key} = true in {raise_in} \

@@ -250,6 +250,28 @@ pub struct CompletedFile {
 }
 
 impl CompletedFile {
+    /// Writes `bytes`, a file made whole in memory such as a report's chart, under a partial
+    /// name in `staging`, to be put in place as `path` with the files streamed beside it.
+    ///
+    /// # Errors
+    ///
+    /// [`ExportError`] if the file can't be written; what was written is removed.
+    pub fn staged(path: &Path, staging: &Path, bytes: &[u8]) -> Result<Self, ExportError> {
+        let partial = staging.join(partial_name(path));
+        fs::write(&partial, bytes).map_err(|source| {
+            // Nothing more can be done about a partial file that won't go.
+            let _ = fs::remove_file(&partial);
+            ExportError {
+                path: path.to_owned(),
+                source,
+            }
+        })?;
+        Ok(Self {
+            path: path.to_owned(),
+            partial,
+        })
+    }
+
     /// The file it will be put in place as.
     pub fn path(&self) -> &Path {
         &self.path

@@ -56,7 +56,9 @@ impl Outcome {
             (_, true) => Self::Guardrail,
             (Step::Report, false) => Self::Report,
             (Step::Source { .. }, false) => Self::Source,
-            (Step::Combine | Step::Output { .. } | Step::Worker, false) => Self::Failed,
+            (Step::Combine | Step::Output { .. } | Step::Chart { .. } | Step::Worker, false) => {
+                Self::Failed
+            }
         }
     }
 }
@@ -90,6 +92,13 @@ mod tests {
         }
     }
 
+    fn chart() -> Step {
+        Step::Chart {
+            number: 1,
+            file: "net.svg".to_owned(),
+        }
+    }
+
     fn output() -> Step {
         Step::Output {
             number: 1,
@@ -103,12 +112,14 @@ mod tests {
             (RunEvent::Finished { elapsed_ms: 5 }, 0),
             (failed(Step::Combine), 1),
             (failed(output()), 1),
+            (failed(chart()), 1),
             (failed(Step::Worker), 1),
             (failed(Step::Report), 3),
             (failed(source()), 4),
             (at_limit(source()), 5),
             (at_limit(Step::Combine), 5),
             (at_limit(output()), 5),
+            (at_limit(chart()), 5),
             (at_limit(Step::Worker), 6),
             (RunEvent::Cancelled, 6),
         ];

@@ -62,6 +62,38 @@ impl ChartSpec {
         })
     }
 
+    /// Whether every column the spec names is one of `columns`, by its exact name, without
+    /// asking what the columns hold: for a result with no rows, whose columns' roles a chart
+    /// can't read.
+    ///
+    /// # Errors
+    ///
+    /// Every column the spec names that `columns` doesn't have, or has twice.
+    pub fn check_names(&self, columns: &[Column]) -> Result<(), Vec<ColumnProblem>> {
+        let finder = Finder {
+            columns,
+            roles: &[],
+        };
+        let sort = self
+            .sort
+            .as_ref()
+            .map(|sort| ("sort", sort.column.as_str()));
+        let problems: Vec<ColumnProblem> = self
+            .x
+            .iter()
+            .map(|name| ("x", name.as_str()))
+            .chain(self.y.iter().map(|name| ("y", name.as_str())))
+            .chain(self.series.iter().map(|name| ("series", name.as_str())))
+            .chain(sort)
+            .filter_map(|(key, name)| finder.find(key, name).err())
+            .collect();
+        if problems.is_empty() {
+            Ok(())
+        } else {
+            Err(problems)
+        }
+    }
+
     /// The spec's titles and Y axis, which name no column and so hold whatever the result.
     pub fn layout_options(&self) -> LayoutOptions {
         LayoutOptions {
@@ -705,5 +737,24 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[test]
+    fn checks_the_names_alone_for_a_result_without_rows() {
+        let spec = ChartSpec {
+            x: Some("month".to_owned()),
+            y: vec!["nett".to_owned(), "category".to_owned()],
+            ..ChartSpec::default()
+        };
+        let problems = spec.check_names(&columns(&NAMES)).unwrap_err();
+
+        assert_eq!(
+            problems
+                .iter()
+                .map(|problem| problem.detail.as_str())
+                .collect::<Vec<_>>(),
+            ["`y = \"nett\"` isn't a column of this result: month, category, net, orders"]
+        );
+        assert_eq!(ChartSpec::default().check_names(&[]), Ok(()));
     }
 }
