@@ -594,7 +594,7 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
     `az login`, a private endpoint and a public container; Iceberg and Delta tables written by
     Spark, Glue, Snowflake or Databricks; and a MotherDuck database with a token, read-only
     too.
-- **C3 — Athena and Trino** (started 2026-11-05, after C2): Athena over AWS's API with C0's
+- **C3 — Athena and Trino** (built, in nine layers, 2026-11-05, after C2): Athena over AWS's API with C0's
   AWS sign-in, the Glue Data Catalog in the explorer, the bytes each query scanned and a
   per-query limit; then Trino over its HTTP protocol, for Starburst and Presto too, with the
   same dialect. Planned in [Cloud and big data](cloud-data.md#c3--athena-and-trino). Rows come
@@ -627,6 +627,40 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
 
   **Exit:** Athena tested with replayed exchanges in CI and tried live by the user; the
   conformance suite against Trino's container in the nightly job.
+
+  **C3 demo note:** the parts that need no cloud account first.
+  - *Trino:* run `docker compose --profile nightly up -d --wait trino` (1.04 GB to download the
+    first time), add a **Trino / Presto** data source on `localhost`, port `58080`, user
+    `dbrover`, **Catalog** `memory`, **Schema** `default`. The explorer shows **memory** and
+    **tpch** (tick **System** for **system**); under **tpch › tiny › nation** are its columns,
+    and **Open data** runs `SELECT * FROM tpch.tiny.nation LIMIT 1000`. In a console, type
+    `SELECT * FROM nation_x`: it is underlined as an unknown table before it runs. Run
+    `SELECT sum(quantity) FROM tpch.sf1000.lineitem`: the status line counts rows and bytes
+    read, and ⌘. stops it. `USE tpch.tiny`, then `SELECT count(*) FROM nation` gives 25;
+    after `CREATE TABLE t (regionkey bigint, name varchar)`, `INSERT INTO t SELECT regionkey,
+    name FROM tpch.tiny.region` says 5 rows affected.
+  - *Athena's dialog:* **New data source › Amazon Web Services › Amazon Athena** opens a dialog
+    with **Sign in with**, **Profile**, **Region**, **Workgroup** (hint `primary`), **Catalog**
+    (`AwsDataCatalog`), **Database** (`default`), **Output location** and **Stop queries
+    above**. `5O` in the last is refused when saving, `0.5` saves as `ask_above_bytes =
+    500000000`. Without an account it can't connect; its driver's tests replay Athena's
+    exchanges.
+  - *Starburst Galaxy:* **Other cloud services › Starburst Galaxy** opens Trino's dialog on 443
+    with `verify-full` and the note on its user.
+  - *By hand, with real accounts* (not tried while building C3), as the manual's page lists:
+    - Athena: `DBROVER_TEST_ATHENA_LIVE=profile,region,workgroup[,s3://bucket/prefix/] cargo
+      test -p dbrover-driver-athena live_athena -- --ignored` runs the driver's own checks
+      (the header row, `NULL` and empty text, an error's place, cancel). Then in the app:
+      browse a Glue database with a partitioned table, an Iceberg table and a view, **Show
+      definition** of each, **Open data**; run a query and see `· … read` after it; set **Stop
+      queries above** to `0.01` on a workgroup without a limit and run a query over a large
+      table, which stops; and on a workgroup with its own limit, see Test connection name it.
+      Check whether bytes scanned grow while a query runs, and an `INSERT`'s row count. Any
+      answer that differs from the replayed exchanges goes into
+      `crates/dbrover-driver-athena/src/tests/exchanges/`.
+    - Starburst Galaxy: a cluster with a user and password over HTTPS, a catalog of its own.
+    - Starburst Enterprise and Presto (`prestodb/presto`), with **Protocol** set to Presto for
+      the latter: connect, browse, run, cancel.
 - **C4 — BigQuery**, over its jobs API, with a dry run showing the bytes a query will scan.
 - **C5 — Snowflake**, over its SQL API.
 - **C6 — Databricks SQL**, over the Statement Execution API and Unity Catalog.

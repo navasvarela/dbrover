@@ -19,6 +19,7 @@
   - [ClickHouse Cloud](clickhouse-cloud.md)
 - [Object storage and MotherDuck](object-storage.md)
 - [DynamoDB](dynamodb.md)
+- [Athena and Trino](athena-trino.md)
 - [Moving data sources to another machine](sharing.md)
 
 # Browsing and changing databases
