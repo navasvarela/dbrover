@@ -1,5 +1,6 @@
 //! Charts from results (W12), driven through the whole app against the PostgreSQL test server,
-//! and a chart in a query's text (CH1) against the SQLite shop of the example reports.
+//! and a chart in a query's text (CH1) and its series and stacked bars (CH2) against the SQLite
+//! shop of the example reports.
 
 use dbrover_chart::{Drawing, Mark};
 
@@ -263,4 +264,82 @@ fn a_chart_block_opens_its_chart_and_save_to_query_writes_it_back() {
         &mut harness,
         "chart: `y = \"nett\"` isn't a column of this result: month, net",
     );
+}
+
+/// Net sales by month and category on the shop: the usual `GROUP BY` shape, not pivoted.
+const SHOP_BY_CATEGORY: &str = "-- [chart]
+-- kind = \"bars\"
+-- x = \"month\"
+-- y = \"net\"
+-- series = \"category\"
+-- stack = true
+SELECT strftime('%Y-%m', l.ordered_on) AS month, p.category, SUM(l.amount) AS net
+FROM order_lines l JOIN products p ON p.id = l.product_id
+GROUP BY month, p.category ORDER BY month, p.category;";
+
+/// CH2's exit: `GROUP BY month, category` draws as stacked bars per category, with no pivot in
+/// the query, on screen and exported as SVG.
+#[test]
+fn group_by_month_and_category_draws_stacked_bars_and_exports_them() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(dir.path(), SHOP);
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    console_with(&mut harness, "shop", SHOP_BY_CATEGORY);
+    harness.get_by_label("Run").click();
+    step_until(&mut harness, "the stacked chart", |harness| {
+        shown_chart(harness).is_some()
+    });
+    let drawing = shown_chart(&harness).unwrap();
+    let pieces: Vec<dbrover_chart::Rect> = drawing
+        .marks
+        .iter()
+        .filter_map(|mark| match mark {
+            Mark::Rect {
+                rect,
+                rounded: false,
+                ..
+            } => Some(*rect),
+            _ => None,
+        })
+        .collect();
+    let lefts: std::collections::BTreeSet<i64> = pieces
+        .iter()
+        .map(|rect| (rect.min.x * 100.0).round() as i64)
+        .collect();
+    assert_eq!(lefts.len(), 3, "a bar for each of three months: {pieces:?}");
+    assert!(pieces.len() > lefts.len(), "each bar in pieces: {pieces:?}");
+    let (_, _, texts) = marks(&drawing);
+    for category in ["accessories", "bikes", "clothing", "parts"] {
+        assert!(
+            texts.contains(&category.to_owned()),
+            "{category} in {texts:?}"
+        );
+    }
+    harness.get_by_value("Series: category");
+
+    let pictures = dir.path().join("pictures");
+    std::fs::create_dir_all(&pictures).unwrap();
+    let answer = pictures.clone();
+    harness.state_mut().pick_picture =
+        Box::new(move |name, format| Some(answer.join(format!("{name}.{}", format.extension()))));
+    harness.get_by_label("Export").click();
+    harness.run_steps(2);
+    harness.get_by_label("SVG…").click();
+    let file = pictures.join("net by month.svg");
+    step_until_visible(&mut harness, &format!("Exported to {}", file.display()));
+    let svg = std::fs::read_to_string(&file).unwrap();
+    let square = svg
+        .lines()
+        .filter(|line| {
+            line.starts_with("<rect x=") && !line.contains(" rx=") && !line.contains("100%")
+        })
+        .count();
+    assert_eq!(square, pieces.len(), "{svg}");
+    for category in ["accessories", "bikes", "clothing", "parts"] {
+        assert!(
+            svg.contains(&format!(">{category}</text>")),
+            "{category} in the SVG"
+        );
+    }
 }

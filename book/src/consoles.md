@@ -533,6 +533,16 @@ For documents, **Chart** comes after **Tree** and **JSON**.
 - **X** picks the column along the bottom, from any column. **Y** ticks the columns of
   numbers measured up the side. Each is a series in a colour of its own, with a legend once
   there are two.
+- **Series** picks a column whose values split Y into a series each, so a result in the usual
+  `GROUP BY month, category` shape charts a series per category with no pivot in the query. Y
+  is then one column. The series come in the order their values first appear, at most eight,
+  one per colour; the line under the chart names the values left out past the eighth. A month
+  with no row for a category is a gap in that category, not a zero. Where two rows have the
+  same month and category, the first is charted and the line under the chart counts the
+  others.
+- **Stacked**, for bars of several series (a **Series** column, or two Ys or more), draws one bar
+  per X with its series' values stacked on each other: positive values up from zero, negative
+  ones down from it. Hovering a bar shows each part and the total.
 - **What it starts with:** X is the first column of dates or text, and Y every other column of
   numbers, up to eight. A month written as text (`to_char(day, 'YYYY-MM')`) starts as bars, a
   date or timestamp (`date_trunc('month', day)`) as a line, and two columns of numbers as a
@@ -594,7 +604,9 @@ says.
 | --- | --- | --- |
 | `kind` | `"bars"`, `"lines"` or `"scatter"` | lines over dates, a scatter over numbers, bars over text |
 | `x` | a column's name | the first column of dates or text |
-| `y` | a column's name, or a list of them: `["net", "refunds"]` | every other column of numbers, up to eight |
+| `y` | a column's name, or a list of them: `["net", "refunds"]` | every other column of numbers, up to eight; with `series`, the first |
+| `series` | a column's name, whose values split the one Y into a series each | none |
+| `stack` | `true` to stack the series' bars | `false` |
 | `title` | text above the chart | none |
 | `x_title`, `y_title` | text under the chart, and above it where Y's name goes | X's name; Y's name, or none before the legend |
 | `y_zero` | `true` to start the Y axis at zero for lines and scatters; bars always do | `false` |
@@ -619,8 +631,9 @@ this result: month, net".
 **The toolbar writes the block.** A click on **Lines** or a new X or Y is often a look at the
 data from another side, so it changes no text: it shows "Not in the query" and **Save to
 query**. **Save to query** writes `kind`, `x` and `y` into the block, explicitly, so a later change
-of columns can't change the chart without anyone seeing; a key that already says the same is
-left as it is, and every other key, comment and blank line stays as it was. A statement without
+of columns can't change the chart without anyone seeing, and `series` and `stack = true` while
+the chart has them (taking them out when it no longer does); a key that already says the same
+is left as it is, and every other key, comment and blank line stays as it was. A statement without
 a block gets one above it. The write is an edit of the console's text: ⌘Z takes it
 back, and it is saved as the console saves. Running the statement again keeps a choice changed
 in the toolbar while the block is unchanged; once the block is edited, the block wins.

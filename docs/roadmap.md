@@ -2369,7 +2369,7 @@ after CI fixes, the reports track and W13, and links no Git library.
 
 ## Charts as code track
 
-CH1 started on 2026-11-06. Proposed on 2026-11-04 in [Charts as code](charts-as-code.md), after
+CH1 and CH2 built on 2026-11-06. Proposed on 2026-11-04 in [Charts as code](charts-as-code.md), after
 asking for a simple syntax for charts of queries and reports. W12's chart, written down as a few
 TOML keys (`kind`, `x`, `y`, `series`, `title`, `sort`, `limit`, …): in a comment block above a
 statement, which opens its result on that chart and which the tab writes back, and as a report's
@@ -2414,12 +2414,32 @@ is added. It came after CI fixes, the reports track and W13.
   [CH1 confirmed](charts-as-code.md#ch1-confirmed). Covered by `dbrover-chart`'s table tests of
   every problem, `dbrover-language`'s of finding and rewriting blocks, kittest tests of the tab,
   and a whole-app test of the exit on the shop.
-- **CH2 — Series and stacked bars (S–M):** `series` splits one Y by a column's values, so
+- **CH2 — Series and stacked bars (S–M):** built; started on 2026-11-06, its details
+  [confirmed](charts-as-code.md#ch2-confirmed). `series` splits one Y by a column's values, so
   `GROUP BY month, category` charts without a pivot, and `stack = true` stacks the bars.
   Horizontal bars and area wait until asked; histograms stay a `GROUP BY` in the query.
   - **CH2a — `series`.**
   - **CH2b — Stacked bars.**
   - **CH2c — The toolbar's Series and Stacked, and the manual.**
+
+  **CH2 demo note:** built in #522, #523 and the toolbar's layer, with **Series** and **Stacked**
+  in [Query consoles](../book/src/consoles.md#charts) and the keys in [A chart in the
+  query](../book/src/consoles.md#a-chart-in-the-query). On the SQLite shop of
+  `examples/reports/shop.sql`, run `SELECT strftime('%Y-%m', l.ordered_on) AS month,
+  p.category, SUM(l.amount) AS net FROM order_lines l JOIN products p ON p.id = l.product_id
+  GROUP BY month, p.category ORDER BY month, p.category` and click **Chart**: the months are bars;
+  pick **Series: category**, and each month has a bar per category, accessories, bikes,
+  clothing and parts, in a colour each with a legend, and no pivot in the query. Tick
+  **Stacked**: one bar per month, its categories piled up from zero, and hovering it shows each
+  part and the total. **Save to query** writes `series = "category"` and `stack = true` into a
+  new block above the statement, and **Export › SVG…** writes the same stacked bars, square
+  where their pieces meet. A month without a category's row leaves a gap in it, counted under
+  the chart; a ninth category would be named there as left out. `stack = true` over lines is
+  refused with "`stack` stacks bars; this chart draws lines". Departures from the design: none
+  of substance; the details settled are in [CH2 confirmed](charts-as-code.md#ch2-confirmed).
+  Covered by `dbrover-chart`'s tests of reading a split, stacking and the spec's problems,
+  kittest tests of the toolbar and of blocks with `series` and `stack`, an SVG test, and a
+  whole-app test of the exit on the shop: stacked bars on screen and in the exported SVG.
 - **CH3 — Charts from reports (M):** a report's `[[chart]]`, drawn from its result or its own
   DuckDB `query`, written through the staging folder with the other files. Past a kind's row
   limit a run fails rather than draw part of the data, unless the chart sets `limit`.
