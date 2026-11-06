@@ -321,7 +321,12 @@ fn grid_toolbar(
         if statement.chart.is_shown() {
             statement.grid.refresh(&statement.rows);
             let (tab, source) = chart_parts(statement, toolbar.dialect);
-            actions.extend(chart::controls(ui, tab, &source).map(ConsoleAction::ExportChart));
+            actions.extend(
+                chart::controls(ui, tab, &source).map(|action| match action {
+                    chart::ChartAction::Export(format) => ConsoleAction::ExportChart(format),
+                    chart::ChartAction::SaveToQuery => ConsoleAction::SaveChartToQuery,
+                }),
+            );
             export_status(ui, toolbar.export_status);
             return false;
         }

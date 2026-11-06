@@ -1,4 +1,5 @@
-//! Charts from results (W12), driven through the whole app against the PostgreSQL test server.
+//! Charts from results (W12), driven through the whole app against the PostgreSQL test server,
+//! and a chart in a query's text (CH1) against the SQLite shop of the example reports.
 
 use dbrover_chart::{Drawing, Mark};
 
@@ -187,5 +188,79 @@ fn charts_totals_by_month_as_bars_and_lines_and_exports_an_svg() {
     assert!(
         !texts.iter().any(|text| text.starts_with("2026-")),
         "{texts:?}"
+    );
+}
+
+/// Net sales by month on the example reports' shop, as bars, with a comment inside the block.
+const SHOP_BY_MONTH: &str = "-- Net sales by month.
+-- [chart]
+-- # Bars read best for three months.
+-- kind = \"bars\"
+-- x = \"month\"
+-- y = \"net\"
+SELECT strftime('%Y-%m', ordered_on) AS month, SUM(amount) AS net
+FROM order_lines GROUP BY month ORDER BY month;";
+
+/// The shop's tables and rows, from the file the example reports are made from.
+const SHOP: &str = include_str!("../../../../../examples/reports/shop.sql");
+
+fn replace_text(harness: &mut Harness<'_, DbRoverApp>, text: &str) {
+    harness.get_by_role(Role::MultilineTextInput).focus();
+    harness.run_steps(2);
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    harness.key_press(egui::Key::Backspace);
+    harness
+        .get_by_role(Role::MultilineTextInput)
+        .type_text(text);
+    step_until(harness, "the text to be typed", |harness| {
+        editor_text(harness) == text
+    });
+}
+
+/// CH1's exit: a statement with a block of bars by month opens as that chart; switching to
+/// lines and Save to query rewrites only `kind`, keeping the comment inside the block; undo
+/// restores the block; and a misspelt column shows the problem with the result's columns.
+#[test]
+fn a_chart_block_opens_its_chart_and_save_to_query_writes_it_back() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(dir.path(), SHOP);
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    console_with(&mut harness, "shop", SHOP_BY_MONTH);
+    harness.get_by_label("Run").click();
+    step_until(&mut harness, "the block's chart", |harness| {
+        shown_chart(harness).is_some()
+    });
+    let (bars, lines, texts) = marks(&shown_chart(&harness).unwrap());
+    assert_eq!((bars, lines), (3, 0), "{texts:?}");
+    for label in ["2026-09", "2026-10", "2026-11", "month", "net"] {
+        assert!(texts.contains(&label.to_owned()), "{label} in {texts:?}");
+    }
+
+    harness.get_by_label("Lines").click();
+    harness.run_steps(2);
+    harness.get_by_label("Not in the query");
+    harness.get_by_label("Save to query").click();
+    let saved = SHOP_BY_MONTH.replace("kind = \"bars\"", "kind = \"lines\"");
+    step_until(&mut harness, "the block to be rewritten", |harness| {
+        editor_text(harness) == saved
+    });
+    assert!(harness.query_by_label("Not in the query").is_none());
+
+    harness.get_by_role(Role::MultilineTextInput).focus();
+    harness.run_steps(2);
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+    step_until(&mut harness, "undo to restore the block", |harness| {
+        editor_text(harness) == SHOP_BY_MONTH
+    });
+
+    replace_text(
+        &mut harness,
+        &SHOP_BY_MONTH.replace("y = \"net\"", "y = \"nett\""),
+    );
+    harness.get_by_label("Run").click();
+    step_until_visible(
+        &mut harness,
+        "chart: `y = \"nett\"` isn't a column of this result: month, net",
     );
 }

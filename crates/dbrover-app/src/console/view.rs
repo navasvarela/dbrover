@@ -8,7 +8,7 @@ use egui::{Id, ScrollArea, Ui, vec2};
 use super::{
     Candidate, ClipboardCopy, Disk, FormatScope, LintOptions, QueryConsole, RecentCompletions,
     RowsToOpen, RunDestination, RunScope, RunState, SubmittedRun, TreeCatalog, cell_viewer,
-    completion_popup, results,
+    completion_popup, problems, results,
 };
 use crate::code_editor::highlight::Marks;
 use crate::code_editor::{self, EditorView, Found, find_bar};
@@ -25,7 +25,7 @@ use dbrover_engine::{
 };
 use dbrover_language::ExplainDepth;
 use dbrover_language::redis::KeyView;
-use dbrover_sql::{Dialect, Severity};
+use dbrover_sql::Dialect;
 use dbrover_store::{ActionId, Snippet};
 
 use super::CellMenuItems;
@@ -95,6 +95,8 @@ pub enum ConsoleAction {
     RunAction(ActionId, GridCells),
     /// Writes the shown chart as a picture; the app asks where.
     ExportChart(PictureFormat),
+    /// Writes the shown chart's kind, X and Y into the block above its statement.
+    SaveChartToQuery,
     /// Changes the shown Redis key from its key bar with `command`, then reads it again with
     /// `then`'s command: the same key, or the key it was renamed to.
     KeyCommand {
@@ -537,8 +539,7 @@ fn safety_badge(ui: &mut Ui, console: &QueryConsole, palette: &Palette) {
 
 /// How many errors and warnings the console has; a click goes to the next one.
 fn problem_count(ui: &mut Ui, console: &mut QueryConsole, keymap: &Keymap, palette: &Palette) {
-    let errors = console.problems.count(Severity::Error);
-    let warnings = console.problems.count(Severity::Warning);
+    let (errors, warnings) = console.problem_counts();
     let (glyph, color) = match (errors, warnings) {
         (0, 0) => return,
         (0, _) => (icons::WARNING, palette.warning),
@@ -711,6 +712,7 @@ fn editor(
         matches: found.matches.clone(),
     };
     let language = console.language();
+    console.refresh_chart_problems();
     ScrollArea::vertical()
         .id_salt(("console_editor_scroll", console.id.0))
         .auto_shrink(false)
@@ -720,7 +722,10 @@ fn editor(
                 hint_text: "SELECT …",
                 highlighter: &language,
                 marks: &marks,
-                problems: console.problems.shown(),
+                problems: &problems::ShownProblem::all(
+                    console.problems.shown(),
+                    console.chart_problems.shown(),
+                ),
             };
             let output = code_editor::edit(ui, &mut console.editor, &view);
             if output.response.changed() {

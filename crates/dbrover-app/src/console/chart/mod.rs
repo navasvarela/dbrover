@@ -1,20 +1,23 @@
 //! The chart tab beside the grid (W12): a chart of the loaded rows' columns, in the grid's
 //! order and through its filter, drawn from what `dbrover_chart` lays out, and exported as
-//! SVG or PNG from the same layout.
+//! SVG or PNG from the same layout. A statement with a chart block above it opens on its chart,
+//! and **Save to query** writes the toolbar's choice into the block (CH1d).
 
+pub mod block;
 mod svg;
 
 use std::sync::Arc;
 
 use dbrover_chart::{
     Anchor, ChartData, ChartKind, Choice, Column, Drawing, LayoutOptions, MAX_POINTS, Mark, Paint,
-    Role, Size, TextMeasure,
+    Resolved, Role, SavedChoice, Size, TextMeasure,
 };
 use dbrover_core::{ColumnInfo, Row, ValueKind};
 use dbrover_engine::Picture;
 use dbrover_sql::Dialect;
 use egui::{Align2, Color32, FontId, Galley, Painter, Pos2, Sense, Stroke, TextStyle, Ui, Vec2};
 
+use self::block::QuerySpec;
 use crate::picture::PictureFormat;
 use crate::theme::Palette;
 use crate::widgets;
@@ -53,7 +56,11 @@ pub struct ChartTab {
     shown: bool,
     /// The chart of the console's previous run, kept for this one if its columns are the same.
     carried: Option<Remembered>,
+    /// The chart block above the statement, as it was when the statement ran.
+    spec: Option<QuerySpec>,
     view: Option<ChartView>,
+    /// Why **Save to query** wrote nothing, until it is tried again.
+    save_error: Option<String>,
 }
 
 /// A chart's columns and choice, kept from one run of a console to the next.
@@ -61,6 +68,15 @@ pub struct ChartTab {
 struct Remembered {
     columns: Vec<String>,
     choice: Choice,
+    /// The text of the block the choice was made under, if the statement had one.
+    spec: Option<String>,
+}
+
+/// What the toolbar asks of the console, beyond the chart itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChartAction {
+    Export(PictureFormat),
+    SaveToQuery,
 }
 
 impl ChartTab {
@@ -68,11 +84,78 @@ impl ChartTab {
     /// this chart's choice for a result with the same columns.
     pub fn carried_over(&self) -> Self {
         let remembered = self.view.as_ref().and_then(ChartView::remembered);
+        let remembered = remembered.map(|remembered| Remembered {
+            spec: self.spec.as_ref().map(|spec| spec.text().to_owned()),
+            ..remembered
+        });
         Self {
             shown: self.shown,
             carried: remembered.or_else(|| self.carried.clone()),
+            spec: None,
             view: None,
+            save_error: None,
         }
+    }
+
+    /// The tab for a statement with `spec`, its block, above it. A block opens the result on
+    /// **Chart**, drawn as it says, unless the previous run's chart was made under the same
+    /// block's text: a choice changed in the toolbar lasts until the block is edited.
+    pub fn with_spec(mut self, spec: Option<QuerySpec>) -> Self {
+        let Some(spec) = spec else {
+            return self;
+        };
+        let unchanged = self
+            .carried
+            .as_ref()
+            .is_some_and(|carried| carried.spec.as_deref() == Some(spec.text()));
+        if !unchanged {
+            self.carried = None;
+            self.shown = true;
+        }
+        self.spec = Some(spec);
+        self
+    }
+
+    /// The toolbar's choice, by the columns' names, for **Save to query**.
+    pub fn saved_choice(&self) -> Option<SavedChoice> {
+        let view = self.view.as_ref()?;
+        let choice = view.choice.as_ref()?;
+        Some(SavedChoice {
+            kind: choice.kind,
+            x: column_name(&view.columns, choice.x).to_owned(),
+            y: choice
+                .ys
+                .iter()
+                .map(|&y| column_name(&view.columns, y).to_owned())
+                .collect(),
+        })
+    }
+
+    /// The block's text, as the statement ran with it.
+    pub fn spec_text(&self) -> Option<&str> {
+        self.spec.as_ref().map(QuerySpec::text)
+    }
+
+    /// **Save to query** wrote `spec` above the statement: the chart is the block's now.
+    pub fn saved_to_query(&mut self, spec: QuerySpec) {
+        if let Some(view) = &mut self.view {
+            view.spec = SpecState::of(Some(&spec), &view.columns, &view.roles);
+        }
+        self.spec = Some(spec);
+        self.save_error = None;
+    }
+
+    pub fn save_failed(&mut self, error: String) {
+        self.save_error = Some(error);
+    }
+
+    /// The chart as a report's `[[chart]]`, for **Copy for a report**: the block's keys with
+    /// the toolbar's choice written in, and a file named as **Export ›** names it.
+    pub fn report_text(&self) -> Option<String> {
+        let saved = self.saved_choice()?;
+        let spec = dbrover_chart::write_back(self.spec_text(), &saved).ok()?;
+        let file = format!("{}.svg", self.file_name());
+        dbrover_chart::for_report(&spec, &file).ok()
     }
 
     pub fn is_shown(&self) -> bool {
@@ -141,8 +224,51 @@ struct ChartView {
     roles_from: usize,
     /// `None` when there is no column of numbers to chart.
     choice: Option<Choice>,
+    spec: SpecState,
     data: Option<Charted>,
     laid_out: Option<LaidOut>,
+}
+
+/// The statement's block, as this result's columns read it.
+enum SpecState {
+    /// The statement has no block.
+    None,
+    /// The block's keys have problems: they are shown in place of the chart.
+    Unread(Vec<String>),
+    /// The block names columns this result doesn't have as it says: the problems are shown
+    /// over the chart the tab would start with.
+    Unresolved(Vec<String>),
+    Resolved(Resolved),
+}
+
+impl SpecState {
+    fn of(spec: Option<&QuerySpec>, columns: &[Column], roles: &[Role]) -> Self {
+        let Some(spec) = spec else {
+            return Self::None;
+        };
+        match spec.read() {
+            Err(problems) => Self::Unread(problems.to_vec()),
+            Ok(spec) => match spec.resolve(columns, roles) {
+                Ok(resolved) => Self::Resolved(resolved),
+                Err(problems) => {
+                    Self::Unresolved(problems.iter().map(ToString::to_string).collect())
+                }
+            },
+        }
+    }
+
+    fn resolved(&self) -> Option<&Resolved> {
+        match self {
+            Self::Resolved(resolved) => Some(resolved),
+            Self::None | Self::Unread(_) | Self::Unresolved(_) => None,
+        }
+    }
+
+    fn options(&self) -> LayoutOptions {
+        self.resolved()
+            .map(|resolved| resolved.options.clone())
+            .unwrap_or_default()
+    }
 }
 
 /// The chart as last laid out, and what it was laid out for.
@@ -156,24 +282,33 @@ struct LaidOut {
 /// The points of a choice, and what they were read from.
 struct Charted {
     choice: Choice,
+    /// The grid's order the points were read in.
+    from: Vec<usize>,
+    /// The rows charted, as indexes into the result's: the grid's order, sorted and cut as the
+    /// block says.
     order: Vec<usize>,
     data: ChartData,
 }
 
 impl ChartView {
-    fn new(source: &Source<'_>, carried: Option<&Remembered>) -> Self {
+    fn new(source: &Source<'_>, carried: Option<&Remembered>, spec: Option<&QuerySpec>) -> Self {
         let columns = chart_columns(source.columns, source.dialect);
         let roles = roles(&columns, source.rows);
         let names: Vec<String> = columns.iter().map(|column| column.name.clone()).collect();
+        let spec = SpecState::of(spec, &columns, &roles);
         let choice = match carried {
             Some(remembered) if remembered.columns == names => Some(remembered.choice.clone()),
-            _ => Choice::starting(&roles),
+            _ => spec
+                .resolved()
+                .map(|resolved| resolved.choice.clone())
+                .or_else(|| Choice::starting(&roles)),
         };
         Self {
             columns,
             roles,
             roles_from: source.rows.len(),
             choice,
+            spec,
             data: None,
             laid_out: None,
         }
@@ -183,7 +318,16 @@ impl ChartView {
         Some(Remembered {
             columns: self.names(),
             choice: self.choice.clone()?,
+            spec: None,
         })
+    }
+
+    /// Whether the chart is the one the block says: `false` without a block, or once the
+    /// toolbar has changed it.
+    fn in_query(&self) -> bool {
+        self.spec
+            .resolved()
+            .is_some_and(|resolved| Some(&resolved.choice) == self.choice.as_ref())
     }
 
     fn names(&self) -> Vec<String> {
@@ -223,21 +367,43 @@ impl ChartView {
         let fresh = self
             .data
             .as_ref()
-            .is_some_and(|charted| &charted.choice == choice && charted.order == source.order);
+            .is_some_and(|charted| &charted.choice == choice && charted.from == source.order);
         if !fresh {
-            let rows: Vec<&Row> = source
-                .order
+            let order = match self.spec.resolved() {
+                Some(resolved) => dbrover_chart::arrange(
+                    source.rows,
+                    source.order,
+                    &self.roles,
+                    resolved.sort,
+                    resolved.limit,
+                ),
+                None => source.order.to_vec(),
+            };
+            let rows: Vec<&Row> = order
                 .iter()
                 .filter_map(|&index| source.rows.get(index))
                 .collect();
             self.data = Some(Charted {
                 choice: choice.clone(),
-                order: source.order.to_vec(),
+                from: source.order.to_vec(),
                 data: ChartData::read(&self.columns, &self.roles, &rows, choice),
+                order,
             });
             self.laid_out = None;
         }
         self.data.as_ref().map(|charted| &charted.data)
+    }
+
+    /// The line under the chart: what was charted, and how the block sorted and cut the rows.
+    fn note(&self, data: &ChartData) -> String {
+        let arranged = self
+            .spec
+            .resolved()
+            .and_then(|resolved| resolved.arrangement(&self.columns));
+        match arranged {
+            Some(arranged) => format!("{} · {arranged}", summary(data)),
+            None => summary(data),
+        }
     }
 }
 
@@ -275,19 +441,22 @@ impl ChartTab {
                 Some(view) => view.remembered(),
                 None => self.carried.clone(),
             };
-            self.view = Some(ChartView::new(source, carried.as_ref()));
+            self.view = Some(ChartView::new(source, carried.as_ref(), self.spec.as_ref()));
         }
+        let spec = self.spec.as_ref();
         let view = self
             .view
-            .get_or_insert_with(|| ChartView::new(source, None));
+            .get_or_insert_with(|| ChartView::new(source, None, spec));
         view.refresh_roles(source.rows);
         view
     }
 }
 
-/// The kind, X and Y, and **Export ›**, above the chart. Returns the format picked from
-/// **Export ›**, if one was.
-pub fn controls(ui: &mut Ui, tab: &mut ChartTab, source: &Source<'_>) -> Option<PictureFormat> {
+/// The kind, X and Y, **Save to query**, **Copy for a report** and **Export ›**, above the
+/// chart. Returns what was asked of the console, if anything was.
+pub fn controls(ui: &mut Ui, tab: &mut ChartTab, source: &Source<'_>) -> Option<ChartAction> {
+    let has_block = tab.spec.is_some();
+    let save_error = tab.save_error.clone();
     let view = tab.view(source);
     let drawn = view.laid_out.is_some();
     let choice = view.choice.as_mut()?;
@@ -322,7 +491,47 @@ pub fn controls(ui: &mut Ui, tab: &mut ChartTab, source: &Source<'_>) -> Option<
         }
     });
     ui.separator();
-    export_menu(ui, drawn)
+    let in_query = view.in_query();
+    let mut action = save_to_query(ui, has_block, in_query, save_error.as_deref());
+    let copy = ui
+        .button("Copy for a report")
+        .on_hover_text("Copy this chart as a report's [[chart]] table, ready to paste");
+    if copy.clicked()
+        && let Some(text) = tab.report_text()
+    {
+        ui.ctx().copy_text(text);
+    }
+    if let Some(format) = export_menu(ui, drawn) {
+        action = Some(ChartAction::Export(format));
+    }
+    action
+}
+
+/// "Not in the query" and **Save to query**, while the chart isn't its block's: there is no
+/// block, or the toolbar changed the chart. Nothing is written without the click.
+fn save_to_query(
+    ui: &mut Ui,
+    has_block: bool,
+    in_query: bool,
+    error: Option<&str>,
+) -> Option<ChartAction> {
+    if in_query {
+        return None;
+    }
+    if let Some(error) = error {
+        ui.colored_label(ui.visuals().error_fg_color, error);
+    } else if has_block {
+        ui.weak("Not in the query");
+    }
+    let hover = if has_block {
+        "Write the kind, X and Y into the chart block above the statement; Undo takes it back"
+    } else {
+        "Write this chart as a block above the statement, so it opens as this chart next time"
+    };
+    ui.button("Save to query")
+        .on_hover_text(hover)
+        .clicked()
+        .then_some(ChartAction::SaveToQuery)
 }
 
 /// **Export ›**: the picture formats, offered once the chart has been drawn.
@@ -359,17 +568,31 @@ fn column_name(columns: &[Column], index: usize) -> &str {
 }
 
 /// The chart, filling the rest of the panel, with a line under it saying what was charted.
+/// A block whose keys have problems shows them in place of the chart; one whose columns don't
+/// fit the result shows them over the chart the tab would start with.
 pub fn show(ui: &mut Ui, tab: &mut ChartTab, source: &Source<'_>) {
     let view = tab.view(source);
+    match &view.spec {
+        SpecState::Unread(problems) => {
+            spec_problems(ui, problems);
+            ui.weak("Fix the chart's block above the statement, or pick Grid to see the rows");
+            return;
+        }
+        SpecState::Unresolved(problems) => spec_problems(ui, problems),
+        SpecState::None | SpecState::Resolved(_) => {}
+    }
     if view.choice.is_none() {
         ui.weak("A chart needs a column of numbers");
         return;
     }
-    let Some(data) = view.data(source) else {
+    if view.data(source).is_none() {
+        return;
+    }
+    let Some(charted) = &view.data else {
         return;
     };
-    let note = summary(data);
-    if data.is_empty() {
+    let note = view.note(&charted.data);
+    if charted.data.is_empty() {
         ui.weak(note);
         return;
     }
@@ -383,6 +606,7 @@ pub fn show(ui: &mut Ui, tab: &mut ChartTab, source: &Source<'_>) {
         width: response.rect.width(),
         height: response.rect.height(),
     };
+    let options = view.spec.options();
     let ChartView {
         data: Some(charted),
         laid_out,
@@ -395,17 +619,24 @@ pub fn show(ui: &mut Ui, tab: &mut ChartTab, source: &Source<'_>) {
         painter: &painter,
         font: &font,
     };
-    let drawing = drawing(laid_out, &charted.data, size, &measure);
+    let drawing = drawing(laid_out, &charted.data, &options, size, &measure);
     let paints = Paints::of(&Palette::for_visuals(ui.visuals()));
     paint(&painter, response.rect.min, &drawing, &paints, &font);
     hover(ui, &response, &drawing, view, source, &paints);
     ui.weak(note);
 }
 
+fn spec_problems(ui: &mut Ui, problems: &[String]) {
+    for problem in problems {
+        ui.colored_label(ui.visuals().error_fg_color, problem);
+    }
+}
+
 /// `data` laid out in `size`, from `laid_out` when it was laid out for that already.
 fn drawing(
     laid_out: &mut Option<LaidOut>,
     data: &ChartData,
+    options: &LayoutOptions,
     size: Size,
     measure: &Measure<'_>,
 ) -> Arc<Drawing> {
@@ -416,12 +647,7 @@ fn drawing(
     {
         return Arc::clone(&cached.drawing);
     }
-    let drawing = Arc::new(dbrover_chart::layout(
-        data,
-        &LayoutOptions::default(),
-        size,
-        measure,
-    ));
+    let drawing = Arc::new(dbrover_chart::layout(data, options, size, measure));
     *laid_out = Some(LaidOut {
         size,
         text_size,

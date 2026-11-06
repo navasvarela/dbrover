@@ -526,6 +526,10 @@ impl Consoles {
                 statements,
             }),
             ConsoleAction::Reconnect => Some(Command::ReconnectConsole(id)),
+            ConsoleAction::SaveChartToQuery => {
+                self.open.get_mut(key)?.save_chart_to_query(Instant::now());
+                None
+            }
             ConsoleAction::CompletionAccepted(candidate) => {
                 self.recent_completions.record(&candidate);
                 None
