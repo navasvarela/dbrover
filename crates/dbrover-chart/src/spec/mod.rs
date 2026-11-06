@@ -33,6 +33,8 @@ pub struct ChartSpec {
     pub y: Vec<String>,
     /// A column whose values split the one Y into a series each.
     pub series: Option<String>,
+    /// Stack the series' bars.
+    pub stack: bool,
     pub title: Option<String>,
     pub x_title: Option<String>,
     pub y_title: Option<String>,
@@ -93,6 +95,7 @@ enum Key {
     X,
     Y,
     Series,
+    Stack,
     Title,
     XTitle,
     YTitle,
@@ -102,11 +105,12 @@ enum Key {
 }
 
 impl Key {
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 11] = [
         Self::Kind,
         Self::X,
         Self::Y,
         Self::Series,
+        Self::Stack,
         Self::Title,
         Self::XTitle,
         Self::YTitle,
@@ -121,6 +125,7 @@ impl Key {
             Self::X => "x",
             Self::Y => "y",
             Self::Series => "series",
+            Self::Stack => "stack",
             Self::Title => "title",
             Self::XTitle => "x_title",
             Self::YTitle => "y_title",

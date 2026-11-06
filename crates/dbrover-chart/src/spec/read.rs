@@ -91,7 +91,8 @@ impl Reader<'_> {
             Key::Title => spec.title = self.text_value(value, "`title` is text, in quotes"),
             Key::XTitle => spec.x_title = self.text_value(value, "`x_title` is text, in quotes"),
             Key::YTitle => spec.y_title = self.text_value(value, "`y_title` is text, in quotes"),
-            Key::YZero => spec.y_zero = self.y_zero(value),
+            Key::YZero => spec.y_zero = self.flag(value, "`y_zero` is true or false"),
+            Key::Stack => spec.stack = self.flag(value, "`stack` is true or false"),
             Key::Sort => spec.sort = self.sort(value),
             Key::Limit => spec.limit = self.limit(value),
         }
@@ -146,10 +147,10 @@ impl Reader<'_> {
         names
     }
 
-    fn y_zero(&mut self, value: &ValueAt<'_>) -> bool {
+    fn flag(&mut self, value: &ValueAt<'_>, what: &str) -> bool {
         let flag = value.item.as_value().and_then(Value::as_bool);
         if flag.is_none() {
-            self.wrong(value, "`y_zero` is true or false");
+            self.wrong(value, what);
         }
         flag.unwrap_or_default()
     }
@@ -315,6 +316,7 @@ kind = "bars"   # by month
 x = "month"
 y = ["net", "refunds"]
 series = "category"
+stack = true
 title = "Net sales"
 x_title = "Month"
 y_title = "Euros"
@@ -330,6 +332,7 @@ limit = 10
                 x: Some("month".to_owned()),
                 y: vec!["net".to_owned(), "refunds".to_owned()],
                 series: Some("category".to_owned()),
+                stack: true,
                 title: Some("Net sales".to_owned()),
                 x_title: Some("Month".to_owned()),
                 y_title: Some("Euros".to_owned()),
@@ -354,7 +357,7 @@ limit = 10
 
     #[test]
     fn says_each_problem_at_its_line() {
-        let cases: [(&str, &[&str]); 17] = [
+        let cases: [(&str, &[&str]); 18] = [
             (
                 "kind = ",
                 &["chart, line 2: string values must be quoted, expected literal string"],
@@ -371,7 +374,7 @@ limit = 10
                 "colour = \"red\"",
                 &[
                     "chart, line 2: no key `colour`; a chart's keys are `kind`, `x`, `y`, \
-                   `series`, `title`, `x_title`, `y_title`, `y_zero`, `sort`, `limit`",
+                   `series`, `stack`, `title`, `x_title`, `y_title`, `y_zero`, `sort`, `limit`",
                 ],
             ),
             (
@@ -404,6 +407,10 @@ limit = 10
             (
                 "title = 1",
                 &["chart, line 2: `title` is text, in quotes, not 1"],
+            ),
+            (
+                "stack = 1",
+                &["chart, line 2: `stack` is true or false, not 1"],
             ),
             (
                 "y_zero = \"yes\"",

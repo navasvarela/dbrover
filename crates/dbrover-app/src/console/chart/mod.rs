@@ -719,8 +719,12 @@ fn paint(painter: &Painter, origin: Pos2, drawing: &Drawing, paints: &Paints, fo
     let at = |point: dbrover_chart::Point| origin + Vec2::new(point.x, point.y);
     for mark in &drawing.marks {
         match mark {
-            Mark::Rect { rect, paint } => {
-                let rounding = if rect.width() >= ROUNDED_BAR_WIDTH {
+            Mark::Rect {
+                rect,
+                paint,
+                rounded,
+            } => {
+                let rounding = if *rounded && rect.width() >= ROUNDED_BAR_WIDTH {
                     BAR_ROUNDING
                 } else {
                     0
@@ -844,7 +848,27 @@ fn point_values(
             lines.push((series.name.clone(), cell(at, y)));
         }
     }
+    if charted.data.stacked {
+        let total: f64 = charted
+            .data
+            .series
+            .iter()
+            .filter_map(|series| series.values.get(point).copied().flatten())
+            .sum();
+        lines.push(("Total".to_owned(), number_text(total)));
+    }
     Some(lines)
+}
+
+/// A sum of values as text: whole numbers without a point, others to at most six places,
+/// without the float's noise (`0.1 + 0.2` is `0.3`).
+fn number_text(value: f64) -> String {
+    let fixed = format!("{value:.6}");
+    let trimmed = fixed.trim_end_matches('0').trim_end_matches('.');
+    match trimmed {
+        "-0" => "0".to_owned(),
+        trimmed => trimmed.to_owned(),
+    }
 }
 
 /// What was charted out of the rows, and what was left out, for the line under the chart:
@@ -955,6 +979,19 @@ mod tests {
              · 1 row left out: no month value · 2 gaps in total: null or not a number"
         );
         assert_eq!(summary(&data(Summary::default(), 0)), "No rows to chart");
+    }
+
+    #[test]
+    fn writes_a_stacks_total_without_float_noise() {
+        let cases = [
+            (1290.0, "1290"),
+            (0.1 + 0.2, "0.3"),
+            (-42.25, "-42.25"),
+            (-0.0000001, "0"),
+        ];
+        for (value, expected) in cases {
+            assert_eq!(number_text(value), expected, "{value}");
+        }
     }
 
     #[test]
