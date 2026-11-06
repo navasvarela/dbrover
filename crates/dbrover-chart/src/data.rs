@@ -1,11 +1,13 @@
 //! A chart's points, read from the rows of a result.
 
+use std::collections::HashMap;
+
 use dbrover_core::Row;
 use jiff::civil::DateTime;
 use jiff::tz::Offset;
 
 use crate::values::{self, WrittenTime};
-use crate::{ChartKind, Choice, Column, Role};
+use crate::{ChartKind, Choice, Column, Role, STARTING_SERIES};
 
 /// Bars charted at most. Past this a bar is narrower than a point on a wide screen and its
 /// labels say nothing; a first guess, to be confirmed by measuring the chart tab.
@@ -22,8 +24,13 @@ pub struct ChartData {
     pub x_name: String,
     pub x: XValues,
     pub series: Vec<Series>,
-    /// Each point's row, as an index into the rows the chart was read from.
+    /// The name of the column whose values the series are, when the chart is split by one.
+    pub split_by: Option<String>,
+    /// Each point's row, as an index into the rows the chart was read from: the first row with
+    /// its X when the chart is split by a column.
     pub rows: Vec<usize>,
+    /// The bars are stacked rather than side by side.
+    pub stacked: bool,
     pub summary: Summary,
 }
 
@@ -48,29 +55,43 @@ pub struct Times {
     pub has_time: bool,
 }
 
-/// One Y column's values, point by point; `None` where the row has no number there.
+/// One series' values, point by point: a Y column's, or the one Y's in the rows of one value of
+/// the column the chart is split by.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Series {
     pub name: String,
+    /// `None` where the point has no number: a null, a value that isn't a number, or, split by
+    /// a column, no row for this series there.
     pub values: Vec<Option<f64>>,
+    /// The row each value was read from, as an index into the rows the chart was read from;
+    /// `None` where the series has no row at the point.
+    pub rows: Vec<Option<usize>>,
 }
 
 impl Series {
-    /// Points with no number: a null, or a value that isn't a number.
+    /// Points with no number: a null, a value that isn't a number, or no row.
     pub fn gaps(&self) -> usize {
         self.values.iter().filter(|value| value.is_none()).count()
     }
 }
 
 /// What was charted out of the rows given, for the line under the chart.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Summary {
     pub rows: usize,
     /// Rows past the limit, which aren't charted: the limit, when it was reached.
     pub limit: Option<usize>,
     /// Rows left out because their X is null or doesn't read as the column's role.
     pub without_x: usize,
+    /// Split by a column, its values past the eighth, in the order first seen, whose rows
+    /// aren't charted: a series each would need more colours than the palette has.
+    pub series_left_out: Vec<String>,
+    /// Split by a column, rows left out because an earlier row had the same X and series.
+    pub repeated: usize,
 }
+
+/// What a split chart's series column holds where it is null, as the grid shows it.
+const NULL_SERIES: &str = "NULL";
 
 impl ChartData {
     /// The points of `choice`, read from `rows` in their order. `roles` are `columns`' roles.
@@ -80,44 +101,50 @@ impl ChartData {
             ChartKind::Lines | ChartKind::Scatter => MAX_POINTS,
         };
         let placement = Placement::of(choice.kind, roles.get(choice.x).copied());
-        let mut points: Vec<Point> = Vec::new();
-        let mut without_x = 0;
-        for (index, row) in rows.iter().take(limit).enumerate() {
-            let x_text = row.get(choice.x).and_then(Option::as_deref);
-            let Some(x) = x_text.and_then(|text| placement.read(text)) else {
-                without_x += 1;
-                continue;
-            };
-            let ys = choice
-                .ys
-                .iter()
-                .map(|&y| {
-                    row.get(y)
-                        .and_then(Option::as_deref)
-                        .and_then(values::number)
-                })
-                .collect();
-            points.push(Point { row: index, x, ys });
-        }
-        if choice.kind == ChartKind::Lines && placement != Placement::Categories {
-            points.sort_by(|a, b| a.x.position().total_cmp(&b.x.position()));
-        }
         let name = |index: usize| {
             columns
                 .get(index)
                 .map(|column| column.name.clone())
                 .unwrap_or_default()
         };
-        let series = choice
-            .ys
-            .iter()
+        let mut reader = match choice.series {
+            Some(series) => Reader::split(series, choice.ys.first().copied()),
+            None => Reader::columns(choice.ys.iter().map(|&y| (y, name(y))).collect()),
+        };
+        let mut without_x = 0;
+        for (index, row) in rows.iter().take(limit).enumerate() {
+            let x_text = row.get(choice.x).and_then(Option::as_deref);
+            match x_text.and_then(|text| placement.read(text)) {
+                Some(x) => reader.add(index, row, x),
+                None => without_x += 1,
+            }
+        }
+        let Reader {
+            mut points,
+            names,
+            left_out,
+            repeated,
+            ..
+        } = reader;
+        if choice.kind == ChartKind::Lines && placement != Placement::Categories {
+            points.sort_by(|a, b| a.x.position().total_cmp(&b.x.position()));
+        }
+        let series = names
+            .into_iter()
             .enumerate()
-            .map(|(position, &y)| Series {
-                name: name(y),
-                values: points
-                    .iter()
-                    .map(|point| point.ys.get(position).copied().flatten())
-                    .collect(),
+            .map(|(position, name)| {
+                let cell = |point: &Point| point.cells.get(position).copied().flatten();
+                Series {
+                    name,
+                    values: points
+                        .iter()
+                        .map(|point| cell(point).and_then(|cell| cell.value))
+                        .collect(),
+                    rows: points
+                        .iter()
+                        .map(|point| cell(point).map(|cell| cell.row))
+                        .collect(),
+                }
             })
             .collect();
         Self {
@@ -125,11 +152,15 @@ impl ChartData {
             x_name: name(choice.x),
             x: x_values(&points),
             series,
+            split_by: choice.series.map(name),
             rows: points.iter().map(|point| point.row).collect(),
+            stacked: choice.stacked(),
             summary: Summary {
                 rows: rows.len(),
                 limit: (rows.len() > limit).then_some(limit),
                 without_x,
+                series_left_out: left_out,
+                repeated,
             },
         }
     }
@@ -141,6 +172,134 @@ impl ChartData {
     pub fn is_empty(&self) -> bool {
         self.rows.is_empty()
     }
+}
+
+/// Reads rows into points: a point per row, each Y column a series; or, split by a column, a
+/// point per X value, each value of the series column a series.
+struct Reader {
+    shape: Shape,
+    points: Vec<Point>,
+    /// The series' names, in the order their cells are kept in.
+    names: Vec<String>,
+    left_out: Vec<String>,
+    repeated: usize,
+}
+
+enum Shape {
+    /// Each Y column, by its index, is a series.
+    Columns(Vec<usize>),
+    Split {
+        series: usize,
+        y: Option<usize>,
+        /// Where each X value's point is.
+        points: HashMap<XKey, usize>,
+    },
+}
+
+impl Reader {
+    fn columns(ys: Vec<(usize, String)>) -> Self {
+        let (ys, names) = ys.into_iter().unzip();
+        Self {
+            shape: Shape::Columns(ys),
+            points: Vec::new(),
+            names,
+            left_out: Vec::new(),
+            repeated: 0,
+        }
+    }
+
+    fn split(series: usize, y: Option<usize>) -> Self {
+        Self {
+            shape: Shape::Split {
+                series,
+                y,
+                points: HashMap::new(),
+            },
+            points: Vec::new(),
+            names: Vec::new(),
+            left_out: Vec::new(),
+            repeated: 0,
+        }
+    }
+
+    fn add(&mut self, index: usize, row: &Row, x: X) {
+        let number = |column: usize| {
+            row.get(column)
+                .and_then(Option::as_deref)
+                .and_then(values::number)
+        };
+        match &mut self.shape {
+            Shape::Columns(ys) => {
+                let cells = ys
+                    .iter()
+                    .map(|&y| {
+                        Some(Cell {
+                            value: number(y),
+                            row: index,
+                        })
+                    })
+                    .collect();
+                self.points.push(Point {
+                    row: index,
+                    x,
+                    cells,
+                });
+            }
+            Shape::Split { series, y, points } => {
+                let name = row
+                    .get(*series)
+                    .and_then(Option::as_deref)
+                    .unwrap_or(NULL_SERIES);
+                let Some(position) = series_position(&mut self.names, &mut self.left_out, name)
+                else {
+                    return;
+                };
+                let point = *points.entry(x.key()).or_insert_with(|| {
+                    self.points.push(Point {
+                        row: index,
+                        x,
+                        cells: Vec::new(),
+                    });
+                    self.points.len() - 1
+                });
+                let Some(point) = self.points.get_mut(point) else {
+                    return;
+                };
+                if point.cells.len() <= position {
+                    point.cells.resize(position + 1, None);
+                }
+                match &mut point.cells[position] {
+                    Some(_) => self.repeated += 1,
+                    empty @ None => {
+                        *empty = Some(Cell {
+                            value: y.and_then(number),
+                            row: index,
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Where `name` is among the series, added if it is new and there is a colour left for it;
+/// `None`, and `name` noted in `left_out`, when there isn't.
+fn series_position(
+    names: &mut Vec<String>,
+    left_out: &mut Vec<String>,
+    name: &str,
+) -> Option<usize> {
+    if let Some(position) = names.iter().position(|known| known == name) {
+        return Some(position);
+    }
+    if names.len() < STARTING_SERIES {
+        names.push(name.to_owned());
+        return Some(names.len() - 1);
+    }
+    if !left_out.iter().any(|known| known == name) {
+        left_out.push(name.to_owned());
+    }
+    None
 }
 
 /// How X values are placed: as categories, or by value.
@@ -173,7 +332,22 @@ impl Placement {
 struct Point {
     row: usize,
     x: X,
-    ys: Vec<Option<f64>>,
+    /// Each series' value here, by the series' position; missing or `None` where it has no row.
+    cells: Vec<Option<Cell>>,
+}
+
+/// A series' value at a point, and the row it was read from.
+#[derive(Debug, Clone, Copy)]
+struct Cell {
+    value: Option<f64>,
+    row: usize,
+}
+
+/// An X value, to find a point by: its text as a category, or its position on the axis.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum XKey {
+    Category(String),
+    Position(u64),
 }
 
 enum X {
@@ -183,6 +357,13 @@ enum X {
 }
 
 impl X {
+    fn key(&self) -> XKey {
+        match self {
+            Self::Category(name) => XKey::Category(name.clone()),
+            Self::Number(_) | Self::Time(_) => XKey::Position(self.position().to_bits()),
+        }
+    }
+
     /// Where the point sorts along the axis. Times sort by the instant they name, one written
     /// without an offset as if it were in UTC.
     fn position(&self) -> f64 {
@@ -287,11 +468,7 @@ mod tests {
             &[Some("2026-02"), Some("20")],
             &[Some("2026-01"), Some("10")],
         ]);
-        let choice = Choice {
-            kind: ChartKind::Bars,
-            x: 0,
-            ys: vec![1],
-        };
+        let choice = Choice::of(ChartKind::Bars, 0, vec![1]);
         let data = read(&[Role::Text, Role::Number], &rows, &choice);
         assert_eq!(
             data.x,
@@ -310,11 +487,7 @@ mod tests {
             &[Some("1"), Some("10")],
             &[Some("2"), Some("20")],
         ]);
-        let choice = Choice {
-            kind: ChartKind::Lines,
-            x: 0,
-            ys: vec![1],
-        };
+        let choice = Choice::of(ChartKind::Lines, 0, vec![1]);
         let data = read(&[Role::Number, Role::Number], &rows, &choice);
         assert_eq!(data.x, XValues::Numbers(vec![1.0, 2.0, 3.0]));
         assert_eq!(
@@ -327,11 +500,7 @@ mod tests {
     #[test]
     fn a_scatter_keeps_the_rows_order() {
         let rows = rows(&[&[Some("3"), Some("30")], &[Some("1"), Some("10")]]);
-        let choice = Choice {
-            kind: ChartKind::Scatter,
-            x: 0,
-            ys: vec![1],
-        };
+        let choice = Choice::of(ChartKind::Scatter, 0, vec![1]);
         let data = read(&[Role::Number, Role::Number], &rows, &choice);
         assert_eq!(data.x, XValues::Numbers(vec![3.0, 1.0]));
     }
@@ -342,11 +511,7 @@ mod tests {
             &[Some("2026-03-01 00:00:00+01"), Some("1")],
             &[Some("2026-03-01 00:00:00+00"), Some("2")],
         ]);
-        let choice = Choice {
-            kind: ChartKind::Lines,
-            x: 0,
-            ys: vec![1],
-        };
+        let choice = Choice::of(ChartKind::Lines, 0, vec![1]);
         let data = read(&[Role::Time, Role::Number], &rows, &choice);
         let XValues::Times(times) = data.x else {
             panic!("expected times, got {:?}", data.x);
@@ -363,20 +528,12 @@ mod tests {
             &[Some("a"), Some("2")],
             &[Some("not a date"), Some("3")],
         ]);
-        let bars = Choice {
-            kind: ChartKind::Bars,
-            x: 0,
-            ys: vec![1],
-        };
+        let bars = Choice::of(ChartKind::Bars, 0, vec![1]);
         let data = read(&[Role::Text, Role::Number], &rows, &bars);
         assert_eq!(data.len(), 2);
         assert_eq!(data.summary.without_x, 1);
 
-        let lines = Choice {
-            kind: ChartKind::Lines,
-            x: 0,
-            ys: vec![1],
-        };
+        let lines = Choice::of(ChartKind::Lines, 0, vec![1]);
         let data = read(&[Role::Time, Role::Number], &rows, &lines);
         assert!(data.is_empty());
         assert_eq!(data.summary.without_x, 3);
@@ -389,11 +546,7 @@ mod tests {
             &[Some("b"), Some("NaN")],
             &[Some("c"), Some("4")],
         ]);
-        let choice = Choice {
-            kind: ChartKind::Bars,
-            x: 0,
-            ys: vec![1],
-        };
+        let choice = Choice::of(ChartKind::Bars, 0, vec![1]);
         let data = read(&[Role::Text, Role::Number], &rows, &choice);
         assert_eq!(data.series[0].values, vec![None, None, Some(4.0)]);
         assert_eq!(data.series[0].gaps(), 2);
@@ -404,11 +557,7 @@ mod tests {
         let many: Vec<Row> = (0..MAX_BARS + 10)
             .map(|index| vec![Some(index.to_string()), Some("1".to_owned())])
             .collect();
-        let choice = Choice {
-            kind: ChartKind::Bars,
-            x: 0,
-            ys: vec![1],
-        };
+        let choice = Choice::of(ChartKind::Bars, 0, vec![1]);
         let data = read(&[Role::Text, Role::Number], &many, &choice);
         assert_eq!(data.len(), MAX_BARS);
         assert_eq!(data.summary.rows, MAX_BARS + 10);
@@ -423,14 +572,105 @@ mod tests {
         assert_eq!(data.summary.limit, None);
     }
 
+    fn split(kind: ChartKind) -> Choice {
+        Choice {
+            series: Some(1),
+            ..Choice::of(kind, 0, vec![2])
+        }
+    }
+
+    #[test]
+    fn a_series_column_splits_one_y_in_first_seen_order() {
+        let rows = rows(&[
+            &[Some("2026-09"), Some("bikes"), Some("10")],
+            &[Some("2026-09"), Some("parts"), Some("3")],
+            &[Some("2026-10"), Some("parts"), Some("4")],
+            &[Some("2026-10"), Some("bikes"), None],
+            &[Some("2026-11"), Some("bikes"), Some("12")],
+        ]);
+        let data = read(
+            &[Role::Text, Role::Text, Role::Number],
+            &rows,
+            &split(ChartKind::Bars),
+        );
+        assert_eq!(
+            data.x,
+            XValues::Categories(vec![
+                "2026-09".to_owned(),
+                "2026-10".to_owned(),
+                "2026-11".to_owned()
+            ])
+        );
+        let named: Vec<(&str, &[Option<f64>])> = data
+            .series
+            .iter()
+            .map(|series| (series.name.as_str(), series.values.as_slice()))
+            .collect();
+        assert_eq!(
+            named,
+            vec![
+                ("bikes", &[Some(10.0), None, Some(12.0)][..]),
+                ("parts", &[Some(3.0), Some(4.0), None][..]),
+            ]
+        );
+        assert_eq!(data.series[0].rows, vec![Some(0), Some(3), Some(4)]);
+        assert_eq!(data.series[1].rows, vec![Some(1), Some(2), None]);
+        assert_eq!(data.series[1].gaps(), 1, "no row is a gap");
+        assert_eq!(data.rows, vec![0, 2, 4]);
+    }
+
+    #[test]
+    fn a_split_keeps_eight_series_and_the_first_row_of_each() {
+        let mut values: Vec<Vec<Option<String>>> = (0..10)
+            .map(|index| {
+                vec![
+                    Some("2026-09".to_owned()),
+                    Some(format!("s{index}")),
+                    Some("1".to_owned()),
+                ]
+            })
+            .collect();
+        values.push(vec![
+            Some("2026-09".to_owned()),
+            Some("s0".to_owned()),
+            Some("9".to_owned()),
+        ]);
+        values.push(vec![Some("2026-09".to_owned()), None, Some("2".to_owned())]);
+        let data = read(
+            &[Role::Text, Role::Text, Role::Number],
+            &values,
+            &split(ChartKind::Bars),
+        );
+        assert_eq!(data.series.len(), STARTING_SERIES);
+        assert_eq!(data.series[0].values, vec![Some(1.0)], "the first row wins");
+        assert_eq!(
+            data.summary.series_left_out,
+            vec!["s8".to_owned(), "s9".to_owned(), NULL_SERIES.to_owned()]
+        );
+        assert_eq!(data.summary.repeated, 1);
+    }
+
+    #[test]
+    fn split_lines_over_times_meet_at_each_time() {
+        let rows = rows(&[
+            &[Some("2026-10-01"), Some("a"), Some("2")],
+            &[Some("2026-09-01"), Some("a"), Some("1")],
+            &[Some("2026-09-01"), Some("b"), Some("5")],
+        ]);
+        let data = read(
+            &[Role::Time, Role::Text, Role::Number],
+            &rows,
+            &split(ChartKind::Lines),
+        );
+        assert_eq!(data.len(), 2);
+        assert_eq!(data.series[0].values, vec![Some(1.0), Some(2.0)]);
+        assert_eq!(data.series[1].values, vec![Some(5.0), None]);
+    }
+
     #[test]
     fn text_on_x_is_placed_as_categories_whatever_the_kind() {
         let rows = rows(&[&[Some("b"), Some("1")], &[Some("a"), Some("2")]]);
-        let choice = Choice {
-            kind: ChartKind::Lines,
-            x: 0,
-            ys: vec![1],
-        };
+        let choice = Choice::of(ChartKind::Lines, 0, vec![1]);
         let data = read(&[Role::Text, Role::Number], &rows, &choice);
         assert_eq!(
             data.x,

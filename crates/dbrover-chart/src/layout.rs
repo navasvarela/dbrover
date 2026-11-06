@@ -637,13 +637,15 @@ mod tests {
                 .map(|(name, values)| Series {
                     name: (*name).to_owned(),
                     values: values.to_vec(),
+                    rows: (0..values.len()).map(Some).collect(),
                 })
                 .collect(),
+            split_by: None,
             rows: (0..len).collect(),
+            stacked: false,
             summary: Summary {
                 rows: len,
-                limit: None,
-                without_x: 0,
+                ..Summary::default()
             },
         }
     }

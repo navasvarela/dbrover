@@ -31,6 +31,8 @@ pub struct ChartSpec {
     pub x: Option<String>,
     /// The Y columns' names; empty when the spec leaves `y` out.
     pub y: Vec<String>,
+    /// A column whose values split the one Y into a series each.
+    pub series: Option<String>,
     pub title: Option<String>,
     pub x_title: Option<String>,
     pub y_title: Option<String>,
@@ -90,6 +92,7 @@ enum Key {
     Kind,
     X,
     Y,
+    Series,
     Title,
     XTitle,
     YTitle,
@@ -99,10 +102,11 @@ enum Key {
 }
 
 impl Key {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 10] = [
         Self::Kind,
         Self::X,
         Self::Y,
+        Self::Series,
         Self::Title,
         Self::XTitle,
         Self::YTitle,
@@ -116,6 +120,7 @@ impl Key {
             Self::Kind => "kind",
             Self::X => "x",
             Self::Y => "y",
+            Self::Series => "series",
             Self::Title => "title",
             Self::XTitle => "x_title",
             Self::YTitle => "y_title",

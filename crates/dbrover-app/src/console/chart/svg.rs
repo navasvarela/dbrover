@@ -157,11 +157,7 @@ mod tests {
         .map(|(month, total)| vec![Some(month.to_owned()), Some(total.to_owned())])
         .collect();
         let borrowed: Vec<&dbrover_core::Row> = rows.iter().collect();
-        let choice = Choice {
-            kind,
-            x: 0,
-            ys: vec![1],
-        };
+        let choice = Choice::of(kind, 0, vec![1]);
         let data = ChartData::read(&columns, &[Role::Text, Role::Number], &borrowed, &choice);
         layout(
             &data,

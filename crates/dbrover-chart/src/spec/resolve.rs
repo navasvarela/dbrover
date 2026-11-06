@@ -52,67 +52,11 @@ impl ChartSpec {
         roles: &[Role],
     ) -> Result<Resolved, Vec<ColumnProblem>> {
         let finder = Finder { columns, roles };
-        let mut problems = Vec::new();
-        let mut found = |key: &str, name: &str| {
-            finder
-                .find(key, name)
-                .map_err(|problem| problems.push(problem))
-                .ok()
-        };
-        let x = self.x.as_deref().map(|name| found("x", name));
-        let named_ys: Vec<Option<usize>> = self.y.iter().map(|name| found("y", name)).collect();
-        let sort = self
-            .sort
-            .as_ref()
-            .map(|sort| (found("sort", &sort.column), sort.descending));
-        let ys: Vec<usize> = named_ys.iter().flatten().copied().collect();
-        problems.extend(finder.not_numbers(&ys));
-        if let Some(Some(x)) = x
-            && ys.contains(&x)
-        {
-            problems.push(ColumnProblem {
-                detail: format!("`x` and `y` both name `{}`", finder.name(x)),
-            });
-        }
-        if !problems.is_empty() {
-            return Err(problems);
-        }
-        let x = match x {
-            Some(x) => x,
-            None => starting_x(roles, &ys),
-        };
-        let Some(x) = x else {
-            return Err(vec![ColumnProblem {
-                detail: "every column is on Y; leave one for `x`".to_owned(),
-            }]);
-        };
-        let ys = if self.y.is_empty() {
-            starting_ys(roles, x)
-        } else {
-            ys
-        };
-        if ys.is_empty() {
-            return Err(vec![ColumnProblem {
-                detail: format!(
-                    "no column but `{}` holds numbers, so Y has none to measure",
-                    finder.name(x)
-                ),
-            }]);
-        }
+        let named = Named::find(self, &finder)?;
+        let choice = named.choice(self, &finder)?;
         Ok(Resolved {
-            choice: Choice {
-                kind: self
-                    .kind
-                    .unwrap_or_else(|| ChartKind::starting(roles.get(x).copied())),
-                x,
-                ys,
-            },
-            sort: sort.and_then(|(column, descending)| {
-                Some(SortBy {
-                    column: column?,
-                    descending,
-                })
-            }),
+            choice,
+            sort: named.sort,
             limit: self.limit,
             options: self.layout_options(),
         })
@@ -152,6 +96,120 @@ impl Resolved {
             (Some(sorted), Some(cut)) => Some(format!("{sorted}, {cut}")),
             (one, other) => one.or(other),
         }
+    }
+}
+
+/// The columns a spec names, found among a result's.
+struct Named {
+    x: Option<usize>,
+    ys: Vec<usize>,
+    series: Option<usize>,
+    sort: Option<SortBy>,
+}
+
+impl Named {
+    /// Every column `spec` names, or every problem with them.
+    fn find(spec: &ChartSpec, finder: &Finder<'_>) -> Result<Self, Vec<ColumnProblem>> {
+        let mut problems = Vec::new();
+        let mut found = |key: &str, name: &str| {
+            finder
+                .find(key, name)
+                .map_err(|problem| problems.push(problem))
+                .ok()
+        };
+        let x = spec.x.as_deref().map(|name| found("x", name));
+        let ys: Vec<Option<usize>> = spec.y.iter().map(|name| found("y", name)).collect();
+        let series = spec.series.as_deref().map(|name| found("series", name));
+        let sort = spec
+            .sort
+            .as_ref()
+            .map(|sort| (found("sort", &sort.column), sort.descending));
+        let named = Self {
+            x: x.flatten(),
+            ys: ys.into_iter().flatten().collect(),
+            series: series.flatten(),
+            sort: sort.and_then(|(column, descending)| {
+                Some(SortBy {
+                    column: column?,
+                    descending,
+                })
+            }),
+        };
+        problems.extend(finder.not_numbers(&named.ys, named.series.is_some()));
+        problems.extend(named.overlaps(finder));
+        if spec.series.is_some() && spec.y.len() > 1 {
+            problems.push(ColumnProblem {
+                detail: format!(
+                    "`series` splits one Y into a series per value, and `y` names {} columns",
+                    spec.y.len()
+                ),
+            });
+        }
+        if problems.is_empty() {
+            Ok(named)
+        } else {
+            Err(problems)
+        }
+    }
+
+    /// A column named for two places at once: X and Y, or the series and X or Y.
+    fn overlaps(&self, finder: &Finder<'_>) -> Vec<ColumnProblem> {
+        let both = |first: &str, second: &str, column: usize| ColumnProblem {
+            detail: format!(
+                "`{first}` and `{second}` both name `{}`",
+                finder.name(column)
+            ),
+        };
+        let mut problems = Vec::new();
+        if let Some(x) = self.x.filter(|x| self.ys.contains(x)) {
+            problems.push(both("x", "y", x));
+        }
+        if let Some(series) = self.series {
+            if self.x == Some(series) {
+                problems.push(both("x", "series", series));
+            }
+            if self.ys.contains(&series) {
+                problems.push(both("y", "series", series));
+            }
+        }
+        problems
+    }
+
+    /// The chart: the columns named, and the starting choice's for those left out.
+    fn choice(&self, spec: &ChartSpec, finder: &Finder<'_>) -> Result<Choice, Vec<ColumnProblem>> {
+        let roles = finder.roles;
+        let taken: Vec<usize> = self.ys.iter().copied().chain(self.series).collect();
+        let x = self
+            .x
+            .or_else(|| starting_x(roles, &taken))
+            .ok_or_else(|| {
+                vec![ColumnProblem {
+                    detail: "every column is on Y or splits it; leave one for `x`".to_owned(),
+                }]
+            })?;
+        let mut ys = self.ys.clone();
+        if ys.is_empty() {
+            ys = starting_ys(roles, x);
+            ys.retain(|&y| Some(y) != self.series);
+            if self.series.is_some() {
+                ys.truncate(1);
+            }
+        }
+        if ys.is_empty() {
+            return Err(vec![ColumnProblem {
+                detail: format!(
+                    "no column but `{}` holds numbers, so Y has none to measure",
+                    finder.name(x)
+                ),
+            }]);
+        }
+        let kind = spec
+            .kind
+            .unwrap_or_else(|| ChartKind::starting(roles.get(x).copied()));
+        Ok(Choice {
+            series: self.series,
+            ..Choice::of(kind, x, ys)
+        })
     }
 }
 
@@ -202,8 +260,9 @@ impl Finder<'_> {
         Err(ColumnProblem { detail })
     }
 
-    /// A problem for each of `ys` that doesn't hold numbers, and for more Ys than colours.
-    fn not_numbers(&self, ys: &[usize]) -> Vec<ColumnProblem> {
+    /// A problem for each of `ys` that doesn't hold numbers, and for more Ys than colours when
+    /// they aren't `split` by a column.
+    fn not_numbers(&self, ys: &[usize], split: bool) -> Vec<ColumnProblem> {
         let mut problems: Vec<ColumnProblem> = ys
             .iter()
             .filter_map(|&y| {
@@ -221,7 +280,7 @@ impl Finder<'_> {
                 })
             })
             .collect();
-        if ys.len() > STARTING_SERIES {
+        if !split && ys.len() > STARTING_SERIES {
             problems.push(ColumnProblem {
                 detail: format!(
                     "`y` names {} columns, and a chart has colours for {STARTING_SERIES}",
@@ -294,55 +353,35 @@ mod tests {
                     x: named("category"),
                     ..ChartSpec::default()
                 },
-                Choice {
-                    kind: ChartKind::Bars,
-                    x: 1,
-                    ys: vec![2, 3],
-                },
+                Choice::of(ChartKind::Bars, 1, vec![2, 3]),
             ),
             (
                 ChartSpec {
                     y: vec!["orders".to_owned()],
                     ..ChartSpec::default()
                 },
-                Choice {
-                    kind: ChartKind::Lines,
-                    x: 0,
-                    ys: vec![3],
-                },
+                Choice::of(ChartKind::Lines, 0, vec![3]),
             ),
             (
                 ChartSpec {
                     kind: Some(ChartKind::Bars),
                     ..ChartSpec::default()
                 },
-                Choice {
-                    kind: ChartKind::Bars,
-                    x: 0,
-                    ys: vec![2, 3],
-                },
+                Choice::of(ChartKind::Bars, 0, vec![2, 3]),
             ),
             (
                 ChartSpec {
                     x: named("net"),
                     ..ChartSpec::default()
                 },
-                Choice {
-                    kind: ChartKind::Scatter,
-                    x: 2,
-                    ys: vec![3],
-                },
+                Choice::of(ChartKind::Scatter, 2, vec![3]),
             ),
             (
                 ChartSpec {
                     y: vec!["orders".to_owned(), "net".to_owned()],
                     ..ChartSpec::default()
                 },
-                Choice {
-                    kind: ChartKind::Lines,
-                    x: 0,
-                    ys: vec![3, 2],
-                },
+                Choice::of(ChartKind::Lines, 0, vec![3, 2]),
             ),
         ];
         for (spec, expected) in cases {
@@ -442,6 +481,97 @@ mod tests {
     }
 
     #[test]
+    fn a_series_splits_one_y() {
+        let cases = [
+            (
+                ChartSpec {
+                    series: named("category"),
+                    ..ChartSpec::default()
+                },
+                Choice {
+                    series: Some(1),
+                    ..Choice::of(ChartKind::Lines, 0, vec![2])
+                },
+            ),
+            (
+                ChartSpec {
+                    series: named("category"),
+                    y: vec!["orders".to_owned()],
+                    kind: Some(ChartKind::Bars),
+                    ..ChartSpec::default()
+                },
+                Choice {
+                    series: Some(1),
+                    ..Choice::of(ChartKind::Bars, 0, vec![3])
+                },
+            ),
+            (
+                ChartSpec {
+                    series: named("month"),
+                    ..ChartSpec::default()
+                },
+                Choice {
+                    series: Some(0),
+                    ..Choice::of(ChartKind::Bars, 1, vec![2])
+                },
+            ),
+        ];
+        for (spec, expected) in cases {
+            assert_eq!(choice(&spec), expected, "{spec:?}");
+        }
+    }
+
+    #[test]
+    fn says_each_problem_with_a_series() {
+        let cases: [(ChartSpec, &[&str]); 4] = [
+            (
+                ChartSpec {
+                    series: named("categry"),
+                    ..ChartSpec::default()
+                },
+                &[
+                    "chart: `series = \"categry\"` isn't a column of this result: month, \
+                   category, net, orders",
+                ],
+            ),
+            (
+                ChartSpec {
+                    series: named("category"),
+                    y: vec!["net".to_owned(), "orders".to_owned()],
+                    ..ChartSpec::default()
+                },
+                &[
+                    "chart: `series` splits one Y into a series per value, and `y` names 2 \
+                   columns",
+                ],
+            ),
+            (
+                ChartSpec {
+                    x: named("category"),
+                    series: named("category"),
+                    ..ChartSpec::default()
+                },
+                &["chart: `x` and `series` both name `category`"],
+            ),
+            (
+                ChartSpec {
+                    y: vec!["net".to_owned()],
+                    series: named("net"),
+                    ..ChartSpec::default()
+                },
+                &["chart: `y` and `series` both name `net`"],
+            ),
+        ];
+        for (spec, expected) in cases {
+            assert_eq!(
+                resolve(&spec),
+                Err(expected.iter().map(|line| (*line).to_owned()).collect()),
+                "{spec:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_column_named_twice_is_named_apart() {
         let spec = ChartSpec {
             y: vec!["count".to_owned()],
@@ -475,7 +605,7 @@ mod tests {
         let problems = all_on_y.resolve(&columns(&["net"]), &[Number]).unwrap_err();
         assert_eq!(
             problems[0].to_string(),
-            "chart: every column is on Y; leave one for `x`"
+            "chart: every column is on Y or splits it; leave one for `x`"
         );
     }
 
@@ -528,11 +658,7 @@ mod tests {
     #[test]
     fn says_how_the_rows_were_arranged() {
         let resolved = |sort: Option<SortBy>, limit: Option<usize>| Resolved {
-            choice: Choice {
-                kind: ChartKind::Bars,
-                x: 1,
-                ys: vec![2],
-            },
+            choice: Choice::of(ChartKind::Bars, 1, vec![2]),
             sort,
             limit,
             options: LayoutOptions::default(),

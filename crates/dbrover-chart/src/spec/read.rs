@@ -85,6 +85,9 @@ impl Reader<'_> {
             Key::Kind => spec.kind = self.kind(value),
             Key::X => spec.x = self.text_value(value, "`x` is a column's name, in quotes"),
             Key::Y => spec.y = self.columns(value),
+            Key::Series => {
+                spec.series = self.text_value(value, "`series` is a column's name, in quotes");
+            }
             Key::Title => spec.title = self.text_value(value, "`title` is text, in quotes"),
             Key::XTitle => spec.x_title = self.text_value(value, "`x_title` is text, in quotes"),
             Key::YTitle => spec.y_title = self.text_value(value, "`y_title` is text, in quotes"),
@@ -311,6 +314,7 @@ mod tests {
 kind = "bars"   # by month
 x = "month"
 y = ["net", "refunds"]
+series = "category"
 title = "Net sales"
 x_title = "Month"
 y_title = "Euros"
@@ -325,6 +329,7 @@ limit = 10
                 kind: Some(ChartKind::Bars),
                 x: Some("month".to_owned()),
                 y: vec!["net".to_owned(), "refunds".to_owned()],
+                series: Some("category".to_owned()),
                 title: Some("Net sales".to_owned()),
                 x_title: Some("Month".to_owned()),
                 y_title: Some("Euros".to_owned()),
@@ -366,7 +371,7 @@ limit = 10
                 "colour = \"red\"",
                 &[
                     "chart, line 2: no key `colour`; a chart's keys are `kind`, `x`, `y`, \
-                   `title`, `x_title`, `y_title`, `y_zero`, `sort`, `limit`",
+                   `series`, `title`, `x_title`, `y_title`, `y_zero`, `sort`, `limit`",
                 ],
             ),
             (
