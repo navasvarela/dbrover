@@ -323,19 +323,39 @@ impl ChartView {
                 .all(|(chart, result)| chart.name == result.name)
     }
 
-    /// Reads the roles again once more rows have loaded, keeping the choice. A role that
-    /// changed places X differently, so the points are read again too.
-    fn refresh_roles(&mut self, rows: &[Row]) {
+    /// Reads the roles again once more rows have loaded. A role that changed places X
+    /// differently, so the points are read again too, and the block is resolved again.
+    ///
+    /// The choice is kept if it was picked in the toolbar or carried from the last run; one
+    /// the block or the starting choice made is made again from the new roles. A view first
+    /// built when a result's columns had come but none of its rows read every column without a
+    /// declared type as text, and so found no Y; keeping that choice left the chart empty for
+    /// good once the rows came, which a loaded machine's tests hit.
+    fn refresh_roles(&mut self, rows: &[Row], spec: Option<&QuerySpec>) {
         if self.roles_from == rows.len() {
             return;
         }
         let roles = roles(&self.columns, rows);
         if roles != self.roles {
+            let made_here = self.choice == self.opening_choice();
             self.roles = roles;
+            self.spec = SpecState::of(spec, &self.columns, &self.roles);
+            if made_here {
+                self.choice = self.opening_choice();
+            }
             self.data = None;
             self.laid_out = None;
         }
         self.roles_from = rows.len();
+    }
+
+    /// The choice the block, or else the starting choice, makes of the columns as their roles
+    /// are now.
+    fn opening_choice(&self) -> Option<Choice> {
+        self.spec
+            .resolved()
+            .map(|resolved| resolved.choice.clone())
+            .or_else(|| Choice::starting(&self.roles))
     }
 
     /// The chart's points, read again only when the choice or the grid's rows change.
@@ -424,7 +444,7 @@ impl ChartTab {
         let view = self
             .view
             .get_or_insert_with(|| ChartView::new(source, None, spec));
-        view.refresh_roles(source.rows);
+        view.refresh_roles(source.rows, spec);
         view
     }
 }
@@ -998,6 +1018,100 @@ mod tests {
             gap < 1.0,
             "a line: egui {line} against {}",
             file.line_height()
+        );
+    }
+
+    fn undeclared(names: &[&str]) -> Vec<ColumnInfo> {
+        names
+            .iter()
+            .map(|name| ColumnInfo {
+                name: (*name).to_owned(),
+                type_name: None,
+            })
+            .collect()
+    }
+
+    fn months() -> Vec<Row> {
+        [("2026-09", "40"), ("2026-10", "12")]
+            .into_iter()
+            .map(|(month, net)| vec![Some(month.to_owned()), Some(net.to_owned())])
+            .collect()
+    }
+
+    /// The block above `SELECT month, net FROM sales`, as a run reads it.
+    fn block(keys: &str) -> QuerySpec {
+        let language = dbrover_language::QueryLanguage::Sql(Dialect::Sqlite);
+        let text = format!("-- [chart]\n{keys}\nSELECT month, net FROM sales;");
+        let statement = language.split(&text).remove(0);
+        block::Blocks::of(language, &text)
+            .spec_for(&statement)
+            .unwrap()
+    }
+
+    /// A result's columns may come a frame before its rows, when every column without a
+    /// declared type reads as text: the chart is made again once the rows say otherwise.
+    #[test]
+    fn makes_the_chart_again_when_the_rows_come_after_the_columns() {
+        let columns = undeclared(&["month", "net"]);
+        let rows = months();
+        let order = [0, 1];
+        let cases = [None, Some(block("-- kind = \"lines\"\n-- y = \"net\""))];
+        for spec in cases {
+            let mut tab = ChartTab::default().with_spec(spec.clone());
+            let before = Source {
+                columns: &columns,
+                rows: &[],
+                order: &[],
+                dialect: None,
+            };
+            assert_eq!(tab.view(&before).choice, None, "{spec:?}");
+
+            let after = Source {
+                rows: &rows,
+                order: &order,
+                ..before
+            };
+            let view = tab.view(&after);
+            let kind = if spec.is_some() {
+                ChartKind::Lines
+            } else {
+                ChartKind::Bars
+            };
+            assert_eq!(view.choice, Some(Choice::of(kind, 0, vec![1])), "{spec:?}");
+            assert_eq!(view.in_query(), spec.is_some());
+        }
+    }
+
+    #[test]
+    fn keeps_a_choice_picked_in_the_toolbar_when_the_roles_change() {
+        let columns = undeclared(&["month", "net"]);
+        let rows = months();
+        let order = [0, 1];
+        let mut tab = ChartTab::default();
+        let first = Source {
+            columns: &columns,
+            rows: &rows[..1],
+            order: &order[..1],
+            dialect: None,
+        };
+        if let Some(choice) = tab.view(&first).choice.as_mut() {
+            choice.kind = ChartKind::Scatter;
+        }
+        let mut more = rows.clone();
+        more.push(vec![Some("2026-11".to_owned()), Some("n/a".to_owned())]);
+        let order = [0, 1, 2];
+        let after = Source {
+            rows: &more,
+            order: &order,
+            ..first
+        };
+
+        let view = tab.view(&after);
+
+        assert_eq!(view.roles, [Role::Text, Role::Text]);
+        assert_eq!(
+            view.choice.as_ref().map(|choice| choice.kind),
+            Some(ChartKind::Scatter)
         );
     }
 }
