@@ -5,7 +5,9 @@
 //!    at the same time, each under its caps, a batch of its lookup's values at a time, typing
 //!    its columns once its last row is in;
 //! 3. lock the database down, and run the combine query under its timeout, its rows going to
-//!    the outputs as a source's do without a combine step.
+//!    the outputs as a source's do without a combine step;
+//! 4. run each chart's own query, if it has one, under the same limits, its rows going to the
+//!    chart.
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -20,12 +22,13 @@ use dbrover_language::Literal;
 use dbrover_sql::Dialect;
 use futures_util::future::try_join_all;
 
+use crate::chart::ChartRun;
 use crate::declared::Shaped;
-use crate::run::{Count, Feed, Outputs, PROGRESS_EVERY, millis};
+use crate::run::{Count, Feed, Outputs, PROGRESS_EVERY, Streamed, millis};
 use crate::statement::{Statements, lookup_literal};
 use crate::typing::ColumnTyper;
 use crate::{
-    AttachedSource, Batch, CombineLimits, Combined, LimitHit, LoadedColumn, PlannedLookup,
+    AttachedSource, Batch, Chart, CombineLimits, Combined, LimitHit, LoadedColumn, PlannedLookup,
     PlannedSource, QuerySource, RunEvent, RunFailure, RunSummary, RunValues, SourceError,
     SourceOpener, SourceReader, SourceStatement, Step,
 };
@@ -46,7 +49,7 @@ pub(crate) struct Combining<'a, O> {
     pub(crate) opener: &'a O,
 }
 
-impl<O: SourceOpener> Combining<'_, O> {
+impl<'a, O: SourceOpener> Combining<'a, O> {
     /// Runs the combine step: see the module.
     pub(crate) async fn run(
         &self,
@@ -100,9 +103,15 @@ impl<O: SourceOpener> Combining<'_, O> {
 
         let started = Instant::now();
         let query = self.combined.combine.query.sql();
-        let mut reader = CombineReader::start(workspace, query, self.outputs.values, self.limits())
-            .await
-            .map_err(|error| error.at(Step::Combine))?;
+        let mut reader = CombineReader::start(
+            workspace,
+            query,
+            self.outputs.values,
+            DuckDbQuery::Combine,
+            self.limits(),
+        )
+        .await
+        .map_err(|error| error.at(Step::Combine))?;
         let streamed = self
             .outputs
             .stream(&mut reader, &Feed::Combine, started, events)
@@ -124,7 +133,70 @@ impl<O: SourceOpener> Combining<'_, O> {
             peak_memory: peaks.memory,
             peak_temp_size: peaks.temp_size,
         });
+        let mut streamed = streamed;
+        if let Err(failure) = self.query_charts(workspace, &mut streamed).await {
+            streamed.abandon();
+            return Err(failure);
+        }
         streamed.finish(events)
+    }
+
+    /// Each chart with a query of its own, which runs in the locked-down workspace now the
+    /// combine step is done, a chart at a time in the file's order, under the combine step's
+    /// limits (`docs/charts-as-code.md`, CH3e), its rows going to the chart.
+    async fn query_charts(
+        &self,
+        workspace: &mut Workspace,
+        streamed: &mut Streamed<'a>,
+    ) -> Result<(), RunFailure> {
+        let plan = self.outputs.plan;
+        let files = &self.outputs.values.charts;
+        for (index, (chart, file)) in plan.charts.iter().zip(files).enumerate() {
+            if let Some(query) = &chart.query {
+                let read = self.chart_rows(workspace, index + 1, chart, file, query);
+                streamed.add_chart(read.await?);
+            }
+        }
+        Ok(())
+    }
+
+    /// Runs a chart's `query` and gives its rows to the chart.
+    async fn chart_rows(
+        &self,
+        workspace: &mut Workspace,
+        number: usize,
+        chart: &'a Chart,
+        file: &str,
+        query: &str,
+    ) -> Result<ChartRun<'a>, RunFailure> {
+        let step = Step::Chart {
+            number,
+            file: file.to_owned(),
+        };
+        let query_of = DuckDbQuery::Chart;
+        let mut reader = CombineReader::start(
+            workspace,
+            query,
+            self.outputs.values,
+            query_of,
+            self.limits(),
+        )
+        .await
+        .map_err(|error| error.at(step.clone()))?;
+        let mut run = ChartRun::new(number, chart, file, reader.columns());
+        let read = loop {
+            match reader.next_page().await {
+                Ok(Some(page)) => {
+                    if let Err(failure) = run.add(&page) {
+                        break Err(failure);
+                    }
+                }
+                Ok(None) => break Ok(()),
+                Err(error) => break Err(error.at(step.clone())),
+            }
+        };
+        reader.close().await;
+        read.map(|()| run)
     }
 
     /// Reads `source` into its table under its caps, a batch of its lookup's values at a
@@ -489,21 +561,34 @@ fn duckdb_failure(error: &DriverError, limits: &CombineLimits) -> SourceError {
     }
 }
 
-/// The combine query's rows, read a page at a time until its timeout.
+/// Which query of the run's DuckDB a [`CombineReader`] reads, which its timeout's message
+/// names.
+#[derive(Debug, Clone, Copy)]
+enum DuckDbQuery {
+    Combine,
+    /// A chart's own query, under the combine step's limits.
+    Chart,
+}
+
+/// The rows of a query of the run's DuckDB, the combine step's or a chart's, read a page at a
+/// time until its timeout.
 struct CombineReader<'a> {
     cursor: Option<Box<dyn ResultCursor>>,
     columns: Vec<ExportColumn>,
     cancel: Arc<dyn CancelHandle>,
     deadline: Instant,
+    query: DuckDbQuery,
     limits: &'a CombineLimits,
 }
 
 impl<'a> CombineReader<'a> {
-    /// Starts `query` with `values` bound, in the locked-down workspace.
+    /// Starts `query` with `values` bound, in the locked-down workspace. It has the combine
+    /// step's `timeout`, counted from now.
     async fn start(
         workspace: &mut Workspace,
         query: &str,
         values: &RunValues,
+        query_of: DuckDbQuery,
         limits: &'a CombineLimits,
     ) -> Result<Self, SourceError> {
         let deadline = Instant::now() + limits.timeout;
@@ -517,7 +602,7 @@ impl<'a> CombineReader<'a> {
                 .await
                 .map_err(|error| duckdb_failure(&error, limits))
         };
-        let cursor = watch(started, deadline, &cancel, limits).await?;
+        let cursor = watch(started, deadline, &cancel, query_of, limits).await?;
         let columns = cursor
             .columns()
             .iter()
@@ -528,6 +613,7 @@ impl<'a> CombineReader<'a> {
             columns,
             cancel,
             deadline,
+            query: query_of,
             limits,
         })
     }
@@ -549,7 +635,7 @@ impl SourceReader for CombineReader<'_> {
                 .await
                 .map_err(|error| duckdb_failure(&error, limits))
         };
-        let page = watch(page, self.deadline, &self.cancel, self.limits).await?;
+        let page = watch(page, self.deadline, &self.cancel, self.query, self.limits).await?;
         Ok((!page.is_empty()).then_some(page))
     }
 
@@ -568,6 +654,7 @@ async fn watch<T>(
     work: impl Future<Output = Result<T, SourceError>>,
     deadline: Instant,
     cancel: &Arc<dyn CancelHandle>,
+    query: DuckDbQuery,
     limits: &CombineLimits,
 ) -> Result<T, SourceError> {
     let mut work = std::pin::pin!(work);
@@ -585,11 +672,18 @@ async fn watch<T>(
     // Whatever it returns now, it ended because of the interrupt.
     let _ = tokio::time::timeout(CANCEL_GRACE, work).await;
     let value = friendly(limits.timeout);
-    Err(SourceError {
-        message: format!(
+    let message = match query {
+        DuckDbQuery::Combine => format!(
             "the combine query ran past {value}, its timeout, and was interrupted; combine fewer \
              rows, or raise timeout"
         ),
+        DuckDbQuery::Chart => format!(
+            "the chart's query ran past {value}, the combine step's timeout, and was \
+             interrupted; read fewer rows in it, or raise timeout in [combine]"
+        ),
+    };
+    Err(SourceError {
+        message,
         limit: Some(Box::new(LimitHit {
             key: "timeout".to_owned(),
             value,

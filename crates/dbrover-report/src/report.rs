@@ -159,6 +159,9 @@ pub struct Chart {
     pub spec: ChartSpec,
     pub file: FileName,
     pub picture: ChartPicture,
+    /// A DuckDB query over the sources' tables to draw instead of the result, run after the
+    /// combine step; `None` draws the result.
+    pub query: Option<String>,
     /// In points.
     pub width: u32,
     pub height: u32,

@@ -65,7 +65,12 @@ impl<'a> ChartRun<'a> {
         }
     }
 
-    fn step(&self) -> Step {
+    /// Its place among the report's charts, counted from 1.
+    pub(crate) fn number(&self) -> usize {
+        self.number
+    }
+
+    pub(crate) fn step(&self) -> Step {
         Step::Chart {
             number: self.number,
             file: self.file.clone(),

@@ -45,6 +45,9 @@ pub fn embedded_code(text: &str) -> Vec<Embedded> {
         found.extend(code(text, combine, "query", StepLanguage::DuckDb));
         found.extend(code(text, combine, "prql", StepLanguage::Prql));
     }
+    for chart in tables(file, "chart") {
+        found.extend(code(text, chart, "query", StepLanguage::DuckDb));
+    }
     found.sort_by_key(|embedded| embedded.range.start);
     found
 }
@@ -206,6 +209,10 @@ prql = '''
 from lines
 select {a}
 '''
+
+[[chart]]
+file = "a.svg"
+query = "SELECT a FROM lines"
 "#;
 
     #[test]
@@ -223,6 +230,7 @@ select {a}
                 ("SELECT 1\n", source("shop")),
                 ("SELECT 2", source("ledger")),
                 ("from lines\nselect {a}\n", StepLanguage::Prql),
+                ("SELECT a FROM lines", StepLanguage::DuckDb),
             ]
         );
     }

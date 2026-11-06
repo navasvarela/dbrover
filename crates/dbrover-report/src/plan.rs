@@ -85,9 +85,14 @@ impl FileLimits {
                     _ => None,
                 }
             }
-            (Step::Combine, "timeout") => Some(self.combine.timeout.is_some()),
-            (Step::Combine, "memory_limit") => Some(self.combine.memory_limit.is_some()),
-            (Step::Combine, "max_temp_size") => Some(self.combine.max_temp_size.is_some()),
+            // A chart's query runs in the combine step's DuckDB, under its limits.
+            (Step::Combine | Step::Chart { .. }, "timeout") => Some(self.combine.timeout.is_some()),
+            (Step::Combine | Step::Chart { .. }, "memory_limit") => {
+                Some(self.combine.memory_limit.is_some())
+            }
+            (Step::Combine | Step::Chart { .. }, "max_temp_size") => {
+                Some(self.combine.max_temp_size.is_some())
+            }
             (Step::Output { number, .. }, "max_size") => {
                 let set = number
                     .checked_sub(1)
@@ -326,10 +331,21 @@ impl Plan {
             }
         });
         let outputs = plan_outputs(&report.outputs, presets, defaults.output, &mut problems);
+        for (index, chart) in report.charts.iter().enumerate() {
+            let Some(query) = &chart.query else {
+                continue;
+            };
+            if let Err(problem) = check_reads(query, "a chart's query") {
+                problems.push(ReportProblem::new(
+                    format!("chart {}: {problem}", index + 1),
+                    Place::key(Table::Chart(index), "query"),
+                ));
+            }
+        }
         let params = if sources.len() == report.sources.len() {
             ordered_params(
                 &report.params,
-                &queries(&sources, combine.as_ref()),
+                &queries(&sources, combine.as_ref(), &report.charts),
                 &mut problems,
             )
         } else {
@@ -660,17 +676,22 @@ const QUERY_WORDS: [&str; 8] = [
 
 /// Whether the combine query is one statement that only reads.
 fn check_combine(query: &str) -> Result<(), String> {
+    check_reads(query, "the combine step")
+}
+
+/// Whether a query of the run's DuckDB, the combine step's or a chart's (`what`), is one
+/// statement that only reads.
+fn check_reads(query: &str, what: &str) -> Result<(), String> {
     let statements = dbrover_sql::split_statements(query, Dialect::DuckDb).len();
     if statements != 1 {
         return Err(format!(
-            "the query holds {statements} statements; the combine step is one query that only \
-             reads"
+            "the query holds {statements} statements; {what} is one query that only reads"
         ));
     }
     match QueryLanguage::Sql(Dialect::DuckDb).classify(query) {
         Ok(StatementKind::Read) => Ok(()),
         Ok(kind) => Err(format!(
-            "the query {}; the combine step only reads the sources' tables",
+            "the query {}; {what} only reads the sources' tables",
             kind.description()
         )),
         // The parser behind `classify` doesn't read all of DuckDB's SQL (`ASOF JOIN … ON`, for
@@ -679,7 +700,7 @@ fn check_combine(query: &str) -> Result<(), String> {
         // such a query might try beyond reading.
         Err(_) if starts_as_query(query) => Ok(()),
         Err(unclassified) => Err(format!(
-            "{unclassified}; the combine step is one query that only reads"
+            "{unclassified}; {what} is one query that only reads"
         )),
     }
 }
@@ -700,7 +721,11 @@ struct Sent<'a> {
 }
 
 /// Each query the run sends, sources first.
-fn queries<'a>(sources: &'a [PlannedSource], combine: Option<&'a PlannedCombine>) -> Vec<Sent<'a>> {
+fn queries<'a>(
+    sources: &'a [PlannedSource],
+    combine: Option<&'a PlannedCombine>,
+    charts: &'a [Chart],
+) -> Vec<Sent<'a>> {
     let sources = sources
         .iter()
         .enumerate()
@@ -724,7 +749,16 @@ fn queries<'a>(sources: &'a [PlannedSource], combine: Option<&'a PlannedCombine>
         language: QueryLanguage::Sql(Dialect::DuckDb),
         lookup: None,
     });
-    sources.chain(combine).collect()
+    let charts = charts.iter().enumerate().filter_map(|(index, chart)| {
+        Some(Sent {
+            label: format!("chart {}", index + 1),
+            place: Place::key(Table::Chart(index), "query"),
+            query: chart.query.as_deref()?,
+            language: QueryLanguage::Sql(Dialect::DuckDb),
+            lookup: None,
+        })
+    });
+    sources.chain(combine).chain(charts).collect()
 }
 
 /// The data source `wanted` names: by name if one has it, else by id.
