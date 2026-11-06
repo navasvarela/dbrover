@@ -206,8 +206,14 @@ impl Named {
         let kind = spec
             .kind
             .unwrap_or_else(|| ChartKind::starting(roles.get(x).copied()));
+        if spec.stack && kind != ChartKind::Bars {
+            return Err(vec![ColumnProblem {
+                detail: format!("`stack` stacks bars; this chart draws {}", kind.spec_name()),
+            }]);
+        }
         Ok(Choice {
             series: self.series,
+            stack: spec.stack,
             ..Choice::of(kind, x, ys)
         })
     }
@@ -519,6 +525,24 @@ mod tests {
         for (spec, expected) in cases {
             assert_eq!(choice(&spec), expected, "{spec:?}");
         }
+    }
+
+    #[test]
+    fn stack_stacks_bars_only() {
+        let bars = ChartSpec {
+            kind: Some(ChartKind::Bars),
+            series: named("category"),
+            stack: true,
+            ..ChartSpec::default()
+        };
+        assert!(choice(&bars).stack);
+        let over_dates = ChartSpec { kind: None, ..bars };
+        assert_eq!(
+            resolve(&over_dates),
+            Err(vec![
+                "chart: `stack` stacks bars; this chart draws lines".to_owned()
+            ])
+        );
     }
 
     #[test]

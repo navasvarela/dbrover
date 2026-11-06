@@ -109,6 +109,9 @@ pub enum Mark {
     Rect {
         rect: Rect,
         paint: Paint,
+        /// Its corners may be rounded: a bar standing alone, not a piece of a stack, whose
+        /// rounded corners would leave notches between the pieces.
+        rounded: bool,
     },
     Line {
         from: Point,
@@ -309,10 +312,39 @@ fn values(data: &ChartData) -> impl Iterator<Item = f64> + '_ {
         .flat_map(|series| series.values.iter().flatten().copied())
 }
 
+/// The values the Y axis must reach: each value, or for stacked bars the top and bottom of each
+/// stack.
+fn reach(data: &ChartData) -> Vec<f64> {
+    if !data.stacked {
+        return values(data).collect();
+    }
+    (0..data.len())
+        .flat_map(|point| {
+            let (up, down) = stack_ends(data, point);
+            [up, down]
+        })
+        .collect()
+}
+
+/// How far a stack's pieces reach at `point`: the positive values summed up from zero, and the
+/// negative ones down from it.
+fn stack_ends(data: &ChartData, point: usize) -> (f64, f64) {
+    data.series
+        .iter()
+        .filter_map(|series| series.values.get(point).copied().flatten())
+        .fold((0.0, 0.0), |(up, down), value| {
+            if value >= 0.0 {
+                (up + value, down)
+            } else {
+                (up, down + value)
+            }
+        })
+}
+
 /// The bottom of the Y axis: the lowest value, and never above zero `from_zero`, as for bars,
 /// which grow from it.
 fn y_low(data: &ChartData, from_zero: bool) -> f64 {
-    let low = values(data).fold(f64::INFINITY, f64::min);
+    let low = reach(data).into_iter().fold(f64::INFINITY, f64::min);
     match (from_zero, low.is_finite()) {
         (_, false) => 0.0,
         (true, true) => low.min(0.0),
@@ -321,7 +353,7 @@ fn y_low(data: &ChartData, from_zero: bool) -> f64 {
 }
 
 fn y_high(data: &ChartData, from_zero: bool) -> f64 {
-    let high = values(data).fold(f64::NEG_INFINITY, f64::max);
+    let high = reach(data).into_iter().fold(f64::NEG_INFINITY, f64::max);
     match (from_zero, high.is_finite()) {
         (_, false) => 1.0,
         (true, true) => high.max(0.0),
@@ -436,6 +468,7 @@ fn shortened(name: &str) -> String {
 
 fn series_marks(drawing: &mut Drawing, data: &ChartData, y_scale: Scale) {
     match data.kind {
+        ChartKind::Bars if data.stacked => stacked_bars(drawing, data, y_scale),
         ChartKind::Bars => bars(drawing, y_scale),
         ChartKind::Lines => lines(drawing),
         ChartKind::Scatter => dots(drawing),
@@ -457,6 +490,33 @@ fn bars(drawing: &mut Drawing, y_scale: Scale) {
             drawing.marks.push(Mark::Rect {
                 rect: Rect::spanning(Point::new(left, zero), Point::new(left + width - gap, *y)),
                 paint: Paint::Series(series),
+                rounded: true,
+            });
+        }
+    }
+}
+
+/// A bar per point as wide as a group of bars, its series' values stacked on each other in the
+/// series' order: positive values up from zero, negative ones down from it.
+fn stacked_bars(drawing: &mut Drawing, data: &ChartData, y_scale: Scale) {
+    let width = drawing.slot.unwrap_or_default() * BAR_GROUP_SHARE;
+    for (point, centre) in drawing.xs.iter().enumerate() {
+        let left = centre - width / 2.0;
+        let (mut up, mut down) = (0.0, 0.0);
+        for (series, values) in data.series.iter().enumerate() {
+            let Some(value) = values.values.get(point).copied().flatten() else {
+                continue;
+            };
+            let end = if value >= 0.0 { &mut up } else { &mut down };
+            let from = *end;
+            *end += value;
+            drawing.marks.push(Mark::Rect {
+                rect: Rect::spanning(
+                    Point::new(left, y_scale.at(from)),
+                    Point::new(left + width, y_scale.at(*end)),
+                ),
+                paint: Paint::Series(series),
+                rounded: false,
             });
         }
     }
@@ -588,6 +648,7 @@ fn legend(
                 Point::new(x + SWATCH, y + SWATCH / 2.0),
             ),
             paint: Paint::Series(index),
+            rounded: true,
         });
         marks.push(Mark::Text {
             at: Point::new(x + SWATCH + LABEL_GAP / 2.0, y),
@@ -668,6 +729,7 @@ mod tests {
                 Mark::Rect {
                     rect,
                     paint: paint @ Paint::Series(_),
+                    ..
                 } if rect.min.y >= drawing.plot.min.y => Some((*rect, *paint)),
                 _ => None,
             })
@@ -850,6 +912,51 @@ mod tests {
             &Fixed,
         );
         assert!(drawing.marks.is_empty());
+    }
+
+    #[test]
+    fn stacked_bars_pile_up_from_zero_and_hang_below_it() {
+        let mut chart = data(
+            ChartKind::Bars,
+            months(2),
+            &[
+                ("bikes", &[Some(10.0), Some(-4.0)]),
+                ("parts", &[Some(5.0), Some(6.0)]),
+                ("clothing", &[None, Some(-2.0)]),
+            ],
+        );
+        chart.stacked = true;
+        let drawing = layout(&chart, &LayoutOptions::default(), SIZE, &Fixed);
+        let bars = rects(&drawing);
+        assert_eq!(bars.len(), 5, "a piece per value, none for a gap");
+        // Point by point, each point's pieces in the series' order.
+        let (bikes, parts) = (bars[0].0, bars[1].0);
+        assert!(
+            (bikes.min.y - parts.max.y).abs() < 0.01,
+            "parts sit on bikes"
+        );
+        assert!(
+            (bikes.min.x - parts.min.x).abs() < 0.01,
+            "one bar per month"
+        );
+        assert!(bikes.height() > parts.height());
+        let (negative_bikes, negative_clothing) = (bars[2].0, bars[4].0);
+        assert!(
+            (negative_bikes.max.y - negative_clothing.min.y).abs() < 0.01,
+            "clothing hangs below bikes"
+        );
+        let labels = texts(&drawing, Paint::Label);
+        assert!(
+            labels.contains(&"20".to_owned()) && labels.contains(&"-10".to_owned()),
+            "the axis reaches 15 up and 6 down: {labels:?}"
+        );
+        assert!(
+            drawing.marks.iter().all(|mark| !matches!(
+                mark,
+                Mark::Rect { rounded: true, rect, .. } if rect.min.y >= drawing.plot.min.y
+            )),
+            "stacked pieces aren't rounded"
+        );
     }
 
     #[test]

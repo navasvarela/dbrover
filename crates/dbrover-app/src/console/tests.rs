@@ -2087,6 +2087,36 @@ mod charts {
     }
 
     #[test]
+    fn stacked_bars_draw_a_bar_per_month_of_its_categories_pieces() {
+        let mut console = by_category(
+            "-- [chart]\n-- kind = \"bars\"\n-- x = \"month\"\n-- y = \"net\"\n-- series = \"category\"\n-- stack = true",
+        );
+        show(&mut console, |_| {});
+        let drawing = tab(&console).drawing().unwrap();
+        let pieces: Vec<dbrover_chart::Rect> = drawing
+            .marks
+            .iter()
+            .filter_map(|mark| match mark {
+                Mark::Rect {
+                    rect,
+                    rounded: false,
+                    ..
+                } => Some(*rect),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pieces.len(), 5);
+        assert!(
+            (pieces[0].min.x - pieces[1].min.x).abs() < 0.01,
+            "September's bikes and parts are one bar"
+        );
+        assert!(
+            (pieces[0].min.y - pieces[1].max.y).abs() < 0.01,
+            "parts on bikes"
+        );
+    }
+
+    #[test]
     fn a_block_that_belongs_to_no_statement_is_marked() {
         let mut console = console("-- [chart]\n\nSELECT 1");
         assert_eq!(console.problem_counts(), (0, 1));

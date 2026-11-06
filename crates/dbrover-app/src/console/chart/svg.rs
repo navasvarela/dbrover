@@ -44,7 +44,11 @@ struct Svg {
 impl Svg {
     fn mark(&mut self, mark: &Mark) {
         match mark {
-            Mark::Rect { rect, paint } => self.rect(*rect, &hex(self.paints.colour(*paint))),
+            Mark::Rect {
+                rect,
+                paint,
+                rounded,
+            } => self.rect(*rect, *rounded, &hex(self.paints.colour(*paint))),
             Mark::Line { from, to, paint } => self.line(format_args!(
                 "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{}\" stroke-width=\"1\"/>",
                 from.x,
@@ -75,8 +79,8 @@ impl Svg {
         }
     }
 
-    fn rect(&mut self, rect: Rect, fill: &str) {
-        let rounding = if rect.width() >= ROUNDED_BAR_WIDTH {
+    fn rect(&mut self, rect: Rect, rounded: bool, fill: &str) {
+        let rounding = if rounded && rect.width() >= ROUNDED_BAR_WIDTH {
             format!(" rx=\"{BAR_ROUNDING}\"")
         } else {
             String::new()
@@ -188,6 +192,56 @@ mod tests {
             );
         }
         assert!(svg.trim_end().ends_with("</svg>"));
+    }
+
+    #[test]
+    fn writes_stacked_bars_as_square_pieces() {
+        let columns = ["month", "category", "net"].map(|name| Column {
+            name: name.to_owned(),
+            kind: ValueKind::Undeclared,
+        });
+        let rows: Vec<dbrover_core::Row> = [
+            ("2026-09", "bikes", "1290"),
+            ("2026-09", "parts", "42"),
+            ("2026-10", "bikes", "649"),
+        ]
+        .into_iter()
+        .map(|row| {
+            vec![
+                Some(row.0.to_owned()),
+                Some(row.1.to_owned()),
+                Some(row.2.to_owned()),
+            ]
+        })
+        .collect();
+        let borrowed: Vec<&dbrover_core::Row> = rows.iter().collect();
+        let choice = Choice {
+            series: Some(1),
+            stack: true,
+            ..Choice::of(ChartKind::Bars, 0, vec![2])
+        };
+        let roles = [Role::Text, Role::Text, Role::Number];
+        let data = ChartData::read(&columns, &roles, &borrowed, &choice);
+        let size = Size {
+            width: 600.0,
+            height: 300.0,
+        };
+        let drawing = layout(
+            &data,
+            &dbrover_chart::LayoutOptions::default(),
+            size,
+            &Fixed,
+        );
+        let svg = svg(&drawing, 11.0);
+
+        let pieces: Vec<&str> = svg
+            .lines()
+            .filter(|line| line.starts_with("<rect x=") && line.contains("height"))
+            .filter(|line| !line.contains("100%"))
+            .collect();
+        let square = pieces.iter().filter(|line| !line.contains(" rx=")).count();
+        assert_eq!(square, 3, "{svg}");
+        assert!(svg.contains(">bikes</text>") && svg.contains(">parts</text>"));
     }
 
     #[test]
