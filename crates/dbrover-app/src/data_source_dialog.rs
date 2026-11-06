@@ -653,6 +653,13 @@ fn athena_rows(ui: &mut Ui, fields: &mut AthenaFields) {
     ui.label("");
     ui.weak("Where query results go in S3, for a workgroup that doesn't say.");
     ui.end_row();
+    text_row(ui, "Stop queries above", &mut fields.limit_gb, "no limit");
+    ui.label("");
+    ui.weak(
+        "In GB scanned, which Athena bills. A workgroup's own limit wins; DbRover's stops a \
+         query within two seconds of passing it.",
+    );
+    ui.end_row();
 }
 
 /// The password to save in the keychain, or the command that prints one on every connection,

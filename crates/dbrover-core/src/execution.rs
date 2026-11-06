@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use crate::DriverError;
+use crate::{DriverError, JobProgress};
 
 /// A result column.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +84,13 @@ pub trait ResultCursor: Send {
 
     /// Whether every row has been read.
     fn is_exhausted(&self) -> bool;
+
+    /// What the statement did, as its engine reported it once it ended: the bytes an Athena
+    /// query scanned, which is what it is billed for (C3). `None`, the default, where the
+    /// engine doesn't say.
+    fn progress(&self) -> Option<JobProgress> {
+        None
+    }
 
     /// Ends the statement and discards any rows not yet read. To stop the server producing
     /// them, call [`CancelHandle::cancel`] first.

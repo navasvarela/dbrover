@@ -243,7 +243,7 @@ fn status(
                 Some(rows) if changes_data => format!("{rows} rows affected"),
                 _ => "Done".to_owned(),
             };
-            ui.label(format!("{text} · {} ms", summary.elapsed.as_millis()));
+            ui.label(format!("{text}{}", summary_tail(summary)));
         }
         Some(Ok(summary)) => {
             ui.label(row_count(statement, Some(summary)));
@@ -278,10 +278,19 @@ fn row_count(statement: &StatementView, summary: Option<&StatementSummary>) -> S
     } else {
         ""
     };
-    let elapsed = summary.map_or(String::new(), |summary| {
-        format!(" · {} ms", summary.elapsed.as_millis())
-    });
-    format!("{rows} {noun}{note}{elapsed}")
+    let tail = summary.map_or(String::new(), summary_tail);
+    format!("{rows} {noun}{note}{tail}")
+}
+
+/// ` · 900 ms`, then ` · 2.5 MB read` where the engine said what the statement scanned, as
+/// Athena does, which bills by it (C3). Only the bytes: the rows it read are the result's,
+/// counted already.
+fn summary_tail(summary: &StatementSummary) -> String {
+    let elapsed = format!(" · {} ms", summary.elapsed.as_millis());
+    match summary.progress.and_then(|progress| progress.bytes_read) {
+        Some(bytes) => format!("{elapsed} · {bytes} read"),
+        None => elapsed,
+    }
 }
 
 /// What the toolbar shows besides the statement's own state.
@@ -1559,4 +1568,37 @@ fn looks_numeric(text: &str) -> bool {
 /// line breaks or quotes quoted, so it pastes into the right cells.
 fn row_as_tsv(row: &Row) -> String {
     row.iter().map(tsv_field).collect::<Vec<_>>().join("\t")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use dbrover_core::{ByteCount, JobProgress};
+
+    use super::*;
+
+    #[test]
+    fn a_summary_says_what_its_statement_scanned_where_the_engine_tells() {
+        let summary = |progress| StatementSummary {
+            rows_changed: None,
+            elapsed: Duration::from_millis(900),
+            truncated: false,
+            progress,
+        };
+        assert_eq!(summary_tail(&summary(None)), " · 900 ms");
+        let scanned = JobProgress {
+            rows_read: Some(1200),
+            bytes_read: Some(ByteCount(2_500_000)),
+        };
+        assert_eq!(
+            summary_tail(&summary(Some(scanned))),
+            " · 900 ms · 2.5 MB read"
+        );
+        let rows_only = JobProgress {
+            rows_read: Some(1200),
+            bytes_read: None,
+        };
+        assert_eq!(summary_tail(&summary(Some(rows_only))), " · 900 ms");
+    }
 }

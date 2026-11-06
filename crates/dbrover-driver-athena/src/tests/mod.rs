@@ -94,6 +94,49 @@ async fn a_select_is_polled_then_read_page_by_page_without_its_header() {
             vec![text("5"), text("Grace"), text("99.99")],
         ]
     );
+    // The statement's summary keeps what it scanned.
+    assert_eq!(
+        cursor.progress().and_then(|progress| progress.bytes_read),
+        Some(ByteCount(2_500_000))
+    );
+    assert_eq!(cursor.finish().await.unwrap(), None);
+    replay.finish();
+}
+
+#[tokio::test]
+async fn the_data_sources_limit_stops_a_query_where_the_workgroup_sets_none() {
+    let replay = Replay::start(include_str!("exchanges/limit.json")).await;
+    let limited = |workgroup: &str| {
+        let mut config = AthenaConfig {
+            workgroup: workgroup.to_owned(),
+            ..config(&replay)
+        };
+        config.cost_guard.ask_above_bytes = Some(ByteCount(1_000_000_000));
+        config
+    };
+
+    let mut connection = connected(&limited("primary")).await;
+    let Err(error) = connection.execute("SELECT * FROM clicks").await else {
+        panic!("the query ran past its limit");
+    };
+    let message = describe_error(&error);
+    assert!(
+        message.contains("Stopped after scanning 1.4 GB, past this data source's limit of 1.0 GB"),
+        "{message}"
+    );
+    assert!(matches!(error, DriverError::Statement { .. }), "{error:?}");
+
+    // The workgroup's own limit is Athena's to keep: DbRover stops nothing.
+    let mut connection = connected(&limited("capped")).await;
+    assert_eq!(
+        connection.server_info().version,
+        "Athena engine version 3, us-east-1, the workgroup stops queries past 10.0 GB"
+    );
+    let mut cursor = connection.execute("SELECT * FROM clicks").await.unwrap();
+    assert_eq!(
+        cursor.next_page(500).await.unwrap(),
+        [vec![Some("1".to_owned())]]
+    );
     assert_eq!(cursor.finish().await.unwrap(), None);
     replay.finish();
 }
