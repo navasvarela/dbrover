@@ -14,6 +14,7 @@
 
 mod audit;
 mod catalog;
+mod chart;
 mod connections;
 mod execute;
 mod project;

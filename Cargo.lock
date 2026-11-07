@@ -2379,6 +2379,7 @@ dependencies = [
  "dbrover-core",
  "dbrover-picture",
  "jiff",
+ "serde_json",
  "thiserror 2.0.21",
  "toml",
  "toml_edit",
@@ -2730,12 +2731,15 @@ name = "dbrover-mcp"
 version = "0.29.0"
 dependencies = [
  "aws-sdk-dynamodb",
+ "base64 0.22.1",
+ "dbrover-chart",
  "dbrover-cloud",
  "dbrover-core",
  "dbrover-driver-duckdb",
  "dbrover-engine",
  "dbrover-export",
  "dbrover-language",
+ "dbrover-picture",
  "dbrover-report",
  "dbrover-sql",
  "dbrover-store",

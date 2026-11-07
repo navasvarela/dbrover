@@ -9,10 +9,15 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+# Encodes the chart tool's PNG for MCP's image content.
+base64.workspace = true
+# The chart tool's spec and drawing, as a report's chart (CH4).
+dbrover-chart.workspace = true
 dbrover-core.workspace = true
 dbrover-engine.workspace = true
 dbrover-export.workspace = true
 dbrover-language.workspace = true
+dbrover-picture.workspace = true
 # The events of a report's run, which run_report reads.
 dbrover-report.workspace = true
 dbrover-sql.workspace = true
@@ -81,4 +86,8 @@ harness = false
 
 [[test]]
 name = "reports"
+harness = false
+
+[[test]]
+name = "chart"
 harness = false

@@ -48,4 +48,4 @@ pub use spec::{
     ChartSpec, ColumnProblem, KeyProblem, Resolved, SPEC_TABLE, SavedChoice, Sort, SortBy,
     SpecProblem, WriteError, arrange, for_report, write_back,
 };
-pub use svg::svg;
+pub use svg::{file_svg, svg};

@@ -12,6 +12,8 @@ publish.workspace = true
 dbrover-core.workspace = true
 dbrover-picture.workspace = true
 jiff.workspace = true
+# Reads an MCP client's chart, as the `chart` tool takes it (CH4).
+serde_json.workspace = true
 thiserror.workspace = true
 # Reads a report's [[chart]] from the table dbrover-report parsed (CH3c).
 toml.workspace = true

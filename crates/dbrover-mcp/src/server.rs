@@ -25,6 +25,7 @@ use serde_json::{Value, json};
 
 use crate::audit::{Audit, Ran};
 use crate::catalog::{self, NodeJson, PathStep};
+use crate::chart::{self as charts, ChartArgs};
 use crate::connections::Connections;
 use crate::execute::ExecuteArgs;
 use crate::project::ServedProject;
@@ -214,7 +215,7 @@ impl ToolError {
         }
     }
 
-    fn into_result(self) -> CallToolResult {
+    pub(crate) fn into_result(self) -> CallToolResult {
         CallToolResult::structured_error(json!({
             "error": {
                 "kind": self.kind,
@@ -352,6 +353,19 @@ impl DbRoverMcp {
         )
     }
 
+    /// Draws one statement that only reads as a chart: bars, lines or a scatter of its rows,
+    /// as DbRover's chart tab draws them, run as query runs it and under the same row limit.
+    /// Returns a PNG image by default, or the SVG as text with format svg, and beside it what
+    /// was charted: the columns, the points, rows left out, and whether the row limit cut the
+    /// rows, which the picture's last line also says.
+    #[tool(annotations(read_only_hint = true, open_world_hint = false))]
+    async fn chart(&self, Parameters(args): Parameters<ChartArgs>) -> ToolResult {
+        Ok(self
+            .chart_result(args)
+            .await
+            .unwrap_or_else(ToolError::into_result))
+    }
+
     /// Shows how the database would run one read statement, without running it.
     #[tool(annotations(read_only_hint = true, open_world_hint = false))]
     async fn explain(&self, Parameters(args): Parameters<StatementArgs>) -> ToolResult {
@@ -450,6 +464,27 @@ impl DbRoverMcp {
             self.inner.audit.refused(tool, name, &message);
             ToolError::invalid(message)
         })
+    }
+
+    /// `chart`: the spec read first, then the statement run as `query` runs it, then drawn.
+    async fn chart_result(&self, args: ChartArgs) -> Result<CallToolResult, ToolError> {
+        let ChartArgs {
+            data_source,
+            sql,
+            chart,
+            format,
+        } = args;
+        let spec = charts::spec(&chart)?;
+        let statement = StatementArgs { data_source, sql };
+        let ran = self.run_statement("chart", statement, false).await?;
+        let read = charts::Read {
+            columns: &ran.rows.columns,
+            rows: &ran.rows.rows,
+            truncated: ran.rows.truncated,
+            max_rows: self.inner.project.limits.max_rows,
+            dialect: ran.dialect,
+        };
+        charts::draw(&spec, &read)?.reply(format, ran.elapsed.as_millis())
     }
 
     async fn list_objects_json(&self, args: ListObjectsArgs) -> Result<Value, ToolError> {
@@ -867,7 +902,7 @@ impl ServerHandler for DbRoverMcp {
         let mut instructions = format!(
             "Databases of the DbRover project \"{}\". Start with list_data_sources; the other \
              tools take a data source's name. query and explain run one statement that only \
-             reads, in a read-only transaction. Every call returns at most {} rows, and a \
+             reads, in a read-only transaction, and chart draws its rows as a picture. Every call returns at most {} rows, and a \
              statement is cancelled after {} s.",
             project.project.name,
             project.limits.max_rows,
