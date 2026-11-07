@@ -99,6 +99,11 @@ egui_kittest = "0.36.2"
 # versions eframe 0.36 is built with: bump them only together with it.
 wgpu = { version = "30.0.1", default-features = false }
 winit = { version = "0.30.13", default-features = false }
+# Lists a query folder's `.sql` files (docs/version-control.md, VC2), leaving out what Git
+# ignores: ripgrep's walker, which reads `.gitignore` files, `.git/info/exclude` and the global
+# excludes file as Git does. Chosen over walkdir, already in the build, plus a hand-written
+# reader of `.gitignore` rules, which are subtle. Pure Rust; it adds globset.
+ignore = "0.4.34"
 # Icon font; 0.14 is the release built against egui 0.36.
 egui-phosphor = "0.14.0"
 # Encodes the query string of Help › Report a problem…'s address. url's own encoder, which the

@@ -62,6 +62,7 @@ use crate::picture::PictureFormat;
 use crate::project_dialog::{
     DeleteProjectChoice, DeleteProjectConfirmation, ProjectDialogAction, ProjectNameDialog,
 };
+use crate::query_folders::{self, QueryFolderAction, QueryFolders};
 use crate::reports::{self, RenameAction, RenameReportDialog, ReportAction, Reports, ReportsSetup};
 use crate::rollback_dialog::{Closing, RollbackChoice, RollbackConfirmation};
 use crate::schema_compare::{CompareAction, LiveSchema, Reading, SchemaCompares};
@@ -203,6 +204,10 @@ pub struct DbRoverApp {
     diagram_dialog: Option<DiagramDialog>,
     /// The `.sql` files consoles show, and the recent ones.
     sql_files: SqlFiles,
+    /// The explorer's **Query folders**, as `settings.toml` lists them.
+    query_folders: QueryFolders,
+    /// Asks for a folder of `.sql` files to list. A field so tests can answer it.
+    pub(crate) pick_query_folder: Box<dyn Fn() -> Option<PathBuf>>,
     open_file_dialog: Option<OpenFileDialog>,
     /// Files to open once the data sources are known: from the command line.
     files_to_open: Vec<PathBuf>,
@@ -323,6 +328,8 @@ impl DbRoverApp {
             pick_report_folder: Box::new(file_picker::pick_report_folder),
             diagram_dialog: None,
             sql_files: SqlFiles::new(remembered_files),
+            query_folders: QueryFolders::new(std::env::home_dir()),
+            pick_query_folder: Box::new(file_picker::pick_query_folder),
             open_file_dialog: None,
             files_to_open: Vec::new(),
             unsaved_confirmation: None,
@@ -566,6 +573,14 @@ impl DbRoverApp {
         self.send_all(batches);
         self.apply_to_sql_files(event);
         self.settings.apply(event);
+        let reads = self.query_folders.apply(event);
+        self.send_all(reads);
+        if matches!(event, Event::SettingsLoaded { .. }) {
+            let reads = self
+                .query_folders
+                .follow(&self.settings.settings().explorer.query_folders);
+            self.send_all(reads);
+        }
         self.updates.apply(event);
         if matches!(event, Event::SettingsLoaded { .. }) {
             let check = self.updates.start(self.settings.settings());
@@ -665,6 +680,44 @@ impl DbRoverApp {
         }
     }
 
+    fn handle_query_folder_action(&mut self, action: QueryFolderAction) {
+        match action {
+            QueryFolderAction::Add => self.add_query_folder(),
+            QueryFolderAction::Remove(written) => {
+                let listed = &self.settings.settings().explorer.query_folders;
+                let kept = query_folders::without_folder(listed, &written);
+                self.save_query_folders(kept);
+            }
+            QueryFolderAction::Reload => {
+                let reads = self.query_folders.reload();
+                self.send_all(reads);
+            }
+        }
+    }
+
+    /// Asks for a folder and lists it, open, in the explorer, unless it is listed already.
+    fn add_query_folder(&mut self) {
+        let Some(path) = (self.pick_query_folder)() else {
+            return;
+        };
+        let listed = &self.settings.settings().explorer.query_folders;
+        if let Some(folders) = self.query_folders.with_folder(listed, &path) {
+            self.save_query_folders(folders);
+        }
+        self.explorer_options.query_folders.collapsed = false;
+        self.explorer_options.query_folders.expanded.insert(path);
+    }
+
+    /// Writes the list to `settings.toml`, and shows it at once rather than once written.
+    fn save_query_folders(&mut self, folders: Vec<PathBuf>) {
+        let mut settings = self.settings.settings().clone();
+        settings.explorer.query_folders = folders;
+        let reads = self.query_folders.follow(&settings.explorer.query_folders);
+        self.send_all(reads);
+        self.settings.set(settings.clone());
+        self.send(Command::SaveSettings(settings));
+    }
+
     /// Asks for a SQL file, and opens it.
     fn choose_sql_file(&mut self) {
         if let Some(path) = (self.pick_sql_file)() {
@@ -756,6 +809,8 @@ impl DbRoverApp {
         let focused = ctx.input(|input| input.viewport().focused.unwrap_or(true));
         if focused && !self.window_focused {
             self.send_if(self.reports.reload());
+            let reads = self.query_folders.reload();
+            self.send_all(reads);
         }
         self.window_focused = focused;
         let mut files = self.consoles.watched_files();
@@ -1429,6 +1484,7 @@ impl DbRoverApp {
                 }
             }
             ExplorerAction::Report(action) => self.handle_report_action(action, ctx),
+            ExplorerAction::QueryFolder(action) => self.handle_query_folder_action(action),
             ExplorerAction::OpenDiagram(key) => {
                 let first = self.diagrams.reopen(&key);
                 if self.diagrams.is_open(&key) {
@@ -2231,6 +2287,7 @@ impl DbRoverApp {
             AppCommand::OpenFile => self.choose_sql_file(),
             AppCommand::OpenRecent(path) => self.open_sql_file(path),
             AppCommand::ClearRecentFiles => self.sql_files.clear_recent(),
+            AppCommand::AddQueryFolder => self.add_query_folder(),
             AppCommand::Save => {
                 if let Some(console) = self.focused_console() {
                     self.save_console(&console);
@@ -2978,6 +3035,7 @@ impl eframe::App for DbRoverApp {
                     diagrams: &mut self.diagrams,
                     diagram_actions: &mut diagram_actions,
                     reports: &mut self.reports,
+                    query_folders: &self.query_folders,
                     report_sources: &report_sources,
                     report_actions: &mut report_actions,
                     history: &mut self.history,
@@ -3136,6 +3194,7 @@ mod tests {
     mod parameters;
     mod password_commands;
     mod plans;
+    mod query_folders;
     mod reports;
     mod schema_compare;
     mod settings;

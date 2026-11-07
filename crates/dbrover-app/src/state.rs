@@ -184,6 +184,7 @@ impl AppState {
             | Event::PictureExported { .. }
             | Event::KeymapLoaded { .. }
             | Event::CustomFileLoaded { .. }
+            | Event::QueryFolderRead { .. }
             | Event::ReportsListed(_)
             | Event::ReportCreated(_)
             | Event::ReportRenamed { .. }
