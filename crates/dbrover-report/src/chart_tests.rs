@@ -130,14 +130,6 @@ fn names_each_charts_problems_and_the_chart_they_are_in() {
             "[[chart]]\nfile = \"net.svg\"\n[[chart]]\nfile = \"net.svg\"",
             vec!["chart 2: another output or chart already writes \"net.svg\""],
         ),
-        (
-            "[[chart]]\nfile = \"net-{since:%Y-%m}.svg\"\nquery = \"SELECT 1\"",
-            vec![
-                "chart 1: no key `query`; a chart's keys are `kind`, `x`, `y`, `series`, \
-                 `stack`, `title`, `x_title`, `y_title`, `y_zero`, `sort`, `limit`, `file`, \
-                 `width`, `height`, `scale`",
-            ],
-        ),
     ];
     for (charts, expected) in cases {
         assert_eq!(problems(charts), expected, "{charts}");
@@ -506,4 +498,136 @@ async fn draws_a_png_at_its_scale() {
     assert!(png.starts_with(b"\x89PNG"));
     // The PNG header's width and height, big-endian, after its signature and IHDR's length.
     assert_eq!(png[16..24], [0, 0, 1, 144, 0, 0, 1, 44]);
+}
+
+/// A report that combines its one source, with `charts`.
+fn combined(charts: &str) -> String {
+    with_charts(charts).replace(
+        "[[output]]",
+        "[combine]\nquery = \"SELECT category, net FROM lines\"\n[[output]]",
+    )
+}
+
+#[test]
+fn a_charts_own_query_needs_a_combine_step_and_reads_only() {
+    assert_eq!(
+        problems("[[chart]]\nfile = \"n.svg\"\nquery = \"SELECT 1\""),
+        [
+            "chart 1: query reads the sources' tables in the combine step's DuckDB, which a \
+             report without [combine] doesn't have; add a [combine], or leave query out to draw \
+             the result"
+        ]
+    );
+    let plan = |charts: &str| {
+        Plan::new(
+            read_report(&combined(charts)).unwrap(),
+            &[shop()],
+            &[],
+            &LimitDefaults::default(),
+        )
+    };
+    assert_eq!(
+        plan("[[chart]]\nfile = \"n.svg\"\nquery = \"DELETE FROM lines\"").unwrap_err(),
+        ["chart 1: the query changes data; a chart's query only reads the sources' tables"]
+    );
+    assert_eq!(
+        plan("[[chart]]\nfile = \"n.svg\"\nquery = \"SELECT * FROM lines WHERE net > :least\"")
+            .unwrap_err(),
+        [
+            "chart 1: the query uses :least, which [report] params doesn't declare; add least = \
+             \"text\" (or its type) to params"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn draws_a_charts_own_query_after_the_combine_step() {
+    let rows: Vec<Row> = [("bikes", "1290"), ("bikes", "649"), ("parts", "42")]
+        .into_iter()
+        .map(|(category, net)| vec![Some(category.to_owned()), Some(net.to_owned())])
+        .collect();
+    let reader = MemoryReader {
+        columns: vec![column("category"), column("net")],
+        pages: [rows].into(),
+        then: None,
+    };
+    let plan = Plan::new(
+        read_report(&combined(
+            "[[chart]]\nfile = \"rows.svg\"\n\
+             [[chart]]\nfile = \"by-category.svg\"\nx = \"category\"\ny = \"total\"\n\
+             query = \"SELECT category, SUM(CAST(net AS DECIMAL(18,2))) AS total FROM lines \
+             WHERE :since IS NOT NULL GROUP BY category ORDER BY category\"",
+        ))
+        .unwrap(),
+        &[shop()],
+        &[],
+        &LimitDefaults::default(),
+    )
+    .unwrap();
+    let typed: TypedValues = [("since".to_owned(), "2026-10-01".to_owned())].into();
+    let values = plan.values(&typed).unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let staging = folder.path().join(".run");
+    let folders = RunFolders {
+        folder: folder.path(),
+        staging: &staging,
+    };
+    let opener = MemoryOpener::of(vec![("lines", reader)]);
+    let mut events = Vec::new();
+    run(&plan, &values, &opener, folders, &mut |event| {
+        events.push(event)
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(
+        files_in(folder.path()),
+        ["by-category.svg", "net-2026-10.csv", "rows.svg"]
+    );
+    let svg = std::fs::read_to_string(folder.path().join("by-category.svg")).unwrap();
+    let texts = texts(&svg);
+    assert!(texts.contains(&"total"), "{texts:?}");
+    assert_eq!(texts.last(), Some(&"Charting 2 rows"));
+    let written: Vec<String> = written(&events)
+        .iter()
+        .filter_map(|file| Some(file.path.file_name()?.to_string_lossy().into_owned()))
+        .collect();
+    assert_eq!(written, ["net-2026-10.csv", "rows.svg", "by-category.svg"]);
+}
+
+#[tokio::test]
+async fn a_charts_failing_query_fails_its_step_and_leaves_no_file() {
+    let reader = categories(3);
+    let plan = Plan::new(
+        read_report(&combined(
+            "[[chart]]\nfile = \"n.svg\"\nquery = \"SELECT nope FROM lines\"",
+        ))
+        .unwrap(),
+        &[shop()],
+        &[],
+        &LimitDefaults::default(),
+    )
+    .unwrap();
+    let typed: TypedValues = [("since".to_owned(), "2026-10-01".to_owned())].into();
+    let values = plan.values(&typed).unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let staging = folder.path().join(".run");
+    let folders = RunFolders {
+        folder: folder.path(),
+        staging: &staging,
+    };
+    let opener = MemoryOpener::of(vec![("lines", reader)]);
+    let failure = run(&plan, &values, &opener, folders, &mut |_| {})
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        failure.step,
+        Step::Chart {
+            number: 1,
+            file: "n.svg".to_owned()
+        }
+    );
+    assert!(failure.message.contains("nope"), "{failure}");
+    assert_eq!(files_in(folder.path()), Vec::<String>::new());
 }

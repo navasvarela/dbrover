@@ -313,13 +313,25 @@ pub(crate) struct Streamed<'a> {
     preview: Preview,
 }
 
-impl Streamed<'_> {
+impl<'a> Streamed<'a> {
+    /// A chart that read its rows elsewhere, its own query's, to draw with the others.
+    pub(crate) fn add_chart(&mut self, chart: ChartRun<'a>) {
+        self.charts.push(chart);
+    }
+
+    /// Removes every output's file, for a run that failed after its rows were written.
+    pub(crate) fn abandon(self) {
+        self.outputs.into_iter().for_each(OutputRun::abandon);
+    }
+
     /// Completes every file, draws every chart, and puts them all in place, sending the preview
     /// and each file.
     pub(crate) fn finish(self, events: &mut dyn FnMut(RunEvent)) -> Result<RunSummary, RunFailure> {
         events(RunEvent::Preview(self.preview));
         let mut completed = complete_outputs(self.outputs)?;
-        for chart in self.charts {
+        let mut charts = self.charts;
+        charts.sort_by_key(ChartRun::number);
+        for chart in charts {
             match chart.draw(self.folders) {
                 Ok(drawn) => completed.push(drawn),
                 Err(failure) => {
@@ -514,7 +526,8 @@ fn start_outputs<'a>(
     Ok(started)
 }
 
-/// A chart for each `[[chart]]`, reading the rows with `columns`.
+/// A chart for each `[[chart]]` that draws the result, reading its rows with `columns`; a chart
+/// with a query of its own reads that once the combine step is done.
 fn start_charts<'a>(
     plan: &'a Plan,
     values: &RunValues,
@@ -524,6 +537,7 @@ fn start_charts<'a>(
         .iter()
         .zip(&values.charts)
         .enumerate()
+        .filter(|(_, (chart, _))| chart.query.is_none())
         .map(|(index, (chart, file))| ChartRun::new(index + 1, chart, file, columns))
         .collect()
 }

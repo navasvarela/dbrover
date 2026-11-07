@@ -285,6 +285,8 @@ fn multi_line_string(original: &str, sql: &str) -> Option<String> {
 enum Step {
     Source(usize),
     Combine,
+    /// A `[[chart]]`'s own query, by its position in the file.
+    Chart(usize),
 }
 
 /// Whether `after` says what `before` does: the same TOML values, but for SQL steps that
@@ -326,8 +328,13 @@ fn sql_steps(file: &toml::Table, data_sources: &[DataSource]) -> Vec<(Step, Dial
             };
             Some((Step::Source(index), dialect_of(&language, data_sources)?))
         });
+    let charts = file
+        .get("chart")
+        .and_then(toml::Value::as_array)
+        .map_or(0, Vec::len);
     sources
         .chain(std::iter::once((Step::Combine, Dialect::DuckDb)))
+        .chain((0..charts).map(|index| (Step::Chart(index), Dialect::DuckDb)))
         .collect()
 }
 
@@ -335,6 +342,7 @@ fn query(file: &toml::Table, step: Step) -> Option<&toml::Value> {
     match step {
         Step::Source(index) => file.get("source")?.as_array()?.get(index)?.get("query"),
         Step::Combine => file.get("combine")?.get("query"),
+        Step::Chart(index) => file.get("chart")?.as_array()?.get(index)?.get("query"),
     }
 }
 
@@ -346,6 +354,11 @@ fn query_mut(file: &mut toml::Table, step: Step) -> Option<&mut toml::Value> {
             .get_mut(index)?
             .as_table_mut()?,
         Step::Combine => file.get_mut("combine")?.as_table_mut()?,
+        Step::Chart(index) => file
+            .get_mut("chart")?
+            .as_array_mut()?
+            .get_mut(index)?
+            .as_table_mut()?,
     };
     table.get_mut("query")
 }
@@ -410,6 +423,18 @@ mod tests {
             formatted,
             "formatting twice changes nothing"
         );
+    }
+
+    #[test]
+    fn formats_a_charts_own_query_as_duckdbs() {
+        let text = "[report]\nname = \"R\"\n\n[combine]\nquery = \"select a from t\"\n\n\
+                    [[chart]]\nfile = \"a.svg\"\nquery = \"select a, count(*) as n from t group by a\"\n";
+        let formatted = format(text);
+        assert!(
+            formatted.contains("file = \"a.svg\"\nquery = \"\"\"\nSELECT\n"),
+            "the chart's query, on lines of its own:\n{formatted}"
+        );
+        assert_eq!(format(&formatted), formatted);
     }
 
     #[test]

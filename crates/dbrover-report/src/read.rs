@@ -60,6 +60,7 @@ pub fn read_with_places(text: &str) -> Result<Report, Vec<ReportProblem>> {
     let header = file.table("report");
     let sources = file.tables("source");
     let combine = file.table("combine");
+    let has_combine = matches!(combine, Ok(Some(_)));
     let outputs = file.tables("output");
     let charts = file.tables("chart");
     for (key, place) in MISPLACED_REPORT_KEYS {
@@ -131,7 +132,14 @@ pub fn read_with_places(text: &str) -> Result<Report, Vec<ReportProblem>> {
     };
 
     let charts = match charts {
-        Ok(charts) => read_charts(charts, &params, &outputs, &mut problems),
+        Ok(charts) => {
+            let read = ChartsRead {
+                params: &params,
+                outputs: &outputs,
+                has_combine,
+            };
+            read_charts(charts, &read, &mut problems)
+        }
         Err(problem) => {
             problems.push(at_file(problem));
             Vec::new()
@@ -1044,7 +1052,7 @@ fn read_output(
 
 /// The keys a `[[chart]]` reads itself, beside the chart's own (`kind`, `x`, …), which
 /// `dbrover-chart` reads.
-const CHART_KEYS: [&str; 4] = ["file", "width", "height", "scale"];
+const CHART_KEYS: [&str; 5] = ["file", "width", "height", "scale", "query"];
 
 /// A chart's size when its file leaves it out, in points: 16 by 9, as wide as a page's text.
 const DEFAULT_CHART_SIZE: (u32, u32) = (800, 450);
@@ -1057,17 +1065,25 @@ const CHART_SIDES: std::ops::RangeInclusive<u32> = 200..=4_000;
 const DEFAULT_PNG_SCALE: u8 = 2;
 const PNG_SCALES: std::ops::RangeInclusive<u8> = 1..=3;
 
+/// What a chart is read against: the report's parameters and outputs, and whether it has a
+/// combine step for a chart's `query`.
+struct ChartsRead<'a> {
+    params: &'a BTreeMap<&'a str, ColumnType>,
+    outputs: &'a [Output],
+    has_combine: bool,
+}
+
 fn read_charts(
     charts: Vec<toml::Table>,
-    params: &BTreeMap<&str, ColumnType>,
-    outputs: &[Output],
+    report: &ChartsRead<'_>,
     problems: &mut Vec<ReportProblem>,
 ) -> Vec<Chart> {
+    let outputs = report.outputs;
     let mut read: Vec<Chart> = Vec::new();
     for (index, table) in charts.into_iter().enumerate() {
         let label = format!("chart {}", index + 1);
         let mut found = Vec::new();
-        let chart = read_chart(table, params, &mut found);
+        let chart = read_chart(table, report, &mut found);
         problems.extend(placed(Table::Chart(index), Some(&label), found));
         let Some(chart) = chart else {
             continue;
@@ -1088,9 +1104,10 @@ fn read_charts(
 
 fn read_chart(
     table: toml::Table,
-    params: &BTreeMap<&str, ColumnType>,
+    report: &ChartsRead<'_>,
     problems: &mut Vec<Found>,
 ) -> Option<Chart> {
+    let params = report.params;
     let spec = ChartSpec::from_table(&table, &CHART_KEYS).map_err(|spec_problems| {
         problems.extend(
             spec_problems
@@ -1100,6 +1117,19 @@ fn read_chart(
     });
     let mut fields = Fields::new(table);
     let file = chart_file(fields.string("file"), params);
+    let query = fields.string("query").and_then(|query| match query {
+        Some(_) if !report.has_combine => Err(Found::at(
+            "query",
+            "query reads the sources' tables in the combine step's DuckDB, which a report \
+             without [combine] doesn't have; add a [combine], or leave query out to draw the \
+             result",
+        )),
+        Some(query) if query.trim().is_empty() => Err(Found::at(
+            "query",
+            "query is empty; leave it out to draw the result",
+        )),
+        query => Ok(query),
+    });
     let width = chart_side(&mut fields, "width", DEFAULT_CHART_SIZE.0);
     let height = chart_side(&mut fields, "height", DEFAULT_CHART_SIZE.1);
     let scale = fields.count("scale").and_then(|scale| match scale {
@@ -1110,11 +1140,13 @@ fn read_chart(
             .map(Some)
             .ok_or_else(|| Found::at("scale", "scale must be 1, 2 or 3")),
     });
-    let (spec, file, width, height, scale) = match (spec, file, width, height, scale) {
-        (Ok(spec), Ok(file), Ok(width), Ok(height), Ok(scale)) => {
-            (spec, file, width, height, scale)
+    let (spec, file, width, height, scale, query) = match (spec, file, width, height, scale, query)
+    {
+        (Ok(spec), Ok(file), Ok(width), Ok(height), Ok(scale), Ok(query)) => {
+            (spec, file, width, height, scale, query)
         }
-        (_, file, width, height, scale) => {
+        (_, file, width, height, scale, query) => {
+            problems.extend(query.err());
             problems.extend(file.err());
             problems.extend(width.err());
             problems.extend(height.err());
@@ -1128,6 +1160,7 @@ fn read_chart(
         spec,
         file,
         picture: picture.ok()?,
+        query,
         width,
         height,
     })
