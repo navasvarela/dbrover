@@ -1,9 +1,10 @@
 # Charts as code
 
-Status: **proposed on 2026-11-04; CH1 and CH2 built on 2026-11-06.** The
-[roadmap](roadmap.md#charts-as-code-track) tracks it as CH1 to CH4. CI fixes, the reports track
-and W13 schema compare came first. Each milestone's decisions are confirmed when it starts, as in
-[Reports](reporting.md): CH1's [below](#ch1-confirmed).
+Status: **proposed on 2026-11-04; CH1 and CH2 built on 2026-11-06; CH3 started on
+2026-11-06.** The [roadmap](roadmap.md#charts-as-code-track) tracks it as CH1 to CH4. CI fixes,
+the reports track and W13 schema compare came first. Each milestone's decisions are confirmed
+when it starts, as in [Reports](reporting.md): CH1's [below](#ch1-confirmed), CH2's and CH3's
+after their layers.
 
 W12 gave every result a **Chart** tab: bars, lines or a scatter of the rows the grid holds,
 picked in the toolbar and exported as SVG or PNG ([Charts](../book/src/consoles.md#charts)).
@@ -270,7 +271,7 @@ chart moves that line by one step, and only one:
   interactive or HTML charts, a model of measures and dimensions shared by charts, and charts in
   the report's tab drawn from live queries.
 
-The proposed wording, applied when CH3 starts: "Dashboards, charts that refresh, and a BI
+The wording, applied to [Reports' scope](reporting.md#scope) when CH3 started: "Dashboards, charts that refresh, and a BI
 semantic layer. A chart stays one result's picture: in a console, or as a file a report writes
 beside its others."
 
@@ -466,6 +467,66 @@ Started on 2026-11-06, after CH1. The plan stands; building it settled these det
 **Exit:** `dbrover report run sales-by-category` writes the Excel, CSV and SVG files, the SVG
 equal byte for byte to the checked-in one; a chart of more than 250 bars without `limit` exits
 with 5 and leaves no file; the report's tab lists the chart with the others.
+
+#### CH3 confirmed
+
+Started on 2026-11-06, after CH2. The plan stands; checking it against the report crate and the
+app settled these details:
+
+- **What moves out of the app (CH3b).** `dbrover-picture` takes the SVG helpers ER1's diagrams
+  and the chart share (`SANS`, `MONO`, `BASELINE_DROP`, `Escaped`), a colour of its own (`Rgb`,
+  since it has no egui), the bundled Inter and JetBrains Mono files, and a text measure: a
+  string's width from Inter's advance widths, its line from the font's ascender, descender and
+  line gap, read with `ttf-parser` (a direct dependency at the lockfile's 0.25.1, so nothing new
+  is built). `dbrover-chart` takes the SVG writer, the light palette a file is drawn in, the
+  eight series colours of both themes, and the sentence the tab writes under a chart, which a
+  file writes too.
+- **Same bytes everywhere.** A report's chart is laid out with the font files' measure at 11
+  points, the tab's small text, and the SVG writes each coordinate rounded to a hundredth of a
+  point, so the last bits of a platform's floating point never reach the file. The tab's
+  **Export ›** writes through the same writer, so its files round the same way; nothing changes
+  on screen. A test bounds how far the two measures place a label apart.
+- **The keys (CH3c).** `[[chart]]` takes the spec's keys, read by `dbrover-chart`'s own reader
+  from the report's TOML, and `file`, `width`, `height` and `scale`. `file` ends in `.svg` or
+  `.png` and takes parameters as an output's does. `width` and `height` are whole points from
+  200 to 4,000; `scale` is 1, 2 or 3 and only for a `.png`, where it is a problem with an
+  `.svg`; a PNG past `dbrover_picture::MAX_PIXELS` at its scale is a problem when the file is
+  read. A misspelt key is suggested from both sets ("no key `fiel`; did you mean `file`?").
+  Problems say "chart 2: …" and are placed on their key in the report's editor. `query` is
+  refused as an unknown key until CH3e reads it, as CH1 refused `series`.
+- **One name a file.** No two files of a run, outputs' or charts', may have the same name, with
+  the file's templates or with a run's values.
+- **A chart's step (CH3d).** A chart is a step of its own, as an output is: `chart 1
+  (net-by-category-2026-10.svg)` in messages, `"step": "chart"` in events. A column it can't
+  find or a file it can't write exits with 1, its row or series limit with 5. Its file is an
+  `output_written` event, so the report's tab lists it with the outputs' files, the history
+  records it as an output after them (rows drawn, size, time), and `dbrover report run` prints
+  its path. An inner report's charts under [RS9](reports-at-scale.md#composing-reports) aren't
+  written, as its outputs aren't; RS9 isn't built yet, so nothing changes for it here.
+- **Reading the rows.** A column's role comes from its declared type, or from the first page of
+  rows when it has none, and the spec is resolved against the columns then; a problem with them
+  fails the chart's step. Without `limit`, the chart keeps the rows up to its kind's limit and
+  counts the rest; past it the run fails: "chart 1 draws bars, at most 250 rows; the result has
+  1,204. Group the rows, or set `limit`." With `limit` and `sort` it keeps the top rows as the
+  pages pass; with `limit` alone, the first ones. A `limit` above the kind's limit doesn't lift
+  it.
+- **More than eight series** fails in the chart's step at its limit, naming the values past the
+  eighth. The advice under a chart's limits says to group the rows or set `limit`, never to raise
+  a default in Settings, which has none for charts.
+- **The line under a file's chart** is the tab's: the rows charted, rows left out and why, gaps
+  per series, and the sort and limit. Its gaps and rows left out are also the file's warnings,
+  which the tab and `dbrover report run` show.
+- **No rows** writes the chart's title and "No rows to chart" in place of marks, with a warning.
+  The spec's column names are checked, but not their roles, which need values.
+- **When files are written.** Charts of the result read its pages beside the outputs; after its
+  last row each chart is drawn and written into the staging folder, and only then are all the
+  files put in place, outputs first, then charts in the file's order. A chart that fails fails
+  the run, which leaves no file.
+- **A chart's own `query` (CH3e)** runs after the combine query's rows are written, a chart at
+  a time in the file's order, on the locked-down workspace, with a `timeout` of the combine's
+  length counted from its own start, under the workspace's `memory_limit`. It is one DuckDB
+  statement that only reads, takes the report's parameters, and is a problem, exit 3, in a
+  report without `[combine]`, which says to add one. The editor colours it as DuckDB's SQL.
 
 ### CH4 — A chart for MCP clients (S)
 

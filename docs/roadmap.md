@@ -2440,21 +2440,32 @@ is added. It came after CI fixes, the reports track and W13.
   Covered by `dbrover-chart`'s tests of reading a split, stacking and the spec's problems,
   kittest tests of the toolbar and of blocks with `series` and `stack`, an SVG test, and a
   whole-app test of the exit on the shop: stacked bars on screen and in the exported SVG.
-- **CH3 — Charts from reports (M):** a report's `[[chart]]`, drawn from its result or its own
-  DuckDB `query`, written through the staging folder with the other files. Past a kind's row
-  limit a run fails rather than draw part of the data, unless the chart sets `limit`.
-  `dbrover report run` prints and reports charts as outputs. The Reports scope line moves one
-  step: a chart stays one result's picture, in a console or as a report's file.
-  - **CH3a — The plan,** and the Scope line's wording.
-  - **CH3b — Drawing without a window:** the SVG writer in `dbrover-chart`, the fonts and a
-    measure of their text (`ttf-parser`, already built for resvg) in `dbrover-picture`.
-  - **CH3c — `[[chart]]` in the report file.**
-  - **CH3d — Running it,** its limits, events and exit codes.
-  - **CH3e — A chart's own `query`.**
-  - **CH3f — Manual,** the sales-by-category example with its chart, and the demo note.
+- **CH3 — Charts from reports (M):** started on 2026-11-06, its decisions
+  [confirmed](charts-as-code.md#ch3-confirmed). A report's `[[chart]]`, drawn from its result
+  or its own DuckDB `query`, written through the staging folder with the other files. Past a
+  kind's row limit a run fails rather than draw part of the data, unless the chart sets
+  `limit`. `dbrover report run` prints and reports charts as outputs. The Reports
+  [scope line](reporting.md#scope) moves one step: a chart stays one result's picture, in a
+  console or as a report's file. In layers, one PR each:
+  - **CH3a — The plan:** CH3's decisions confirmed, the Scope line's wording, and this entry.
+  - **CH3b — Drawing without a window:** the SVG writer, the file palette and the line under a
+    chart in `dbrover-chart`; the SVG helpers, the bundled fonts and a measure of their text
+    (`ttf-parser`, already built for resvg) in `dbrover-picture`; the app's **Export ›**
+    through them, unchanged on screen.
+  - **CH3c — `[[chart]]` in the report file:** read and planned in `dbrover-report`, with
+    `file` and its parameters, `.svg` or `.png`, `width`, `height` and `scale`, every problem
+    naming the chart.
+  - **CH3d — Running it:** a chart reads the result's pages beside the outputs, under its row
+    and series limits, staged and put in place with the files; its warnings, metrics and
+    `output_written` event; `dbrover report run` prints it and exits with 1 or 5.
+  - **CH3e — A chart's own `query`:** run after the combine, in the locked workspace, under the
+    combine's limits.
+  - **CH3f — Manual,** the sales-by-category example with its chart and its October 2026 SVG
+    checked in, and the demo note.
 
   **Exit:** `dbrover report run sales-by-category` writes Excel, CSV and an SVG equal byte for
-  byte to a checked-in one; 251 bars without `limit` exit with 5 and leave no file.
+  byte to a checked-in one; 251 bars without `limit` exit with 5 and leave no file; the
+  report's tab lists the chart with the other files.
 - **CH4 — A chart for MCP clients (S):** a read-only `chart` tool that runs one query as `query`
   does, under its row limit, and returns a PNG (or SVG) of it.
 
