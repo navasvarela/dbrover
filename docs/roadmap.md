@@ -2369,7 +2369,9 @@ after CI fixes, the reports track and W13, and links no Git library.
 
 ## Charts as code track
 
-CH1, CH2 and CH3 built on 2026-11-06. Proposed on 2026-11-04 in [Charts as code](charts-as-code.md), after
+Done: CH1, CH2 and CH3 built on 2026-11-06, CH4 on 2026-11-07, in #515 to #519, #522 to
+#524, #526 to #531, and #533 and #534; what was left for later is in
+[Charts as code](charts-as-code.md#left-for-later). Proposed on 2026-11-04 in [Charts as code](charts-as-code.md), after
 asking for a simple syntax for charts of queries and reports. W12's chart, written down as a few
 TOML keys (`kind`, `x`, `y`, `series`, `title`, `sort`, `limit`, …): in a comment block above a
 statement, which opens its result on that chart and which the tab writes back, and as a report's
@@ -2489,8 +2491,34 @@ is added. It came after CI fixes, the reports track and W13.
   chart's own query), `dbrover-chart`'s and `dbrover-picture`'s tests of the writer, the measure
   and the number formatting, an app test of the tab, the engine's test of the example against
   its checked-in SVG on every platform, and `dbrover report run`'s exit tests.
-- **CH4 — A chart for MCP clients (S):** a read-only `chart` tool that runs one query as `query`
-  does, under its row limit, and returns a PNG (or SVG) of it.
+- **CH4 — A chart for MCP clients (S):** built; started on 2026-11-07, its details
+  [confirmed](charts-as-code.md#ch4-confirmed). A read-only `chart` tool that runs one query as
+  `query` does, under its row limit, and returns a PNG (or SVG) of it. In layers, one PR each:
+  - **CH4a — The `chart` tool:** its arguments, the spec read from JSON with a block's
+    problems, the query run as `query` runs it, PNG and SVG replies, the audit log's entry.
+  - **CH4b — Manual and demo note:** the MCP chapter's tool table; the track closed.
+
+  **Exit:** over stdio, a `chart` call on the shop returns a PNG an MCP client shows; a data
+  source the project doesn't serve to MCP clients refuses it; a result past the row limit is
+  drawn cut, and the reply says so.
+
+  **CH4 demo note:** built in #533 and this layer, with a row, `chart`, in
+  [What the assistant can do](../book/src/mcp.md#what-the-assistant-can-do). Make the shop from
+  `examples/reports/shop.sql` in a SQLite data source named `shop`, in a project allowed for MCP
+  clients, and connect an assistant such as Claude Desktop (see
+  [Connecting an AI assistant](../book/src/mcp.md)). Ask it to chart net sales by category: it
+  calls `chart` with `SELECT p.category, SUM(l.amount) AS net FROM order_lines l JOIN products p
+  ON p.id = l.product_id GROUP BY p.category ORDER BY net DESC` and `{"kind": "bars", "x":
+  "category", "y": "net"}`, and shows four bars, bikes far above the rest, with "Charting 4
+  rows" under them; the statement is in the shop's **History**, marked **MCP**. With the
+  project's row limit lowered to 5, charting every product's price draws five bars, and both the
+  picture and the reply say "only the first 5 rows were read, the project's row limit". A SQL
+  Server data source without an MCP login isn't served, so `chart` on it answers that the
+  project has no such data source. `"kind": "pie"` answers "chart.kind: `kind` is bars, lines
+  or scatter, not "pie"". Departures from the design: none of substance; the details settled
+  are in [CH4 confirmed](charts-as-code.md#ch4-confirmed). Covered by the MCP crate's unit tests
+  of the spec, the drawing and both replies, and `crates/dbrover-mcp/tests/chart.rs`, the exit
+  over stdio on the shop.
 
 ## Design and documentation track
 

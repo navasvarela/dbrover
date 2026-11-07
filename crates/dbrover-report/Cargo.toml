@@ -35,6 +35,8 @@ tracing.workspace = true
 
 [dev-dependencies]
 calamine.workspace = true
+# Decodes a chart's PNG to look at its pixels.
+resvg.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 

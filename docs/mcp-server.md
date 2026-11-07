@@ -168,6 +168,7 @@ engine has no such setting). Results are limited to `max_rows`.
   | `get_definition` | read | A view's, function's or index's source |
   | `query` | read | Runs one read statement and returns its rows (up to `max_rows`), as JSON or, with `format`, as CSV, Markdown or JSON Lines text (W7i) |
   | `explain` | read | The plan of one statement, without running it |
+  | `chart` | read | Runs one read statement as `query` does and returns a chart of its rows as a PNG image or SVG text ([Charts as code](charts-as-code.md#a-chart-tool-for-mcp-clients), CH4) |
   | `execute` | write, schema or admin | Runs statements that change something, in one transaction where the engine allows |
 
   Reading and changing are separate tools on purpose. A client can then allow `query` freely
