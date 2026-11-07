@@ -35,6 +35,7 @@ use crate::icons::{self, Icon, Role};
 use crate::keymap::Keymap;
 use crate::log_console::LogConsole;
 use crate::mcp_settings::McpDefaultsEditor;
+use crate::query_folders::QueryFolders;
 use crate::reports::{self, ReportAction, ReportView, Reports};
 use crate::schema_compare::{Candidate, CompareAction, CompareId, SchemaCompares};
 use crate::settings::AppSettings;
@@ -348,6 +349,7 @@ pub struct Panels<'a> {
     /// What the user asked of the diagram tabs this frame.
     pub diagram_actions: &'a mut Vec<DiagramAction>,
     pub reports: &'a mut Reports,
+    pub query_folders: &'a QueryFolders,
     /// The saved data sources, which reports name.
     pub report_sources: &'a [DataSource],
     /// What the user asked of the report tabs this frame.
@@ -514,6 +516,7 @@ impl TabViewer for Panels<'_> {
                     saved_diagrams: self.diagrams.saved(),
                     actions: self.custom_actions,
                     reports: self.reports,
+                    query_folders: self.query_folders,
                 },
                 self.explorer_options,
                 self.explorer_actions,

@@ -21,6 +21,7 @@ use crate::consoles::SavedConsoles;
 use crate::custom_actions;
 use crate::diagram::SavedDiagrams;
 use crate::icons;
+use crate::query_folders::{self, QueryFolderAction, QueryFolders, SectionState};
 use crate::reports::{ReportAction, Reports};
 use crate::state::{DataSourceEntry, DataSources};
 use crate::theme::Palette;
@@ -87,6 +88,8 @@ pub enum ExplorerAction {
     OpenDiagram(DiagramKey),
     /// Something asked of the **Reports** section.
     Report(ReportAction),
+    /// Something asked of the **Query folders** section.
+    QueryFolder(QueryFolderAction),
     /// Makes the node at the path, or the data source for the root, the one that keys and the
     /// Actions menu act on.
     Select(DataSourceId, CatalogPath),
@@ -147,6 +150,8 @@ pub struct ExplorerOptions {
     pub collapsed_groups: BTreeSet<Group>,
     /// The node last clicked: the root path for a data source's own row.
     pub selected: Option<(DataSourceId, CatalogPath)>,
+    /// What is folded and opened in **Query folders**.
+    pub query_folders: SectionState,
 }
 
 /// A group of data sources in the explorer.
@@ -172,6 +177,8 @@ pub struct ExplorerView<'a> {
     pub actions: &'a [CustomAction],
     /// Listed under the data sources, when there is a reports folder.
     pub reports: &'a Reports,
+    /// Listed last, always, so a first folder can be added from the section's menu.
+    pub query_folders: &'a QueryFolders,
 }
 
 pub fn show(
@@ -194,6 +201,13 @@ pub fn show(
         }
         DataSources::Loaded(entries) if entries.is_empty() && view.projects.is_empty() => {
             ui.weak("No data sources yet. Add one with +.");
+            query_folders_section(
+                ui,
+                view.query_folders,
+                None,
+                &mut options.query_folders,
+                actions,
+            );
         }
         DataSources::Loaded(entries) => {
             let needle = options.filter.trim().to_lowercase();
@@ -209,6 +223,7 @@ pub fn show(
                 selected: options.selected.as_ref(),
             };
             let collapsed = &mut options.collapsed_groups;
+            let query_folders = &mut options.query_folders;
             ScrollArea::both().auto_shrink(false).show(ui, |ui| {
                 if view.projects.is_empty() {
                     data_sources(ui, &tree, entries.iter(), &filter, actions);
@@ -220,9 +235,28 @@ pub fn show(
                 if view.reports.is_set_up() {
                     reports_section(ui, view.reports, &filter, collapsed, actions);
                 }
+                query_folders_section(
+                    ui,
+                    view.query_folders,
+                    filter.needle,
+                    query_folders,
+                    actions,
+                );
             });
         }
     }
+}
+
+fn query_folders_section(
+    ui: &mut Ui,
+    folders: &QueryFolders,
+    needle: Option<&str>,
+    state: &mut SectionState,
+    actions: &mut Vec<ExplorerAction>,
+) {
+    let mut asked = Vec::new();
+    query_folders::section(ui, folders, needle, state, &mut asked);
+    actions.extend(asked.into_iter().map(ExplorerAction::QueryFolder));
 }
 
 /// What every data source row needs besides its entry.

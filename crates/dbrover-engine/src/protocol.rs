@@ -15,8 +15,8 @@ use dbrover_sql::{ExistingTable, ParameterValues};
 use dbrover_store::{
     ActionId, ConsoleKey, CustomFile, CustomFileKind, DiagramFile, DiagramKey, HistoryEntry,
     HistoryQuery, ImportPlan, ImportPreview, KeymapBindings, McpOverrides, McpPermissions, Project,
-    Projects, ReportFiles, ReportName, ReportRun, RowChange, SavedConsole, SavedDiagram, Secret,
-    Separator, Settings, SqlFileContents, TrustedCommand, TrustedCommands,
+    Projects, QueryTree, ReportFiles, ReportName, ReportRun, RowChange, SavedConsole, SavedDiagram,
+    Secret, Separator, Settings, SqlFileContents, TrustedCommand, TrustedCommands,
 };
 
 use crate::{
@@ -355,6 +355,9 @@ pub enum Command {
         kind: CustomFileKind,
         text: String,
     },
+    /// Lists a query folder's `.sql` files (VC2). Answered by [`Event::QueryFolderRead`]. Not
+    /// in order with other commands: a large folder doesn't hold them up.
+    ReadQueryFolder(PathBuf),
     /// Lists the report files in `reports/`, with their text. Answered by
     /// [`Event::ReportsListed`].
     ListReports(ReportFiles),
@@ -594,6 +597,11 @@ pub enum Event {
     CustomFileLoaded {
         path: PathBuf,
         file: CustomFile,
+    },
+    /// The answer to [`Command::ReadQueryFolder`].
+    QueryFolderRead {
+        path: PathBuf,
+        result: Result<QueryTree, QueryFolderProblem>,
     },
     /// The report files [`Command::ListReports`] found, or why the folder couldn't be read.
     ReportsListed(Result<Vec<ReportText>, String>),
@@ -1094,6 +1102,14 @@ pub enum SessionState {
     /// request; a console only when asked, since its transaction, temporary tables and
     /// session settings went with the connection.
     Lost(String),
+}
+
+/// Why a query folder couldn't be listed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QueryFolderProblem {
+    /// Not on this machine, as when a synced settings folder lists a clone made elsewhere.
+    Missing,
+    Failed(String),
 }
 
 /// A report file found in `reports/`, and its text or why it couldn't be read.

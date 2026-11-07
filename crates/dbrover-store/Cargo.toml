@@ -12,6 +12,7 @@ publish.workspace = true
 dbrover-core.workspace = true
 dbrover-export.workspace = true
 directories.workspace = true
+ignore.workspace = true
 jiff.workspace = true
 keyring.workspace = true
 rusqlite.workspace = true

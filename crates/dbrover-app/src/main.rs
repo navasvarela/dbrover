@@ -53,6 +53,7 @@ mod password_prompt;
 mod picture;
 mod previous_install;
 mod project_dialog;
+mod query_folders;
 mod relaunch;
 mod renderer;
 mod repaint;

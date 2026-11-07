@@ -25,6 +25,7 @@ mod pictures;
 mod programs;
 mod projects;
 mod protocol;
+mod query_folders;
 pub mod read_only;
 pub mod read_write;
 mod registry;
@@ -59,9 +60,10 @@ pub use programs::{
 };
 pub use protocol::{
     Command, ConsoleId, CostApproval, DatabaseFile, DdlFailure, DescribedTable, EditFailure, Event,
-    Exporter, ImportFailure, PasswordKept, PasswordUpdate, Picture, ReportSaveFailure, ReportText,
-    RowEdit, RowsImport, RunId, RunOrigin, RunOutcome, RunPurpose, SessionState, StatementCheck,
-    StatementFailure, StatementSummary, TableExport, TransactionEnd, TransactionMode,
+    Exporter, ImportFailure, PasswordKept, PasswordUpdate, Picture, QueryFolderProblem,
+    ReportSaveFailure, ReportText, RowEdit, RowsImport, RunId, RunOrigin, RunOutcome, RunPurpose,
+    SessionState, StatementCheck, StatementFailure, StatementSummary, TableExport, TransactionEnd,
+    TransactionMode,
 };
 pub use releases::{GithubReleases, Release, ReleaseError, ReleaseFeed};
 pub use repaint::Repaint;
