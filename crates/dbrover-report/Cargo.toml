@@ -9,12 +9,16 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+# A [[chart]]'s keys, read and drawn as a console's chart is (docs/charts-as-code.md, CH3).
+dbrover-chart.workspace = true
 dbrover-core.workspace = true
 # The run's own DuckDB, which sources load into and the combine step runs in.
 dbrover-driver-duckdb.workspace = true
 # Reads a document source's items, to take its declared columns from them.
 dbrover-document.workspace = true
 dbrover-export.workspace = true
+# A chart's PNG and its pixels' limit.
+dbrover-picture.workspace = true
 dbrover-language.workspace = true
 dbrover-sql.workspace = true
 futures-util.workspace = true

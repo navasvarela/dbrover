@@ -16,9 +16,9 @@ use dbrover_sql::{Dialect, ParameterValues, StatementKind};
 
 use crate::problem::{Place, ReportProblem, Table, messages};
 use crate::{
-    CombineLimits, CombineLimitsSet, CombineQuery, FileName, LimitDefaults, LimitSetIn, Lookup,
-    Output, OutputColumns, OutputLimits, OutputLimitsSet, OutputWriter, Param, Report, Source,
-    SourceColumn, SourceLimits, SourceLimitsSet, SourceRead, SourceStart, Step,
+    Chart, CombineLimits, CombineLimitsSet, CombineQuery, FileName, LimitDefaults, LimitSetIn,
+    Lookup, Output, OutputColumns, OutputLimits, OutputLimitsSet, OutputWriter, Param, Report,
+    Source, SourceColumn, SourceLimits, SourceLimitsSet, SourceRead, SourceStart, Step,
 };
 
 /// A report ready to run.
@@ -32,6 +32,8 @@ pub struct Plan {
     pub timeout: Duration,
     pub logic: Logic,
     pub outputs: Vec<PlannedOutput>,
+    /// The charts it draws, as its file lists them: a chart names nothing to look up.
+    pub charts: Vec<Chart>,
     /// The limits the report's file sets, so a run stopped at one can say who set it.
     file_limits: FileLimits,
 }
@@ -258,6 +260,8 @@ pub struct RunValues {
     pub parameters: ParameterValues,
     /// Each output's file name, in the outputs' order.
     pub files: Vec<String>,
+    /// Each chart's file name, in the charts' order.
+    pub charts: Vec<String>,
 }
 
 impl Plan {
@@ -351,6 +355,7 @@ impl Plan {
             timeout: report.timeout.unwrap_or(defaults.run_timeout),
             logic,
             outputs,
+            charts: report.charts,
             file_limits,
         })
     }
@@ -411,7 +416,7 @@ impl Plan {
         }
     }
 
-    /// Checks `typed` against the parameters' types, and names each output's file.
+    /// Checks `typed` against the parameters' types, and names each output's and chart's file.
     ///
     /// # Errors
     ///
@@ -454,6 +459,20 @@ impl Plan {
                 Err(problem) => problems.push(format!("output {}: {problem}", index + 1)),
             }
         }
+        let mut charts: Vec<String> = Vec::new();
+        for (index, chart) in self.charts.iter().enumerate() {
+            match chart.file.render(&by_name) {
+                Ok(file) if files.contains(&file) || charts.contains(&file) => {
+                    problems.push(format!(
+                        "chart {}: another output or chart already writes {file:?} with these \
+                         values",
+                        index + 1
+                    ));
+                }
+                Ok(file) => charts.push(file),
+                Err(problem) => problems.push(format!("chart {}: {problem}", index + 1)),
+            }
+        }
         if !problems.is_empty() {
             return Err(problems);
         }
@@ -461,7 +480,11 @@ impl Plan {
             .into_iter()
             .map(|(name, (_, plain))| (name, Some(plain)))
             .collect();
-        Ok(RunValues { parameters, files })
+        Ok(RunValues {
+            parameters,
+            files,
+            charts,
+        })
     }
 }
 

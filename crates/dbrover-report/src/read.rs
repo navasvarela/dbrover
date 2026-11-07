@@ -8,13 +8,14 @@ use std::time::Duration;
 
 use dbrover_export::{ColumnType, CustomFormatId, ExportFormat, IfInvalid, Preset, SchemaColumn};
 
+use dbrover_chart::ChartSpec;
 use dbrover_driver_duckdb::DuckDbType;
 
 use crate::problem::{Place, ReportProblem, Table, messages, syntax_problems};
 use crate::{
-    ByteSize, Combine, CombineLimitsSet, CombineQuery, FileName, HintId, Lookup, Output,
-    OutputColumns, OutputLimitsSet, OutputWriter, Param, Report, Source, SourceColumn,
-    SourceLimitsSet, SourceRead,
+    ByteSize, Chart, ChartPicture, Combine, CombineLimitsSet, CombineQuery, FileName, HintId,
+    Lookup, Output, OutputColumns, OutputLimitsSet, OutputWriter, Param, Report, Source,
+    SourceColumn, SourceLimitsSet, SourceRead, grouped,
 };
 
 /// Keys a file may put in the wrong table, and where each goes, so it says so rather than
@@ -60,6 +61,7 @@ pub fn read_with_places(text: &str) -> Result<Report, Vec<ReportProblem>> {
     let sources = file.tables("source");
     let combine = file.table("combine");
     let outputs = file.tables("output");
+    let charts = file.tables("chart");
     for (key, place) in MISPLACED_REPORT_KEYS {
         if file.take(key).is_some() {
             problems.push(at_file(Found::at(key, place)));
@@ -68,7 +70,7 @@ pub fn read_with_places(text: &str) -> Result<Report, Vec<ReportProblem>> {
     problems.extend(
         file.unknown(
             "a report file",
-            "[report], [[source]], [combine] and [[output]]",
+            "[report], [[source]], [combine], [[output]] and [[chart]]",
         )
         .into_iter()
         .map(at_file),
@@ -128,6 +130,14 @@ pub fn read_with_places(text: &str) -> Result<Report, Vec<ReportProblem>> {
         }
     };
 
+    let charts = match charts {
+        Ok(charts) => read_charts(charts, &params, &outputs, &mut problems),
+        Err(problem) => {
+            problems.push(at_file(problem));
+            Vec::new()
+        }
+    };
+
     match header {
         Some(header) if problems.is_empty() => Ok(Report {
             name: header.name,
@@ -138,6 +148,7 @@ pub fn read_with_places(text: &str) -> Result<Report, Vec<ReportProblem>> {
             sources,
             combine,
             outputs,
+            charts,
         }),
         _ => Err(problems),
     }
@@ -1029,6 +1040,173 @@ fn read_output(
         }
     };
     output.filter(|_| problems.is_empty())
+}
+
+/// The keys a `[[chart]]` reads itself, beside the chart's own (`kind`, `x`, …), which
+/// `dbrover-chart` reads.
+const CHART_KEYS: [&str; 4] = ["file", "width", "height", "scale"];
+
+/// A chart's size when its file leaves it out, in points: 16 by 9, as wide as a page's text.
+const DEFAULT_CHART_SIZE: (u32, u32) = (800, 450);
+
+/// The sides a chart may have, in points. Below the least, the axes' labels leave no room for
+/// the plot; past the most, a PNG at 3× is far past `dbrover_picture::MAX_PIXELS` anyway.
+const CHART_SIDES: std::ops::RangeInclusive<u32> = 200..=4_000;
+
+/// A PNG's scale when its chart leaves it out, as **Export ›** offers it first.
+const DEFAULT_PNG_SCALE: u8 = 2;
+const PNG_SCALES: std::ops::RangeInclusive<u8> = 1..=3;
+
+fn read_charts(
+    charts: Vec<toml::Table>,
+    params: &BTreeMap<&str, ColumnType>,
+    outputs: &[Output],
+    problems: &mut Vec<ReportProblem>,
+) -> Vec<Chart> {
+    let mut read: Vec<Chart> = Vec::new();
+    for (index, table) in charts.into_iter().enumerate() {
+        let label = format!("chart {}", index + 1);
+        let mut found = Vec::new();
+        let chart = read_chart(table, params, &mut found);
+        problems.extend(placed(Table::Chart(index), Some(&label), found));
+        let Some(chart) = chart else {
+            continue;
+        };
+        let name = chart.file.as_str();
+        let taken = outputs.iter().any(|output| output.file.as_str() == name)
+            || read.iter().any(|kept| kept.file.as_str() == name);
+        if taken {
+            problems.push(ReportProblem::new(
+                format!("{label}: another output or chart already writes {name:?}"),
+                Place::key(Table::Chart(index), "file"),
+            ));
+        }
+        read.push(chart);
+    }
+    read
+}
+
+fn read_chart(
+    table: toml::Table,
+    params: &BTreeMap<&str, ColumnType>,
+    problems: &mut Vec<Found>,
+) -> Option<Chart> {
+    let spec = ChartSpec::from_table(&table, &CHART_KEYS).map_err(|spec_problems| {
+        problems.extend(
+            spec_problems
+                .into_iter()
+                .map(|problem| Found::at(&problem.key, problem.detail)),
+        );
+    });
+    let mut fields = Fields::new(table);
+    let file = chart_file(fields.string("file"), params);
+    let width = chart_side(&mut fields, "width", DEFAULT_CHART_SIZE.0);
+    let height = chart_side(&mut fields, "height", DEFAULT_CHART_SIZE.1);
+    let scale = fields.count("scale").and_then(|scale| match scale {
+        None => Ok(None),
+        Some(scale) => u8::try_from(scale)
+            .ok()
+            .filter(|scale| PNG_SCALES.contains(scale))
+            .map(Some)
+            .ok_or_else(|| Found::at("scale", "scale must be 1, 2 or 3")),
+    });
+    let (spec, file, width, height, scale) = match (spec, file, width, height, scale) {
+        (Ok(spec), Ok(file), Ok(width), Ok(height), Ok(scale)) => {
+            (spec, file, width, height, scale)
+        }
+        (_, file, width, height, scale) => {
+            problems.extend(file.err());
+            problems.extend(width.err());
+            problems.extend(height.err());
+            problems.extend(scale.err());
+            return None;
+        }
+    };
+    let picture =
+        chart_picture(&file, scale, (width, height)).map_err(|problem| problems.push(problem));
+    Some(Chart {
+        spec,
+        file,
+        picture: picture.ok()?,
+        width,
+        height,
+    })
+}
+
+/// The chart's `file`, a name of its own with the report's parameters in it.
+fn chart_file(
+    file: Result<Option<String>, Found>,
+    params: &BTreeMap<&str, ColumnType>,
+) -> Result<FileName, Found> {
+    match file? {
+        Some(file) => FileName::parse(&file)
+            .and_then(|name| name.check(params).map(|()| name))
+            .map_err(|problem| Found::at("file", format!("file: {problem}"))),
+        None => Err(Found::at(
+            "file",
+            "needs a file name, as file = \"net-by-category.svg\"",
+        )),
+    }
+}
+
+/// `width` or `height`, in points.
+fn chart_side(fields: &mut Fields, key: &str, default: u32) -> Result<u32, Found> {
+    let side = fields.count(key)?;
+    let Some(side) = side else {
+        return Ok(default);
+    };
+    u32::try_from(side)
+        .ok()
+        .filter(|side| CHART_SIDES.contains(side))
+        .ok_or_else(|| {
+            Found::at(
+                key,
+                format!(
+                    "{key} is a number of points from {} to {}",
+                    grouped(u64::from(*CHART_SIDES.start())),
+                    grouped(u64::from(*CHART_SIDES.end()))
+                ),
+            )
+        })
+}
+
+/// SVG or PNG, by the file's extension, and a PNG's scale, which must fit
+/// `dbrover_picture::MAX_PIXELS` at the chart's size.
+fn chart_picture(
+    file: &FileName,
+    scale: Option<u8>,
+    (width, height): (u32, u32),
+) -> Result<ChartPicture, Found> {
+    let extension = std::path::Path::new(file.as_str())
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase);
+    match (extension.as_deref(), scale) {
+        (Some("svg"), None) => Ok(ChartPicture::Svg),
+        (Some("svg"), Some(_)) => Err(Found::at(
+            "scale",
+            "scale sizes a PNG's pixels, and this chart writes SVG; take it out, or name a .png \
+             file",
+        )),
+        (Some("png"), scale) => {
+            let scale = scale.unwrap_or(DEFAULT_PNG_SCALE);
+            let pixels = u64::from(width) * u64::from(height) * u64::from(scale).pow(2);
+            if pixels > dbrover_picture::MAX_PIXELS {
+                return Err(Found::at(
+                    "scale",
+                    format!(
+                        "a PNG of {width} × {height} points at {scale}× is too large to draw; \
+                         make the chart smaller, lower scale, or write SVG"
+                    ),
+                ));
+            }
+            Ok(ChartPicture::Png { scale })
+        }
+        _ => Err(Found::at(
+            "file",
+            "file: a chart writes an .svg or a .png file",
+        )),
+    }
 }
 
 /// Whether the writer is known to write Excel files before the presets are looked up: a
