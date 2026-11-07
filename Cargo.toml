@@ -178,6 +178,9 @@ rusqlite = { version = "0.40.2", features = ["bundled", "column_decltype"] }
 # already builds for the database logos, plus its `text` feature, without which a PNG would have
 # boxes and no words. No system fonts: the app hands it its own bundled ones.
 resvg = { version = "0.45.1", default-features = false, features = ["text"] }
+# Measures text in the bundled fonts for pictures laid out with no window (dbrover-picture):
+# the version resvg already builds, through fontdb.
+ttf-parser = { version = "0.25.1", default-features = false, features = ["std"] }
 # Reads SQL Server's XML showplans (dbrover-plan): the version resvg already builds for the
 # database logos, so nothing new is compiled.
 roxmltree = "0.20.0"

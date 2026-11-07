@@ -1,30 +1,14 @@
 //! A picture as a PNG, drawn from its SVG with resvg, at a scale.
 
-use std::fmt;
-
 use resvg::tiny_skia::{Pixmap, Transform};
 use resvg::usvg::{Options, Tree};
+
+use crate::Fonts;
 
 /// The most pixels a PNG may have: 64 megapixels, 256 MB while it is drawn. A diagram of a few
 /// hundred tables at 3× passes it; past it the export is refused rather than risk running out
 /// of memory, and SVG, or a smaller scale, is the way.
 pub const MAX_PIXELS: u64 = 64 * 1024 * 1024;
-
-/// The font files the SVG's text is drawn with. Only these: the system's fonts are never
-/// looked at, so a PNG looks the same on every machine.
-#[derive(Clone)]
-pub struct Fonts {
-    /// The first is the face for any family the SVG names that isn't among them.
-    pub files: Vec<&'static [u8]>,
-    /// The family of the first file, which text falls back to.
-    pub fallback_family: &'static str,
-}
-
-impl fmt::Debug for Fonts {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} font files", self.files.len())
-    }
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum PngError {
@@ -78,11 +62,9 @@ pub fn png(svg: &str, scale: f32, fonts: &Fonts) -> Result<Vec<u8>, PngError> {
 mod tests {
     use super::*;
 
-    const INTER: &[u8] = include_bytes!("../../../assets/fonts/inter/Inter-Regular.ttf");
-
     fn fonts() -> Fonts {
         Fonts {
-            files: vec![INTER],
+            files: vec![crate::INTER_REGULAR],
             fallback_family: "Inter",
         }
     }

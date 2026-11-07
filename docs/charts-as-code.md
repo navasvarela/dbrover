@@ -485,7 +485,8 @@ app settled these details:
   points, the tab's small text, and the SVG writes each coordinate rounded to a hundredth of a
   point, so the last bits of a platform's floating point never reach the file. The tab's
   **Export ›** writes through the same writer, so its files round the same way; nothing changes
-  on screen. A test bounds how far the two measures place a label apart.
+  on screen. The font file's advances leave out kerning, which egui applies: a test bounds the
+  difference at a point, or 3% of a label of kerned capitals such as "WAVY".
 - **The keys (CH3c).** `[[chart]]` takes the spec's keys, read by `dbrover-chart`'s own reader
   from the report's TOML, and `file`, `width`, `height` and `scale`. `file` ends in `.svg` or
   `.png` and takes parameters as an output's does. `width` and `height` are whole points from

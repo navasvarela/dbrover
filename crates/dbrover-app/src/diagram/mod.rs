@@ -311,7 +311,7 @@ impl Diagrams {
             PictureFormat::Png { scale } => Picture::Png {
                 svg,
                 scale: f32::from(scale),
-                fonts: crate::fonts::bundled_files(),
+                fonts: dbrover_picture::Fonts::bundled(),
             },
         };
         tab.exported = None;

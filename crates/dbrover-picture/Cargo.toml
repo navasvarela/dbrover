@@ -11,6 +11,7 @@ publish.workspace = true
 [dependencies]
 resvg.workspace = true
 thiserror.workspace = true
+ttf-parser.workspace = true
 
 [lints]
 workspace = true

@@ -12,6 +12,7 @@
 #[cfg(any(target_os = "macos", test))]
 use std::path::{Path, PathBuf};
 
+use dbrover_picture::{INTER_REGULAR, INTER_SEMIBOLD, JETBRAINS_MONO};
 #[cfg(any(target_os = "macos", test))]
 use egui::epaint::text::{FontTweak, VariationCoords};
 use egui::{FontData, FontDefinitions, FontFamily, FontId};
@@ -106,20 +107,6 @@ struct Faces {
     sans: FontData,
     sans_semibold: FontData,
     mono: FontData,
-}
-
-const INTER_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/inter/Inter-Regular.ttf");
-const INTER_SEMIBOLD: &[u8] = include_bytes!("../../../assets/fonts/inter/Inter-SemiBold.ttf");
-const JETBRAINS_MONO: &[u8] =
-    include_bytes!("../../../assets/fonts/jetbrains-mono/JetBrainsMono-Regular.ttf");
-
-/// The bundled faces, for drawing a diagram's PNG with the app's own text whatever the
-/// system has.
-pub fn bundled_files() -> dbrover_picture::Fonts {
-    dbrover_picture::Fonts {
-        files: vec![INTER_REGULAR, INTER_SEMIBOLD, JETBRAINS_MONO],
-        fallback_family: "Inter",
-    }
 }
 
 impl Faces {

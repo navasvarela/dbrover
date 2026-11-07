@@ -58,7 +58,7 @@ pub(crate) fn nice_step(raw: f64) -> f64 {
     if !(raw.is_finite() && raw > 0.0) {
         return 1.0;
     }
-    let magnitude = 10f64.powf(raw.log10().floor());
+    let magnitude = power_of_ten(decimal_exponent(raw));
     let normalised = raw / magnitude;
     let round = match normalised {
         n if n <= 1.0 => 1.0,
@@ -71,8 +71,10 @@ pub(crate) fn nice_step(raw: f64) -> f64 {
 
 /// `value` with as many decimals as `step` has, and commas between thousands.
 pub(crate) fn number_label(value: f64, step: f64) -> String {
+    // A step is 1, 2 or 5 times a power of ten, so it needs as many decimals as its exponent
+    // is below zero.
     let decimals = if step > 0.0 && step < 1.0 {
-        (-step.log10()).ceil() as usize
+        decimal_exponent(step).unsigned_abs() as usize
     } else {
         0
     }
@@ -94,6 +96,27 @@ pub(crate) fn number_label(value: f64, step: f64) -> String {
         Some(fraction) => format!("{sign}{grouped}.{fraction}"),
         None => format!("{sign}{grouped}"),
     }
+}
+
+/// The power of ten of `value`'s leading digit: 2 for 120.5, -1 for 0.5.
+///
+/// Read from the number as Rust writes it in scientific form rather than with `log10`, whose
+/// last bit differs between platforms' maths libraries: on a power of ten such as 1,000 one
+/// library's 2.9999999999999996 would floor to another step, and a report's chart, compared byte
+/// for byte with a checked-in file, would differ by platform. Rust's own formatting is the same
+/// everywhere.
+fn decimal_exponent(value: f64) -> i32 {
+    let written = format!("{value:e}");
+    written
+        .rsplit_once('e')
+        .and_then(|(_, exponent)| exponent.parse().ok())
+        .unwrap_or(0)
+}
+
+/// Ten to the power `exponent`, the double nearest it, as parsing `1e{exponent}` makes it on
+/// every platform.
+fn power_of_ten(exponent: i32) -> f64 {
+    format!("1e{exponent}").parse().unwrap_or(1.0)
 }
 
 fn thousands(digits: &str) -> String {
@@ -128,6 +151,25 @@ mod tests {
             let found = nice_step(raw);
             assert!((found - step).abs() < 1e-12, "{raw}: {found} != {step}");
         }
+    }
+
+    #[test]
+    fn reads_the_power_of_ten_of_a_leading_digit_exactly() {
+        let cases = [
+            (1000.0, 3),
+            (999.999_999_999_999_9, 2),
+            (120.5, 2),
+            (1.0, 0),
+            (0.5, -1),
+            (0.1, -1),
+            (0.05, -2),
+            (1e-12, -12),
+        ];
+        for (value, exponent) in cases {
+            assert_eq!(decimal_exponent(value), exponent, "{value}");
+        }
+        assert_eq!(power_of_ten(3), 1000.0);
+        assert_eq!(power_of_ten(-1), 0.1);
     }
 
     #[test]

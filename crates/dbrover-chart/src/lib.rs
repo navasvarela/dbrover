@@ -15,14 +15,20 @@
 //! resolves against a result's columns into a [`Choice`], how its rows are sorted and cut
 //! ([`arrange`]), and the [`LayoutOptions`] its titles set.
 //!
-//! Whoever shows a chart only paints the marks, and an export writes the same marks, so a file
-//! shows the chart the screen shows. Nothing here draws or talks to a database.
+//! Whoever shows a chart only paints the marks, and [`svg`] writes the same marks as a file, so a
+//! file shows the chart the screen shows, in [`FILE_COLOURS`]. With no window, text is measured
+//! with the bundled font's file (`dbrover_picture::FontMeasure`). Nothing here paints on screen
+//! or talks to a database.
 
 mod choice;
 mod data;
 mod layout;
+mod measure;
+mod note;
+mod palette;
 mod role;
 mod spec;
+mod svg;
 mod ticks;
 mod time;
 mod values;
@@ -33,8 +39,13 @@ pub use layout::{
     Anchor, Drawing, LayoutOptions, Mark, POINT_RADIUS, Paint, Point, Rect, Size, TextMeasure,
     layout,
 };
+pub use palette::{
+    BAR_ROUNDING, FILE_COLOURS, FILE_TEXT_SIZE, FileColours, LINE_WIDTH, ROUNDED_BAR_WIDTH,
+    SERIES_DARK, SERIES_LIGHT,
+};
 pub use role::{Column, Role};
 pub use spec::{
     ChartSpec, ColumnProblem, Resolved, SPEC_TABLE, SavedChoice, Sort, SortBy, SpecProblem,
     WriteError, arrange, for_report, write_back,
 };
+pub use svg::svg;
