@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450" viewBox="0 0 800 450" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<line x1="52.03" y1="384.07" x2="792" y2="384.07" stroke="#d3d7df" stroke-width="1"/>
+<text x="46.03" y="387.92" text-anchor="end" fill="#5c6270">0</text>
+<line x1="52.03" y1="327.83" x2="792" y2="327.83" stroke="#d3d7df" stroke-width="1"/>
+<text x="46.03" y="331.68" text-anchor="end" fill="#5c6270">10,000</text>
+<line x1="52.03" y1="271.59" x2="792" y2="271.59" stroke="#d3d7df" stroke-width="1"/>
+<text x="46.03" y="275.44" text-anchor="end" fill="#5c6270">20,000</text>
+<line x1="52.03" y1="215.35" x2="792" y2="215.35" stroke="#d3d7df" stroke-width="1"/>
+<text x="46.03" y="219.2" text-anchor="end" fill="#5c6270">30,000</text>
+<line x1="52.03" y1="159.1" x2="792" y2="159.1" stroke="#d3d7df" stroke-width="1"/>
+<text x="46.03" y="162.95" text-anchor="end" fill="#5c6270">40,000</text>
+<line x1="52.03" y1="102.86" x2="792" y2="102.86" stroke="#d3d7df" stroke-width="1"/>
+<text x="46.03" y="106.71" text-anchor="end" fill="#5c6270">50,000</text>
+<line x1="52.03" y1="46.62" x2="792" y2="46.62" stroke="#d3d7df" stroke-width="1"/>
+<text x="46.03" y="50.47" text-anchor="end" fill="#5c6270">60,000</text>
+<line x1="52.03" y1="384.07" x2="792" y2="384.07" stroke="#5c6270" stroke-width="1"/>
+<text x="144.53" y="400.58" text-anchor="middle" fill="#5c6270">bikes</text>
+<text x="329.52" y="400.58" text-anchor="middle" fill="#5c6270">clothing</text>
+<text x="514.51" y="400.58" text-anchor="middle" fill="#5c6270">parts</text>
+<text x="699.5" y="400.58" text-anchor="middle" fill="#5c6270">accessories</text>
+<rect x="70.53" y="78.56" width="146.99" height="305.51" rx="2" fill="#2a78d6"/>
+<rect x="255.52" y="336.9" width="146.99" height="47.18" rx="2" fill="#2a78d6"/>
+<rect x="440.52" y="366.52" width="146.99" height="17.56" rx="2" fill="#2a78d6"/>
+<rect x="625.51" y="369.41" width="146.99" height="14.66" rx="2" fill="#2a78d6"/>
+<text x="400" y="18.5" text-anchor="middle" fill="#1d1f26">Net sales by category</text>
+<text x="422.02" y="419.89" text-anchor="middle" fill="#1d1f26">category</text>
+<text x="52.03" y="37.81" text-anchor="start" fill="#1d1f26">net</text>
+<text x="8" y="439.2" text-anchor="start" fill="#5c6270">Charting 4 rows</text>
+</svg>

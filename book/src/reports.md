@@ -7,7 +7,7 @@ limits you can see, so a report that reads too much never takes DbRover or your 
 it.
 
 A report reads one data source, or several, combined in DuckDB SQL or in PRQL, and writes CSV
-and Excel files. A source can read by the keys an earlier one found, and can be on a document database
+and Excel files, and charts of them as SVG or PNG pictures. A source can read by the keys an earlier one found, and can be on a document database
 such as DynamoDB or MongoDB, by declaring the columns it makes.
 
 ## Your first report
@@ -27,10 +27,11 @@ run on made-up data:
 4. Click **Sales by category**. Its tab opens.
 5. Type `2026-10-01` for **since** and `2026-11-01` for **until**, and click **Run**.
 
-The tab shows the run as it goes, then the two files it wrote, `sales-by-category-2026-10.xlsx`
-and `sales-by-category-2026-10.csv`, in your Downloads folder. Click one to open it: each
-product's units, sales, returns and net amount, a subtotal for each category, and a total of
-68,435.76. Under the files, a preview shows the rows the report wrote.
+The tab shows the run as it goes, then the three files it wrote in your Downloads folder:
+`sales-by-category-2026-10.xlsx` and `sales-by-category-2026-10.csv`, each product's units,
+sales, returns and net amount, a subtotal for each category, and a total of 68,435.76; and
+`sales-by-category-2026-10.svg`, a bar chart of each category's net sales. Click one to open it.
+Under the files, a preview shows the rows the report wrote.
 
 ### The examples
 
@@ -38,7 +39,7 @@ Each example shows a kind of report of its own:
 
 | Report | Reads | Shows |
 | --- | --- | --- |
-| [`sales-by-category.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/sales-by-category.toml) | SQLite | Grouping with a subtotal for each group and a total, with `GROUPING SETS`, and amounts rounded to the cent as they load. |
+| [`sales-by-category.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/sales-by-category.toml) | SQLite | Grouping with a subtotal for each group and a total, with `GROUPING SETS`, and amounts rounded to the cent as they load. A [chart](#charts) of each category's net sales, from a query of its own. |
 | [`sales-by-week.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/sales-by-week.toml) | SQLite | A combine step in [PRQL](#prql): each category's net sales, week by week, filtered by the report's parameters in PRQL's own `$since`. |
 | [`order-history.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/order-history.toml) | SQLite and MongoDB | Every order line of a period with its customer, read from MongoDB by the ids the lines name, and each customer's running total with a window function. Past an Excel sheet's million rows, it goes on in a new sheet. |
 | [`battery-flows.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/battery-flows.toml) | PostgreSQL, DynamoDB and DuckDB | Three sources joined: each battery's charges and discharges priced at the hour's energy price with `ASOF JOIN`, keeping every digit. |
@@ -220,7 +221,7 @@ touch them.
 ## A report file
 
 A report is a TOML file, with one `[report]`, one or more `[[source]]`s, a `[combine]` when
-there are several, and one or more `[[output]]`s. The simplest reads one source, as this one
+there are several, one or more `[[output]]`s, and any number of [`[[chart]]`s](#charts). The simplest reads one source, as this one
 does, on a shop's orders:
 
 ```toml
@@ -362,6 +363,68 @@ such as `decimal(38,2)`, to keep its cells numbers.
 
 A value that doesn't fit stops the run with the output, the column, the row and the value, as
 `row 2, column "Amount": "n/a" isn't a decimal number`.
+
+## Charts
+
+A `[[chart]]` draws a chart of the report's rows each time it runs, and writes it as an SVG or
+PNG file beside the outputs' files. Its keys are the ones a chart takes above a statement in a
+console (see [A chart in the query](consoles.md#a-chart-in-the-query)), so a chart worked out
+there and copied with **Copy for a report** pastes in unchanged, with a few more for its file:
+
+```toml
+[[chart]]
+file = "sales-by-category-{since:%Y-%m}.svg"
+title = "Net sales by category"
+query = """
+SELECT category, COALESCE(SUM(amount), 0) AS net
+FROM lines
+GROUP BY category
+ORDER BY net DESC
+"""
+x = "category"
+y = "net"
+```
+
+| Key | What it is |
+| --- | --- |
+| `file` | The picture's name, ending in `.svg` or `.png`, with parameters as an output's: `{since:%Y-%m}`. No two files of a run, outputs' or charts', may have the same name. |
+| `width`, `height` | Its size in points, from 200 to 4,000. 800 by 450 unless you say. |
+| `scale` | For a PNG: 1, 2 or 3 pixels a point, as **Export ›** offers. 2 unless you say. |
+| `query` | Instead of the report's rows: a DuckDB query over the sources' tables, with the report's `:name` parameters. Needs a `[combine]`. |
+| `kind`, `x`, `y`, `series`, `stack`, `title`, `x_title`, `y_title`, `y_zero`, `sort`, `limit` | The chart, as in a console. A key left out takes the value **Chart** would start with. |
+
+The chart is drawn as the **Chart** tab draws it, in the light theme's colours on white, with
+the line under it saying what was charted, rows left out and gaps. An SVG is the same, byte for
+byte, from the same rows on any machine, so you can keep one in git and compare a month's with
+the last.
+
+**Which rows.** Without `query`, a chart draws the rows the outputs write: the `[combine]`'s, or
+the one source's. With `query`, it draws that query's rows, run in the combine step's DuckDB
+once the outputs' rows are written, under the `[combine]`'s `timeout` and `memory_limit`. The
+example needs it: its rows mix each product with a subtotal for each category and a total,
+right for Excel and wrong for a chart, so its chart sums the source's own lines by category.
+
+**A chart doesn't draw part of the data without saying so.** The **Chart** tab draws the first
+250 bars or 50,000 points and says so under the chart, but nobody reads a report's chart as it
+is made, so a report's chart past them stops the run instead: "it draws bars, at most 250 rows,
+and the result has 1,204; group the rows in the query, or set limit to draw the first ones". With
+`limit`, it draws the first rows, after `sort`, and says so under the chart. A `series` with
+more than eight values stops the run the same way, naming the values past the eighth, one a
+colour.
+
+**Gaps and empty months.** A null or a value that isn't a number is a gap, never a zero; the
+gaps are counted under the chart and in the run's warnings. A month whose rows are none still
+gets its chart, saying "No rows to chart", with a warning.
+
+**Problems.** A misspelt key or a value of the wrong kind is a problem of the file, underlined
+in the editor and keeping the report from running, as "chart 1: no key `fiel`; did you mean
+`file`?". A column the rows don't have stops the run in the chart's step, as
+"`y = "nett"` isn't a column of this result: category, net". A chart that fails fails the run,
+which writes none of its files.
+
+Charts are written with the outputs' files, listed with them in the tab and by
+`dbrover report run`, and kept in the run's history as outputs, with the rows drawn and the
+file's size.
 
 ## Several sources
 
@@ -583,6 +646,7 @@ consoles and their transactions carry on. The limits, cheapest first:
 | Each source | its rows, its data, its time, every batch of its lookup together; read-only | `max_rows`, `max_bytes`, `timeout` in `[[source]]` |
 | The combine step | DuckDB's memory, threads and spilled data; its time | `memory_limit`, `threads`, `max_temp_size`, `timeout` in `[combine]` |
 | Each output | its data; Excel's rows a sheet | `max_size`, `continue_on_new_sheet` in `[[output]]` |
+| Each chart | its kind's rows (250 bars, 50,000 points) and eight series; its `query`, the combine step's limits | `limit` in `[[chart]]`, or fewer rows from the query |
 | The run | its time | `timeout` in `[report]` |
 | The process | a lower priority; on Linux, half the machine's memory and the run's time on each processor thread | — |
 
@@ -677,12 +741,13 @@ Source lines: 246 rows, 6.5 KB in 0.0 s
 Combine: 13 rows, 509 bytes in 0.0 s
 /home/me/reports/2026-10/sales-by-category-2026-10.xlsx
 /home/me/reports/2026-10/sales-by-category-2026-10.csv
+/home/me/reports/2026-10/sales-by-category-2026-10.svg
 Finished in 0.0 s.
 ```
 
 With `--json`, standard output is the run's events instead, as the report's tab reads them:
 `started`, `progress` about once a second, `source_done`, `combine_done`, `preview`,
-`output_written` for each file, and last `finished`, `failed` or `cancelled`. `jq` picks out what
+`output_written` for each file, a chart's included, and last `finished`, `failed` or `cancelled`. `jq` picks out what
 a script needs:
 
 ```bash
@@ -698,11 +763,11 @@ folder (see [Where DbRover keeps its files](files.md)).
 | Code | The run |
 | --- | --- |
 | 0 | ran and wrote its files |
-| 1 | failed otherwise: the combine query, an output that couldn't be written, or the worker |
+| 1 | failed otherwise: the combine query, an output or chart that couldn't be written, a chart naming a column the rows don't have, or the worker |
 | 2 | didn't start: the command line is wrong |
 | 3 | didn't start: the report file isn't found or has a problem, a data source it names doesn't exist, a parameter is missing, unknown or of the wrong type, or the settings folder can't be used |
 | 4 | failed in a source: connecting to its data source, or its query |
-| 5 | stopped at a limit, such as `max_rows`; the message names the key to raise |
+| 5 | stopped at a limit, such as `max_rows` or a chart's rows; the message names the key to raise or set |
 | 6 | was stopped: its own time limit (`timeout` in `[report]`), Ctrl-C, or SIGTERM |
 
 Ctrl-C, or the SIGTERM that cron, `timeout` and CI runners send to stop a job, cancels the run as

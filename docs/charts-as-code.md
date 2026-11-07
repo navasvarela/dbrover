@@ -1,7 +1,6 @@
 # Charts as code
 
-Status: **proposed on 2026-11-04; CH1 and CH2 built on 2026-11-06; CH3 started on
-2026-11-06.** The [roadmap](roadmap.md#charts-as-code-track) tracks it as CH1 to CH4. CI fixes,
+Status: **proposed on 2026-11-04; CH1, CH2 and CH3 built on 2026-11-06.** The [roadmap](roadmap.md#charts-as-code-track) tracks it as CH1 to CH4. CI fixes,
 the reports track and W13 schema compare came first. Each milestone's decisions are confirmed
 when it starts, as in [Reports](reporting.md): CH1's [below](#ch1-confirmed), CH2's and CH3's
 after their layers.
@@ -144,7 +143,7 @@ x = "category"
 y = "net"
 ```
 
-This one, added to `examples/reports/sales-by-category.toml`, writes a bar chart of each
+This one, in `examples/reports/sales-by-category.toml` since CH3f, writes a bar chart of each
 category's net sales next to the Excel and CSV files, each month the report runs. Without
 `query`, a chart draws the report's result, as an output writes it.
 

@@ -63,3 +63,18 @@ columns = [
 format = "csv"
 file = "sales-by-category-{since:%Y-%m}.csv"
 columns = "same"
+
+# A bar chart of each category's net sales, beside the Excel and CSV files. The result above mixes
+# products with subtotals, right for Excel and wrong for a chart, so the chart has a query of its
+# own over the source's table.
+[[chart]]
+file = "sales-by-category-{since:%Y-%m}.svg"
+title = "Net sales by category"
+query = """
+SELECT category, COALESCE(SUM(amount), 0) AS net
+FROM lines
+GROUP BY category
+ORDER BY net DESC
+"""
+x = "category"
+y = "net"
