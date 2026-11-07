@@ -310,13 +310,54 @@ Which objects have one depends on the database:
   each of its indices; an index template, as its `PUT /_index_template/<name>`. Each runs again
   as written, in a console.
 
+## Query folders
+
+**Query folders**, at the bottom of the explorer, lists folders of `.sql` files you keep
+elsewhere, such as the `queries/` folder of a team's Git repository. DbRover only reads these
+folders: there is no Git inside DbRover, and you commit, pull and switch branches with Git as
+you always do.
+
+- **File › Add query folder…**, or **Add query folder…** on the section's menu (right-click
+  **Query folders**), asks for a folder and lists it, open. A folder is listed by its name;
+  hover over it to see its path.
+- **Remove from list** on a folder's menu forgets it. No file is touched.
+- **Reload** on the section's menu reads every folder again.
+
+Under each folder are its `.sql` files, and the subfolders that hold any, however deep: folders
+first, then files, each sorted by name. What Git wouldn't show you isn't listed:
+
+- hidden files and folders, such as `.git` and `.idea`;
+- inside a Git repository, whatever its `.gitignore` files, `.git/info/exclude` or your global
+  Git excludes file ignore, so `node_modules` or `target` are never searched.
+
+Outside a repository a `.gitignore` means nothing, as for Git.
+
+**Click a file** to open it in a console, as **File › Open…** does: on the data source it was
+opened on last time, asking the first time if you have more than one, and saved only when you
+ask. See [Files, parameters and find](files-parameters.md).
+
+**New query here…** on a folder or subfolder asks for a file name (`.sql` is added if you leave
+it out), creates an empty file there and opens it on the data source of the console you were
+last in. It never replaces a file of the same name.
+
+The folders are read again whenever DbRover's window comes back to the front, so after a
+`git checkout` or `git pull` in a terminal, files the branch adds or removes show when you
+switch back, and an open file the branch changed shows its new text (see
+[When the file changes elsewhere](files-parameters.md#when-the-file-changes-elsewhere)).
+
+The list is kept in `settings.toml` (see [Where DbRover keeps its files](files.md)), with
+folders under your home folder written as `~/…`. With the settings folder synced between
+machines, a repository cloned at the same place under each home folder is found on each. A
+folder that isn't on this machine stays listed, dimmed, until you clone it there or remove it.
+
 ## Filtering
 
 Type in the box at the top of the explorer to filter the tree by name, ignoring case. An object
 that matches is shown with everything under it, and the nodes leading to it stay open even if
 they don't match themselves. Data sources and projects are matched by name too: a project
 whose name matches shows all its data sources, and data sources and projects with nothing
-matching are hidden while you type.
+matching are hidden while you type. Under **Query folders**, files whose names match are shown,
+with the folders leading to them open.
 
 ![The explorer filtered by "order"](images/explorer-filter.png)
 

@@ -2328,7 +2328,7 @@ after CI fixes, the reports track and W13, and links no Git library.
   source and a changed one; both show once the window is in front, saving a third keeps all
   three and their comments, and `git diff` shows only the third's lines. `git status` doesn't
   list `history.sqlite`. A report run before and after an edit shows two blob ids.
-- **VC2 — A folder of queries (S–M):** planned in
+- **VC2 — A folder of queries (S–M):** built; planned in
   [Version control](version-control.md#vc2--a-folder-of-queries). Folders of `.sql` files you
   add (a repository's `queries/`) as a tree in the explorer, hidden and Git-ignored files left
   out, each file opened and saved in place through W6. The request other tools' users make most.
@@ -2342,11 +2342,33 @@ after CI fixes, the reports track and W13, and links no Git library.
     and opens it on the last focused console's data source, and a folder missing on this
     machine is listed dimmed. Whole-app kittest tests on a temporary clone with a
     `.gitignore`.
-  - **VC2c — Manual,** and the demo note.
+  - **VC2c — Manual and demo note:** built; a section,
+    [Query folders](../book/src/explorer.md#query-folders), in The explorer, with links from
+    the files chapters.
 
   **Exit:** a clone with `queries/sales.sql` and `queries/admin/users.sql` shows both and not
   `.git`; saving `sales.sql` shows in `git diff`; checking out a branch that adds a file shows
   it once the window is in front.
+
+  **VC2 demo note:** built in #536, #537 and the manual's layer. In a terminal, `git init shop`,
+  add `queries/sales.sql`, `queries/admin/users.sql` and `queries/scratch/try.sql` with
+  `scratch/` in `.gitignore`, and commit. In DbRover, **File › Add query folder…** and pick
+  `shop`: **Query folders** lists `shop`, open, with `queries` under it; inside are `admin`
+  (holding `users.sql`) and `sales.sql`, and neither `.git` nor `scratch`. Hover `shop` for its
+  path; `settings.toml` now has `[explorer] query_folders = ["~/…/shop"]`. Click `sales.sql`: it
+  opens in a console (asking for a data source the first time if there are several); edit and
+  ⌘S, and `git diff` in the terminal shows the edit. `git checkout -b refunds`, add
+  `queries/refunds.sql`, and change `sales.sql`'s text with another editor; switch back to
+  DbRover and `refunds.sql` is in the tree, and the console shows the new text. Right-click
+  `admin` → **New query here…**, type `audit`, **Create**: `queries/admin/audit.sql` is created
+  empty and opens on the data source of the console you were last in. Edit `settings.toml` to
+  list a folder that doesn't exist: it shows dimmed, with "isn't on this machine" on hover.
+  **Remove from list** takes `shop` off the list and leaves the clone as it was. Departures
+  from the design: `.gitignore` files count only inside a repository, as for Git; the list is
+  `[explorer] query_folders`; **New query here** opens on the console focused last, since
+  right-clicking the explorer focuses the explorer. Covered by the store's listing tests, the
+  engine's answer, the app's unit tests, and whole-app kittest tests on a temporary clone
+  with a `.gitignore`. No screenshot of the section in the manual yet.
 - **VC3 — Schema snapshots (S–M), with W13:** built; designed on 2026-11-05 in
   [Comparing schemas](schema-compare.md#snapshot-files-vc3), in W13's stack. A schema saved as
   a deterministic, diffable file (in the app and as `dbrover schema snapshot`), and W13
