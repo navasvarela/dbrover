@@ -1,11 +1,13 @@
-//! A report's `[[chart]]` read and planned (`docs/charts-as-code.md`, CH3c).
+//! A report's `[[chart]]` read and planned (`docs/charts-as-code.md`, CH3c), and drawn in a run
+//! (CH3d).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use dbrover_chart::{ChartKind, ChartSpec};
-use dbrover_core::{ConnectionConfig, DataSource, DataSourceId, SafetyLevel, SqliteConfig};
+use dbrover_core::{ConnectionConfig, DataSource, DataSourceId, Row, SafetyLevel, SqliteConfig};
 
 use super::*;
+use crate::run_tests::{MemoryOpener, MemoryReader, column, files_in};
 
 fn shop() -> DataSource {
     DataSource {
@@ -198,4 +200,310 @@ fn refuses_values_that_make_a_chart_an_outputs_file() {
         plan.values(&typed).unwrap_err(),
         ["chart 1: another output or chart already writes \"2026-10-01.svg\" with these values"]
     );
+}
+
+/// `count` categories, each a row of its name and its net, in pages of 100.
+fn categories(count: usize) -> MemoryReader {
+    let rows: Vec<Row> = (0..count)
+        .map(|n| vec![Some(format!("category {n:03}")), Some(format!("{n}.5"))])
+        .collect();
+    MemoryReader {
+        columns: vec![column("category"), column("net")],
+        pages: rows.chunks(100).map(<[Row]>::to_vec).collect(),
+        then: None,
+    }
+}
+
+/// Runs the report with `charts` on `reader`, in October 2026, into `folder`.
+async fn run_charts(
+    charts: &str,
+    reader: MemoryReader,
+    folder: &Path,
+) -> (Result<RunSummary, RunFailure>, Vec<RunEvent>) {
+    let plan = Plan::new(
+        read_report(&with_charts(charts)).unwrap(),
+        &[shop()],
+        &[],
+        &LimitDefaults::default(),
+    )
+    .unwrap();
+    let typed: TypedValues = [("since".to_owned(), "2026-10-01".to_owned())].into();
+    let values = plan.values(&typed).unwrap();
+    let staging = folder.join(".run");
+    let folders = RunFolders {
+        folder,
+        staging: &staging,
+    };
+    let opener = MemoryOpener::of(vec![("lines", reader)]);
+    let mut events = Vec::new();
+    let outcome = run(&plan, &values, &opener, folders, &mut |event| {
+        events.push(event)
+    })
+    .await;
+    (outcome, events)
+}
+
+fn written(events: &[RunEvent]) -> Vec<&WrittenFile> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::OutputWritten(file) => Some(file),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The texts of an SVG's `<text>` elements.
+fn texts(svg: &str) -> Vec<&str> {
+    svg.lines()
+        .filter_map(|line| line.split_once('>')?.1.strip_suffix("</text>"))
+        .collect()
+}
+
+#[tokio::test]
+async fn writes_a_chart_beside_the_outputs_and_reports_it_as_a_file() {
+    let folder = tempfile::tempdir().unwrap();
+    let (outcome, events) = run_charts(
+        "[[chart]]\nfile = \"net-{since:%Y-%m}.svg\"\ntitle = \"Net by category\"",
+        categories(3),
+        folder.path(),
+    )
+    .await;
+
+    outcome.unwrap();
+    assert_eq!(
+        files_in(folder.path()),
+        ["net-2026-10.csv", "net-2026-10.svg"]
+    );
+    let svg = std::fs::read_to_string(folder.path().join("net-2026-10.svg")).unwrap();
+    assert!(
+        svg.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"800\" height=\"450\"")
+    );
+    let texts = texts(&svg);
+    assert!(texts.contains(&"Net by category"), "{texts:?}");
+    assert!(texts.contains(&"category 002"), "{texts:?}");
+    assert_eq!(texts.last(), Some(&"Charting 3 rows"));
+    let written = written(&events);
+    assert_eq!(written.len(), 2);
+    assert_eq!(written[1].path, folder.path().join("net-2026-10.svg"));
+    assert_eq!(written[1].rows, 3);
+    assert_eq!(written[1].size, svg.len() as u64);
+    assert!(written[1].warnings.is_empty());
+}
+
+#[tokio::test]
+async fn the_same_rows_make_the_same_bytes() {
+    let first = tempfile::tempdir().unwrap();
+    let second = tempfile::tempdir().unwrap();
+    let chart = "[[chart]]\nfile = \"net.svg\"";
+    run_charts(chart, categories(40), first.path())
+        .await
+        .0
+        .unwrap();
+    run_charts(chart, categories(40), second.path())
+        .await
+        .0
+        .unwrap();
+
+    assert_eq!(
+        std::fs::read(first.path().join("net.svg")).unwrap(),
+        std::fs::read(second.path().join("net.svg")).unwrap()
+    );
+}
+
+#[tokio::test]
+async fn sorts_and_cuts_to_the_top_rows_as_the_pages_pass() {
+    let folder = tempfile::tempdir().unwrap();
+    let (outcome, _) = run_charts(
+        "[[chart]]\nfile = \"top.svg\"\nsort = \"net desc\"\nlimit = 3",
+        categories(1_000),
+        folder.path(),
+    )
+    .await;
+
+    outcome.unwrap();
+    let svg = std::fs::read_to_string(folder.path().join("top.svg")).unwrap();
+    let texts = texts(&svg);
+    for top in ["category 999", "category 998", "category 997"] {
+        assert!(texts.contains(&top), "{top} in {texts:?}");
+    }
+    assert!(!texts.contains(&"category 996"));
+    assert_eq!(
+        texts.last(),
+        Some(&"Charting 3 rows · sorted by net, largest first, the first 3")
+    );
+}
+
+#[tokio::test]
+async fn fails_past_its_kinds_rows_and_leaves_no_file() {
+    let folder = tempfile::tempdir().unwrap();
+    let (outcome, events) = run_charts(
+        "[[chart]]\nfile = \"net.svg\"\nkind = \"bars\"",
+        categories(251),
+        folder.path(),
+    )
+    .await;
+
+    let failure = outcome.unwrap_err();
+    assert_eq!(
+        failure.to_string(),
+        "chart 1 (net.svg): it draws bars, at most 250 rows, and the result has 251; group the \
+         rows in the query, or set limit to draw the first ones"
+    );
+    let limit = failure.limit.unwrap();
+    assert_eq!(
+        (limit.key.as_str(), limit.value.as_str()),
+        ("limit", "250 rows of bars")
+    );
+    assert_eq!(
+        limit.advice(),
+        "It stopped at 250 rows of bars, the most a chart of its kind draws. Group the rows in \
+         the query, or set limit in chart 1 of the report's file to draw the first ones."
+    );
+    assert_eq!(files_in(folder.path()), Vec::<String>::new());
+    assert!(written(&events).is_empty());
+}
+
+#[tokio::test]
+async fn a_limit_draws_the_first_rows_and_cant_lift_the_kinds() {
+    let folder = tempfile::tempdir().unwrap();
+    let (outcome, _) = run_charts(
+        "[[chart]]\nfile = \"first.svg\"\nlimit = 250",
+        categories(1_204),
+        folder.path(),
+    )
+    .await;
+    outcome.unwrap();
+
+    let (outcome, _) = run_charts(
+        "[[chart]]\nfile = \"all.svg\"\nlimit = 1000",
+        categories(1_204),
+        folder.path(),
+    )
+    .await;
+    assert_eq!(
+        outcome.unwrap_err().message,
+        "it draws bars, at most 250 rows, and its limit is 1,000 of the result's 1,204; lower \
+         limit to 250 or less"
+    );
+}
+
+#[tokio::test]
+async fn fails_past_eight_series_naming_the_values_past_the_eighth() {
+    let rows: Vec<Row> = (0..10)
+        .map(|n| {
+            vec![
+                Some("2026-10".to_owned()),
+                Some(format!("c{n}")),
+                Some("1".to_owned()),
+            ]
+        })
+        .collect();
+    let reader = MemoryReader {
+        columns: vec![column("month"), column("category"), column("net")],
+        pages: [rows].into(),
+        then: None,
+    };
+    let folder = tempfile::tempdir().unwrap();
+    let (outcome, _) = run_charts(
+        "[[chart]]\nfile = \"net.svg\"\nx = \"month\"\ny = \"net\"\nseries = \"category\"",
+        reader,
+        folder.path(),
+    )
+    .await;
+
+    let failure = outcome.unwrap_err();
+    assert_eq!(
+        failure.message,
+        "category has more values than the chart's 8 colours; past the eighth: c8, c9"
+    );
+    assert_eq!(
+        failure.limit.map(|limit| limit.key),
+        Some("series".to_owned())
+    );
+}
+
+#[tokio::test]
+async fn a_result_without_rows_still_has_its_chart_saying_so() {
+    let folder = tempfile::tempdir().unwrap();
+    let (outcome, events) = run_charts(
+        "[[chart]]\nfile = \"net.svg\"\ntitle = \"Net\"\ny = \"net\"",
+        categories(0),
+        folder.path(),
+    )
+    .await;
+
+    outcome.unwrap();
+    let svg = std::fs::read_to_string(folder.path().join("net.svg")).unwrap();
+    assert_eq!(texts(&svg), ["Net", "No rows to chart"]);
+    assert_eq!(
+        written(&events)[1].warnings,
+        ["the result has no rows, so the chart says \"No rows to chart\""]
+    );
+}
+
+#[tokio::test]
+async fn a_column_the_result_doesnt_have_fails_the_charts_step() {
+    for rows in [0, 3] {
+        let folder = tempfile::tempdir().unwrap();
+        let (outcome, _) = run_charts(
+            "[[chart]]\nfile = \"net.svg\"\ny = \"nett\"",
+            categories(rows),
+            folder.path(),
+        )
+        .await;
+
+        let failure = outcome.unwrap_err();
+        assert_eq!(
+            failure.to_string(),
+            "chart 1 (net.svg): `y = \"nett\"` isn't a column of this result: category, net",
+            "{rows} rows"
+        );
+        assert!(failure.limit.is_none());
+        assert_eq!(files_in(folder.path()), Vec::<String>::new());
+    }
+}
+
+#[tokio::test]
+async fn gaps_are_warnings_and_said_under_the_chart() {
+    let rows: Vec<Row> = vec![
+        vec![Some("a".to_owned()), Some("1".to_owned())],
+        vec![Some("b".to_owned()), None],
+    ];
+    let reader = MemoryReader {
+        columns: vec![column("category"), column("net")],
+        pages: [rows].into(),
+        then: None,
+    };
+    let folder = tempfile::tempdir().unwrap();
+    let (outcome, events) =
+        run_charts("[[chart]]\nfile = \"net.svg\"", reader, folder.path()).await;
+
+    outcome.unwrap();
+    assert_eq!(
+        written(&events)[1].warnings,
+        ["1 gap in net: null or not a number"]
+    );
+    let svg = std::fs::read_to_string(folder.path().join("net.svg")).unwrap();
+    assert_eq!(
+        texts(&svg).last(),
+        Some(&"Charting 2 rows · 1 gap in net: null or not a number")
+    );
+}
+
+#[tokio::test]
+async fn draws_a_png_at_its_scale() {
+    let folder = tempfile::tempdir().unwrap();
+    let (outcome, _) = run_charts(
+        "[[chart]]\nfile = \"net.png\"\nwidth = 400\nheight = 300\nscale = 1",
+        categories(3),
+        folder.path(),
+    )
+    .await;
+
+    outcome.unwrap();
+    let png = std::fs::read(folder.path().join("net.png")).unwrap();
+    assert!(png.starts_with(b"\x89PNG"));
+    // The PNG header's width and height, big-endian, after its signature and IHDR's length.
+    assert_eq!(png[16..24], [0, 0, 1, 144, 0, 0, 1, 44]);
 }

@@ -17,6 +17,16 @@ pub const MAX_BARS: usize = 250;
 /// first guess, to be confirmed by measuring the frame time of a scatter this big.
 pub const MAX_POINTS: usize = 50_000;
 
+impl ChartKind {
+    /// The most rows a chart of this kind draws: [`MAX_BARS`] or [`MAX_POINTS`].
+    pub fn max_rows(self) -> usize {
+        match self {
+            Self::Bars => MAX_BARS,
+            Self::Lines | Self::Scatter => MAX_POINTS,
+        }
+    }
+}
+
 /// What a chart draws: one X value per point, and each series' value there.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChartData {
@@ -96,10 +106,7 @@ const NULL_SERIES: &str = "NULL";
 impl ChartData {
     /// The points of `choice`, read from `rows` in their order. `roles` are `columns`' roles.
     pub fn read(columns: &[Column], roles: &[Role], rows: &[&Row], choice: &Choice) -> Self {
-        let limit = match choice.kind {
-            ChartKind::Bars => MAX_BARS,
-            ChartKind::Lines | ChartKind::Scatter => MAX_POINTS,
-        };
+        let limit = choice.kind.max_rows();
         let placement = Placement::of(choice.kind, roles.get(choice.x).copied());
         let name = |index: usize| {
             columns

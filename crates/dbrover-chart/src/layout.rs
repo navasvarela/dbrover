@@ -276,6 +276,72 @@ pub fn layout(
     drawing
 }
 
+/// Lays `data` out for a file, as [`layout`] does, with `note`, the line under the chart, in its
+/// last line. A chart with no points says `note` in place of its marks, under its title.
+pub fn layout_file(
+    data: &ChartData,
+    options: &LayoutOptions,
+    size: Size,
+    measure: &impl TextMeasure,
+    note: &str,
+) -> Drawing {
+    let line = measure.line_height();
+    if data.is_empty() {
+        return without_points(data.kind, options, size, line, note);
+    }
+    let chart = Size {
+        height: size.height - line - LABEL_GAP,
+        ..size
+    };
+    let mut drawing = layout(data, options, chart, measure);
+    drawing.size = size;
+    drawing.marks.push(Mark::Text {
+        at: Point::new(PADDING, size.height - PADDING - line / 2.0),
+        text: note.to_owned(),
+        anchor: Anchor::Start,
+        paint: Paint::Label,
+    });
+    drawing
+}
+
+/// A file's chart with nothing to draw: its title, and `note` where the plot would be.
+fn without_points(
+    kind: ChartKind,
+    options: &LayoutOptions,
+    size: Size,
+    line: f32,
+    note: &str,
+) -> Drawing {
+    let mut marks = Vec::new();
+    if let Some(title) = &options.title {
+        marks.push(Mark::Text {
+            at: Point::new(size.width / 2.0, PADDING + line / 2.0),
+            text: title.clone(),
+            anchor: Anchor::Middle,
+            paint: Paint::Title,
+        });
+    }
+    let middle = Point::new(size.width / 2.0, size.height / 2.0);
+    marks.push(Mark::Text {
+        at: middle,
+        text: note.to_owned(),
+        anchor: Anchor::Middle,
+        paint: Paint::Label,
+    });
+    Drawing {
+        size,
+        plot: Rect {
+            min: middle,
+            max: middle,
+        },
+        marks,
+        kind,
+        slot: None,
+        xs: Vec::new(),
+        ys: Vec::new(),
+    }
+}
+
 /// A linear map from values to points.
 #[derive(Debug, Clone, Copy)]
 struct Scale {
@@ -1038,5 +1104,56 @@ mod tests {
         let cut = shortened(long);
         assert_eq!(cut.chars().count(), MAX_LABEL_CHARS);
         assert!(cut.ends_with('…'));
+    }
+
+    #[test]
+    fn a_files_chart_ends_with_its_note() {
+        let data = data(
+            ChartKind::Bars,
+            months(3),
+            &[("net", &[Some(1.0), Some(2.0), Some(3.0)])],
+        );
+
+        let drawing = layout_file(
+            &data,
+            &LayoutOptions::default(),
+            SIZE,
+            &Fixed,
+            "Charting 3 rows",
+        );
+
+        assert_eq!(drawing.size, SIZE);
+        assert!(drawing.plot.max.y < SIZE.height - 2.0 * 14.0);
+        assert_eq!(
+            drawing.marks.last(),
+            Some(&Mark::Text {
+                at: Point::new(PADDING, SIZE.height - PADDING - 7.0),
+                text: "Charting 3 rows".to_owned(),
+                anchor: Anchor::Start,
+                paint: Paint::Label,
+            })
+        );
+    }
+
+    #[test]
+    fn a_files_chart_without_points_says_so_under_its_title() {
+        let empty = data(ChartKind::Bars, months(0), &[("net", &[])]);
+        let options = LayoutOptions {
+            title: Some("Net sales".to_owned()),
+            ..LayoutOptions::default()
+        };
+
+        let drawing = layout_file(&empty, &options, SIZE, &Fixed, "No rows to chart");
+
+        let texts: Vec<&str> = drawing
+            .marks
+            .iter()
+            .filter_map(|mark| match mark {
+                Mark::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, ["Net sales", "No rows to chart"]);
+        assert_eq!(drawing.marks.len(), 2);
     }
 }

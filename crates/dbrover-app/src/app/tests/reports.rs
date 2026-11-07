@@ -276,6 +276,38 @@ fn runs_a_report_from_its_tab_and_shows_its_files_and_preview() {
     );
 }
 
+/// A report's chart is a file it writes: named before the run with the outputs' files, and
+/// listed with them once written (`docs/charts-as-code.md`, CH3d).
+#[test]
+fn lists_a_reports_chart_with_its_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("out");
+    let mut script = finished_run(&out);
+    let chart = RunEvent::OutputWritten(WrittenFile {
+        path: out.join("balances-2026-10.svg"),
+        rows: 2,
+        size: 2_400,
+        elapsed_ms: 1,
+        warnings: vec!["1 gap in balance: null or not a number".to_owned()],
+    });
+    let finished = script.len() - 1;
+    script.insert(finished, chart);
+    let report = format!(
+        "{TRIAL_BALANCE}\n[[chart]]\nfile = \"balances-{{since:%Y-%m}}.svg\"\nx = \"account\"\n"
+    );
+    let mut harness = start_with_reports(dir.path(), &report, StandIn::new(script));
+
+    open_and_fill(&mut harness, "2026-10-01");
+    harness.get_by_label("1 source · 3 files");
+    harness.get_by_label("balances-2026-10.svg");
+    harness.get_by_label("Run").click();
+    step_until_visible(&mut harness, "Finished in 1.2 s: 2 rows read.");
+
+    // Once in the side panel's files to write, and once as the file written.
+    assert_eq!(harness.get_all_by_label("balances-2026-10.svg").count(), 2);
+    shows(&harness, "1 gap in balance: null or not a number");
+}
+
 /// The start of a run of `COMBINED`, both sources loaded.
 fn combined_start() -> Vec<RunEvent> {
     let source = |id: &str| SourceStart {

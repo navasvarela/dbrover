@@ -37,7 +37,7 @@ pub use choice::{ChartKind, Choice, STARTING_SERIES};
 pub use data::{ChartData, MAX_BARS, MAX_POINTS, Series, Summary, Times, XValues};
 pub use layout::{
     Anchor, Drawing, LayoutOptions, Mark, POINT_RADIUS, Paint, Point, Rect, Size, TextMeasure,
-    layout,
+    layout, layout_file,
 };
 pub use palette::{
     BAR_ROUNDING, FILE_COLOURS, FILE_TEXT_SIZE, FileColours, LINE_WIDTH, ROUNDED_BAR_WIDTH,

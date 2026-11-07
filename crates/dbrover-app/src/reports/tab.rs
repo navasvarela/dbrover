@@ -475,10 +475,10 @@ fn chip_button(ui: &mut Ui, glyph: &str, color: egui::Color32, text: &str) -> bo
     widgets::name(response, egui::WidgetType::Button, text, true).clicked()
 }
 
-/// `1 source · 2 files`.
+/// `1 source · 3 files`, the outputs' and the charts'.
 fn summary(plan: &Plan) -> String {
     let sources = plan.source_starts().len();
-    let outputs = plan.outputs.len();
+    let outputs = plan.outputs.len() + plan.charts.len();
     let count = |n: usize, one: &str, many: &str| match n {
         1 => format!("1 {one}"),
         n => format!("{n} {many}"),
@@ -853,7 +853,7 @@ fn output(
     });
     match plan.values(values) {
         Ok(run) => {
-            for file in &run.files {
+            for file in run.files.iter().chain(&run.charts) {
                 ui.horizontal(|ui| {
                     ui.label(widgets::glyph(file_icon(Path::new(file))).color(palette.primary));
                     ui.label(file);
@@ -1263,6 +1263,7 @@ fn file_icon(path: &Path) -> &'static str {
     match path.extension().and_then(|extension| extension.to_str()) {
         Some("xlsx") => icons::FILE_XLS,
         Some("csv") => icons::FILE_CSV,
+        Some("svg" | "png") => icons::CHART_BAR,
         _ => icons::FILE_TXT,
     }
 }

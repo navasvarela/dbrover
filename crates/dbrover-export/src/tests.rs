@@ -351,6 +351,26 @@ fn leaves_the_chosen_file_alone_until_finished_and_when_abandoned() {
     );
 }
 
+#[test]
+fn stages_a_whole_file_and_puts_it_in_place_or_removes_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let staging = dir.path().join(".run");
+    std::fs::create_dir(&staging).unwrap();
+    let path = dir.path().join("net.svg");
+
+    let staged = CompletedFile::staged(&path, &staging, b"<svg/>").unwrap();
+    assert_eq!(staged.size().unwrap(), 6);
+    assert!(!path.exists());
+    staged.put_in_place().unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"<svg/>");
+
+    CompletedFile::staged(&dir.path().join("other.svg"), &staging, b"<svg/>")
+        .unwrap()
+        .abandon();
+    assert_eq!(std::fs::read_dir(&staging).unwrap().count(), 0);
+    assert!(CompletedFile::staged(&path, &dir.path().join("missing"), b"").is_err());
+}
+
 /// What a dialog remembers reads back as it was, a missing field takes its default, and an
 /// option no format can use is refused.
 #[test]

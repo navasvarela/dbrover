@@ -15,6 +15,7 @@
 //! worker, which hand this crate what they read. [`run`] then opens the sources through a
 //! [`SourceOpener`] and streams their rows ([`SourceReader`]) into the output files.
 
+mod chart;
 mod combine;
 mod declared;
 mod embedded;
