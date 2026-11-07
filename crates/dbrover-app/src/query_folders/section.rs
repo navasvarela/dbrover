@@ -1,7 +1,7 @@
 //! **Query folders** in the explorer: each listed folder's tree of `.sql` files.
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use dbrover_engine::QueryFolderProblem;
 use dbrover_store::{QueryFile, QueryTree};
@@ -120,7 +120,9 @@ impl Tree<'_> {
             .is_none_or(|needle| file.name.to_lowercase().contains(needle))
     }
 
-    /// A listed folder: its row, with its path on hover, then what was read of it.
+    /// A listed folder: its row, with its path on hover, then what was read of it. A folder
+    /// missing on this machine stays listed, dimmed, for a synced settings folder lists
+    /// clones made on other machines.
     fn folder(
         &self,
         ui: &mut Ui,
@@ -128,10 +130,25 @@ impl Tree<'_> {
         state: &mut SectionState,
         actions: &mut Vec<QueryFolderAction>,
     ) {
-        let name = folder.name();
-        let row = self.folder_row(ui, &name, folder.path().to_owned(), state);
-        let row = row.on_hover_text(folder.path().display().to_string());
+        let missing = matches!(
+            folder.listing(),
+            Listing::Failed(QueryFolderProblem::Missing)
+        );
+        let look = if missing {
+            FolderLook::Missing
+        } else {
+            FolderLook::Present
+        };
+        let row = self.folder_row(ui, &folder.name(), folder.path(), look, state);
+        let hover = match look {
+            FolderLook::Present => folder.path().display().to_string(),
+            FolderLook::Missing => format!("{} isn't on this machine", folder.path().display()),
+        };
+        let row = row.on_hover_text(hover);
         widgets::context_menu(&row, |ui| {
+            if look == FolderLook::Present {
+                new_query_item(ui, folder.path(), actions);
+            }
             if widgets::menu_item(ui, icons::X, "Remove from list").clicked() {
                 actions.push(QueryFolderAction::Remove(folder.written().to_owned()));
             }
@@ -150,29 +167,44 @@ impl Tree<'_> {
                 Listing::Read(tree) if tree.files.is_empty() && tree.folders.is_empty() => {
                     ui.weak("No .sql files here.");
                 }
-                Listing::Read(tree) => self.tree(ui, tree, state),
-                Listing::Failed(problem) => {
-                    ui.colored_label(self.palette.error, problem_text(problem));
+                Listing::Read(tree) => self.tree(ui, tree, state, actions),
+                Listing::Failed(QueryFolderProblem::Missing) => {
+                    ui.weak("Not on this machine. Clone it to the same place to see its files.");
+                }
+                Listing::Failed(QueryFolderProblem::Failed(error)) => {
+                    ui.colored_label(
+                        self.palette.error,
+                        format!("Can't read the folder: {error}"),
+                    );
                 }
             },
         );
     }
 
-    fn tree(&self, ui: &mut Ui, tree: &QueryTree, state: &mut SectionState) {
+    fn tree(
+        &self,
+        ui: &mut Ui,
+        tree: &QueryTree,
+        state: &mut SectionState,
+        actions: &mut Vec<QueryFolderAction>,
+    ) {
         for folder in tree
             .folders
             .iter()
             .filter(|folder| self.shows(&folder.tree))
         {
-            self.folder_row(ui, &folder.name, folder.path.clone(), state);
+            let row = self.folder_row(ui, &folder.name, &folder.path, FolderLook::Present, state);
+            widgets::context_menu(&row, |ui| new_query_item(ui, &folder.path, actions));
             if self.is_open(state, &folder.path) {
                 ui.indent(Id::new(("query_folder", &folder.path)), |ui| {
-                    self.tree(ui, &folder.tree, state);
+                    self.tree(ui, &folder.tree, state, actions);
                 });
             }
         }
         for file in tree.files.iter().filter(|file| self.shows_file(file)) {
-            self.file_row(ui, file);
+            if self.file_row(ui, file).clicked() {
+                actions.push(QueryFolderAction::Open(file.path.clone()));
+            }
         }
     }
 
@@ -182,27 +214,41 @@ impl Tree<'_> {
         &self,
         ui: &mut Ui,
         name: &str,
-        path: PathBuf,
+        path: &Path,
+        look: FolderLook,
         state: &mut SectionState,
     ) -> egui::Response {
-        let open = self.is_open(state, &path);
+        let open = self.is_open(state, path);
+        let (glyph, icon_color, text) = match look {
+            FolderLook::Present => (
+                icons::FOLDER_SIMPLE,
+                self.palette.warning,
+                RichText::new(name),
+            ),
+            FolderLook::Missing => (
+                icons::FOLDER_SIMPLE_DASHED,
+                self.palette.text_weak,
+                RichText::new(name).color(self.palette.text_weak),
+            ),
+        };
         let row = ui.horizontal(|ui| {
             let toggled = expander(ui, open, name).clicked();
-            ui.label(widgets::glyph(icons::FOLDER_SIMPLE).color(self.palette.warning));
-            let label = ui.add(Label::new(name).selectable(false).sense(Sense::click()));
+            ui.label(widgets::glyph(glyph).color(icon_color));
+            let label = ui.add(Label::new(text).selectable(false).sense(Sense::click()));
             (label, toggled)
         });
         let (label, toggled) = row.inner;
         if (toggled || label.clicked()) && self.needle.is_none() {
             if open {
-                state.expanded.remove(&path);
+                state.expanded.remove(path);
             } else {
-                state.expanded.insert(path);
+                state.expanded.insert(path.to_owned());
             }
         }
         label
     }
 
+    /// A file's row; clicking it opens the file as **File › Open…** does.
     fn file_row(&self, ui: &mut Ui, file: &QueryFile) -> egui::Response {
         ui.horizontal(|ui| {
             // Lined up with the folders' icons, past where their carets are.
@@ -219,14 +265,19 @@ impl Tree<'_> {
     }
 
     /// While filtering, every folder leading to a match is open.
-    fn is_open(&self, state: &SectionState, path: &std::path::Path) -> bool {
+    fn is_open(&self, state: &SectionState, path: &Path) -> bool {
         self.needle.is_some() || state.expanded.contains(path)
     }
 }
 
-fn problem_text(problem: &QueryFolderProblem) -> String {
-    match problem {
-        QueryFolderProblem::Missing => "Not on this machine.".to_owned(),
-        QueryFolderProblem::Failed(error) => format!("Can't read the folder: {error}"),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FolderLook {
+    Present,
+    Missing,
+}
+
+fn new_query_item(ui: &mut Ui, folder: &Path, actions: &mut Vec<QueryFolderAction>) {
+    if widgets::menu_item(ui, icons::FILE_PLUS, "New query here…").clicked() {
+        actions.push(QueryFolderAction::NewQuery(folder.to_owned()));
     }
 }

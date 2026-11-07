@@ -238,6 +238,10 @@ pub enum Command {
         path: PathBuf,
         text: String,
     },
+    /// Creates an empty `.sql` file, never over an existing one, for **New query here** (VC2).
+    /// Answered by [`Event::SqlFileCreated`], in order with the other `.sql` file commands, so
+    /// an [`Command::OpenSqlFile`] sent after it finds the file.
+    CreateSqlFile(PathBuf),
     /// Looks at whether `.sql` files changed on disk since the times given. Answered by an
     /// [`Event::SqlFileChanged`] for each one that did, before anything sent after it is.
     CheckSqlFiles(Vec<WatchedFile>),
@@ -651,6 +655,11 @@ pub enum Event {
         console: ConsoleKey,
         path: PathBuf,
         result: Result<Option<SystemTime>, String>,
+    },
+    /// The answer to [`Command::CreateSqlFile`].
+    SqlFileCreated {
+        path: PathBuf,
+        result: Result<(), String>,
     },
     /// A file [`Command::CheckSqlFiles`] looked at changed on disk: what it holds now, or
     /// `None` if it is gone.

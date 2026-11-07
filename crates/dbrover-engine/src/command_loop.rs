@@ -341,6 +341,7 @@ impl Engine {
                 text,
             } => self.events.send(sql_files::save(console, path, text).await),
             Command::CheckSqlFiles(files) => sql_files::check(files, &self.events).await,
+            Command::CreateSqlFile(path) => self.events.send(sql_files::create(path).await),
             Command::DescribeTable { data_source, table } => {
                 self.request(data_source, SessionRequest::DescribeTable(table));
             }

@@ -252,7 +252,8 @@ repository holds a folder of them. VC2 shows such folders in the explorer.
 - **Opening a file** opens it as **File › Open…** does: the same console, the same data source
   question the first time, the same save and reload. Nothing new about files themselves.
 - **New query here** on a folder asks for a name and creates an empty `.sql` file there, on
-  the focused console's data source.
+  the focused console's data source: the console last focused, since right-clicking the
+  explorer focuses the explorer. With none, it opens as **File › Open…** would.
 - **Where the list lives:** `settings.toml`'s `[explorer] query_folders`, with paths under
   the home folder written as `~/…`, as data source exports write them, so a synced settings folder brings the list along
   and a folder missing on this machine is shown dimmed rather than dropped.
