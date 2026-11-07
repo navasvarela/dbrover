@@ -393,6 +393,8 @@ y = "net"
 | `query` | Instead of the report's rows: a DuckDB query over the sources' tables, with the report's `:name` parameters. Needs a `[combine]`. |
 | `kind`, `x`, `y`, `series`, `stack`, `title`, `x_title`, `y_title`, `y_zero`, `sort`, `limit` | The chart, as in a console. A key left out takes the value **Chart** would start with. |
 
+![The sales-by-category example's chart for October 2026: four bars, bikes far above clothing, parts and accessories, titled Net sales by category, with "Charting 4 rows" under them.](images/report-chart.svg)
+
 The chart is drawn as the **Chart** tab draws it, in the light theme's colours on white, with
 the line under it saying what was charted, rows left out and gaps. An SVG is the same, byte for
 byte, from the same rows on any machine, so you can keep one in git and compare a month's with

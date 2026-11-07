@@ -495,9 +495,24 @@ async fn draws_a_png_at_its_scale() {
 
     outcome.unwrap();
     let png = std::fs::read(folder.path().join("net.png")).unwrap();
-    assert!(png.starts_with(b"\x89PNG"));
-    // The PNG header's width and height, big-endian, after its signature and IHDR's length.
-    assert_eq!(png[16..24], [0, 0, 1, 144, 0, 0, 1, 44]);
+    let pixmap = resvg::tiny_skia::Pixmap::decode_png(&png).unwrap();
+    assert_eq!((pixmap.width(), pixmap.height()), (400, 300));
+    // The bars, in the first series' colour, and the labels, in dark text, are drawn: not an
+    // empty or black picture.
+    let bar = dbrover_chart::SERIES_LIGHT[0];
+    let count = |wanted: &dyn Fn(u8, u8, u8) -> bool| {
+        pixmap
+            .pixels()
+            .iter()
+            .filter(|pixel| wanted(pixel.red(), pixel.green(), pixel.blue()))
+            .count()
+    };
+    let bars = count(&|red, green, blue| (red, green, blue) == (bar.0, bar.1, bar.2));
+    let text = count(&|red, green, blue| red < 120 && green < 120 && blue < 140);
+    let white = count(&|red, green, blue| (red, green, blue) == (255, 255, 255));
+    assert!(bars > 10_000, "{bars} pixels of bars");
+    assert!(text > 200, "{text} pixels of text");
+    assert!(white > 400 * 300 / 2, "{white} pixels of white");
 }
 
 /// A report that combines its one source, with `charts`.
