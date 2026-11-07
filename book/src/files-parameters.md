@@ -9,6 +9,8 @@ before they run. And the editor finds and replaces text.
 - **File › Open…** (⌘O) asks for a file and opens it in a new console.
 - **File › Open recent** lists the last ten files; **Clear recent files** empties the list.
 - **Drop a file** on the window to open it.
+- **Click it under Query folders** in the explorer, for folders of queries such as a
+  repository's; see [Query folders](explorer.md#query-folders).
 - **From a terminal**, `dbrover report.sql` starts DbRover with the file open. Several files can
   be named.
 
