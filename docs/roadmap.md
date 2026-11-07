@@ -2337,7 +2337,11 @@ after CI fixes, the reports track and W13, and links no Git library.
     with **Remove from list** and **Reload**, folders read by the engine with the `ignore`
     crate (hidden folders and what a repository's `.gitignore` files ignore left out), and
     read again when the window comes back to the front.
-  - **VC2b — Opening and creating** (**New query here**).
+  - **VC2b — Opening and creating:** built; a file in the tree opens as **File › Open…**
+    does, **New query here…** on a folder creates an empty `.sql` file (never over another)
+    and opens it on the last focused console's data source, and a folder missing on this
+    machine is listed dimmed. Whole-app kittest tests on a temporary clone with a
+    `.gitignore`.
   - **VC2c — Manual,** and the demo note.
 
   **Exit:** a clone with `queries/sales.sql` and `queries/admin/users.sql` shows both and not

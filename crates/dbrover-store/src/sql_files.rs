@@ -34,6 +34,8 @@ pub enum SqlFileError {
         #[source]
         source: io::Error,
     },
+    #[error("{} is already there", path.display())]
+    Exists { path: PathBuf },
 }
 
 /// Reads the file at `path`.
@@ -72,6 +74,30 @@ pub fn write_sql_file(path: &Path, text: &str) -> Result<Option<SystemTime>, Sql
     modified(path).map_err(write_error)
 }
 
+/// Creates an empty file at `path`, for **New query here** (VC2). An existing file is never
+/// replaced, even one made between asking for the name and creating it.
+///
+/// # Errors
+///
+/// [`SqlFileError::Exists`] if there is a file at `path` already, [`SqlFileError::Write`] if
+/// it can't be created.
+pub fn create_sql_file(path: &Path) -> Result<(), SqlFileError> {
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(_) => Ok(()),
+        Err(source) if source.kind() == io::ErrorKind::AlreadyExists => Err(SqlFileError::Exists {
+            path: path.to_owned(),
+        }),
+        Err(source) => Err(SqlFileError::Write {
+            path: path.to_owned(),
+            source,
+        }),
+    }
+}
+
 /// When the file at `path` was last modified: `Ok(None)` where the file system doesn't say.
 ///
 /// # Errors
@@ -98,6 +124,26 @@ mod tests {
         assert_eq!(read.modified, written);
         assert_eq!(modified(&path).unwrap(), written);
         assert!(!dir.path().join("reports/monthly.sql.tmp").exists());
+    }
+
+    #[test]
+    fn creates_an_empty_file_but_never_over_another() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("refunds.sql");
+
+        create_sql_file(&path).unwrap();
+        assert_eq!(read_sql_file(&path).unwrap().text, "");
+
+        fs::write(&path, "select 1;").unwrap();
+        assert!(matches!(
+            create_sql_file(&path),
+            Err(SqlFileError::Exists { .. })
+        ));
+        assert_eq!(read_sql_file(&path).unwrap().text, "select 1;");
+        assert!(matches!(
+            create_sql_file(&dir.path().join("gone").join("x.sql")),
+            Err(SqlFileError::Write { .. })
+        ));
     }
 
     #[test]
