@@ -12,7 +12,7 @@ backquoted names, and DbRover reads that too.
 An Athena data source keeps no password and no AWS secret. It signs in as a
 [DynamoDB](dynamodb.md#signing-in) data source does, through AWS's own SDK, with what is already
 on your machine (`~/.aws`, IAM Identity Center, `aws login`, a role). Add one with **New data
-source › Amazon Athena**, or under **Amazon Web Services**.
+source › Amazon Web Services › Amazon Athena**.
 
 | Field | Default | Notes |
 | --- | --- | --- |

@@ -9,7 +9,9 @@ catalog differs from its engine's.
 
 Under **New data source** (the explorer's **+**, or the Welcome tab), each cloud has a menu of
 its services: **Amazon Web Services**, **Google Cloud**, **Microsoft Azure**, and **Other cloud
-services** for Neon, Supabase and ClickHouse Cloud. Choose the service. The dialog opens for the
+services** for Neon, Supabase and ClickHouse Cloud. The engines only one cloud runs come first in
+its menu: [DynamoDB](dynamodb.md) and [Amazon Athena](athena-trino.md) under Amazon Web Services,
+[BigQuery](bigquery.md) under Google Cloud. Choose the service. The dialog opens for the
 service's engine with its port, TLS mode and sign-in set, and the **Host** field's hint shows a
 host name of the service's form. Fill in the host, database and user from the service's console,
 then **Test connection**.

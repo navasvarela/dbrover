@@ -661,7 +661,7 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
     - Starburst Galaxy: a cluster with a user and password over HTTPS, a catalog of its own.
     - Starburst Enterprise and Presto (`prestodb/presto`), with **Protocol** set to Presto for
       the latter: connect, browse, run, cancel.
-- **C4 — BigQuery** (started 2026-11-08, after C3): BigQuery over its REST jobs API with C0b's
+- **C4 — BigQuery** (built, in eight layers, 2026-11-08, after C3): BigQuery over its REST jobs API with C0b's
   Google sign-in, GoogleSQL, projects, datasets and tables in the explorer, a dry run before
   every statement that shows the bytes it will scan, and `maximumBytesBilled` from C0's limit.
   Planned in [Cloud and big data](cloud-data.md#c4--bigquery). Rows come as text through
@@ -694,6 +694,50 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
   **Exit:** BigQuery tested with replayed exchanges in CI and the emulator nightly, and tried
   live by the user: a query over a public dataset shows its estimate as it is typed, asks
   above the limit, and shows what it read.
+
+  **C4 demo note:** the parts that need no Google account first.
+  - *The emulator:* run `docker compose --profile nightly up -d --wait bigquery` (93 MB to
+    download the first time), then **New data source › Google Cloud › BigQuery** with **Sign in
+    with** Emulator, **Endpoint** `http://localhost:59050` and **Project** `dbrover`; **Test
+    connection** says *project dbrover*. The explorer shows **dbrover › shop** with
+    **customers** and **orders**, and under **orders** its columns with their GoogleSQL types
+    (`INT64`, `NUMERIC`, `TIMESTAMP`). **Show definition** on **orders** writes its `CREATE
+    TABLE`. **Open data** on **customers** shows Ada and Grace with `· 0 bytes read`: the rows
+    came from the free table preview, not a query. In a console, `SELECT customer, SUM(total)
+    FROM shop.orders GROUP BY customer` runs as a job and gives three rows, one of them for the
+    order without a customer. The emulator runs a dry run's query and ignores the byte
+    limit, so the estimate and the question above the limit can't be tried on it.
+  - *The dialog:* **Ask above** starts at `1`; `5O` is refused when saving, `0.5` saves as
+    `ask_above_bytes = 500000000`. **Credentials file** without a file, and **Emulator** without
+    an endpoint, are refused. **MCP credentials file** sits under the safety level. DynamoDB and
+    Athena are now only under **Amazon Web Services**, BigQuery only under **Google Cloud**.
+  - *By hand, with a Google Cloud project* (not tried while building C4), as the manual's page
+    lists. Queries over public datasets are billed to your project, within its free TiB a month
+    at these sizes:
+    - `gcloud auth application-default login`, then `DBROVER_TEST_BIGQUERY_LIVE=my-project
+      cargo test -p dbrover-driver-bigquery live_bigquery -- --ignored` runs the driver's own
+      checks: `NULL` and empty text, a `TIMESTAMP`, an array and a record, an error's place, and
+      cancel. Again with `DBROVER_TEST_BIGQUERY_LIVE=my-project,key.json` for a service
+      account's key.
+    - In the app, with **Other projects** `bigquery-public-data`: browse **samples**, and a
+      partitioned table (`bigquery-public-data.google_trends.top_terms`, by day); **Show
+      definition** of a table and of a view; **Open data** on `samples.wikipedia`, which says
+      `· 0 bytes read`.
+    - Type `SELECT title FROM \`bigquery-public-data.samples.wikipedia\``: the toolbar says
+      **Will scan** some GB as it is typed, and a misspelt column is underlined where
+      BigQuery points. Run it with **Ask above** at 1: the console asks, **Scan anyway** runs
+      it, the status line counts bytes while it runs, and `· … read` follows it.
+    - With **Ask above** at `0.005` (5 MB), run `SELECT * FROM
+      \`bigquery-public-data.samples.shakespeare\` LIMIT 5`: the dry run says about 6 MB,
+      so the console asks; and a query whose dry run says less than 5 MB but which BigQuery
+      bills at its 10 MiB minimum should be refused by BigQuery for its *maximum bytes billed*,
+      with DbRover's explanation. Check that, and its wording.
+    - In a dataset of your own: `CREATE TABLE`, an `INSERT` and an `UPDATE`, whose row counts
+      the console should show; a project in `europe-west2` with **Location** set; and an **MCP
+      credentials file** for a service account with only **BigQuery Data Viewer** and
+      **BigQuery Job User**, served to an MCP client, which can query but not change a table.
+    - Any answer that differs from the replayed exchanges goes into
+      `crates/dbrover-driver-bigquery/src/tests/exchanges/`.
 - **C5 — Snowflake**, over its SQL API.
 - **C6 — Databricks SQL**, over the Statement Execution API and Unity Catalog.
 

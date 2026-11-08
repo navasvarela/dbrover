@@ -1,5 +1,8 @@
 # Google Cloud
 
+**New data source › Google Cloud** lists [BigQuery](bigquery.md), which has its own chapter,
+and Cloud SQL's engines.
+
 ## Cloud SQL
 
 Choose **Cloud SQL for PostgreSQL**, **… MySQL** or **… SQL Server** in **New data source ›

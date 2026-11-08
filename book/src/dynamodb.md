@@ -10,7 +10,8 @@ statement reads a whole table.
 A DynamoDB data source keeps no password and no AWS secret. It signs in the way the AWS CLI
 does, through AWS's own SDK, with what is already on your machine: the shared `config` and
 `credentials` files in `~/.aws`, IAM Identity Center (`aws sso login`), `aws login`,
-`credential_process`, the environment, or a role. DbRover saves only the names you type.
+`credential_process`, the environment, or a role. DbRover saves only the names you type. Add one
+with **New data source › Amazon Web Services › DynamoDB**.
 
 ![The New DynamoDB data source dialog, signing in with an AWS profile](images/dynamodb-data-source-dialog.png)
 
