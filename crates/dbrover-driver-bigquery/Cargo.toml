@@ -1,0 +1,32 @@
+[package]
+name = "dbrover-driver-bigquery"
+description = "Google BigQuery driver for DbRover, over BigQuery's REST API, with queries run as jobs."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+dbrover-cloud.workspace = true
+dbrover-core.workspace = true
+# Writes a TIMESTAMP's microseconds as BigQuery's console shows them.
+jiff.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+# Each job's id is DbRover's own, so a retried insert finds the same job.
+uuid.workspace = true
+
+[dev-dependencies]
+dbrover-cloud = { workspace = true, features = ["stand-in"] }
+dbrover-core = { workspace = true, features = ["conformance"] }
+tempfile.workspace = true
+# The test server that replays BigQuery's exchanges listens on the loopback address.
+tokio = { workspace = true, features = ["net", "io-util", "macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

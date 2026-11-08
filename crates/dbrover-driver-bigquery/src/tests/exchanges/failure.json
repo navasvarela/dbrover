@@ -1,0 +1,31 @@
+{
+  "doc": "Two statements BigQuery won't run: one jobs.insert refuses outright, and one whose job fails, each pointing at its mistake with [line:column].",
+  "exchanges": [
+    {
+      "method": "GET", "path": "/projects/analytics/datasets", "query": {"maxResults": "1"},
+      "response": {}
+    },
+    {
+      "method": "POST", "path": "/projects/analytics/jobs",
+      "request": {"configuration": {"query": {"query": "SELECT 1 x y"}}},
+      "status": 400,
+      "response": {"error": {"code": 400, "message": "Syntax error: Expected end of input but got identifier \"y\" at [1:12]",
+        "errors": [{"message": "Syntax error: Expected end of input but got identifier \"y\" at [1:12]",
+          "domain": "global", "reason": "invalidQuery", "location": "q", "locationType": "parameter"}],
+        "status": "INVALID_ARGUMENT"}}
+    },
+    {
+      "method": "POST", "path": "/projects/analytics/jobs",
+      "request": {"configuration": {"query": {"query": "SELECT id,\n  totl\nFROM orders"}}},
+      "response": {"jobReference": {"projectId": "analytics", "jobId": "{job}", "location": "US"},
+        "status": {"state": "PENDING"}}
+    },
+    {
+      "method": "GET", "path": "/projects/analytics/jobs/{job}", "query": {"location": "US"},
+      "response": {"jobReference": {"projectId": "analytics", "jobId": "{job}", "location": "US"},
+        "status": {"state": "DONE",
+          "errorResult": {"reason": "invalidQuery", "location": "query", "message": "Unrecognized name: totl; Did you mean total? at [2:3]"},
+          "errors": [{"reason": "invalidQuery", "location": "query", "message": "Unrecognized name: totl; Did you mean total? at [2:3]"}]}}
+    }
+  ]
+}

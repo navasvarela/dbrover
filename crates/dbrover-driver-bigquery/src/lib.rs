@@ -1,0 +1,164 @@
+//! Google BigQuery driver for DbRover, over BigQuery's REST API (`docs/cloud-data.md`, C4).
+//!
+//! A statement runs as a query job in the data source's project: inserted with DbRover's own
+//! job id, polled until it is done, and its result read a page at a time. Those four calls are
+//! C0's [`JobService`](dbrover_core::JobService) ([`jobs`]), so the cursor, cancel and progress
+//! handles are [`Jobs`]'s. BigQuery keeps no session between jobs and runs no transaction
+//! outside a script, so a connection is an API client, signed in with C0b's Google sign-in.
+
+mod api;
+mod errors;
+mod jobs;
+mod results;
+#[cfg(test)]
+mod tests;
+
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use dbrover_core::{
+    BigQueryConfig, CancelHandle, CatalogNode, CatalogPath, ChildrenPage, ChildrenQuery,
+    Connection, DriverError, Jobs, ProgressHandle, Rejection, RelationName, ResultCursor,
+    ServerInfo, TableConstraints, TableDescription, TableName, TransactionStatus,
+};
+
+use crate::api::{Api, segment};
+use crate::jobs::{BigQueryJobs, JobPlace};
+
+/// What DbRover calls the service in messages and on Test connection.
+const PRODUCT: &str = "BigQuery";
+
+/// Signs in as `config` says and lists one of its project's datasets, which proves the
+/// sign-in works, the endpoint answers and the project can be read.
+///
+/// # Errors
+///
+/// [`DriverError::Connect`] when the data source names no project, the sign-in can't be used
+/// (no Application Default Credentials, an unreadable credentials file, a refresh token
+/// Google refused), BigQuery can't be reached, or it refuses the project.
+pub async fn connect(config: &BigQueryConfig) -> Result<BigQueryConnection, DriverError> {
+    if config.project.trim().is_empty() {
+        return Err(DriverError::Connect(
+            "Set the data source's project: the Google Cloud project its queries run in".into(),
+        ));
+    }
+    let api = Api::new(&config.endpoint, &config.sign_in).map_err(errors::connect)?;
+    let datasets_path = format!("/projects/{}/datasets", segment(&config.project));
+    let probe = Probe {
+        api: api.clone(),
+        path: datasets_path,
+    };
+    probe.run().await.map_err(errors::connect)?;
+    let place = JobPlace {
+        project: config.project.clone(),
+        dataset: config.dataset.clone(),
+        location: config.location.clone(),
+    };
+    let jobs = Jobs::new(Arc::new(BigQueryJobs::new(api, place)));
+    Ok(BigQueryConnection {
+        server_info: ServerInfo::new(PRODUCT, describe_place(config)),
+        probe,
+        jobs,
+    })
+}
+
+/// `project analytics in EU`, which Test connection shows as the version.
+fn describe_place(config: &BigQueryConfig) -> String {
+    match config.location.as_str() {
+        "" => format!("project {}", config.project),
+        location => format!("project {} in {location}", config.project),
+    }
+}
+
+/// The cheapest request that needs the data source's sign-in and project: one dataset of the
+/// project, which is free.
+struct Probe {
+    api: Api,
+    path: String,
+}
+
+impl Probe {
+    async fn run(&self) -> Result<(), api::ApiError> {
+        self.api
+            .get::<serde_json::Value>(&self.path, &[("maxResults", "1")])
+            .await
+            .map(drop)
+    }
+}
+
+/// A console's or the explorer's connection to BigQuery in one project.
+pub struct BigQueryConnection {
+    server_info: ServerInfo,
+    probe: Probe,
+    jobs: Arc<Jobs>,
+}
+
+#[async_trait]
+impl Connection for BigQueryConnection {
+    fn server_info(&self) -> &ServerInfo {
+        &self.server_info
+    }
+
+    async fn ping(&mut self) -> Result<(), DriverError> {
+        self.probe.run().await.map_err(errors::connection)
+    }
+
+    /// Nothing yet: the explorer's levels come with C4d.
+    async fn children(&mut self, _path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError> {
+        Ok(Vec::new())
+    }
+
+    async fn children_page(
+        &mut self,
+        _path: &CatalogPath,
+        query: &ChildrenQuery,
+    ) -> Result<ChildrenPage, DriverError> {
+        Ok(ChildrenPage::whole(Vec::new(), query))
+    }
+
+    async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError> {
+        Err(DriverError::InvalidPath(path.clone()))
+    }
+
+    async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError> {
+        self.jobs.execute(sql).await
+    }
+
+    /// `None`: BigQuery's tables have no enforced key that tells their rows apart, so their
+    /// rows are never edited (`Dialect::read_only_results`).
+    async fn describe_table(
+        &mut self,
+        _table: &RelationName,
+    ) -> Result<Option<TableDescription>, DriverError> {
+        Ok(None)
+    }
+
+    async fn describe_constraints(
+        &mut self,
+        _table: &TableName,
+    ) -> Result<TableConstraints, DriverError> {
+        Ok(TableConstraints::default())
+    }
+
+    /// `None` until C4e checks statements with a dry run.
+    async fn validate(&mut self, _sql: &str) -> Result<Option<Rejection>, DriverError> {
+        Ok(None)
+    }
+
+    async fn transaction_status(&mut self) -> Result<TransactionStatus, DriverError> {
+        Ok(TransactionStatus::Idle)
+    }
+
+    fn cancel_handle(&self) -> Arc<dyn CancelHandle> {
+        Arc::clone(&self.jobs) as Arc<dyn CancelHandle>
+    }
+
+    fn progress_handle(&self) -> Option<Arc<dyn ProgressHandle>> {
+        Some(Arc::clone(&self.jobs) as Arc<dyn ProgressHandle>)
+    }
+
+    /// Nothing to close: BigQuery keeps no session.
+    async fn close(self: Box<Self>) -> Result<(), DriverError> {
+        Ok(())
+    }
+}

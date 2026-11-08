@@ -238,6 +238,7 @@ pub fn driver_id(driver: DriverKind) -> &'static str {
         DriverKind::Cassandra => "cassandra",
         DriverKind::DynamoDb => "dynamodb",
         DriverKind::Athena => "athena",
+        DriverKind::BigQuery => "bigquery",
         DriverKind::Trino => "trino",
     }
 }

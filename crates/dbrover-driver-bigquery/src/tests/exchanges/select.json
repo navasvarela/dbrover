@@ -1,0 +1,89 @@
+{
+  "doc": "A SELECT inserted with DbRover's job id and the default dataset, run where BigQuery chose (europe-west2), polled through RUNNING to DONE and read in three pages. NULL is a null value, the empty string an empty one; arrays, records and timestamps come in BigQuery's shapes.",
+  "exchanges": [
+    {
+      "method": "GET", "path": "/projects/analytics/datasets", "query": {"maxResults": "1"},
+      "response": {"datasets": []}
+    },
+    {
+      "method": "POST", "path": "/projects/analytics/jobs",
+      "request": {
+        "jobReference": {"projectId": "analytics", "location": "absent"},
+        "configuration": {"query": {
+          "query": "SELECT id, name, placed, tags, address FROM orders ORDER BY id",
+          "useLegacySql": false,
+          "defaultDataset": {"projectId": "analytics", "datasetId": "sales"},
+          "maximumBytesBilled": "absent"}}
+      },
+      "response": {"kind": "bigquery#job", "id": "analytics:europe-west2.{job}",
+        "jobReference": {"projectId": "analytics", "jobId": "{job}", "location": "europe-west2"},
+        "configuration": {"jobType": "QUERY"},
+        "status": {"state": "PENDING"}, "statistics": {"creationTime": "1767323045000"}}
+    },
+    {
+      "method": "GET", "path": "/projects/analytics/jobs/{job}", "query": {"location": "europe-west2"},
+      "response": {"jobReference": {"projectId": "analytics", "jobId": "{job}", "location": "europe-west2"},
+        "status": {"state": "RUNNING"},
+        "statistics": {"creationTime": "1767323045000", "startTime": "1767323045100"}}
+    },
+    {
+      "method": "GET", "path": "/projects/analytics/jobs/{job}", "query": {"location": "europe-west2"},
+      "response": {"jobReference": {"projectId": "analytics", "jobId": "{job}", "location": "europe-west2"},
+        "status": {"state": "DONE"},
+        "statistics": {"totalBytesProcessed": "2500000",
+          "query": {"totalBytesProcessed": "2500000", "totalBytesBilled": "10485760",
+            "statementType": "SELECT", "cacheHit": false}}}
+    },
+    {
+      "method": "GET", "path": "/projects/analytics/queries/{job}",
+      "query": {"location": "europe-west2", "maxResults": "500", "formatOptions.useInt64Timestamp": "true"},
+      "response": {"kind": "bigquery#getQueryResultsResponse", "jobComplete": true, "totalRows": "5",
+        "jobReference": {"projectId": "analytics", "jobId": "{job}", "location": "europe-west2"},
+        "schema": {"fields": [
+          {"name": "id", "type": "INTEGER", "mode": "REQUIRED"},
+          {"name": "name", "type": "STRING", "mode": "NULLABLE"},
+          {"name": "placed", "type": "TIMESTAMP", "mode": "NULLABLE"},
+          {"name": "tags", "type": "STRING", "mode": "REPEATED"},
+          {"name": "address", "type": "RECORD", "mode": "NULLABLE", "fields": [
+            {"name": "city", "type": "STRING"}, {"name": "floor", "type": "INTEGER"}]}]},
+        "rows": [
+          {"f": [{"v": "1"}, {"v": "Ada"}, {"v": "1767323045123456"}, {"v": [{"v": "new"}, {"v": "gift"}]},
+                 {"v": {"f": [{"v": "Paris"}, {"v": "3"}]}}]},
+          {"f": [{"v": "2"}, {"v": null}, {"v": null}, {"v": []}, {"v": null}]}
+        ],
+        "pageToken": "page-2", "totalBytesProcessed": "2500000", "cacheHit": false}
+    },
+    {
+      "method": "GET", "path": "/projects/analytics/queries/{job}",
+      "query": {"location": "europe-west2", "pageToken": "page-2"},
+      "response": {"jobComplete": true, "totalRows": "5",
+        "schema": {"fields": [
+          {"name": "id", "type": "INTEGER", "mode": "REQUIRED"},
+          {"name": "name", "type": "STRING", "mode": "NULLABLE"},
+          {"name": "placed", "type": "TIMESTAMP", "mode": "NULLABLE"},
+          {"name": "tags", "type": "STRING", "mode": "REPEATED"},
+          {"name": "address", "type": "RECORD", "mode": "NULLABLE", "fields": [
+            {"name": "city", "type": "STRING"}, {"name": "floor", "type": "INTEGER"}]}]},
+        "rows": [
+          {"f": [{"v": "3"}, {"v": ""}, {"v": "0"}, {"v": []}, {"v": null}]},
+          {"f": [{"v": "4"}, {"v": "Grace"}, {"v": null}, {"v": []}, {"v": null}]}
+        ],
+        "pageToken": "page-3"}
+    },
+    {
+      "method": "GET", "path": "/projects/analytics/queries/{job}",
+      "query": {"location": "europe-west2", "pageToken": "page-3"},
+      "response": {"jobComplete": true, "totalRows": "5",
+        "schema": {"fields": [
+          {"name": "id", "type": "INTEGER", "mode": "REQUIRED"},
+          {"name": "name", "type": "STRING", "mode": "NULLABLE"},
+          {"name": "placed", "type": "TIMESTAMP", "mode": "NULLABLE"},
+          {"name": "tags", "type": "STRING", "mode": "REPEATED"},
+          {"name": "address", "type": "RECORD", "mode": "NULLABLE", "fields": [
+            {"name": "city", "type": "STRING"}, {"name": "floor", "type": "INTEGER"}]}]},
+        "rows": [
+          {"f": [{"v": "5"}, {"v": "Edsger"}, {"v": null}, {"v": []}, {"v": null}]}
+        ]}
+    }
+  ]
+}

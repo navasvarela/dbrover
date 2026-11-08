@@ -20,7 +20,7 @@ use dbrover_cloud::storage::{
 use dbrover_cloud::token::REFRESH_MARGIN;
 use dbrover_cloud::{AccessToken, TokenCache};
 use dbrover_core::{
-    AzureContainer, AzureSignIn, AzureTool, GcsBucket, GcsSignIn, ObjectStorage, Password,
+    AzureContainer, AzureSignIn, AzureTool, GcsBucket, GoogleCloudSignIn, ObjectStorage, Password,
     S3Bucket, S3SignIn, Variables,
 };
 
@@ -223,19 +223,12 @@ fn with_token(token: Option<AccessToken>) -> SignedIn {
 /// C0b's Google sign-in, whose token's scope (`cloud-platform`) covers Cloud Storage.
 async fn sign_in_to_gcs(bucket: &GcsBucket) -> Result<SignedIn, BucketError> {
     let credentials_file = match &bucket.sign_in {
-        GcsSignIn::Google => None,
-        GcsSignIn::CredentialsFile { credentials_file } => Some(credentials_file.clone()),
-        GcsSignIn::Anonymous => return Ok(with_token(None)),
+        GoogleCloudSignIn::Google => None,
+        GoogleCloudSignIn::CredentialsFile { credentials_file } => Some(credentials_file.clone()),
+        GoogleCloudSignIn::Anonymous => return Ok(with_token(None)),
     };
-    let google = GoogleSignIn {
-        credentials_file: credentials_file.clone(),
-    };
-    let token = token_cache(TokenKey::Google { credentials_file })
-        .token(|| async {
-            let credentials = google.credentials(&ProcessVariables)?;
-            Ok::<_, BucketError>(credentials.token().await?)
-        })
-        .await?;
+    let google = GoogleSignIn { credentials_file };
+    let token = google.cached_token(&ProcessVariables).await?;
     Ok(with_token(Some(token)))
 }
 
@@ -251,7 +244,7 @@ async fn sign_in_to_azure(container: &AzureContainer) -> Result<SignedIn, Bucket
         },
         tenant: Some(tenant.clone()).filter(|tenant| !tenant.is_empty()),
     };
-    let key = TokenKey::Entra {
+    let key = TokenKey {
         tool: *tool,
         tenant: tenant.clone(),
     };
@@ -261,16 +254,17 @@ async fn sign_in_to_azure(container: &AzureContainer) -> Result<SignedIn, Bucket
     Ok(with_token(Some(token)))
 }
 
-/// Which sign-in a token was fetched for.
+/// Which Entra ID sign-in a token was fetched for. Google's tokens are kept by
+/// `GoogleSignIn::cached_token`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum TokenKey {
-    Google { credentials_file: Option<PathBuf> },
-    Entra { tool: AzureTool, tenant: String },
+struct TokenKey {
+    tool: AzureTool,
+    tenant: String,
 }
 
 /// The tokens fetched for each sign-in, kept for the app's lifetime, so that every console
-/// opened on a bucket doesn't ask Google again or run `az` again, as C0's tokens for
-/// databases are kept (`dbrover-engine`'s `cloud_sign_in`).
+/// opened on a bucket doesn't run `az` again, as C0's tokens for databases are kept
+/// (`dbrover-engine`'s `cloud_sign_in`).
 static TOKENS: LazyLock<Mutex<HashMap<TokenKey, Arc<TokenCache>>>> = LazyLock::new(Mutex::default);
 
 fn token_cache(key: TokenKey) -> Arc<TokenCache> {

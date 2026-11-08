@@ -51,7 +51,7 @@ pub enum S3SignIn {
     /// An access key of the store's own (MinIO, R2), whose secret is the data source's
     /// password.
     AccessKey { key_id: String },
-    /// No credentials, for a public bucket.
+    /// No credentials, for a public bucket or a local emulator.
     Anonymous,
 }
 
@@ -61,21 +61,21 @@ pub struct GcsBucket {
     /// The address of a stand-in for Google's (`http://localhost:4443`); empty for Google's.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub endpoint: String,
-    #[serde(default, skip_serializing_if = "GcsSignIn::is_default")]
-    pub sign_in: GcsSignIn,
+    #[serde(default, skip_serializing_if = "GoogleCloudSignIn::is_default")]
+    pub sign_in: GoogleCloudSignIn,
 }
 
-/// Who a Google Cloud Storage bucket is read as.
+/// Who a Google Cloud data source signs in as: a Cloud Storage bucket (C2), or BigQuery (C4).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "with", rename_all = "kebab-case")]
-pub enum GcsSignIn {
+pub enum GoogleCloudSignIn {
     /// Application Default Credentials (C0b), or a credentials file of the data source's own.
     #[default]
     Google,
     CredentialsFile {
         credentials_file: PathBuf,
     },
-    /// No credentials, for a public bucket.
+    /// No credentials, for a public bucket or a local emulator.
     Anonymous,
 }
 
@@ -124,7 +124,18 @@ impl S3SignIn {
     }
 }
 
-impl GcsSignIn {
+impl GoogleCloudSignIn {
+    /// The sign-in with the placeholders (W9) in its credentials file's path resolved.
+    pub(crate) fn resolve(&self, variables: &dyn Variables) -> Result<Self, PlaceholderError> {
+        Ok(match self {
+            Self::CredentialsFile { credentials_file } => Self::CredentialsFile {
+                credentials_file: expand_path(credentials_file, variables)
+                    .map_err(PlaceholderError::in_setting(Setting::CredentialsFile))?,
+            },
+            sign_in @ (Self::Google | Self::Anonymous) => sign_in.clone(),
+        })
+    }
+
     pub fn is_default(&self) -> bool {
         *self == Self::default()
     }
@@ -235,13 +246,7 @@ impl ObjectStorage {
             Self::Gcs(gcs) => Self::Gcs(GcsBucket {
                 bucket: text(&gcs.bucket, Setting::Bucket)?,
                 endpoint: text(&gcs.endpoint, Setting::Endpoint)?,
-                sign_in: match &gcs.sign_in {
-                    GcsSignIn::CredentialsFile { credentials_file } => GcsSignIn::CredentialsFile {
-                        credentials_file: expand_path(credentials_file, variables)
-                            .map_err(PlaceholderError::in_setting(Setting::CredentialsFile))?,
-                    },
-                    sign_in @ (GcsSignIn::Google | GcsSignIn::Anonymous) => sign_in.clone(),
-                },
+                sign_in: gcs.sign_in.resolve(variables)?,
             }),
             Self::Azure(azure) => Self::Azure(AzureContainer {
                 account: text(&azure.account, Setting::StorageAccount)?,
@@ -392,7 +397,7 @@ mod tests {
                 ObjectStorage::Gcs(GcsBucket {
                     bucket: "sales".to_owned(),
                     endpoint: "http://localhost:4443".to_owned(),
-                    sign_in: GcsSignIn::Google,
+                    sign_in: GoogleCloudSignIn::Google,
                 }),
                 "provider = \"gcs\"",
             ),
@@ -400,7 +405,7 @@ mod tests {
                 ObjectStorage::Gcs(GcsBucket {
                     bucket: "sales".to_owned(),
                     endpoint: String::new(),
-                    sign_in: GcsSignIn::CredentialsFile {
+                    sign_in: GoogleCloudSignIn::CredentialsFile {
                         credentials_file: "/keys/reader.json".into(),
                     },
                 }),

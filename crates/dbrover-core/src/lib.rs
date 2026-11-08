@@ -42,11 +42,11 @@ pub use command_template::{CommandTemplate, DataSourceFields};
 pub use connection::{Connection, Rejection, RejectionKind, ServerInfo};
 pub use cost::{ByteCount, CostEstimate, CostGuard, FullScan, ReadPace, ScanGuard};
 pub use data_source::{
-    AthenaConfig, AwsSignInKind, CassandraConfig, ClickHouseConfig, ConnectionConfig, DataSource,
-    DataSourceId, DriverKind, DuckDbConfig, DuckDbDatabase, DynamoDbConfig, ElasticsearchAuth,
-    ElasticsearchConfig, McpLogin, MongoConfig, MysqlConfig, Port, PostgresConfig, ProjectId,
-    RedisConfig, Route, SafetyLevel, ServerConfig, SourceColor, SqlServerConfig, SqliteConfig,
-    SshConfig, SshLogin, TlsMode, TrinoConfig, TrinoProtocol,
+    AthenaConfig, AwsSignInKind, BigQueryConfig, CassandraConfig, ClickHouseConfig,
+    ConnectionConfig, DataSource, DataSourceId, DriverKind, DuckDbConfig, DuckDbDatabase,
+    DynamoDbConfig, ElasticsearchAuth, ElasticsearchConfig, McpLogin, MongoConfig, MysqlConfig,
+    Port, PostgresConfig, ProjectId, RedisConfig, Route, SafetyLevel, ServerConfig, SourceColor,
+    SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode, TrinoConfig, TrinoProtocol,
 };
 pub use error::{BoxError, DriverError, describe_error, position_at};
 pub use execution::{
@@ -61,8 +61,8 @@ pub use managed_service::{
 };
 pub use mongo_uri::MongoUri;
 pub use object_storage::{
-    AzureContainer, AzureSignIn, GcsBucket, GcsSignIn, ICEBERG_METADATA_SUFFIX, ObjectStorage,
-    S3Bucket, S3SignIn, StorageProvider, object_source, object_url, reads_as_table,
+    AzureContainer, AzureSignIn, GcsBucket, GoogleCloudSignIn, ICEBERG_METADATA_SUFFIX,
+    ObjectStorage, S3Bucket, S3SignIn, StorageProvider, object_source, object_url, reads_as_table,
 };
 pub use password::Password;
 pub use password_command::PasswordCommand;

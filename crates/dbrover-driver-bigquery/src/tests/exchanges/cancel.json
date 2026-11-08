@@ -1,0 +1,38 @@
+{
+  "doc": "A long query polled while it runs, then cancelled by its id and location; its next poll says it was stopped, and the connection still answers.",
+  "exchanges": [
+    {
+      "method": "GET", "path": "/projects/analytics/datasets", "query": {"maxResults": "1"},
+      "response": {}
+    },
+    {
+      "method": "POST", "path": "/projects/analytics/jobs",
+      "request": {"configuration": {"query": {"query": "SELECT COUNT(*) FROM big.events"}}},
+      "response": {"jobReference": {"projectId": "analytics", "jobId": "{job}", "location": "US"},
+        "status": {"state": "RUNNING"}}
+    },
+    {
+      "method": "GET", "path": "/projects/analytics/jobs/{job}", "query": {"location": "US"},
+      "repeat": true,
+      "response": {"jobReference": {"projectId": "analytics", "jobId": "{job}", "location": "US"},
+        "status": {"state": "RUNNING"},
+        "statistics": {"query": {"totalBytesProcessed": "7000000000"}}}
+    },
+    {
+      "method": "POST", "path": "/projects/analytics/jobs/{job}/cancel", "query": {"location": "US"},
+      "response": {"kind": "bigquery#jobCancelResponse", "job": {
+        "jobReference": {"projectId": "analytics", "jobId": "{job}", "location": "US"},
+        "status": {"state": "RUNNING"}}}
+    },
+    {
+      "method": "GET", "path": "/projects/analytics/jobs/{job}", "query": {"location": "US"},
+      "response": {"jobReference": {"projectId": "analytics", "jobId": "{job}", "location": "US"},
+        "status": {"state": "DONE", "errorResult": {"reason": "stopped",
+          "message": "Job execution was cancelled: User requested cancellation"}}}
+    },
+    {
+      "method": "GET", "path": "/projects/analytics/datasets", "query": {"maxResults": "1"},
+      "response": {}
+    }
+  ]
+}

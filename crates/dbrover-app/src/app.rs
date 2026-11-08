@@ -3533,12 +3533,7 @@ mod tests {
         harness.run();
         harness.get_by_label_contains("Amazon Web Services").hover();
         step_until_visible(&mut harness, "Amazon RDS");
-        // The engine list has Athena too; the AWS submenu's is the last.
-        harness
-            .get_all_by_label("Amazon Athena")
-            .last()
-            .unwrap()
-            .click();
+        harness.get_by_label("Amazon Athena").click();
         harness.run();
         harness.get_by_label_contains("New Amazon Athena data source");
         for (field, text) in [
@@ -4108,6 +4103,8 @@ mod tests {
             .unwrap()
             .click();
         harness.run();
+        harness.get_by_label_contains("Amazon Web Services").hover();
+        step_until_visible(&mut harness, "DynamoDB");
         harness.get_by_label("DynamoDB").click();
         harness.run();
         harness.get_by_label_contains("New DynamoDB data source");

@@ -84,9 +84,9 @@ pub fn mode(driver: DriverKind, storage: Storage) -> Option<ReadOnlyMode> {
         }
         // DuckDB refuses to open a database in memory read-only, and a MotherDuck database
         // isn't opened read-only (see `Storage::Hosted`). SQL Server has no read-only
-        // transaction, and Redis, MongoDB, Elasticsearch, Cassandra, DynamoDB, Athena and
-        // Trino no read-only session at all: a user who may only read is their guard (docs/nosql.md,
-        // N0a to N5; docs/cloud-data.md, C3).
+        // transaction, and Redis, MongoDB, Elasticsearch, Cassandra, DynamoDB, Athena, Trino
+        // and BigQuery no read-only session at all: a user who may only read is their guard
+        // (docs/nosql.md, N0a to N5; docs/cloud-data.md, C3 and C4).
         (DriverKind::DuckDb, Storage::InMemory | Storage::Hosted)
         | (
             DriverKind::SqlServer
@@ -96,7 +96,8 @@ pub fn mode(driver: DriverKind, storage: Storage) -> Option<ReadOnlyMode> {
             | DriverKind::Cassandra
             | DriverKind::DynamoDb
             | DriverKind::Athena
-            | DriverKind::Trino,
+            | DriverKind::Trino
+            | DriverKind::BigQuery,
             _,
         ) => None,
     }
@@ -144,6 +145,10 @@ pub fn read_only_login(driver: DriverKind) -> &'static str {
         DriverKind::Athena => {
             "a profile whose IAM policy allows Athena's queries and reading Glue's catalog and \
              the tables' S3 data, and writes nothing but query results"
+        }
+        DriverKind::BigQuery => {
+            "a credentials file whose account has only the BigQuery Data Viewer and BigQuery Job \
+             User roles"
         }
         DriverKind::Postgres
         | DriverKind::Sqlite
@@ -393,6 +398,8 @@ mod tests {
                 | DriverKind::DynamoDb
                 | DriverKind::Athena
                 | DriverKind::Trino => guard == Guard::Login,
+                // Its logins come with its dialog (C4g).
+                DriverKind::BigQuery => guard == Guard::CheckOnly,
             };
             assert!(expected, "{driver:?}: {guard:?}");
         }

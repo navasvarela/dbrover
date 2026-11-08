@@ -16,9 +16,9 @@ pub mod token;
 
 use std::error::Error;
 
-pub use http::HttpError;
 #[cfg(any(test, feature = "stand-in"))]
 pub use http::stand_in;
+pub use http::{Answer, HttpError, Https};
 pub use token::{AccessToken, TokenCache};
 
 /// `error`'s message followed by each of its causes', as AWS's SDK and hyper nest them: the

@@ -1,0 +1,12 @@
+{
+  "doc": "A project the sign-in may not read.",
+  "exchanges": [
+    {
+      "method": "GET", "path": "/projects/someone-else/datasets", "query": {"maxResults": "1"},
+      "status": 403,
+      "response": {"error": {"code": 403, "message": "Access Denied: Project someone-else: User does not have bigquery.datasets.list permission in project someone-else.",
+        "errors": [{"message": "Access Denied: Project someone-else: User does not have bigquery.datasets.list permission in project someone-else.",
+          "domain": "global", "reason": "accessDenied"}], "status": "PERMISSION_DENIED"}}
+    }
+  ]
+}

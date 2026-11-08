@@ -7,7 +7,8 @@
 
 use dbrover_core::conformance;
 use dbrover_core::{
-    ChildrenQuery, GcsBucket, GcsSignIn, NodeKind, ObjectKind, ObjectStorage, S3Bucket, S3SignIn,
+    ChildrenQuery, GcsBucket, GoogleCloudSignIn, NodeKind, ObjectKind, ObjectStorage, S3Bucket,
+    S3SignIn,
 };
 
 use super::*;
@@ -339,7 +340,7 @@ fn test_gcs_bucket(directory: &std::path::Path, token_uri: &str) -> Option<GcsBu
     Some(GcsBucket {
         bucket: bucket.to_owned(),
         endpoint: endpoint.to_owned(),
-        sign_in: GcsSignIn::CredentialsFile { credentials_file },
+        sign_in: GoogleCloudSignIn::CredentialsFile { credentials_file },
     })
 }
 

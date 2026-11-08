@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
 use dbrover_core::{
-    ClickHouseConfig, ConnectionConfig, DataSourceId, DuckDbConfig, DuckDbDatabase, GcsBucket,
-    GcsSignIn, MysqlConfig, ObjectStorage, PasswordCommand, Port, PostgresConfig, ProjectId,
-    S3Bucket, S3SignIn, ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, SshConfig,
-    SshLogin, TlsMode, Variables,
+    BigQueryConfig, ClickHouseConfig, ConnectionConfig, DataSourceId, DuckDbConfig, DuckDbDatabase,
+    GcsBucket, GoogleCloudSignIn, MysqlConfig, ObjectStorage, PasswordCommand, Port,
+    PostgresConfig, ProjectId, S3Bucket, S3SignIn, ServerConfig, SourceColor, SqlServerConfig,
+    SqliteConfig, SshConfig, SshLogin, TlsMode, Variables,
 };
 
 use super::*;
@@ -167,10 +167,22 @@ fn every_kind(home: &Path, beside: &Path, project: ProjectId) -> Vec<DataSource>
                 storage: Some(ObjectStorage::Gcs(GcsBucket {
                     bucket: "lake".to_owned(),
                     endpoint: String::new(),
-                    sign_in: GcsSignIn::CredentialsFile {
+                    sign_in: GoogleCloudSignIn::CredentialsFile {
                         credentials_file: home.join("keys/lake.json"),
                     },
                 })),
+            }),
+        ),
+        data_source(
+            "warehouse",
+            None,
+            ConnectionConfig::BigQuery(BigQueryConfig {
+                sign_in: GoogleCloudSignIn::CredentialsFile {
+                    credentials_file: home.join("keys/warehouse.json"),
+                },
+                project: "analytics".to_owned(),
+                other_projects: vec!["bigquery-public-data".to_owned()],
+                ..BigQueryConfig::default()
             }),
         ),
         data_source(
@@ -246,6 +258,10 @@ fn writes_portable_paths_and_reads_them_back_for_another_home_and_folder() {
     );
     assert!(
         text.contains(r#"credentials_file = "~/keys/lake.json""#),
+        "{text}"
+    );
+    assert!(
+        text.contains(r#"credentials_file = "~/keys/warehouse.json""#),
         "{text}"
     );
     assert!(

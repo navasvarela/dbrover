@@ -70,7 +70,11 @@ impl DriverFields {
             Self::Elasticsearch(fields) => Some(&mut fields.server),
             Self::Cassandra(fields) => Some(&mut fields.server),
             Self::Trino(fields) => Some(&mut fields.server),
-            Self::Sqlite(_) | Self::DuckDb(_) | Self::DynamoDb(_) | Self::Athena(_) => None,
+            Self::Sqlite(_)
+            | Self::DuckDb(_)
+            | Self::DynamoDb(_)
+            | Self::Athena(_)
+            | Self::BigQuery(_) => None,
         }
     }
 }

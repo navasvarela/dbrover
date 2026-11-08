@@ -1,6 +1,7 @@
-//! The few HTTPS requests a sign-in makes, to a provider's token endpoint: hyper with rustls on
-//! ring and the web's root certificates, as the Elasticsearch driver sends its requests, rather
-//! than a provider's SDK (`docs/cloud-data.md`, Decisions).
+//! The few HTTPS requests a sign-in makes, to a provider's token endpoint, and those of the
+//! small API clients built on it (a bucket's listing, BigQuery's REST API): hyper with rustls
+//! on ring and the web's root certificates, as the Elasticsearch driver sends its requests,
+//! rather than a provider's SDK (`docs/cloud-data.md`, Decisions).
 
 use std::time::Duration;
 
@@ -16,8 +17,9 @@ use hyper_util::rt::TokioExecutor;
 
 use crate::with_causes;
 
-/// How long a request may take, connecting included. Token endpoints and a bucket's listing
-/// answer in well under a second; a request that hangs would hold the connection up with it.
+/// How long a request may take, connecting included. Token endpoints, a bucket's listing and
+/// BigQuery's job calls answer in well under a second (DbRover never asks BigQuery to wait for
+/// a job); a request that hangs would hold the connection up with it.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, thiserror::Error)]
@@ -36,7 +38,7 @@ pub enum HttpError {
 
 /// What an endpoint answered: its status, its headers and its whole body.
 #[derive(Debug)]
-pub(crate) struct Answer {
+pub struct Answer {
     pub status: u16,
     pub headers: HeaderMap,
     pub body: Bytes,
@@ -44,17 +46,22 @@ pub(crate) struct Answer {
 
 impl Answer {
     /// The header's value, when it is there and is text.
-    pub(crate) fn header(&self, name: &str) -> Option<&str> {
+    pub fn header(&self, name: &str) -> Option<&str> {
         self.headers.get(name)?.to_str().ok()
     }
 }
 
-pub(crate) struct Https {
+/// A client for HTTPS APIs. Cheap to clone: clones share the connection pool.
+#[derive(Clone)]
+pub struct Https {
     client: Client<HttpsConnector<HttpConnector>, Full<Bytes>>,
 }
 
 impl Https {
-    pub(crate) fn new() -> Result<Self, HttpError> {
+    /// # Errors
+    ///
+    /// [`HttpError::Tls`] when the system's root certificates can't be loaded.
+    pub fn new() -> Result<Self, HttpError> {
         let tls = dbrover_tls::client_config(&TlsMode::VerifyFull { ca_file: None })?;
         let connector = hyper_rustls::HttpsConnectorBuilder::new()
             .with_tls_config(tls)
@@ -129,6 +136,45 @@ impl Https {
             ));
         }
         self.get_signed(address, &headers).await
+    }
+
+    /// Sends `body` as JSON (a `GET` when there is none, a `POST` when there is) to `address`,
+    /// with `token` as a bearer token when there is one, which goes only over HTTPS or to this
+    /// machine, as [`Https::get_with_token`]'s.
+    ///
+    /// # Errors
+    ///
+    /// [`HttpError`] when the address can't take the token or can't be reached; an answer with
+    /// an error status is an [`Answer`] all the same.
+    pub async fn json_with_token(
+        &self,
+        address: &str,
+        token: Option<&Password>,
+        body: Option<String>,
+    ) -> Result<Answer, HttpError> {
+        let uri = match token {
+            Some(_) => sendable(address)?,
+            None => address
+                .parse()
+                .map_err(|_| HttpError::BadAddress(address.to_owned()))?,
+        };
+        let method = if body.is_some() {
+            Method::POST
+        } else {
+            Method::GET
+        };
+        let mut request = Request::new(Full::new(Bytes::from(body.unwrap_or_default())));
+        *request.method_mut() = method;
+        *request.uri_mut() = uri;
+        let headers = request.headers_mut();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        if let Some(token) = token {
+            let mut value = HeaderValue::from_str(&format!("Bearer {}", token.expose()))
+                .map_err(|_| HttpError::BadAddress(address.to_owned()))?;
+            value.set_sensitive(true);
+            headers.insert(AUTHORIZATION, value);
+        }
+        self.send(request).await
     }
 
     async fn send(&self, request: Request<Full<Bytes>>) -> Result<Answer, HttpError> {

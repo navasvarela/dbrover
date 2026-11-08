@@ -500,10 +500,18 @@ fn toolbar(ui: &mut Ui, options: &mut ExplorerOptions, actions: &mut Vec<Explore
     });
 }
 
-/// One entry per driver, each with its icon. Also used by the Welcome tab.
+/// One entry per engine people run themselves, each with its icon, then a submenu per cloud
+/// with the engines only that cloud runs (DynamoDB, Athena, BigQuery) and its managed services.
+/// Also used by the Welcome tab.
+///
+/// A cloud's own engines are in its submenu alone: listed in both places, the menu grew past
+/// what a 900-point window shows with the Azure submenu open beside it (C4c).
 pub fn new_data_source_menu(ui: &mut Ui, actions: &mut Vec<ExplorerAction>) {
     let logo_size = ui.text_style_height(&TextStyle::Button);
-    for driver in DriverKind::ALL {
+    let run_by_anyone = DriverKind::ALL
+        .into_iter()
+        .filter(|driver| ServiceVendor::running_only(*driver).is_none());
+    for driver in run_by_anyone {
         new_driver_item(ui, driver, logo_size, actions);
     }
     ui.separator();

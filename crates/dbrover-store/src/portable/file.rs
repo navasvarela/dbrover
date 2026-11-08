@@ -11,12 +11,12 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
 use dbrover_core::{
-    AthenaConfig, CassandraConfig, ClickHouseConfig, CloudSignIn, ConnectionConfig, DataSource,
-    DataSourceId, DuckDbConfig, DuckDbDatabase, DynamoDbConfig, ElasticsearchAuth,
-    ElasticsearchConfig, GcsBucket, GcsSignIn, McpLogin, MongoConfig, MysqlConfig, ObjectStorage,
-    PasswordCommand, Port, PostgresConfig, ProjectId, RedisConfig, SafetyLevel, ServerConfig,
-    SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode, TrinoConfig,
-    TrinoProtocol,
+    AthenaConfig, BigQueryConfig, CassandraConfig, ClickHouseConfig, CloudSignIn, ConnectionConfig,
+    DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase, DynamoDbConfig, ElasticsearchAuth,
+    ElasticsearchConfig, GcsBucket, GoogleCloudSignIn, McpLogin, MongoConfig, MysqlConfig,
+    ObjectStorage, PasswordCommand, Port, PostgresConfig, ProjectId, RedisConfig, SafetyLevel,
+    ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode,
+    TrinoConfig, TrinoProtocol,
 };
 use serde::{Deserialize, Serialize};
 
@@ -175,6 +175,9 @@ enum PortableConfig {
     /// As DynamoDB's: no secret or path in it.
     Athena(AthenaConfig),
     Trino(PortableTrino),
+    /// As written, its credentials file, if it names one, moved as every other path is.
+    #[serde(rename = "bigquery")]
+    BigQuery(BigQueryConfig),
 }
 
 impl PortableConfig {
@@ -226,6 +229,10 @@ impl PortableConfig {
             }),
             ConnectionConfig::DynamoDb(config) => Self::DynamoDb(config.clone()),
             ConnectionConfig::Athena(config) => Self::Athena(config.clone()),
+            ConnectionConfig::BigQuery(config) => Self::BigQuery(BigQueryConfig {
+                sign_in: portable_google_sign_in(&config.sign_in, path),
+                ..config.clone()
+            }),
             ConnectionConfig::Trino(TrinoConfig {
                 server,
                 schema,
@@ -312,6 +319,10 @@ impl PortableConfig {
             }),
             Self::DynamoDb(config) => ConnectionConfig::DynamoDb(config),
             Self::Athena(config) => ConnectionConfig::Athena(config),
+            Self::BigQuery(config) => ConnectionConfig::BigQuery(BigQueryConfig {
+                sign_in: portable_google_sign_in(&config.sign_in, path),
+                ..config
+            }),
             Self::Trino(PortableTrino {
                 server,
                 schema,
@@ -624,17 +635,26 @@ struct PortableDuckDb {
 /// `storage` with its credentials file, if it names one, moved as every other path is.
 fn portable_storage(storage: &ObjectStorage, path: &impl Fn(&Path) -> PathBuf) -> ObjectStorage {
     match storage {
-        ObjectStorage::Gcs(GcsBucket {
-            bucket,
-            endpoint,
-            sign_in: GcsSignIn::CredentialsFile { credentials_file },
-        }) => ObjectStorage::Gcs(GcsBucket {
-            bucket: bucket.clone(),
-            endpoint: endpoint.clone(),
-            sign_in: GcsSignIn::CredentialsFile {
-                credentials_file: path(credentials_file),
-            },
+        ObjectStorage::Gcs(bucket) => ObjectStorage::Gcs(GcsBucket {
+            sign_in: portable_google_sign_in(&bucket.sign_in, path),
+            ..bucket.clone()
         }),
+        other => other.clone(),
+    }
+}
+
+/// A Google Cloud sign-in with its credentials file, if it names one, moved as every other
+/// path is.
+fn portable_google_sign_in(
+    sign_in: &GoogleCloudSignIn,
+    path: &impl Fn(&Path) -> PathBuf,
+) -> GoogleCloudSignIn {
+    match sign_in {
+        GoogleCloudSignIn::CredentialsFile { credentials_file } => {
+            GoogleCloudSignIn::CredentialsFile {
+                credentials_file: path(credentials_file),
+            }
+        }
         other => other.clone(),
     }
 }

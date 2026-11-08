@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use dbrover_core::{
-    ConnectionConfig, DataSource, DataSourceId, DuckDbDatabase, GcsBucket, GcsSignIn,
+    ConnectionConfig, DataSource, DataSourceId, DuckDbDatabase, GcsBucket, GoogleCloudSignIn,
     ObjectStorage, ProjectId, ServerConfig, SshLogin, TlsMode, Variables, expand_path,
 };
 
@@ -505,6 +505,26 @@ fn data_source_settings(data_source: &DataSource, names: &ProjectNames) -> Setti
                 or_default(&config.output_location, "the workgroup's"),
             ));
         }
+        ConnectionConfig::BigQuery(config) => {
+            let signs_in = match &config.sign_in {
+                GoogleCloudSignIn::Google => "Application Default Credentials".to_owned(),
+                GoogleCloudSignIn::CredentialsFile { credentials_file } => {
+                    format!("credentials file {}", credentials_file.display())
+                }
+                GoogleCloudSignIn::Anonymous => "no one (an emulator)".to_owned(),
+            };
+            settings.push(("Signs in as", signs_in));
+            settings.push(("Project", config.project.clone()));
+            settings.push(("Dataset", or_default(&config.dataset, "none")));
+            settings.push((
+                "Location",
+                or_default(&config.location, "BigQuery's choice"),
+            ));
+            if !config.other_projects.is_empty() {
+                settings.push(("Other projects", config.other_projects.join(", ")));
+            }
+            settings.push(("Endpoint", or_default(&config.endpoint, "Google's own")));
+        }
         ConnectionConfig::Sqlite(config) => {
             settings.push(("File", config.path.display().to_string()));
             settings.push(("Read-only", yes_no(config.read_only)));
@@ -601,6 +621,14 @@ fn paths(config: &ConnectionConfig) -> Vec<(&'static str, &Path)> {
     let server = match config {
         ConnectionConfig::Sqlite(config) => return vec![("File", &config.path)],
         ConnectionConfig::DynamoDb(_) | ConnectionConfig::Athena(_) => return Vec::new(),
+        ConnectionConfig::BigQuery(config) => {
+            return match &config.sign_in {
+                GoogleCloudSignIn::CredentialsFile { credentials_file } => {
+                    vec![("Credentials file", credentials_file.as_path())]
+                }
+                GoogleCloudSignIn::Google | GoogleCloudSignIn::Anonymous => Vec::new(),
+            };
+        }
         ConnectionConfig::DuckDb(config) => {
             let file = match &config.database {
                 DuckDbDatabase::File { path, .. } => Some(("File", path.as_path())),
@@ -608,7 +636,7 @@ fn paths(config: &ConnectionConfig) -> Vec<(&'static str, &Path)> {
             };
             let key_file = match &config.storage {
                 Some(ObjectStorage::Gcs(GcsBucket {
-                    sign_in: GcsSignIn::CredentialsFile { credentials_file },
+                    sign_in: GoogleCloudSignIn::CredentialsFile { credentials_file },
                     ..
                 })) => Some(("Credentials file", credentials_file.as_path())),
                 _ => None,
