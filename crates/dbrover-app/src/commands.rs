@@ -21,6 +21,8 @@ pub enum AppCommand {
     OpenFile,
     OpenRecent(PathBuf),
     ClearRecentFiles,
+    /// Asks for a folder of `.sql` files to list in the explorer (VC2).
+    AddQueryFolder,
     Save,
     SaveAs,
     ExportDataSources,
@@ -91,6 +93,7 @@ impl AppCommand {
             Self::ShowSettings => keymap::Action::Settings.id(),
             Self::OpenRecent(_) => "file.open-recent",
             Self::ClearRecentFiles => "file.clear-recent",
+            Self::AddQueryFolder => "file.add-query-folder",
             Self::ExportDataSources => "file.export-data-sources",
             Self::ImportDataSources => "file.import-data-sources",
             Self::Theme(ThemePreference::System) => "view.theme.system",
@@ -124,6 +127,7 @@ impl AppCommand {
             }
             Self::OpenFile => "Open…",
             Self::ClearRecentFiles => "Clear recent files",
+            Self::AddQueryFolder => "Add query folder…",
             Self::Save => "Save",
             Self::SaveAs => "Save as…",
             Self::ExportDataSources => "Export data sources…",
@@ -462,6 +466,7 @@ pub fn egui_menu_bar(
             entries: vec![
                 Command(C::OpenFile),
                 Submenu(open_recent(recent_files)),
+                Command(C::AddQueryFolder),
                 Command(C::Save),
                 Command(C::SaveAs),
                 Separator,
@@ -532,6 +537,7 @@ pub fn macos_menu_bar(
             entries: vec![
                 Command(C::OpenFile),
                 Submenu(open_recent(recent_files)),
+                Command(C::AddQueryFolder),
                 Separator,
                 Command(C::Save),
                 Command(C::SaveAs),

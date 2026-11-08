@@ -2332,7 +2332,11 @@ after CI fixes, the reports track and W13, and links no Git library.
   [Version control](version-control.md#vc2--a-folder-of-queries). Folders of `.sql` files you
   add (a repository's `queries/`) as a tree in the explorer, hidden and Git-ignored files left
   out, each file opened and saved in place through W6. The request other tools' users make most.
-  - **VC2a — The folder list and the tree.**
+  - **VC2a — The folder list and the tree:** built; `[explorer] query_folders` in
+    `settings.toml`, **File › Add query folder…**, the explorer's **Query folders** section
+    with **Remove from list** and **Reload**, folders read by the engine with the `ignore`
+    crate (hidden folders and what a repository's `.gitignore` files ignore left out), and
+    read again when the window comes back to the front.
   - **VC2b — Opening and creating** (**New query here**).
   - **VC2c — Manual,** and the demo note.
 

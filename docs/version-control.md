@@ -243,7 +243,9 @@ repository holds a folder of them. VC2 shows such folders in the explorer.
   it and touches no file.
 - **The tree:** the folder's `.sql` files, and its subfolders that hold any, sorted by name.
   Hidden folders (`.git`, `.idea`) aren't entered. Files Git ignores aren't listed: the
-  `ignore` crate (ripgrep's) reads `.gitignore` files as Git does. It is a new dependency, pure
+  `ignore` crate (ripgrep's) reads `.gitignore` files as Git does, inside a repository only
+  and up to its top. Outside one they mean nothing, as for Git: with no repository to stop
+  at, every `.gitignore` up to the root of the disk would count. It is a new dependency, pure
   Rust and small, chosen over `walkdir` (already in the build) plus a hand-written reader of
   `.gitignore` rules, which are subtle. The tree is read again when the window comes back to
   the front, so a checkout that adds or removes files shows.
@@ -251,8 +253,8 @@ repository holds a folder of them. VC2 shows such folders in the explorer.
   question the first time, the same save and reload. Nothing new about files themselves.
 - **New query here** on a folder asks for a name and creates an empty `.sql` file there, on
   the focused console's data source.
-- **Where the list lives:** `settings.toml`, with paths under the home folder written as
-  `~/…`, as data source exports write them, so a synced settings folder brings the list along
+- **Where the list lives:** `settings.toml`'s `[explorer] query_folders`, with paths under
+  the home folder written as `~/…`, as data source exports write them, so a synced settings folder brings the list along
   and a folder missing on this machine is shown dimmed rather than dropped.
 
 **Exit:** add a clone of a repository with `queries/sales.sql` and `queries/admin/users.sql`;

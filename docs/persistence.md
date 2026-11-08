@@ -160,7 +160,13 @@ ask_database = true                   # connected consoles prepare (never run) s
 [history]                 # both absent by default: the history keeps everything
 max_age_days = 365        # statements older than this go
 max_per_data_source = 100000  # only the newest this many of each data source stay
+
+[explorer]
+query_folders = ["~/src/shop/queries"]  # listed under Query folders; ~ is the home folder
 ```
+
+A query folder missing on this machine, as when a synced settings folder lists a clone made
+elsewhere, stays in the list and is shown as missing.
 
 An id in `lint.disabled` that names no rule is listed in the Settings window, and ignored.
 

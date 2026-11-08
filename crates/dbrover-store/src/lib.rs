@@ -16,6 +16,7 @@ mod paths;
 mod portable;
 mod previous_install;
 mod projects;
+mod query_folders;
 mod reports;
 mod secrets;
 mod settings;
@@ -57,11 +58,15 @@ pub use projects::{
     InvalidSchemaScope, InvalidSlug, InvalidTimeout, McpOverrides, McpPermissions, Project,
     ProjectFile, ProjectSlug, ProjectStoreError, Projects, SchemaScope, StatementTimeout,
 };
+pub use query_folders::{
+    QueryFile, QueryFolderError, QueryFolderListing, QuerySubfolder, QueryTree, expand_home,
+    home_relative, read_query_folder,
+};
 pub use reports::{ReportFiles, ReportName, ReportSaveError};
 pub use secrets::{Secret, SecretError, SecretStore, os_keychain};
 pub use settings::{
-    FormatSettings, HistorySettings, KeywordCase, LintSettings, ReportSettings, Settings,
-    SettingsError, SettingsFile, UpdateSettings,
+    ExplorerSettings, FormatSettings, HistorySettings, KeywordCase, LintSettings, ReportSettings,
+    Settings, SettingsError, SettingsFile, UpdateSettings,
 };
 pub use settings_folder::{
     CONFIG_DIR_FLAG, CONFIG_DIR_VARIABLE, ChosenFolder, ChosenFolderError, ChosenFolderFile,

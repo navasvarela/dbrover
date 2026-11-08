@@ -20,6 +20,7 @@ pub struct Settings {
     pub updates: UpdateSettings,
     pub history: HistorySettings,
     pub reports: ReportSettings,
+    pub explorer: ExplorerSettings,
 }
 
 /// How the SQL formatter writes statements.
@@ -88,6 +89,17 @@ pub struct HistorySettings {
     /// Only the newest this many statements of each data source stay.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_per_data_source: Option<NonZeroU32>,
+}
+
+/// What the explorer lists besides data sources.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ExplorerSettings {
+    /// Folders of `.sql` files listed under **Query folders**, in the order added. Folders
+    /// under the home folder are written as `~/…` ([`crate::home_relative`]), so a synced
+    /// settings folder brings the list to another machine; one missing there is still listed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub query_folders: Vec<PathBuf>,
 }
 
 /// The defaults of every report's limits, which a report's file overrides key by key, and how
@@ -333,6 +345,9 @@ mod tests {
                 runs_kept: NonZeroU32::new(50),
                 ..ReportSettings::default()
             },
+            explorer: ExplorerSettings {
+                query_folders: vec!["~/src/shop/queries".into(), "/srv/queries".into()],
+            },
         };
 
         file.save(&settings).unwrap();
@@ -343,6 +358,12 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("memory_limit = \"4 GiB\"\n"), "{text}");
+        assert!(
+            text.contains(
+                "[explorer]\nquery_folders = [\"~/src/shop/queries\", \"/srv/queries\"]\n"
+            ),
+            "{text}"
+        );
 
         std::fs::write(file.path(), "[format]\nindent = 2\n").unwrap();
         assert!(matches!(file.load(), Err(SettingsError::Parse { .. })));

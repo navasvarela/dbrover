@@ -151,6 +151,14 @@ pub fn pick_settings_folder(current: &Path) -> Option<PathBuf> {
     dialog.pick_folder()
 }
 
+/// Shows the folder dialog for a folder of `.sql` files to list in the explorer, or `None` if
+/// it was cancelled.
+pub fn pick_query_folder() -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .set_title("Add a folder of queries")
+        .pick_folder()
+}
+
 /// Shows the folder dialog for where a report's files go, starting in `current`, or `None` if
 /// it was cancelled.
 pub fn pick_report_folder(current: &Path) -> Option<PathBuf> {

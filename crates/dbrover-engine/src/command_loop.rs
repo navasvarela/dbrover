@@ -27,6 +27,7 @@ use crate::passwords::SessionPasswords;
 use crate::pictures;
 use crate::programs::{self, ProgramFailure, ProgramId, ProgramRequest, ProgramRunner};
 use crate::projects::{ProjectError, ProjectRegistry};
+use crate::query_folders;
 use crate::registry::{Registry, RegistryError};
 use crate::releases::{self, ReleaseFeed};
 use crate::report_files;
@@ -426,6 +427,10 @@ impl Engine {
             Command::CreateCustomFile { kind, text } => {
                 self.events
                     .send(config_files::create_custom(&self.custom_files, kind, text).await);
+            }
+            Command::ReadQueryFolder(path) => {
+                let events = self.events.clone();
+                tokio::spawn(async move { events.send(query_folders::read(path).await) });
             }
             Command::ListReports(files) => self.events.send(report_files::list(files).await),
             Command::SaveReport {
