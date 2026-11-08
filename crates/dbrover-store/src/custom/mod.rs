@@ -289,7 +289,8 @@ mod tests {
             drivers(names(&["postgresql"])),
             Err(
                 "\"postgresql\" is not a driver; the drivers are postgres, sqlite, mysql, \
-                 sqlserver, duckdb, clickhouse, redis, mongodb, elasticsearch, cassandra, dynamodb, athena, trino"
+                 sqlserver, duckdb, clickhouse, redis, mongodb, elasticsearch, cassandra, dynamodb, \
+                 athena, trino, bigquery"
                     .to_owned()
             )
         );
