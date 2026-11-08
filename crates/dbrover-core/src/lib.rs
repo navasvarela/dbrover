@@ -40,7 +40,7 @@ pub use catalog_page::{
 pub use cloud_sign_in::{AzureTool, CloudProvider, CloudSignIn};
 pub use command_template::{CommandTemplate, DataSourceFields};
 pub use connection::{Connection, Rejection, RejectionKind, ServerInfo};
-pub use cost::{ByteCount, CostEstimate, CostGuard, FullScan, ReadPace, ScanGuard};
+pub use cost::{ByteCount, CostEstimate, CostGuard, FullScan, ReadPace, ScanEstimate, ScanGuard};
 pub use data_source::{
     AthenaConfig, AwsSignInKind, BigQueryConfig, CassandraConfig, ClickHouseConfig,
     ConnectionConfig, DataSource, DataSourceId, DriverKind, DuckDbConfig, DuckDbDatabase,

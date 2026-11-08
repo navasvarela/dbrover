@@ -1711,7 +1711,7 @@ fn validates_statements_without_running_them_or_disturbing_unread_rows() {
         ],
     );
     let checks = expect_checks(&mut engine);
-    assert_eq!(checks[0], StatementCheck::Accepted);
+    assert_eq!(checks[0], StatementCheck::Accepted { estimate: None });
     assert_eq!(rejected(&checks[1]), Some(RejectionKind::UnknownName));
     assert_eq!(rejected(&checks[2]), Some(RejectionKind::Syntax));
     assert_eq!(
@@ -1774,7 +1774,7 @@ fn never_validates_inside_a_postgres_transaction() {
     );
     let checks = expect_checks(&mut engine);
     assert_eq!(rejected(&checks[0]), Some(RejectionKind::UnknownName));
-    assert_eq!(checks[1], StatementCheck::Accepted);
+    assert_eq!(checks[1], StatementCheck::Accepted { estimate: None });
 
     execute(&engine, id, 2, &["BEGIN"]);
     finish_run(&mut engine, 2);

@@ -247,6 +247,12 @@ pub trait Connection: Send {
         Ok(None)
     }
 
+    /// Lets the next statement this connection runs scan past the data source's byte limit,
+    /// because the user saw its estimate ([`Connection::estimate_cost`]) and said yes. Engines
+    /// that keep the limit themselves (BigQuery's `maximumBytesBilled`, C4) send that one
+    /// statement without it; the default does nothing.
+    fn allow_next_past_limit(&mut self) {}
+
     /// Whether a transaction is open on this connection, as the database sees it, so a
     /// transaction the user started with their own `BEGIN` counts too.
     ///

@@ -2,6 +2,7 @@
 //! `jobs.cancel`.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
@@ -12,7 +13,7 @@ use dbrover_core::{
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::api::{Api, segment};
+use crate::api::{Api, ApiError, segment};
 use crate::errors;
 use crate::results::{self, ApiRow, Schema};
 
@@ -33,6 +34,8 @@ pub(crate) struct JobPlace {
     pub dataset: String,
     /// The location to run in; empty to let BigQuery choose from the tables a query reads.
     pub location: String,
+    /// The data source's byte limit, sent with every job as `maximumBytesBilled`.
+    pub limit: Option<ByteCount>,
 }
 
 /// A job DbRover started and hasn't seen end.
@@ -47,6 +50,9 @@ pub(crate) struct BigQueryJobs {
     api: Api,
     place: JobPlace,
     started: Mutex<HashMap<JobId, Started>>,
+    /// Whether the next job goes without `maximumBytesBilled`, as one the user let through
+    /// after seeing its estimate.
+    next_past_limit: AtomicBool,
 }
 
 impl BigQueryJobs {
@@ -55,7 +61,13 @@ impl BigQueryJobs {
             api,
             place,
             started: Mutex::new(HashMap::new()),
+            next_past_limit: AtomicBool::new(false),
         }
+    }
+
+    /// Lets the next job scan past the data source's limit.
+    pub(crate) fn allow_next_past_limit(&self) {
+        self.next_past_limit.store(true, Ordering::SeqCst);
     }
 
     fn started(&self) -> MutexGuard<'_, HashMap<JobId, Started>> {
@@ -78,8 +90,9 @@ impl BigQueryJobs {
         )
     }
 
-    /// The body of `jobs.insert` for `statement`, as job `job`.
-    fn insert_body(&self, job: &JobId, statement: &str) -> serde_json::Value {
+    /// The body of `jobs.insert` for `statement`, as job `job`, with the data source's limit as
+    /// `maximumBytesBilled` unless `past_limit`.
+    fn insert_body(&self, job: &JobId, statement: &str, past_limit: bool) -> serde_json::Value {
         let mut reference = json!({ "projectId": self.place.project, "jobId": job.as_str() });
         if !self.place.location.is_empty() {
             reference["location"] = json!(self.place.location);
@@ -88,6 +101,10 @@ impl BigQueryJobs {
         if !self.place.dataset.is_empty() {
             query["defaultDataset"] =
                 json!({ "projectId": self.place.project, "datasetId": self.place.dataset });
+        }
+        if let Some(limit) = self.place.limit.filter(|_| !past_limit) {
+            // The API takes an int64 as a JSON string.
+            query["maximumBytesBilled"] = json!(limit.0.to_string());
         }
         json!({ "jobReference": reference, "configuration": { "query": query } })
     }
@@ -99,8 +116,21 @@ impl BigQueryJobs {
             .as_deref()
             .and_then(|statement| errors::position_in(statement, &error.message));
         JobFailure {
-            message: error.message.clone(),
+            message: self.explained(&error.message, error.reason.as_deref()),
             position,
+        }
+    }
+
+    /// BigQuery's `message`, with what a refusal for the byte limit means in DbRover.
+    fn explained(&self, message: &str, reason: Option<&str>) -> String {
+        match (reason, self.place.limit) {
+            (Some(LIMIT_EXCEEDED), Some(limit)) => format!(
+                "{message} BigQuery refused it unbilled: it bills more than this data source's \
+                 limit of {limit}, which its dry run didn't foresee (BigQuery bills at least \
+                 10 MiB for each table a query reads). Raise Ask above in the data source's \
+                 settings to run it."
+            ),
+            _ => message.to_owned(),
         }
     }
 }
@@ -139,9 +169,13 @@ struct JobStatus {
 
 #[derive(Debug, Clone, Deserialize)]
 struct ErrorResult {
+    reason: Option<String>,
     #[serde(default)]
     message: String,
 }
+
+/// BigQuery's reason for a job refused because it would bill more than `maximumBytesBilled`.
+const LIMIT_EXCEEDED: &str = "bytesBilledLimitExceeded";
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -197,11 +231,29 @@ impl JobService for BigQueryJobs {
     async fn submit(&self, statement: &str) -> Result<JobId, DriverError> {
         let job = new_job_id();
         let path = format!("/projects/{}/jobs", segment(&self.place.project));
+        let past_limit = self.next_past_limit.swap(false, Ordering::SeqCst);
         let started: Job = self
             .api
-            .post(&path, &[], &self.insert_body(&job, statement))
+            .post(&path, &[], &self.insert_body(&job, statement, past_limit))
             .await
-            .map_err(|error| errors::statement(error, statement))?;
+            .map_err(|error| match error {
+                ApiError::Refused {
+                    status,
+                    reason,
+                    message,
+                } => {
+                    let message = self.explained(&message, reason.as_deref());
+                    errors::statement(
+                        ApiError::Refused {
+                            status,
+                            reason,
+                            message,
+                        },
+                        statement,
+                    )
+                }
+                other => errors::statement(other, statement),
+            })?;
         self.started().insert(
             job.clone(),
             Started {

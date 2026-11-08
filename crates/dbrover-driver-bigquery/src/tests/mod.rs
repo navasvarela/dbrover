@@ -5,8 +5,9 @@ mod emulator;
 mod replay;
 
 use dbrover_core::{
-    BigQueryConfig, ByteCount, CatalogPath, Connection, DriverError, GoogleCloudSignIn,
-    JobProgress, NodeKind, conformance, describe_error,
+    BigQueryConfig, ByteCount, CatalogPath, Connection, CostEstimate, CostGuard, DriverError,
+    GoogleCloudSignIn, JobProgress, NodeKind, RejectionKind, ScanEstimate, conformance,
+    describe_error,
 };
 
 use self::replay::Replay;
@@ -225,6 +226,69 @@ async fn connecting_says_what_is_missing() {
     assert!(
         describe_error(&error).contains("Set the data source's project"),
         "{error:?}"
+    );
+    replay.finish();
+}
+
+#[tokio::test]
+async fn the_dry_run_estimates_and_the_limit_is_kept_unless_let_through() {
+    let replay = Replay::start(include_str!("exchanges/limit.json")).await;
+    let config = BigQueryConfig {
+        cost_guard: CostGuard {
+            ask_above_bytes: Some(ByteCount(1_000_000_000)),
+            ..CostGuard::default()
+        },
+        ..config(&replay)
+    };
+    let mut connection = connected(&config).await;
+    let large = "SELECT * FROM big.events";
+    assert_eq!(connection.validate(large).await.unwrap(), None);
+    assert_eq!(
+        connection.estimate_cost(large).await.unwrap(),
+        Some(CostEstimate::Bytes(ScanEstimate::exactly(ByteCount(
+            1_400_000_000
+        ))))
+    );
+    connection.allow_next_past_limit();
+    let cursor = connection
+        .execute(large)
+        .await
+        .unwrap_or_else(|error| panic!("{}", describe_error(&error)));
+    assert_eq!(
+        cursor.progress().and_then(|progress| progress.bytes_read),
+        Some(ByteCount(1_400_000_000))
+    );
+    cursor.finish().await.unwrap();
+
+    let small = "SELECT name FROM small.lookup";
+    assert_eq!(
+        connection.estimate_cost(small).await.unwrap(),
+        Some(CostEstimate::Bytes(ScanEstimate::exactly(ByteCount(
+            2_000_000
+        ))))
+    );
+    let error = match connection.execute(small).await {
+        Ok(_) => panic!("{small} ran past the limit"),
+        Err(error) => describe_error(&error),
+    };
+    assert!(error.contains("1010000000 or higher required"), "{error}");
+    assert!(error.contains("limit of 1.0 GB"), "{error}");
+
+    let misspelt = "SELECT nme FROM small.lookup";
+    let rejection = connection.validate(misspelt).await.unwrap().unwrap();
+    assert_eq!(rejection.kind, RejectionKind::UnknownName);
+    assert_eq!(rejection.position, Some(7));
+    assert_eq!(connection.estimate_cost(misspelt).await.unwrap(), None);
+
+    assert_eq!(
+        connection
+            .estimate_cost("SELECT * FROM lake.clicks")
+            .await
+            .unwrap(),
+        Some(CostEstimate::Bytes(ScanEstimate {
+            bytes: ByteCount(0),
+            at_least: true,
+        }))
     );
     replay.finish();
 }

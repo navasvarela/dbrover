@@ -1,0 +1,66 @@
+{
+  "doc": "A data source with a 1 GB limit. A statement's check and its estimate share one dry run; one estimated at 1.4 GB is let through without maximumBytesBilled; one estimated at 2 MB is sent with it, and BigQuery refuses it at its first poll for billing more (its 10 MiB minimum per table). An invalid statement's dry run is refused with its place.",
+  "exchanges": [
+    {
+      "method": "GET", "path": "/projects/analytics/datasets", "query": {"maxResults": "1"},
+      "response": {}
+    },
+    {
+      "method": "POST", "path": "/projects/analytics/jobs",
+      "request": {"jobReference": {"projectId": "analytics", "jobId": "absent"},
+        "configuration": {"dryRun": true, "query": {"query": "SELECT * FROM big.events", "useLegacySql": false}}},
+      "response": {"kind": "bigquery#job", "jobReference": {"projectId": "analytics", "location": "US"},
+        "configuration": {"dryRun": true, "jobType": "QUERY"}, "status": {"state": "DONE"},
+        "statistics": {"totalBytesProcessed": "1400000000",
+          "query": {"totalBytesProcessed": "1400000000", "totalBytesProcessedAccuracy": "PRECISE",
+            "statementType": "SELECT"}}}
+    },
+    {
+      "method": "POST", "path": "/projects/analytics/jobs",
+      "request": {"configuration": {"query": {"query": "SELECT * FROM big.events", "maximumBytesBilled": "absent"}}},
+      "response": {"jobReference": {"projectId": "analytics", "jobId": "{job}", "location": "US"},
+        "status": {"state": "DONE"}}
+    },
+    {
+      "method": "GET", "path": "/projects/analytics/jobs/{job}", "query": {"location": "US"},
+      "response": {"status": {"state": "DONE"},
+        "statistics": {"query": {"totalBytesProcessed": "1400000000", "totalBytesBilled": "1400000000"}}}
+    },
+    {
+      "method": "GET", "path": "/projects/analytics/queries/{job}", "query": {"location": "US"},
+      "response": {"jobComplete": true, "schema": {"fields": [{"name": "n", "type": "INTEGER"}]},
+        "rows": [{"f": [{"v": "1"}]}]}
+    },
+    {
+      "method": "POST", "path": "/projects/analytics/jobs",
+      "request": {"configuration": {"dryRun": true, "query": {"query": "SELECT name FROM small.lookup"}}},
+      "response": {"jobReference": {"projectId": "analytics", "location": "US"},
+        "statistics": {"query": {"totalBytesProcessed": "2000000", "totalBytesProcessedAccuracy": "PRECISE"}}}
+    },
+    {
+      "method": "POST", "path": "/projects/analytics/jobs",
+      "request": {"configuration": {"query": {"query": "SELECT name FROM small.lookup", "maximumBytesBilled": "1000000000"}}},
+      "response": {"jobReference": {"projectId": "analytics", "jobId": "{job}", "location": "US"},
+        "status": {"state": "RUNNING"}}
+    },
+    {
+      "method": "GET", "path": "/projects/analytics/jobs/{job}", "query": {"location": "US"},
+      "response": {"status": {"state": "DONE", "errorResult": {"reason": "bytesBilledLimitExceeded",
+        "message": "Query exceeded limit for bytes billed: 1000000000. 1010000000 or higher required."}}}
+    },
+    {
+      "method": "POST", "path": "/projects/analytics/jobs",
+      "request": {"configuration": {"dryRun": true, "query": {"query": "SELECT nme FROM small.lookup"}}},
+      "status": 400,
+      "response": {"error": {"code": 400, "message": "Unrecognized name: nme; Did you mean name? at [1:8]",
+        "errors": [{"message": "Unrecognized name: nme; Did you mean name? at [1:8]", "domain": "global",
+          "reason": "invalidQuery", "location": "q", "locationType": "parameter"}], "status": "INVALID_ARGUMENT"}}
+    },
+    {
+      "method": "POST", "path": "/projects/analytics/jobs",
+      "request": {"configuration": {"dryRun": true, "query": {"query": "SELECT * FROM lake.clicks"}}},
+      "response": {"jobReference": {"projectId": "analytics", "location": "US"},
+        "statistics": {"query": {"totalBytesProcessed": "0", "totalBytesProcessedAccuracy": "LOWER_BOUND"}}}
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 //! Asking the database whether it would accept a console's statements, without running them.
 
-use dbrover_core::{TransactionStatus, describe_error};
+use dbrover_core::{CostEstimate, TransactionStatus, describe_error};
 use dbrover_sql::is_checkable;
 
 use super::{Disconnected, SessionOwner, Worker};
@@ -33,7 +33,9 @@ pub(super) async fn validate(
                 .guard(work, None, worker.cancel_handle)
                 .await?
             {
-                Ok(None) => StatementCheck::Accepted,
+                Ok(None) => StatementCheck::Accepted {
+                    estimate: estimate(worker, &sql).await?,
+                },
                 Ok(Some(rejection)) => StatementCheck::Rejected(rejection),
                 Err(error) => {
                     tracing::warn!(
@@ -51,4 +53,32 @@ pub(super) async fn validate(
         .context
         .send(Event::StatementsValidated { console, results });
     Ok(())
+}
+
+/// What an accepted statement would scan, on a data source with a cost guard: its engine's
+/// estimate in bytes, which BigQuery's driver answers from the dry run its check just made, so
+/// it is shown before the statement runs, limit or not (`docs/cloud-data.md`, C4). `None`
+/// where there is none, or it couldn't be had.
+async fn estimate(
+    worker: &mut Worker<'_>,
+    sql: &str,
+) -> Result<Option<CostEstimate>, Disconnected> {
+    let guarded = worker
+        .context
+        .data_source
+        .config
+        .cost_guard()
+        .is_some_and(|guard| guard.is_on());
+    if !guarded {
+        return Ok(None);
+    }
+    let work = worker.connection.estimate_cost(sql);
+    let estimate = worker
+        .signals
+        .guard(work, None, worker.cancel_handle)
+        .await?;
+    Ok(estimate
+        .ok()
+        .flatten()
+        .filter(|estimate| matches!(estimate, CostEstimate::Bytes(_))))
 }

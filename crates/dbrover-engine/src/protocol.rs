@@ -929,7 +929,11 @@ pub struct StatementSummary {
 /// What the database said about a statement it was asked to prepare.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StatementCheck {
-    Accepted,
+    /// The database would run it, and, on an engine that estimates what a statement scans
+    /// before it runs (BigQuery's dry run, C4), what it would scan.
+    Accepted {
+        estimate: Option<CostEstimate>,
+    },
     Rejected(Rejection),
     /// Not asked: the console isn't connected, holds unread rows or an open transaction, the
     /// statement isn't a data query or change, or the database couldn't be asked.

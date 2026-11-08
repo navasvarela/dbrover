@@ -14,7 +14,36 @@ pub enum CostEstimate {
     WholeTable(FullScan),
     /// The bytes the statement will scan, whatever it returns, as a dry run reports them
     /// (BigQuery, C4).
-    Bytes(ByteCount),
+    Bytes(ScanEstimate),
+}
+
+/// The bytes a statement will scan, as its engine estimates them before it runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScanEstimate {
+    pub bytes: ByteCount,
+    /// Whether the statement may scan more: BigQuery's dry run can say only how much at least
+    /// a query over an external table will scan.
+    pub at_least: bool,
+}
+
+impl ScanEstimate {
+    /// An estimate the engine gives as exact, or as the most the statement can scan.
+    pub fn exactly(bytes: ByteCount) -> Self {
+        Self {
+            bytes,
+            at_least: false,
+        }
+    }
+}
+
+impl fmt::Display for ScanEstimate {
+    /// `2.5 GB`, or `at least 2.5 GB`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.at_least {
+            f.write_str("at least ")?;
+        }
+        self.bytes.fmt(f)
+    }
 }
 
 impl CostEstimate {
@@ -22,7 +51,7 @@ impl CostEstimate {
     pub fn describe(&self) -> String {
         match self {
             Self::WholeTable(scan) => scan.describe(),
-            Self::Bytes(bytes) => format!("This scans {bytes}, billed whatever it returns."),
+            Self::Bytes(scan) => format!("This scans {scan}, billed whatever it returns."),
         }
     }
 
@@ -30,7 +59,7 @@ impl CostEstimate {
     pub fn heading(&self) -> String {
         match self {
             Self::WholeTable(scan) => format!("Read all of {}?", scan.table),
-            Self::Bytes(bytes) => format!("Scan {bytes}?"),
+            Self::Bytes(scan) => format!("Scan {scan}?"),
         }
     }
 }
@@ -152,7 +181,9 @@ impl CostGuard {
             CostEstimate::WholeTable(_) => {
                 self.whole_table == ScanGuard::AskBeforeScans && pace == ReadPace::Whole
             }
-            CostEstimate::Bytes(bytes) => self.ask_above_bytes.is_some_and(|limit| *bytes > limit),
+            CostEstimate::Bytes(scan) => {
+                self.ask_above_bytes.is_some_and(|limit| scan.bytes > limit)
+            }
         }
     }
 }
@@ -175,7 +206,7 @@ mod tests {
         let ask = ScanGuard::AskBeforeScans;
         let off = ScanGuard::Off;
         let limit = Some(ByteCount(10 * GB));
-        let bytes = |count| CostEstimate::Bytes(ByteCount(count));
+        let bytes = |count| CostEstimate::Bytes(ScanEstimate::exactly(ByteCount(count)));
         let whole = ReadPace::Whole;
         let paged = ReadPace::PageAtATime;
         for (whole_table, ask_above_bytes, estimate, pace, held) in [
@@ -227,11 +258,16 @@ mod tests {
     fn each_estimate_says_what_running_it_costs() {
         assert_eq!(scan().heading(), "Read all of orders?");
         assert!(scan().describe().contains("partition key customer"));
-        let bytes = CostEstimate::Bytes(ByteCount(2_500_000_000));
+        let bytes = CostEstimate::Bytes(ScanEstimate::exactly(ByteCount(2_500_000_000)));
         assert_eq!(bytes.heading(), "Scan 2.5 GB?");
         assert_eq!(
             bytes.describe(),
             "This scans 2.5 GB, billed whatever it returns."
         );
+        let at_least = CostEstimate::Bytes(ScanEstimate {
+            bytes: ByteCount(2_500_000_000),
+            at_least: true,
+        });
+        assert_eq!(at_least.heading(), "Scan at least 2.5 GB?");
     }
 }

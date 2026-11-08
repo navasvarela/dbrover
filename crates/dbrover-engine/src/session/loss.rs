@@ -152,6 +152,10 @@ impl Connection for Watched {
             .watch(self.connection.estimate_cost(statement).await)
     }
 
+    fn allow_next_past_limit(&mut self) {
+        self.connection.allow_next_past_limit();
+    }
+
     async fn transaction_status(&mut self) -> Result<TransactionStatus, DriverError> {
         self.loss.watch(self.connection.transaction_status().await)
     }

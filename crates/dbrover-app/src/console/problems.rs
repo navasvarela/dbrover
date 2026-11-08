@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::time::{Duration, Instant};
 
-use dbrover_core::RejectionKind;
+use dbrover_core::{CostEstimate, RejectionKind};
 use dbrover_engine::StatementCheck;
 use dbrover_language::QueryLanguage;
 use dbrover_sql::{
@@ -124,6 +124,15 @@ pub struct Problems {
 }
 
 impl Problems {
+    /// What the database estimated `sql` would scan when it last accepted it, on an engine that
+    /// estimates before running (BigQuery's dry run, C4).
+    pub fn estimate_of(&self, sql: &str) -> Option<&CostEstimate> {
+        match self.database.get(sql)? {
+            StatementCheck::Accepted { estimate } => estimate.as_ref(),
+            StatementCheck::Rejected(_) | StatementCheck::Skipped => None,
+        }
+    }
+
     /// A console's problems, to be checked as soon as it is drawn.
     pub fn new(now: Instant) -> Self {
         Self {
@@ -236,7 +245,7 @@ impl Problems {
             // the parser, and it knows the names better than the cached catalog.
             let answered = matches!(
                 answer,
-                Some(StatementCheck::Accepted | StatementCheck::Rejected(_))
+                Some(StatementCheck::Accepted { .. } | StatementCheck::Rejected(_))
             );
             let mut found: Vec<Problem> = self
                 .local
@@ -388,6 +397,7 @@ mod tests {
 
     use super::super::completion::NoCatalog;
     use super::*;
+    use dbrover_core::{ByteCount, ScanEstimate};
 
     fn input<'a>(text: &'a str, options: &'a LintOptions, can_ask: bool) -> CheckInput<'a> {
         CheckInput {
@@ -481,7 +491,10 @@ mod tests {
                         kind: RejectionKind::UnknownName,
                     }),
                 ),
-                ("select a from t where".to_owned(), StatementCheck::Accepted),
+                (
+                    "select a from t where".to_owned(),
+                    StatementCheck::Accepted { estimate: None },
+                ),
             ],
             start,
         );
@@ -494,6 +507,37 @@ mod tests {
             problems.shown()[0].message,
             "The database says: column \"nope\" does not exist"
         );
+    }
+
+    #[test]
+    fn keeps_what_the_database_estimates_an_accepted_statement_scans() {
+        let start = Instant::now();
+        let options = LintOptions::default();
+        let text = "select * from big.events; select 1";
+        let mut problems = Problems::new(start);
+        check(&mut problems, &input(text, &options, true), start);
+        let scan = CostEstimate::Bytes(ScanEstimate::exactly(ByteCount(1_400_000_000)));
+        problems.database_answered(
+            &[
+                (
+                    "select * from big.events".to_owned(),
+                    StatementCheck::Accepted {
+                        estimate: Some(scan.clone()),
+                    },
+                ),
+                (
+                    "select 1".to_owned(),
+                    StatementCheck::Accepted { estimate: None },
+                ),
+            ],
+            start,
+        );
+        assert_eq!(
+            problems.estimate_of("select * from big.events"),
+            Some(&scan)
+        );
+        assert_eq!(problems.estimate_of("select 1"), None);
+        assert_eq!(problems.estimate_of("select 2"), None);
     }
 
     #[test]
