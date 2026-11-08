@@ -149,6 +149,32 @@ msck repair table `sales`.`orders`;
 unload (select * from orders) to 's3://bucket/out/' with (format = 'PARQUET');
 "#;
 
+/// A BigQuery script as its console holds one: backquoted paths, `#` comments, strings in
+/// either quote, triple-quoted over lines and raw, `SELECT * EXCEPT`, `QUALIFY`, a `MERGE`,
+/// and blocks of the procedural language whose semicolons don't end them.
+const BIGQUERY_CORPUS: &str = r##"
+# Daily orders, with the newest status of each.
+declare since date default date_sub(current_date(), interval 7 day);
+select * except (secret), "it's" as note, r'\d+' as pattern from `my-project.sales.orders` as o, unnest(o.items) as item where o.order_date >= since qualify row_number() over (partition by o.id order by o.updated_at desc) = 1;
+select json_value(payload, '$.user.id'), '''a "triple";
+quoted string''' from `my-project`.sales.events -- the raw events
+where _partitiondate = current_date();
+merge sales.orders t using staging s on t.id = s.id when matched then update set total = s.total when not matched then insert row;
+begin
+  if (select count(*) from sales.orders) > 0 then
+    select 'some';
+  else
+    select 'none';
+  end if;
+exception when error then
+  select @@error.message;
+end;
+create temp function js_upper(x string) returns string language js as r"""
+  return x.toUpperCase();
+""";
+export data options (uri = 'gs://bucket/out/*.csv', format = 'CSV') as select * from sales.orders;
+"##;
+
 fn format_all(text: &str, dialect: Dialect, options: &FormatOptions) -> String {
     let ranges = split_statements(text, dialect);
     format_ranges(text, &ranges, dialect, options)
@@ -170,6 +196,7 @@ fn formatting_the_corpus_never_changes_a_token_and_is_stable() {
         (DUCKDB_CORPUS, Dialect::DuckDb),
         (CLICKHOUSE_CORPUS, Dialect::ClickHouse),
         (TRINO_CORPUS, Dialect::Trino),
+        (BIGQUERY_CORPUS, Dialect::BigQuery),
     ] {
         for case in [
             KeywordCase::Upper,
@@ -202,6 +229,7 @@ fn formatting_keeps_every_statement_boundary() {
         (DUCKDB_CORPUS, Dialect::DuckDb),
         (CLICKHOUSE_CORPUS, Dialect::ClickHouse),
         (TRINO_CORPUS, Dialect::Trino),
+        (BIGQUERY_CORPUS, Dialect::BigQuery),
     ] {
         let formatted = format_all(corpus, dialect, &FormatOptions::default());
         let before = split_statements(corpus, dialect);
@@ -252,6 +280,19 @@ fn keeps_the_case_of_every_clickhouse_word() {
     );
 }
 
+/// GoogleSQL's `#` comments, `"…"` strings and backquoted paths stay as they were, `* EXCEPT`
+/// stays with its star, and a block of the procedural language is one statement.
+#[test]
+fn formats_googlesql_as_bigquery_reads_it() {
+    let script = "select * except (secret) from `my-project.sales.orders` # newest\n\
+                  where x = \"a\"; begin select 1; select 2; end";
+    assert_eq!(
+        format_all(script, Dialect::BigQuery, &FormatOptions::default()),
+        "SELECT * EXCEPT (secret)\nFROM `my-project.sales.orders` # newest\nWHERE x = \"a\"; \
+         BEGIN SELECT 1; SELECT 2; END"
+    );
+}
+
 #[test]
 fn every_statement_formats_on_its_own_too() {
     for (corpus, dialect) in [
@@ -262,6 +303,7 @@ fn every_statement_formats_on_its_own_too() {
         (DUCKDB_CORPUS, Dialect::DuckDb),
         (CLICKHOUSE_CORPUS, Dialect::ClickHouse),
         (TRINO_CORPUS, Dialect::Trino),
+        (BIGQUERY_CORPUS, Dialect::BigQuery),
     ] {
         for range in split_statements(corpus, dialect) {
             let statement = &corpus[range];

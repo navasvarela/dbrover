@@ -643,12 +643,13 @@ fn rename(object: &str, old: &ObjectName, new_name: &str, dialect: Dialect) -> S
     let old_sql = old.to_sql(dialect);
     match dialect {
         // CQL can't rename a table, and Trino's renames are its connectors'; `ddl_statements`
-        // refuses both dialects' DDL before this.
+        // refuses their DDL, and BigQuery's, before this.
         Dialect::Postgres
         | Dialect::Sqlite
         | Dialect::DuckDb
         | Dialect::Cassandra
-        | Dialect::Trino => format!(
+        | Dialect::Trino
+        | Dialect::BigQuery => format!(
             "ALTER {object} {old_sql} RENAME TO {}",
             quote_name(dialect, new_name)
         ),

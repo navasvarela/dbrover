@@ -17,7 +17,7 @@ pub use capabilities::{
 use dbrover_core::{Quoting, ServerInfo};
 use dbrover_plan::PlanFormat;
 use sqlparser::dialect::{
-    ClickHouseDialect, DuckDbDialect, GenericDialect, MsSqlDialect, MySqlDialect,
+    BigQueryDialect, ClickHouseDialect, DuckDbDialect, GenericDialect, MsSqlDialect, MySqlDialect,
     PostgreSqlDialect, SQLiteDialect,
 };
 
@@ -45,6 +45,10 @@ pub enum Dialect {
     /// Trino's SQL, which Starburst and Presto speak too, and Amazon Athena, whose engine is
     /// Trino's (`docs/cloud-data.md`, C3). Athena's DDL is Hive's, with backquoted names.
     Trino,
+    /// GoogleSQL, BigQuery's SQL (`docs/cloud-data.md`, C4): names in backquotes that may hold
+    /// a whole `project.dataset.table` path, strings in either quote, and a procedural
+    /// language of `BEGIN … END`, `IF`, loops and variables.
+    BigQuery,
 }
 
 /// The lexical rules that differ between dialects. Strings in `'…'`, `--` line comments and
@@ -81,6 +85,14 @@ pub(crate) struct LexicalRules {
     /// Transact-SQL's names that start with `@` (variables), `@@` (system functions), `#` or
     /// `##` (temporary tables), and may hold `@`, `#` and `$` after their first character.
     pub sigil_identifiers: bool,
+    /// Whether a backslash escapes the next character in a quoted identifier too, as in
+    /// GoogleSQL, where `` `a\`b` `` names `` a`b ``.
+    pub backslash_escapes_in_identifiers: bool,
+    /// `'''…'''` and `"""…"""` strings, which may hold quotes and newlines.
+    pub triple_quoted_strings: bool,
+    /// GoogleSQL's prefixes before a string's quote: `r` (raw), `b` (bytes), and both, in
+    /// either order and case.
+    pub string_prefixes: bool,
 }
 
 /// How a script divides into the statements DbRover sends one at a time, beyond splitting at
@@ -101,6 +113,10 @@ pub(crate) struct ScriptRules {
     /// don't split. Its only block: CQL has no `BEGIN … END` or `CASE … END`, and `end` may name
     /// a column.
     pub batches: bool,
+    /// GoogleSQL's procedural language, whose blocks (`BEGIN … END`, `IF … END IF`, `LOOP`,
+    /// `WHILE`, `REPEAT`, `FOR`, and `CASE … END CASE`) open where a statement starts, at the
+    /// top level or inside another block, and keep their semicolons.
+    pub procedural_blocks: bool,
 }
 
 /// The statements that mark a point inside an open transaction, so that a group of changes can
@@ -166,10 +182,19 @@ pub(crate) enum ParserGap {
     WithExpressionAlias,
     /// Trino's `VALUES 1, 2, 3`: rows of one value each, written without their parentheses.
     BareValues,
+    /// A word and a dot before a function's name, `SAFE.SUBSTR(s, 1, 2)`: GoogleSQL's `SAFE.`
+    /// prefix, which makes a function return `NULL` rather than fail.
+    FunctionPrefix(&'static str),
+    /// A table-valued function's argument that names an object by its kind, `TABLE t` or
+    /// `MODEL m`, right after the `(` or a `,`.
+    ObjectArgument(&'static str),
+    /// GoogleSQL's `FULL`, `LEFT` (each optionally `OUTER`) or `INNER` before a `UNION`,
+    /// `INTERSECT` or `EXCEPT`, which says which columns a set operation by name keeps.
+    SetOperationMode,
 }
 
 impl Dialect {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Postgres,
         Self::Sqlite,
         Self::Mysql,
@@ -178,6 +203,7 @@ impl Dialect {
         Self::ClickHouse,
         Self::Cassandra,
         Self::Trino,
+        Self::BigQuery,
     ];
 
     /// The dialect's name in messages.
@@ -191,6 +217,7 @@ impl Dialect {
             Self::ClickHouse => "ClickHouse",
             Self::Cassandra => "CQL",
             Self::Trino => "Trino",
+            Self::BigQuery => "BigQuery",
         }
     }
 
@@ -212,6 +239,9 @@ impl Dialect {
                 bracket_identifiers: false,
                 national_strings: true,
                 sigil_identifiers: false,
+                backslash_escapes_in_identifiers: false,
+                triple_quoted_strings: false,
+                string_prefixes: false,
             },
             Self::Sqlite => LexicalRules {
                 escape_strings: false,
@@ -227,6 +257,9 @@ impl Dialect {
                 bracket_identifiers: true,
                 national_strings: false,
                 sigil_identifiers: false,
+                backslash_escapes_in_identifiers: false,
+                triple_quoted_strings: false,
+                string_prefixes: false,
             },
             Self::Mysql => LexicalRules {
                 escape_strings: false,
@@ -242,6 +275,9 @@ impl Dialect {
                 bracket_identifiers: false,
                 national_strings: true,
                 sigil_identifiers: false,
+                backslash_escapes_in_identifiers: false,
+                triple_quoted_strings: false,
+                string_prefixes: false,
             },
             // `"…"` is an identifier while `QUOTED_IDENTIFIER` is on, as every client library
             // sets it and the driver does on connecting.
@@ -261,6 +297,9 @@ impl Dialect {
                 bracket_identifiers: false,
                 national_strings: false,
                 sigil_identifiers: false,
+                backslash_escapes_in_identifiers: false,
+                triple_quoted_strings: false,
+                string_prefixes: false,
             },
             Self::SqlServer => LexicalRules {
                 escape_strings: false,
@@ -276,6 +315,9 @@ impl Dialect {
                 bracket_identifiers: true,
                 national_strings: true,
                 sigil_identifiers: true,
+                backslash_escapes_in_identifiers: false,
+                triple_quoted_strings: false,
+                string_prefixes: false,
             },
             // Checked against ScyllaDB 2026.3 and Cassandra 5.0: `//` comments, `$$` strings
             // without a tag, `''` for a quote and no backslash escapes, and block comments
@@ -294,6 +336,9 @@ impl Dialect {
                 bracket_identifiers: false,
                 national_strings: false,
                 sigil_identifiers: false,
+                backslash_escapes_in_identifiers: false,
+                triple_quoted_strings: false,
+                string_prefixes: false,
             },
             // Trino's grammar: `''` for a quote and no backslash escapes, block comments that
             // end at the first `*/`, and no `$` in unquoted names. Its lexer reads a
@@ -313,6 +358,34 @@ impl Dialect {
                 bracket_identifiers: false,
                 national_strings: false,
                 sigil_identifiers: false,
+                backslash_escapes_in_identifiers: false,
+                triple_quoted_strings: false,
+                string_prefixes: false,
+            },
+            // GoogleSQL's lexical structure (BigQuery's documentation, "Lexical structure and
+            // syntax", read on 2026-11-08): `"…"` is a string like `'…'`, both with backslash
+            // escapes, which quoted names take too; triple-quoted strings; `r` and `b`
+            // prefixes; `#` and `--` comments, and block comments that don't nest. A doubled
+            // quote is no escape there (`'a''b'` is refused, for want of a space between two
+            // strings), but it is read as one, as elsewhere, so that what `Quoting` writes
+            // reads back as one token.
+            Self::BigQuery => LexicalRules {
+                escape_strings: false,
+                backslash_escapes: true,
+                double_quoted_strings: true,
+                dollar_quoting: false,
+                dollar_in_identifiers: false,
+                nested_block_comments: false,
+                hash_comments: true,
+                slash_comments: false,
+                dash_comments_need_space: false,
+                backtick_identifiers: true,
+                bracket_identifiers: false,
+                national_strings: false,
+                sigil_identifiers: false,
+                backslash_escapes_in_identifiers: true,
+                triple_quoted_strings: true,
+                string_prefixes: true,
             },
         }
     }
@@ -328,6 +401,7 @@ impl Dialect {
                     go_batches: false,
                     blocks_anywhere: false,
                     batches: false,
+                    procedural_blocks: false,
                 }
             }
             Self::Mysql => ScriptRules {
@@ -335,18 +409,28 @@ impl Dialect {
                 go_batches: false,
                 blocks_anywhere: false,
                 batches: false,
+                procedural_blocks: false,
             },
             Self::SqlServer => ScriptRules {
                 delimiter_command: false,
                 go_batches: true,
                 blocks_anywhere: true,
                 batches: false,
+                procedural_blocks: false,
             },
             Self::Cassandra => ScriptRules {
                 delimiter_command: false,
                 go_batches: false,
                 blocks_anywhere: false,
                 batches: true,
+                procedural_blocks: false,
+            },
+            Self::BigQuery => ScriptRules {
+                delimiter_command: false,
+                go_batches: false,
+                blocks_anywhere: false,
+                batches: false,
+                procedural_blocks: true,
             },
         }
     }
@@ -364,6 +448,7 @@ impl Dialect {
             // `sqlparser` has no Trino dialect; its generic one reads Trino's queries and,
             // with `CREATE EXTERNAL TABLE`, Athena's DDL, and the gaps below cover the rest.
             Self::Trino => &GenericDialect {},
+            Self::BigQuery => &BigQueryDialect {},
             Self::Cassandra => return None,
         })
     }
@@ -423,6 +508,7 @@ impl Dialect {
             ],
             Self::Cassandra => &[],
             Self::Trino => TRINO_PARSER_GAPS,
+            Self::BigQuery => BIGQUERY_PARSER_GAPS,
         }
     }
 
@@ -435,7 +521,8 @@ impl Dialect {
             | Self::DuckDb
             | Self::ClickHouse
             | Self::Cassandra
-            | Self::Trino => &["insert"],
+            | Self::Trino
+            | Self::BigQuery => &["insert"],
             Self::Sqlite | Self::Mysql => &["insert", "replace"],
         }
     }
@@ -451,7 +538,8 @@ impl Dialect {
             | Self::DuckDb
             | Self::ClickHouse
             | Self::Cassandra
-            | Self::Trino => &[],
+            | Self::Trino
+            | Self::BigQuery => &[],
             Self::Mysql => &[
                 "alter", "create", "drop", "grant", "rename", "revoke", "truncate",
             ],
@@ -471,14 +559,15 @@ impl Dialect {
             Self::Sqlite => "EXPLAIN QUERY PLAN ",
             Self::Mysql if server.is_some_and(has_tree_explain) => "EXPLAIN FORMAT=TREE ",
             Self::Mysql => "EXPLAIN ",
-            Self::SqlServer | Self::Cassandra => "",
+            Self::SqlServer | Self::Cassandra | Self::BigQuery => "",
         }
     }
 
     /// Whether the database can describe how it would run a statement. CQL has no `EXPLAIN`:
-    /// a query's partitions are its plan.
+    /// a query's partitions are its plan. Nor has BigQuery: a job's plan is in its statistics,
+    /// once it has run.
     pub fn explains(self) -> bool {
-        self != Self::Cassandra
+        !matches!(self, Self::Cassandra | Self::BigQuery)
     }
 
     /// How to ask the database for a plan DbRover draws as a tree, for a console connected to
@@ -510,9 +599,15 @@ impl Dialect {
                 Some(MysqlFlavour::QueryBlocks) | None => return None,
             },
             (Self::SqlServer, _) => "",
-            (Self::Sqlite | Self::DuckDb | Self::ClickHouse | Self::Cassandra | Self::Trino, _) => {
-                return None;
-            }
+            (
+                Self::Sqlite
+                | Self::DuckDb
+                | Self::ClickHouse
+                | Self::Cassandra
+                | Self::Trino
+                | Self::BigQuery,
+                _,
+            ) => return None,
         };
         let format = match self {
             Self::Mysql => PlanFormat::MysqlJson,
@@ -526,16 +621,23 @@ impl Dialect {
     /// experimental and off unless the server is configured for them, so a ClickHouse console
     /// has no manual commit mode. CQL has none: a batch applies its statements together, and a
     /// lightweight transaction is one statement's condition. Athena has none, and Trino's
-    /// depend on each catalog's connector, most of which write outside them.
+    /// depend on each catalog's connector, most of which write outside them. BigQuery's last
+    /// only as long as one script or session, and each statement DbRover sends is a job of
+    /// its own.
     pub fn has_transactions(self) -> bool {
-        !matches!(self, Self::ClickHouse | Self::Cassandra | Self::Trino)
+        !matches!(
+            self,
+            Self::ClickHouse | Self::Cassandra | Self::Trino | Self::BigQuery
+        )
     }
 
     /// Opens a transaction. SQL Server needs the keyword: a bare `BEGIN` opens a block there.
     pub fn begin_transaction(self) -> &'static str {
         match self {
             Self::Postgres | Self::Sqlite | Self::Mysql | Self::DuckDb => "BEGIN",
-            Self::SqlServer | Self::ClickHouse | Self::Cassandra => "BEGIN TRANSACTION",
+            Self::SqlServer | Self::ClickHouse | Self::Cassandra | Self::BigQuery => {
+                "BEGIN TRANSACTION"
+            }
             Self::Trino => "START TRANSACTION",
         }
     }
@@ -558,6 +660,7 @@ impl Dialect {
             Self::ClickHouse => {
                 format!("positionUTF8(lowerUTF8(toString({value})), {needle}) > 0")
             }
+            Self::BigQuery => format!("strpos(lower(CAST({value} AS STRING)), {needle}) > 0"),
             // Never asked for: CQL can't select from a query, so its rows are never arranged
             // in the database (`arrange::can_arrange`). `LIKE` is the nearest it has, and only
             // on a column with a SASI or vector index.
@@ -579,6 +682,10 @@ impl Dialect {
                 "Athena and Trino have no transactions an import could run in, so an import that \
                  failed halfway couldn't be undone",
             ),
+            Self::BigQuery => Some(
+                "BigQuery has no transactions an import could run in outside a script, so an \
+                 import that failed halfway couldn't be undone",
+            ),
             Self::Postgres | Self::Sqlite | Self::Mysql | Self::SqlServer | Self::DuckDb => None,
         }
     }
@@ -592,9 +699,9 @@ impl Dialect {
             Self::Postgres | Self::Sqlite | Self::SqlServer | Self::DuckDb => "DEFAULT VALUES",
             // CQL has neither, and its grid inserts name every key column (N4·5).
             Self::Mysql | Self::ClickHouse | Self::Cassandra => "() VALUES ()",
-            // Trino has neither; never asked for, since the grid doesn't insert there (see
-            // `read_only_results`).
-            Self::Trino => "DEFAULT VALUES",
+            // Trino and BigQuery have neither; never asked for, since the grid doesn't insert
+            // there (see `read_only_results`).
+            Self::Trino | Self::BigQuery => "DEFAULT VALUES",
         }
     }
 
@@ -609,6 +716,10 @@ impl Dialect {
             ),
             Self::Trino => Some(
                 "Athena and Trino tables have no key that tells their rows apart, so rows can't be edited here",
+            ),
+            // A BigQuery primary key is declared `NOT ENFORCED`, so its values may repeat.
+            Self::BigQuery => Some(
+                "BigQuery tables have no enforced key that tells their rows apart, so rows can't be edited here",
             ),
             Self::Postgres
             | Self::Sqlite
@@ -631,7 +742,9 @@ impl Dialect {
     /// transaction ends. DuckDB has no savepoints at all, so `None`.
     pub fn edits_savepoint(self) -> Option<Savepoint> {
         Some(match self {
-            Self::DuckDb | Self::ClickHouse | Self::Cassandra | Self::Trino => return None,
+            Self::DuckDb | Self::ClickHouse | Self::Cassandra | Self::Trino | Self::BigQuery => {
+                return None;
+            }
             Self::Postgres | Self::Sqlite | Self::Mysql => Savepoint {
                 open: "SAVEPOINT dbrover_edits",
                 keep: &["RELEASE SAVEPOINT dbrover_edits"],
@@ -690,7 +803,8 @@ impl Dialect {
                 | Self::DuckDb
                 | Self::ClickHouse
                 | Self::Cassandra
-                | Self::Trino,
+                | Self::Trino
+                | Self::BigQuery,
                 _,
             ) => None,
         }
@@ -710,6 +824,7 @@ impl Dialect {
             Self::ClickHouse => functions::CLICKHOUSE,
             Self::Cassandra => functions::CQL,
             Self::Trino => functions::TRINO,
+            Self::BigQuery => functions::BIGQUERY,
         }
     }
 
@@ -729,7 +844,11 @@ impl Dialect {
             Self::Postgres | Self::Sqlite | Self::DuckDb | Self::Cassandra | Self::Trino => {
                 Quoting::STANDARD
             }
-            Self::Mysql | Self::ClickHouse => Quoting {
+            // TODO(C4c): GoogleSQL escapes a quote with a backslash only, and refuses the doubled
+            // quote `Quoting` writes (`'it''s'`, `` `a``b` ``), so a literal or a name holding
+            // its own quote fails there. `Quoting` needs a backslash style before the BigQuery
+            // driver writes such literals; until then the statement is refused, not misread.
+            Self::Mysql | Self::ClickHouse | Self::BigQuery => Quoting {
                 identifier_open: '`',
                 identifier_close: '`',
                 backslash_escapes: true,
@@ -761,7 +880,7 @@ impl Dialect {
             Self::DuckDb => ParameterBinding::Numbered("$"),
             Self::SqlServer => ParameterBinding::Numbered("@P"),
             Self::Mysql => ParameterBinding::Positional,
-            Self::Postgres | Self::ClickHouse | Self::Cassandra | Self::Trino => {
+            Self::Postgres | Self::ClickHouse | Self::Cassandra | Self::Trino | Self::BigQuery => {
                 ParameterBinding::Literal
             }
         }
@@ -771,9 +890,9 @@ impl Dialect {
     /// PostgreSQL's `pg_*` tables (always on the search path) and its catalog schemas,
     /// SQLite's `sqlite_*` tables, `pragma_*` functions and `temp` schema, MySQL's own
     /// databases, SQL Server's and DuckDB's catalog schemas, ClickHouse's `system` database,
-    /// the keyspaces Cassandra and ScyllaDB keep for themselves, and each Trino catalog's
-    /// `information_schema` (Trino's own `system` catalog is hidden by its driver). Names are compared
-    /// case-insensitively.
+    /// the keyspaces Cassandra and ScyllaDB keep for themselves, each Trino catalog's
+    /// `information_schema` (Trino's own `system` catalog is hidden by its driver), and
+    /// BigQuery's `INFORMATION_SCHEMA` views. Names are compared case-insensitively.
     pub fn is_system_name(self, schema: Option<&str>, table: &str) -> bool {
         let (table_prefixes, schemas): (&[&str], &[&str]) = match self {
             Self::Postgres => (&["pg_"], &["pg_catalog", "information_schema", "pg_toast"]),
@@ -786,7 +905,7 @@ impl Dialect {
             Self::DuckDb => (&[], &["information_schema", "pg_catalog"]),
             Self::ClickHouse => (&[], &["system", "information_schema"]),
             Self::Cassandra => (&[], CQL_SYSTEM_KEYSPACES),
-            Self::Trino => (&[], &["information_schema"]),
+            Self::Trino | Self::BigQuery => (&[], &["information_schema"]),
         };
         let table = table.to_ascii_lowercase();
         table_prefixes
@@ -808,6 +927,30 @@ const TRINO_PARSER_GAPS: &[ParserGap] = &[
     // `TIMESTAMP`.
     ParserGap::Words(&["for", "version", "as", "of"]),
     ParserGap::Words(&["for", "timestamp", "as", "of"]),
+];
+
+/// What `sqlparser` 0.63's BigQuery dialect rejects in valid GoogleSQL statements, from the
+/// corpus in `check::tests` (the statements BigQuery's documentation gives for each
+/// construct; nothing here was run against BigQuery itself).
+const BIGQUERY_PARSER_GAPS: &[ParserGap] = &[
+    // `SAFE.` before the functions `sqlparser` reads as syntax of their own (`SUBSTR`, `CAST`,
+    // `TRIM`, `EXTRACT`, `CEIL`, …); before the others it reads fine, but which are which
+    // is the parser's detail, so every `SAFE.` call goes unchecked.
+    ParserGap::FunctionPrefix("safe"),
+    // `ML.PREDICT(MODEL m, TABLE t)`, `APPENDS(TABLE t, …)`, `VECTOR_SEARCH(TABLE t, …)`.
+    ParserGap::ObjectArgument("table"),
+    ParserGap::ObjectArgument("model"),
+    // Set operations by name: `FULL UNION ALL BY NAME`, `UNION ALL BY NAME ON (a)`, and
+    // `UNION ALL [STRICT] CORRESPONDING [BY (a)]`; a plain `UNION ALL BY NAME` reads fine.
+    ParserGap::SetOperationMode,
+    ParserGap::Words(&["by", "name", "on"]),
+    ParserGap::Words(&["corresponding"]),
+    ParserGap::Words(&["match_recognize"]),
+    // Bit shifts, which `sqlparser` reads as operators it has no use for here. A nested
+    // type's `>>` in a typed literal, `ARRAY<ARRAY<INT64>>[]`, is the same two characters,
+    // and goes unchecked too.
+    ParserGap::Operator("<<"),
+    ParserGap::Operator(">>"),
 ];
 
 /// The keyspaces Cassandra 5 and ScyllaDB 2026 create for themselves.
@@ -894,6 +1037,13 @@ mod tests {
             (Dialect::ClickHouse, Some("default"), "events", false),
             (Dialect::Trino, Some("INFORMATION_SCHEMA"), "tables", true),
             (Dialect::Trino, Some("tiny"), "orders", false),
+            (
+                Dialect::BigQuery,
+                Some("INFORMATION_SCHEMA"),
+                "TABLES",
+                true,
+            ),
+            (Dialect::BigQuery, Some("sales"), "orders", false),
         ];
         for (dialect, schema, table, expected) in cases {
             assert_eq!(
@@ -956,7 +1106,12 @@ mod tests {
                 .map(|request| request.format),
             Some(PlanFormat::MysqlJson)
         );
-        for dialect in [Dialect::Sqlite, Dialect::DuckDb, Dialect::ClickHouse] {
+        for dialect in [
+            Dialect::Sqlite,
+            Dialect::DuckDb,
+            Dialect::ClickHouse,
+            Dialect::BigQuery,
+        ] {
             for depth in [ExplainDepth::Estimated, ExplainDepth::Analysed] {
                 assert_eq!(dialect.plan_request(depth, None), None, "{dialect:?}");
             }

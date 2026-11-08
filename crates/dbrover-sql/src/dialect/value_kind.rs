@@ -18,6 +18,7 @@ impl Dialect {
             Self::ClickHouse => named_kind(unwrap_clickhouse(&name), self),
             Self::Cassandra => cql_kind(&name),
             Self::Trino => trino_kind(&name),
+            Self::BigQuery => bigquery_kind(&name),
             Self::Postgres | Self::Mysql | Self::SqlServer | Self::DuckDb => {
                 named_kind(&name, self)
             }
@@ -63,6 +64,25 @@ fn trino_kind(name: &str) -> ValueKind {
         return ValueKind::TimestampWithZone;
     }
     named_kind(name, Dialect::Trino)
+}
+
+/// GoogleSQL's types, their aliases, and the legacy names BigQuery's REST API reports in a
+/// table's schema (`INTEGER`, `FLOAT`, `BOOLEAN`, `RECORD`). A `TIMESTAMP` is an instant, which
+/// the driver writes in UTC; a `DATETIME` is a date and a time of day in no zone. Parameters
+/// (`NUMERIC(10, 2)`) and element types (`ARRAY<INT64>`) don't change the kind.
+fn bigquery_kind(name: &str) -> ValueKind {
+    match name.split(['(', '<']).next().unwrap_or(name).trim() {
+        "int64" | "integer" | "int" | "smallint" | "bigint" | "tinyint" | "byteint" => {
+            ValueKind::Integer
+        }
+        "numeric" | "bignumeric" | "decimal" | "bigdecimal" => ValueKind::Decimal,
+        "float64" | "float" => ValueKind::Float,
+        "bool" | "boolean" => ValueKind::Boolean,
+        "date" => ValueKind::Date,
+        "datetime" => ValueKind::Timestamp,
+        "timestamp" => ValueKind::TimestampWithZone,
+        _ => ValueKind::Text,
+    }
 }
 
 /// CQL's types. A `timestamp` is an instant, which the driver writes in UTC with its offset;
@@ -246,6 +266,33 @@ mod tests {
                     ("string", Text),
                     ("array(integer)", Text),
                     ("row(a integer, b varchar)", Text),
+                ],
+            ),
+            (
+                Dialect::BigQuery,
+                &[
+                    ("INT64", Integer),
+                    ("INTEGER", Integer),
+                    ("BYTEINT", Integer),
+                    ("NUMERIC(10, 2)", Decimal),
+                    ("BIGNUMERIC", Decimal),
+                    ("FLOAT64", Float),
+                    ("FLOAT", Float),
+                    ("BOOL", Boolean),
+                    ("BOOLEAN", Boolean),
+                    ("DATE", Date),
+                    ("DATETIME", Timestamp),
+                    ("TIMESTAMP", TimestampWithZone),
+                    ("TIME", Text),
+                    ("STRING(10)", Text),
+                    ("BYTES", Text),
+                    ("GEOGRAPHY", Text),
+                    ("JSON", Text),
+                    ("INTERVAL", Text),
+                    ("ARRAY<INT64>", Text),
+                    ("STRUCT<a INT64, b STRING>", Text),
+                    ("RECORD", Text),
+                    ("RANGE<DATE>", Text),
                 ],
             ),
         ];
