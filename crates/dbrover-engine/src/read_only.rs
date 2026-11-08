@@ -397,9 +397,8 @@ mod tests {
                 | DriverKind::Cassandra
                 | DriverKind::DynamoDb
                 | DriverKind::Athena
-                | DriverKind::Trino => guard == Guard::Login,
-                // Its logins come with its dialog (C4g).
-                DriverKind::BigQuery => guard == Guard::CheckOnly,
+                | DriverKind::Trino
+                | DriverKind::BigQuery => guard == Guard::Login,
             };
             assert!(expected, "{driver:?}: {guard:?}");
         }

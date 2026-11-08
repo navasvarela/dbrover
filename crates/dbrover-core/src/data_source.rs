@@ -225,7 +225,8 @@ pub enum ConnectionConfig {
 
 impl ConnectionConfig {
     /// The same configuration signing in as `user`; `None` for engines without a login. A
-    /// DynamoDB data source's login is an AWS profile, and an emulator's is unused.
+    /// DynamoDB or Athena data source's login is an AWS profile, and an emulator's is unused;
+    /// a BigQuery data source's is a credentials file.
     pub fn with_user(&self, user: &str) -> Option<Self> {
         let mut config = self.clone();
         if let Self::DynamoDb(dynamodb) = &mut config {
@@ -234,6 +235,12 @@ impl ConnectionConfig {
         }
         if let Self::Athena(athena) = &mut config {
             user.clone_into(&mut athena.profile);
+            return Some(config);
+        }
+        if let Self::BigQuery(bigquery) = &mut config {
+            bigquery.sign_in = GoogleCloudSignIn::CredentialsFile {
+                credentials_file: user.into(),
+            };
             return Some(config);
         }
         let server = config.server_mut()?;
@@ -515,10 +522,10 @@ impl ConnectionConfig {
 impl DriverKind {
     /// Whether a data source signs in as someone whose grants the database enforces: a user
     /// with a password, or, on DynamoDB and Athena, an AWS profile whose IAM policy AWS
-    /// enforces. Such an engine without a read-only mode is served to MCP clients through an
-    /// MCP login.
+    /// enforces, and on BigQuery a credentials file whose roles Google enforces. Such an engine
+    /// without a read-only mode is served to MCP clients through an MCP login.
     pub fn has_logins(self) -> bool {
-        self.uses_password() || matches!(self, Self::DynamoDb | Self::Athena)
+        self.uses_password() || matches!(self, Self::DynamoDb | Self::Athena | Self::BigQuery)
     }
 
     /// Whether connections authenticate with a password, so the keychain is worth asking.
@@ -1721,7 +1728,22 @@ mod tests {
             assert_eq!(config.driver(), DriverKind::BigQuery);
             assert!(!config.uses_password());
             assert!(config.cost_guard().is_some());
+            assert!(config.driver().has_logins());
         }
+        let ConnectionConfig::BigQuery(as_reader) = ConnectionConfig::BigQuery(BigQueryConfig {
+            project: "analytics".to_owned(),
+            ..BigQueryConfig::default()
+        })
+        .with_user("/keys/reader.json")
+        .unwrap() else {
+            panic!("not BigQuery");
+        };
+        assert_eq!(
+            as_reader.sign_in,
+            GoogleCloudSignIn::CredentialsFile {
+                credentials_file: "/keys/reader.json".into()
+            }
+        );
     }
 
     #[test]
