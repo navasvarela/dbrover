@@ -186,6 +186,7 @@ async fn serves_a_project_over_stdio_with_no_window() {
     assert_eq!(
         names,
         [
+            "chart",
             "describe_table",
             "explain",
             "get_definition",

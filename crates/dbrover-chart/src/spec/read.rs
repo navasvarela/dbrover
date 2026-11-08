@@ -1,6 +1,6 @@
 //! Reading a spec into a [`ChartSpec`], with every problem it has: from a block's text, whose
-//! problems are placed at their bytes, or from a report's `[[chart]]` table, whose problems are
-//! placed at their keys. The keys are read by one [`Reader`], whichever TOML library read them.
+//! problems are placed at their bytes, or from a report's `[[chart]]` table or an MCP client's
+//! JSON object, whose problems are placed at their keys. The keys are read by one [`Reader`], whichever TOML library read them.
 
 use std::ops::Range;
 
@@ -70,6 +70,38 @@ impl ChartSpec {
                 continue;
             };
             reader.key(&mut spec, key, &TomlValue { value, key: name });
+        }
+        if reader.problems.is_empty() {
+            Ok(spec)
+        } else {
+            Err(reader
+                .problems
+                .into_iter()
+                .map(|(key, detail)| KeyProblem { key, detail })
+                .collect())
+        }
+    }
+}
+
+impl ChartSpec {
+    /// Reads a spec from a JSON object of its keys, as the MCP server's `chart` tool takes it
+    /// (CH4): the same keys, with the same problems, as a block's.
+    ///
+    /// # Errors
+    ///
+    /// Every problem the keys have, by key: keys that don't exist, and values of the wrong
+    /// kind.
+    pub fn from_json(
+        object: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<Self, Vec<KeyProblem>> {
+        let mut reader = Reader::default();
+        let mut spec = Self::default();
+        for (name, value) in object {
+            let Some(key) = Key::named(name) else {
+                reader.problem(name.clone(), unknown_key(name, &[]));
+                continue;
+            };
+            reader.key(&mut spec, key, &JsonValue { value, key: name });
         }
         if reader.problems.is_empty() {
             Ok(spec)
@@ -242,6 +274,52 @@ impl KeyValue for TomlValue<'_> {
     fn written(&self) -> String {
         match self.value {
             toml::Value::Table(_) => "a table".to_owned(),
+            value => value.to_string(),
+        }
+    }
+}
+
+/// A value of an MCP client's JSON, placed at its key.
+struct JsonValue<'a> {
+    value: &'a serde_json::Value,
+    key: &'a str,
+}
+
+impl KeyValue for JsonValue<'_> {
+    type Place = String;
+
+    fn place(&self) -> String {
+        self.key.to_owned()
+    }
+
+    fn text(&self) -> Option<&str> {
+        self.value.as_str()
+    }
+
+    fn flag(&self) -> Option<bool> {
+        self.value.as_bool()
+    }
+
+    fn integer(&self) -> Option<i64> {
+        self.value.as_i64()
+    }
+
+    fn items(&self) -> Option<Vec<Self>> {
+        let items = self.value.as_array()?;
+        Some(
+            items
+                .iter()
+                .map(|value| JsonValue {
+                    value,
+                    key: self.key,
+                })
+                .collect(),
+        )
+    }
+
+    fn written(&self) -> String {
+        match self.value {
+            serde_json::Value::Object(_) => "an object".to_owned(),
             value => value.to_string(),
         }
     }
@@ -710,6 +788,39 @@ limit = 10
         for (keys, expected) in cases {
             assert_eq!(from_table(keys), Err(vec![expected]), "{keys}");
         }
+    }
+
+    #[test]
+    fn reads_an_mcp_clients_json_with_the_same_problems() {
+        let read = |value: serde_json::Value| {
+            let serde_json::Value::Object(object) = value else {
+                panic!("an object");
+            };
+            ChartSpec::from_json(&object)
+        };
+        assert_eq!(
+            read(serde_json::json!({ "kind": "bars", "y": ["net"], "stack": false, "limit": 5 })),
+            Ok(ChartSpec {
+                kind: Some(ChartKind::Bars),
+                y: vec!["net".to_owned()],
+                limit: Some(5),
+                ..ChartSpec::default()
+            })
+        );
+        let problems =
+            read(serde_json::json!({ "kind": "area", "ys": "net", "x": null })).unwrap_err();
+        let details: Vec<(&str, &str)> = problems
+            .iter()
+            .map(|problem| (problem.key.as_str(), problem.detail.as_str()))
+            .collect();
+        assert_eq!(
+            details,
+            [
+                ("kind", "`kind` is bars, lines or scatter, not \"area\""),
+                ("ys", "no key `ys`; did you mean `y`?"),
+                ("x", "`x` is a column's name, in quotes, not null"),
+            ]
+        );
     }
 
     #[test]

@@ -3,10 +3,28 @@
 
 use std::fmt::{self, Write as _};
 
-use dbrover_picture::{BASELINE_DROP, Escaped, Points, Rgb, SANS};
+use dbrover_picture::{BASELINE_DROP, Escaped, FontMeasure, MeasureError, Points, Rgb, SANS};
 
-use crate::palette::{BAR_ROUNDING, FILE_COLOURS, LINE_WIDTH, ROUNDED_BAR_WIDTH};
-use crate::{Anchor, Drawing, Mark, Point, Rect};
+use crate::palette::{BAR_ROUNDING, FILE_COLOURS, FILE_TEXT_SIZE, LINE_WIDTH, ROUNDED_BAR_WIDTH};
+use crate::{Anchor, ChartData, Drawing, LayoutOptions, Mark, Point, Rect, Size, layout_file};
+
+/// `data` drawn as a file draws it, with no window: laid out in `size` with the bundled font's
+/// measure at [`FILE_TEXT_SIZE`], `note` in its last line, and written as SVG. What a report's
+/// chart and the MCP server's `chart` tool write.
+///
+/// # Errors
+///
+/// [`MeasureError`] if the bundled font doesn't read, which only a broken build does.
+pub fn file_svg(
+    data: &ChartData,
+    options: &LayoutOptions,
+    size: Size,
+    note: &str,
+) -> Result<String, MeasureError> {
+    let measure = FontMeasure::inter(FILE_TEXT_SIZE)?;
+    let drawing = layout_file(data, options, size, &measure, note);
+    Ok(svg(&drawing, FILE_TEXT_SIZE))
+}
 
 /// `drawing` as an SVG document, its text at `text_size` points, the size it was measured at.
 /// Every number is written to a hundredth of a point ([`Points`]), so the same drawing is the

@@ -9,12 +9,12 @@
 use std::time::{Duration, Instant};
 
 use dbrover_chart::{
-    ChartData, ChartKind, ChartSpec, Choice, Column, ColumnProblem, FILE_TEXT_SIZE, LayoutOptions,
-    Resolved, Role, STARTING_SERIES, Size, arrange, layout_file,
+    ChartData, ChartKind, ChartSpec, Choice, Column, ColumnProblem, LayoutOptions, Resolved, Role,
+    STARTING_SERIES, Size, arrange, file_svg,
 };
 use dbrover_core::Row;
 use dbrover_export::{CompletedFile, ExportColumn};
-use dbrover_picture::{FontMeasure, Fonts};
+use dbrover_picture::Fonts;
 
 use crate::events::{CHART_ROWS_KEY, CHART_SERIES_KEY};
 use crate::run::{Completed, RunFolders, describe};
@@ -216,14 +216,12 @@ impl<'a> ChartRun<'a> {
 
     fn picture(&self, drawn: &Drawn) -> Result<Vec<u8>, RunFailure> {
         let fail = |message: String| RunFailure::new(self.step(), message);
-        let measure =
-            FontMeasure::inter(FILE_TEXT_SIZE).map_err(|error| fail(error.to_string()))?;
         let size = Size {
             width: self.chart.width as f32,
             height: self.chart.height as f32,
         };
-        let drawing = layout_file(&drawn.data, &drawn.options, size, &measure, &drawn.note);
-        let svg = dbrover_chart::svg(&drawing, FILE_TEXT_SIZE);
+        let svg = file_svg(&drawn.data, &drawn.options, size, &drawn.note)
+            .map_err(|error| fail(error.to_string()))?;
         match self.chart.picture {
             ChartPicture::Svg => Ok(svg.into_bytes()),
             ChartPicture::Png { scale } => {
