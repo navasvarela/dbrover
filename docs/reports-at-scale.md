@@ -121,7 +121,7 @@ a columnar format that reads into Arrow without text:
 | ClickHouse | `FORMAT ArrowStream` over its HTTP interface | The driver's existing HTTP path; needs `arrow-ipc`. |
 | Snowflake | Arrow result chunks from the SQL API | C5. |
 | Databricks SQL | `ARROW_STREAM` results, inline or as external links | C6. |
-| BigQuery | Arrow from the Storage Read API (gRPC) | C4, if gRPC is accepted (below). |
+| BigQuery | Arrow from the Storage Read API (gRPC), billed apart from the query | Not in C4, which reads `getQueryResults`' JSON as text ([C4's note](cloud-data.md#rows-and-columnar-batches-in-c4)); later, for large results, if gRPC is accepted (below). |
 | Trino and Athena | None in their APIs (text rows); Trino's spooled results and Athena's result files in S3 (CSV, or Parquet through `UNLOAD`) are files | C3 delivers text rows; the files are RS7's handoff, through C2's object storage. |
 | PostgreSQL, MySQL, SQL Server | None. PostgreSQL's `COPY (query) TO STDOUT` streams text faster than the simple protocol, inside the read-only transaction. | A later layer of this plan, if RS1 measures it worthwhile. |
 
@@ -138,6 +138,7 @@ C4 to C6 come after this plan's first milestones, so their drivers implement `ne
 the start rather than adding it later. C3 started first (2026-11-05) and doesn't need it:
 Athena's and Trino's APIs answer in text, so their cursors keep `next_page`, and `next_batch`'s
 default (`None`) leaves them unchanged ([C3's note](cloud-data.md#rows-and-columnar-batches)).
+C4 (2026-11-08) did the same for BigQuery: its REST results are JSON text.
 
 **Backpressure.** A source's reader and its loader are joined by a bounded queue of a few
 batches, so a fast network never piles up rows in the worker, and the time each side waits is
@@ -347,7 +348,7 @@ before any is added.
 | --- | --- | --- | --- |
 | **Apache Arrow** (`arrow-rs`) | The batch format between columnar engines and DuckDB. | `arrow` 58 is already built through `duckdb`; `arrow-ipc` adds a small pure-Rust crate and `flatbuffers`. | **Yes**, RS6. |
 | **Arrow Flight / Flight SQL** | Few of DbRover's engines serve it (Dremio, InfluxDB 3); the warehouses' fast paths are their own (Snowflake's Arrow chunks, Databricks's links, BigQuery's Storage API). | gRPC: `tonic`, `prost`, `h2` and their build-time code generation. | **No**, until an engine DbRover adds needs it. |
-| **BigQuery Storage Read API** | Arrow results in parallel streams, much faster than REST paging for large results. | gRPC, as above. | **Decide in C4**, against the bucket handoff, which needs nothing new. |
+| **BigQuery Storage Read API** | Arrow results in parallel streams, much faster than REST paging for large results. | gRPC, as above. | **Not in C4** (2026-11-08): billed apart from the query and needing gRPC, for results the console reads a page at a time. Decided again with RS6 and RS7, against the bucket handoff (`EXPORT DATA`), which needs nothing new. |
 | **DataFusion** | A second SQL engine overlapping DuckDB; its table providers would make pushdown principled. | Hundreds of crates; minutes of build and many megabytes of binary. | **No.** One combine dialect (DuckDB's) is a feature. |
 | **Polars** | A DataFrame library; its SQL is a subset, its lazy API not SQL. | Large, as DataFusion. | **No.** |
 | **ADBC** | Arrow-native drivers, but as native shared libraries loaded at run time. | Packaging per platform, and native plugins, which [Vision](vision.md) keeps out. | **No.** |
@@ -591,8 +592,7 @@ Runs table.
 - `dbrover-app`: the Profile, Explain, Compare, Resume and the live view; the command line's new
   subcommands and flags; the MCP tools in `dbrover-mcp`.
 
-No new crate is planned. `arrow-ipc` is the one new dependency (RS6), and gRPC only if C4
-chooses it.
+No new crate is planned. `arrow-ipc` is the one new dependency (RS6); C4 didn't choose gRPC.
 
 ## Milestones
 
@@ -769,7 +769,7 @@ Proposed defaults; each is confirmed when its milestone starts.
 
 - Should an MCP client run reports (RS8)? The read-only tools come first either way.
 - Is the BigQuery Storage Read API worth gRPC in the build, or does the bucket handoff cover
-  BigQuery's large results? Decided in C4.
+  BigQuery's large results? C4 left it out (it reads text pages); decided with RS6 and RS7.
 - Should the run profile be exportable to a standard trace format (Chrome's trace events, which
   `chrome://tracing` and Perfetto open), for people who already read traces? Cheap to add to
   `--profile` once the profile exists.

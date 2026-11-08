@@ -661,7 +661,39 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
     - Starburst Galaxy: a cluster with a user and password over HTTPS, a catalog of its own.
     - Starburst Enterprise and Presto (`prestodb/presto`), with **Protocol** set to Presto for
       the latter: connect, browse, run, cancel.
-- **C4 — BigQuery**, over its jobs API, with a dry run showing the bytes a query will scan.
+- **C4 — BigQuery** (started 2026-11-08, after C3): BigQuery over its REST jobs API with C0b's
+  Google sign-in, GoogleSQL, projects, datasets and tables in the explorer, a dry run before
+  every statement that shows the bytes it will scan, and `maximumBytesBilled` from C0's limit.
+  Planned in [Cloud and big data](cloud-data.md#c4--bigquery). Rows come as text through
+  today's cursors; BigQuery's Storage Read API, and so RS6, aren't needed first (see
+  [Rows and columnar batches in C4](cloud-data.md#rows-and-columnar-batches-in-c4)). In
+  layers, one PR each:
+  - **C4a — Plan:** C4's layers, decisions and risks, this entry, and RS6's.
+  - **C4b — The GoogleSQL dialect:** backquoted paths, `#` comments, BigQuery's strings,
+    functions and writing verbs, with a corpus of its statements.
+  - **C4c — BigQuery: settings and queries as jobs:** a data source with a sign-in, project,
+    dataset, location and limit, run through C0's `JobService` over BigQuery's REST API;
+    tested against exchanges replayed on this machine.
+  - **C4d — Projects, datasets and tables in the explorer:** each level a page at a time,
+    nested columns, partitioning and clustering, **Show definition**; the emulator in the
+    nightly job.
+  - **C4e — The dry run and the byte limit:** an estimate before every statement and under the
+    editor as it is typed, the limit asked about and sent as `maximumBytesBilled`, and what
+    each statement read.
+  - **C4f — Open data for free:** a table's rows read with `tabledata.list`, not a billed
+    query.
+  - **C4g — BigQuery in the data source dialog:** **BigQuery** under **Google Cloud**, its
+    logo, a 1 GB limit by default, and the MCP server's read-only mode.
+  - **C4h — Manual:** a page on BigQuery, and the demo note.
+
+  Nothing is tried against a real Google Cloud project while building C4: BigQuery is tested
+  against exchanges written from its REST reference and replayed on this machine (every pull
+  request) and against the community emulator (nightly), and the live checks are listed in
+  the demo note, with a test the user runs by hand.
+
+  **Exit:** BigQuery tested with replayed exchanges in CI and the emulator nightly, and tried
+  live by the user: a query over a public dataset shows its estimate as it is typed, asks
+  above the limit, and shows what it read.
 - **C5 — Snowflake**, over its SQL API.
 - **C6 — Databricks SQL**, over the Statement Execution API and Unity Catalog.
 
@@ -2289,7 +2321,9 @@ measurement.
   then C4 to C6), appended to DuckDB without text; ADR 0007. Before C5 and C6, whose services
   answer in Arrow. C3 started first (2026-11-05) and delivers rows as text: Athena's and
   Trino's APIs give no columnar answer, and their large results reach a report as files,
-  through RS7's handoff ([C3's note](cloud-data.md#rows-and-columnar-batches)).
+  through RS7's handoff ([C3's note](cloud-data.md#rows-and-columnar-batches)). C4 delivers
+  rows as text too; BigQuery's Storage Read API, billed apart and over gRPC, can later answer
+  `next_batch` for large results ([C4's note](cloud-data.md#rows-and-columnar-batches-in-c4)).
 - **RS7 — Lakes and warehouses in the combine:** C2's buckets attached with DuckDB's pruning,
   and large warehouse results handed over through a bucket the user names.
 - **RS8 — Reports over MCP:** read-only tools to list, explain and compare reports and their
