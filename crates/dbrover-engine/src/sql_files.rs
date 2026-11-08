@@ -61,6 +61,19 @@ pub(crate) async fn save(console: ConsoleKey, path: PathBuf, text: String) -> Ev
     }
 }
 
+/// Creates an empty file, answering with [`Event::SqlFileCreated`].
+pub(crate) async fn create(path: PathBuf) -> Event {
+    let task_path = path.clone();
+    let result = flatten(
+        tokio::task::spawn_blocking(move || dbrover_store::create_sql_file(&task_path)).await,
+    );
+    match &result {
+        Ok(()) => tracing::info!("created {}", path.display()),
+        Err(error) => tracing::warn!("could not create {}: {error}", path.display()),
+    }
+    Event::SqlFileCreated { path, result }
+}
+
 /// Answers with an [`Event::SqlFileChanged`] for each file whose modification time isn't the
 /// one given, with what it holds now, or `None` once it is gone. A file that can't be read is
 /// only logged: it is looked at again at the next check.

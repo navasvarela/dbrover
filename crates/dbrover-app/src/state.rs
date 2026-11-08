@@ -185,6 +185,7 @@ impl AppState {
             | Event::KeymapLoaded { .. }
             | Event::CustomFileLoaded { .. }
             | Event::QueryFolderRead { .. }
+            | Event::SqlFileCreated { .. }
             | Event::ReportsListed(_)
             | Event::ReportCreated(_)
             | Event::ReportRenamed { .. }

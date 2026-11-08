@@ -1,6 +1,7 @@
 //! The explorer's **Query folders** (VC2, `docs/version-control.md`): folders of `.sql` files,
 //! such as a repository's `queries/`, listed from `settings.toml` and read by the engine.
 
+mod new_query;
 mod section;
 
 use std::path::{Path, PathBuf};
@@ -8,6 +9,7 @@ use std::path::{Path, PathBuf};
 use dbrover_engine::{Command, Event, QueryFolderProblem};
 use dbrover_store::{QueryTree, expand_home, home_relative};
 
+pub use new_query::{CreatedQuery, NewQueryAction, NewQueryDialog};
 pub use section::{SectionState, section};
 
 /// Something asked of the **Query folders** section.
@@ -19,6 +21,10 @@ pub enum QueryFolderAction {
     Remove(PathBuf),
     /// Reads every folder again.
     Reload,
+    /// Opens the `.sql` file as **File › Open…** does.
+    Open(PathBuf),
+    /// Asks for a name, and creates an empty `.sql` file in this folder.
+    NewQuery(PathBuf),
 }
 
 /// A listed folder, and what was last read of it.

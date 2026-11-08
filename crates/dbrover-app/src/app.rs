@@ -62,7 +62,9 @@ use crate::picture::PictureFormat;
 use crate::project_dialog::{
     DeleteProjectChoice, DeleteProjectConfirmation, ProjectDialogAction, ProjectNameDialog,
 };
-use crate::query_folders::{self, QueryFolderAction, QueryFolders};
+use crate::query_folders::{
+    self, CreatedQuery, NewQueryAction, NewQueryDialog, QueryFolderAction, QueryFolders,
+};
 use crate::reports::{self, RenameAction, RenameReportDialog, ReportAction, Reports, ReportsSetup};
 use crate::rollback_dialog::{Closing, RollbackChoice, RollbackConfirmation};
 use crate::schema_compare::{CompareAction, LiveSchema, Reading, SchemaCompares};
@@ -208,6 +210,11 @@ pub struct DbRoverApp {
     query_folders: QueryFolders,
     /// Asks for a folder of `.sql` files to list. A field so tests can answer it.
     pub(crate) pick_query_folder: Box<dyn Fn() -> Option<PathBuf>>,
+    /// **New query here**, asking for the new file's name.
+    new_query_dialog: Option<NewQueryDialog>,
+    /// The console last focused, whose data source a new query opens on. The focused tab
+    /// alone won't do: right-clicking the explorer focuses the explorer.
+    last_console: Option<ConsoleKey>,
     open_file_dialog: Option<OpenFileDialog>,
     /// Files to open once the data sources are known: from the command line.
     files_to_open: Vec<PathBuf>,
@@ -330,6 +337,8 @@ impl DbRoverApp {
             sql_files: SqlFiles::new(remembered_files),
             query_folders: QueryFolders::new(std::env::home_dir()),
             pick_query_folder: Box::new(file_picker::pick_query_folder),
+            new_query_dialog: None,
+            last_console: None,
             open_file_dialog: None,
             files_to_open: Vec::new(),
             unsaved_confirmation: None,
@@ -575,6 +584,14 @@ impl DbRoverApp {
         self.settings.apply(event);
         let reads = self.query_folders.apply(event);
         self.send_all(reads);
+        let created = self
+            .new_query_dialog
+            .as_mut()
+            .and_then(|dialog| dialog.apply(event));
+        if let Some(created) = created {
+            self.new_query_dialog = None;
+            self.open_new_query(created);
+        }
         if matches!(event, Event::SettingsLoaded { .. }) {
             let reads = self
                 .query_folders
@@ -692,6 +709,57 @@ impl DbRoverApp {
                 let reads = self.query_folders.reload();
                 self.send_all(reads);
             }
+            QueryFolderAction::Open(path) => self.open_sql_file(path),
+            QueryFolderAction::NewQuery(folder) => {
+                let open = workspace::console_tabs(&self.dock);
+                let data_source = self
+                    .last_console
+                    .as_ref()
+                    .filter(|key| open.contains(key))
+                    .map(|key| key.data_source);
+                self.new_query_dialog = Some(NewQueryDialog::new(folder, data_source));
+            }
+        }
+    }
+
+    fn show_new_query_dialog(&mut self, ctx: &egui::Context) {
+        let Some(action) = self
+            .new_query_dialog
+            .as_mut()
+            .and_then(|dialog| dialog.show(ctx))
+        else {
+            return;
+        };
+        match action {
+            NewQueryAction::Create(path) => self.send(Command::CreateSqlFile(path)),
+            NewQueryAction::Close => self.new_query_dialog = None,
+        }
+    }
+
+    /// Shows a file **New query here** created in its folder's tree, and opens it on the
+    /// focused console's data source, or as **File › Open…** would without one.
+    fn open_new_query(&mut self, created: CreatedQuery) {
+        let reads = self.query_folders.reload();
+        self.send_all(reads);
+        if let Some(folder) = created.path.parent() {
+            self.explorer_options
+                .query_folders
+                .expanded
+                .insert(folder.to_owned());
+        }
+        match created
+            .data_source
+            .filter(|id| self.state.data_source(*id).is_some())
+        {
+            Some(id) => self.read_sql_file(created.path, id),
+            None => self.open_sql_file(created.path),
+        }
+    }
+
+    /// Notes the focused console, for **New query here**.
+    fn remember_focused_console(&mut self) {
+        if let Some(key) = self.focused_console() {
+            self.last_console = Some(key);
         }
     }
 
@@ -3110,7 +3178,9 @@ impl eframe::App for DbRoverApp {
         self.save_consoles(&ctx);
         self.save_diagrams(&ctx);
         self.check_sql_files(&ctx);
+        self.remember_focused_console();
         self.show_open_file_dialog(&ctx);
+        self.show_new_query_dialog(&ctx);
         let given = self.consoles.show_parameters_dialog(&ctx);
         self.send_if(given);
         let confirmed = self.consoles.show_hazard_confirmation(&ctx);

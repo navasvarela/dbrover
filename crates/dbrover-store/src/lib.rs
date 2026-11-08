@@ -73,4 +73,6 @@ pub use settings_folder::{
     FolderCheck, FolderOverrides, FolderRefusal, RelativeFolder, SettingsFolder, check_folder,
     settings_folder,
 };
-pub use sql_files::{SqlFileContents, SqlFileError, modified, read_sql_file, write_sql_file};
+pub use sql_files::{
+    SqlFileContents, SqlFileError, create_sql_file, modified, read_sql_file, write_sql_file,
+};
