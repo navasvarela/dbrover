@@ -3,7 +3,8 @@
 Status: **C0 built** (2026-11-02); **C1 built** (2026-11-03), tried only against local
 stand-ins; **C2 built** (2026-11-04), tried only against local stand-ins; **C3 built**
 (2026-11-05), Athena tried only against exchanges written from its documentation and Trino
-against its container; **C4 started** (2026-11-08); C5 and C6 planned, not scheduled. Proposed on
+against its container; **C4 built** (2026-11-08), BigQuery tried only against exchanges
+written from its documentation and the community emulator; C5 and C6 planned, not scheduled. Proposed on
 2026-10-27; the order and the decisions below are confirmed as each milestone starts. The
 providers' priority was set on 2026-10-28: AWS, then Google Cloud, then Azure. On 2026-11-01
 DynamoDB was moved ahead of the track, as the NoSQL track's [N5](nosql.md#n5--dynamodb), with
@@ -849,7 +850,7 @@ Google Cloud project with billing; the last column is what the community emulato
   growing pause and gives the cursor, cancel and progress handles, as Athena's driver does.
   `jobs.query` would save a round trip on short queries, but it waits on the server rather than
   in `Jobs`, and leaves no job to cancel while it waits; it can come later as a fast path. Each
-  job's id is DbRover's own (`dbrover_` and 24 random characters), so a request retried after a
+  job's id is DbRover's own (`dbrover_` and a UUID's 32 hexadecimal digits), so a request retried after a
   dropped connection finds the same job; the driver keeps each running job's location to send
   with the calls after it.
 - **Its own HTTP client.** Requests go over hyper and rustls with ring, as C0b's sign-in and the
@@ -928,8 +929,8 @@ uses both, under the data source's one setting:
   recognises that exact shape on a table and answers it from `tabledata.list`, and its dry run
   says 0 bytes. A view, a materialized view or an external table is a query, held by the limit
   like any other. **Show definition** of a view is `tables.get`'s `view.query`, free; of a table,
-  a query of `INFORMATION_SCHEMA.TABLES.ddl`, billed at BigQuery's 10 MiB minimum
-  (about $0.00006), which the manual says.
+  a `CREATE TABLE` DbRover writes from `tables.get` (columns, partitioning, clustering), free too
+  (planned as a query of `INFORMATION_SCHEMA.TABLES.ddl`, billed; see C4d's notes).
 - **A default limit.** A new BigQuery data source starts with **Ask above** at 1 GB, about
   $0.006 at on-demand prices, so a first `SELECT *` on a large public table asks. The user can
   clear it.
@@ -969,9 +970,9 @@ uses both, under the data source's one setting:
 
 Each layer is one pull request in a stack, useful and tested on its own, with no cloud account.
 
-- **C4a — Plan:** this section, C4's rows in [Decisions](#decisions) and [Risks](#risks), and
-  the roadmap's entry in layers.
-- **C4b — The GoogleSQL dialect:** `Dialect::BigQuery` in `dbrover-sql`: backquoted names and
+- **C4a — Plan** (built): this section, C4's rows in [Decisions](#decisions) and
+  [Risks](#risks), and the roadmap's entry in layers.
+- **C4b — The GoogleSQL dialect** (built): `Dialect::BigQuery` in `dbrover-sql`: backquoted names and
   paths with dashes, `#` comments, triple-quoted, raw and bytes strings, `sqlparser`'s
   `BigQueryDialect` for the syntax check, BigQuery's functions for completion, no `EXPLAIN`,
   `INFORMATION_SCHEMA` hidden, the verbs that write and scripting's administration verbs, with
@@ -979,7 +980,12 @@ Each layer is one pull request in a stack, useful and tested on its own, with no
   **Exit:** the corpus passes or names its gaps; a script with GoogleSQL's strings, comments
   and backquoted paths splits and formats as BigQuery reads it; read-only mode classifies the
   classify corpus.
-- **C4c — BigQuery: settings and queries as jobs:** `ConnectionConfig::BigQuery` and
+  **As built:** 248 functions for completion. `sqlparser`'s gaps, each named in the corpus:
+  the `SAFE.` prefix on a function, a function taking a `TABLE` or `MODEL` as its argument, set
+  operations by name with a mode (`FULL UNION ALL BY NAME`, `CORRESPONDING`), `MATCH_RECOGNIZE`,
+  and `<<` and `>>`. The formatter keeps `* EXCEPT (…)` together, and quoting a name for
+  BigQuery uses backquotes.
+- **C4c — BigQuery: settings and queries as jobs** (built): `ConnectionConfig::BigQuery` and
   `DriverKind::BigQuery` with the sign-in (ADC or a credentials file, C0b), the project jobs run
   and are billed in, a default dataset, a location, other projects to show, an endpoint for the
   emulator and the replay server, and C0's cost guard (1 GB by default); a
@@ -991,14 +997,32 @@ Each layer is one pull request in a stack, useful and tested on its own, with no
   `NUMERIC` and `BYTES` read as the console shows them; an `UPDATE` says how many rows it
   changed; a failed job's message reaches the console with its position; cancel calls
   `jobs.cancel` by id and location; the settings round-trip through `data_sources.toml`.
-- **C4d — Projects, datasets and tables in the explorer:** the levels above, paged; columns with
+  **As built:** C2's `GcsSignIn` became `GoogleCloudSignIn`, shared by buckets and BigQuery, with
+  a third way, **Emulator**, that sends no token. The project is written `project_id` in
+  `data_sources.toml`, since `project` is the data source's own key. The token cache moved into
+  `dbrover-cloud` (`GoogleSignIn::cached_token`), where DuckDB's Google buckets use it too. Values
+  come as `formatOptions.useInt64Timestamp`, so a `TIMESTAMP` is exact to the microsecond. The
+  dialog's rows, the Emulator sign-in and **Ask above** came forward from C4g, so the driver
+  could be tried in the app; with BigQuery in it, the **New data source** menu grew past what a
+  900-point window shows, so the engines only one cloud runs (DynamoDB, Athena, BigQuery) are
+  now only in that cloud's submenu. `live_bigquery`, ignored, runs the driver's checks against
+  BigQuery when the user sets `DBROVER_TEST_BIGQUERY_LIVE`.
+- **C4d — Projects, datasets and tables in the explorer** (built): the levels above, paged; columns with
   nested fields, partitioning and clustering marked; **Show definition**; the emulator in the
   nightly job.
   **Exit:** replayed, the conformance walk visits two projects (one from **Other projects**),
   a dataset with a partitioned table, a view and a record column; a level of datasets pages
   in three requests; nothing the explorer does starts a job except a table's **Show
   definition**. Nightly, the checks above pass against the emulator.
-- **C4e — The dry run and the byte limit:** `estimate_cost` and `validate` from one dry run,
+  **As built:** nothing the explorer does starts a job: a table's **Show definition** is a
+  `CREATE TABLE` written from `tables.get`, with its columns, `PARTITION BY` (a date column, a
+  truncated timestamp, `_PARTITIONDATE` or `RANGE_BUCKET`) and `CLUSTER BY`, leaving out its
+  options and descriptions, where `INFORMATION_SCHEMA` would have cost a 10 MiB query. A
+  record's fields are columns of their own, named `address.city`, rather than nodes under the
+  record. The emulator runs in the nightly job beside Trino, the job renamed `warehouses`; it
+  ignores `maxResults`, so paging is the replayed exchanges' to prove, and it loses a column's
+  `REPEATED` mode when it loads one from YAML, so arrays are tried in queries.
+- **C4e — The dry run and the byte limit** (built): `estimate_cost` and `validate` from one dry run,
   kept for the statement's text; `maximumBytesBilled` from the limit on every job, and none on
   one the user let through (a new `Connection` call the engine makes before it); the estimate
   under the editor; `· … read` after each statement.
@@ -1007,20 +1031,36 @@ Each layer is one pull request in a stack, useful and tested on its own, with no
   under the limit is sent with it; a `bytesBilledLimitExceeded` failure says what it needed;
   an invalid statement is underlined at BigQuery's `[line:column]`; a lower-bound estimate says
   so; a kittest shows **This statement will scan 1.4 GB** under the editor.
-- **C4f — Open data for free:** the driver answers ``SELECT * FROM `p.d.t` LIMIT n`` on a
+  **As built:** an estimate is a `ScanEstimate` (bytes, and whether they are a lower bound), and
+  a statement check that passes carries it, so the editor's check and the cost guard share one
+  dry run; the driver also keeps the last 16 answers by statement text. The estimate is in the
+  console's toolbar, **Will scan 1.4 GB**, rather than a line under the editor. The engine calls
+  `Connection::allow_next_past_limit` before a statement the user let through, and drivers
+  without a limit of their own ignore it. A job refused for its limit says which limit stopped
+  it, that BigQuery didn't bill it, and that its 10 MiB minimum per table can bill more than the
+  dry run said. `· … read` after a statement is the job's
+  `totalBytesProcessed`.
+- **C4f — Open data for free** (built): the driver answers ``SELECT * FROM `p.d.t` LIMIT n`` on a
   table from `tabledata.list`, with its columns from `tables.get`, and estimates it at 0 bytes;
   any other statement, a view or an external table is a query.
   **Exit:** replayed, **Open data** on a table sends no job and reads two pages of
   `tabledata.list`; on a view it runs a query; a `WHERE` or an `ORDER BY` makes it a query.
-- **C4g — BigQuery in the data source dialog:** **New data source › Google Cloud › BigQuery**,
+  **As built:** the statement is recognised in any case, with or without its semicolon, with
+  backslash escapes in the path; `tables.get` decides whether the name is a table. The rows are
+  BigQuery's first in storage order. The emulator test reads a table this way too.
+- **C4g — BigQuery in the data source dialog** (built): **New data source › Google Cloud › BigQuery**,
   with **Sign in with** (Application Default Credentials or a credentials file), **Project**,
   **Dataset**, **Location**, **Other projects** and **Ask above**, each taking `${NAME}`
   placeholders; BigQuery's logo; the MCP server's read-only mode (statements classified, an
   MCP login being another credentials file).
   **Exit:** a kittest adds a BigQuery data source from the menu and it saves as typed, with
   1 GB as its limit.
-- **C4h — Manual and demo note:** a page in the manual's Data sources part, **BigQuery**, and
-  the C4 demo note in the roadmap, with the live checks.
+  **As built:** what was left after C4c: the **MCP credentials file**, the row the dialog shows
+  as **MCP profile** for DynamoDB and Athena, and the kittest.
+- **C4h — Manual and demo note** (built): a page in the manual's Data sources part,
+  **BigQuery**, and the C4 demo note in the roadmap, with the live checks. The manual's other
+  pages now send DynamoDB and Athena to **Amazon Web Services** in the menu, and the website
+  lists BigQuery.
 
 **Exit:** BigQuery tested with exchanges replayed in CI and against the emulator nightly, and
 tried live by the user (the demo note's list, and the ignored live test): a query over a

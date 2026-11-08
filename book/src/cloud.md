@@ -97,8 +97,9 @@ than you allowed:
   every item of a table. [DynamoDB](dynamodb.md#the-scan-guard) is the first engine with it.
 - **A byte limit.** Athena says what a query scanned only once it runs, so there the limit
   stops a query that passes it, where the workgroup has no limit of its own: see
-  [Athena and Trino](athena-trino.md#what-a-query-costs). An engine that can say before it runs,
-  as BigQuery's dry run will, asks first. It is kept in `data_sources.toml` as
+  [Athena and Trino](athena-trino.md#what-a-query-costs). BigQuery says before it runs, with a
+  dry run, so there the console asks first, and the limit goes with every query for BigQuery to
+  enforce: see [BigQuery](bigquery.md#what-a-query-costs). It is kept in `data_sources.toml` as
   `ask_above_bytes = 10000000000`.
 
 A console asks before running a held statement, with what it would read and **Scan anyway**,
