@@ -3568,6 +3568,61 @@ mod tests {
         );
     }
 
+    /// BigQuery from **New data source › Google Cloud** (C4): a project, a dataset and a public
+    /// project to show, signed in with Application Default Credentials, asking above 1 GB.
+    #[test]
+    fn adds_a_bigquery_data_source_from_the_google_cloud_menu() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "No data sources yet.");
+
+        harness
+            .get_all_by_label("New data source")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label_contains("Google Cloud").hover();
+        step_until_visible(&mut harness, "Cloud SQL for PostgreSQL");
+        harness.get_by_label("BigQuery").click();
+        harness.run();
+        harness.get_by_label_contains("New BigQuery data source");
+        harness.get_by_label_contains("Application Default Credentials");
+        for (field, text) in [
+            ("Project", "analytics"),
+            ("Dataset", "sales"),
+            ("Other projects", "bigquery-public-data"),
+        ] {
+            harness.get_by_label(field).focus();
+            harness.run();
+            harness.get_by_label(field).type_text(text);
+            harness.run();
+        }
+        harness.get_by_label("Save").click();
+
+        step_until_visible(&mut harness, "Expand analytics");
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        let [saved] = saved.as_slice() else {
+            panic!("expected one data source, got {saved:?}");
+        };
+        assert_eq!(
+            saved.config,
+            dbrover_core::ConnectionConfig::BigQuery(dbrover_core::BigQueryConfig {
+                project: "analytics".to_owned(),
+                dataset: "sales".to_owned(),
+                other_projects: vec!["bigquery-public-data".to_owned()],
+                cost_guard: dbrover_core::CostGuard {
+                    ask_above_bytes: Some(dbrover_core::ByteCount(1_000_000_000)),
+                    ..dbrover_core::CostGuard::default()
+                },
+                ..dbrover_core::BigQueryConfig::default()
+            })
+        );
+    }
+
     /// A Trino data source (C3): the catalog in the database's place, a schema, and Presto's
     /// headers chosen.
     #[test]
