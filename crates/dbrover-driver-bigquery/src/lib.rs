@@ -11,6 +11,7 @@ mod catalog;
 mod dry_run;
 mod errors;
 mod jobs;
+mod preview;
 mod results;
 #[cfg(test)]
 mod tests;
@@ -19,15 +20,18 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use dbrover_core::{
-    BigQueryConfig, CancelHandle, CatalogNode, CatalogPath, ChildrenPage, ChildrenQuery,
+    BigQueryConfig, ByteCount, CancelHandle, CatalogNode, CatalogPath, ChildrenPage, ChildrenQuery,
     Connection, CostEstimate, DriverError, Jobs, ProgressHandle, Rejection, RelationName,
-    ResultCursor, ServerInfo, TableConstraints, TableDescription, TableName, TransactionStatus,
+    ResultCursor, ScanEstimate, ServerInfo, TableConstraints, TableDescription, TableName,
+    TransactionStatus,
 };
 
 use crate::api::{Api, segment};
 use crate::catalog::{Lister, NamedProjects};
 use crate::dry_run::{DryRun, DryRuns};
 use crate::jobs::{BigQueryJobs, JobPlace};
+use crate::preview::{Preview, PreviewCursor};
+use crate::results::Schema;
 
 /// What DbRover calls the service in messages and on Test connection.
 const PRODUCT: &str = "BigQuery";
@@ -113,6 +117,19 @@ pub struct BigQueryConnection {
 }
 
 impl BigQueryConnection {
+    /// The schema of the table `statement` previews, when it is **Open data**'s statement on a
+    /// table, which `tabledata.list` answers for free.
+    async fn previewed(&self, statement: &str) -> Result<Option<(Preview, Schema)>, DriverError> {
+        let Some(preview) = Preview::recognise(statement) else {
+            return Ok(None);
+        };
+        let table = self
+            .lister()
+            .table(&preview.project, &preview.dataset, &preview.table)
+            .await?;
+        Ok(table.previewable().map(|schema| (preview, schema)))
+    }
+
     fn lister(&self) -> Lister<'_> {
         Lister {
             api: &self.api,
@@ -154,7 +171,16 @@ impl Connection for BigQueryConnection {
         self.lister().definition(path).await
     }
 
+    /// A query job, but for **Open data**'s statement on a table, which reads its rows with
+    /// `tabledata.list` for free.
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError> {
+        if let Some((preview, schema)) = self.previewed(sql).await? {
+            return Ok(Box::new(PreviewCursor::new(
+                self.api.clone(),
+                &preview,
+                schema,
+            )));
+        }
         self.jobs.execute(sql).await
     }
 
@@ -188,6 +214,11 @@ impl Connection for BigQueryConnection {
         &mut self,
         statement: &str,
     ) -> Result<Option<CostEstimate>, DriverError> {
+        if self.previewed(statement).await?.is_some() {
+            return Ok(Some(CostEstimate::Bytes(ScanEstimate::exactly(ByteCount(
+                0,
+            )))));
+        }
         Ok(match self.dry_runs.check(statement).await? {
             DryRun::Accepted(scan) => Some(CostEstimate::Bytes(scan)),
             DryRun::Rejected(_) => None,

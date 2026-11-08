@@ -391,6 +391,12 @@ pub(crate) fn qualified(project: &str, dataset: &str, name: &str) -> String {
 }
 
 impl Table {
+    /// Its schema, when its rows can be read with `tabledata.list`: a table's, not a view's or
+    /// an external table's, whose rows only a query reads.
+    pub(crate) fn previewable(self) -> Option<Schema> {
+        (self.kind == "TABLE").then_some(self.schema)
+    }
+
     fn definition(&self, name: &str) -> String {
         if let Some(view) = &self.view {
             return format!("CREATE VIEW {name} AS\n{};", view.query);
