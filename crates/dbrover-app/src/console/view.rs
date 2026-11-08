@@ -19,7 +19,7 @@ use crate::split::VerticalSplit;
 use crate::theme::Palette;
 use crate::widgets::{self, IconButton};
 use dbrover_core::{CatalogPath, RelationName};
-use dbrover_core::{JobProgress, SafetyLevel, TransactionStatus};
+use dbrover_core::{CostEstimate, JobProgress, SafetyLevel, TransactionStatus};
 use dbrover_engine::{
     CostApproval, RunId, RunOrigin, RunOutcome, SessionState, TransactionEnd, TransactionMode,
 };
@@ -429,6 +429,7 @@ fn toolbar(
         lost_connection(ui, console, palette, actions);
         run_status(ui, console, palette);
         problem_count(ui, console, keymap, palette);
+        scan_estimate(ui, console);
         if let Some(error) = console.save_error() {
             ui.colored_label(palette.error, "Not saved")
                 .on_hover_text(error);
@@ -558,6 +559,18 @@ fn problem_count(ui: &mut Ui, console: &mut QueryConsole, keymap: &Keymap, palet
     if response.clicked() {
         console.jump_to_problem(true);
     }
+}
+
+/// What the statement at the cursor will scan, where its engine says before running it
+/// (BigQuery's dry run, C4): `Will scan 1.4 GB`.
+fn scan_estimate(ui: &mut Ui, console: &QueryConsole) {
+    let Some(CostEstimate::Bytes(scan)) = console.scan_estimate() else {
+        return;
+    };
+    ui.weak(format!("Will scan {scan}")).on_hover_text(
+        "What the statement at the cursor scans if it runs, from the database's dry run. \
+         It is billed whatever the statement returns, LIMIT or not.",
+    );
 }
 
 /// `1 error, 2 warnings`, leaving out a count of zero.

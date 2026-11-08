@@ -191,7 +191,13 @@ async fn run_statements(
             outcome = RunOutcome::Failed;
             break;
         }
-        if let Some(pace) = script.cost.pace(index) {
+        let judged = script.cost.pace(index);
+        if judged.is_none() {
+            // The user saw what this statement scans and said yes: an engine that keeps the
+            // limit itself lets it past, this once.
+            worker.connection.allow_next_past_limit();
+        }
+        if let Some(pace) = judged {
             match cost::held_cost(worker, &checked, pace).await? {
                 Ok(None) => {}
                 Ok(Some(estimate)) => {

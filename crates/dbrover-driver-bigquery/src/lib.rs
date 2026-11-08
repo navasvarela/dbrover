@@ -8,6 +8,7 @@
 
 mod api;
 mod catalog;
+mod dry_run;
 mod errors;
 mod jobs;
 mod results;
@@ -19,12 +20,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use dbrover_core::{
     BigQueryConfig, CancelHandle, CatalogNode, CatalogPath, ChildrenPage, ChildrenQuery,
-    Connection, DriverError, Jobs, ProgressHandle, Rejection, RelationName, ResultCursor,
-    ServerInfo, TableConstraints, TableDescription, TableName, TransactionStatus,
+    Connection, CostEstimate, DriverError, Jobs, ProgressHandle, Rejection, RelationName,
+    ResultCursor, ServerInfo, TableConstraints, TableDescription, TableName, TransactionStatus,
 };
 
 use crate::api::{Api, segment};
 use crate::catalog::{Lister, NamedProjects};
+use crate::dry_run::{DryRun, DryRuns};
 use crate::jobs::{BigQueryJobs, JobPlace};
 
 /// What DbRover calls the service in messages and on Test connection.
@@ -55,9 +57,14 @@ pub async fn connect(config: &BigQueryConfig) -> Result<BigQueryConnection, Driv
         project: config.project.clone(),
         dataset: config.dataset.clone(),
         location: config.location.clone(),
+        limit: config.cost_guard.ask_above_bytes,
     };
-    let jobs = Jobs::new(Arc::new(BigQueryJobs::new(api, place)));
+    let dry_runs = DryRuns::new(api.clone(), place.clone());
+    let query_jobs = Arc::new(BigQueryJobs::new(api, place));
+    let jobs = Jobs::new(Arc::clone(&query_jobs) as Arc<dyn dbrover_core::JobService>);
     Ok(BigQueryConnection {
+        dry_runs,
+        query_jobs,
         server_info: ServerInfo::new(PRODUCT, describe_place(config)),
         api: probe.api.clone(),
         project: config.project.clone(),
@@ -99,6 +106,9 @@ pub struct BigQueryConnection {
     project: String,
     other_projects: Vec<String>,
     probe: Probe,
+    dry_runs: DryRuns,
+    /// The jobs' own service, to let a statement past the limit; `jobs` runs them.
+    query_jobs: Arc<BigQueryJobs>,
     jobs: Arc<Jobs>,
 }
 
@@ -164,9 +174,28 @@ impl Connection for BigQueryConnection {
         Ok(TableConstraints::default())
     }
 
-    /// `None` until C4e checks statements with a dry run.
-    async fn validate(&mut self, _sql: &str) -> Result<Option<Rejection>, DriverError> {
-        Ok(None)
+    /// BigQuery's dry run, which is free and leaves no job in the project's history.
+    async fn validate(&mut self, sql: &str) -> Result<Option<Rejection>, DriverError> {
+        Ok(match self.dry_runs.check(sql).await? {
+            DryRun::Accepted(_) => None,
+            DryRun::Rejected(rejection) => Some(rejection),
+        })
+    }
+
+    /// The bytes the dry run says `statement` will scan, which BigQuery bills whatever it
+    /// returns; `None` for a statement BigQuery won't run, which says why when it is run.
+    async fn estimate_cost(
+        &mut self,
+        statement: &str,
+    ) -> Result<Option<CostEstimate>, DriverError> {
+        Ok(match self.dry_runs.check(statement).await? {
+            DryRun::Accepted(scan) => Some(CostEstimate::Bytes(scan)),
+            DryRun::Rejected(_) => None,
+        })
+    }
+
+    fn allow_next_past_limit(&mut self) {
+        self.query_jobs.allow_next_past_limit();
     }
 
     async fn transaction_status(&mut self) -> Result<TransactionStatus, DriverError> {

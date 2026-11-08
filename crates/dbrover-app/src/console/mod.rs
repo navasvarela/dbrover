@@ -26,8 +26,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use dbrover_core::{
-    Cell, ColumnInfo, DataSource, DataSourceId, Identifier, JobProgress, RelationName, ResultShape,
-    Row, SafetyLevel, TableDescription, TransactionStatus,
+    Cell, ColumnInfo, CostEstimate, DataSource, DataSourceId, Identifier, JobProgress,
+    RelationName, ResultShape, Row, SafetyLevel, TableDescription, TransactionStatus,
 };
 use dbrover_engine::{
     Command, ConsoleId, CostApproval, EditFailure, Event, Export, ExportAll, Exporter, RowEdit,
@@ -1502,6 +1502,16 @@ impl QueryConsole {
     }
 
     /// How many problems the editor underlines as errors, and as warnings.
+    /// What the statement at the cursor would scan, as its engine estimated when it checked
+    /// it; `None` with several statements selected, or none estimated.
+    pub fn scan_estimate(&self) -> Option<CostEstimate> {
+        let statements = self.statements_to_run(RunScope::Current);
+        let [statement] = statements.as_slice() else {
+            return None;
+        };
+        self.problems.estimate_of(&statement.sql).cloned()
+    }
+
     pub fn problem_counts(&mut self) -> (usize, usize) {
         self.refresh_chart_problems();
         let chart = |severity| self.chart_problems.count(severity);
