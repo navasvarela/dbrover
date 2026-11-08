@@ -40,10 +40,13 @@ list` and `--progress`, and reports listed and run over MCP), v0.28.0 (schema co
 PostgreSQL schemas side by side with the script that turns one into the other, schema snapshots
 as diffable files, and `dbrover schema snapshot` and `dbrover schema compare`; a report's page
 with its file edited in place, highlighted, checked as you type and formatted, and following
-the file on disk) and v0.29.0 (Athena, signed in with an AWS profile, with the Glue Data
+the file on disk), v0.29.0 (Athena, signed in with an AWS profile, with the Glue Data
 Catalog in the explorer and the bytes each query scanned; Trino, Starburst and Presto over
 Trino's HTTP protocol; and a chart written as a `-- [chart]` block above a statement, opened on
-its result and saved back from the chart tab).
+its result and saved back from the chart tab) and v0.30.0 (a chart's series and stacked bars;
+charts drawn by a report's runs as SVG or PNG files beside its others, from its result or a
+query of their own; a `chart` tool for MCP clients; and folders of queries listed in the
+explorer, opened and added to there).
 R3's update notice is built, ahead of R2 (see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
