@@ -84,16 +84,7 @@ pub(crate) async fn password(
             let google = GoogleSignIn {
                 credentials_file: credentials_file.clone(),
             };
-            let key = TokenKey {
-                sign_in: sign_in.clone(),
-                resource: None,
-            };
-            cache_for(key)
-                .token(|| async {
-                    let credentials = google.credentials(&ProcessEnvironment)?;
-                    Ok::<_, CloudSignInError>(credentials.token().await?)
-                })
-                .await?
+            google.cached_token(&ProcessEnvironment).await?
         }
         CloudSignIn::Entra { tool, tenant } => {
             let entra = EntraSignIn {

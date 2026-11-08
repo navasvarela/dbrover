@@ -6,7 +6,9 @@
 //! (`authorized_user`) and a service account's key (`service_account`) are each exchanged at
 //! Google's token endpoint for an access token that lasts an hour.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
 
 use base64::Engine;
@@ -17,7 +19,7 @@ use ring::signature::{RSA_PKCS1_SHA256, RsaKeyPair};
 use serde::Deserialize;
 
 use crate::http::{Answer, HttpError, Https};
-use crate::token::AccessToken;
+use crate::token::{AccessToken, TokenCache};
 
 /// Where Google's token endpoint is, for files that don't say.
 const TOKEN_ENDPOINT: &str = "https://oauth2.googleapis.com/token";
@@ -90,6 +92,35 @@ impl GoogleSignIn {
         })?;
         GoogleCredentials::parse(&path, &text)
     }
+}
+
+impl GoogleSignIn {
+    /// An access token for this sign-in, fetched once and kept until it is about to expire
+    /// ([`TokenCache`]), for every data source and console in the app that signs in the same
+    /// way: databases (C0d), buckets (C2) and BigQuery (C4).
+    ///
+    /// # Errors
+    ///
+    /// [`GoogleError`] when the credentials can't be read or Google refuses them.
+    pub async fn cached_token(
+        &self,
+        variables: &(dyn Variables + Sync),
+    ) -> Result<AccessToken, GoogleError> {
+        cache_for(self.credentials_file.clone())
+            .token(|| async { self.credentials(variables)?.token().await })
+            .await
+    }
+}
+
+/// The tokens fetched for each credentials file (`None` for Application Default
+/// Credentials), kept for the app's lifetime, as gcloud keeps its own: a token depends only on
+/// the file it came from.
+static TOKENS: LazyLock<Mutex<HashMap<Option<PathBuf>, Arc<TokenCache>>>> =
+    LazyLock::new(Mutex::default);
+
+fn cache_for(credentials_file: Option<PathBuf>) -> Arc<TokenCache> {
+    let mut tokens = TOKENS.lock().unwrap_or_else(PoisonError::into_inner);
+    Arc::clone(tokens.entry(credentials_file).or_default())
 }
 
 /// The file Application Default Credentials come from: `GOOGLE_APPLICATION_CREDENTIALS`'s,

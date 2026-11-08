@@ -2,7 +2,9 @@
 //! the rules are testable without a UI.
 
 mod athena;
+mod bigquery;
 mod bucket;
+mod byte_limit;
 mod cassandra;
 mod dynamodb;
 mod elasticsearch;
@@ -21,7 +23,8 @@ use dbrover_core::{
 use dbrover_engine::PasswordUpdate;
 use dbrover_engine::read_only::Storage;
 
-pub use athena::AthenaFields;
+pub use athena::{AthenaFields, LIMIT_LABEL as ATHENA_LIMIT_LABEL};
+pub use bigquery::{BigQueryFields, BigQuerySignIn, LIMIT_LABEL as BIGQUERY_LIMIT_LABEL};
 pub use bucket::{BucketFields, BucketSignIn};
 pub use cassandra::CassandraFields;
 pub use dynamodb::DynamoDbFields;
@@ -117,8 +120,8 @@ pub enum FormError {
     EndpointMissing,
     #[error("Output location must be in S3: s3://bucket/prefix/.")]
     OutputLocationNotS3,
-    #[error("Stop queries above must be a number of gigabytes, such as 10 or 0.5.")]
-    InvalidByteLimit,
+    #[error("{0} must be a number of gigabytes, such as 10 or 0.5.")]
+    InvalidByteLimit(&'static str),
     #[error("SSH host is required.")]
     SshHostMissing,
     #[error("SSH port must be a number from 1 to 65535, or a ${{VARIABLE}}.")]
@@ -141,6 +144,8 @@ pub enum FormError {
     ProfileMissing,
     #[error("Access key is required to sign in with an access key.")]
     AccessKeyMissing,
+    #[error("Project is required: the Google Cloud project BigQuery's jobs run in.")]
+    ProjectMissing,
     #[error("Credentials file is required to sign in with one.")]
     CredentialsFileMissing,
     #[error("{1} doesn't sign in with {0}.")]
@@ -202,6 +207,7 @@ pub enum DriverFields {
     Cassandra(CassandraFields),
     DynamoDb(DynamoDbFields),
     Athena(AthenaFields),
+    BigQuery(BigQueryFields),
     Trino(TrinoFields),
 }
 
@@ -298,6 +304,7 @@ impl DriverFields {
             DriverKind::Cassandra => Self::Cassandra(CassandraFields::new()),
             DriverKind::DynamoDb => Self::DynamoDb(DynamoDbFields::default()),
             DriverKind::Athena => Self::Athena(AthenaFields::default()),
+            DriverKind::BigQuery => Self::BigQuery(BigQueryFields::default()),
             DriverKind::Trino => Self::Trino(TrinoFields::new()),
         }
     }
@@ -365,6 +372,9 @@ impl DriverFields {
                 Self::DynamoDb(DynamoDbFields::from_config(config))
             }
             ConnectionConfig::Athena(config) => Self::Athena(AthenaFields::from_config(config)),
+            ConnectionConfig::BigQuery(config) => {
+                Self::BigQuery(BigQueryFields::from_config(config))
+            }
             ConnectionConfig::Trino(config) => Self::Trino(TrinoFields::from_config(config)),
         }
     }
@@ -383,6 +393,7 @@ impl DriverFields {
             Self::Cassandra(_) => DriverKind::Cassandra,
             Self::DynamoDb(_) => DriverKind::DynamoDb,
             Self::Athena(_) => DriverKind::Athena,
+            Self::BigQuery(_) => DriverKind::BigQuery,
             Self::Trino(_) => DriverKind::Trino,
         }
     }
@@ -399,7 +410,11 @@ impl DriverFields {
             Self::Elasticsearch(fields) => Some(&fields.server),
             Self::Cassandra(fields) => Some(&fields.server),
             Self::Trino(fields) => Some(&fields.server),
-            Self::Sqlite(_) | Self::DuckDb(_) | Self::DynamoDb(_) | Self::Athena(_) => None,
+            Self::Sqlite(_)
+            | Self::DuckDb(_)
+            | Self::DynamoDb(_)
+            | Self::Athena(_)
+            | Self::BigQuery(_) => None,
         }
     }
 
@@ -429,6 +444,7 @@ impl DriverFields {
             Self::Cassandra(fields) => ConnectionConfig::Cassandra(fields.to_config()?),
             Self::DynamoDb(fields) => ConnectionConfig::DynamoDb(fields.to_config()?),
             Self::Athena(fields) => ConnectionConfig::Athena(fields.to_config()?),
+            Self::BigQuery(fields) => ConnectionConfig::BigQuery(fields.to_config()?),
             Self::Trino(fields) => ConnectionConfig::Trino(fields.to_config()?),
         })
     }

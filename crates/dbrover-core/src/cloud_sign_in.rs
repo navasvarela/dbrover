@@ -142,7 +142,8 @@ impl DriverKind {
             | Self::Cassandra
             | Self::DynamoDb
             | Self::Athena
-            | Self::Trino => &[],
+            | Self::Trino
+            | Self::BigQuery => &[],
         }
     }
 }

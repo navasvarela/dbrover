@@ -15,10 +15,11 @@ use egui::{
 };
 
 use crate::data_source_form::{
-    AthenaFields, BucketFields, BucketSignIn, CassandraFields, CloudFields, DataSourceForm,
-    DatabaseField, DriverFields, DuckDbFields, DuckDbLocation, DynamoDbFields, ElasticsearchFields,
-    FormError, McpLoginFields, McpPasswordChange, MongoFields, MongoTarget, ServerFields,
-    SshFields, SshLoginChoice, TlsChoice, TrinoFields,
+    ATHENA_LIMIT_LABEL, AthenaFields, BIGQUERY_LIMIT_LABEL, BigQueryFields, BigQuerySignIn,
+    BucketFields, BucketSignIn, CassandraFields, CloudFields, DataSourceForm, DatabaseField,
+    DriverFields, DuckDbFields, DuckDbLocation, DynamoDbFields, ElasticsearchFields, FormError,
+    McpLoginFields, McpPasswordChange, MongoFields, MongoTarget, ServerFields, SshFields,
+    SshLoginChoice, TlsChoice, TrinoFields,
 };
 use crate::dialog::{self, DialogSize};
 use crate::file_picker::{self, FileEngine};
@@ -224,6 +225,10 @@ impl DataSourceDialog {
             }
             DriverFields::Athena(fields) => {
                 athena_rows(ui, fields);
+                None
+            }
+            DriverFields::BigQuery(fields) => {
+                bigquery_rows(ui, fields);
                 None
             }
             DriverFields::Sqlite(fields) => {
@@ -677,11 +682,84 @@ fn athena_rows(ui: &mut Ui, fields: &mut AthenaFields) {
     ui.label("");
     ui.weak("Where query results go in S3, for a workgroup that doesn't say.");
     ui.end_row();
-    text_row(ui, "Stop queries above", &mut fields.limit_gb, "no limit");
+    text_row(ui, ATHENA_LIMIT_LABEL, &mut fields.limit_gb, "no limit");
     ui.label("");
     ui.weak(
         "In GB scanned, which Athena bills. A workgroup's own limit wins; DbRover's stops a \
          query within two seconds of passing it.",
+    );
+    ui.end_row();
+}
+
+/// How BigQuery signs in, the project its jobs run in, and the limit its dry runs ask above.
+fn bigquery_rows(ui: &mut Ui, fields: &mut BigQueryFields) {
+    ui.label("Sign in with");
+    ui.horizontal(|ui| {
+        ui.radio_value(&mut fields.sign_in, BigQuerySignIn::Google, "Google Cloud");
+        ui.radio_value(
+            &mut fields.sign_in,
+            BigQuerySignIn::CredentialsFile,
+            "Credentials file",
+        );
+        ui.radio_value(&mut fields.sign_in, BigQuerySignIn::Emulator, "Emulator");
+    });
+    ui.end_row();
+    match fields.sign_in {
+        BigQuerySignIn::Google => {
+            ui.label("");
+            ui.weak("Application Default Credentials: gcloud auth application-default login.");
+            ui.end_row();
+        }
+        BigQuerySignIn::CredentialsFile => setting_row(
+            ui,
+            "Credentials file",
+            &mut fields.credentials_file,
+            "a service account's key",
+            Resolve::Path,
+        ),
+        BigQuerySignIn::Emulator => {
+            setting_row(
+                ui,
+                "Endpoint",
+                &mut fields.endpoint,
+                "http://localhost:9050",
+                Resolve::Text,
+            );
+            ui.label("");
+            ui.weak("The BigQuery emulator, which takes no sign-in.");
+            ui.end_row();
+        }
+    }
+    setting_row(
+        ui,
+        "Project",
+        &mut fields.project,
+        "my-project",
+        Resolve::Text,
+    );
+    ui.label("");
+    ui.weak("Queries run in this project, which is billed for them.");
+    ui.end_row();
+    setting_row(ui, "Dataset", &mut fields.dataset, "none", Resolve::Text);
+    setting_row(
+        ui,
+        "Location",
+        &mut fields.location,
+        "BigQuery's choice",
+        Resolve::Text,
+    );
+    setting_row(
+        ui,
+        "Other projects",
+        &mut fields.other_projects,
+        "bigquery-public-data",
+        Resolve::Text,
+    );
+    text_row(ui, BIGQUERY_LIMIT_LABEL, &mut fields.limit_gb, "no limit");
+    ui.label("");
+    ui.weak(
+        "In GB scanned, which BigQuery bills. A statement whose dry run says more asks first, \
+         and none bills more without asking.",
     );
     ui.end_row();
 }

@@ -238,6 +238,7 @@ pub fn driver_id(driver: DriverKind) -> &'static str {
         DriverKind::Cassandra => "cassandra",
         DriverKind::DynamoDb => "dynamodb",
         DriverKind::Athena => "athena",
+        DriverKind::BigQuery => "bigquery",
         DriverKind::Trino => "trino",
     }
 }
@@ -288,7 +289,8 @@ mod tests {
             drivers(names(&["postgresql"])),
             Err(
                 "\"postgresql\" is not a driver; the drivers are postgres, sqlite, mysql, \
-                 sqlserver, duckdb, clickhouse, redis, mongodb, elasticsearch, cassandra, dynamodb, athena, trino"
+                 sqlserver, duckdb, clickhouse, redis, mongodb, elasticsearch, cassandra, dynamodb, \
+                 athena, trino, bigquery"
                     .to_owned()
             )
         );

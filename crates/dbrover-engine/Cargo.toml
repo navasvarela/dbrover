@@ -15,6 +15,7 @@ dbrover-cloud.workspace = true
 dbrover-core.workspace = true
 dbrover-picture.workspace = true
 dbrover-driver-athena.workspace = true
+dbrover-driver-bigquery.workspace = true
 dbrover-driver-cassandra.workspace = true
 dbrover-driver-clickhouse.workspace = true
 dbrover-driver-dynamodb.workspace = true

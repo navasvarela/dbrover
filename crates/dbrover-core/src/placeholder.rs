@@ -62,6 +62,10 @@ pub enum Setting {
     OutputLocation,
     /// The schema a Trino console starts in (C3).
     Schema,
+    /// A BigQuery project, dataset and location (C4).
+    Project,
+    Dataset,
+    Location,
 }
 
 impl fmt::Display for Setting {
@@ -92,6 +96,9 @@ impl fmt::Display for Setting {
             Self::Catalog => "the catalog",
             Self::OutputLocation => "the output location",
             Self::Schema => "the schema",
+            Self::Project => "the project",
+            Self::Dataset => "the dataset",
+            Self::Location => "the location",
         })
     }
 }

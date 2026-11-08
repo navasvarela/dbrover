@@ -137,6 +137,19 @@ Each driver crate runs the suite against its own backend:
   position from its `line L:C:`, and a workgroup without a place for results. `live_athena`,
   ignored, runs the same against real Athena when `DBROVER_TEST_ATHENA_LIVE` names
   `profile,region,workgroup[,output location]`; CI never sets it.
+- **BigQuery**: no account, and no container on pull requests. As for Athena, each test
+  starts a server on `127.0.0.1` that answers the driver from a file of exchanges in
+  `crates/dbrover-driver-bigquery/src/tests/exchanges/`, in their order, written from
+  BigQuery's REST reference (their README says what that can't show); `{job}` in a file stands
+  for the job id the driver chose. The data source signs in as nobody, except in the test that
+  checks the bearer token, which signs in with a credentials file whose token endpoint is
+  `dbrover-cloud`'s stand-in; no Google file of the machine's is read. The tests run
+  `check_lifecycle`, `check_connect_failure` and `check_cancel` (a job polled while it runs,
+  cancelled by its id and location); besides: a `SELECT` run where BigQuery chose and read in
+  three pages, `NULL` beside empty text, arrays, records and timestamps, an `UPDATE`'s row
+  count, and a statement refused at its insert and one failed at its poll, each with its
+  position from `[line:column]`. `live_bigquery`, ignored, runs the same against BigQuery when
+  `DBROVER_TEST_BIGQUERY_LIVE` names `project[,credentials file]`; CI never sets it.
 - **Trino**: the `trino` container (Trino 484, port 58080, with only the `memory` and `tpch`
   catalogs of `docker/trino/`), only under the compose file's `nightly` profile, which
   `.github/workflows/nightly.yml` starts once a day: its image is 1.04 GB to download and the

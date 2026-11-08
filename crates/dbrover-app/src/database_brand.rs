@@ -118,5 +118,12 @@ pub fn of(driver: DriverKind) -> DatabaseBrand {
             light: Color32::from_rgb(0xC0, 0x00, 0x8C),
             dark: Color32::from_rgb(0xFF, 0x6E, 0xD2),
         },
+        // BigQuery's blue, darkened on the light theme to read on white.
+        DriverKind::BigQuery => DatabaseBrand {
+            logo_uri: "bytes://logos/googlebigquery.svg",
+            logo_svg: include_bytes!("../../../assets/icons/databases/googlebigquery.svg"),
+            light: Color32::from_rgb(0x1A, 0x5F, 0xD0),
+            dark: Color32::from_rgb(0x66, 0x9D, 0xF6),
+        },
     }
 }

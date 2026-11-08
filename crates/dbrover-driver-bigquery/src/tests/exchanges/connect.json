@@ -1,0 +1,12 @@
+{
+  "doc": "Connecting lists one dataset of the project, which needs the sign-in and the project; so does each ping.",
+  "exchanges": [
+    {
+      "method": "GET", "path": "/projects/analytics/datasets", "query": {"maxResults": "1"},
+      "repeat": true,
+      "response": {"kind": "bigquery#datasetList", "datasets": [{"kind": "bigquery#dataset",
+        "id": "analytics:sales", "datasetReference": {"projectId": "analytics", "datasetId": "sales"},
+        "location": "europe-west2"}], "nextPageToken": "sales"}
+    }
+  ]
+}

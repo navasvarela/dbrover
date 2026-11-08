@@ -2,9 +2,12 @@
 //! empty for AWS's own choice, or a local emulator at an endpoint), then where its queries run.
 //! Nothing secret is typed here.
 
-use dbrover_core::{AthenaConfig, AwsSignInKind, ByteCount, CostGuard};
+use dbrover_core::{AthenaConfig, AwsSignInKind, CostGuard};
 
-use super::FormError;
+use super::{FormError, byte_limit};
+
+/// The limit's field in the dialog, which its errors name.
+pub const LIMIT_LABEL: &str = "Stop queries above";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AthenaFields {
@@ -21,12 +24,6 @@ pub struct AthenaFields {
     pub limit_gb: String,
     pub cost_guard: CostGuard,
 }
-
-/// Bytes in a gigabyte, decimal, as cloud bills count them.
-const GIGABYTE: u64 = 1_000_000_000;
-
-/// The digits a gigabyte has after its point, to the byte.
-const GIGABYTE_DIGITS: usize = 9;
 
 /// A new data source's fields: names left empty show Athena's defaults as their hints, and
 /// saving fills them in.
@@ -55,7 +52,7 @@ impl AthenaFields {
             limit_gb: config
                 .cost_guard
                 .ask_above_bytes
-                .map(gigabytes)
+                .map(byte_limit::gigabytes)
                 .unwrap_or_default(),
             cost_guard: config.cost_guard,
         }
@@ -91,7 +88,10 @@ impl AthenaFields {
         };
         let limit = match self.limit_gb.trim() {
             "" => None,
-            typed => Some(parse_gigabytes(typed).ok_or(FormError::InvalidByteLimit)?),
+            typed => Some(
+                byte_limit::parse_gigabytes(typed)
+                    .ok_or(FormError::InvalidByteLimit(LIMIT_LABEL))?,
+            ),
         };
         Ok(AthenaConfig {
             sign_in: self.sign_in,
@@ -110,63 +110,10 @@ impl AthenaFields {
     }
 }
 
-/// `1.5` for 1,500,000,000 bytes: as few digits as say it exactly.
-fn gigabytes(bytes: ByteCount) -> String {
-    let whole = bytes.0 / GIGABYTE;
-    let fraction = bytes.0 % GIGABYTE;
-    if fraction == 0 {
-        return whole.to_string();
-    }
-    let digits = format!("{fraction:0width$}", width = GIGABYTE_DIGITS);
-    format!("{whole}.{}", digits.trim_end_matches('0'))
-}
-
-/// A number of gigabytes, such as `10` or `0.5`, read exactly; `None` for anything else,
-/// zero, or more than a byte's precision.
-fn parse_gigabytes(text: &str) -> Option<ByteCount> {
-    let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
-    let digits = |part: &str| part.chars().all(|c| c.is_ascii_digit());
-    if whole.is_empty() && fraction.is_empty()
-        || !digits(whole)
-        || !digits(fraction)
-        || fraction.len() > GIGABYTE_DIGITS
-    {
-        return None;
-    }
-    let whole: u64 = if whole.is_empty() {
-        0
-    } else {
-        whole.parse().ok()?
-    };
-    let fraction: u64 = format!("{fraction:0<width$}", width = GIGABYTE_DIGITS)
-        .parse()
-        .ok()?;
-    let bytes = whole.checked_mul(GIGABYTE)?.checked_add(fraction)?;
-    (bytes > 0).then_some(ByteCount(bytes))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn gigabytes_are_read_and_written_to_the_byte() {
-        for (text, bytes) in [
-            ("10", Some(10_000_000_000)),
-            ("0.5", Some(500_000_000)),
-            (".25", Some(250_000_000)),
-            ("1.000000001", Some(1_000_000_001)),
-            ("1.0000000001", None),
-            ("0", None),
-            ("-1", None),
-            ("1e3", None),
-            (".", None),
-        ] {
-            assert_eq!(parse_gigabytes(text), bytes.map(ByteCount), "{text}");
-        }
-        assert_eq!(gigabytes(ByteCount(10_000_000_000)), "10");
-        assert_eq!(gigabytes(ByteCount(1_000_000_001)), "1.000000001");
-    }
+    use dbrover_core::ByteCount;
 
     #[test]
     fn empty_names_are_athenas_defaults_and_results_go_to_s3() {
@@ -192,7 +139,10 @@ mod tests {
         assert_eq!(AthenaFields::from_config(&config).database, "sales");
 
         fields.limit_gb = "ten".into();
-        assert_eq!(fields.to_config(), Err(FormError::InvalidByteLimit));
+        assert_eq!(
+            fields.to_config(),
+            Err(FormError::InvalidByteLimit(LIMIT_LABEL))
+        );
         fields.limit_gb = " 1.5 ".into();
         let config = fields.to_config().unwrap();
         assert_eq!(

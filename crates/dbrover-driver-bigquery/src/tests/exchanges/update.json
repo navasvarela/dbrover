@@ -1,0 +1,29 @@
+{
+  "doc": "An UPDATE in the data source's location (EU): its job's statistics and its result both say how many rows it changed; the result has no schema.",
+  "exchanges": [
+    {
+      "method": "GET", "path": "/projects/analytics/datasets", "query": {"maxResults": "1"},
+      "response": {}
+    },
+    {
+      "method": "POST", "path": "/projects/analytics/jobs",
+      "request": {"jobReference": {"projectId": "analytics", "location": "EU"},
+        "configuration": {"query": {"query": "UPDATE sales.orders SET total = 0 WHERE id < 4",
+          "useLegacySql": false, "defaultDataset": "absent"}}},
+      "response": {"jobReference": {"projectId": "analytics", "jobId": "{job}", "location": "EU"},
+        "status": {"state": "RUNNING"}}
+    },
+    {
+      "method": "GET", "path": "/projects/analytics/jobs/{job}", "query": {"location": "EU"},
+      "response": {"jobReference": {"projectId": "analytics", "jobId": "{job}", "location": "EU"},
+        "status": {"state": "DONE"},
+        "statistics": {"query": {"totalBytesProcessed": "48", "statementType": "UPDATE",
+          "numDmlAffectedRows": "3", "dmlStats": {"updatedRowCount": "3"}}}}
+    },
+    {
+      "method": "GET", "path": "/projects/analytics/queries/{job}", "query": {"location": "EU"},
+      "response": {"jobComplete": true, "totalRows": "0", "numDmlAffectedRows": "3",
+        "jobReference": {"projectId": "analytics", "jobId": "{job}", "location": "EU"}}
+    }
+  ]
+}

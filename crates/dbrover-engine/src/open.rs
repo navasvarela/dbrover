@@ -360,6 +360,10 @@ async fn connect(
         ConnectionConfig::Trino(config) => {
             Box::new(dbrover_driver_trino::connect(config, password, route).await?)
         }
+        // BigQuery's REST API is Google's, reached directly over HTTPS, as AWS's are.
+        ConnectionConfig::BigQuery(config) => {
+            Box::new(dbrover_driver_bigquery::connect(config).await?)
+        }
     })
 }
 

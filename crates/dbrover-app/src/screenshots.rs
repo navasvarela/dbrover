@@ -1022,7 +1022,16 @@ fn cassandra_data_source_dialog(harness: &mut Harness<'static, DbRoverApp>, _: &
 }
 
 fn dynamodb_data_source_dialog(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
-    open_new_data_source_dialog(harness, "DynamoDB");
+    harness
+        .get_all_by_label("New data source")
+        .next()
+        .unwrap()
+        .click();
+    harness.run_ok();
+    harness.get_by_label_contains("Amazon Web Services").hover();
+    harness.run_ok();
+    harness.get_by_label("DynamoDB").click();
+    harness.run_ok();
     retype(harness, "Name", "orders (AWS)");
     retype(harness, "Profile", "analytics");
     retype(harness, "Region", "eu-west-1");

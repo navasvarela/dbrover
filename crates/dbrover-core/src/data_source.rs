@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::placeholder::{PlaceholderError, Setting, Variables, expand, expand_path};
-use crate::{CloudSignIn, CostGuard, DriverError, ObjectStorage, PasswordCommand};
+use crate::{
+    CloudSignIn, CostGuard, DriverError, GoogleCloudSignIn, ObjectStorage, PasswordCommand,
+};
 
 /// Stable identity of a data source. Written once when the data source is created, so renaming
 /// it never breaks the keychain entry, consoles or history that refer to it.
@@ -216,6 +218,9 @@ pub enum ConnectionConfig {
     Athena(AthenaConfig),
     /// Trino, Starburst and Presto, over Trino's HTTP protocol (C3).
     Trino(TrinoConfig),
+    /// Google BigQuery, over its REST API (C4).
+    #[serde(rename = "bigquery")]
+    BigQuery(BigQueryConfig),
 }
 
 impl ConnectionConfig {
@@ -241,6 +246,7 @@ impl ConnectionConfig {
         match self {
             Self::DynamoDb(config) => Some(config.cost_guard),
             Self::Athena(config) => Some(config.cost_guard),
+            Self::BigQuery(config) => Some(config.cost_guard),
             Self::Postgres(_)
             | Self::Sqlite(_)
             | Self::Mysql(_)
@@ -285,7 +291,11 @@ impl ConnectionConfig {
             Self::Elasticsearch(config) => Some(&config.server),
             Self::Cassandra(config) => Some(&config.server),
             Self::Trino(config) => Some(&config.server),
-            Self::Sqlite(_) | Self::DuckDb(_) | Self::DynamoDb(_) | Self::Athena(_) => None,
+            Self::Sqlite(_)
+            | Self::DuckDb(_)
+            | Self::DynamoDb(_)
+            | Self::Athena(_)
+            | Self::BigQuery(_) => None,
         }
     }
 
@@ -300,7 +310,11 @@ impl ConnectionConfig {
             Self::Elasticsearch(config) => Some(&mut config.server),
             Self::Cassandra(config) => Some(&mut config.server),
             Self::Trino(config) => Some(&mut config.server),
-            Self::Sqlite(_) | Self::DuckDb(_) | Self::DynamoDb(_) | Self::Athena(_) => None,
+            Self::Sqlite(_)
+            | Self::DuckDb(_)
+            | Self::DynamoDb(_)
+            | Self::Athena(_)
+            | Self::BigQuery(_) => None,
         }
     }
 
@@ -318,6 +332,7 @@ impl ConnectionConfig {
             Self::Cassandra(_) => DriverKind::Cassandra,
             Self::DynamoDb(_) => DriverKind::DynamoDb,
             Self::Athena(_) => DriverKind::Athena,
+            Self::BigQuery(_) => DriverKind::BigQuery,
             Self::Trino(_) => DriverKind::Trino,
         }
     }
@@ -341,7 +356,8 @@ impl ConnectionConfig {
             | Self::Elasticsearch(_)
             | Self::Cassandra(_) => None,
             // Trino's catalogs are its top level, listed whole, as Athena's are.
-            Self::DynamoDb(_) | Self::Athena(_) | Self::Trino(_) => None,
+            // BigQuery's projects are its top level, as Trino's catalogs are.
+            Self::DynamoDb(_) | Self::Athena(_) | Self::Trino(_) | Self::BigQuery(_) => None,
         }
     }
 
@@ -371,6 +387,7 @@ impl ConnectionConfig {
             Self::DynamoDb(_) => "",
             // The database each query names in its context, in the data source's catalog.
             Self::Athena(config) => &config.database,
+            Self::BigQuery(config) => &config.dataset,
             // The schema a console starts in, in the catalog its server settings name.
             Self::Trino(config) => &config.schema,
         }
@@ -427,6 +444,7 @@ impl ConnectionConfig {
             }),
             Self::DynamoDb(config) => Self::DynamoDb(config.resolve(variables)?),
             Self::Athena(config) => Self::Athena(config.resolve(variables)?),
+            Self::BigQuery(config) => Self::BigQuery(config.resolve(variables)?),
             Self::Trino(config) => Self::Trino(TrinoConfig {
                 server: config.server.resolve(variables)?,
                 schema: expand(&config.schema, variables)
@@ -480,6 +498,7 @@ impl ConnectionConfig {
             Self::Cassandra(config) => config.server.default_name(),
             Self::DynamoDb(config) => config.default_name(),
             Self::Athena(config) => config.default_name(),
+            Self::BigQuery(config) => config.project.clone(),
             // `catalog@host`, or the host alone when no catalog is chosen.
             Self::Trino(config) if config.server.database.is_empty() => config.server.host.clone(),
             Self::Trino(config) => config.server.default_name(),
@@ -516,7 +535,8 @@ impl DriverKind {
             | Self::Cassandra
             | Self::Trino => true,
             // AWS's SDK signs DynamoDB's and Athena's requests with what the profile names.
-            Self::Sqlite | Self::DuckDb | Self::DynamoDb | Self::Athena => false,
+            // Google's token is BigQuery's, from C0b's sign-in.
+            Self::Sqlite | Self::DuckDb | Self::DynamoDb | Self::Athena | Self::BigQuery => false,
         }
     }
 }
@@ -538,6 +558,7 @@ impl fmt::Display for ConnectionConfig {
             Self::Cassandra(config) => config.server.fmt(f),
             Self::DynamoDb(config) => config.fmt(f),
             Self::Athena(config) => config.fmt(f),
+            Self::BigQuery(config) => config.fmt(f),
             Self::Trino(config) => config.server.fmt(f),
             Self::Sqlite(config) if config.read_only => {
                 write!(f, "{} (read-only)", config.path.display())
@@ -1239,6 +1260,82 @@ impl fmt::Display for AthenaConfig {
     }
 }
 
+/// Google BigQuery, its jobs run and billed in one project (`docs/cloud-data.md`, C4). Nothing
+/// in it is secret: the sign-in is C0b's Application Default Credentials or a credentials file
+/// it names, which DbRover reads when connecting.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BigQueryConfig {
+    #[serde(default, skip_serializing_if = "GoogleCloudSignIn::is_default")]
+    pub sign_in: GoogleCloudSignIn,
+    /// The project jobs run in and are billed to, listed first in the explorer. Written as
+    /// `project_id`, Google's own name for it, since `project` is the data source's own key.
+    #[serde(rename = "project_id")]
+    pub project: String,
+    /// The dataset unqualified table names resolve in; empty for none.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub dataset: String,
+    /// Where jobs run (`US`, `EU`, `europe-west2`, …); empty to let BigQuery choose from the
+    /// tables a query reads.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub location: String,
+    /// Projects to show in the explorer besides those the sign-in can list, such as
+    /// `bigquery-public-data`, which BigQuery's own listing never shows.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub other_projects: Vec<String>,
+    /// An address instead of Google's: the emulator, or a test server.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub endpoint: String,
+    /// Written only where it differs from the default (C0e).
+    #[serde(flatten)]
+    pub cost_guard: CostGuard,
+}
+
+impl BigQueryConfig {
+    fn resolve(&self, variables: &dyn Variables) -> Result<Self, PlaceholderError> {
+        let expand_setting = |text: &str, setting| {
+            expand(text, variables).map_err(PlaceholderError::in_setting(setting))
+        };
+        Ok(Self {
+            sign_in: self.sign_in.resolve(variables)?,
+            project: expand_setting(&self.project, Setting::Project)?,
+            dataset: expand_setting(&self.dataset, Setting::Dataset)?,
+            location: expand_setting(&self.location, Setting::Location)?,
+            other_projects: self
+                .other_projects
+                .iter()
+                .map(|project| expand_setting(project, Setting::Project))
+                .collect::<Result<_, _>>()?,
+            endpoint: expand_setting(&self.endpoint, Setting::Endpoint)?,
+            cost_guard: self.cost_guard,
+        })
+    }
+}
+
+/// `BigQuery project analytics, dataset sales, in EU`, or what of it is set.
+impl fmt::Display for BigQueryConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "BigQuery project {}", self.project)?;
+        if !self.dataset.is_empty() {
+            write!(f, ", dataset {}", self.dataset)?;
+        }
+        if !self.location.is_empty() {
+            write!(f, ", in {}", self.location)?;
+        }
+        match (&self.sign_in, self.endpoint.as_str()) {
+            (GoogleCloudSignIn::Anonymous, "") => f.write_str(", signed in as no one"),
+            (GoogleCloudSignIn::Anonymous, endpoint) => write!(f, " at {endpoint} (emulator)"),
+            (GoogleCloudSignIn::CredentialsFile { credentials_file }, endpoint) => {
+                if !endpoint.is_empty() {
+                    write!(f, " at {endpoint}")?;
+                }
+                write!(f, " as {}", credentials_file.display())
+            }
+            (GoogleCloudSignIn::Google, "") => Ok(()),
+            (GoogleCloudSignIn::Google, endpoint) => write!(f, " at {endpoint}"),
+        }
+    }
+}
+
 /// Whom a data source on an AWS service (DynamoDB, Athena) signs in as.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -1371,10 +1468,11 @@ pub enum DriverKind {
     DynamoDb,
     Athena,
     Trino,
+    BigQuery,
 }
 
 impl DriverKind {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::Postgres,
         Self::Sqlite,
         Self::Mysql,
@@ -1388,6 +1486,7 @@ impl DriverKind {
         Self::DynamoDb,
         Self::Athena,
         Self::Trino,
+        Self::BigQuery,
     ];
 
     pub fn display_name(self) -> &'static str {
@@ -1405,6 +1504,7 @@ impl DriverKind {
             Self::DynamoDb => "DynamoDB",
             Self::Athena => "Amazon Athena",
             Self::Trino => "Trino / Presto",
+            Self::BigQuery => "BigQuery",
         }
     }
 }
@@ -1553,6 +1653,102 @@ mod tests {
             file.data_source[0].config.to_string(),
             "cluster0.example.mongodb.net (connection string)"
         );
+    }
+
+    #[test]
+    fn a_bigquery_data_source_round_trips() {
+        let data_source = |config| DataSource {
+            id: DataSourceId::generate(),
+            name: "warehouse".to_owned(),
+            color: None,
+            safety: SafetyLevel::Normal,
+            project: None,
+            mcp_login: None,
+            config: ConnectionConfig::BigQuery(config),
+        };
+        let adc = BigQueryConfig {
+            project: "analytics".to_owned(),
+            dataset: "sales".to_owned(),
+            location: "EU".to_owned(),
+            other_projects: vec!["bigquery-public-data".to_owned()],
+            cost_guard: CostGuard {
+                whole_table: ScanGuard::AskBeforeScans,
+                ask_above_bytes: Some(ByteCount(1_000_000_000)),
+            },
+            ..BigQueryConfig::default()
+        };
+        let key_file = BigQueryConfig {
+            sign_in: GoogleCloudSignIn::CredentialsFile {
+                credentials_file: "/keys/reader.json".into(),
+            },
+            project: "analytics".to_owned(),
+            ..BigQueryConfig::default()
+        };
+        let emulator = BigQueryConfig {
+            sign_in: GoogleCloudSignIn::Anonymous,
+            project: "dbrover".to_owned(),
+            endpoint: "http://localhost:59050".to_owned(),
+            ..BigQueryConfig::default()
+        };
+        for (config, written, shown) in [
+            (
+                adc,
+                "driver = \"bigquery\"\nproject_id = \"analytics\"\ndataset = \"sales\"\n\
+                 location = \"EU\"\nother_projects = [\"bigquery-public-data\"]\n\
+                 ask_above_bytes = 1000000000",
+                "BigQuery project analytics, dataset sales, in EU",
+            ),
+            (
+                key_file,
+                "[data_source.sign_in]\nwith = \"credentials-file\"\n\
+                 credentials_file = \"/keys/reader.json\"",
+                "BigQuery project analytics as /keys/reader.json",
+            ),
+            (
+                emulator,
+                "endpoint = \"http://localhost:59050\"",
+                "BigQuery project dbrover at http://localhost:59050 (emulator)",
+            ),
+        ] {
+            let file = File {
+                data_source: vec![data_source(config)],
+            };
+            let text = toml::to_string(&file).unwrap();
+            assert!(text.contains(written), "{text}");
+            assert_eq!(toml::from_str::<File>(&text).unwrap(), file);
+            let config = &file.data_source[0].config;
+            assert_eq!(config.to_string(), shown);
+            assert_eq!(config.driver(), DriverKind::BigQuery);
+            assert!(!config.uses_password());
+            assert!(config.cost_guard().is_some());
+        }
+    }
+
+    #[test]
+    fn a_bigquery_data_source_resolves_its_placeholders() {
+        let config = ConnectionConfig::BigQuery(BigQueryConfig {
+            sign_in: GoogleCloudSignIn::CredentialsFile {
+                credentials_file: "${KEYS}/reader.json".into(),
+            },
+            project: "${PROJECT}".to_owned(),
+            dataset: "${PROJECT}_sales".to_owned(),
+            other_projects: vec!["${PROJECT}-shared".to_owned()],
+            ..BigQueryConfig::default()
+        });
+        let variables = Fixed::new(&[("PROJECT", "acme"), ("KEYS", "/keys")]);
+        let ConnectionConfig::BigQuery(resolved) = config.resolve(&variables).unwrap() else {
+            panic!("not BigQuery");
+        };
+        assert_eq!(resolved.project, "acme");
+        assert_eq!(resolved.dataset, "acme_sales");
+        assert_eq!(resolved.other_projects, ["acme-shared"]);
+        assert_eq!(
+            resolved.sign_in,
+            GoogleCloudSignIn::CredentialsFile {
+                credentials_file: "/keys/reader.json".into()
+            }
+        );
+        assert_eq!(config.default_name(), "${PROJECT}");
     }
 
     #[test]

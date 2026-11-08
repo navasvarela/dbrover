@@ -440,12 +440,20 @@ impl ServiceVendor {
     }
 
     /// The engines of DbRover's own that only this cloud runs, such as DynamoDB and Athena
-    /// on AWS, which its menu offers beside the managed services.
+    /// on AWS and BigQuery on Google Cloud, which its menu offers beside the managed services.
     pub fn engines(self) -> &'static [DriverKind] {
         match self {
             Self::Aws => &[DriverKind::DynamoDb, DriverKind::Athena],
-            Self::GoogleCloud | Self::Azure | Self::Independent => &[],
+            Self::GoogleCloud => &[DriverKind::BigQuery],
+            Self::Azure | Self::Independent => &[],
         }
+    }
+
+    /// The cloud that alone runs `driver`, if one does.
+    pub fn running_only(driver: DriverKind) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|vendor| vendor.engines().contains(&driver))
     }
 }
 

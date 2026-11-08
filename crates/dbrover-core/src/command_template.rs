@@ -51,7 +51,9 @@ impl From<&ConnectionConfig> for DataSourceFields {
             | ConnectionConfig::Elasticsearch(_)
             | ConnectionConfig::Cassandra(_)
             | ConnectionConfig::Trino(_) => None,
-            ConnectionConfig::DynamoDb(_) | ConnectionConfig::Athena(_) => None,
+            ConnectionConfig::DynamoDb(_)
+            | ConnectionConfig::Athena(_)
+            | ConnectionConfig::BigQuery(_) => None,
         };
         let server = config.server();
         Self {

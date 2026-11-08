@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use dbrover_core::{
-    AzureContainer, AzureSignIn, AzureTool, GcsBucket, GcsSignIn, ObjectStorage, S3Bucket,
+    AzureContainer, AzureSignIn, AzureTool, GcsBucket, GoogleCloudSignIn, ObjectStorage, S3Bucket,
     S3SignIn, StorageProvider,
 };
 
@@ -124,12 +124,12 @@ impl BucketFields {
                 gcs.bucket.clone_into(&mut fields.bucket);
                 gcs.endpoint.clone_into(&mut fields.endpoint);
                 fields.sign_in = match &gcs.sign_in {
-                    GcsSignIn::Google => BucketSignIn::Provider,
-                    GcsSignIn::CredentialsFile { credentials_file } => {
+                    GoogleCloudSignIn::Google => BucketSignIn::Provider,
+                    GoogleCloudSignIn::CredentialsFile { credentials_file } => {
                         fields.credentials_file = credentials_file.display().to_string();
                         BucketSignIn::CredentialsFile
                     }
-                    GcsSignIn::Anonymous => BucketSignIn::Anonymous,
+                    GoogleCloudSignIn::Anonymous => BucketSignIn::Anonymous,
                 };
             }
             ObjectStorage::Azure(azure) => {
@@ -212,16 +212,16 @@ impl BucketFields {
         })
     }
 
-    fn gcs_sign_in(&self) -> Result<GcsSignIn, FormError> {
+    fn gcs_sign_in(&self) -> Result<GoogleCloudSignIn, FormError> {
         Ok(match self.sign_in {
-            BucketSignIn::Provider => GcsSignIn::Google,
-            BucketSignIn::CredentialsFile => GcsSignIn::CredentialsFile {
+            BucketSignIn::Provider => GoogleCloudSignIn::Google,
+            BucketSignIn::CredentialsFile => GoogleCloudSignIn::CredentialsFile {
                 credentials_file: PathBuf::from(required(
                     &self.credentials_file,
                     FormError::CredentialsFileMissing,
                 )?),
             },
-            BucketSignIn::Anonymous => GcsSignIn::Anonymous,
+            BucketSignIn::Anonymous => GoogleCloudSignIn::Anonymous,
             BucketSignIn::Profile | BucketSignIn::AccessKey => return Err(self.not_offered()),
         })
     }
@@ -283,7 +283,7 @@ mod tests {
             ObjectStorage::Gcs(GcsBucket {
                 bucket: "logs".to_owned(),
                 endpoint: String::new(),
-                sign_in: GcsSignIn::CredentialsFile {
+                sign_in: GoogleCloudSignIn::CredentialsFile {
                     credentials_file: "/keys/reader.json".into(),
                 },
             }),

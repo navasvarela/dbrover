@@ -16,6 +16,7 @@ dbrover-cloud = { path = "crates/dbrover-cloud" }
 dbrover-core = { path = "crates/dbrover-core" }
 dbrover-diagram = { path = "crates/dbrover-diagram" }
 dbrover-driver-athena = { path = "crates/dbrover-driver-athena" }
+dbrover-driver-bigquery = { path = "crates/dbrover-driver-bigquery" }
 dbrover-driver-cassandra = { path = "crates/dbrover-driver-cassandra" }
 dbrover-driver-mongodb = { path = "crates/dbrover-driver-mongodb" }
 dbrover-driver-mysql = { path = "crates/dbrover-driver-mysql" }
