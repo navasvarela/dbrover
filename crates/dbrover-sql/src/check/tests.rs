@@ -246,6 +246,82 @@ optimize iceberg_orders rewrite data using bin_pack;
 vacuum iceberg_orders;
 "#;
 
+/// GoogleSQL statements, as BigQuery's documentation writes each construct: queries and DML,
+/// which are checked, then the DDL and scripting a BigQuery console holds, which aren't.
+const VALID_BIGQUERY: &str = r##"
+select * from `my-project.sales.orders` where order_date >= date '2026-01-01' limit 10;
+select word, sum(word_count) as count from `bigquery-public-data`.samples.shakespeare group by word order by count desc limit 10;
+select o.id from sales.orders as o where o.status in ('shipped', "delivered");
+select struct(1 as a, 'x' as b), [1, 2, 3], array<int64>[1, 2], struct<a int64, b string>(1, 'x') from t;
+select x, i from unnest([1, 2, 3]) as x with offset as i;
+select o.id, item.sku from sales.orders as o, unnest(o.items) as item;
+select arr[offset(0)], arr[safe_offset(1)], arr[ordinal(1)], s.a.b from t;
+select * except (secret) replace (upper(name) as name) from users;
+select user_id, row_number() over (partition by country order by ts desc) as rn from events qualify rn = 1;
+select * from (select product, quarter, sales from t) pivot (sum(sales) for quarter in ('Q1', 'Q2'));
+select * from (select product, q1, q2 from t) unpivot (sales for quarter in (q1, q2));
+select safe_cast(x as int64), safe.parse_date('%Y-%m-%d', s), safe.substr(s, 1, 2), safe.cast(y as numeric) from t;
+select format_date('%Y-%m', current_date()), parse_timestamp('%Y-%m-%d %H:%M:%S', s, 'UTC') from t;
+select date_add(current_date(), interval 7 day), timestamp_trunc(ts, week(monday)), extract(dayofweek from d) from t;
+select approx_count_distinct(user_id), array_agg(distinct x ignore nulls order by x limit 10), string_agg(name, ', ') from t;
+select generate_date_array('2026-01-01', '2026-01-31', interval 1 day);
+select json_value(payload, '$.user.id'), json_query(payload, '$.items'), payload.user.id, payload['items'][0] from t;
+select st_distance(st_geogpoint(lng1, lat1), st_geogpoint(lng2, lat2)) from places;
+select * from t for system_time as of timestamp_sub(current_timestamp(), interval 1 hour);
+select * from t tablesample system (10 percent);
+select r'\d+', b'bytes', rb'\x00', '''triple
+'quoted' string''', """double "triple" quoted""", 'it\'s', "a \"b\"" from t;
+select 1 # a hash comment
+-- a dash comment
+/* a block comment */ from t;
+select timestamp '2026-01-01 00:00:00 UTC', datetime '2026-01-01 00:00:00', numeric '1.5', json '{"a": 1}', interval '1-2 3 4:5:6' year to second;
+select @param, @@project_id, 0xFF from t where id = @id;
+with recursive r as (select 1 as n union all select n + 1 from r where n < 10) select * from r;
+select x, countif(y > 0), logical_and(z) from t group by all;
+select sum(x) over w as s from t qualify s > 1 window w as (order by y);
+select * from `region-us`.INFORMATION_SCHEMA.JOBS where creation_time > timestamp_sub(current_timestamp(), interval 1 day);
+select (select as struct 1 as a, 2 as b), array(select as struct a, b from u) from t;
+select x from t where x like any ('a%', 'b%');
+select * from t1 union all by name select * from t2;
+select * from t1 full union all by name select * from t2;
+select * from t1 union all by name on (a) select * from t2;
+select * from t1 union distinct strict corresponding select * from t2;
+select * from t |> where x > 1 |> aggregate count(*) group by y;
+select * from ml.predict(model `p.d.m`, table t);
+select * from appends(table t, null, null);
+select 1 << 2, 8 >> 1, array<array<int64>>[];
+select * from `p.d.t*` where _table_suffix between '20260101' and '20260131';
+select * from t match_recognize (order by x measures count(*) as n pattern (a+) define a as true);
+insert into sales.orders (id, total) values (1, 10.5), (2, 20);
+insert sales.orders (id) values (3);
+insert into t (a, s) values (1, struct(1, 'x'));
+update sales.orders set status = 'shipped' where id = 1;
+update t set s.a = 1, x = u.x from u where t.id = u.id;
+delete from t where id = 1;
+delete t where true;
+merge sales.orders t using staging s on t.id = s.id when matched then update set total = s.total when not matched by target then insert (id, total) values (s.id, s.total) when not matched by source then delete;
+truncate table sales.orders;
+create table sales.orders (id int64 not null, total numeric(10, 2), created_at timestamp, items array<struct<sku string, qty int64>>) partition by date(created_at) cluster by id options (description = 'orders', partition_expiration_days = 30);
+create temp function double_it(x int64) returns int64 as (x * 2);
+create temp function js_fn(x string) returns string language js as r"""
+  return x.toUpperCase();
+""";
+create or replace procedure sales.p(x int64) begin select x; select x + 1; end;
+alter table t set options (description = 'x');
+declare n int64 default 3;
+set n = n + 1;
+call sales.p(1);
+execute immediate 'select ?' using 1;
+export data options (uri = 'gs://bucket/out/*.csv', format = 'CSV', overwrite = true) as select * from t;
+load data into sales.orders from files (format = 'CSV', uris = ['gs://bucket/in/*.csv']);
+assert (select count(*) from t) > 0 as 'empty';
+begin select 1; exception when error then select @@error.message; end;
+if n > 1 then select 1; elseif n < 0 then select 2; else select 3; end if;
+while n > 0 do set n = n - 1; end while;
+begin transaction;
+commit transaction;
+"##;
+
 fn syntax_errors(corpus: &str, dialect: Dialect) -> Vec<(String, Problem)> {
     split_statements(corpus, dialect)
         .into_iter()
@@ -268,6 +344,7 @@ fn valid_statements_get_no_syntax_error() {
     assert_eq!(syntax_errors(VALID_DUCKDB, Dialect::DuckDb), []);
     assert_eq!(syntax_errors(VALID_CLICKHOUSE, Dialect::ClickHouse), []);
     assert_eq!(syntax_errors(VALID_TRINO, Dialect::Trino), []);
+    assert_eq!(syntax_errors(VALID_BIGQUERY, Dialect::BigQuery), []);
 }
 
 #[test]
@@ -425,6 +502,7 @@ fn still_reports_syntax_errors_around_the_dialects_gaps() {
             (sql, Dialect::DuckDb),
             (sql, Dialect::ClickHouse),
             (sql, Dialect::Trino),
+            (sql, Dialect::BigQuery),
         ]
     });
     // DuckDB accepts a trailing comma in a select list, `select a, from t`. `**` is its power
@@ -436,14 +514,20 @@ fn still_reports_syntax_errors_around_the_dialects_gaps() {
         // mistakes, checked.
         ("select * from t for for update", Dialect::Trino),
         ("insert into t values (1,, 2)", Dialect::Trino),
+        // BigQuery's gaps leave a name called `safe`, a column called `table` and a join
+        // checked.
+        ("select safe.x from t where", Dialect::BigQuery),
+        ("select f(table) from t where", Dialect::BigQuery),
+        ("select a from t left join u on", Dialect::BigQuery),
     ];
     for (sql, dialect) in everywhere
         .filter(|&(sql, dialect)| {
-            // DuckDB and ClickHouse accept a trailing comma in a select list. Trino doesn't,
-            // but `sqlparser`'s generic dialect does, so Trino's own error says so on running.
+            // DuckDB, ClickHouse and BigQuery accept a trailing comma in a select list. Trino
+            // doesn't, but `sqlparser`'s generic dialect does, so Trino's own error says so on
+            // running.
             !(matches!(
                 dialect,
-                Dialect::DuckDb | Dialect::ClickHouse | Dialect::Trino
+                Dialect::DuckDb | Dialect::ClickHouse | Dialect::Trino | Dialect::BigQuery
             ) && sql == "select a, from t")
         })
         .chain(duckdb)

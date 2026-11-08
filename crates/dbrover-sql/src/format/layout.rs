@@ -186,6 +186,15 @@ impl<'a> Layout<'a> {
         self.leaf(node).is_some_and(Item::is_comment)
     }
 
+    /// Whether the node before `index` is a `*`, as in `SELECT t.* EXCEPT (a)`.
+    fn follows_star(&self, nodes: &[Node], index: usize) -> bool {
+        index
+            .checked_sub(1)
+            .and_then(|before| nodes.get(before))
+            .and_then(|node| self.leaf(node))
+            .is_some_and(|item| item.is_punctuation("*"))
+    }
+
     fn is_comma(&self, node: &Node) -> bool {
         self.leaf(node).is_some_and(|item| item.is_punctuation(","))
     }
@@ -313,6 +322,8 @@ impl<'a> Layout<'a> {
             "window" | "returning" => (1, ClauseKind::List),
             "limit" | "offset" | "fetch" => (1, ClauseKind::Inline),
             "group" | "order" if next(1) == Some("by") => (2, ClauseKind::List),
+            // GoogleSQL's `SELECT * EXCEPT (a)` leaves columns out, rather than rows.
+            "except" if self.follows_star(nodes, index) => return None,
             "union" | "intersect" | "except" => {
                 (with_following(&["all", "distinct"]), ClauseKind::Inline)
             }

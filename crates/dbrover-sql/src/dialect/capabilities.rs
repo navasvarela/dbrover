@@ -615,6 +615,47 @@ const TRINO: Capabilities = Capabilities {
     schema_compare: false,
 };
 
+/// BigQuery: a table's partitioning, clustering and options are what its DDL is about, and
+/// none of the helpers' forms ask them, so nothing is offered; [`Dialect::writes_ddl`] keeps
+/// the helpers away. The types are GoogleSQL's.
+const BIGQUERY: Capabilities = Capabilities {
+    transactional_ddl: false,
+    drop_cascade: false,
+    unique_keys: false,
+    foreign_keys: false,
+    referential_actions: &[],
+    indexes: false,
+    index_methods: &[],
+    table_changes: &[],
+    rebuilds_tables: false,
+    foreign_key_switch: None,
+    converts_with_using: false,
+    restricted_add_column: false,
+    rebuilds_table_ddl: false,
+    common_types: &[
+        "INT64",
+        "FLOAT64",
+        "NUMERIC",
+        "BOOL",
+        "STRING",
+        "BYTES",
+        "DATE",
+        "DATETIME",
+        "TIMESTAMP",
+        "JSON",
+        "ARRAY<STRING>",
+        "STRUCT<a INT64, b STRING>",
+    ],
+    materialized_views: false,
+    view_replacement: ViewReplacement::OrReplace,
+    renames_views: false,
+    schema_creation: SchemaCreation::Unsupported,
+    schema_owner: false,
+    drop_schema_cascade: false,
+    users: UserModel::Unsupported,
+    schema_compare: false,
+};
+
 impl Dialect {
     /// What the dialect's DDL can do.
     pub fn capabilities(self) -> &'static Capabilities {
@@ -627,6 +668,7 @@ impl Dialect {
             Self::ClickHouse => &CLICKHOUSE,
             Self::Cassandra => &CQL,
             Self::Trino => &TRINO,
+            Self::BigQuery => &BIGQUERY,
         }
     }
 
@@ -634,9 +676,10 @@ impl Dialect {
     /// designed around the queries that read it, its primary key can't change afterwards, and
     /// a keyspace's replication is chosen per cluster, none of which the helpers' forms ask.
     /// Nor Trino's: what a table can be is each catalog's connector's to say, and Athena's
-    /// tables are Hive's, over files in S3 whose format and location the forms don't ask.
+    /// tables are Hive's, over files in S3 whose format and location the forms don't ask. Nor
+    /// BigQuery's, whose tables are made by their partitioning, clustering and options.
     pub fn writes_ddl(self) -> bool {
-        !matches!(self, Self::Cassandra | Self::Trino)
+        !matches!(self, Self::Cassandra | Self::Trino | Self::BigQuery)
     }
 
     /// What the object helpers may write on a server of this dialect that said it is

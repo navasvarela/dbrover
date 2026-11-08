@@ -70,3 +70,8 @@ fn cql() {
 fn trino() {
     check_corpus(Dialect::Trino, include_str!("classify/trino.sql"));
 }
+
+#[test]
+fn bigquery() {
+    check_corpus(Dialect::BigQuery, include_str!("classify/bigquery.sql"));
+}

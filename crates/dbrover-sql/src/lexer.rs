@@ -109,7 +109,10 @@ impl Lexer<'_> {
             ('#', _) if self.rules.hash_comments => self.line_comment(),
             ('/', Some('/')) if self.rules.slash_comments => self.line_comment(),
             ('/', Some('*')) => self.block_comment(),
-            ('\'', _) => self.quoted('\'', TokenKind::String),
+            ('\'', _) => self.string('\''),
+            (c, _) if is_word_start(c) && self.string_prefix_length().is_some() => {
+                self.prefixed_string()
+            }
             ('e' | 'E', Some('\'')) if self.rules.escape_strings => {
                 self.bump();
                 self.escape_string()
@@ -118,7 +121,7 @@ impl Lexer<'_> {
                 self.bump();
                 self.quoted('\'', TokenKind::String)
             }
-            ('"', _) if self.rules.double_quoted_strings => self.quoted('"', TokenKind::String),
+            ('"', _) if self.rules.double_quoted_strings => self.string('"'),
             ('"', _) => self.quoted('"', TokenKind::QuotedIdentifier),
             ('`', _) if self.rules.backtick_identifiers => {
                 self.quoted('`', TokenKind::QuotedIdentifier)
@@ -198,10 +201,74 @@ impl Lexer<'_> {
         TokenKind::BlockComment
     }
 
+    /// A string opening with `quote`: triple-quoted where the dialect has those, else quoted.
+    fn string(&mut self, quote: char) -> TokenKind {
+        let triple = if quote == '"' { "\"\"\"" } else { "'''" };
+        if self.rules.triple_quoted_strings && self.rest().starts_with(triple) {
+            self.triple_quoted(triple)
+        } else {
+            self.quoted(quote, TokenKind::String)
+        }
+    }
+
+    /// How many characters of GoogleSQL's string prefix (`r`, `b`, `rb`, `br`, in any case)
+    /// start the rest, right before a quote; `None` where none does, or the dialect has none.
+    fn string_prefix_length(&self) -> Option<usize> {
+        if !self.rules.string_prefixes {
+            return None;
+        }
+        let is_prefix = |c: &u8| matches!(c.to_ascii_lowercase(), b'r' | b'b');
+        let is_quote = |c: &u8| matches!(c, b'\'' | b'"');
+        match self.rest().as_bytes() {
+            [first, quote, ..] if is_prefix(first) && is_quote(quote) => Some(1),
+            [first, second, quote, ..]
+                if is_prefix(first)
+                    && is_prefix(second)
+                    && !first.eq_ignore_ascii_case(second)
+                    && is_quote(quote) =>
+            {
+                Some(2)
+            }
+            _ => None,
+        }
+    }
+
+    /// A string after its prefix. A raw string is read like any other: its backslashes are
+    /// kept rather than escapes, but one still keeps the quote after it from ending the
+    /// string, which is why a raw string can't end in an odd number of backslashes.
+    fn prefixed_string(&mut self) -> TokenKind {
+        let Some(length) = self.string_prefix_length() else {
+            return self.word();
+        };
+        self.position += length;
+        let quote = if self.peek() == Some('"') { '"' } else { '\'' };
+        self.string(quote)
+    }
+
+    /// `'''…'''` or `"""…"""`, ending at the first three quotes a backslash doesn't escape.
+    fn triple_quoted(&mut self, delimiter: &str) -> TokenKind {
+        self.position += delimiter.len();
+        while !self.rest().is_empty() {
+            if self.rest().starts_with(delimiter) {
+                self.position += delimiter.len();
+                break;
+            }
+            if self.bump() == Some('\\') {
+                self.bump();
+            }
+        }
+        TokenKind::String
+    }
+
     /// Text between `quote`s, where a doubled quote stands for itself (`'it''s'`), and, in a
-    /// string of a dialect with backslash escapes, `\` escapes the next character.
+    /// string of a dialect with backslash escapes (or a name, where those escape names too),
+    /// `\` escapes the next character.
     fn quoted(&mut self, quote: char, kind: TokenKind) -> TokenKind {
-        let backslash_escapes = kind == TokenKind::String && self.rules.backslash_escapes;
+        let backslash_escapes = if kind == TokenKind::String {
+            self.rules.backslash_escapes
+        } else {
+            self.rules.backslash_escapes_in_identifiers
+        };
         self.bump();
         while let Some(c) = self.bump() {
             if c == '\\' && backslash_escapes {
@@ -315,7 +382,7 @@ mod tests {
     #[test]
     fn recognises_dialect_specific_quoting() {
         use TokenKind::*;
-        let cases: [Case; 14] = [
+        let cases: [Case; 16] = [
             (
                 "$fn$ a; $x$ b $fn$ ;",
                 Dialect::Postgres,
@@ -456,6 +523,47 @@ mod tests {
                     (Punctuation, "$"),
                     (BlockComment, "/* /* */"),
                     (Number, "1"),
+                ],
+            ),
+            // GoogleSQL: a whole path in backquotes, strings in either quote with backslash
+            // escapes, which names take too, `#` comments and block comments that don't nest.
+            (
+                r#"select `my-project.sales.orders`, `a\`b`, "it's", 'a\'b', x$ # note
+-- dash
+/* a /* b */ c"#,
+                Dialect::BigQuery,
+                vec![
+                    (Word, "select"),
+                    (QuotedIdentifier, "`my-project.sales.orders`"),
+                    (Punctuation, ","),
+                    (QuotedIdentifier, r"`a\`b`"),
+                    (Punctuation, ","),
+                    (String, "\"it's\""),
+                    (Punctuation, ","),
+                    (String, r"'a\'b'"),
+                    (Punctuation, ","),
+                    (Word, "x"),
+                    (Punctuation, "$"),
+                    (LineComment, "# note"),
+                    (LineComment, "-- dash"),
+                    (BlockComment, "/* a /* b */"),
+                    (Word, "c"),
+                ],
+            ),
+            // GoogleSQL's triple-quoted strings, over lines, and its raw and bytes prefixes in
+            // any order and case; a prefix without a quote after it is a name.
+            (
+                "'''x\n'y'' z''' \"\"\"a \\\"\"\" b\"\"\" r'\\d+\\'' b'\\x00' RB'''raw''' bR\"x\" rb br'",
+                Dialect::BigQuery,
+                vec![
+                    (String, "'''x\n'y'' z'''"),
+                    (String, "\"\"\"a \\\"\"\" b\"\"\""),
+                    (String, "r'\\d+\\''"),
+                    (String, "b'\\x00'"),
+                    (String, "RB'''raw'''"),
+                    (String, "bR\"x\""),
+                    (Word, "rb"),
+                    (String, "br'"),
                 ],
             ),
             // Only Transact-SQL has `@` names; elsewhere `@p` is a parameter marker's sign.

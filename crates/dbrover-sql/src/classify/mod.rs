@@ -357,6 +357,15 @@ fn statement_kind(statement: &Statement) -> StatementKind {
         | Statement::Comment { .. }
         | Statement::RenameTable(_) => Schema,
 
+        // GoogleSQL's `BEGIN … END` block, which `sqlparser` reads as a `BEGIN` holding
+        // statements: no transaction, but a script, which is administration like the rest of
+        // GoogleSQL's procedural language (`IF`, `DECLARE`, `SET`, `CALL`). Its statements are
+        // visited too.
+        Statement::StartTransaction {
+            has_end_keyword: true,
+            ..
+        } => Admin,
+
         Statement::StartTransaction { .. }
         | Statement::Commit { .. }
         | Statement::Rollback { .. }

@@ -180,6 +180,34 @@ impl<'a> Tokens<'a> {
             ParserGap::BareValues => {
                 current.as_deref() == Some("values") && self.text(index + 1) != Some("(")
             }
+            ParserGap::FunctionPrefix(prefix) => {
+                current.as_deref() == Some(prefix)
+                    && self.text(index + 1) == Some(".")
+                    && self.word(index + 2).is_some()
+                    && self.text(index + 3) == Some("(")
+            }
+            ParserGap::ObjectArgument(keyword) => {
+                current.as_deref() == Some(keyword)
+                    && index
+                        .checked_sub(1)
+                        .and_then(|before| self.text(before))
+                        .is_some_and(|before| matches!(before, "(" | ","))
+                    && self.tokens.get(index + 1).is_some_and(|name| {
+                        matches!(name.kind, TokenKind::Word | TokenKind::QuotedIdentifier)
+                    })
+            }
+            ParserGap::SetOperationMode => {
+                let operator = if self.word(index + 1).as_deref() == Some("outer") {
+                    index + 2
+                } else {
+                    index + 1
+                };
+                matches!(current.as_deref(), Some("full" | "left" | "inner"))
+                    && matches!(
+                        self.word(operator).as_deref(),
+                        Some("union" | "intersect" | "except")
+                    )
+            }
             ParserGap::IsAnyExpression => {
                 current.as_deref() == Some("is") && {
                     let next = if self.word(index + 1).as_deref() == Some("not") {
