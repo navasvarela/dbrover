@@ -1,9 +1,12 @@
 # Charts as code
 
-Status: **proposed on 2026-11-04; CH1, CH2 and CH3 built on 2026-11-06.** The [roadmap](roadmap.md#charts-as-code-track) tracks it as CH1 to CH4. CI fixes,
-the reports track and W13 schema compare came first. Each milestone's decisions are confirmed
-when it starts, as in [Reports](reporting.md): CH1's [below](#ch1-confirmed), CH2's and CH3's
-after their layers.
+Status: **done.** Proposed on 2026-11-04; CH1, CH2 and CH3 built on 2026-11-06, and CH4 on
+2026-11-07, which closes the track: CH1 in #515 to #519, CH2 in #522 to #524, CH3 in #526 to
+#531, CH4 in #533 and #534. The [roadmap](roadmap.md#charts-as-code-track) tracks it as CH1 to
+CH4. CI fixes, the reports track and W13 schema compare came first. Each milestone's decisions
+were confirmed when it started, as in [Reports](reporting.md): CH1's [below](#ch1-confirmed),
+CH2's, CH3's and CH4's after their layers. What was left for later is
+[at the end](#left-for-later).
 
 W12 gave every result a **Chart** tab: bars, lines or a scatter of the rows the grid holds,
 picked in the toolbar and exported as SVG or PNG ([Charts](../book/src/consoles.md#charts)).
@@ -538,15 +541,58 @@ app settled these details:
 whose MCP access is off refuses it; a result past the row limit is drawn cut, and the reply says
 so.
 
+#### CH4 confirmed
+
+Started and built on 2026-11-07, after CH3. The plan stands; building it settled these details:
+
+- **Arguments:** `data_source`, `sql`, `chart` (a JSON object of a block's keys, all optional)
+  and `format` (`png`, the default, or `svg`). The picture is 800 by 450 points, a report's
+  chart's default; there is no size argument, since a client shows the picture at its own size.
+- **The spec** is read by the same reader as a block's and a report's, from JSON
+  (`ChartSpec::from_json`), each problem naming its key: "chart.kind: `kind` is bars, lines or
+  scatter, not "pie"". It is checked before the statement runs.
+- **The statement** runs through the same steps as `query`'s, and is logged as a `chart` call
+  and kept in the history. A data source the project doesn't serve to MCP clients, such as a
+  SQL Server one without an MCP login, is refused as it is by every tool: the project has no
+  data source of that name.
+- **Drawing** is a report's file's (`dbrover_chart::file_svg`, which the report's run uses
+  too): the font file's measure, and the line under the chart. Past the kind's rows or colours,
+  the tool draws the first ones and says so, as the tab does, rather than fail as a report does:
+  an assistant reads the reply.
+- **The row limit:** when it cut the rows, the reply has `truncated` and `truncated_reason`, and
+  the picture's last line ends with "only the first N rows were read, the project's row limit".
+- **The reply** is the picture, then the summary as JSON text, which is also the structured
+  content: kind, x, y, series, rows read, points, rows left out and the line under the chart.
+
 ### Order
 
 CH1 and CH2 are the app's and can come any time after W13. CH3 needs CH1b's spec, and is best
 after RS9 is designed into place, though it doesn't depend on it. CH4 needs CH3b and nothing
 from reports.
 
+## Left for later
+
+What the track built leaves out, each to be weighed when someone asks for it:
+
+- **Re-resolving a toolbar choice:** when more rows change a column's role, the tab makes the
+  block's or the starting choice again (fixed in CH3b), but a choice changed in the toolbar is
+  kept as it was, even if its Y no longer holds numbers.
+- **Copy for a report** gives no confirmation on screen that the chart was copied.
+- **A size for the `chart` tool's picture:** 800 by 450 points, always.
+- **More kinds and keys:** horizontal bars and stacked areas, and colours, log scales or
+  annotations, as [Which chart kinds to add](#which-chart-kinds-to-add) and the risks say.
+- **Copy as Vega-Lite,** and an Excel chart in an Excel output, as
+  [Options weighed](#options-weighed) says.
+- **A `dbrover chart` command,** until a report of one chart proves too heavy.
+- **A chart in the report's tab,** drawn from its last run's file: the tab lists the file, and
+  opens it in the system's viewer.
+
+CH3's two loose ends were tied in CH4b: a report chart's PNG is checked by its pixels, not only
+its size, and the manual's Reports chapter shows the example's chart.
+
 ## Decisions
 
-Proposed defaults; each is confirmed when its milestone starts.
+Proposed defaults; each was confirmed when its milestone started.
 
 | Question | Proposed | Consequence |
 | --- | --- | --- |
