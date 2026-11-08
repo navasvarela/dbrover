@@ -1,0 +1,47 @@
+# What the BigQuery emulator (ghcr.io/goccy/bigquery-emulator) starts with: the project
+# `dbrover` and a dataset `shop`, for the BigQuery driver's tests in the nightly job
+# (docs/cloud-data.md, C4). The emulator keeps it in memory; nothing is written back here.
+#
+# The emulator loses a column's REPEATED mode when it loads it from this file, so arrays and
+# records are tried in queries instead, which it answers in BigQuery's shapes.
+projects:
+  - id: dbrover
+    datasets:
+      - id: shop
+        tables:
+          - id: customers
+            columns:
+              - name: id
+                type: INTEGER
+                mode: REQUIRED
+              - name: name
+                type: STRING
+            data:
+              - id: 1
+                name: Ada
+              - id: 2
+                name: Grace
+          - id: orders
+            columns:
+              - name: id
+                type: INTEGER
+                mode: REQUIRED
+              - name: customer
+                type: INTEGER
+              - name: total
+                type: NUMERIC
+              - name: placed
+                type: TIMESTAMP
+            data:
+              - id: 1
+                customer: 1
+                total: 12.50
+                placed: 2026-01-02T03:04:05Z
+              - id: 2
+                customer: 2
+                total: 7
+                placed: 2026-01-03T00:00:00Z
+              - id: 3
+                customer: null
+                total: 0
+                placed: null

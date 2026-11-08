@@ -368,6 +368,7 @@ impl QueryLanguage {
             Self::PartiQl => partiql::read_all(path),
             Self::Sql(Dialect::DuckDb) => read_object(path),
             Self::Sql(Dialect::Trino) => read_catalog_table(path),
+            Self::Sql(Dialect::BigQuery) => read_bigquery_table(path),
             Self::Sql(_) | Self::Redis | Self::Mongo | Self::Search => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
@@ -521,6 +522,29 @@ fn read_catalog_table(path: &CatalogPath) -> Option<String> {
     Some(format!("SELECT * FROM {name} LIMIT {OPEN_DATA_LIMIT};"))
 }
 
+/// `SELECT *` of the table or view at `path` as BigQuery's explorer lists it, by its project,
+/// dataset and name in one pair of backquotes, as BigQuery's own console writes it, with
+/// [`OPEN_DATA_LIMIT`]. BigQuery bills the whole scan whatever the `LIMIT`; its dry run says
+/// how much before it runs (`docs/cloud-data.md`, C4).
+fn read_bigquery_table(path: &CatalogPath) -> Option<String> {
+    let object = path.last()?;
+    if !matches!(
+        object.kind,
+        NodeKind::Table | NodeKind::View | NodeKind::MaterializedView
+    ) {
+        return None;
+    }
+    let name = format!(
+        "{}.{}.{}",
+        path.name_of(NodeKind::Database)?,
+        path.name_of(NodeKind::Schema)?,
+        object.name
+    );
+    // GoogleSQL escapes a quote inside a quoted name with a backslash, never by doubling it.
+    let quoted = name.replace('\\', "\\\\").replace('`', "\\`");
+    Some(format!("SELECT * FROM `{quoted}` LIMIT {OPEN_DATA_LIMIT};"))
+}
+
 #[cfg(test)]
 mod tests {
     use dbrover_core::{ObjectKind, TableFormat};
@@ -547,6 +571,33 @@ mod tests {
         ];
         for (path, expected) in cases {
             assert_eq!(trino.read_all(&path).as_deref(), expected, "{path}");
+        }
+    }
+
+    #[test]
+    fn bigquery_opens_a_table_by_its_whole_path_in_backquotes() {
+        let dataset = CatalogPath::root()
+            .child(NodeKind::Database, "my-project")
+            .child(NodeKind::Schema, "sales");
+        let bigquery = QueryLanguage::Sql(Dialect::BigQuery);
+        let cases = [
+            (
+                dataset.child(NodeKind::Table, "orders"),
+                Some("SELECT * FROM `my-project.sales.orders` LIMIT 1000;"),
+            ),
+            (
+                dataset.child(NodeKind::View, "monthly totals"),
+                Some("SELECT * FROM `my-project.sales.monthly totals` LIMIT 1000;"),
+            ),
+            (
+                dataset.child(NodeKind::MaterializedView, "it`s"),
+                Some("SELECT * FROM `my-project.sales.it\\`s` LIMIT 1000;"),
+            ),
+            (dataset.child(NodeKind::Column, "id"), None),
+            (dataset.clone(), None),
+        ];
+        for (path, expected) in cases {
+            assert_eq!(bigquery.read_all(&path).as_deref(), expected, "{path}");
         }
     }
 

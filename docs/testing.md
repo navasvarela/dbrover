@@ -149,7 +149,13 @@ Each driver crate runs the suite against its own backend:
   three pages, `NULL` beside empty text, arrays, records and timestamps, an `UPDATE`'s row
   count, and a statement refused at its insert and one failed at its poll, each with its
   position from `[line:column]`. `live_bigquery`, ignored, runs the same against BigQuery when
-  `DBROVER_TEST_BIGQUERY_LIVE` names `project[,credentials file]`; CI never sets it.
+  `DBROVER_TEST_BIGQUERY_LIVE` names `project[,credentials file]`; CI never sets it. The
+  community emulator (`ghcr.io/goccy/bigquery-emulator`, in `docker-compose.yml` under the
+  `nightly` profile, with `docker/bigquery/data.yaml`) runs in the nightly `warehouses` job,
+  where `DBROVER_TEST_BIGQUERY_URL=http://localhost:59050/dbrover`: `check_lifecycle`,
+  `walk_catalog`, `check_invalid_path` and a query read over three pages. It ignores
+  `maxResults` on listings and the byte limit, runs dry runs and finishes jobs at once, so the
+  rest stays with the replayed exchanges.
 - **Trino**: the `trino` container (Trino 484, port 58080, with only the `memory` and `tpch`
   catalogs of `docker/trino/`), only under the compose file's `nightly` profile, which
   `.github/workflows/nightly.yml` starts once a day: its image is 1.04 GB to download and the

@@ -1,11 +1,12 @@
 //! The driver against BigQuery's exchanges, replayed by a server on this machine (`replay`),
 //! and against BigQuery only when the user asks for it by hand (`live_bigquery`).
 
+mod emulator;
 mod replay;
 
 use dbrover_core::{
-    BigQueryConfig, ByteCount, Connection, DriverError, GoogleCloudSignIn, JobProgress,
-    conformance, describe_error,
+    BigQueryConfig, ByteCount, CatalogPath, Connection, DriverError, GoogleCloudSignIn,
+    JobProgress, NodeKind, conformance, describe_error,
 };
 
 use self::replay::Replay;
@@ -225,6 +226,104 @@ async fn connecting_says_what_is_missing() {
         describe_error(&error).contains("Set the data source's project"),
         "{error:?}"
     );
+    replay.finish();
+}
+
+#[tokio::test]
+async fn the_explorer_walks_projects_datasets_and_tables_for_free() {
+    let replay = Replay::start(include_str!("exchanges/catalog.json")).await;
+    let config = BigQueryConfig {
+        other_projects: vec!["bigquery-public-data".to_owned(), "analytics".to_owned()],
+        ..config(&replay)
+    };
+    let mut connection = connected(&config).await;
+    let nodes = conformance::walk_catalog(&mut connection, 4).await;
+    let shown: Vec<(String, Option<&str>)> = nodes
+        .iter()
+        .map(|node| (node.path.to_string(), node.detail.as_deref()))
+        .collect();
+    let expected = [
+        ("analytics", None),
+        ("bigquery-public-data", None),
+        ("marketing", Some("Marketing team")),
+        ("sales", Some("EU")),
+        ("samples", Some("US")),
+        ("orders", Some("partitioned by day on placed")),
+        ("monthly totals", None),
+        ("daily", None),
+        ("shakespeare", None),
+    ];
+    for (label, detail) in expected {
+        assert!(
+            nodes
+                .iter()
+                .any(|node| node.label == label && node.detail.as_deref() == detail),
+            "{label} with {detail:?} in {shown:#?}"
+        );
+    }
+    let columns: Vec<(&str, Option<&str>)> = nodes
+        .iter()
+        .filter(|node| {
+            node.path
+                .parent()
+                .and_then(|parent| parent.last().map(|last| last.name.clone()))
+                .as_deref()
+                == Some("orders")
+        })
+        .map(|node| (node.label.as_str(), node.detail.as_deref()))
+        .collect();
+    assert_eq!(
+        columns,
+        [
+            ("id", Some("INT64")),
+            ("customer", Some("STRING, clustering 1")),
+            ("placed", Some("TIMESTAMP, partitioning")),
+            ("address", Some("STRUCT<city STRING, floors ARRAY<INT64>>")),
+            ("address.city", Some("STRING")),
+            ("address.floors", Some("ARRAY<INT64>")),
+        ]
+    );
+    let kinds: Vec<NodeKind> = nodes
+        .iter()
+        .filter(|node| ["orders", "monthly totals", "daily"].contains(&node.label.as_str()))
+        .filter_map(|node| node.path.last().map(|last| last.kind))
+        .filter(|kind| *kind != NodeKind::Column)
+        .collect();
+    assert_eq!(
+        kinds,
+        [NodeKind::Table, NodeKind::View, NodeKind::MaterializedView]
+    );
+    assert_eq!(replay.job(), None, "the explorer started a job");
+    replay.finish();
+}
+
+#[tokio::test]
+async fn a_level_of_datasets_pages_and_filters_in_dbrover() {
+    let replay = Replay::start(include_str!("exchanges/datasets-paged.json")).await;
+    let mut connection = connected(&config(&replay)).await;
+    let project = CatalogPath::root().child(NodeKind::Database, "analytics");
+    let page = connection
+        .children_page(
+            &project,
+            &dbrover_core::ChildrenQuery {
+                filter: Some("SALES".to_owned()),
+                after: None,
+                limit: Some(1000),
+            },
+        )
+        .await
+        .unwrap_or_else(|error| panic!("{}", describe_error(&error)));
+    let labels: Vec<&str> = page.nodes.iter().map(|node| node.label.as_str()).collect();
+    assert_eq!(labels, ["sales_2024", "sales_2025", "Sales_Archive"]);
+    assert!(page.next.is_none());
+    replay.finish();
+}
+
+#[tokio::test]
+async fn paths_it_never_listed_are_invalid() {
+    let replay = Replay::start(include_str!("exchanges/connect.json")).await;
+    let mut connection = connected(&config(&replay)).await;
+    conformance::check_invalid_path(&mut connection).await;
     replay.finish();
 }
 

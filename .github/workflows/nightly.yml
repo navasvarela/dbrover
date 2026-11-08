@@ -5,7 +5,10 @@ name: Nightly
 # Apache Cassandra takes about 40 seconds more on a runner (docs/nosql.md, N4), so its run of the
 # same tests is here. Trino's image is 1.04 GB to download and its server takes about a gigabyte
 # of memory (docs/cloud-data.md, C3); each pull request tries the driver against a stand-in
-# coordinator in its tests instead, and the conformance suite runs against Trino here.
+# coordinator in its tests instead, and the conformance suite runs against Trino here. The
+# BigQuery emulator is small (93 MB, healthy within a second) but differs from BigQuery where
+# its driver matters most (C4): pull requests replay BigQuery's exchanges, and its catalog and
+# paging are tried against the emulator here, in the same job as Trino, so they share a build.
 on:
   schedule:
     - cron: "17 3 * * *"
@@ -49,9 +52,9 @@ jobs:
           cargo test -p dbrover-driver-cassandra -p dbrover-engine
           cargo test -p dbrover-mcp --test cassandra
 
-  trino:
+  warehouses:
     runs-on: ubuntu-latest
-    # A cold Rust cache builds the driver's and the engine's tests in about 15 minutes.
+    # A cold Rust cache builds the drivers' and the engine's tests in about 15 minutes.
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
@@ -75,3 +78,11 @@ jobs:
         env:
           DBROVER_TEST_TRINO_URL: trino://dbrover@localhost:58080/memory/default
         run: cargo test -p dbrover-driver-trino
+      - name: Start the BigQuery emulator
+        run: |
+          docker compose --profile nightly up -d --wait bigquery \
+            || { docker compose --profile nightly logs --tail 40 bigquery; exit 1; }
+      - name: Run the BigQuery tests
+        env:
+          DBROVER_TEST_BIGQUERY_URL: http://localhost:59050/dbrover
+        run: cargo test -p dbrover-driver-bigquery
