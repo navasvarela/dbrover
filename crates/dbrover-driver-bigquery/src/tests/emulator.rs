@@ -1,7 +1,7 @@
 //! The driver against the BigQuery emulator, where `DBROVER_TEST_BIGQUERY_URL` names it as
 //! `http://host:port/project`: the nightly job's run (`docs/cloud-data.md`, C4, Testing without
 //! an account). The emulator answers BigQuery's catalog and paging as Google documents them, so
-//! those are tried here; what it does differently (dry runs, the byte limit, running jobs,
+//! those are tried here, and **Open data**'s `tabledata.list`; what it does differently (dry runs, the byte limit, running jobs,
 //! row counts, errors) is the replayed exchanges' to try.
 
 use dbrover_core::{
@@ -60,6 +60,18 @@ async fn the_emulator_connects_walks_and_pages() {
         ]
     );
     conformance::check_invalid_path(&mut connection).await;
+
+    let open_data = format!(
+        "SELECT * FROM `{}.shop.customers` LIMIT 1000",
+        config.project
+    );
+    let mut cursor = connection
+        .execute(&open_data)
+        .await
+        .unwrap_or_else(|error| panic!("{}", describe_error(&error)));
+    let customers = cursor.next_page(500).await.unwrap();
+    assert_eq!(customers.len(), 2, "{customers:?}");
+    cursor.finish().await.unwrap();
 
     let mut cursor = connection
         .execute("SELECT x FROM UNNEST(GENERATE_ARRAY(1, 1200)) AS x ORDER BY x")

@@ -294,6 +294,52 @@ async fn the_dry_run_estimates_and_the_limit_is_kept_unless_let_through() {
 }
 
 #[tokio::test]
+async fn open_data_reads_a_tables_rows_for_free() {
+    let replay = Replay::start(include_str!("exchanges/preview.json")).await;
+    let mut connection = connected(&config(&replay)).await;
+    let open_data = "SELECT * FROM `analytics.sales.orders` LIMIT 3;";
+    assert_eq!(
+        connection.estimate_cost(open_data).await.unwrap(),
+        Some(CostEstimate::Bytes(ScanEstimate::exactly(ByteCount(0))))
+    );
+    let mut cursor = connection
+        .execute(open_data)
+        .await
+        .unwrap_or_else(|error| panic!("{}", describe_error(&error)));
+    let names: Vec<&str> = cursor
+        .columns()
+        .iter()
+        .map(|column| column.name.as_str())
+        .collect();
+    assert_eq!(names, ["id", "placed"]);
+    let rows = cursor.next_page(500).await.unwrap();
+    assert_eq!(
+        rows,
+        [
+            vec![text("1"), text("2026-01-02 03:04:05.000000 UTC")],
+            vec![text("2"), None],
+            vec![text("3"), None],
+        ]
+    );
+    assert!(cursor.is_exhausted(), "stopped at the LIMIT");
+    assert_eq!(
+        cursor.progress().and_then(|progress| progress.bytes_read),
+        Some(ByteCount(0))
+    );
+    cursor.finish().await.unwrap();
+    assert_eq!(replay.job(), None, "a preview started a job");
+
+    assert_eq!(
+        connection
+            .estimate_cost("SELECT * FROM `analytics.sales.monthly totals` LIMIT 1000")
+            .await
+            .unwrap(),
+        Some(CostEstimate::Bytes(ScanEstimate::exactly(ByteCount(48))))
+    );
+    replay.finish();
+}
+
+#[tokio::test]
 async fn the_explorer_walks_projects_datasets_and_tables_for_free() {
     let replay = Replay::start(include_str!("exchanges/catalog.json")).await;
     let config = BigQueryConfig {

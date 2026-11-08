@@ -1,0 +1,42 @@
+{
+  "doc": "Open data on a table reads its rows with tabledata.list, free: its estimate is 0 bytes and no job runs; the console reads two of tabledata.list's pages, up to the LIMIT. On a view the same statement is a query, dry run and job.",
+  "exchanges": [
+    {
+      "method": "GET", "path": "/projects/analytics/datasets", "query": {"maxResults": "1"},
+      "response": {}
+    },
+    {
+      "method": "GET", "path": "/projects/analytics/datasets/sales/tables/orders",
+      "response": {"type": "TABLE", "numRows": "5", "schema": {"fields": [
+        {"name": "id", "type": "INTEGER", "mode": "REQUIRED"},
+        {"name": "placed", "type": "TIMESTAMP"}]}}
+    },
+    {
+      "method": "GET", "path": "/projects/analytics/datasets/sales/tables/orders",
+      "response": {"type": "TABLE", "numRows": "5", "schema": {"fields": [
+        {"name": "id", "type": "INTEGER", "mode": "REQUIRED"},
+        {"name": "placed", "type": "TIMESTAMP"}]}}
+    },
+    {
+      "method": "GET", "path": "/projects/analytics/datasets/sales/tables/orders/data",
+      "query": {"maxResults": "3", "formatOptions.useInt64Timestamp": "true"},
+      "response": {"kind": "bigquery#tableDataList", "totalRows": "5", "pageToken": "BG2",
+        "rows": [{"f": [{"v": "1"}, {"v": "1767323045000000"}]}, {"f": [{"v": "2"}, {"v": null}]}]}
+    },
+    {
+      "method": "GET", "path": "/projects/analytics/datasets/sales/tables/orders/data",
+      "query": {"maxResults": "1", "pageToken": "BG2"},
+      "response": {"totalRows": "5", "pageToken": "BG3",
+        "rows": [{"f": [{"v": "3"}, {"v": null}]}]}
+    },
+    {
+      "method": "GET", "path": "/projects/analytics/datasets/sales/tables/monthly%20totals",
+      "response": {"type": "VIEW", "view": {"query": "SELECT 1 AS month"}}
+    },
+    {
+      "method": "POST", "path": "/projects/analytics/jobs",
+      "request": {"configuration": {"dryRun": true, "query": {"query": "SELECT * FROM `analytics.sales.monthly totals` LIMIT 1000"}}},
+      "response": {"statistics": {"query": {"totalBytesProcessed": "48", "totalBytesProcessedAccuracy": "PRECISE"}}}
+    }
+  ]
+}
