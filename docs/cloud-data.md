@@ -3,7 +3,7 @@
 Status: **C0 built** (2026-11-02); **C1 built** (2026-11-03), tried only against local
 stand-ins; **C2 built** (2026-11-04), tried only against local stand-ins; **C3 built**
 (2026-11-05), Athena tried only against exchanges written from its documentation and Trino
-against its container; C4 to C6 planned, not scheduled. Proposed on
+against its container; **C4 started** (2026-11-08); C5 and C6 planned, not scheduled. Proposed on
 2026-10-27; the order and the decisions below are confirmed as each milestone starts. The
 providers' priority was set on 2026-10-28: AWS, then Google Cloud, then Azure. On 2026-11-01
 DynamoDB was moved ahead of the track, as the NoSQL track's [N5](nosql.md#n5--dynamodb), with
@@ -647,7 +647,8 @@ fills later is the cursor itself: RS6 adds `next_batch` beside `next_page`, answ
 default, so C3's cursors need no change, and RS7's handoff can read an Athena job's result file
 from the output location its `GetQueryExecution` names. RS6's entry now says it comes before
 C5 and C6, whose services do answer in Arrow (Snowflake's result chunks, Databricks's
-`ARROW_STREAM`), and before C4 if BigQuery's Storage Read API is chosen.
+`ARROW_STREAM`). C4 didn't choose BigQuery's Storage Read API (see
+[C4's note](#rows-and-columnar-batches-in-c4)), so it doesn't need RS6 either.
 
 #### Bytes scanned and the cost limit
 
@@ -812,9 +813,219 @@ nightly job; Starburst and Presto tried by hand.
 
 ### C4 — BigQuery
 
-- A driver over the REST jobs API: projects, datasets and tables in the explorer, GoogleSQL,
-  a dry run before every statement that shows the bytes it will scan, and
-  `maximumBytesBilled` from C0's limit.
+Started on 2026-11-08, after C3 and the charts track. Google's warehouse, the first of Google
+Cloud's: a driver over BigQuery's REST API, signed in with C0b's Application Default
+Credentials, speaking GoogleSQL. BigQuery bills a query by the bytes it scans, and says how
+many before it runs (a dry run, free), so C4 is where C0e's byte limit asks *before* a
+statement runs instead of stopping it partway, as Athena's had to.
+
+#### What BigQuery does, from its documentation and its emulator
+
+Read from Google's REST reference (`bigquery/v2`) and its pages on running queries, costs and
+pricing on 2026-11-08. Nothing below has been tried against BigQuery itself, which needs a
+Google Cloud project with billing; the last column is what the community emulator
+(`ghcr.io/goccy/bigquery-emulator:0.8.1`) answered on this machine.
+
+| Question | BigQuery | The emulator |
+| --- | --- | --- |
+| Running a statement | `jobs.insert` (`POST /projects/{project}/jobs`) with `configuration.query` (`query`, `useLegacySql: false`, `defaultDataset`, `maximumBytesBilled`) answers at once with the job; `jobs.get` says where it is (`PENDING`, `RUNNING`, `DONE`, with `status.errorResult` when it failed); `jobs.cancel` asks it to stop. A job id may be chosen by the client, so a retried insert can't run a query twice. `jobs.query` runs short queries without a job, waiting up to `timeoutMs`. | Every job is `DONE` in the answer to its insert: there is no running job to poll, show progress for or cancel. `jobs.cancel` answers with the finished job. |
+| Where a job runs | In a location (`US`, `EU`, `europe-west2`, …), inferred from the tables a query reads, or given in `jobReference.location`. Every later call about the job (`jobs.get`, `getQueryResults`, `jobs.cancel`) needs `location=` when it isn't the `US` or `EU` multi-region. | Ignores locations. |
+| Results | `jobs.getQueryResults` (`GET /projects/{project}/queries/{job}`), with `maxResults` and `pageToken`; `schema.fields` (name, type, mode `NULLABLE`/`REQUIRED`/`REPEATED`, nested `fields` for a `RECORD`); `rows[].f[].v`, every value a JSON string, `null` for `NULL`, an array as `[{"v": …}]` and a record as `{"f": [...]}`; `numDmlAffectedRows` for `INSERT`, `UPDATE`, `DELETE` and `MERGE`. A `TIMESTAMP` is seconds as a float in text unless `formatOptions.useInt64Timestamp` asks for microseconds. | The same shapes for a query's own arrays and records (and `BYTES` in base64); `TIMESTAMP` as `1767323045.000000`. A table loaded with a `REPEATED` column loses its mode and reads as a JSON string. DML says `statementType: SELECT` and no `numDmlAffectedRows`. |
+| What a query read | `statistics.query.totalBytesProcessed` and `totalBytesBilled`, which on-demand pricing bills at about $6.25 a TiB, rounded up to a MB, with 10 MiB at least per table read, and the first TiB of each month free. `LIMIT` doesn't lower it: a `SELECT * … LIMIT 10` is billed for every column it names, whole. | Reports a few bytes for a small table. |
+| A dry run | `configuration.dryRun: true` checks the statement and answers with the bytes it would process (`statistics.query.totalBytesProcessed`, and how exact that is in `totalBytesProcessedAccuracy`: `PRECISE`, `UPPER_BOUND` for clustered tables, `LOWER_BOUND` for external tables), without running it, free and outside the slot quota. An invalid statement is an HTTP 400 with the message and its place (`… at [2:23]`). Row-level security makes it say 0 bytes. | `jobs.insert` with a `jobReference` doesn't change data and reports bytes; without one it fails with an internal error. `jobs.query` with `dryRun` *runs the query* and returns its rows. |
+| A byte limit | `maximumBytesBilled`: a query whose estimate is above it fails before running, unbilled (`bytesBilledLimitExceeded`, naming the bytes it would need). A clustered table's upper-bound estimate can make a query fail that would have billed less. | Ignored: a query with a limit of 1 byte runs. |
+| Errors | `status.errorResult` with a `reason` (`invalidQuery`, `notFound`, `accessDenied`, `bytesBilledLimitExceeded`, `quotaExceeded`, `stopped` for a cancelled job, …) and a message ending `at [line:column]` where it points into the statement. | `reason: jobInternalError` and `[at line:column]`. |
+| Catalog | `projects.list` (the projects the sign-in can see; public ones such as `bigquery-public-data` aren't listed), `datasets.list`, `tables.list` (`TABLE`, `VIEW`, `MATERIALIZED_VIEW`, `EXTERNAL`, `SNAPSHOT`), each paged with `pageToken` and `maxResults`; `tables.get` for a table's columns (nested), partitioning, clustering and a view's `view.query`. All are free. `INFORMATION_SCHEMA.TABLES` has a `ddl` column, by query, billed. | All of these, paged; unknown datasets are a 404 `notFound`. |
+| Reading a table without a query | `tabledata.list` (`GET …/tables/{table}/data`) pages through a table's rows by `maxResults` and `pageToken`, free, as the console's **Preview** and `bq head` do. Not for views or external tables. | The same. |
+| Sessions and transactions | None by default: each job stands alone. `CREATE TEMP TABLE`, variables and `BEGIN TRANSACTION` need a multi-statement script, or a session (`createSession`, then its id in `connectionProperties`). | Runs a script in one job. |
+| Checking without running | A dry run, which also gives the bytes. | See above. |
+| Sign-in | An OAuth access token as a bearer token: C0b's Application Default Credentials or a service account's key, with the `cloud-platform` scope C0b already asks for. | Takes any token, or none. |
+| A local server | None of Google's. The emulator: 93 MB to download (461 MB on disk), for arm64 and amd64, answering 0.35 s after `docker run` on a laptop, with about 80 MB of memory, its data loaded from a YAML file. | |
+
+#### How the pieces fit
+
+- **BigQuery runs on C0's jobs.** `jobs.insert`, `jobs.get`, `jobs.getQueryResults` and
+  `jobs.cancel` are `JobService`'s submit, poll, page and cancel, so `Jobs` polls with C0f's
+  growing pause and gives the cursor, cancel and progress handles, as Athena's driver does.
+  `jobs.query` would save a round trip on short queries, but it waits on the server rather than
+  in `Jobs`, and leaves no job to cancel while it waits; it can come later as a fast path. Each
+  job's id is DbRover's own (`dbrover_` and 24 random characters), so a request retried after a
+  dropped connection finds the same job; the driver keeps each running job's location to send
+  with the calls after it.
+- **Its own HTTP client.** Requests go over hyper and rustls with ring, as C0b's sign-in and the
+  Trino driver's do, to `https://bigquery.googleapis.com/bigquery/v2/`, or to an endpoint the
+  data source names (the emulator, the replay server). No Google SDK, as the cloud track's
+  decision on SDKs says. The token comes from C0b's sign-in through the app-wide token cache,
+  and goes only over HTTPS or to this machine, as C2 decided for buckets.
+- **One dialect, GoogleSQL.** `Dialect::BigQuery` in `dbrover-sql`: names in backquotes, which
+  may hold a whole path with dashes (`` `my-project.sales.orders` ``), `#` comments, strings in
+  single, double and triple quotes with `r` and `b` prefixes, `sqlparser`'s own `BigQueryDialect`
+  for the syntax check, BigQuery's functions for completion, `INFORMATION_SCHEMA` hidden unless
+  **System** is ticked, and the verbs that write (DML, DDL, `MERGE`, `EXPORT DATA`, `LOAD DATA`,
+  and scripting's `DECLARE`, `SET`, `CALL`, `EXECUTE IMMEDIATE`). There is no `EXPLAIN`: a job's
+  plan is in its statistics, so ⌥⌘E isn't offered.
+- **Projects on top.** The explorer starts with projects: the data source's own first, then
+  any it lists under **Other projects** (for public data such as `bigquery-public-data`, which
+  `projects.list` never shows), then the rest of `projects.list`. Under a project come its
+  datasets, then tables, views, materialized views and external tables, then columns, with a
+  record's fields as its children and partitioning and clustering columns marked. Each level is
+  paged, a thousand at a time where BigQuery allows it.
+- **Rows as text, as today.** `getQueryResults` answers in JSON, so rows go through
+  `ResultCursor::next_page` as text, as Athena's and Trino's do: an array or a record is its
+  JSON in one cell, a `TIMESTAMP` is written as BigQuery's console writes it
+  (`2026-01-02 03:04:05.000000 UTC`, from `useInt64Timestamp`'s microseconds), `BYTES` stay
+  base64, and `NUMERIC` keeps every digit, being text already. See
+  [RS6](#rows-and-columnar-batches-in-c4).
+
+#### Rows and columnar batches in C4
+
+BigQuery has a columnar answer: the Storage Read API streams a table, or a finished query's
+result table, as Arrow record batches over gRPC. C4 doesn't use it, so RS6 still isn't needed
+first, for the reasons C3 gave and two more:
+
+- It is billed apart from the query (about $1.10 a TiB read, after 300 TiB a month free), so
+  reading a console's first page through it would cost more than through `getQueryResults`,
+  which is free once the query has run.
+- It needs gRPC and protocol buffers, a stack DbRover doesn't build yet, for results the
+  console reads a page at a time anyway.
+
+The seam stays the cursor: when RS6 adds `next_batch`, BigQuery's cursor can answer it from the
+Storage Read API on the job's destination table, for reports and exports of large results. RS6's
+entry keeps "before C5 and C6", and names BigQuery's Storage Read API as a later user.
+
+#### The dry run, the byte limit and what runs without asking
+
+C0e left the limit (`ask_above_bytes`) waiting for an engine that estimates bytes. BigQuery's
+dry run is that estimate, and `maximumBytesBilled` is a limit BigQuery keeps to exactly, so C4
+uses both, under the data source's one setting:
+
+- **Before every statement, a dry run.** The engine already asks `Connection::estimate_cost`
+  before a statement when the data source's guard is on (C0e); BigQuery's answers with the dry
+  run's `totalBytesProcessed`, as `CostEstimate::Bytes`, saying when it is only a lower bound.
+  Over the limit, the console asks (**Scan 1.4 GB?**), and Run to file, exports and the MCP
+  server refuse, as for DynamoDB's whole-table reads. The dry run is free, takes a round trip
+  (about a tenth of a second), and its answer is kept for the statement's text, so the
+  statement's own check (below) and the run share one.
+- **As the statement is typed, the same dry run.** `Connection::validate` is the dry run, which
+  is free and adds nothing to the project's job history: an invalid statement is underlined
+  where BigQuery points, as on PostgreSQL. A statement it accepts shows what it would scan
+  under the editor (**This statement will scan 1.4 GB**), as BigQuery's own console does, so
+  the cost is in sight before anything runs.
+- **`maximumBytesBilled` from the limit.** Every job DbRover sends carries the data source's
+  limit as `maximumBytesBilled`, so a statement the dry run underestimated still can't bill
+  more than the limit: BigQuery refuses it unbilled, and DbRover says so with the bytes it
+  needed. A statement the user lets through (**Scan anyway**) runs without it, since the user
+  has seen and accepted the estimate; the engine tells the connection so before running it.
+  A data source with no limit sends none, and still shows each estimate.
+- **After it runs, what it scanned.** The result line ends `· 1.4 GB read`, from the job's
+  `totalBytesProcessed`, as C3f's does for Athena, and the progress line shows it while the
+  job runs. What BigQuery bills can be a little more (its 10 MiB minimum per table); the
+  manual says so rather than adding a second number to the line.
+- **What DbRover runs by itself scans nothing.** The explorer reads BigQuery's catalog API,
+  which is free. **Open data** on a table reads its rows with `tabledata.list`, free, rather
+  than a `SELECT … LIMIT`, which BigQuery bills whole: the console's statement is still
+  ``SELECT * FROM `p.d.t` LIMIT 1000``, so it can be edited and rerun, but the driver
+  recognises that exact shape on a table and answers it from `tabledata.list`, and its dry run
+  says 0 bytes. A view, a materialized view or an external table is a query, held by the limit
+  like any other. **Show definition** of a view is `tables.get`'s `view.query`, free; of a table,
+  a query of `INFORMATION_SCHEMA.TABLES.ddl`, billed at BigQuery's 10 MiB minimum
+  (about $0.00006), which the manual says.
+- **A default limit.** A new BigQuery data source starts with **Ask above** at 1 GB, about
+  $0.006 at on-demand prices, so a first `SELECT *` on a large public table asks. The user can
+  clear it.
+
+#### Testing without an account
+
+- **Exchanges written from the REST reference, replayed on `127.0.0.1`.** As for Athena: a test
+  server answers the driver's requests from files of exchanges, each a request (method, path,
+  the query's parameters and the parts of its JSON body that matter) and the answer, in order.
+  The data source points at it as its endpoint and signs in with C0b's stand-in token
+  endpoint. The files are written from Google's REST reference, since there is no account to
+  record from; what the reference doesn't show (an error's exact text, `totalBytesProcessed`
+  while running, whether `bytesBilledLimitExceeded` comes at insert or at the first poll) is
+  listed in the README beside them for the live check. These run on every pull request.
+- **The emulator, nightly, for what it gets right.** It is cheap (93 MB, ready in under a
+  second, 80 MB of memory), but differs from BigQuery where C4 matters most: it runs a
+  `jobs.query` dry run for real, ignores `maximumBytesBilled`, finishes every job inside its
+  insert (so polling, progress and cancel can't be tried), reports DML as a `SELECT` with no
+  row count, and words its errors differently. So it isn't the proof of the driver, and it
+  doesn't run on pull requests: it joins `docker-compose.yml` under the `nightly` profile,
+  with its data in `docker/bigquery/data.yaml`, and the nightly `trino` job becomes a
+  `warehouses` job that also runs the BigQuery driver's tests against it:
+  `check_lifecycle`, `walk_catalog`, `check_children_pages`, `check_invalid_path` and a
+  query paged over several pages. That adds about 10 seconds to pull and start, and the
+  driver crate's build (a minute or two on main's cache), to a job that already builds the
+  engine; no new job and no new cold build. `check_execution`, `check_transactions`,
+  `check_validate` and `check_cancel` are skipped and say why (no row counts, no
+  transactions outside a script, a dry run that runs, no running job).
+- **A live test the user runs.** An `#[ignore]`d test runs the replayed scenarios' checks
+  against BigQuery when `DBROVER_TEST_BIGQUERY_LIVE` names a project (and optionally a
+  credentials file), signing in with that machine's ADC, over a public dataset so it costs
+  little; CI never sets it, and nothing reads the machine's Google files otherwise.
+- **Sign-in:** C0b's stand-ins (a token endpoint on `127.0.0.1` and credentials files the tests
+  write), never the machine's own `~/.config/gcloud`.
+
+#### Layers
+
+Each layer is one pull request in a stack, useful and tested on its own, with no cloud account.
+
+- **C4a — Plan:** this section, C4's rows in [Decisions](#decisions) and [Risks](#risks), and
+  the roadmap's entry in layers.
+- **C4b — The GoogleSQL dialect:** `Dialect::BigQuery` in `dbrover-sql`: backquoted names and
+  paths with dashes, `#` comments, triple-quoted, raw and bytes strings, `sqlparser`'s
+  `BigQueryDialect` for the syntax check, BigQuery's functions for completion, no `EXPLAIN`,
+  `INFORMATION_SCHEMA` hidden, the verbs that write and scripting's administration verbs, with
+  a corpus of BigQuery's statements and the gaps `sqlparser` rejects wrongly.
+  **Exit:** the corpus passes or names its gaps; a script with GoogleSQL's strings, comments
+  and backquoted paths splits and formats as BigQuery reads it; read-only mode classifies the
+  classify corpus.
+- **C4c — BigQuery: settings and queries as jobs:** `ConnectionConfig::BigQuery` and
+  `DriverKind::BigQuery` with the sign-in (ADC or a credentials file, C0b), the project jobs run
+  and are billed in, a default dataset, a location, other projects to show, an endpoint for the
+  emulator and the replay server, and C0's cost guard (1 GB by default); a
+  `dbrover-driver-bigquery` crate implementing `JobService` over its own HTTP client; values as
+  text; the engine's connect arm, and the app's arms the compiler asks for; the replay server.
+  **Exit:** replayed, a query is inserted with DbRover's job id, the default dataset and
+  `useLegacySql: false`, polled through `RUNNING` to `DONE` in a location other than the US, and
+  paged over three pages; `NULL` and empty text stay apart; an array, a record, a `TIMESTAMP`,
+  `NUMERIC` and `BYTES` read as the console shows them; an `UPDATE` says how many rows it
+  changed; a failed job's message reaches the console with its position; cancel calls
+  `jobs.cancel` by id and location; the settings round-trip through `data_sources.toml`.
+- **C4d — Projects, datasets and tables in the explorer:** the levels above, paged; columns with
+  nested fields, partitioning and clustering marked; **Show definition**; the emulator in the
+  nightly job.
+  **Exit:** replayed, the conformance walk visits two projects (one from **Other projects**),
+  a dataset with a partitioned table, a view and a record column; a level of datasets pages
+  in three requests; nothing the explorer does starts a job except a table's **Show
+  definition**. Nightly, the checks above pass against the emulator.
+- **C4e — The dry run and the byte limit:** `estimate_cost` and `validate` from one dry run,
+  kept for the statement's text; `maximumBytesBilled` from the limit on every job, and none on
+  one the user let through (a new `Connection` call the engine makes before it); the estimate
+  under the editor; `· … read` after each statement.
+  **Exit:** replayed, a statement estimated at 1.4 GB with a 1 GB limit is held and its
+  question says 1.4 GB; **Scan anyway** sends it without `maximumBytesBilled`; one estimated
+  under the limit is sent with it; a `bytesBilledLimitExceeded` failure says what it needed;
+  an invalid statement is underlined at BigQuery's `[line:column]`; a lower-bound estimate says
+  so; a kittest shows **This statement will scan 1.4 GB** under the editor.
+- **C4f — Open data for free:** the driver answers ``SELECT * FROM `p.d.t` LIMIT n`` on a
+  table from `tabledata.list`, with its columns from `tables.get`, and estimates it at 0 bytes;
+  any other statement, a view or an external table is a query.
+  **Exit:** replayed, **Open data** on a table sends no job and reads two pages of
+  `tabledata.list`; on a view it runs a query; a `WHERE` or an `ORDER BY` makes it a query.
+- **C4g — BigQuery in the data source dialog:** **New data source › Google Cloud › BigQuery**,
+  with **Sign in with** (Application Default Credentials or a credentials file), **Project**,
+  **Dataset**, **Location**, **Other projects** and **Ask above**, each taking `${NAME}`
+  placeholders; BigQuery's logo; the MCP server's read-only mode (statements classified, an
+  MCP login being another credentials file).
+  **Exit:** a kittest adds a BigQuery data source from the menu and it saves as typed, with
+  1 GB as its limit.
+- **C4h — Manual and demo note:** a page in the manual's Data sources part, **BigQuery**, and
+  the C4 demo note in the roadmap, with the live checks.
+
+**Exit:** BigQuery tested with exchanges replayed in CI and against the emulator nightly, and
+tried live by the user (the demo note's list, and the ignored live test): a query over a
+public dataset shows its estimate as it is typed, asks above the limit, and shows what it
+billed.
 
 ### C5 — Snowflake
 
@@ -897,6 +1108,20 @@ C3's own decisions, taken on 2026-11-05 when it started; each can be overturned 
 | Presto and Starburst | **One driver, with Presto's header spelling as a setting** (`protocol = "presto"`), and Starburst Galaxy as one of C1's services. | Presto's and Starburst's servers aren't in CI: their headers and preset are tested, and connecting is tried by hand. |
 | Read-only and MCP | **Statements classified before they are sent** (W11's check), as for MotherDuck: neither service has a read-only session to open. An MCP login is another AWS profile for Athena, as for DynamoDB, and another user for Trino. | IAM policies and Trino's access control remain what really limits a login. |
 
+C4's own decisions, taken on 2026-11-08 when it started; each can be overturned in review.
+
+| Question | Chosen | Consequence |
+| --- | --- | --- |
+| BigQuery's API | **REST, `bigquery/v2`, over DbRover's own hyper and rustls client,** with no Google SDK (the track's decision on SDKs). `jobs.insert` and `jobs.getQueryResults`, not the Storage Read API. | No gRPC or protocol buffers in the build; results come as JSON text a page at a time. Large results for reports wait for RS6 and RS7. |
+| BigQuery on jobs | **`JobService`,** with DbRover's own job ids and each job's location kept for the calls after it. `jobs.query` isn't used yet. | Cancel and progress come with `Jobs`, as for Athena; a retried insert never runs a query twice. Short queries take a poll more than `jobs.query` would (about a tenth of a second). |
+| The byte limit | **Asked about before running, from a dry run, and kept to by BigQuery through `maximumBytesBilled`** on every job, except one the user let through after seeing its estimate. | A statement over the limit never runs unasked, and one the dry run underestimated is refused by BigQuery unbilled. A statement let through is billed what it scans, which the question showed; one whose estimate is a lower bound says so in the question. |
+| Checking statements as they are typed | **The dry run,** which is free and leaves no job in the project's history, and whose bytes show under the editor. | One request per pause in typing, as PostgreSQL's prepare is; the estimate is in sight before running. Dry runs count against BigQuery's API request quota (far above a person's typing). |
+| A default limit | **1 GB for a new BigQuery data source,** in the dialog, which the user can clear. | A `SELECT *` over a large public table asks first. Data sources whose file has no `ask_above_bytes` have no limit, as before. |
+| **Open data** | **`tabledata.list`, free, for a table,** behind the console's ordinary ``SELECT * FROM `p.d.t` LIMIT 1000``, which the driver recognises in that exact shape. Views, materialized views and external tables run the query. | Browsing a table costs nothing, as in BigQuery's console. The rows are BigQuery's first in storage order, which `LIMIT` without `ORDER BY` allows; any change to the statement makes it a billed query again. |
+| Sessions | **None in C4:** each statement is its own job. | `CREATE TEMP TABLE`, `DECLARE` and `BEGIN TRANSACTION` fail with BigQuery's own error outside a script run as one statement; a console's statements can't share them. BigQuery's sessions (`createSession`) can come later, when someone needs them. |
+| Which projects show | **The data source's project, then the projects it names to show, then `projects.list`.** | Public datasets (`bigquery-public-data`) can be browsed by naming their project, since `projects.list` never lists them. |
+| Testing | **Exchanges written from the REST reference, replayed on `127.0.0.1` on every pull request; the emulator nightly for the catalog and paging; an ignored live test for the user.** The emulator isn't the conformance suite's proof: it runs dry runs, ignores the byte limit, finishes jobs at once and words errors its own way. | Pull requests stay as fast as they are and need no account. The nightly job adds about 10 seconds and a small crate's build. What only BigQuery shows waits for the live run, which the demo note lists. |
+
 ## Risks
 
 - **Surprise bills.** A missed automatic query on a large table costs the user money. Every
@@ -952,3 +1177,15 @@ C3's own decisions, taken on 2026-11-05 when it started; each can be overturned 
   another. DbRover sets nothing of its own on the session; the manual's Neon and Supabase
   pages say to use the session port (Supabase's 5432, Neon's host without `-pooler`) for work
   that needs it.
+- **BigQuery's answers written from its documentation.** The replayed exchanges show DbRover's
+  requests are well formed and that it reads Google's documented answers; an error's exact
+  text, `totalBytesProcessed` while a job runs and when `bytesBilledLimitExceeded` comes are
+  unknown until the live run, and the emulator differs where it matters most. The live test
+  and the demo note's list are how the user finds out.
+- **Estimates that aren't exact.** A dry run's bytes are an upper bound on clustered tables, a
+  lower bound (or 0) on external tables and under row-level security. `maximumBytesBilled`
+  keeps an underestimate from billing more than the limit, except on a statement the user let
+  through; the question says when its estimate is a lower bound.
+- **A free preview that isn't the query.** **Open data** on a table answers a `SELECT … LIMIT`
+  from `tabledata.list`. Only that exact shape on a table is answered so, and the dry run of it
+  says 0 bytes, so the console and the bill agree; any edit makes it a query.
