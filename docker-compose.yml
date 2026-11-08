@@ -391,6 +391,27 @@ services:
       timeout: 5s
       retries: 60
 
+  # The community BigQuery emulator (C4), with the project and dataset of
+  # docker/bigquery/data.yaml, in memory. It answers BigQuery's catalog and paging as Google
+  # documents them, but runs a dry run, ignores maximumBytesBilled and finishes every job inside
+  # its insert, so it isn't the BigQuery driver's proof: the driver's own tests replay BigQuery's
+  # exchanges on every pull request, and the nightly job runs the catalog and paging against
+  # this (`docker compose --profile nightly up -d --wait bigquery`). 93 MB to download, healthy
+  # within a second. The image has neither curl nor wget, so the check is bash opening the port.
+  bigquery:
+    image: ghcr.io/goccy/bigquery-emulator:0.8.1
+    profiles: [nightly]
+    command: ["--project=dbrover", "--data-from-yaml=/data/data.yaml"]
+    ports:
+      - "59050:9050"
+    volumes:
+      - ./docker/bigquery:/data:ro
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9050"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
   # DynamoDB Local, AWS's own emulator, in memory: the DynamoDB tests sign in to it as a local
   # emulator, with made-up credentials, so they need no AWS account. It answers any request
   # once it listens, with an error to one that isn't signed, which is all the check needs.

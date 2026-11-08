@@ -1,0 +1,26 @@
+{
+  "doc": "A level of datasets that BigQuery answers in three pages, filtered in DbRover since BigQuery filters datasets only by label.",
+  "exchanges": [
+    {
+      "method": "GET", "path": "/projects/analytics/datasets", "query": {"maxResults": "1"},
+      "response": {}
+    },
+    {
+      "method": "GET", "path": "/projects/analytics/datasets", "query": {"maxResults": "1000"},
+      "response": {"datasets": [
+        {"datasetReference": {"datasetId": "sales_2024"}},
+        {"datasetReference": {"datasetId": "marketing"}}], "nextPageToken": "t2"}
+    },
+    {
+      "method": "GET", "path": "/projects/analytics/datasets", "query": {"pageToken": "t2"},
+      "response": {"datasets": [
+        {"datasetReference": {"datasetId": "sales_2025"}},
+        {"datasetReference": {"datasetId": "staging"}}], "nextPageToken": "t3"}
+    },
+    {
+      "method": "GET", "path": "/projects/analytics/datasets", "query": {"pageToken": "t3"},
+      "response": {"datasets": [
+        {"datasetReference": {"datasetId": "Sales_Archive"}}]}
+    }
+  ]
+}

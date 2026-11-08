@@ -1,0 +1,383 @@
+{
+ "doc": "The explorer's walk: the data source's project, a public one it names to show, and one more from projects.list; a dataset holding a partitioned and clustered table with a record column, a view and a materialized view. Every call is a free listing; nothing starts a job. The conformance walk asks breadth first, and reads each table once for Show definition and again for its columns.",
+ "exchanges": [
+  {
+   "method": "GET",
+   "path": "/projects/analytics/datasets",
+   "query": {
+    "maxResults": "1"
+   },
+   "response": {}
+  },
+  {
+   "method": "GET",
+   "path": "/projects",
+   "response": {
+    "kind": "bigquery#projectList",
+    "totalItems": 2,
+    "projects": [
+     {
+      "kind": "bigquery#project",
+      "id": "analytics",
+      "numericId": "101",
+      "projectReference": {
+       "projectId": "analytics"
+      },
+      "friendlyName": "Analytics"
+     },
+     {
+      "kind": "bigquery#project",
+      "id": "marketing",
+      "numericId": "102",
+      "projectReference": {
+       "projectId": "marketing"
+      },
+      "friendlyName": "Marketing team"
+     }
+    ]
+   },
+   "query": {
+    "maxResults": "998"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/projects/analytics/datasets",
+   "response": {
+    "datasets": [
+     {
+      "datasetReference": {
+       "projectId": "analytics",
+       "datasetId": "sales"
+      },
+      "location": "EU"
+     }
+    ]
+   },
+   "query": {
+    "maxResults": "1000"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/projects/bigquery-public-data/datasets",
+   "response": {
+    "datasets": [
+     {
+      "datasetReference": {
+       "projectId": "bigquery-public-data",
+       "datasetId": "samples"
+      },
+      "location": "US"
+     }
+    ]
+   },
+   "query": {
+    "maxResults": "1000"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/projects/marketing/datasets",
+   "response": {},
+   "query": {
+    "maxResults": "1000"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/projects/analytics/datasets/sales/tables",
+   "response": {
+    "totalItems": 3,
+    "tables": [
+     {
+      "tableReference": {
+       "projectId": "analytics",
+       "datasetId": "sales",
+       "tableId": "orders"
+      },
+      "type": "TABLE",
+      "timePartitioning": {
+       "type": "DAY",
+       "field": "placed"
+      },
+      "clustering": {
+       "fields": [
+        "customer"
+       ]
+      }
+     },
+     {
+      "tableReference": {
+       "projectId": "analytics",
+       "datasetId": "sales",
+       "tableId": "monthly totals"
+      },
+      "type": "VIEW",
+      "view": {
+       "useLegacySql": false
+      }
+     },
+     {
+      "tableReference": {
+       "projectId": "analytics",
+       "datasetId": "sales",
+       "tableId": "daily"
+      },
+      "type": "MATERIALIZED_VIEW"
+     }
+    ]
+   },
+   "query": {
+    "maxResults": "1000"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/projects/analytics/datasets/sales/tables/orders",
+   "response": {
+    "type": "TABLE",
+    "schema": {
+     "fields": [
+      {
+       "name": "id",
+       "type": "INTEGER",
+       "mode": "REQUIRED"
+      },
+      {
+       "name": "customer",
+       "type": "STRING"
+      },
+      {
+       "name": "placed",
+       "type": "TIMESTAMP"
+      },
+      {
+       "name": "address",
+       "type": "RECORD",
+       "fields": [
+        {
+         "name": "city",
+         "type": "STRING"
+        },
+        {
+         "name": "floors",
+         "type": "INTEGER",
+         "mode": "REPEATED"
+        }
+       ]
+      }
+     ]
+    },
+    "timePartitioning": {
+     "type": "DAY",
+     "field": "placed"
+    },
+    "clustering": {
+     "fields": [
+      "customer"
+     ]
+    }
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/projects/analytics/datasets/sales/tables/monthly%20totals",
+   "response": {
+    "type": "VIEW",
+    "schema": {
+     "fields": [
+      {
+       "name": "month",
+       "type": "DATE"
+      },
+      {
+       "name": "total",
+       "type": "NUMERIC"
+      }
+     ]
+    },
+    "view": {
+     "query": "SELECT DATE_TRUNC(DATE(placed), MONTH) AS month, SUM(total) AS total FROM sales.orders GROUP BY month",
+     "useLegacySql": false
+    }
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/projects/analytics/datasets/sales/tables/daily",
+   "response": {
+    "type": "MATERIALIZED_VIEW",
+    "schema": {
+     "fields": [
+      {
+       "name": "day",
+       "type": "DATE"
+      },
+      {
+       "name": "orders",
+       "type": "INTEGER"
+      }
+     ]
+    },
+    "materializedView": {
+     "query": "SELECT DATE(placed) AS day, COUNT(*) AS orders FROM sales.orders GROUP BY day"
+    }
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/projects/bigquery-public-data/datasets/samples/tables",
+   "response": {
+    "tables": [
+     {
+      "tableReference": {
+       "projectId": "bigquery-public-data",
+       "datasetId": "samples",
+       "tableId": "shakespeare"
+      },
+      "type": "TABLE"
+     }
+    ]
+   },
+   "query": {
+    "maxResults": "1000"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/projects/bigquery-public-data/datasets/samples/tables/shakespeare",
+   "response": {
+    "type": "TABLE",
+    "schema": {
+     "fields": [
+      {
+       "name": "word",
+       "type": "STRING",
+       "mode": "REQUIRED"
+      },
+      {
+       "name": "word_count",
+       "type": "INTEGER",
+       "mode": "REQUIRED"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/projects/analytics/datasets/sales/tables/orders",
+   "response": {
+    "type": "TABLE",
+    "schema": {
+     "fields": [
+      {
+       "name": "id",
+       "type": "INTEGER",
+       "mode": "REQUIRED"
+      },
+      {
+       "name": "customer",
+       "type": "STRING"
+      },
+      {
+       "name": "placed",
+       "type": "TIMESTAMP"
+      },
+      {
+       "name": "address",
+       "type": "RECORD",
+       "fields": [
+        {
+         "name": "city",
+         "type": "STRING"
+        },
+        {
+         "name": "floors",
+         "type": "INTEGER",
+         "mode": "REPEATED"
+        }
+       ]
+      }
+     ]
+    },
+    "timePartitioning": {
+     "type": "DAY",
+     "field": "placed"
+    },
+    "clustering": {
+     "fields": [
+      "customer"
+     ]
+    }
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/projects/analytics/datasets/sales/tables/monthly%20totals",
+   "response": {
+    "type": "VIEW",
+    "schema": {
+     "fields": [
+      {
+       "name": "month",
+       "type": "DATE"
+      },
+      {
+       "name": "total",
+       "type": "NUMERIC"
+      }
+     ]
+    },
+    "view": {
+     "query": "SELECT DATE_TRUNC(DATE(placed), MONTH) AS month, SUM(total) AS total FROM sales.orders GROUP BY month",
+     "useLegacySql": false
+    }
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/projects/analytics/datasets/sales/tables/daily",
+   "response": {
+    "type": "MATERIALIZED_VIEW",
+    "schema": {
+     "fields": [
+      {
+       "name": "day",
+       "type": "DATE"
+      },
+      {
+       "name": "orders",
+       "type": "INTEGER"
+      }
+     ]
+    },
+    "materializedView": {
+     "query": "SELECT DATE(placed) AS day, COUNT(*) AS orders FROM sales.orders GROUP BY day"
+    }
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/projects/bigquery-public-data/datasets/samples/tables/shakespeare",
+   "response": {
+    "type": "TABLE",
+    "schema": {
+     "fields": [
+      {
+       "name": "word",
+       "type": "STRING",
+       "mode": "REQUIRED"
+      },
+      {
+       "name": "word_count",
+       "type": "INTEGER",
+       "mode": "REQUIRED"
+      }
+     ]
+    }
+   }
+  }
+ ]
+}

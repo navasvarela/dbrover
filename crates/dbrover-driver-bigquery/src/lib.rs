@@ -7,6 +7,7 @@
 //! outside a script, so a connection is an API client, signed in with C0b's Google sign-in.
 
 mod api;
+mod catalog;
 mod errors;
 mod jobs;
 mod results;
@@ -23,6 +24,7 @@ use dbrover_core::{
 };
 
 use crate::api::{Api, segment};
+use crate::catalog::{Lister, NamedProjects};
 use crate::jobs::{BigQueryJobs, JobPlace};
 
 /// What DbRover calls the service in messages and on Test connection.
@@ -57,6 +59,9 @@ pub async fn connect(config: &BigQueryConfig) -> Result<BigQueryConnection, Driv
     let jobs = Jobs::new(Arc::new(BigQueryJobs::new(api, place)));
     Ok(BigQueryConnection {
         server_info: ServerInfo::new(PRODUCT, describe_place(config)),
+        api: probe.api.clone(),
+        project: config.project.clone(),
+        other_projects: config.other_projects.clone(),
         probe,
         jobs,
     })
@@ -89,8 +94,24 @@ impl Probe {
 /// A console's or the explorer's connection to BigQuery in one project.
 pub struct BigQueryConnection {
     server_info: ServerInfo,
+    api: Api,
+    /// The project jobs run in, listed first in the explorer.
+    project: String,
+    other_projects: Vec<String>,
     probe: Probe,
     jobs: Arc<Jobs>,
+}
+
+impl BigQueryConnection {
+    fn lister(&self) -> Lister<'_> {
+        Lister {
+            api: &self.api,
+            projects: NamedProjects {
+                own: &self.project,
+                others: &self.other_projects,
+            },
+        }
+    }
 }
 
 #[async_trait]
@@ -103,21 +124,24 @@ impl Connection for BigQueryConnection {
         self.probe.run().await.map_err(errors::connection)
     }
 
-    /// Nothing yet: the explorer's levels come with C4d.
-    async fn children(&mut self, _path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError> {
-        Ok(Vec::new())
+    /// The level's first thousand nodes: the explorer pages through the rest with
+    /// [`Connection::children_page`].
+    async fn children(&mut self, path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError> {
+        let page = self.children_page(path, &ChildrenQuery::default()).await?;
+        Ok(page.nodes)
     }
 
     async fn children_page(
         &mut self,
-        _path: &CatalogPath,
+        path: &CatalogPath,
         query: &ChildrenQuery,
     ) -> Result<ChildrenPage, DriverError> {
-        Ok(ChildrenPage::whole(Vec::new(), query))
+        self.lister().page(path, query).await
     }
 
+    /// From `tables.get`, which is free: no job runs to show a definition.
     async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError> {
-        Err(DriverError::InvalidPath(path.clone()))
+        self.lister().definition(path).await
     }
 
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError> {

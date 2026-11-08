@@ -844,10 +844,12 @@ impl Dialect {
             Self::Postgres | Self::Sqlite | Self::DuckDb | Self::Cassandra | Self::Trino => {
                 Quoting::STANDARD
             }
-            // TODO(C4c): GoogleSQL escapes a quote with a backslash only, and refuses the doubled
+            // TODO: GoogleSQL escapes a quote with a backslash only, and refuses the doubled
             // quote `Quoting` writes (`'it''s'`, `` `a``b` ``), so a literal or a name holding
-            // its own quote fails there. `Quoting` needs a backslash style before the BigQuery
-            // driver writes such literals; until then the statement is refused, not misread.
+            // its own quote fails there: refused by BigQuery, not misread. **Open data**
+            // (`dbrover-language`) and the BigQuery driver write their own names with
+            // backslashes; the generic paths (Find, foreign keys, the grid's filters) need a
+            // backslash style in `Quoting`.
             Self::Mysql | Self::ClickHouse | Self::BigQuery => Quoting {
                 identifier_open: '`',
                 identifier_close: '`',
