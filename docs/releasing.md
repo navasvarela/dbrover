@@ -43,10 +43,14 @@ with its file edited in place, highlighted, checked as you type and formatted, a
 the file on disk), v0.29.0 (Athena, signed in with an AWS profile, with the Glue Data
 Catalog in the explorer and the bytes each query scanned; Trino, Starburst and Presto over
 Trino's HTTP protocol; and a chart written as a `-- [chart]` block above a statement, opened on
-its result and saved back from the chart tab) and v0.30.0 (a chart's series and stacked bars;
+its result and saved back from the chart tab), v0.30.0 (a chart's series and stacked bars;
 charts drawn by a report's runs as SVG or PNG files beside its others, from its result or a
 query of their own; a `chart` tool for MCP clients; and folders of queries listed in the
-explorer, opened and added to there).
+explorer, opened and added to there) and v0.31.0 (BigQuery, signed in with Google, with its
+projects, datasets and tables in the explorer and a dry run before every statement that shows
+the bytes it will scan; and a settings folder that lives well in Git: a change pulled while
+DbRover runs is no longer undone by its next save, TOML files keep their comments and order, the
+history stays out of commits, and each report run names the version of its file).
 R3's update notice is built, ahead of R2 (see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
