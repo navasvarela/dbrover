@@ -24,6 +24,7 @@ settings folder can also be one you choose; see [Choosing the settings folder](#
 | `actions.toml`, `snippets.toml`, `theme.toml` (settings folder) | Your own actions, snippets and colours, if you wrote any. See [Actions, snippets and themes](customising.md). |
 | `exports.toml` (settings folder) | Your own export formats, if you wrote any. See [Your own export formats](export-formats.md). |
 | `reports/*.toml` (settings folder) | Your reports, one file each, for every project. See [Reports](reports.md). |
+| `.gitignore` (settings folder) | Keeps `history.sqlite` out of Git commits. Written once, when DbRover creates the folder. See [Keeping your settings in Git](#keeping-your-settings-in-git). |
 | `trusted_commands.toml` (data folder) | The command actions, password commands and export programs you chose **Run** for, each as it was then. See [Commands](customising.md#the-first-run), [Password from a command](data-sources.md#password-from-a-command) and [Programs](export-formats.md#programs). |
 | `settings_folder.toml` (data folder) | The settings folder you chose in **Settings › Files**, if you chose one. |
 | `app.ron` (data folder) | The window's size and position, the panel layout, the theme you picked, the recent `.sql` files and which file each console tab shows. |
@@ -217,6 +218,78 @@ The folder must be an absolute path or start with `~`. It is created if it isn't
 **Settings › Files** shows the folder, and can't change it while the flag or variable is set.
 `dbrover mcp` takes the same flag and variable; see
 [Connecting an AI assistant](mcp.md#another-settings-folder).
+
+## Keeping your settings in Git
+
+The settings folder is plain files, so it can live in a Git repository: your dotfiles, or a
+team's repository of queries and reports. DbRover has no Git of its own; you commit, pull and
+push as you would any files, and DbRover keeps out of Git's way.
+
+**What to commit.** Everything DbRover writes there but the history: `data_sources.toml`,
+`projects.toml`, `settings.toml`, `reports/`, `diagrams/`, and the files you write yourself
+(`keymap.toml`, `actions.toml`, `snippets.toml`, `theme.toml`, `exports.toml`). Consoles in
+`consoles/` are saved a second after you stop typing, so every pause is a change; commit them
+if you want them on another machine, or uncomment `consoles/` in the `.gitignore`.
+
+**What stays out.** `history.sqlite` holds the text of every statement you ran and the old
+values of the cells you edited, changes with each statement, and is this machine's. The
+`.gitignore` DbRover writes into a folder it creates leaves it out, with the `-wal` and `-shm`
+files SQLite keeps beside it:
+
+```gitignore
+# Written by DbRover. The query history is this machine's, holds the text of every
+# statement, and changes with each one; don't commit it.
+history.sqlite
+history.sqlite-*
+# Consoles are saved as you type. Uncomment to keep them out of commits too.
+# consoles/
+```
+
+DbRover writes it when it creates the settings folder, or into a folder you choose in
+**Settings › Files**, and only if there is no `.gitignore` there. It never changes one that
+is there, and doesn't write it again if you delete it. **Settings › Files** says whether the
+folder is in a Git repository and, while it has no `.gitignore`, offers **Add a .gitignore**.
+
+**What never reaches the repository.** Passwords are in each machine's keychain, and the
+commands you trusted to run (command actions, password commands, export programs) are trusted
+in each machine's data folder. A settings folder cloned onto another machine, or pulled with
+someone else's changes, asks for each password once there and asks before running any command
+for the first time.
+
+**Pulling while DbRover runs.** DbRover reads the folder's files again when its window comes
+back to the front, and again just before it saves one, so a `git pull` in a terminal is never
+undone by DbRover's next save:
+
+- A data source or project added, changed or removed by the pull shows in the explorer once
+  you switch back to DbRover. Saving one of yours changes only that one's lines in the file,
+  keeping the others, your comments and their order, so `git diff` shows only your change.
+- `settings.toml`, a console and a diagram follow the pulled file if you had nothing unsaved
+  in them. If you had, or if a save of yours finds the file changed, they say so and offer
+  **Reload** (take the file's) or **Keep mine** (write yours over it).
+- A file a merge left with conflict markers can't be read, so DbRover never writes over it:
+  the log console or the page says why, and saving waits until you fix the file.
+
+**A team's repository.** One repository can hold what a team shares, each person pointing
+DbRover at the parts they use:
+
+| In the repository | In DbRover |
+| --- | --- |
+| `queries/*.sql` | **File › Add query folder…**, so the explorer lists them; see [Query folders](explorer.md#query-folders). |
+| `reports/*.toml` | `dbrover report run ./reports/<name>.toml` from the checkout, or the files copied into the settings folder's `reports/` for the app's **Reports**. |
+| An export of the team's data sources | **File › Import data sources…** on each machine, again after a pull that changed it; see [Moving data sources to another machine](sharing.md). |
+
+A CI job can run a report straight from the checkout, against a settings folder of its own that
+has the data sources the report reads, and keep what it wrote and what it said:
+
+```bash
+dbrover report run ./reports/trial-balance.toml --config-dir ci-settings \
+  -p month=2026-10 -o out/ --json > out/run.jsonl
+```
+
+Each run of a report names the version of its file that ran, as Git calls it (the file's
+*blob id*). The report's [Runs](reports.md#runs) show it, the command line prints it, and
+`git log --find-object=<id>` lists the commits that had exactly that file, so you can tell
+which version of a report wrote a given set of files.
 
 ## Starting over
 
