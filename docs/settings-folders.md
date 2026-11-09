@@ -118,6 +118,16 @@ why: a choice made here would be ignored until DbRover starts without them. File
 category in the Settings tab with this one row for now, and the natural home for "Open the
 settings folder" later.
 
+**A `.gitignore` for the history (VC1d, [Version control](version-control.md)).** DbRover
+writes a commented `.gitignore` naming `history.sqlite` and its `-wal` and `-shm` files into
+a settings folder that was missing or empty when the app started (created by this start, or
+filled by a copy), and into a folder chosen here that receives no copy, as the app quits to
+switch to it. It never changes a `.gitignore` that exists, and a folder that held anything
+before is left alone, so deleting the file is respected. Files also says whether the folder is
+in a Git repository (a `.git` in it or a folder above it), and offers **Add a .gitignore**
+while the folder has none. `dbrover mcp` and `dbrover report run` never write it: they don't
+create the folder.
+
 ### Switching
 
 **Choose…** opens a folder picker and checks the folder before anything changes:

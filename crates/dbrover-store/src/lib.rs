@@ -11,6 +11,7 @@ mod custom;
 mod data_sources;
 mod diagrams;
 mod file_version;
+mod gitignore;
 mod history;
 mod in_place;
 mod keymap;
@@ -42,6 +43,7 @@ pub use diagrams::{
     InvalidDiagramName, PlacedTable, ReadDiagram, SavedDiagram,
 };
 pub use file_version::{BlobId, FileVersion, Snapshot};
+pub use gitignore::{GITIGNORE, GitStatus, GitignoreAdded, add_gitignore};
 pub use history::{
     CombineMetrics, DEFAULT_RUNS_KEPT, History, HistoryEntry, HistoryError, HistoryExportError,
     HistoryFile, HistoryOutcome, HistoryQuery, HistorySource, HistorySourceKind, NamedCell,

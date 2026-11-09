@@ -193,6 +193,12 @@ If the folder isn't there when DbRover starts (a drive that isn't connected, a s
 that was moved), DbRover uses the default folder for that session and says so. Your choice is
 kept, so the folder is used again once it is back.
 
+DbRover puts a `.gitignore` in a settings folder it creates, or one you choose here, unless
+there is one already, so a folder kept in Git doesn't commit the query history
+(`history.sqlite`, which holds the text of every statement). **Files** says whether the folder
+is in a Git repository and, if it has no `.gitignore`, offers **Add a .gitignore**. DbRover
+never changes a `.gitignore` that is there, and doesn't write it again if you delete it.
+
 **Using one folder on two machines:** quit DbRover on one before using the other. Each file is
 written whole, but a sync service can't merge two machines' changes to the same file, and it
 may copy `history.sqlite` while DbRover is writing to it.

@@ -2398,8 +2398,9 @@ after CI fixes, the reports track and W13, and links no Git library.
     the check also runs when the window comes back to the front.
   - **VC1c — Comments and order kept:** built; `data_sources.toml`, `projects.toml` and
     `settings.toml` edited in place with `toml_edit`, so a save changes only its own lines.
-  - **VC1d — A `.gitignore` for the history:** written when the settings folder is created or
-    chosen, never replaced, so `history.sqlite` isn't committed.
+  - **VC1d — A `.gitignore` for the history:** built; written when the settings folder is
+    created or chosen, never replaced, so `history.sqlite` isn't committed; **Settings ›
+    Files** says whether the folder is in Git and offers **Add a .gitignore** when it has none.
   - **VC1e — A report's run names the report's version:** the file's Git blob id with each run,
     in the tab, `--json` and the log, found with `git log --find-object`.
   - **VC1f — Manual:** *Keeping your settings in Git*, and this demo note.

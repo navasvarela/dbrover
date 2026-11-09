@@ -7,11 +7,11 @@ use std::path::{Path, PathBuf};
 use dbrover_core::describe_error;
 use dbrover_store::{
     AppPaths, CONFIG_DIR_VARIABLE, ChosenFolder, ChosenFolderError, ChosenFolderFile,
-    FolderOverrides, InstallFolders, RelativeFolder, SettingsFolder, settings_folder,
+    FolderOverrides, GitStatus, InstallFolders, RelativeFolder, SettingsFolder, settings_folder,
 };
 
 use crate::folder_notice::FolderNotice;
-use crate::folder_switch::FolderInUse;
+use crate::folder_switch::{FolderInUse, add_history_gitignore};
 use crate::previous_install::{self, Adopted};
 
 /// The folder the start-up settled on, before anything is copied into it.
@@ -91,6 +91,7 @@ impl Decision {
             folder,
             unavailable,
         } = self;
+        let new_folder = holds_nothing(&settings_path(&default, &folder));
         let adopted = match &folder {
             SettingsFolder::Default => previous_install::adopt(default.clone(), previous_installs),
             SettingsFolder::Flag(path) | SettingsFolder::Environment(path) => {
@@ -101,10 +102,29 @@ impl Decision {
         Session {
             adopted,
             folder,
+            new_folder,
             default_settings: default.folders().settings.clone(),
             chosen_file: default.chosen_folder_file(),
             unavailable,
         }
+    }
+}
+
+/// The settings folder `folder` names, before anything is copied into it.
+fn settings_path(default: &AppPaths, folder: &SettingsFolder) -> PathBuf {
+    match folder {
+        SettingsFolder::Default => default.folders().settings.clone(),
+        SettingsFolder::Flag(path) | SettingsFolder::Environment(path) => path.clone(),
+        SettingsFolder::Chosen(chosen) => chosen.folder.clone(),
+    }
+}
+
+/// Whether `folder` is missing or empty: this start creates it, or copies settings into it. A
+/// folder that can't be listed counts as holding something, so nothing is written there.
+fn holds_nothing(folder: &Path) -> bool {
+    match std::fs::read_dir(folder) {
+        Ok(mut entries) => entries.next().is_none(),
+        Err(error) => error.kind() == std::io::ErrorKind::NotFound,
     }
 }
 
@@ -144,6 +164,8 @@ fn forget_copy(file: &ChosenFolderFile, chosen: &ChosenFolder, default: &AppPath
 pub struct Session {
     pub adopted: Adopted,
     pub folder: SettingsFolder,
+    /// Whether the settings folder was missing or empty before this start.
+    new_folder: bool,
     default_settings: PathBuf,
     /// In the default data folder, even when a failed copy leaves this session on a previous
     /// install's folders.
@@ -178,6 +200,16 @@ impl Session {
         }
     }
 
+    /// Writes DbRover's `.gitignore` into a settings folder this start created or copied the
+    /// settings into, unless the copy failed and the session fell back to another folder. A
+    /// folder that held anything before is left as it is: a `.gitignore` deleted from it
+    /// stays deleted.
+    pub fn add_gitignore_if_new(&self) {
+        if self.new_folder && !self.adopted.failed() {
+            add_history_gitignore(&self.paths().folders().settings);
+        }
+    }
+
     /// What to tell the user once: that the chosen folder isn't available, before what a copy
     /// did, since only the first needs them to act.
     pub fn notice(&self) -> Option<FolderNotice> {
@@ -193,6 +225,7 @@ impl Session {
     /// The folder in use, for Settings › Files to show and change.
     pub fn folder_in_use(&self) -> FolderInUse {
         FolderInUse {
+            git: GitStatus::of(&self.paths().folders().settings),
             folders: self.paths().folders().clone(),
             source: self.folder.clone(),
             default_settings: self.default_settings.clone(),

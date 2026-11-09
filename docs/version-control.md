@@ -216,6 +216,14 @@ one. **Settings › Files** shows whether the folder is in a Git repository (a `
 folder above it) and, when the folder has no `.gitignore`, offers **Add a .gitignore**. It
 doesn't judge one you wrote.
 
+Made precise while building it (VC1d): DbRover never creates the settings folder as a step of
+its own (each file's first write does), so "when it creates the folder" means a settings folder
+that was missing or empty when the app started; the file goes in once any copy into it is done,
+since a copy needs the folder empty. A folder chosen in Settings that receives no copy gets it
+as the app quits to switch. A folder that held anything is otherwise left alone, which is what
+keeps a deleted `.gitignore` deleted. Only the app writes it; `dbrover mcp` and
+`dbrover report run` create nothing.
+
 ### A report's run names the report's version (VC1e)
 
 Each run in `report_runs` records the report file's Git blob id: SHA-1 over `blob <length>\0`

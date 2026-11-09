@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 
 use dbrover_store::{
     CONFIG_DIR_FLAG, CONFIG_DIR_VARIABLE, ChosenFolder, ChosenFolderError, ChosenFolderFile,
-    FolderCheck, InstallFolders, SettingsFolder, check_folder,
+    FolderCheck, GitStatus, GitignoreAdded, InstallFolders, SettingsFolder, add_gitignore,
+    check_folder,
 };
 use egui::{Id, RichText};
 
@@ -22,6 +23,8 @@ pub struct FolderInUse {
     pub source: SettingsFolder,
     pub default_settings: PathBuf,
     pub chosen_file: ChosenFolderFile,
+    /// Whether the folder is in a Git repository and has a `.gitignore`, as last looked.
+    pub git: GitStatus,
 }
 
 impl FolderInUse {
@@ -79,6 +82,21 @@ impl FolderInUse {
     }
 }
 
+/// Writes DbRover's `.gitignore` into `folder` if it has none, so the history isn't committed
+/// with the settings (VC1d). A failure only means Git may list the history, so it is logged.
+pub fn add_history_gitignore(folder: &Path) {
+    match add_gitignore(folder) {
+        Ok(GitignoreAdded::Written) => {
+            tracing::info!("wrote a .gitignore for the history in {}", folder.display());
+        }
+        Ok(GitignoreAdded::AlreadyThere) => {}
+        Err(error) => tracing::warn!(
+            "could not write a .gitignore in {}: {error}",
+            folder.display()
+        ),
+    }
+}
+
 /// What Settings › Files asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FolderRequest {
@@ -86,6 +104,8 @@ pub enum FolderRequest {
     Choose,
     /// Confirm switching back to the default folder.
     UseDefault,
+    /// Write DbRover's `.gitignore` into the folder, which has none.
+    AddGitignore,
 }
 
 /// A switch the user confirmed, saved as DbRover quits so the next start makes it.
@@ -206,6 +226,7 @@ mod tests {
         FolderInUse {
             chosen_file: ChosenFolderFile::new(folders.data.join("settings_folder.toml")),
             default_settings: folders.settings.clone(),
+            git: GitStatus::of(&folders.settings),
             folders,
             source: SettingsFolder::Default,
         }

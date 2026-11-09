@@ -1619,6 +1619,10 @@ fn settings_files(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
         }),
         default_settings: PathBuf::from("/Users/ada/.config/dbrover"),
         chosen_file: ChosenFolderFile::new(data.join("settings_folder.toml")),
+        git: dbrover_store::GitStatus {
+            repository: None,
+            has_gitignore: true,
+        },
     });
     open_settings_page(harness, "Files");
 }
