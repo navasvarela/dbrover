@@ -1,7 +1,7 @@
 # Reports at scale
 
-Status: **planned, not scheduled.** Proposed on 2026-11-04, to come after RP5 (PRQL) unless the
-order changes. Each milestone's decisions are confirmed when it starts, as in
+Status: **RS1 built** (2026-11-09); **the rest planned, not scheduled.** Proposed on
+2026-11-04, to come after RP5 (PRQL) unless the order changes. Each milestone's decisions are confirmed when it starts, as in
 [Reports](reporting.md) and [Cloud and big data](cloud-data.md).
 
 [Reports](reporting.md) (RP1 to RP6) run a recipe of sources, a combine step and outputs in a
@@ -696,6 +696,54 @@ Where the code changes the plan, the plan above still says what it said; this se
 | DuckDB's memory from `duckdb_memory()` once a second. | The run's DuckDB has one connection, busy loading or running the combine. | Left for RS3, where the workspace on a file gets a second connection; RS1 keeps DuckDB's two peaks at the end, as RP4 did. |
 | `dbrover report compare <report> <run> <run>`. | Runs have no id outside SQLite. | A run is named by its `report_runs` row id, which the history now returns with each run and `dbrover report runs` lists. |
 | A benchmark of the text and typed paths, per engine. | Every source loads as text, then is cast; declared columns (RP3) only choose the types. | RS1g measures SQLite, DuckDB, PostgreSQL and MySQL (from the repository's Docker Compose file), each with inferred and declared columns, on data made by DuckDB's `range()`. These are the numbers RS3c's typed loading and RS6's columnar path are judged by. |
+
+## Benchmark
+
+RS1g's baseline, the numbers RS3c's typed loading and RS6's columnar sources are judged by.
+`crates/dbrover-engine/tests/report_benchmark.rs`, an ignored test run by hand in release mode,
+runs one report per engine and column kind: one source of generated rows (`id` integer, `amount`
+decimal(18,2), `ts` timestamp, `label` text), loaded into the combine step's DuckDB and added up
+into one CSV line, so the outputs cost nothing. Each engine makes its rows in the source's own
+query (DuckDB's `range()`, PostgreSQL's `generate_series`, ten digits cross-joined in SQLite and
+MySQL), so nothing is loaded beforehand. *Inferred* types the columns from their values (RP2's
+text path); *declared* gives them in the file (RP3). The phases are each source's own profile.
+
+Measured on 2026-11-09 on an Apple M4 Pro (12 cores, 24 GB), with PostgreSQL 17 and MySQL 8.4
+from the repository's Docker Compose file on the same machine, so there is no network in these
+numbers: 10,000,000 rows, in seconds.
+
+| Engine | Columns | Rows | Run (s) | Source (s) | Until first row | Receiving | Loading | Typing | Combine (s) | Rows a second | DuckDB peak |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| DuckDB | inferred | 10,000,000 | 12.48 | 12.45 | 0.00 | 3.49 | 7.31 | 0.14 | 0.02 | 803,148 | 977 MB |
+| DuckDB | declared | 10,000,000 | 16.32 | 16.30 | 0.00 | 7.41 | 7.29 | 0.14 | 0.01 | 613,534 | 981 MB |
+| SQLite | inferred | 10,000,000 | 14.65 | 14.62 | 0.00 | 5.89 | 7.10 | 0.13 | 0.01 | 684,134 | 877 MB |
+| SQLite | declared | 10,000,000 | 18.47 | 18.45 | 0.00 | 9.81 | 7.06 | 0.13 | 0.01 | 541,976 | 964 MB |
+| PostgreSQL | inferred | 10,000,000 | 11.40 | 11.38 | 0.45 | 1.65 | 7.60 | 0.14 | 0.01 | 878,811 | 892 MB |
+| PostgreSQL | declared | 10,000,000 | 15.57 | 15.55 | 0.29 | 5.68 | 7.93 | 0.14 | 0.01 | 643,128 | 981 MB |
+| MySQL | inferred | 10,000,000 | 11.60 | 11.58 | 0.08 | 2.75 | 7.09 | 0.13 | 0.01 | 863,334 | 894 MB |
+| MySQL | declared | 10,000,000 | 15.53 | 15.51 | 0.08 | 6.75 | 7.05 | 0.13 | 0.01 | 644,828 | 981 MB |
+
+At a million rows each time is a tenth of these, within a few hundredths of a second.
+
+What it says:
+
+- **Loading into DuckDB is the text path's bottleneck**, about 7 of 11 to 15 seconds whatever the
+  engine: the appender takes each value as text. That is what RS3c's typed appends and RS6's
+  Arrow batches remove, and RS6's exit compares against these rows a second.
+- **Typing is cheap.** The second copy RP2's load-then-cast makes (`CREATE TABLE … AS SELECT
+  CAST(…)`) takes 0.14 s for ten million rows: the double copy costs space more than time, and
+  RS3c's case for typing on arrival is the appender, not the cast.
+- **Declared columns are slower today**, by about 4 seconds: each value is checked and rewritten
+  in its type's plain form in Rust before it is appended as text again. The profile counts that
+  as *receiving rows*, since it happens inside the source's reader, so `slow-first-row` and the
+  Profile's bottleneck aren't misled, but *receiving* on a declared source includes DbRover's own
+  work. RS3c, which appends declared columns typed, should turn this from a cost into a saving.
+- **The engines themselves are fast here**: under half a second to the first row, and 1.6 to 6
+  seconds of receiving: PostgreSQL quickest, then MySQL, while SQLite and DuckDB make their rows
+  in the worker's own process, so their *receiving* is their query's work too. Over a network, *receiving* grows with the
+  bytes: the Profile tells the two apart.
+- **DuckDB's memory** peaked at under 1 GB for 10 million rows of about 40 bytes each, inside the
+  2 GiB default `memory_limit`, with no spill.
 
 ## Recommended path
 
