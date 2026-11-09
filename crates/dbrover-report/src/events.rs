@@ -1,6 +1,9 @@
 //! What a run reports as it goes: the events the worker writes as JSON Lines and the app
 //! reads (`docs/reporting.md`, "The worker in RP1" and "Progress in RP2"). Shared by both
 //! sides, so they can't disagree on a field.
+//!
+//! Each line is a [`TimedEvent`]: the event, and when in the run it was sent, which with each
+//! step's own times places the step on the run's timeline (`docs/reports-at-scale.md`, RS1b).
 
 use std::path::PathBuf;
 
@@ -8,6 +11,18 @@ use dbrover_core::BlobId;
 use serde::{Deserialize, Serialize};
 
 use crate::Plan;
+
+/// An event as a line carries it: the event, and how long after the worker started it was
+/// sent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TimedEvent {
+    /// Milliseconds from the worker's start, by its own clock. For an event the app's side
+    /// makes (a cancelled run, a worker that died), by the app's clock from starting it.
+    #[serde(default)]
+    pub at_ms: u64,
+    #[serde(flatten)]
+    pub event: RunEvent,
+}
 
 /// One step of a run, or how it ended.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,6 +44,16 @@ pub enum RunEvent {
         /// than VC1e.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         version: Option<BlobId>,
+        /// The combine step's limits, for a report that combines; `None` from a worker older
+        /// than RS1b too.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        combine_limits: Option<CombineCaps>,
+        /// The whole run's time limit; `None` from a worker older than RS1b.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u64>,
+        /// Where the run runs; `None` from a worker older than RS1b.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        machine: Option<Machine>,
     },
     /// What a step has returned so far, about once a second.
     Progress {
@@ -58,6 +83,9 @@ pub enum RunEvent {
         /// How many statements a source with a lookup sent, one a batch of its values.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         batches: Option<u64>,
+        /// Where its time went; `None` from a worker older than RS1b.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        phases: Option<SourcePhases>,
     },
     /// A DuckDB file was attached for the combine step to read in place.
     SourceAttached {
@@ -79,6 +107,17 @@ pub enum RunEvent {
         /// bounds; `None` when DuckDB didn't say.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         peak_temp_size: Option<u64>,
+        /// The time spent waiting on DuckDB for the query's rows, the first page's included;
+        /// the rest of `elapsed_ms` went to the outputs. `None` from a worker older than RS1b.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        query_ms: Option<u64>,
+    },
+    /// What the worker process used, sent once just before the run's end.
+    WorkerUsage {
+        /// The most memory the worker's process held resident at once, DuckDB's included;
+        /// `None` where the system doesn't say (Windows).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        peak_memory: Option<u64>,
     },
     /// The first rows the outputs were given.
     Preview(Preview),
@@ -100,6 +139,14 @@ impl RunEvent {
             Self::Finished { .. } | Self::Failed(_) | Self::Cancelled
         )
     }
+
+    /// The event, sent `at` into the run.
+    pub fn at(self, at: std::time::Duration) -> TimedEvent {
+        TimedEvent {
+            at_ms: u64::try_from(at.as_millis()).unwrap_or(u64::MAX),
+            event: self,
+        }
+    }
 }
 
 /// A source as a run starts.
@@ -112,6 +159,56 @@ pub struct SourceStart {
     /// The source whose values its lookup reads, which it waits for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waits_for: Option<String>,
+    /// Its data source's engine, as DbRover names it (`PostgreSQL`); `None` from a worker
+    /// older than RS1b.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
+    /// The caps it runs under; `None` for an attached file, which reads nothing itself, and
+    /// from a worker older than RS1b.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<SourceCaps>,
+}
+
+/// A source's caps as a run applies them, whoever set them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceCaps {
+    pub max_rows: u64,
+    pub max_bytes: u64,
+    pub timeout_ms: u64,
+}
+
+/// The combine step's limits as a run applies them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CombineCaps {
+    pub memory_limit: u64,
+    pub max_temp_size: u64,
+    pub timeout_ms: u64,
+}
+
+/// The machine a run runs on, as far as a profile compares runs by it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Machine {
+    /// The processor's cores, as the system offers them to the worker.
+    pub cores: u32,
+    /// DbRover's version, as `0.31.0`.
+    pub dbrover: String,
+}
+
+/// Where a source's time went, in milliseconds. The phases add up to about the source's time;
+/// a source with a lookup adds each batch's.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourcePhases {
+    /// Connecting to its data source.
+    pub connect_ms: u64,
+    /// From sending the statement to its first row: the engine's own work, mostly.
+    pub server_ms: u64,
+    /// Waiting for the rest of its rows, once the first came.
+    pub transfer_ms: u64,
+    /// Its rows appended to its table in DuckDB, and a lookup's values read from there; zero
+    /// for a report without a combine step, whose outputs' time is their own.
+    pub load_ms: u64,
+    /// Typing its table's columns once every row is in, which rewrites the table.
+    pub type_ms: u64,
 }
 
 /// A column of a source's table in DuckDB, and the type it was given.
@@ -336,6 +433,7 @@ mod tests {
                     elapsed_ms: 5,
                     peak_memory: None,
                     peak_temp_size: None,
+                    query_ms: None,
                 },
             ),
             (

@@ -17,8 +17,8 @@ use dbrover_core::{BlobId, DataSource, describe_error};
 use dbrover_engine::{PasswordCommands, ProcessRunner, SourceAccess, Tunnels};
 use dbrover_export::CustomFormat;
 use dbrover_report::{
-    LimitDefaults, Logic, Plan, RunEvent, RunFailure, RunFolders, RunRequest, RunValues, Step,
-    read_report,
+    LimitDefaults, Machine, Plan, RunEvent, RunFailure, RunFolders, RunRequest, RunValues, Step,
+    TimedEvent, read_report,
 };
 use dbrover_store::{AppPaths, CustomFile, CustomFileKind, DataSourceFile, os_keychain};
 
@@ -37,7 +37,7 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
         eprintln!("{error:#}");
     }
     let started = Instant::now();
-    let mut out = Events::new(io::stdout().lock());
+    let mut out = Events::new(io::stdout().lock(), started);
     // Kept to say, of a limit the run stops at, whether the file or Settings set it.
     let mut planned: Option<Plan> = None;
     let outcome = read_request()
@@ -48,13 +48,7 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
             let (plan, version, values) = prepare(&paths, &request)?;
             limits::limit_processor_time(plan.processor_time());
             tracing::info!(report = %plan.name, %version, "running the report");
-            let started = out.send(&RunEvent::Started {
-                report: plan.name.clone(),
-                sources: plan.source_starts(),
-                combine: matches!(plan.logic, Logic::Combine(_)),
-                combine_sql: plan.compiled_combine().map(str::to_owned),
-                version: Some(version),
-            });
+            let started = out.send(&plan.started(version, machine()));
             if started.is_err() {
                 abandon(&request.staging);
             }
@@ -66,6 +60,10 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
             planned = Some(plan);
             ran
         });
+    // Ends the run as much as the end itself: whether anyone reads it changes nothing.
+    let _ = out.send(&RunEvent::WorkerUsage {
+        peak_memory: limits::peak_memory(),
+    });
     match outcome {
         Ok(()) => {
             // The run is over: whether anyone reads its end changes nothing.
@@ -85,25 +83,47 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
     }
 }
 
-/// Writes events, a line each, flushed at once so the app sees each as it happens; also
-/// `dbrover report run --json`'s output.
+/// Where the worker runs.
+fn machine() -> Machine {
+    Machine {
+        cores: std::thread::available_parallelism()
+            .ok()
+            .and_then(|cores| u32::try_from(cores.get()).ok())
+            .unwrap_or(1),
+        dbrover: env!("CARGO_PKG_VERSION").to_owned(),
+    }
+}
+
+/// Writes events, a line each with its time in the run, flushed at once so the app sees each
+/// as it happens; also `dbrover report run --json`'s output.
 pub(crate) struct Events<W: Write> {
     out: W,
+    /// When the run started, which each event's time counts from.
+    started: Instant,
 }
 
 impl<W: Write> Events<W> {
-    pub(crate) fn new(out: W) -> Self {
-        Self { out }
+    pub(crate) fn new(out: W, started: Instant) -> Self {
+        Self { out, started }
     }
 
-    /// Writes `event`.
+    /// Writes `event`, sent now.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::forward`].
+    pub(crate) fn send(&mut self, event: &RunEvent) -> io::Result<()> {
+        self.forward(&event.clone().at(self.started.elapsed()))
+    }
+
+    /// Writes `event` with the time it already has, as the worker that sent it wrote it.
     ///
     /// # Errors
     ///
     /// When it can't be written: the reader has gone, or closed the pipe. Logged here; the
     /// worker stops its run, while `dbrover report run --json` runs on, its exit code saying
     /// how the run ended.
-    pub(crate) fn send(&mut self, event: &RunEvent) -> io::Result<()> {
+    pub(crate) fn forward(&mut self, event: &TimedEvent) -> io::Result<()> {
         let written = serde_json::to_string(event)
             .map_err(io::Error::other)
             .and_then(|line| writeln!(self.out, "{line}"))

@@ -46,10 +46,11 @@ pub use diagrams::{
 pub use file_version::{FileVersion, Snapshot};
 pub use gitignore::{GITIGNORE, GitStatus, GitignoreAdded, add_gitignore};
 pub use history::{
-    CombineMetrics, DEFAULT_RUNS_KEPT, History, HistoryEntry, HistoryError, HistoryExportError,
-    HistoryFile, HistoryOutcome, HistoryQuery, HistorySource, HistorySourceKind, NamedCell,
-    OutputMetrics, ReplacedCell, ReportRun, RowChange, RowChangeKind, RunError, RunOrigin,
-    RunOutcome, SourceMetrics, StepMetrics, redact_secrets,
+    CombineCaps, CombineMetrics, DEFAULT_RUNS_KEPT, History, HistoryEntry, HistoryError,
+    HistoryExportError, HistoryFile, HistoryOutcome, HistoryQuery, HistorySource,
+    HistorySourceKind, NamedCell, OutputMetrics, ReplacedCell, ReportRun, RowChange, RowChangeKind,
+    RunError, RunOrigin, RunOutcome, RunProfile, SourceCaps, SourceMetrics, SourcePhases,
+    StepMetrics, redact_secrets,
 };
 pub use in_place::InPlaceError;
 pub use keymap::{KeymapBindings, KeymapError, KeymapFile};

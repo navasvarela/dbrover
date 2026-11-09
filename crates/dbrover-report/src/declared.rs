@@ -61,6 +61,10 @@ impl<R: SourceReader> SourceReader for Shaped<R> {
         }
     }
 
+    fn opening(&self) -> crate::Opening {
+        self.inner.opening()
+    }
+
     async fn next_page(&mut self) -> Result<Option<Vec<Row>>, SourceError> {
         let page = self.inner.next_page().await?;
         match (&mut self.declared, page) {

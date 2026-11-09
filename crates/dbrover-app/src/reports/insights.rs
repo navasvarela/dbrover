@@ -240,6 +240,11 @@ mod tests {
             first_row_ms: Some(1),
             elapsed_ms,
             batches: None,
+            started_ms: None,
+            engine: None,
+            phases: None,
+            limits: None,
+            waits_for: None,
         })
     }
 
@@ -251,6 +256,9 @@ mod tests {
             elapsed_ms,
             peak_memory: Some(1 << 30),
             peak_temp_size,
+            started_ms: None,
+            query_ms: None,
+            limits: None,
         })
     }
 
@@ -261,6 +269,8 @@ mod tests {
             rows,
             size: rows * 30,
             elapsed_ms,
+            started_ms: None,
+            ended_ms: None,
         })
     }
 
@@ -274,6 +284,7 @@ mod tests {
             steps,
             origin: dbrover_store::RunOrigin::App,
             version: None,
+            profile: Default::default(),
         }
     }
 

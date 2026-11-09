@@ -7,7 +7,7 @@ use std::num::NonZeroU32;
 use std::path::Path;
 
 use dbrover_core::describe_error;
-use dbrover_report::{RunEvent, TypedValues};
+use dbrover_report::{TimedEvent, TypedValues};
 use dbrover_store::{AppPaths, HistoryFile, ReportName, RunOrigin};
 
 use crate::reports::RunRecord;
@@ -43,7 +43,7 @@ impl RunHistory {
         })
     }
 
-    pub fn event(&mut self, event: &RunEvent) {
+    pub fn event(&mut self, event: &TimedEvent) {
         self.record.apply(event.clone());
     }
 

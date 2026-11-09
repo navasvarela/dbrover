@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use dbrover_core::{
-    ConnectionConfig, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase, PostgresConfig,
-    RedisConfig, SafetyLevel, ServerConfig, SqliteConfig, TlsMode,
+    BlobId, ConnectionConfig, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase,
+    PostgresConfig, RedisConfig, SafetyLevel, ServerConfig, SqliteConfig, TlsMode,
 };
 use dbrover_export::{
     ColumnType, CustomFormat, CustomFormatId, CustomFormatKind, DecimalSpec, ExportFormat,
@@ -794,15 +794,47 @@ fn reads_and_plans_the_valuation() {
                 data_source: "ledger-postgres".to_owned(),
                 attached: false,
                 waits_for: None,
+                engine: Some("PostgreSQL".to_owned()),
+                limits: Some(SourceCaps::from(&SourceLimits::default())),
             },
             SourceStart {
                 id: "prices".to_owned(),
                 data_source: "prices-duckdb".to_owned(),
                 attached: true,
                 waits_for: None,
+                engine: Some("DuckDB".to_owned()),
+                limits: None,
             },
         ]
     );
+    let machine = Machine {
+        cores: 8,
+        dbrover: "0.31.0".to_owned(),
+    };
+    let RunEvent::Started {
+        combine,
+        combine_limits,
+        timeout_ms,
+        machine: started_on,
+        ..
+    } = plan.started(BlobId::of(b""), machine.clone())
+    else {
+        panic!("not a start");
+    };
+    assert!(combine);
+    assert_eq!(
+        combine_limits,
+        Some(CombineCaps {
+            memory_limit: 1 << 30,
+            max_temp_size: DEFAULT_MAX_TEMP_SIZE.0,
+            timeout_ms: u64::try_from(DEFAULT_COMBINE_TIMEOUT.as_millis()).unwrap(),
+        })
+    );
+    assert_eq!(
+        timeout_ms,
+        Some(u64::try_from(DEFAULT_RUN_TIMEOUT.as_millis()).unwrap())
+    );
+    assert_eq!(started_on, Some(machine));
 }
 
 #[test]

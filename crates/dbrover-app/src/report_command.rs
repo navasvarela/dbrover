@@ -20,9 +20,10 @@ use std::io;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Instant;
 
 use dbrover_engine::WorkerRun;
-use dbrover_report::{Plan, RunEvent, RunFailure, RunRequest, Step, TypedValues};
+use dbrover_report::{Plan, RunEvent, RunFailure, RunRequest, Step, TimedEvent, TypedValues};
 use dbrover_store::{AppPaths, ReportSettings, RunOrigin, SettingsFile};
 use tracing_appender::non_blocking::WorkerGuard;
 
@@ -255,30 +256,31 @@ fn run_worker(
     paths: &AppPaths,
     prepared: &Prepared,
     stopping: &Stopping,
-    on_event: &mut dyn FnMut(&RunEvent),
+    on_event: &mut dyn FnMut(&TimedEvent),
 ) -> Outcome {
+    let started = Instant::now();
     let run = match start_worker(paths, prepared) {
         Ok(run) => run,
         Err(error) => {
             let failure =
                 RunFailure::new(Step::Worker, format!("could not start the worker: {error}"));
-            on_event(&RunEvent::Failed(failure));
+            on_event(&RunEvent::Failed(failure).at(started.elapsed()));
             return Outcome::Failed;
         }
     };
     stopping.started(run.stopper());
-    while let Some(mut event) = run.wait_next() {
+    while let Some(mut timed) = run.wait_next() {
         // The worker places its own limits; the run's time limit is enforced from here.
-        if let RunEvent::Failed(failure) = &mut event {
+        if let RunEvent::Failed(failure) = &mut timed.event {
             failure.place_limit(&prepared.plan);
         }
-        on_event(&event);
-        if let Some(outcome) = Outcome::of_end(&event) {
+        on_event(&timed);
+        if let Some(outcome) = Outcome::of_end(&timed.event) {
             return outcome;
         }
     }
     // `WorkerRun` always ends a run with an event of its own; this is a bug, not a run's end.
     let failure = RunFailure::new(Step::Worker, "the run's events stopped before it ended");
-    on_event(&RunEvent::Failed(failure));
+    on_event(&RunEvent::Failed(failure).at(started.elapsed()));
     Outcome::Failed
 }

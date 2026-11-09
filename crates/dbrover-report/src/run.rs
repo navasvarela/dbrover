@@ -28,7 +28,7 @@ use crate::declared::Shaped;
 use crate::statement::Statements;
 use crate::{
     LimitHit, Logic, Plan, PlannedOutput, Preview, QuerySource, RunEvent, RunFailure, RunValues,
-    Step, WrittenFile,
+    SourcePhases, Step, WrittenFile,
 };
 
 /// How many rows the preview keeps: a screenful or two, enough to see a report is right.
@@ -62,10 +62,25 @@ pub struct SourceStatement<'a> {
     pub deadline: Instant,
 }
 
+/// How long opening a source's statement took, for its profile.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Opening {
+    /// Connecting to its data source.
+    pub connect: Duration,
+    /// From connected to its statement running: a read-only transaction, the cost guard's
+    /// estimate, and the engine's answer to the statement.
+    pub start: Duration,
+}
+
 /// A source's rows, read a page at a time.
 pub trait SourceReader {
     /// The result's columns.
     fn columns(&self) -> &[ExportColumn];
+
+    /// How long opening it took; nothing for a reader that doesn't measure it.
+    fn opening(&self) -> Opening {
+        Opening::default()
+    }
 
     /// Whether its rows are rows, or documents of one cell each (ADR 0006).
     fn shape(&self) -> ResultShape {
@@ -152,12 +167,18 @@ pub async fn run<O: SourceOpener>(
             let mut reader = Shaped::open(opener, &statement)
                 .await
                 .map_err(|error| error.at(step()))?;
+            let opening = reader.opening();
             let streamed = outputs
                 .stream(&mut reader, &Feed::Source(source), opened, events)
                 .await;
             reader.close().await;
             let streamed = streamed?;
-            events(source_done(source, &streamed.read, opened.elapsed()));
+            events(source_done(
+                source,
+                &streamed.read,
+                opened.elapsed(),
+                opening,
+            ));
             streamed.finish(events)
         }
         Logic::Combine(combined) => {
@@ -199,7 +220,13 @@ impl Feed<'_> {
 }
 
 /// The event that says a source whose rows went straight to the outputs gave its last row.
-fn source_done(source: &QuerySource, read: &Count, elapsed: Duration) -> RunEvent {
+/// The time its outputs took is theirs, so it loaded nothing.
+fn source_done(
+    source: &QuerySource,
+    read: &Count,
+    elapsed: Duration,
+    opening: Opening,
+) -> RunEvent {
     RunEvent::SourceDone {
         id: source.id.clone(),
         rows: read.rows,
@@ -209,6 +236,13 @@ fn source_done(source: &QuerySource, read: &Count, elapsed: Duration) -> RunEven
         table: Vec::new(),
         warnings: Vec::new(),
         batches: None,
+        phases: Some(SourcePhases {
+            connect_ms: millis(opening.connect),
+            server_ms: millis(opening.start + read.waited_first),
+            transfer_ms: millis(read.waited_rest),
+            load_ms: 0,
+            type_ms: 0,
+        }),
     }
 }
 
@@ -254,7 +288,9 @@ impl<'a> Outputs<'a> {
         };
         let mut last_progress = Instant::now();
         let streamed = loop {
-            let page = match reader.next_page().await {
+            let (page, waited) = timed(reader.next_page()).await;
+            read.waited(waited, read.first_row.is_none());
+            let page = match page {
                 Ok(Some(page)) => page,
                 Ok(None) => break Ok(()),
                 Err(error) => break Err(error.at(step.clone())),
@@ -382,15 +418,35 @@ pub(crate) fn millis(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
-/// What a source, or the combine step, has returned so far.
+/// `work`'s output, and how long it took.
+pub(crate) async fn timed<T>(work: impl Future<Output = T>) -> (T, Duration) {
+    let started = Instant::now();
+    let output = work.await;
+    (output, started.elapsed())
+}
+
+/// What a source, or the combine step, has returned so far, and how long it waited for it.
 #[derive(Default)]
 pub(crate) struct Count {
     pub(crate) rows: u64,
     pub(crate) bytes: u64,
     pub(crate) first_row: Option<Duration>,
+    /// Waiting for each statement's first page of rows, or for its end when it returned none.
+    pub(crate) waited_first: Duration,
+    /// Waiting for the pages after each statement's first.
+    pub(crate) waited_rest: Duration,
 }
 
 impl Count {
+    /// Counts `wait` for a page, which came `before_first_row` of its statement or after.
+    pub(crate) fn waited(&mut self, wait: Duration, before_first_row: bool) {
+        if before_first_row {
+            self.waited_first += wait;
+        } else {
+            self.waited_rest += wait;
+        }
+    }
+
     pub(crate) fn add(&mut self, page: &[Row]) {
         self.rows += page.len() as u64;
         self.bytes += page.iter().map(|row| row_bytes(row)).sum::<u64>();

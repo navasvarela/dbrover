@@ -37,8 +37,8 @@ mod typing;
 
 pub use embedded::{Embedded, PrqlToken, StepLanguage, embedded_code, prql_tokens};
 pub use events::{
-    Batch, LimitHit, LimitSetIn, LoadedColumn, Preview, RunEvent, RunFailure, SourceStart, Step,
-    WrittenFile,
+    Batch, CombineCaps, LimitHit, LimitSetIn, LoadedColumn, Machine, Preview, RunEvent, RunFailure,
+    SourceCaps, SourcePhases, SourceStart, Step, TimedEvent, WrittenFile,
 };
 pub use file_name::FileName;
 pub use format::{FormatReportError, FormattedReport, format_report};
@@ -61,8 +61,8 @@ pub use report::{
 };
 pub use request::RunRequest;
 pub use run::{
-    PREVIEW_ROWS, RunFolders, RunSummary, SourceError, SourceOpener, SourceReader, SourceStatement,
-    grouped, run,
+    Opening, PREVIEW_ROWS, RunFolders, RunSummary, SourceError, SourceOpener, SourceReader,
+    SourceStatement, grouped, run,
 };
 pub use text::plan_text;
 
