@@ -19,7 +19,7 @@ use super::{
     CheckInputs, OnDisk, ReportAction, ReportFile, Reports, RunEnd, RunPanel, RunRecord, SaveError,
     StepRecord, StepState, runs_table,
 };
-use super::{live, profile_view};
+use super::{compare_view, live, profile_view};
 use crate::code_editor::highlight::Marks;
 use crate::code_editor::{self, EditorView, Severity, find_bar};
 use crate::console::LintOptions;
@@ -931,6 +931,7 @@ fn run_panel(
             (RunPanel::LastRun, "Last run"),
             (RunPanel::Preview, "Preview"),
             (RunPanel::Profile, "Profile"),
+            (RunPanel::Compare, "Compare"),
             (RunPanel::Runs, past.as_str()),
         ] {
             if ui.selectable_label(shown == panel, label).clicked() {
@@ -951,6 +952,7 @@ fn run_panel(
             }
             RunPanel::Preview => preview(ui, reports, name),
             RunPanel::Profile => profile_view::show(ui, reports, name),
+            RunPanel::Compare => compare_view::show(ui, reports, name),
             RunPanel::Runs => runs_table::show(ui, reports, name, actions),
         });
 }

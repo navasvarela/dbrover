@@ -270,6 +270,7 @@ file = "r.csv"
     /// A finished run whose source read 100,000 rows for 10 written, and whose combine spilled.
     fn hinted_run() -> ReportRun {
         ReportRun {
+            id: None,
             report: ReportName::new("r").unwrap(),
             started_at: jiff::Timestamp::UNIX_EPOCH,
             elapsed: Duration::from_secs(2),

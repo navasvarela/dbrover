@@ -4,18 +4,28 @@
 use std::path::{MAIN_SEPARATOR, PathBuf};
 
 use dbrover_report::TypedValues;
-use dbrover_store::ReportName;
+use dbrover_store::{ReportName, RunId};
 
 use crate::version::parse_config_dir;
 
 pub const USAGE: &str = "\
 Usage: dbrover report run <report> [--param <name>=<value>]… [--output-dir <folder>]
-                          [--json] [--progress] [--config-dir <folder>]
+                          [--json] [--progress] [--profile <file>] [--config-dir <folder>]
        dbrover report list [--json] [--config-dir <folder>]
+       dbrover report runs <report> [--json] [--config-dir <folder>]
+       dbrover report compare <report> <run> <run> [--json] [--config-dir <folder>]
 
 list prints each report in the settings folder's reports folder: the name run takes, its
 title and parameters, and what keeps it from running, if anything. With --json, an object a
 line.
+
+runs prints the runs the history keeps of a report in the reports folder, newest first: each
+run's id, start, end, time and file version, and the step that held it longest. With --json,
+each run's whole profile, an object a line.
+
+compare prints two of those runs, by their ids, step by step: each step's time, rows, bytes
+and peaks in both, the changes past half marked, and the parameters and limits that differ.
+With --json, one object.
 
 Runs a report without opening a window, for cron, a scheduled task or a CI job, under the
 limits a run from the app has, and exits with a code that says how it ended.
@@ -33,6 +43,8 @@ in .toml or holding a folder separator is a path.
       --progress               On a terminal, keeps a line on standard error of what each
                                running step has read so far, how fast, and what it waits
                                on, rewritten each second.
+      --profile <file>         Writes the run's profile to <file> as JSON once it ends: each
+                               step's times, phases and limits, and the hints.
       --config-dir <folder>    The settings folder whose data sources, export formats and
                                report limits the run uses, as for the app.
 
@@ -54,6 +66,8 @@ Exit codes:
 pub enum Request {
     Run(RunArgs),
     List(ListArgs),
+    Runs(RunsArgs),
+    Compare(CompareArgs),
     Help,
     /// Arguments that can't be followed, with what was wrong.
     Invalid(String),
@@ -70,7 +84,115 @@ pub struct RunArgs {
     pub style: OutputStyle,
     /// Whether to keep a live line of the running steps on a terminal.
     pub progress: bool,
+    /// Where to write the run's profile once it ends.
+    pub profile: Option<PathBuf>,
     pub config_dir: Option<PathBuf>,
+}
+
+/// `dbrover report runs`' arguments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunsArgs {
+    pub report: ReportArg,
+    pub style: OutputStyle,
+    pub config_dir: Option<PathBuf>,
+}
+
+/// `dbrover report compare`'s arguments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompareArgs {
+    pub report: ReportArg,
+    pub before: RunId,
+    pub after: RunId,
+    pub style: OutputStyle,
+    pub config_dir: Option<PathBuf>,
+}
+
+/// What `runs` and `compare` read before their own arguments: the report, the style and the
+/// settings folder; `None` when `--help` was asked for.
+struct HistoryArgs {
+    words: Vec<String>,
+    style: OutputStyle,
+    config_dir: Option<PathBuf>,
+}
+
+impl HistoryArgs {
+    fn parse(args: impl Iterator<Item = String>) -> Result<Option<Self>, String> {
+        let mut args = args.peekable();
+        let mut words = Vec::new();
+        let mut style = OutputStyle::Human;
+        let mut config_dir = None;
+        while let Some(arg) = args.next() {
+            if let Some(folder) = parse_config_dir(&arg, &mut args) {
+                config_dir = Some(folder?);
+                continue;
+            }
+            match arg.as_str() {
+                "--help" | "-h" => return Ok(None),
+                "--json" => style = OutputStyle::JsonLines,
+                option if option.starts_with('-') => {
+                    return Err(format!("unknown argument {option:?}"));
+                }
+                _ => words.push(arg),
+            }
+        }
+        Ok(Some(Self {
+            words,
+            style,
+            config_dir,
+        }))
+    }
+}
+
+impl RunsArgs {
+    fn parse(args: impl Iterator<Item = String>) -> Result<Option<Self>, String> {
+        let Some(HistoryArgs {
+            words,
+            style,
+            config_dir,
+        }) = HistoryArgs::parse(args)?
+        else {
+            return Ok(None);
+        };
+        match words.as_slice() {
+            [report] => Ok(Some(Self {
+                report: ReportArg::new(report)?,
+                style,
+                config_dir,
+            })),
+            [] => Err("dbrover report runs needs a report: its name".to_owned()),
+            [_, extra, ..] => Err(format!("{extra:?}: runs takes one report")),
+        }
+    }
+}
+
+impl CompareArgs {
+    fn parse(args: impl Iterator<Item = String>) -> Result<Option<Self>, String> {
+        let Some(HistoryArgs {
+            words,
+            style,
+            config_dir,
+        }) = HistoryArgs::parse(args)?
+        else {
+            return Ok(None);
+        };
+        let run_id = |word: &String| {
+            word.parse::<RunId>()
+                .map_err(|_| format!("{word:?} isn't a run's id; dbrover report runs lists them"))
+        };
+        match words.as_slice() {
+            [report, before, after] => Ok(Some(Self {
+                report: ReportArg::new(report)?,
+                before: run_id(before)?,
+                after: run_id(after)?,
+                style,
+                config_dir,
+            })),
+            _ => Err(
+                "dbrover report compare needs a report and two runs' ids: <report> <run> <run>"
+                    .to_owned(),
+            ),
+        }
+    }
 }
 
 /// `dbrover report list`'s arguments.
@@ -148,9 +270,21 @@ impl Request {
                 Ok(None) => Self::Help,
                 Err(problem) => Self::Invalid(problem),
             },
+            Some("runs") => match RunsArgs::parse(args) {
+                Ok(Some(runs)) => Self::Runs(runs),
+                Ok(None) => Self::Help,
+                Err(problem) => Self::Invalid(problem),
+            },
+            Some("compare") => match CompareArgs::parse(args) {
+                Ok(Some(compare)) => Self::Compare(compare),
+                Ok(None) => Self::Help,
+                Err(problem) => Self::Invalid(problem),
+            },
             Some("--help" | "-h") => Self::Help,
             Some(other) => Self::Invalid(format!("unknown report command {other:?}")),
-            None => Self::Invalid("dbrover report needs a command: run or list".to_owned()),
+            None => Self::Invalid(
+                "dbrover report needs a command: run, list, runs or compare".to_owned(),
+            ),
         }
     }
 }
@@ -164,6 +298,7 @@ impl RunArgs {
         let mut output_dir = None;
         let mut style = OutputStyle::Human;
         let mut progress = false;
+        let mut profile = None;
         let mut config_dir = None;
         while let Some(arg) = args.next() {
             if let Some(folder) = parse_config_dir(&arg, &mut args) {
@@ -179,6 +314,10 @@ impl RunArgs {
             }
             if let Some(folder) = option_value(&arg, &["--output-dir", "-o"], &mut args) {
                 output_dir = Some(PathBuf::from(folder?));
+                continue;
+            }
+            if let Some(file) = option_value(&arg, &["--profile"], &mut args) {
+                profile = Some(PathBuf::from(file?));
                 continue;
             }
             match arg.as_str() {
@@ -201,6 +340,7 @@ impl RunArgs {
             output_dir,
             style,
             progress,
+            profile,
             config_dir,
         }))
     }
@@ -251,6 +391,18 @@ mod tests {
         ReportArg::Name(ReportName::new(name).unwrap())
     }
 
+    fn run_args(report: ReportArg) -> RunArgs {
+        RunArgs {
+            report,
+            values: TypedValues::new(),
+            output_dir: None,
+            style: OutputStyle::Human,
+            progress: false,
+            profile: None,
+            config_dir: None,
+        }
+    }
+
     fn run(report: ReportArg, values: &[(&str, &str)]) -> Request {
         Request::Run(RunArgs {
             report,
@@ -261,6 +413,7 @@ mod tests {
             output_dir: None,
             style: OutputStyle::Human,
             progress: false,
+            profile: None,
             config_dir: None,
         })
     }
@@ -285,6 +438,67 @@ mod tests {
             ),
             (&["list", "--help"], Request::Help),
             (&["list", "sales"], invalid("unknown argument \"sales\"")),
+        ];
+        for (args, expected) in cases {
+            assert_eq!(parse(args), expected, "{args:?}");
+        }
+    }
+
+    #[test]
+    fn reads_the_history_commands_and_a_profile_file() {
+        let cases: Vec<(&[&str], Request)> = vec![
+            (
+                &["runs", "sales", "--json"],
+                Request::Runs(RunsArgs {
+                    report: named("sales"),
+                    style: OutputStyle::JsonLines,
+                    config_dir: None,
+                }),
+            ),
+            (
+                &[
+                    "compare",
+                    "sales",
+                    "11",
+                    "12",
+                    "--config-dir",
+                    "/srv/dbrover",
+                ],
+                Request::Compare(CompareArgs {
+                    report: named("sales"),
+                    before: RunId(11),
+                    after: RunId(12),
+                    style: OutputStyle::Human,
+                    config_dir: Some("/srv/dbrover".into()),
+                }),
+            ),
+            (
+                &["compare", "sales", "11"],
+                invalid(
+                    "dbrover report compare needs a report and two runs' ids: <report> <run> \
+                     <run>",
+                ),
+            ),
+            (
+                &["compare", "sales", "11", "newest"],
+                invalid("\"newest\" isn't a run's id; dbrover report runs lists them"),
+            ),
+            (
+                &["runs"],
+                invalid("dbrover report runs needs a report: its name"),
+            ),
+            (&["runs", "sales", "--help"], Request::Help),
+            (
+                &["run", "sales", "--profile", "out/profile.json"],
+                Request::Run(RunArgs {
+                    profile: Some("out/profile.json".into()),
+                    ..run_args(named("sales"))
+                }),
+            ),
+            (
+                &["run", "sales", "--profile"],
+                invalid("--profile needs a value"),
+            ),
         ];
         for (args, expected) in cases {
             assert_eq!(parse(args), expected, "{args:?}");
@@ -343,6 +557,7 @@ mod tests {
                     output_dir: Some("/srv/out".into()),
                     style: OutputStyle::Human,
                     progress: true,
+                    profile: None,
                     config_dir: Some("/srv/dbrover".into()),
                 }),
             ),
@@ -354,6 +569,7 @@ mod tests {
                     output_dir: Some("out".into()),
                     style: OutputStyle::Human,
                     progress: false,
+                    profile: None,
                     config_dir: None,
                 }),
             ),
@@ -365,6 +581,7 @@ mod tests {
                     output_dir: None,
                     style: OutputStyle::JsonLines,
                     progress: false,
+                    profile: None,
                     config_dir: None,
                 }),
             ),
@@ -374,7 +591,10 @@ mod tests {
             ),
             (&["run", "sales", "--help"], Request::Help),
             (&["--help"], Request::Help),
-            (&[], invalid("dbrover report needs a command: run or list")),
+            (
+                &[],
+                invalid("dbrover report needs a command: run, list, runs or compare"),
+            ),
             (&["lists"], invalid("unknown report command \"lists\"")),
             (
                 &["run"],

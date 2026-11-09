@@ -489,6 +489,7 @@ mod tests {
             origin: dbrover_store::RunOrigin::App,
             version: None,
             profile: RunProfile::default(),
+            id: None,
         }
     }
 

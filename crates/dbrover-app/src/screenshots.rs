@@ -1773,6 +1773,7 @@ fn report_page(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
         origin,
         version: None,
         profile: Default::default(),
+        id: None,
     };
     let failed = ReportRun {
         outcome: RunOutcome::Failed(RunError {

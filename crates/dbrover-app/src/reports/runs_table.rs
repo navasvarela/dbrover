@@ -10,9 +10,9 @@ use dbrover_store::{ReportName, ReportRun, RunOrigin, RunOutcome, StepMetrics};
 use egui::{Grid, RichText, Ui};
 use jiff::tz::TimeZone;
 
-use super::hints;
 use super::insights::{self, StepKey, seconds};
 use super::{ReportAction, Reports};
+use super::{compare, hints};
 use crate::icons;
 use crate::theme::Palette;
 use crate::widgets;
@@ -164,14 +164,20 @@ fn table(ui: &mut Ui, palette: &Palette, name: &ReportName, runs: &[ReportRun]) 
                 ui.end_row();
             }
 
+            let slower = compare::slower_than_usual(runs);
             for key in insights::step_keys(runs) {
                 ui.weak(key.to_string());
-                for (run, dominant) in runs.iter().zip(&dominants) {
+                for (index, (run, dominant)) in runs.iter().zip(&dominants).enumerate() {
                     let step = run.steps.iter().find(|step| StepKey::of(step) == key);
+                    let marks = Marks {
+                        dominant: dominant.as_ref() == Some(&key),
+                        slower: slower
+                            .iter()
+                            .find(|slower| slower.run == index && slower.step == key)
+                            .map(|slower| slower.times),
+                    };
                     match step {
-                        Some(step) => {
-                            step_cell(ui, palette, run, step, dominant.as_ref() == Some(&key))
-                        }
+                        Some(step) => step_cell(ui, palette, run, step, marks),
                         None => {
                             ui.weak("—");
                         }
@@ -253,7 +259,15 @@ fn outcome(ui: &mut Ui, palette: &Palette, run: &ReportRun) {
 }
 
 /// A step's time and rows; the step that dominated its run in the accent colour.
-fn step_cell(ui: &mut Ui, palette: &Palette, run: &ReportRun, step: &StepMetrics, dominant: bool) {
+/// A step's cell: whether it dominated its run, and how many times its usual time it took
+/// when that is far more.
+struct Marks {
+    dominant: bool,
+    slower: Option<f64>,
+}
+
+fn step_cell(ui: &mut Ui, palette: &Palette, run: &ReportRun, step: &StepMetrics, marks: Marks) {
+    let Marks { dominant, slower } = marks;
     let text = match (step, insights::own_time(run, step)) {
         (StepMetrics::Attached { .. }, _) | (_, None) => "attached".to_owned(),
         (StepMetrics::Source(source), Some(time)) => {
@@ -266,18 +280,21 @@ fn step_cell(ui: &mut Ui, palette: &Palette, run: &ReportRun, step: &StepMetrics
             format!("{} · {}", seconds(time), ByteCount(output.size))
         }
     };
-    let text = if dominant {
-        RichText::new(text).strong().color(palette.primary)
-    } else {
-        RichText::new(text)
+    let text = match (dominant, slower) {
+        (_, Some(_)) => RichText::new(format!("{text} ▲")).color(palette.warning),
+        (true, None) => RichText::new(text).strong().color(palette.primary),
+        (false, None) => RichText::new(text),
     };
     let response = ui.label(text);
-    let details = details(step);
-    let details = if dominant {
-        format!("{details}\nThe step that took the longest share of this run.")
-    } else {
-        details
-    };
+    let mut details = details(step);
+    if dominant {
+        details.push_str("\nThe step that took the longest share of this run.");
+    }
+    if let Some(times) = slower {
+        details.push_str(&format!(
+            "\nSlower than usual: {times:.1} times its median over the runs listed."
+        ));
+    }
     response.on_hover_text(details);
 }
 

@@ -7,14 +7,16 @@
 //! are typed, but never runs one: the worker reads the file again and runs it, so what runs is
 //! what is saved.
 
+pub mod compare;
+mod compare_view;
 mod file;
 mod highlight;
-mod hints;
-mod insights;
+pub mod hints;
+pub mod insights;
 mod launcher;
 pub mod live;
 mod problems;
-mod profile;
+pub mod profile;
 mod profile_view;
 mod rename_dialog;
 mod runs_table;
@@ -217,6 +219,25 @@ pub struct ReportState {
     pub run_panel: Option<RunPanel>,
     /// Which of the runs listed **Profile** shows, counted from the newest.
     pub profile_run: usize,
+    /// The two runs **Compare** shows.
+    pub compare_runs: ComparedRuns,
+}
+
+/// The two runs **Compare** shows, each by its place among the runs listed, counted from the
+/// newest: the one before the newest, and the newest, until others are picked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ComparedRuns {
+    pub before: usize,
+    pub after: usize,
+}
+
+impl Default for ComparedRuns {
+    fn default() -> Self {
+        Self {
+            before: 1,
+            after: 0,
+        }
+    }
 }
 
 /// The run panel's tabs.
@@ -225,6 +246,7 @@ pub enum RunPanel {
     LastRun,
     Preview,
     Profile,
+    Compare,
     Runs,
 }
 
@@ -357,6 +379,7 @@ impl RunRecord {
             origin,
             version: self.version,
             profile: self.profile.clone(),
+            id: None,
         })
     }
 
