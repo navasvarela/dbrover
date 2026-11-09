@@ -12,15 +12,43 @@ pub enum HintId {
     SourceReadsMore,
     /// The combine step spilled to disk.
     CombineSpilled,
+    /// A source spent most of its time before its first row (RS1e).
+    SlowFirstRow,
+    /// A source spent most of its time loading into DuckDB (RS1e).
+    LoadBound,
+    /// A lookup sent many batches (RS1e).
+    ManyBatches,
+    /// A source waited long for sources it doesn't read (RS1e).
+    RoundWait,
+    /// An output's writer took most of the run (RS1e).
+    WriterBound,
+    /// A peak came close to its limit without passing it (RS1e).
+    NearLimit,
 }
 
 impl HintId {
-    pub const ALL: [Self; 2] = [Self::SourceReadsMore, Self::CombineSpilled];
+    /// Every id, in the order the hints are listed.
+    pub const ALL: [Self; 8] = [
+        Self::SourceReadsMore,
+        Self::CombineSpilled,
+        Self::SlowFirstRow,
+        Self::LoadBound,
+        Self::ManyBatches,
+        Self::RoundWait,
+        Self::WriterBound,
+        Self::NearLimit,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::SourceReadsMore => "source-reads-more",
             Self::CombineSpilled => "combine-spilled",
+            Self::SlowFirstRow => "slow-first-row",
+            Self::LoadBound => "load-bound",
+            Self::ManyBatches => "many-batches",
+            Self::RoundWait => "round-wait",
+            Self::WriterBound => "writer-bound",
+            Self::NearLimit => "near-limit",
         }
     }
 }
@@ -36,12 +64,14 @@ impl fmt::Display for HintId {
 #[error("{0:?} isn't a hint's id; the ids are {ids}", ids = known_ids())]
 pub struct UnknownHint(pub String);
 
+/// `a, b and c`.
 fn known_ids() -> String {
-    HintId::ALL
-        .iter()
-        .map(|id| id.as_str())
-        .collect::<Vec<_>>()
-        .join(" and ")
+    let ids: Vec<&str> = HintId::ALL.iter().map(|id| id.as_str()).collect();
+    match ids.split_last() {
+        Some((last, [])) => (*last).to_owned(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+        None => String::new(),
+    }
 }
 
 impl FromStr for HintId {
@@ -69,8 +99,9 @@ mod tests {
                 .parse::<HintId>()
                 .unwrap_err()
                 .to_string(),
-            "\"source-reads-more-rows\" isn't a hint's id; the ids are source-reads-more and \
-             combine-spilled"
+            "\"source-reads-more-rows\" isn't a hint's id; the ids are source-reads-more, \
+             combine-spilled, slow-first-row, load-bound, many-batches, round-wait, writer-bound \
+             and near-limit"
         );
     }
 }

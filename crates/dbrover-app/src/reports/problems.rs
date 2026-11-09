@@ -12,7 +12,7 @@ use dbrover_sql::{Dialect, ProblemSource, Severity as SqlSeverity};
 use dbrover_store::ReportRun;
 
 use super::highlight::language_of;
-use super::insights::{self, Hint};
+use super::hints::{self, HintAt};
 use crate::code_editor::{EditorProblem, Severity};
 use crate::console::LintOptions;
 
@@ -152,24 +152,24 @@ fn sql_severity(severity: SqlSeverity, source: &ProblemSource, combine: bool) ->
 fn hint_problems(text: &str, locator: &Locator<'_>, runs: &[ReportRun]) -> Vec<TextProblem> {
     let file = toml::from_str::<toml::Table>(text).ok();
     let quiet = file.as_ref().map(quiet_hints).unwrap_or_default();
-    insights::hints(runs)
+    hints::hints(runs)
         .into_iter()
-        .filter(|hint| !quiet.contains(&hint.id()))
+        .filter(|hint| !quiet.contains(&hint.id))
         .filter_map(|hint| {
-            let table = match &hint {
-                Hint::Filter { source, .. } => {
-                    Table::Source(source_position(file.as_ref()?, source)?)
-                }
-                Hint::Spilled { .. } => Table::Combine,
+            let table = match &hint.at {
+                HintAt::Source(source) => Table::Source(source_position(file.as_ref()?, source)?),
+                HintAt::Combine => Table::Combine,
+                HintAt::Output(number) => Table::Output(number.checked_sub(1)?),
+                HintAt::Report => Table::Report,
             };
             let range = locator.locate(&Place::table(table));
             let mut placed = at(text, range, Severity::Hint, hint.to_string());
             placed.note = Some(format!(
                 "From the newest run. Quiet this hint in the side panel, or add \"{}\" to \
                  [report] quiet_hints.",
-                hint.id()
+                hint.id
             ));
-            placed.hint = Some(hint.id());
+            placed.hint = Some(hint.id);
             Some(placed)
         })
         .collect()

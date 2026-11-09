@@ -1,18 +1,9 @@
 //! What a report's runs say (`docs/reporting.md`, "The report's tab in RP4"): the time each
-//! step spent on its own work, the step that dominates a run, and two hints from the newest
-//! finished run.
+//! step spent on its own work, and the step that dominates a run. The hints are in `hints`.
 
 use std::fmt;
 
-use dbrover_core::ByteCount;
-use dbrover_report::{HintId, grouped};
 use dbrover_store::{ReportRun, RunOutcome, StepMetrics};
-
-/// A source must read at least this many rows for the filter hint: below it, filtering in the
-/// source's query saves too little to mention.
-const FILTER_HINT_MIN_ROWS: u64 = 10_000;
-/// ... and at least this many times the rows the outputs write.
-const FILTER_HINT_RATIO: u64 = 10;
 
 /// A step of a report, the same one from one run to the next.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -143,88 +134,6 @@ pub fn dominant_throughout(runs: &[ReportRun]) -> Option<Dominant> {
     finished
         .all(|run| dominant(run).is_some_and(|other| other.step == newest.step))
         .then_some(newest)
-}
-
-/// Something to change, from what a run measured.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Hint {
-    /// A source read far more rows than the outputs wrote.
-    Filter {
-        source: String,
-        read: u64,
-        written: u64,
-    },
-    /// The combine step held this many bytes on disk at its peak.
-    Spilled { bytes: u64 },
-}
-
-impl Hint {
-    /// The id a report's `quiet_hints` silences it by.
-    pub fn id(&self) -> HintId {
-        match self {
-            Self::Filter { .. } => HintId::SourceReadsMore,
-            Self::Spilled { .. } => HintId::CombineSpilled,
-        }
-    }
-}
-
-/// The hints the newest finished run of `runs` gives.
-pub fn hints(runs: &[ReportRun]) -> Vec<Hint> {
-    let Some(run) = runs.iter().find(|run| run.outcome == RunOutcome::Finished) else {
-        return Vec::new();
-    };
-    let written = run
-        .steps
-        .iter()
-        .filter_map(|step| match step {
-            StepMetrics::Output(output) => Some(output.rows),
-            _ => None,
-        })
-        .max();
-    run.steps
-        .iter()
-        .filter_map(|step| match step {
-            StepMetrics::Source(source) => {
-                let written = written?;
-                let reads_far_more = source.rows >= FILTER_HINT_MIN_ROWS
-                    && source.rows >= written.saturating_mul(FILTER_HINT_RATIO);
-                reads_far_more.then(|| Hint::Filter {
-                    source: source.id.clone(),
-                    read: source.rows,
-                    written,
-                })
-            }
-            StepMetrics::Combine(combine) => combine
-                .peak_temp_size
-                .filter(|bytes| *bytes > 0)
-                .map(|bytes| Hint::Spilled { bytes }),
-            StepMetrics::Attached { .. } | StepMetrics::Output(_) => None,
-        })
-        .collect()
-}
-
-impl fmt::Display for Hint {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Filter {
-                source,
-                read,
-                written,
-            } => write!(
-                f,
-                "Source {source} read {} rows for {} written. If the combine step drops most of \
-                 them, filter them in the source's query, where its database can use an index.",
-                grouped(*read),
-                grouped(*written)
-            ),
-            Self::Spilled { bytes } => write!(
-                f,
-                "Combine spilled {} to disk, past its memory_limit. A larger memory_limit in \
-                 [combine], or fewer rows from the sources, keeps it in memory.",
-                ByteCount(*bytes)
-            ),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -379,69 +288,6 @@ mod tests {
                 expected
             );
         }
-    }
-
-    #[test]
-    fn hints_at_a_source_that_reads_far_more_than_is_written() {
-        let cases = [
-            (9_999, 10, false),
-            (10_000, 10, true),
-            (10_000, 1_000, true),
-            (10_000, 1_001, false),
-            (2_000_000, 300_000, false),
-        ];
-        for (read, written, hinted) in cases {
-            let runs = [finished(
-                1_000,
-                vec![
-                    source("tx", read, 500),
-                    combine(400, None),
-                    output(1, written, 10),
-                ],
-            )];
-            let expected = hinted.then(|| Hint::Filter {
-                source: "tx".to_owned(),
-                read,
-                written,
-            });
-            assert_eq!(
-                hints(&runs).first().cloned(),
-                expected,
-                "{read} for {written}"
-            );
-        }
-    }
-
-    #[test]
-    fn hints_at_a_combine_step_that_spilled_from_the_newest_finished_run() {
-        let spilled = |bytes| finished(1_000, vec![combine(900, bytes), output(1, 40, 10)]);
-        let cancelled = run(500, RunOutcome::Cancelled, vec![combine(400, Some(0))]);
-        let cases = [
-            (
-                vec![spilled(Some(3_200_000_000))],
-                vec![Hint::Spilled {
-                    bytes: 3_200_000_000,
-                }],
-            ),
-            (vec![spilled(Some(0))], Vec::new()),
-            (vec![spilled(None)], Vec::new()),
-            (
-                vec![cancelled, spilled(Some(1 << 20))],
-                vec![Hint::Spilled { bytes: 1 << 20 }],
-            ),
-            (vec![spilled(Some(0)), spilled(Some(1 << 20))], Vec::new()),
-        ];
-        for (runs, expected) in cases {
-            assert_eq!(hints(&runs), expected);
-        }
-        assert_eq!(
-            Hint::Spilled {
-                bytes: 3_200_000_000
-            }
-            .to_string(),
-            "Combine spilled 3.2 GB to disk, past its memory_limit. A larger memory_limit in \
-             [combine], or fewer rows from the sources, keeps it in memory."
-        );
     }
 
     #[test]

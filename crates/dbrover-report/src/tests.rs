@@ -752,10 +752,13 @@ fn reads_and_plans_the_valuation() {
     assert!(report.quiet_hints.is_empty());
     let quiet = read_report(&VALUATION.replace(
         "[report]\n",
-        "[report]\nquiet_hints = [\"source-reads-more\", \"combine-spilled\", \"source-reads-more\"]\n",
+        "[report]\nquiet_hints = [\"source-reads-more\", \"near-limit\", \"source-reads-more\"]\n",
     ))
     .unwrap();
-    assert_eq!(quiet.quiet_hints, HintId::ALL);
+    assert_eq!(
+        quiet.quiet_hints,
+        [HintId::SourceReadsMore, HintId::NearLimit]
+    );
     assert!(combine.query.sql().contains("ASOF JOIN"));
     assert_eq!(combine.query.compiled(), None);
     assert_eq!(
@@ -952,8 +955,9 @@ fn names_every_problem_with_several_sources() {
         ),
         (
             VALUATION.replace("[report]\n", "[report]\nquiet_hints = [\"spills\"]\n"),
-            "[report]: quiet_hints: \"spills\" isn't a hint's id; the ids are source-reads-more \
-             and combine-spilled",
+            "[report]: quiet_hints: \"spills\" isn't a hint's id; the ids are source-reads-more, \
+             combine-spilled, slow-first-row, load-bound, many-batches, round-wait, writer-bound \
+             and near-limit",
         ),
         (
             VALUATION.replace(
