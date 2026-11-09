@@ -1,8 +1,8 @@
 # Version control
 
-Status: **proposed on 2026-11-04, planned, not scheduled.** The
-[roadmap](roadmap.md#version-control-track) tracks it as VC1 to VC3. It doesn't move CI fixes,
-the reports track (RP5 and what it left for later) or W13 schema compare, which come first.
+Status: **built.** Proposed on 2026-11-04; VC3 was built with W13 on 2026-11-05, VC2 on
+2026-11-07 and VC1 on 2026-11-09. The [roadmap](roadmap.md#version-control-track) tracks it as
+VC1 to VC3; each section below records what building it made precise.
 
 Many database tools say they support Git. This plan asks whether DbRover should, and answers
 **only a small piece**: no Git client inside the app, but the files DbRover already keeps made
@@ -247,8 +247,8 @@ that carry it.
 
 ### The manual (VC1f)
 
-A section of [Where DbRover keeps its files](../book/src/files.md), **Keeping your settings in
-Git**: what to commit, what the `.gitignore` leaves out and why, that passwords stay in each
+A section of [Where DbRover keeps its files](../book/src/files.md#keeping-your-settings-in-git),
+**Keeping your settings in Git**: what to commit, what the `.gitignore` leaves out and why, that passwords stay in each
 machine's keychain and trust in its data folder (so a cloned settings folder asks before
 running any command), and that DbRover picks up a `git pull` when its window comes back to the
 front. A short recipe for a team's repository: `queries/*.sql`, `reports/`, an exported data

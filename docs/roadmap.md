@@ -2379,13 +2379,13 @@ measurement.
 
 ## Version control track
 
-Planned, not scheduled. Proposed on 2026-11-04 in [Version control](version-control.md), after
-looking at how other database tools use Git. The answer is a small piece: no Git client in the
-app (Vision keeps that a non-goal), but the files DbRover writes made safe under Git, a
-repository's folder of `.sql` files in the explorer, and schema snapshots Git can keep. It comes
-after CI fixes, the reports track and W13, and links no Git library.
+Done: VC3 built with W13 on 2026-11-05, VC2 on 2026-11-07 and VC1 on 2026-11-09. Proposed on
+2026-11-04 in [Version control](version-control.md), after looking at how other database tools
+use Git. The answer is a small piece: no Git client in the app (Vision keeps that a non-goal),
+but the files DbRover writes made safe under Git, a repository's folder of `.sql` files in the
+explorer, and schema snapshots Git can keep. It links no Git library and never runs `git`.
 
-- **VC1 — Files that live well in Git (M):** planned in
+- **VC1 — Files that live well in Git (M):** built; planned in
   [Version control](version-control.md#vc1--files-that-live-well-in-git). In layers, one PR
   each:
   - **VC1a — The plan:** the design, this entry and Vision's reworded non-goal; landed with
@@ -2404,12 +2404,47 @@ after CI fixes, the reports track and W13, and links no Git library.
   - **VC1e — A report's run names the report's version:** built; the file's Git blob id with
     each run, in the tab (with **Copy** for the `git log --find-object` that finds it, and a
     mark where it changed), `--json`, the command line's first line and the log.
-  - **VC1f — Manual:** *Keeping your settings in Git*, and this demo note.
+  - **VC1f — Manual:** built; [Keeping your settings in
+    Git](../book/src/files.md#keeping-your-settings-in-git) in *Where DbRover keeps its
+    files*, and this demo note.
 
   **Exit:** with the settings folder in Git and DbRover running, `git pull` brings a new data
   source and a changed one; both show once the window is in front, saving a third keeps all
   three and their comments, and `git diff` shows only the third's lines. `git status` doesn't
   list `history.sqlite`. A report run before and after an edit shows two blob ids.
+
+  **VC1 demo note:** built in one stack, VC1b to VC1f. Start DbRover once with a new settings
+  folder (`dbrover --config-dir /tmp/vc1`), add two SQLite data sources and quit; the folder
+  has a `.gitignore` naming `history.sqlite`. `git init`, `git add -A`, `git commit` there:
+  `git status` lists no `history.sqlite`. **Settings › Files** says the folder is in a Git
+  repository, with no **Add a .gitignore** (delete the file to see the button). Start DbRover
+  on the folder again. In a terminal, add a comment above the first `[[data_source]]`, rename
+  the second, add a third by hand, and commit (or make the change in a clone and `git pull`).
+  Switch back to DbRover: the explorer shows the renamed and the new data source without a
+  restart. Edit the first one's colour and save: `git diff` shows only its `color` line, and
+  the comment is still there. Now change `settings.toml` by hand with **View → Settings…**
+  closed and switch back: the setting follows. Open **Settings**, change the file again in
+  the terminal without switching away (with another editor saving it while DbRover is in
+  front), and change a setting: the page says *settings.toml changed on disk*, with **Reload**
+  and **Keep mine**. A console in the settings folder with text you haven't saved, and a
+  diagram you moved a table in, ask the same way when their file changes underneath; with
+  nothing unsaved they follow it. Put `<<<<<<< HEAD` at the top of `data_sources.toml` and
+  switch back: the log console says it can't be read, saving a data source fails, and the file
+  is left as it is. Run a report from its tab, edit its file, run it again: **Runs** shows two
+  versions in its **Version** row, the newer marked as changed; the copy button gives
+  `git log --find-object=<id> -- reports/<name>.toml`, which, after committing each version,
+  lists the commit of the first. `dbrover report run <name>` prints `, version <id>` on its
+  first line, and `--json`'s `started` event has `version`. Departures from the design, each
+  recorded in [Version control](version-control.md): the version is the blob id alone, with no
+  modification time; data sources and projects re-read before every save, changed or not;
+  saves of a document whose change on disk is unanswered are held, not sent; a deleted file is
+  no change; "when it creates the folder" is a folder missing or empty at start-up; no
+  one-off reformat on the first save after VC1c, since only changed values are rewritten; the
+  worker, not the app, computes a run's version, so every run carries it. Covered by store
+  tests for each case, engine tests of saves and focus checks against changed files, the
+  app's unit tests, a whole-app kittest test that pulls data sources behind the app's back,
+  and the worker's and command line's tests of the version. Not tried by hand on Windows or
+  Linux.
 - **VC2 — A folder of queries (S–M):** built; planned in
   [Version control](version-control.md#vc2--a-folder-of-queries). Folders of `.sql` files you
   add (a repository's `queries/`) as a tree in the explorer, hidden and Git-ignored files left
