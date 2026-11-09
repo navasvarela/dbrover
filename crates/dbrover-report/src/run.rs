@@ -25,6 +25,7 @@ use dbrover_sql::ParameterValues;
 
 use crate::chart::ChartRun;
 use crate::declared::Shaped;
+use crate::live::{ProgressClock, waiting};
 use crate::statement::Statements;
 use crate::{
     LimitHit, Logic, Plan, PlannedOutput, Preview, QuerySource, RunEvent, RunFailure, RunValues,
@@ -164,9 +165,19 @@ pub async fn run<O: SourceOpener>(
                 id: source.id.clone(),
             };
             let statement = Statements::new(plan, values, source).whole(opened);
-            let mut reader = Shaped::open(opener, &statement)
-                .await
-                .map_err(|error| error.at(step()))?;
+            let mut clock = ProgressClock::new();
+            let (reader, _) = waiting(Shaped::open(opener, &statement), |so_far| {
+                events(RunEvent::Progress {
+                    step: step(),
+                    rows: 0,
+                    bytes: 0,
+                    elapsed_ms: millis(opened.elapsed()),
+                    batch: None,
+                    busy: Some(clock.lap(so_far)),
+                });
+            })
+            .await;
+            let mut reader = reader.map_err(|error| error.at(step()))?;
             let opening = reader.opening();
             let streamed = outputs
                 .stream(&mut reader, &Feed::Source(source), opened, events)
@@ -286,10 +297,21 @@ impl<'a> Outputs<'a> {
             rows: Vec::new(),
             more: false,
         };
-        let mut last_progress = Instant::now();
+        let mut clock = ProgressClock::new();
         let streamed = loop {
-            let (page, waited) = timed(reader.next_page()).await;
+            let (page, waited) = waiting(reader.next_page(), |so_far| {
+                events(RunEvent::Progress {
+                    step: step.clone(),
+                    rows: read.rows,
+                    bytes: read.bytes,
+                    elapsed_ms: millis(opened.elapsed()),
+                    batch: None,
+                    busy: Some(clock.lap(so_far)),
+                });
+            })
+            .await;
             read.waited(waited, read.first_row.is_none());
+            clock.waited(waited);
             let page = match page {
                 Ok(Some(page)) => page,
                 Ok(None) => break Ok(()),
@@ -304,23 +326,27 @@ impl<'a> Outputs<'a> {
                 break Err(failure);
             }
             keep_for_preview(&mut preview, &page);
-            if let Err(failure) = outputs
-                .iter_mut()
-                .try_for_each(|output| output.write(&page))
-            {
+            let (written, writing) = timed(async {
+                outputs
+                    .iter_mut()
+                    .try_for_each(|output| output.write(&page))
+            })
+            .await;
+            clock.wrote(writing);
+            if let Err(failure) = written {
                 break Err(failure);
             }
             if let Err(failure) = charts.iter_mut().try_for_each(|chart| chart.add(&page)) {
                 break Err(failure);
             }
-            if last_progress.elapsed() >= PROGRESS_EVERY {
-                last_progress = Instant::now();
+            if clock.due() {
                 events(RunEvent::Progress {
                     step: step.clone(),
                     rows: read.rows,
                     bytes: read.bytes,
                     elapsed_ms: millis(opened.elapsed()),
                     batch: None,
+                    busy: Some(clock.lap(Duration::ZERO)),
                 });
             }
         };

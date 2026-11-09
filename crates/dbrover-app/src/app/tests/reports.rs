@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use dbrover_report::{
-    Batch, LimitHit, LoadedColumn, Preview, RunEvent, RunFailure, RunRequest, SourcePhases,
+    Batch, Busy, LimitHit, LoadedColumn, Preview, RunEvent, RunFailure, RunRequest, SourcePhases,
     SourceStart, Step, TimedEvent, WrittenFile,
 };
 use dbrover_store::{ReportFiles, ReportName, RunOutcome, StepMetrics};
@@ -507,6 +507,38 @@ file = "trial-balance-{since:%Y-%m}.csv"
 "##;
 
 #[test]
+fn says_how_fast_a_running_source_reads_and_what_it_waits_on() {
+    let mut script = combined_start();
+    script.truncate(1);
+    if let Some(RunEvent::Started { sources, .. }) = script.first_mut() {
+        sources[0].engine = Some("SQLite".to_owned());
+    }
+    let progress = |elapsed_ms, rows, waiting_pct| RunEvent::Progress {
+        step: Step::Source {
+            id: "entries".to_owned(),
+        },
+        rows,
+        bytes: rows * 20,
+        elapsed_ms,
+        batch: None,
+        busy: Some(Busy {
+            waiting_pct,
+            loading_pct: 4,
+            writing_pct: 0,
+        }),
+    };
+    script.extend([progress(1_000, 1_000, 60), progress(3_000, 2_000, 92)]);
+    let dir = tempfile::tempdir().unwrap();
+    let mut harness = start_with_reports(dir.path(), COMBINED, StandIn::new(script));
+    open_and_fill(&mut harness, "2026-10-01");
+    harness.get_by_label("Run").click();
+    step_until_visible(
+        &mut harness,
+        "2,000 rows, 40.0 KB · 3.0 s · 500 rows/s, 10.0 KB/s · waiting on SQLite (92%)",
+    );
+}
+
+#[test]
 fn shows_a_lookup_waiting_then_its_batches_then_done() {
     let start = RunEvent::Started {
         report: "Trial balance".to_owned(),
@@ -541,6 +573,7 @@ fn shows_a_lookup_waiting_then_its_batches_then_done() {
         bytes: 20_000,
         elapsed_ms: 1_000,
         batch,
+        busy: None,
     };
     let entries_done = RunEvent::SourceDone {
         id: "entries".to_owned(),

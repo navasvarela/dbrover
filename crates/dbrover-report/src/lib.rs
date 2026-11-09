@@ -24,6 +24,7 @@ mod file_name;
 mod format;
 mod hints;
 mod limits;
+mod live;
 mod plan;
 mod problem;
 mod prql;
@@ -37,8 +38,8 @@ mod typing;
 
 pub use embedded::{Embedded, PrqlToken, StepLanguage, embedded_code, prql_tokens};
 pub use events::{
-    Batch, CombineCaps, LimitHit, LimitSetIn, LoadedColumn, Machine, Preview, RunEvent, RunFailure,
-    SourceCaps, SourcePhases, SourceStart, Step, TimedEvent, WrittenFile,
+    Batch, Busy, CombineCaps, LimitHit, LimitSetIn, LoadedColumn, Machine, Preview, RunEvent,
+    RunFailure, SourceCaps, SourcePhases, SourceStart, Step, TimedEvent, WrittenFile,
 };
 pub use file_name::FileName;
 pub use format::{FormatReportError, FormattedReport, format_report};

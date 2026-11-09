@@ -11,6 +11,7 @@ mod file;
 mod highlight;
 mod insights;
 mod launcher;
+pub mod live;
 mod problems;
 mod profile;
 mod profile_view;
@@ -27,9 +28,9 @@ use dbrover_core::{BlobId, DataSource};
 use dbrover_engine::{Command, Event, ReportSaveFailure, ReportText, WatchedFile};
 use dbrover_export::CustomFormat;
 use dbrover_report::{
-    Batch, CombineCaps, CombineLimits, LimitDefaults, LoadedColumn, OutputLimits, Plan, Preview,
-    Report, RunEvent, RunFailure, RunRequest, SourceCaps, SourceLimits, SourcePhases, SourceStart,
-    Step, TimedEvent, TypedValues, WrittenFile, read_report,
+    Batch, Busy, CombineCaps, CombineLimits, LimitDefaults, LoadedColumn, OutputLimits, Plan,
+    Preview, Report, RunEvent, RunFailure, RunRequest, SourceCaps, SourceLimits, SourcePhases,
+    SourceStart, Step, TimedEvent, TypedValues, WrittenFile, read_report,
 };
 use dbrover_sql::FormatOptions;
 use dbrover_store::{
@@ -280,6 +281,10 @@ pub struct StepRecord {
     pub engine: Option<String>,
     /// A source's caps, as the run's start gave them.
     pub limits: Option<SourceCaps>,
+    /// While it runs: its rows a second.
+    pub pace: live::Pace,
+    /// While it runs: what it spent its last second on.
+    pub busy: Option<Busy>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -514,6 +519,7 @@ impl RunRecord {
                 bytes,
                 elapsed_ms,
                 batch,
+                busy,
             } => {
                 if let Some(record) = self.step_mut(&step) {
                     record.state = StepState::Running {
@@ -522,6 +528,8 @@ impl RunRecord {
                         elapsed_ms,
                     };
                     record.batches = batch;
+                    record.pace.see(elapsed_ms, rows, bytes);
+                    record.busy = busy;
                 }
             }
             RunEvent::SourceDone {
@@ -615,6 +623,8 @@ impl StepRecord {
             sql: None,
             engine: None,
             limits: None,
+            pace: live::Pace::default(),
+            busy: None,
         }
     }
 
@@ -1391,6 +1401,7 @@ mod tests {
                 bytes: 20_000,
                 elapsed_ms: 1_000,
                 batch: None,
+                busy: None,
             },
         );
         assert_eq!(
