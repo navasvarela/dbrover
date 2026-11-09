@@ -38,11 +38,12 @@ pub use custom::{
     TrustedCommandsFile, driver_id, parse_actions, parse_exports, parse_snippets, parse_theme,
 };
 pub use data_sources::{DataSourceFile, StoreError};
+pub use dbrover_core::BlobId;
 pub use diagrams::{
     DiagramFile, DiagramFiles, DiagramFolder, DiagramKey, DiagramName, DiagramStoreError,
     InvalidDiagramName, PlacedTable, ReadDiagram, SavedDiagram,
 };
-pub use file_version::{BlobId, FileVersion, Snapshot};
+pub use file_version::{FileVersion, Snapshot};
 pub use gitignore::{GITIGNORE, GitStatus, GitignoreAdded, add_gitignore};
 pub use history::{
     CombineMetrics, DEFAULT_RUNS_KEPT, History, HistoryEntry, HistoryError, HistoryExportError,

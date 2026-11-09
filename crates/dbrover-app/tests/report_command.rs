@@ -108,6 +108,12 @@ mod runs {
             self.home.path().join("out")
         }
 
+        /// The version of the report `name` as its run's first line names it.
+        fn version(&self, name: &str) -> String {
+            let path = self.config().join("reports").join(format!("{name}.toml"));
+            dbrover_core::BlobId::of(&std::fs::read(path).unwrap()).short()
+        }
+
         fn write_report(&self, name: &str, text: &str) {
             let path = self.config().join("reports").join(format!("{name}.toml"));
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -221,11 +227,11 @@ mod runs {
         );
         let stderr = String::from_utf8(output.stderr).unwrap();
         let lines: Vec<&str> = stderr.lines().collect();
-        assert_eq!(
-            lines.first(),
-            Some(&"Sales by category (since = 2026-10-01, until = 2026-11-01)"),
-            "{stderr}"
+        let first = format!(
+            "Sales by category (since = 2026-10-01, until = 2026-11-01), version {}",
+            settings.version("sales-by-category")
         );
+        assert_eq!(lines.first(), Some(&first.as_str()), "{stderr}");
         assert!(
             lines
                 .iter()
@@ -607,7 +613,8 @@ mod runs {
             let mut stderr = BufReader::new(child.stderr.take().unwrap());
             let mut started = String::new();
             stderr.read_line(&mut started).unwrap();
-            assert_eq!(started, "Products\n", "{signal}");
+            let expected = format!("Products, version {}\n", settings.version("products"));
+            assert_eq!(started, expected, "{signal}");
 
             let pid = child.id().to_string();
             let target = if to_group { format!("-{pid}") } else { pid };

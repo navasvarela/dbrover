@@ -4,7 +4,7 @@
 
 use std::io::Write;
 
-use dbrover_core::ByteCount;
+use dbrover_core::{BlobId, ByteCount};
 use dbrover_report::{RunEvent, RunFailure, Step, TypedValues, WrittenFile, grouped};
 
 use super::printer::Printer;
@@ -50,9 +50,10 @@ impl<O: Write, E: Write> HumanLines<O, E> {
             RunEvent::Started {
                 report,
                 combine_sql,
+                version,
                 ..
             } => {
-                let line = started(report, &self.values);
+                let line = started(report, &self.values, version.as_ref());
                 self.error_line(&line);
                 self.combine_sql.clone_from(combine_sql);
             }
@@ -169,15 +170,21 @@ impl<O: Write, E: Write> HumanLines<O, E> {
 }
 
 /// `Sales by category (since = 2026-10-01, until = 2026-11-01)`.
-fn started(report: &str, values: &TypedValues) -> String {
-    if values.is_empty() {
-        return report.to_owned();
+/// The report's title, the values it runs with, and the version of its file that runs, as
+/// Git abbreviates a blob id.
+fn started(report: &str, values: &TypedValues, version: Option<&BlobId>) -> String {
+    let mut line = report.to_owned();
+    if !values.is_empty() {
+        let values: Vec<String> = values
+            .iter()
+            .map(|(name, value)| format!("{name} = {value}"))
+            .collect();
+        line.push_str(&format!(" ({})", values.join(", ")));
     }
-    let values: Vec<String> = values
-        .iter()
-        .map(|(name, value)| format!("{name} = {value}"))
-        .collect();
-    format!("{report} ({})", values.join(", "))
+    if let Some(version) = version {
+        line.push_str(&format!(", version {}", version.short()));
+    }
+    line
 }
 
 /// The SQL a combine step's PRQL compiled to, its lines numbered as DuckDB's errors count them.
@@ -277,6 +284,7 @@ mod tests {
             sources: Vec::new(),
             combine: true,
             combine_sql: combine_sql.map(str::to_owned),
+            version: None,
         };
         let failed = RunEvent::Failed(RunFailure::new(
             Step::Combine,
@@ -328,6 +336,7 @@ mod tests {
                 sources: Vec::new(),
                 combine: true,
                 combine_sql: None,
+                version: None,
             },
             RunEvent::Progress {
                 step: Step::Combine,
@@ -453,7 +462,12 @@ mod tests {
             sources: Vec::new(),
             combine: false,
             combine_sql: None,
+            version: None,
         };
         assert_eq!(lines(&[], &[started]).1, "Stock\n");
+        assert_eq!(
+            super::started("Stock", &TypedValues::new(), Some(&BlobId::of(b"hello\n"))),
+            "Stock, version ce01362"
+        );
     }
 }

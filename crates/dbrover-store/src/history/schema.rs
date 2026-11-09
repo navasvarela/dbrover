@@ -7,8 +7,9 @@
 use rusqlite::TransactionBehavior;
 
 /// The schema this DbRover writes. 0 is every file from before provenance (W4), with or without
-/// `source`; 3 adds report runs (RP4); 4 where a run came from (RP6g).
-const VERSION: i32 = 4;
+/// `source`; 3 adds report runs (RP4); 4 where a run came from (RP6g); 5 the version of the
+/// report file each run ran (VC1e).
+const VERSION: i32 = 5;
 
 /// The table as the first DbRover with MCP made it; [`COLUMNS`] adds the rest.
 const TABLE: &str = "
@@ -86,6 +87,11 @@ pub(super) fn migrate(connection: &mut rusqlite::Connection) -> rusqlite::Result
         // older DbRover writes, which read as the app's.
         if !has_column(&transaction, "report_runs", "origin")? {
             transaction.execute("ALTER TABLE report_runs ADD COLUMN origin TEXT", [])?;
+        }
+        // The Git blob id of the report file's text that ran (VC1e); `NULL` in runs from
+        // before it.
+        if !has_column(&transaction, "report_runs", "version")? {
+            transaction.execute("ALTER TABLE report_runs ADD COLUMN version TEXT", [])?;
         }
         transaction.pragma_update(None, "user_version", VERSION)?;
     }

@@ -273,6 +273,7 @@ mod tests {
             params: Default::default(),
             steps,
             origin: dbrover_store::RunOrigin::App,
+            version: None,
         }
     }
 

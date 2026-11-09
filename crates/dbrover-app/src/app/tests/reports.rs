@@ -180,6 +180,7 @@ fn finished_run(folder: &Path) -> Vec<RunEvent> {
             }],
             combine: false,
             combine_sql: None,
+            version: None,
         },
         RunEvent::SourceDone {
             id: "balances".to_owned(),
@@ -339,6 +340,7 @@ fn combined_start() -> Vec<RunEvent> {
             sources: vec![source("entries"), source("accounts")],
             combine: true,
             combine_sql: None,
+            version: None,
         },
         loaded(
             "entries",
@@ -501,6 +503,7 @@ fn shows_a_lookup_waiting_then_its_batches_then_done() {
         ],
         combine: true,
         combine_sql: None,
+        version: None,
     };
     let progress = |id: &str, batch| RunEvent::Progress {
         step: Step::Source { id: id.to_owned() },
@@ -711,6 +714,7 @@ fn cancel_stops_the_running_report() {
         }],
         combine: false,
         combine_sql: None,
+        version: None,
     }]);
     let mut harness = start_with_reports(dir.path(), TRIAL_BALANCE, launcher);
 
@@ -1041,6 +1045,7 @@ fn renaming_a_report_keeps_its_runs() {
                 params: std::collections::BTreeMap::new(),
                 steps: Vec::new(),
                 origin: dbrover_store::RunOrigin::Command,
+                version: None,
             },
             dbrover_store::DEFAULT_RUNS_KEPT,
         )

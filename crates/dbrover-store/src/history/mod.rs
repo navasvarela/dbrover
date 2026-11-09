@@ -821,7 +821,7 @@ mod tests {
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .unwrap();
-            assert_eq!((mode.as_str(), version), ("wal", 4));
+            assert_eq!((mode.as_str(), version), ("wal", 5));
         }
     }
 

@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use dbrover_core::{ConnectionConfig, DataSource, DataSourceId, SafetyLevel, SqliteConfig};
+use dbrover_core::{BlobId, ConnectionConfig, DataSource, DataSourceId, SafetyLevel, SqliteConfig};
 use dbrover_engine::WorkerRun;
 use dbrover_report::{LimitDefaults, RunEvent, RunRequest, SourceLimits, SourceStart, Step};
 use dbrover_store::DataSourceFile;
@@ -303,6 +303,7 @@ fn runs_a_report_and_reports_each_step() {
             }],
             combine: false,
             combine_sql: None,
+            version: Some(BlobId::of(&std::fs::read(&report).unwrap())),
         }
     );
     assert_eq!(

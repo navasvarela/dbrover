@@ -13,7 +13,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use dbrover_core::{DataSource, describe_error};
+use dbrover_core::{BlobId, DataSource, describe_error};
 use dbrover_engine::{PasswordCommands, ProcessRunner, SourceAccess, Tunnels};
 use dbrover_export::CustomFormat;
 use dbrover_report::{
@@ -45,13 +45,15 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
         .and_then(|request| {
             limits::limit_memory(request.memory_limit);
             let paths = settings_paths(config_dir)?;
-            let (plan, values) = prepare(&paths, &request)?;
+            let (plan, version, values) = prepare(&paths, &request)?;
             limits::limit_processor_time(plan.processor_time());
+            tracing::info!(report = %plan.name, %version, "running the report");
             let started = out.send(&RunEvent::Started {
                 report: plan.name.clone(),
                 sources: plan.source_starts(),
                 combine: matches!(plan.logic, Logic::Combine(_)),
                 combine_sql: plan.compiled_combine().map(str::to_owned),
+                version: Some(version),
             });
             if started.is_err() {
                 abandon(&request.staging);
@@ -139,15 +141,19 @@ pub(crate) fn settings_paths(config_dir: Option<&Path>) -> Result<AppPaths, RunF
 
 /// The report read, planned against the saved data sources and presets, and the request's
 /// values checked.
-fn prepare(paths: &AppPaths, request: &RunRequest) -> Result<(Plan, RunValues), RunFailure> {
+fn prepare(
+    paths: &AppPaths,
+    request: &RunRequest,
+) -> Result<(Plan, BlobId, RunValues), RunFailure> {
     let fail = |problems: Vec<String>| RunFailure::new(Step::Report, problems.join("\n"));
-    let plan = plan(paths, &request.report, &request.defaults).map_err(fail)?;
+    let (plan, version) = plan(paths, &request.report, &request.defaults).map_err(fail)?;
     let values = plan.values(&request.values).map_err(fail)?;
-    Ok((plan, values))
+    Ok((plan, version, values))
 }
 
 /// The report file at `report` read and planned against the settings folder's data sources
-/// and presets, under `defaults` where it sets no limit of its own.
+/// and presets, under `defaults` where it sets no limit of its own, with the Git blob id of
+/// the text read, which names the version that runs.
 ///
 /// # Errors
 ///
@@ -157,12 +163,14 @@ pub(crate) fn plan(
     paths: &AppPaths,
     report: &Path,
     defaults: &LimitDefaults,
-) -> Result<Plan, Vec<String>> {
+) -> Result<(Plan, BlobId), Vec<String>> {
     let text = std::fs::read_to_string(report)
         .map_err(|error| vec![format!("could not read {}: {error}", report.display())])?;
+    let version = BlobId::of(text.as_bytes());
     let report = read_report(&text)?;
     let named = Named::load(paths)?;
-    Plan::new(report, &named.data_sources, &named.presets, defaults)
+    let plan = Plan::new(report, &named.data_sources, &named.presets, defaults)?;
+    Ok((plan, version))
 }
 
 /// What a report names, as the settings folder has it: its data sources, and `exports.toml`'s

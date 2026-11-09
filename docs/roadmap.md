@@ -2401,8 +2401,9 @@ after CI fixes, the reports track and W13, and links no Git library.
   - **VC1d — A `.gitignore` for the history:** built; written when the settings folder is
     created or chosen, never replaced, so `history.sqlite` isn't committed; **Settings ›
     Files** says whether the folder is in Git and offers **Add a .gitignore** when it has none.
-  - **VC1e — A report's run names the report's version:** the file's Git blob id with each run,
-    in the tab, `--json` and the log, found with `git log --find-object`.
+  - **VC1e — A report's run names the report's version:** built; the file's Git blob id with
+    each run, in the tab (with **Copy** for the `git log --find-object` that finds it, and a
+    mark where it changed), `--json`, the command line's first line and the log.
   - **VC1f — Manual:** *Keeping your settings in Git*, and this demo note.
 
   **Exit:** with the settings folder in Git and DbRover running, `git pull` brings a new data

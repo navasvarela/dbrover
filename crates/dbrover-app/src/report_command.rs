@@ -161,7 +161,7 @@ pub(crate) fn prepare(
 ) -> Result<Prepared, Vec<String>> {
     let settings = report_settings(paths)?;
     let defaults = reports::limit_defaults(&settings);
-    let plan = report_worker::plan(paths, report, &defaults)?;
+    let (plan, _) = report_worker::plan(paths, report, &defaults)?;
     let mut problems = unknown_parameters(&plan, values);
     if let Err(more) = plan.values(values) {
         problems.extend(more);

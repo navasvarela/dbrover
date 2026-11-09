@@ -21,7 +21,7 @@ use std::num::{NonZeroU32, NonZeroUsize};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
-use dbrover_core::DataSource;
+use dbrover_core::{BlobId, DataSource};
 use dbrover_engine::{Command, Event, ReportSaveFailure, ReportText, WatchedFile};
 use dbrover_export::CustomFormat;
 use dbrover_report::{
@@ -247,6 +247,8 @@ pub struct RunRecord {
     pub end: Option<RunEnd>,
     /// What each step that finished measured, in the order they finished.
     pub measured: Vec<StepMetrics>,
+    /// The Git blob id of the report file's text that runs, as the run's start said.
+    pub version: Option<BlobId>,
 }
 
 /// A source or the combine step, as far as the run has gone.
@@ -305,6 +307,7 @@ impl RunRecord {
             files: Vec::new(),
             end: None,
             measured: Vec::new(),
+            version: None,
         }
     }
 
@@ -331,6 +334,7 @@ impl RunRecord {
             params: self.params.clone(),
             steps: self.measured.clone(),
             origin,
+            version: self.version,
         })
     }
 
@@ -415,8 +419,10 @@ impl RunRecord {
                 sources,
                 combine,
                 combine_sql,
+                version,
                 ..
             } => {
+                self.version = version;
                 self.steps = sources.into_iter().map(StepRecord::source).collect();
                 if combine {
                     self.steps.push(StepRecord {
@@ -1004,6 +1010,7 @@ mod tests {
                 }],
                 combine: false,
                 combine_sql: None,
+                version: None,
             });
             record.apply(RunEvent::SourceDone {
                 id: "balances".to_owned(),
@@ -1059,6 +1066,24 @@ mod tests {
     }
 
     #[test]
+    fn keeps_the_version_the_runs_start_named() {
+        let version = BlobId::of(b"[report]\n");
+        let mut record = RunRecord::new(TypedValues::new());
+        record.apply(RunEvent::Started {
+            report: "Values".to_owned(),
+            sources: Vec::new(),
+            combine: false,
+            combine_sql: None,
+            version: Some(version),
+        });
+        record.apply(RunEvent::Finished { elapsed_ms: 1 });
+
+        let report = ReportName::new("values").unwrap();
+        let run = record.to_report_run(&report, RunOrigin::Command).unwrap();
+        assert_eq!(run.version, Some(version));
+    }
+
+    #[test]
     fn follows_each_step_of_a_combined_run() {
         let source = |id: &str, attached| SourceStart {
             id: id.to_owned(),
@@ -1072,6 +1097,7 @@ mod tests {
             sources: vec![source("tx", false), source("prices", true)],
             combine: true,
             combine_sql: None,
+            version: None,
         });
         let states = |record: &RunRecord| -> Vec<StepState> {
             record.steps.iter().map(|step| step.state).collect()

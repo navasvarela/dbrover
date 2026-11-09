@@ -363,6 +363,7 @@ fn events_are_json_lines_the_app_reads_back() {
             }],
             combine: false,
             combine_sql: None,
+            version: None,
         },
         RunEvent::Progress {
             step: Step::Combine,

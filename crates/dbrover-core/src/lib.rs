@@ -3,6 +3,7 @@
 //! Nothing here does I/O. Driver crates implement [`Connection`]; the engine owns the
 //! connections and the UI only ever sees the plain data types.
 
+mod blob_id;
 mod byte_size;
 mod catalog;
 mod catalog_page;
@@ -29,6 +30,7 @@ mod table;
 #[cfg(feature = "conformance")]
 pub mod conformance;
 
+pub use blob_id::{BlobId, InvalidBlobId};
 pub use byte_size::ByteSize;
 pub use catalog::{
     CatalogNode, CatalogPath, FolderKind, KeyType, NodeKind, ObjectKind, PathSegment, TableFormat,
