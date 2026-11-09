@@ -180,3 +180,37 @@ fn a_failed_copy_keeps_the_previous_folder_and_tries_again_next_time() {
         Some(paths.folders().settings.as_path())
     );
 }
+
+#[test]
+fn writes_the_history_gitignore_only_into_a_folder_this_start_creates_or_fills() {
+    let home = TempDir::new().unwrap();
+    let paths = AppPaths::under_home(home.path());
+    let gitignore = paths.folders().settings.join(".gitignore");
+
+    decide_without_overrides(&paths)
+        .prepare(Vec::new())
+        .add_gitignore_if_new();
+    let written = fs::read_to_string(&gitignore).unwrap();
+    assert!(written.contains("\nhistory.sqlite\n"), "{written}");
+
+    // As the first start's data sources and history would be.
+    fs::write(paths.data_sources_file(), "").unwrap();
+    fs::remove_file(&gitignore).unwrap();
+    decide_without_overrides(&paths)
+        .prepare(Vec::new())
+        .add_gitignore_if_new();
+    assert!(!gitignore.exists(), "a .gitignore deleted stays deleted");
+
+    let (home, paths) = home_with_settings();
+    let chosen = home.path().join("Dropbox/dbrover");
+    fs::create_dir_all(&chosen).unwrap();
+    choose(&paths, &chosen, Some(&paths.folders().settings));
+    decide_without_overrides(&paths)
+        .prepare(Vec::new())
+        .add_gitignore_if_new();
+    assert!(
+        chosen.join(".gitignore").is_file(),
+        "written after the copy"
+    );
+    assert!(chosen.join("data_sources.toml").is_file());
+}

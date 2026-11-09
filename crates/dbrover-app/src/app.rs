@@ -45,7 +45,9 @@ use crate::export_dialog::{
 use crate::export_sources_dialog::{ExportAction, ExportSourcesDialog};
 use crate::file_picker;
 use crate::folder_notice::FolderNotice;
-use crate::folder_switch::{FolderInUse, FolderRequest, FolderSwitch, PendingSwitch, SwitchAction};
+use crate::folder_switch::{
+    self, FolderInUse, FolderRequest, FolderSwitch, PendingSwitch, SwitchAction,
+};
 use crate::history_tab::{HistoryAction, HistoryTabs};
 use crate::host_key_prompt::{HostKeyAction, HostKeyPrompt};
 use crate::import_dialog::{ImportAction, ImportDialog};
@@ -2835,12 +2837,17 @@ impl DbRoverApp {
 
     /// Opens the window that confirms switching to the folder picked, or the default one.
     fn ask_to_switch_folder(&mut self, request: FolderRequest) {
-        let Some(in_use) = &self.folder_in_use else {
+        let Some(in_use) = &mut self.folder_in_use else {
             return;
         };
         let folder = match request {
             FolderRequest::Choose => (self.pick_settings_folder)(&in_use.folders.settings),
             FolderRequest::UseDefault => Some(in_use.default_settings.clone()),
+            FolderRequest::AddGitignore => {
+                folder_switch::add_history_gitignore(&in_use.folders.settings);
+                in_use.git = dbrover_store::GitStatus::of(&in_use.folders.settings);
+                None
+            }
         };
         if let Some(folder) = folder {
             self.folder_switch = Some(in_use.switch_to(folder));
@@ -2876,6 +2883,11 @@ impl DbRoverApp {
                     "switching the settings folder to {}",
                     pending.folder.display()
                 );
+                // A folder about to receive a copy must stay empty for it; the next start
+                // writes the file once the copy is in (`Session::add_gitignore_if_new`).
+                if pending.copy_from.is_none() {
+                    folder_switch::add_history_gitignore(&pending.folder);
+                }
                 relaunch::request(Restart::Relaunch);
             }
             Err(error) => tracing::error!(
@@ -4608,6 +4620,7 @@ mod tests {
             source: dbrover_store::SettingsFolder::Default,
             default_settings: dir.path().to_owned(),
             chosen_file: dbrover_store::ChosenFolderFile::new(data.join("settings_folder.toml")),
+            git: dbrover_store::GitStatus::of(dir.path()),
         };
         let synced = tempfile::tempdir().unwrap();
         let picked = synced.path().to_owned();
@@ -4621,6 +4634,11 @@ mod tests {
         harness.get_by_label("Files").click();
         harness.run_steps(2);
         harness.get_by_label(&dir.path().display().to_string());
+        harness.get_by_label("Not in a Git repository.");
+        harness.get_by_label("Add a .gitignore").click();
+        harness.run_steps(2);
+        assert!(dir.path().join(".gitignore").is_file());
+        assert!(harness.query_by_label("Add a .gitignore").is_none());
         assert!(
             harness
                 .get_by_label("Use the default folder")

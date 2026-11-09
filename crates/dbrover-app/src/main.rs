@@ -156,6 +156,7 @@ fn run_window(files: Vec<PathBuf>, config_dir: Option<&Path>) -> anyhow::Result<
     // Lives until DbRover exits, so the log file also gets the reason for a failed start.
     let _file_guard = telemetry.file_guard;
     session.log();
+    session.add_gitignore_if_new();
     // wgpu reports some failures by panicking, and a panic would otherwise end DbRover as
     // silently as an error.
     std::panic::catch_unwind(AssertUnwindSafe(|| {

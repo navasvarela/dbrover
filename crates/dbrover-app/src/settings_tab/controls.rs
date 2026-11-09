@@ -107,25 +107,52 @@ fn settings_folder(
     ui.add_space(ui.spacing().item_spacing.y);
     ui.label(RichText::new(folder.folders.settings.display().to_string()).monospace());
     form::description_label(ui, &folder.describe_source());
+    let gitignore = git_status(ui, folder);
     let locked = folder.locked_because();
+    let switch = ui
+        .horizontal(|ui| {
+            let unlocked = locked.is_none();
+            let mut choose = ui.add_enabled(unlocked, Button::new("Choose…"));
+            let mut default = ui.add_enabled(
+                unlocked && !folder.is_default(),
+                Button::new("Use the default folder"),
+            );
+            if let Some(reason) = &locked {
+                choose = choose.on_disabled_hover_text(reason);
+                default = default.on_disabled_hover_text(reason);
+            }
+            if choose.clicked() {
+                Some(FolderRequest::Choose)
+            } else if default.clicked() {
+                Some(FolderRequest::UseDefault)
+            } else {
+                None
+            }
+        })
+        .inner;
+    switch.or(gitignore)
+}
+
+/// Whether the folder is in a Git repository, and, when it has no `.gitignore`, a button that
+/// writes DbRover's (VC1d). A `.gitignore` of the user's own is never judged.
+fn git_status(ui: &mut Ui, folder: &FolderInUse) -> Option<FolderRequest> {
+    let in_repository = match &folder.git.repository {
+        Some(top) => format!("In the Git repository at {}.", top.display()),
+        None => "Not in a Git repository.".to_owned(),
+    };
+    form::description_label(ui, &in_repository);
+    if folder.git.has_gitignore {
+        return None;
+    }
     ui.horizontal(|ui| {
-        let unlocked = locked.is_none();
-        let mut choose = ui.add_enabled(unlocked, Button::new("Choose…"));
-        let mut default = ui.add_enabled(
-            unlocked && !folder.is_default(),
-            Button::new("Use the default folder"),
+        form::description_label(
+            ui,
+            "No .gitignore: Git would commit the query history with the settings.",
         );
-        if let Some(reason) = &locked {
-            choose = choose.on_disabled_hover_text(reason);
-            default = default.on_disabled_hover_text(reason);
-        }
-        if choose.clicked() {
-            Some(FolderRequest::Choose)
-        } else if default.clicked() {
-            Some(FolderRequest::UseDefault)
-        } else {
-            None
-        }
+        ui.button("Add a .gitignore")
+            .on_hover_text("Leave history.sqlite out of commits; nothing else changes")
+            .clicked()
+            .then_some(FolderRequest::AddGitignore)
     })
     .inner
 }
