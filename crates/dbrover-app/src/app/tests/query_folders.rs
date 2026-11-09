@@ -3,8 +3,6 @@
 use std::fs;
 use std::path::PathBuf;
 
-use egui::ViewportId;
-
 use super::*;
 
 /// A clone with queries in `queries/`, a scratch folder its `.gitignore` leaves out, and
@@ -55,20 +53,6 @@ fn open_folder(harness: &mut Harness<'_, DbRoverApp>, name: &str) {
     step_until_visible(harness, name);
     harness.get_by_label(name).click();
     harness.run();
-}
-
-/// What `git checkout` in a terminal looks like to the app: the window loses the focus, and
-/// gets it back.
-fn switch_away_and_back(harness: &mut Harness<'_, DbRoverApp>) {
-    for focused in [false, true] {
-        harness
-            .input_mut()
-            .viewports
-            .entry(ViewportId::ROOT)
-            .or_default()
-            .focused = Some(focused);
-        harness.step();
-    }
 }
 
 fn settings_text(dir: &Path) -> String {

@@ -54,9 +54,16 @@ the default folder for that session (the app says so; `dbrover mcp` stops instea
 - Each entry has a stable `id` (UUID, written once) so renames don't break consoles, history or
   keychain entries.
 - Written atomically (write to temp file, then rename) so a crash never truncates it.
-- Owned by the engine: loaded once at start-up, rewritten on every save or delete.
+- Owned by the engine: loaded at start-up, and read again when the window comes back to the
+  front and before every save or delete (VC1b, [Version control](version-control.md)). Each
+  change is applied to what the file holds then, so a `git pull` while DbRover runs isn't
+  undone: entries another program added, changed or removed are taken in, sent to the UI as
+  the events of the same changes made in the app, and logged ("data_sources.toml changed on
+  disk; reloaded before saving").
 - If the file exists but can't be parsed, the engine refuses all changes and the explorer shows
-  the error. A broken file is never overwritten with an empty list.
+  the error. A broken file is never overwritten with an empty list. One that breaks while
+  DbRover runs (a merge's conflict markers) is logged, the data sources in memory stay, and
+  saves fail until it is fixed.
 - `color` is optional (one of `red`, `orange`, `yellow`, `green`, `teal`, `blue`, `violet`,
   `pink`) and only written when set, so files from before it existed load unchanged.
 - `safety` is optional (`normal`, `careful` or `read-only`) and only written when it isn't
@@ -143,9 +150,14 @@ read_only = true
 - `settings.toml`, written by View → Settings… on every change (atomically), or by hand.
   Missing settings take their defaults; unknown ones make the file invalid, so a typo is
   reported rather than ignored.
-- Read by the engine at start-up (after the keymap, before the data sources), after a save
-  and on Reload, and sent as `Event::SettingsLoaded`. A file that can't be read leaves the
-  app on its last good settings (the defaults at start-up) and the Settings window shows why.
+- Read by the engine at start-up (after the keymap, before the data sources) and on Reload,
+  and sent as `Event::SettingsLoaded`. A file that can't be read leaves the app on its last
+  good settings (the defaults at start-up) and the Settings window shows why; it is never
+  written over.
+- Written only over the version the app last saw (VC1b): one another program changed is
+  reported as `Event::SettingsChangedOnDisk`. Found when the window comes back to the front,
+  the app reads it again; found by a save, the Settings window asks, **Reload** or **Keep
+  mine**.
 - Rewriting the file drops comments in it.
 
 ```toml
@@ -173,11 +185,13 @@ An id in `lint.disabled` that names no rule is listed in the Settings window, an
 ## Query consoles
 
 - One plain `.sql` file per console: `consoles/<data-source-id>/<name>.sql`, readable and
-  editable with any editor (while DbRover is closed). Names are `console`, `console_2`, …; any
+  editable with any editor. Names are `console`, `console_2`, …; any
   other `.sql` file put in the folder shows up as a saved console
   named after the file.
-- Owned by the engine (`ConsoleFiles` in `dbrover-store`): read once at start-up, right after the
-  data sources, and written atomically (temporary file, then rename) on `SaveConsole`. The UI
+- Owned by the engine (`ConsoleFiles` in `dbrover-store`): read at start-up, right after the
+  data sources, and written atomically (temporary file, then rename) on `SaveConsole`, unless
+  another program changed the file since (VC1b: the console then asks, **Reload** or **Keep
+  mine**). Read again when the window comes back to the front. The UI
   sends a save a second after typing stops, and for every unsaved console on quit; the engine
   handles queued commands before it stops, so the last edit is written.
 - A file that can't be read is logged and left alone; its tab is dropped from the layout.
@@ -192,8 +206,10 @@ An id in `lint.disabled` that names no rule is listed in the Settings window, an
   id, the schema it was opened on, and each table with where its box sits, in whole points; a
   table without `x` and `y` is placed by the layout. Columns and keys are never saved: they are
   described again when the diagram opens.
-- Owned by the engine (`DiagramFiles` in `dbrover-store`): read once at start-up, right after
-  the consoles, and written atomically on `SaveDiagram`. The UI sends a save a second after the
+- Owned by the engine (`DiagramFiles` in `dbrover-store`): read at start-up, right after the
+  consoles, and written atomically on `SaveDiagram`, unless another program changed the file
+  since (VC1b): a tab with nothing unsaved then shows the new file, and one with changes asks,
+  **Reload** or **Keep mine**. Read again when the window comes back to the front. The UI sends a save a second after the
   diagram last changed, when its tab closes, and for every unsaved diagram on quit. An unknown
   field makes the file unreadable, so a typo is reported; rewriting it drops comments.
 - Listed under the data source's **Diagrams** menu wherever they are under `diagrams/`, by the

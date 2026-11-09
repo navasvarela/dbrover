@@ -19,6 +19,7 @@ mod handle;
 mod history;
 mod keymap;
 mod open;
+mod outside_changes;
 mod password_commands;
 mod passwords;
 mod pictures;
@@ -52,6 +53,7 @@ pub use export::{Export, ExportAll};
 pub use export_programs::ExportProgramRequest;
 pub use handle::{EngineConfig, EngineError, EngineHandle, IDLE_PING_AFTER};
 pub use open::{OpenError, open_data_source, open_data_source_for_mcp};
+pub use outside_changes::Noticed;
 pub use password_commands::{PASSWORD_COMMAND_TIMEOUT, PasswordCommandError, PasswordCommands};
 pub use passwords::PasswordNeeded;
 pub use programs::{
@@ -59,11 +61,11 @@ pub use programs::{
     ProgramRunner,
 };
 pub use protocol::{
-    Command, ConsoleId, CostApproval, DatabaseFile, DdlFailure, DescribedTable, EditFailure, Event,
-    Exporter, ImportFailure, PasswordKept, PasswordUpdate, Picture, QueryFolderProblem,
-    ReportSaveFailure, ReportText, RowEdit, RowsImport, RunId, RunOrigin, RunOutcome, RunPurpose,
-    SessionState, StatementCheck, StatementFailure, StatementSummary, TableExport, TransactionEnd,
-    TransactionMode,
+    Command, ConsoleId, CostApproval, DatabaseFile, DdlFailure, DescribedTable, Document,
+    EditFailure, Event, Exporter, ImportFailure, PasswordKept, PasswordUpdate, Picture,
+    QueryFolderProblem, ReportSaveFailure, ReportText, RowEdit, RowsImport, RunId, RunOrigin,
+    RunOutcome, RunPurpose, SessionState, StatementCheck, StatementFailure, StatementSummary,
+    TableExport, TransactionEnd, TransactionMode,
 };
 pub use releases::{GithubReleases, Release, ReleaseError, ReleaseFeed};
 pub use repaint::Repaint;

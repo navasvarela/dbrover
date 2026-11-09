@@ -30,9 +30,9 @@ use dbrover_core::{
     RelationName, ResultShape, Row, SafetyLevel, TableDescription, TransactionStatus,
 };
 use dbrover_engine::{
-    Command, ConsoleId, CostApproval, EditFailure, Event, Export, ExportAll, Exporter, RowEdit,
-    RunId, RunOrigin, RunOutcome, RunPurpose, SessionState, StatementFailure, StatementSummary,
-    TransactionEnd, TransactionMode, WatchedFile,
+    Command, ConsoleId, CostApproval, Document, EditFailure, Event, Export, ExportAll, Exporter,
+    Noticed, RowEdit, RunId, RunOrigin, RunOutcome, RunPurpose, SessionState, StatementFailure,
+    StatementSummary, TransactionEnd, TransactionMode, WatchedFile,
 };
 use dbrover_export::{
     CustomFormat, ExportColumn, ExportContext, ExportOptions, ExportSpec, ProgramSpec, RowSource,
@@ -1584,6 +1584,9 @@ impl QueryConsole {
         let Storage::Config(file) = &mut self.storage else {
             return Err(None);
         };
+        if matches!(file.disk, Disk::Changed(_)) {
+            return Err(None);
+        }
         let since = file.unsaved_since.ok_or(None)?;
         let waited = now.saturating_duration_since(since);
         if waited < delay {
@@ -1639,12 +1642,42 @@ impl QueryConsole {
         matches!(&self.storage, Storage::File(file) if file.is_unsaved(&self.editor.text))
     }
 
-    /// What another program did to the console's `.sql` file, if anything.
+    /// What another program did to the console's file, if anything the console shows.
     pub fn disk(&self) -> Option<&Disk> {
-        match &self.storage {
-            Storage::File(file) if file.disk != Disk::Unchanged => Some(&file.disk),
-            _ => None,
+        let disk = match &self.storage {
+            Storage::File(file) => &file.disk,
+            Storage::Config(file) => &file.disk,
+        };
+        (*disk != Disk::Unchanged).then_some(disk)
+    }
+
+    /// Takes in what the console's file in the config folder holds after another program
+    /// changed it. A console with nothing unsaved found by looking follows the file; one
+    /// with unsaved text, or whose save found it, keeps its text and asks.
+    pub fn config_file_changed(&mut self, text: &str, noticed: Noticed) {
+        let Storage::Config(file) = &mut self.storage else {
+            return;
+        };
+        let nothing_unsaved = file.unsaved_since.is_none() && file.disk == Disk::Unchanged;
+        if noticed == Noticed::Looking && nothing_unsaved {
+            file.answered = true;
+            self.replace_text(text.to_owned());
+        } else if text == self.editor.text {
+            file.answered = true;
+            file.disk = Disk::Unchanged;
+        } else {
+            file.disk = Disk::Changed(text.to_owned());
         }
+    }
+
+    /// [`Command::SeenOnDisk`] once **Reload** or **Keep mine** answered a change to the
+    /// console's file in the config folder, to send before its next save.
+    pub fn take_answer(&mut self) -> Option<Command> {
+        let Storage::Config(file) = &mut self.storage else {
+            return None;
+        };
+        std::mem::take(&mut file.answered)
+            .then(|| Command::SeenOnDisk(Document::Console(self.key.clone())))
     }
 
     /// Writes the text to the console's `.sql` file. `None` if it shows none, and Save as must
@@ -1704,19 +1737,39 @@ impl QueryConsole {
         }
     }
 
-    /// Drops the unsaved changes for what the `.sql` file now holds.
+    /// Drops the unsaved changes for what the console's file now holds.
     pub fn reload_file(&mut self) {
-        if let Storage::File(file) = &mut self.storage
-            && let Some(text) = file.reload()
-        {
+        let text = match &mut self.storage {
+            Storage::File(file) => file.reload(),
+            Storage::Config(file) => match std::mem::take(&mut file.disk) {
+                Disk::Changed(text) => {
+                    file.unsaved_since = None;
+                    file.answered = true;
+                    Some(text)
+                }
+                unchanged => {
+                    file.disk = unchanged;
+                    None
+                }
+            },
+        };
+        if let Some(text) = text {
             self.replace_text(text);
         }
     }
 
-    /// Keeps the text over what the `.sql` file now holds, until it is saved over it.
+    /// Keeps the text over what the console's file now holds, until it is saved over it: at
+    /// once for a console in the config folder, which saves itself.
     pub fn keep_mine(&mut self) {
-        if let Storage::File(file) = &mut self.storage {
-            file.keep_mine();
+        match &mut self.storage {
+            Storage::File(file) => file.keep_mine(),
+            Storage::Config(file) => {
+                if matches!(file.disk, Disk::Changed(_)) {
+                    file.disk = Disk::Unchanged;
+                    file.answered = true;
+                    file.unsaved_since.get_or_insert_with(Instant::now);
+                }
+            }
         }
     }
 

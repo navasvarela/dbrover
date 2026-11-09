@@ -8,7 +8,9 @@ use dbrover_core::DataSourceId;
 use serde::{Deserialize, Serialize};
 
 use crate::ProjectSlug;
-use crate::atomic::write_atomically;
+use crate::file_version::{
+    CheckedWrite, FileVersion, Snapshot, read_versioned, write_if_unchanged,
+};
 
 const EXTENSION: &str = "toml";
 const HEADER: &str = "\
@@ -158,6 +160,14 @@ pub struct SavedDiagram {
     pub file: DiagramFile,
 }
 
+/// A diagram file as read at start-up, and its version, to notice later changes made by
+/// other programs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadDiagram {
+    pub diagram: SavedDiagram,
+    pub version: FileVersion,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum DiagramStoreError {
     #[error("could not read {}", path.display())]
@@ -184,6 +194,9 @@ pub enum DiagramStoreError {
         #[source]
         source: toml::ser::Error,
     },
+    /// Another program wrote the file between DbRover reading it and writing it back.
+    #[error("{} changed on disk while it was being saved", path.display())]
+    ChangedWhileSaving { path: PathBuf },
 }
 
 /// The `diagrams/` folder.
@@ -213,7 +226,7 @@ impl DiagramFiles {
     /// [`DiagramStoreError::Read`] if the folder exists but can't be listed.
     pub fn load_all(
         &self,
-    ) -> Result<Vec<Result<SavedDiagram, DiagramStoreError>>, DiagramStoreError> {
+    ) -> Result<Vec<Result<ReadDiagram, DiagramStoreError>>, DiagramStoreError> {
         let mut diagrams = Vec::new();
         for (folder, folder_path) in self.folders()? {
             for (name, path) in diagram_files(&folder_path)? {
@@ -221,7 +234,17 @@ impl DiagramFiles {
                     folder: folder.clone(),
                     name,
                 };
-                diagrams.push(read(&path).map(|file| SavedDiagram { key, file }));
+                let read = read_file(&path).and_then(|snapshot| {
+                    let file = snapshot.value.ok_or_else(|| DiagramStoreError::Read {
+                        path: path.clone(),
+                        source: io::ErrorKind::NotFound.into(),
+                    })?;
+                    Ok(ReadDiagram {
+                        diagram: SavedDiagram { key, file },
+                        version: snapshot.version,
+                    })
+                });
+                diagrams.push(read);
             }
         }
         Ok(diagrams)
@@ -236,20 +259,45 @@ impl DiagramFiles {
             .collect())
     }
 
-    /// Replaces the diagram's file, atomically.
+    /// The diagram's file as it is now, to [`write_over`](Self::write_over) later: `None` if
+    /// there is no file.
     ///
     /// # Errors
     ///
-    /// [`DiagramStoreError::Serialize`] if the diagram can't be written as TOML, and
-    /// [`DiagramStoreError::Write`] if the folder or file can't be written.
-    pub fn save(&self, key: &DiagramKey, file: &DiagramFile) -> Result<(), DiagramStoreError> {
+    /// [`DiagramStoreError::Read`] or [`DiagramStoreError::Parse`] if the file exists but
+    /// can't be used.
+    pub fn read(
+        &self,
+        key: &DiagramKey,
+    ) -> Result<Snapshot<Option<DiagramFile>>, DiagramStoreError> {
+        read_file(&self.path(key))
+    }
+
+    /// Replaces the diagram's file, atomically, and returns its new version.
+    ///
+    /// # Errors
+    ///
+    /// [`DiagramStoreError::Serialize`] if the diagram can't be written as TOML,
+    /// [`DiagramStoreError::ChangedWhileSaving`] if the file is no longer what `read` holds,
+    /// and [`DiagramStoreError::Write`] if the folder or file can't be written.
+    pub fn write_over(
+        &self,
+        key: &DiagramKey,
+        read: &Snapshot<Option<DiagramFile>>,
+        file: &DiagramFile,
+    ) -> Result<FileVersion, DiagramStoreError> {
         let body = toml::to_string(file).map_err(|source| DiagramStoreError::Serialize {
             name: key.name.clone(),
             source,
         })?;
         let path = self.path(key);
-        write_atomically(&path, &format!("{HEADER}{body}"))
-            .map_err(|source| DiagramStoreError::Write { path, source })
+        match write_if_unchanged(&path, read.version, &format!("{HEADER}{body}")) {
+            Ok(CheckedWrite::Written(version)) => Ok(version),
+            Ok(CheckedWrite::ChangedOnDisk(_)) => {
+                Err(DiagramStoreError::ChangedWhileSaving { path })
+            }
+            Err(source) => Err(DiagramStoreError::Write { path, source }),
+        }
     }
 
     /// Removes the diagram's file. Succeeds if there was none.
@@ -271,15 +319,21 @@ impl DiagramFiles {
     }
 }
 
-fn read(path: &Path) -> Result<DiagramFile, DiagramStoreError> {
-    let text = fs::read_to_string(path).map_err(|source| DiagramStoreError::Read {
+fn read_file(path: &Path) -> Result<Snapshot<Option<DiagramFile>>, DiagramStoreError> {
+    let read = read_versioned(path).map_err(|source| DiagramStoreError::Read {
         path: path.to_owned(),
         source,
     })?;
-    toml::from_str(&text).map_err(|source| DiagramStoreError::Parse {
-        path: path.to_owned(),
-        source,
-    })
+    let file = match &read.text {
+        Some(text) => Some(
+            toml::from_str(text).map_err(|source| DiagramStoreError::Parse {
+                path: path.to_owned(),
+                source,
+            })?,
+        ),
+        None => None,
+    };
+    Ok(Snapshot::new(read, file))
 }
 
 /// The `.toml` files directly in `folder`, by diagram name.
@@ -378,6 +432,33 @@ mod tests {
         }
     }
 
+    fn save(files: &DiagramFiles, key: &DiagramKey, file: &DiagramFile) {
+        let read = files.read(key).unwrap();
+        files.write_over(key, &read, file).unwrap();
+    }
+
+    #[test]
+    fn never_writes_over_a_file_changed_since_it_was_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = DiagramFiles::new(dir.path());
+        let diagram = key(DiagramFolder::NoProject, "shop");
+        let read = files.read(&diagram).unwrap();
+        assert_eq!((&read.value, read.version), (&None, FileVersion::Missing));
+        files
+            .write_over(&diagram, &read, &shop(DataSourceId::generate()))
+            .unwrap();
+
+        assert!(matches!(
+            files.write_over(&diagram, &read, &shop(DataSourceId::generate())),
+            Err(DiagramStoreError::ChangedWhileSaving { .. })
+        ));
+        fs::write(files.path(&diagram), "data_source = 3").unwrap();
+        assert!(matches!(
+            files.read(&diagram),
+            Err(DiagramStoreError::Parse { .. })
+        ));
+    }
+
     #[test]
     fn saves_and_reads_diagrams_in_their_projects_folders() {
         let dir = tempfile::tempdir().unwrap();
@@ -387,8 +468,8 @@ mod tests {
         let alone = key(DiagramFolder::NoProject, "public");
         let data_source = DataSourceId::generate();
 
-        files.save(&in_project, &shop(data_source)).unwrap();
-        files.save(&alone, &shop(data_source)).unwrap();
+        save(&files, &in_project, &shop(data_source));
+        save(&files, &alone, &shop(data_source));
 
         assert!(dir.path().join("diagrams/shop-eu/public.toml").is_file());
         assert!(dir.path().join("diagrams/_none/public.toml").is_file());
@@ -396,7 +477,7 @@ mod tests {
             .load_all()
             .unwrap()
             .into_iter()
-            .map(Result::unwrap)
+            .map(|read| read.unwrap().diagram)
             .collect();
         loaded.sort_by(|a, b| a.key.cmp(&b.key));
         let keys: Vec<&DiagramKey> = loaded.iter().map(|saved| &saved.key).collect();
@@ -415,7 +496,7 @@ mod tests {
         let diagram = key(DiagramFolder::NoProject, "shop");
         let id: DataSourceId = "6f1c0d9e-3b8a-4c3e-9f57-2d1e8a7b5c40".parse().unwrap();
 
-        files.save(&diagram, &shop(id)).unwrap();
+        save(&files, &diagram, &shop(id));
 
         let text = fs::read_to_string(files.path(&diagram)).unwrap();
         let body = text.strip_prefix(HEADER).unwrap();
@@ -441,7 +522,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let files = DiagramFiles::new(dir.path());
         let good = key(DiagramFolder::NoProject, "good");
-        files.save(&good, &shop(DataSourceId::generate())).unwrap();
+        save(&files, &good, &shop(DataSourceId::generate()));
         fs::write(dir.path().join("_none/broken.toml"), "data_source = 3").unwrap();
         fs::create_dir_all(dir.path().join("Not A Slug")).unwrap();
         fs::write(dir.path().join("Not A Slug/x.toml"), "").unwrap();

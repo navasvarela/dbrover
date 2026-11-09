@@ -581,7 +581,8 @@ impl DbRoverApp {
         let batches = self.diagrams.apply(event);
         self.send_all(batches);
         self.apply_to_sql_files(event);
-        self.settings.apply(event);
+        let reload = self.settings.apply(event);
+        self.send_if(reload);
         let reads = self.query_folders.apply(event);
         self.send_all(reads);
         let created = self
@@ -876,6 +877,7 @@ impl DbRoverApp {
         // A window whose focus isn't known (in tests) counts as focused.
         let focused = ctx.input(|input| input.viewport().focused.unwrap_or(true));
         if focused && !self.window_focused {
+            self.send(Command::LookForOutsideChanges);
             self.send_if(self.reports.reload());
             let reads = self.query_folders.reload();
             self.send_all(reads);
@@ -2797,6 +2799,10 @@ impl DbRoverApp {
                 self.send(Command::SaveSettings(settings));
             }
             SettingsAction::Reload => self.send(Command::ReloadSettings),
+            SettingsAction::KeepMine => {
+                let commands = self.settings.keep_mine();
+                self.send_all(commands);
+            }
             SettingsAction::Theme(preference) => {
                 self.run_command(AppCommand::Theme(preference), ctx)
             }
@@ -3261,6 +3267,7 @@ mod tests {
     mod history;
     mod menus;
     mod modify_table;
+    mod outside_changes;
     mod parameters;
     mod password_commands;
     mod plans;
@@ -3345,6 +3352,20 @@ mod tests {
             .build_eframe(|cc| DbRoverApp::new(cc, log_feed, config).unwrap());
         crate::test_support::wait_for_startup(&mut harness);
         harness
+    }
+
+    /// What `git checkout` in a terminal looks like to the app: the window loses the focus, and
+    /// gets it back.
+    fn switch_away_and_back(harness: &mut Harness<'_, DbRoverApp>) {
+        for focused in [false, true] {
+            harness
+                .input_mut()
+                .viewports
+                .entry(egui::ViewportId::ROOT)
+                .or_default()
+                .focused = Some(focused);
+            harness.step();
+        }
     }
 
     /// Saves one SQLite data source named `shop`, over a database with `schema`.
@@ -5551,7 +5572,8 @@ mod tests {
             data_source: shop.id,
             name: ConsoleName::numbered(1),
         };
-        files.save(&saved, "select 41;").unwrap();
+        let read = files.read(&saved).unwrap();
+        files.write_over(&saved, &read, "select 41;").unwrap();
         let deleted = ConsoleKey {
             data_source: shop.id,
             name: ConsoleName::numbered(2),

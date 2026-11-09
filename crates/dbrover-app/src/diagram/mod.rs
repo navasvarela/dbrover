@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use dbrover_core::DataSourceId;
-use dbrover_engine::{Command, Event, Picture, SessionState};
+use dbrover_engine::{Command, Document, Event, Noticed, Picture, SessionState};
 use dbrover_store::{DiagramFile, DiagramFolder, DiagramKey, DiagramName, SavedDiagram};
 use egui::{Rect, Ui};
 
@@ -41,6 +41,10 @@ pub enum DiagramAction {
 enum TabAction {
     Delete,
     Export(PictureFormat),
+    /// Show what the file holds now, which another program changed.
+    Reload,
+    /// Save this diagram over what another program wrote.
+    KeepMine,
 }
 
 /// A diagram's tab: the diagram, the part of it the tab shows, and how its file stands.
@@ -57,6 +61,9 @@ pub struct DiagramTab {
     changed: Option<(DiagramFile, Instant)>,
     /// Why the last save failed, until one succeeds.
     save_error: Option<String>,
+    /// What another program wrote to the file while the tab had unsaved changes. Saves wait
+    /// until **Reload** or **Keep mine**.
+    on_disk: Option<DiagramFile>,
     confirming_delete: bool,
     /// How the last export went: where it was written, or why it wasn't.
     exported: Option<Result<PathBuf, String>>,
@@ -86,8 +93,10 @@ impl SavedDiagrams {
 pub struct Diagrams {
     open: BTreeMap<DiagramKey, DiagramTab>,
     saved: SavedDiagrams,
-    /// Saves of diagrams whose tab closed before their last change was saved.
-    closing_saves: Vec<Command>,
+    /// Commands to send with the next saves: those of diagrams whose tab closed before their
+    /// last change was saved, telling the engine a change on disk was answered, and reading
+    /// the tables of a diagram reloaded from its file.
+    pending: Vec<Command>,
     /// The diagram each export being written is of, by the file it is written to.
     exporting: HashMap<PathBuf, DiagramKey>,
 }
@@ -133,6 +142,7 @@ impl Diagrams {
             saved,
             changed: None,
             save_error: None,
+            on_disk: None,
             confirming_delete: false,
             exported: None,
             #[cfg(test)]
@@ -151,7 +161,7 @@ impl Diagrams {
         let current = tab.diagram.to_file();
         if tab.saved.as_ref() != Some(&current) {
             let closing = save(key, &current, &mut self.saved);
-            self.closing_saves.push(closing);
+            self.pending.push(closing);
         }
     }
 
@@ -211,6 +221,9 @@ impl Diagrams {
                 }
                 Vec::new()
             }
+            Event::DiagramChangedOnDisk { key, file, noticed } => {
+                self.changed_on_disk(key, file, *noticed)
+            }
             Event::TablesDescribed {
                 data_source,
                 tables,
@@ -239,12 +252,15 @@ impl Diagrams {
     /// Saves each diagram that has stayed changed for [`SAVE_DELAY`], and says how long until
     /// the next one is due, if one is waiting.
     pub fn due_saves(&mut self, now: Instant) -> (Vec<Command>, Option<Duration>) {
-        let mut saves = std::mem::take(&mut self.closing_saves);
+        let mut saves = std::mem::take(&mut self.pending);
         let mut next_due: Option<Duration> = None;
         let mut wait_for = |wait: Duration| {
             next_due = Some(next_due.map_or(wait, |next: Duration| next.min(wait)));
         };
         for (key, tab) in &mut self.open {
+            if tab.on_disk.is_some() {
+                continue;
+            }
             let current = tab.diagram.to_file();
             if tab.saved.as_ref() == Some(&current) {
                 tab.changed = None;
@@ -273,7 +289,7 @@ impl Diagrams {
 
     /// Saves every open diagram that changed since it was last saved, at once: on quitting.
     pub fn unsaved(&mut self) -> Vec<Command> {
-        let mut saves = std::mem::take(&mut self.closing_saves);
+        let mut saves = std::mem::take(&mut self.pending);
         for (key, tab) in &mut self.open {
             let current = tab.diagram.to_file();
             if tab.saved.as_ref() != Some(&current) {
@@ -293,7 +309,52 @@ impl Diagrams {
         match view::show(ui, tab, key)? {
             TabAction::Delete => Some(DiagramAction::Delete(key.clone())),
             TabAction::Export(format) => Some(DiagramAction::Export(key.clone(), format)),
+            TabAction::Reload => {
+                if let Some(file) = tab.on_disk.take() {
+                    self.pending.extend(reload(tab, file));
+                    self.pending.push(seen_on_disk(key));
+                }
+                None
+            }
+            TabAction::KeepMine => {
+                if let Some(file) = tab.on_disk.take() {
+                    // What the file holds now isn't this diagram, so it is saved again.
+                    tab.saved = Some(file);
+                    self.pending.push(seen_on_disk(key));
+                }
+                None
+            }
         }
+    }
+
+    /// Takes in what the diagram's file holds after another program changed it. A tab with
+    /// nothing unsaved found by looking shows the file; one with unsaved changes, or whose
+    /// save found it, keeps its diagram and asks. A diagram without a tab is listed as the
+    /// file holds it.
+    fn changed_on_disk(
+        &mut self,
+        key: &DiagramKey,
+        file: &DiagramFile,
+        noticed: Noticed,
+    ) -> Vec<Command> {
+        self.saved.0.insert(key.clone(), file.clone());
+        let Some(tab) = self.open.get_mut(key) else {
+            return vec![seen_on_disk(key)];
+        };
+        let current = tab.diagram.to_file();
+        if &current == file {
+            tab.saved = Some(current);
+            tab.on_disk = None;
+            return vec![seen_on_disk(key)];
+        }
+        let nothing_unsaved = tab.saved.as_ref() == Some(&current) && tab.on_disk.is_none();
+        if noticed == Noticed::Looking && nothing_unsaved {
+            let mut commands: Vec<Command> = reload(tab, file.clone()).into_iter().collect();
+            commands.push(seen_on_disk(key));
+            return commands;
+        }
+        tab.on_disk = Some(file.clone());
+        Vec::new()
     }
 
     /// The command that writes the open diagram `key` to `path` as `format`, or `None` while
@@ -346,6 +407,20 @@ impl Diagrams {
             .map(|tab| &mut tab.diagram)
             .filter(move |diagram| diagram.data_source == id)
     }
+}
+
+/// Shows `file` in `tab` in place of its diagram, and returns the first batch of its tables to
+/// describe.
+fn reload(tab: &mut DiagramTab, file: DiagramFile) -> Option<Command> {
+    tab.diagram = Diagram::from_file(&file);
+    tab.saved = Some(file);
+    tab.changed = None;
+    tab.fit = true;
+    tab.diagram.next_batch()
+}
+
+fn seen_on_disk(key: &DiagramKey) -> Command {
+    Command::SeenOnDisk(Document::Diagram(key.clone()))
 }
 
 /// The command that writes `file` as the diagram `key`, which is listed as saved from then on.
@@ -406,6 +481,64 @@ mod tests {
         let (saves, next) = diagrams.due_saves(start + SAVE_DELAY * 3);
         assert!(saves.is_empty() && next.is_none(), "nothing changed since");
         assert!(diagrams.unsaved().is_empty());
+    }
+
+    #[test]
+    fn follows_its_file_unless_it_has_unsaved_changes_and_then_asks() {
+        let mut diagrams = Diagrams::default();
+        let data_source = DataSourceId::generate();
+        let file = |tables: &[&str]| DiagramFile {
+            data_source,
+            schema: None,
+            tables: tables
+                .iter()
+                .map(|name| PlacedTable {
+                    schema: "main".to_owned(),
+                    name: (*name).to_owned(),
+                    x: Some(0),
+                    y: Some(0),
+                })
+                .collect(),
+        };
+        loaded(&mut diagrams, "shop", file(&["orders"]));
+        diagrams.reopen(&key("shop"));
+        let seen = |commands: &[Command]| {
+            commands.iter().any(|command| {
+                matches!(command, Command::SeenOnDisk(Document::Diagram(seen)) if *seen == key("shop"))
+            })
+        };
+
+        let pulled = file(&["orders", "refunds"]);
+        let commands = diagrams.apply(&Event::DiagramChangedOnDisk {
+            key: key("shop"),
+            file: pulled.clone(),
+            noticed: Noticed::Looking,
+        });
+        assert!(seen(&commands), "{commands:?}");
+        let shown: Vec<&str> = diagrams
+            .iter()
+            .next()
+            .unwrap()
+            .1
+            .tables()
+            .iter()
+            .map(|t| t.name.name.as_str())
+            .collect();
+        assert_eq!(shown, ["orders", "refunds"]);
+
+        let commands = diagrams.apply(&Event::DiagramChangedOnDisk {
+            key: key("shop"),
+            file: file(&["customers"]),
+            noticed: Noticed::Saving,
+        });
+        assert!(commands.is_empty(), "a refused save asks: {commands:?}");
+        let start = Instant::now();
+        diagrams.due_saves(start);
+        let (saves, _) = diagrams.due_saves(start + SAVE_DELAY * 2);
+        assert!(
+            saves.is_empty(),
+            "nothing is saved while it asks: {saves:?}"
+        );
     }
 
     #[test]

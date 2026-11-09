@@ -10,6 +10,7 @@ mod csv;
 mod custom;
 mod data_sources;
 mod diagrams;
+mod file_version;
 mod history;
 mod keymap;
 mod paths;
@@ -24,7 +25,8 @@ mod settings_folder;
 mod sql_files;
 
 pub use consoles::{
-    ConsoleFiles, ConsoleKey, ConsoleName, ConsoleStoreError, InvalidConsoleName, SavedConsole,
+    ConsoleFiles, ConsoleKey, ConsoleName, ConsoleStoreError, InvalidConsoleName, ReadConsole,
+    SavedConsole,
 };
 pub use csv::{CsvError, CsvReader, CsvRecord, Separator};
 pub use custom::{
@@ -36,8 +38,9 @@ pub use custom::{
 pub use data_sources::{DataSourceFile, StoreError};
 pub use diagrams::{
     DiagramFile, DiagramFiles, DiagramFolder, DiagramKey, DiagramName, DiagramStoreError,
-    InvalidDiagramName, PlacedTable, SavedDiagram,
+    InvalidDiagramName, PlacedTable, ReadDiagram, SavedDiagram,
 };
+pub use file_version::{BlobId, FileVersion, Snapshot};
 pub use history::{
     CombineMetrics, DEFAULT_RUNS_KEPT, History, HistoryEntry, HistoryError, HistoryExportError,
     HistoryFile, HistoryOutcome, HistoryQuery, HistorySource, HistorySourceKind, NamedCell,

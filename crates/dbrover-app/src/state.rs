@@ -215,6 +215,9 @@ impl AppState {
             | Event::TransactionChanged { .. }
             | Event::TransactionEnded { .. }
             | Event::ConsoleSaveFailed { .. }
+            | Event::ConsoleChangedOnDisk { .. }
+            | Event::DiagramChangedOnDisk { .. }
+            | Event::SettingsChangedOnDisk { .. }
             | Event::SqlFileRead { .. }
             | Event::SqlFileSaved { .. }
             | Event::SqlFileChanged { .. }

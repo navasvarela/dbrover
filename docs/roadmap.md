@@ -2388,12 +2388,14 @@ after CI fixes, the reports track and W13, and links no Git library.
 - **VC1 — Files that live well in Git (M):** planned in
   [Version control](version-control.md#vc1--files-that-live-well-in-git). In layers, one PR
   each:
-  - **VC1a — The plan:** the design, this entry and Vision's reworded non-goal.
-  - **VC1b — Noticing changes made outside DbRover:** every file DbRover rewrites is checked
-    before the write, so a `git pull` while it runs is no longer undone by the next save; data
-    sources and projects merge per entry, documents offer **Reload** or **Keep mine**, and the
-    check also runs when the window comes back to the front. A bug fix as much as a feature;
-    worth pulling forward if someone hits it.
+  - **VC1a — The plan:** the design, this entry and Vision's reworded non-goal; landed with
+    the track's proposal. The design fit when VC1 started, so there was no plan PR; VC1b
+    recorded the points it made precise.
+  - **VC1b — Noticing changes made outside DbRover:** built; every file DbRover rewrites is
+    checked before the write (its Git blob id against the one last read or written), so a
+    `git pull` while it runs is no longer undone by the next save; data sources and projects
+    merge per entry, the settings, consoles and diagrams offer **Reload** or **Keep mine**, and
+    the check also runs when the window comes back to the front.
   - **VC1c — Comments and order kept:** `data_sources.toml`, `projects.toml` and
     `settings.toml` edited in place with `toml_edit`, so a save changes only its own lines.
   - **VC1d — A `.gitignore` for the history:** written when the settings folder is created or

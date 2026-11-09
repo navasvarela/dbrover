@@ -22,13 +22,14 @@ use crate::export_programs::{self, ExportProgramRequest};
 use crate::history::{HistoryExport, HistoryLog};
 use crate::keymap;
 use crate::open::{TestServices, TypedSecrets, create_database_file, test_connection};
+use crate::outside_changes::{DocumentVersions, Noticed};
 use crate::password_commands::PasswordCommands;
 use crate::passwords::SessionPasswords;
 use crate::pictures;
 use crate::programs::{self, ProgramFailure, ProgramId, ProgramRequest, ProgramRunner};
-use crate::projects::{ProjectError, ProjectRegistry};
+use crate::projects::{OutsideChanges as ProjectChanges, ProjectError, ProjectRegistry};
 use crate::query_folders;
-use crate::registry::{Registry, RegistryError};
+use crate::registry::{OutsideChanges as DataSourceChanges, Registry, RegistryError};
 use crate::releases::{self, ReleaseFeed};
 use crate::report_files;
 use crate::session::{Script, Services, Session, SessionOwner, SessionRequest};
@@ -38,7 +39,7 @@ use crate::transfer;
 use crate::tunnels::Tunnels;
 use crate::updater::{self, UpdateInstaller};
 use crate::{
-    Command, ConsoleId, EditFailure, EngineConfig, Event, ExportAll, Exporter, HostKey,
+    Command, ConsoleId, Document, EditFailure, EngineConfig, Event, ExportAll, Exporter, HostKey,
     PasswordKept, PasswordUpdate, ProcessEnvironment, RunOutcome, StatementCheck,
 };
 
@@ -61,7 +62,8 @@ pub(crate) async fn run(
     tracing::info!("engine started");
     events.send(Event::Started);
     events.send(keymap::load(&config.keymap).await);
-    let settings = settings::load(&config.settings).await;
+    let mut documents = DocumentVersions::default();
+    let settings = settings::load(&config.settings, &mut documents).await;
     let retention = settings::history_retention(&settings);
     events.send(settings);
     for event in config_files::load_custom(&config.custom_files).await {
@@ -74,8 +76,8 @@ pub(crate) async fn run(
     events.send(projects.loaded_event());
     let registry = Registry::load(config.data_sources).await;
     events.send(registry.loaded_event());
-    events.send(console_files::load(&config.consoles).await);
-    events.send(diagram_files::load(&config.diagrams).await);
+    events.send(console_files::load(&config.consoles, &mut documents).await);
+    events.send(diagram_files::load(&config.diagrams, &mut documents).await);
     let (history, history_task) = HistoryLog::start(config.history, events.clone());
     if let Some(retention) = retention {
         history.prune(retention);
@@ -85,6 +87,7 @@ pub(crate) async fn run(
         history,
         registry,
         projects,
+        documents,
         secrets: config.secrets,
         passwords: SessionPasswords::default(),
         tunnels: Tunnels::new(config.known_hosts),
@@ -125,6 +128,8 @@ struct ConsoleSession {
 struct Engine {
     registry: Registry,
     projects: ProjectRegistry,
+    /// The versions of the settings, consoles and diagrams the app last saw.
+    documents: DocumentVersions,
     history: HistoryLog,
     secrets: Arc<dyn SecretStore>,
     /// Passwords given at the prompt, shared with every session.
@@ -161,6 +166,74 @@ impl Engine {
     /// in the order the UI sent them.
     /// Anything that waits on a network (connecting, testing) runs in its own task.
     async fn handle(&mut self, command: Command) {
+        self.handle_command(command).await;
+        self.follow_outside_changes();
+    }
+
+    /// Reads again what other programs may have changed in the settings folder.
+    async fn look_for_outside_changes(&mut self) {
+        self.registry.look_again().await;
+        self.projects.look_again().await;
+        let settings = settings::look_again(&self.settings_file, &mut self.documents).await;
+        if let Some(settings) = settings {
+            self.events.send(settings);
+        }
+        for document in self.documents.documents() {
+            let event = match document {
+                Document::Settings => None,
+                Document::Console(key) => {
+                    console_files::look_again(&self.console_files, &mut self.documents, key).await
+                }
+                Document::Diagram(key) => {
+                    diagram_files::look_again(&self.diagram_files, &mut self.documents, key).await
+                }
+            };
+            if let Some(event) = event {
+                self.events.send(event);
+            }
+        }
+    }
+
+    /// Tells the app what other programs changed in `data_sources.toml` and `projects.toml`,
+    /// found by the last command, as the events of the same changes made in the app.
+    fn follow_outside_changes(&mut self) {
+        match self.projects.take_outside_changes() {
+            Some(ProjectChanges::Entries {
+                projects,
+                mcp_defaults,
+                noticed,
+            }) => {
+                tracing::info!("{}", reloaded_message("projects.toml", noticed));
+                for id in projects.removed {
+                    self.events.send(Event::ProjectDeleted(id));
+                }
+                for project in projects.saved {
+                    self.events.send(Event::ProjectSaved(project));
+                }
+                if let Some(defaults) = mcp_defaults {
+                    self.events.send(Event::McpDefaultsSaved(defaults));
+                }
+            }
+            Some(ProjectChanges::Readable) => self.events.send(self.projects.loaded_event()),
+            None => {}
+        }
+        match self.registry.take_outside_changes() {
+            Some(DataSourceChanges::Entries { changes, noticed }) => {
+                tracing::info!("{}", reloaded_message("data_sources.toml", noticed));
+                for id in changes.removed {
+                    self.disconnect(id);
+                    self.events.send(Event::DataSourceDeleted(id));
+                }
+                for data_source in changes.saved {
+                    self.events.send(Event::DataSourceSaved(data_source));
+                }
+            }
+            Some(DataSourceChanges::Readable) => self.events.send(self.registry.loaded_event()),
+            None => {}
+        }
+    }
+
+    async fn handle_command(&mut self, command: Command) {
         match command {
             Command::SaveDataSource {
                 data_source,
@@ -305,19 +378,25 @@ impl Engine {
             Command::ReconnectConsole(console) => self.reconnect_console(console),
             Command::CloseConsole(console) => self.close_console(console),
             Command::SaveConsole { key, text } => {
-                if let Some(failed) = console_files::save(&self.console_files, key, text).await {
+                let saved =
+                    console_files::save(&self.console_files, &mut self.documents, key, text).await;
+                if let Some(failed) = saved {
                     self.events.send(failed);
                 }
             }
             Command::DeleteConsoleFile(key) => {
-                console_files::delete(&self.console_files, key).await;
+                console_files::delete(&self.console_files, &mut self.documents, key).await;
             }
             Command::SaveDiagram { key, file } => {
-                if let Some(failed) = diagram_files::save(&self.diagram_files, key, file).await {
+                let saved =
+                    diagram_files::save(&self.diagram_files, &mut self.documents, key, file).await;
+                if let Some(failed) = saved {
                     self.events.send(failed);
                 }
             }
-            Command::DeleteDiagram(key) => diagram_files::delete(&self.diagram_files, key).await,
+            Command::DeleteDiagram(key) => {
+                diagram_files::delete(&self.diagram_files, &mut self.documents, key).await;
+            }
             Command::ReadSchemaSnapshot { path } => {
                 let events = self.events.clone();
                 tokio::spawn(
@@ -465,15 +544,20 @@ impl Engine {
                 }
             }
             Command::ReloadSettings => {
-                self.events.send(settings::load(&self.settings_file).await);
+                let loaded = settings::load(&self.settings_file, &mut self.documents).await;
+                self.events.send(loaded);
             }
             Command::SaveSettings(new) => {
-                let saved = settings::save(&self.settings_file, new).await;
-                if let Some(retention) = settings::history_retention(&saved) {
-                    self.history.prune(retention);
+                let saved = settings::save(&self.settings_file, &mut self.documents, new).await;
+                if let Some(saved) = saved {
+                    if let Some(retention) = settings::history_retention(&saved) {
+                        self.history.prune(retention);
+                    }
+                    self.events.send(saved);
                 }
-                self.events.send(saved);
             }
+            Command::LookForOutsideChanges => self.look_for_outside_changes().await,
+            Command::SeenOnDisk(document) => self.documents.seen(&document),
             Command::ExportRows {
                 console,
                 mut export,
@@ -1203,5 +1287,13 @@ impl Engine {
                 tracing::error!("session shutdown failed: {error}");
             }
         }
+    }
+}
+
+/// What the log console says when a file of entries changed on disk was read again.
+fn reloaded_message(file: &str, noticed: Noticed) -> String {
+    match noticed {
+        Noticed::Saving => format!("{file} changed on disk; reloaded before saving"),
+        Noticed::Looking => format!("{file} changed on disk; reloaded"),
     }
 }
