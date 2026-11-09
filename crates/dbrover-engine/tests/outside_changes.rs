@@ -82,6 +82,11 @@ fn the_window_coming_to_the_front_reads_changed_data_sources_again() {
     engine.expect_started(vec![kept.clone(), removed.clone()]);
 
     engine.send(Command::LookForOutsideChanges);
+    // Commands run in order but apart from the test: until the settings come back, the first
+    // look may not have run yet. Without this, it could find the pulled file and the second
+    // look could then read the file half rewritten with the conflict markers below.
+    engine.send(Command::ReloadSettings);
+    engine.expect_settings(Ok(Settings::default()));
     let pulled = sqlite("pulled");
     file.save(&[kept.clone(), pulled.clone()]).unwrap();
     engine.send(Command::LookForOutsideChanges);
