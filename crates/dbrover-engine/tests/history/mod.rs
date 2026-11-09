@@ -324,11 +324,16 @@ fn keeps_a_reports_newest_runs_and_clears_them() {
     runs_found(&mut engine, record(run(10, ReportRunOutcome::Finished)));
     runs_found(&mut engine, record(run(20, ReportRunOutcome::Cancelled)));
     let runs = runs_found(&mut engine, record(run(30, ReportRunOutcome::Finished)));
+    // Each comes back with the id it was kept under, in the order it was kept.
+    let kept = |id: i64, run: ReportRun| ReportRun {
+        id: Some(dbrover_store::RunId(id)),
+        ..run
+    };
     assert_eq!(
         runs,
         [
-            run(30, ReportRunOutcome::Finished),
-            run(20, ReportRunOutcome::Cancelled)
+            kept(3, run(30, ReportRunOutcome::Finished)),
+            kept(2, run(20, ReportRunOutcome::Cancelled))
         ]
     );
 
@@ -339,6 +344,6 @@ fn keeps_a_reports_newest_runs_and_clears_them() {
             listed: 1,
         },
     );
-    assert_eq!(listed, [run(30, ReportRunOutcome::Finished)]);
+    assert_eq!(listed, [kept(3, run(30, ReportRunOutcome::Finished))]);
     assert!(runs_found(&mut engine, Command::ClearReportRuns(report.clone())).is_empty());
 }
