@@ -2,40 +2,12 @@
 //! program (a `git pull`, a synced folder) changed the file since (VC1b in
 //! `docs/version-control.md`).
 
-use std::fmt;
 use std::path::Path;
 use std::{fs, io};
 
-use sha1::{Digest, Sha1};
+use dbrover_core::BlobId;
 
 use crate::atomic::write_atomically;
-
-/// A file's Git blob id: SHA-1 over `blob <length>\0` and the file's bytes, which is what
-/// `git hash-object` prints and what Git itself calls that version of the file. Computed
-/// without Git, so it names a version inside a repository or out of one.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct BlobId([u8; 20]);
-
-impl BlobId {
-    pub fn of(bytes: &[u8]) -> Self {
-        let mut hasher = Sha1::new();
-        hasher.update(format!("blob {}\0", bytes.len()).as_bytes());
-        hasher.update(bytes);
-        Self(hasher.finalize().into())
-    }
-}
-
-impl fmt::Display for BlobId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.iter().try_for_each(|byte| write!(f, "{byte:02x}"))
-    }
-}
-
-impl fmt::Debug for BlobId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "BlobId({self})")
-    }
-}
 
 /// What a file held when DbRover last read or wrote it: its bytes' [`BlobId`], or no file.
 ///
@@ -150,19 +122,6 @@ pub(crate) fn write_versioned(path: &Path, contents: &str) -> io::Result<FileVer
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_blob_id_is_what_git_hash_object_prints() {
-        // `printf 'hello\n' | git hash-object --stdin` and `git hash-object /dev/null`.
-        assert_eq!(
-            BlobId::of(b"hello\n").to_string(),
-            "ce013625030ba8dba906f756967f9e9ca394464a"
-        );
-        assert_eq!(
-            BlobId::of(b"").to_string(),
-            "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
-        );
-    }
 
     #[test]
     fn writes_only_over_the_version_it_expects() {

@@ -174,6 +174,13 @@ newest first:
 - when the run started, with a terminal or a plug beside it when it was started from the
   command line or from MCP rather than the tab (hover over it to see which), how it ended (hover over *failed* for the step and the error), its total time and the
   parameters it ran with;
+- the version of the report's file that ran: its Git blob id, shortened as Git shortens it
+  (hover over it for the whole id), with a mark where the file changed since the run before.
+  The copy button beside it puts `git log --find-object=<id> -- reports/<name>.toml` on the
+  clipboard: run in a settings folder kept in Git, it lists the commits that had exactly that
+  file, so you can tell which version of the report wrote a given set of files. The id needs no
+  Git to work out, so it is there whether or not the folder is in a repository; runs from before
+  DbRover 0.31 have none;
 - a row for each source, the combine step and each output: its time and its rows, or for an
   output the file's size. Hover over a cell for everything the step measured: the bytes it read,
   how long its first row took, a lookup's batches, the combine step's peak memory and how much
@@ -738,7 +745,7 @@ Standard error tells the run as it goes, and standard output lists each file wri
 path a line, so a script can pass them on:
 
 ```text
-Sales by category (since = 2026-10-01, until = 2026-11-01)
+Sales by category (since = 2026-10-01, until = 2026-11-01), version 3b18e51
 Source lines: 246 rows, 6.5 KB in 0.0 s
 Combine: 13 rows, 509 bytes in 0.0 s
 /home/me/reports/2026-10/sales-by-category-2026-10.xlsx
@@ -749,8 +756,10 @@ Finished in 0.0 s.
 
 With `--json`, standard output is the run's events instead, as the report's tab reads them:
 `started`, `progress` about once a second, `source_done`, `combine_done`, `preview`,
-`output_written` for each file, a chart's included, and last `finished`, `failed` or `cancelled`. `jq` picks out what
-a script needs:
+`output_written` for each file, a chart's included, and last `finished`, `failed` or `cancelled`.
+`started` has the report file's Git blob id as `version`, the same the first line of the human
+output shortens, so a CI job's output names the version that ran; the run's log says it too.
+`jq` picks out what a script needs:
 
 ```bash
 dbrover report run sales-by-category -p since=2026-10-01 -p until=2026-11-01 --json \

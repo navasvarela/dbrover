@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use dbrover_core::ByteCount;
+use dbrover_core::{BlobId, ByteCount};
 use dbrover_report::{HintId, grouped};
 use dbrover_store::{ReportName, ReportRun, RunOrigin, RunOutcome, StepMetrics};
 use egui::{Grid, RichText, Ui};
@@ -139,6 +139,18 @@ fn table(ui: &mut Ui, palette: &Palette, name: &ReportName, runs: &[ReportRun]) 
             }
             ui.end_row();
 
+            if runs.iter().any(|run| run.version.is_some()) {
+                ui.weak("Version").on_hover_text(
+                    "The report file's Git blob id: what Git calls the version that ran",
+                );
+                // Newest first, so the run to the right is the one before.
+                let older = runs.iter().skip(1).map(Some).chain([None]);
+                for (run, older) in runs.iter().zip(older) {
+                    version(ui, palette, name, run, older);
+                }
+                ui.end_row();
+            }
+
             let params: BTreeSet<&String> = runs.iter().flat_map(|run| run.params.keys()).collect();
             for param in params {
                 ui.weak(param);
@@ -167,6 +179,48 @@ fn table(ui: &mut Ui, palette: &Palette, name: &ReportName, runs: &[ReportRun]) 
                 ui.end_row();
             }
         });
+}
+
+/// The version of the report's file that `run` ran, shortened as Git shortens it, with
+/// **Copy** for the `git log` that finds its commits, and a mark when it differs from `older`'s,
+/// the run before.
+fn version(
+    ui: &mut Ui,
+    palette: &Palette,
+    name: &ReportName,
+    run: &ReportRun,
+    older: Option<&ReportRun>,
+) {
+    let Some(id) = run.version else {
+        ui.weak("—");
+        return;
+    };
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(id.short()).monospace())
+            .on_hover_text(id.to_string());
+        let changed = older
+            .and_then(|older| older.version)
+            .is_some_and(|before| before != id);
+        if changed {
+            let response = ui
+                .label(widgets::glyph(icons::GIT_DIFF).color(palette.warning))
+                .on_hover_text("The file changed since the run before");
+            widgets::name(response, egui::WidgetType::Label, "changed", true);
+        }
+        let copy = ui
+            .small_button(widgets::glyph(icons::COPY))
+            .on_hover_text("Copy the git log command that lists the commits with this version");
+        let copy = widgets::name(copy, egui::WidgetType::Button, "Copy git log", true);
+        if copy.clicked() {
+            ui.ctx().copy_text(find_object_command(name, id));
+        }
+    });
+}
+
+/// The command that lists the commits that had exactly this version of the report's file,
+/// from the settings folder.
+fn find_object_command(name: &ReportName, id: BlobId) -> String {
+    format!("git log --find-object={id} -- reports/{name}.toml")
 }
 
 /// Where a run came from, beside its start, for the runs the tab didn't start: a glyph, and
@@ -319,4 +373,21 @@ fn heading(
             state.confirm_clear = false;
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn copies_the_git_log_that_finds_the_version() {
+        let name = ReportName::new("trial-balance").unwrap();
+        let id = BlobId::of(b"hello\n");
+
+        assert_eq!(
+            find_object_command(&name, id),
+            "git log --find-object=ce013625030ba8dba906f756967f9e9ca394464a \
+             -- reports/trial-balance.toml"
+        );
+    }
 }

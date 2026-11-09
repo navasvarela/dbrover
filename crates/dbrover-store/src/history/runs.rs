@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 use std::time::Duration;
 
+use dbrover_core::BlobId;
 use jiff::Timestamp;
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -33,6 +34,9 @@ pub struct ReportRun {
     /// Each step that finished, in the order it finished.
     pub steps: Vec<StepMetrics>,
     pub origin: RunOrigin,
+    /// The Git blob id of the report file's text that ran: `git log --find-object` with it
+    /// lists the commits that had exactly that file. `None` for runs from before VC1e.
+    pub version: Option<BlobId>,
 }
 
 /// What started a run.
@@ -175,8 +179,8 @@ impl History {
         let transaction = self.connection.unchecked_transaction()?;
         transaction.execute(
             "INSERT INTO report_runs
-                 (report, started_at, elapsed_ms, outcome, params, steps, failure, origin)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                 (report, started_at, elapsed_ms, outcome, params, steps, failure, origin, version)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 run.report.as_str(),
                 format_timestamp(run.started_at),
@@ -186,6 +190,7 @@ impl History {
                 to_json(&run.steps)?,
                 failure,
                 run.origin.as_str(),
+                run.version.map(|version| version.to_string()),
             ],
         )?;
         delete_older_runs(&transaction, &run.report, kept)?;
@@ -201,7 +206,7 @@ impl History {
     /// [`HistoryError::Database`] if the query fails.
     pub fn runs(&self, report: &ReportName, limit: usize) -> Result<Vec<ReportRun>, HistoryError> {
         let mut statement = self.connection.prepare_cached(
-            "SELECT started_at, elapsed_ms, outcome, params, steps, failure, origin
+            "SELECT started_at, elapsed_ms, outcome, params, steps, failure, origin, version
              FROM report_runs
              WHERE report = ?1 ORDER BY started_at DESC, id DESC LIMIT ?2",
         )?;
@@ -286,6 +291,7 @@ struct StoredRun {
     steps: String,
     failure: Option<String>,
     origin: Option<String>,
+    version: Option<String>,
 }
 
 impl StoredRun {
@@ -298,6 +304,7 @@ impl StoredRun {
             steps: row.get(4)?,
             failure: row.get(5)?,
             origin: row.get(6)?,
+            version: row.get(7)?,
         })
     }
 
@@ -310,6 +317,8 @@ impl StoredRun {
             params: serde_json::from_str(&self.params).ok()?,
             steps: serde_json::from_str(&self.steps).ok()?,
             origin: RunOrigin::from_stored(self.origin.as_deref()),
+            // An id that doesn't parse (edited by hand) is shown as no id, not as no run.
+            version: self.version.and_then(|version| version.parse().ok()),
         })
     }
 }
@@ -366,6 +375,7 @@ mod tests {
                 }),
             ],
             origin: RunOrigin::App,
+            version: None,
         }
     }
 
@@ -526,6 +536,39 @@ mod tests {
             origins,
             [RunOrigin::Mcp, RunOrigin::Command, RunOrigin::App]
         );
+    }
+
+    #[test]
+    fn keeps_the_version_each_run_ran_and_reads_older_runs_without_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = HistoryFile::new(dir.path().join("history.sqlite"));
+        drop(file.open().unwrap());
+        // A version 4 file, with a run from before versions.
+        let version_4 = rusqlite::Connection::open(file.path()).unwrap();
+        version_4
+            .execute_batch(
+                "ALTER TABLE report_runs DROP COLUMN version; PRAGMA user_version = 4;
+                 INSERT INTO report_runs (report, started_at, elapsed_ms, outcome, params, steps)
+                 VALUES ('values', '2026-10-01T00:00:00Z', 5, 'finished', '{}', '[]');",
+            )
+            .unwrap();
+        drop(version_4);
+
+        let history = file.open().unwrap();
+        let ran = BlobId::of(b"[report]\ntitle = \"Values\"\n");
+        let run = ReportRun {
+            version: Some(ran),
+            ..run("values", 1, RunOutcome::Finished)
+        };
+        history.record_run(&run, DEFAULT_RUNS_KEPT).unwrap();
+
+        let versions: Vec<Option<BlobId>> = history
+            .runs(&name("values"), 10)
+            .unwrap()
+            .iter()
+            .map(|run| run.version)
+            .collect();
+        assert_eq!(versions, [Some(ran), None]);
     }
 
     #[test]

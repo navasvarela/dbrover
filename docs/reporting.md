@@ -1090,6 +1090,8 @@ table of its own, `report_runs`, one row a run:
 | `params` | the values the run used, as JSON |
 | `steps` | each source, the combine step and each output with what it measured, as JSON |
 | `failure` | the failed step and its error, for a run that failed |
+| `origin` | where the run came from: the app, the command line or MCP (RP6g, schema 4) |
+| `version` | the report file's Git blob id, the version that ran (VC1e in [Version control](version-control.md), schema 5) |
 
 The schema's version goes from 2 to 3. As W4's rule says, the migration only adds: a table and
 its index, which an older DbRover neither reads nor minds. The app writes a run's row once the

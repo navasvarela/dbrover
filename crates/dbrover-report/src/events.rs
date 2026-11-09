@@ -4,6 +4,7 @@
 
 use std::path::PathBuf;
 
+use dbrover_core::BlobId;
 use serde::{Deserialize, Serialize};
 
 use crate::Plan;
@@ -23,6 +24,11 @@ pub enum RunEvent {
         /// combine step in SQL, whose SQL is the file's.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         combine_sql: Option<String>,
+        /// The Git blob id of the report file's text that runs (VC1e): what Git itself calls
+        /// that version of the file, for `git log --find-object`. `None` from a worker older
+        /// than VC1e.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<BlobId>,
     },
     /// What a step has returned so far, about once a second.
     Progress {

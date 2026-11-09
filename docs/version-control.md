@@ -237,6 +237,14 @@ report that changed between two runs shows a different id, which the run compari
 This is a schema migration of the history (one nullable column); runs recorded before it show
 no id.
 
+Made precise while building it (VC1e): the worker computes the id from the text it reads and
+plans, and sends it in the `started` event (`version`), so the app, `dbrover report run` and
+MCP runs all get it from one place and it is always the text that ran, saved or not. The
+history keeps it in `report_runs.version` (schema 5). The tab shows it in a **Version** row of
+the runs, marked where it differs from the run before; the command line's first line ends with
+`, version <short id>`; the worker logs it. `BlobId` moved to `dbrover-core`, beside the events
+that carry it.
+
 ### The manual (VC1f)
 
 A section of [Where DbRover keeps its files](../book/src/files.md), **Keeping your settings in
