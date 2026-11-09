@@ -20,8 +20,17 @@ const ENTRY_ID: &str = "id";
 pub enum InPlaceError {
     #[error("could not write the values as TOML")]
     Serialize(#[from] toml::ser::Error),
+    /// Boxed: a `TomlError` is 88 bytes, which made every error holding an `InPlaceError`
+    /// (`StoreError`, `ProjectStoreError`, `SettingsError`) reach clippy's `result_large_err`
+    /// limit of 128 bytes on Windows, where a `PathBuf` is 8 bytes larger than elsewhere.
     #[error("the file isn't TOML DbRover can edit")]
-    Parse(#[from] toml_edit::TomlError),
+    Parse(#[source] Box<toml_edit::TomlError>),
+}
+
+impl From<toml_edit::TomlError> for InPlaceError {
+    fn from(error: toml_edit::TomlError) -> Self {
+        Self::Parse(Box::new(error))
+    }
 }
 
 /// The comment DbRover writes at the top of a file, and the ones earlier versions wrote, which
