@@ -166,7 +166,7 @@ pub async fn run<O: SourceOpener>(
             };
             let statement = Statements::new(plan, values, source).whole(opened);
             let mut clock = ProgressClock::new();
-            let (reader, _) = waiting(Shaped::open(opener, &statement), |so_far| {
+            let (reader, _) = waiting(Box::pin(Shaped::open(opener, &statement)), |so_far| {
                 events(RunEvent::Progress {
                     step: step(),
                     rows: 0,

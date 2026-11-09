@@ -106,13 +106,13 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
         let query = self.combined.combine.query.sql();
         let mut clock = ProgressClock::new();
         let (reader, starting) = waiting(
-            CombineReader::start(
+            Box::pin(CombineReader::start(
                 workspace,
                 query,
                 self.outputs.values,
                 DuckDbQuery::Combine,
                 self.limits(),
-            ),
+            )),
             |so_far| {
                 events(progress(
                     &Step::Combine,
@@ -417,7 +417,7 @@ impl Loading<'_> {
         events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
     ) -> Result<(), RunFailure> {
         let step = self.step();
-        let (reader, opening_time) = waiting(Shaped::open(opener, statement), |so_far| {
+        let (reader, opening_time) = waiting(Box::pin(Shaped::open(opener, statement)), |so_far| {
             let busy = self.clock.lap(so_far);
             (events.borrow_mut())(progress(&step, &self.read, self.opened, batch, busy));
         })

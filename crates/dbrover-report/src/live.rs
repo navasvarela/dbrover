@@ -78,12 +78,16 @@ fn percent(part: Duration, whole: Duration) -> u8 {
 
 /// Awaits `work`, calling `tick` with how long it has waited so far every
 /// [`PROGRESS_EVERY`] it takes; returns its output and how long it took.
+///
+/// `work` is boxed: opening a source is the whole of connecting to any engine, a future large
+/// enough that keeping it on the stack beside this one overflowed a test thread's 2 MiB stack in
+/// a debug build on Linux, and the worker's threads have no more.
 pub(crate) async fn waiting<T>(
     work: impl Future<Output = T>,
     mut tick: impl FnMut(Duration),
 ) -> (T, Duration) {
     let started = Instant::now();
-    let mut work = std::pin::pin!(work);
+    let mut work = Box::pin(work);
     loop {
         tokio::select! {
             output = &mut work => return (output, started.elapsed()),
