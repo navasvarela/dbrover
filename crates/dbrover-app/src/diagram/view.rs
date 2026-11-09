@@ -71,6 +71,28 @@ pub(super) fn show(ui: &mut Ui, tab: &mut DiagramTab, key: &DiagramKey) -> Optio
     deleted.then_some(TabAction::Delete).or(exported)
 }
 
+/// That another program changed the diagram's file while the tab had changes it hadn't
+/// saved, and the choice between the two.
+fn changed_on_disk(ui: &mut Ui, palette: &Palette) -> Option<TabAction> {
+    widgets::status(
+        ui,
+        icons::WARNING,
+        palette.warning,
+        "The file changed on disk, and this diagram has unsaved changes",
+    );
+    if ui
+        .button("Reload")
+        .on_hover_text("Show what the file holds now, dropping your changes")
+        .clicked()
+    {
+        return Some(TabAction::Reload);
+    }
+    let keep = ui
+        .button("Keep mine")
+        .on_hover_text("Keep this diagram; it is saved over the file");
+    keep.clicked().then_some(TabAction::KeepMine)
+}
+
 /// **Delete diagram…**'s question, while it is asked; whether it was confirmed.
 fn confirm_delete(ui: &Ui, tab: &mut DiagramTab, key: &DiagramKey) -> bool {
     if !tab.confirming_delete {
@@ -131,6 +153,11 @@ fn toolbar(ui: &mut Ui, tab: &mut DiagramTab) -> Option<TabAction> {
             tab.confirming_delete = true;
         }
         ui.add_space(8.0);
+        if tab.on_disk.is_some()
+            && let Some(answer) = changed_on_disk(ui, &palette)
+        {
+            action = Some(answer);
+        }
         if let Some(error) = &tab.save_error {
             ui.colored_label(palette.error, format!("Could not save: {error}"));
         }

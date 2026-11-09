@@ -58,6 +58,8 @@ pub enum SettingsAction {
     SaveMcpDefaults(McpPermissions),
     /// Read `settings.toml` again, after editing it by hand.
     Reload,
+    /// Write the settings in use over `settings.toml`, which another program changed.
+    KeepMine,
     Theme(ThemePreference),
     /// Read `keymap.toml` again.
     ReloadKeymap,
@@ -432,7 +434,7 @@ fn settings_page(
     caption: impl Fn(&Found<'_>) -> String,
 ) -> Option<Page> {
     let palette = Palette::for_visuals(ui.visuals());
-    file_status(ui, view.settings, &palette);
+    file_status(ui, view.settings, &palette, actions);
     let theme = ui.ctx().options(|options| options.theme_preference);
     let mut draft = Draft {
         settings: view.settings.settings().clone(),
@@ -506,8 +508,17 @@ fn page_title(ui: &mut Ui, title: &str, summary: &str) {
     ui.add_space(14.0);
 }
 
-/// Why `settings.toml` couldn't be read, and what in it couldn't be used, above the settings.
-fn file_status(ui: &mut Ui, settings: &AppSettings, palette: &Palette) {
+/// Why `settings.toml` couldn't be read or written, and what in it couldn't be used, above the
+/// settings.
+fn file_status(
+    ui: &mut Ui,
+    settings: &AppSettings,
+    palette: &Palette,
+    actions: &mut Vec<SettingsAction>,
+) {
+    if settings.changed_on_disk() {
+        changed_on_disk(ui, palette, actions);
+    }
     if let Some(error) = settings.error() {
         widgets::status(ui, icons::X_CIRCLE, palette.error, error);
     }
@@ -517,6 +528,34 @@ fn file_status(ui: &mut Ui, settings: &AppSettings, palette: &Palette) {
     if settings.error().is_some() || !settings.problems().is_empty() {
         ui.add_space(8.0);
     }
+}
+
+/// That another program changed `settings.toml` before the last change here was saved, and
+/// the choice between the two.
+fn changed_on_disk(ui: &mut Ui, palette: &Palette, actions: &mut Vec<SettingsAction>) {
+    ui.horizontal(|ui| {
+        widgets::status(
+            ui,
+            icons::WARNING,
+            palette.warning,
+            "settings.toml changed on disk, and your last change isn't saved",
+        );
+        if ui
+            .button("Reload")
+            .on_hover_text("Use what the file holds now, dropping your change")
+            .clicked()
+        {
+            actions.push(SettingsAction::Reload);
+        }
+        if ui
+            .button("Keep mine")
+            .on_hover_text("Write the settings in use over the file")
+            .clicked()
+        {
+            actions.push(SettingsAction::KeepMine);
+        }
+    });
+    ui.add_space(8.0);
 }
 
 /// What in a file the page lists was skipped, or why it couldn't be read, at the top of the

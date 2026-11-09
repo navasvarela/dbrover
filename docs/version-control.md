@@ -158,6 +158,28 @@ bytes. Before writing, it checks the file on disk again.
 The book's "edit it only while DbRover is closed" then becomes "DbRover picks up changes when
 its window comes back to the front".
 
+Made precise while building it (VC1b):
+
+- **The version is the bytes' Git blob id alone,** with no modification time: the bytes are
+  read before every check anyway, and a time adds nothing a hash doesn't. The same id names a
+  report's version in VC1e.
+- **Data sources and projects:** each change is applied to the file as it is read just before
+  writing, whether it changed or not. Entries another program added, changed or removed reach
+  the app as the events of the same changes made in it (a removed data source is disconnected,
+  its keychain entries kept). A file that breaks while DbRover runs keeps the entries in
+  memory, is logged, and refuses saves until fixed; one broken at start-up is read again when
+  the window comes to the front, so fixing it needs no restart.
+- **Documents:** the engine holds the version of each settings file, console and diagram the
+  app last saw, and after reporting a change holds every save of it until the app answers
+  (**Reload** shows the file's, **Keep mine** writes over exactly the version shown). Saves
+  sent before the app heard of the change are dropped rather than written over it. A change
+  found when the window comes to the front is followed silently where there is nothing unsaved
+  (a console or diagram whose edits are all written; the settings, which save on each click);
+  a file deleted since is no change, as there is nothing on disk to lose.
+- **Consoles and diagrams without a tab** take the file's text as it is now, for when they
+  are opened again. New files that appear in `consoles/` or `diagrams/` show up at the next
+  start, as before.
+
 ### Keeping comments and order (VC1c)
 
 `data_sources.toml`, `projects.toml` and `settings.toml` are written with `toml_edit`, which is

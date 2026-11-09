@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use dbrover_engine::Event;
+use dbrover_engine::{Command, Document, Event, Noticed};
 
 use crate::console::LintOptions;
 use dbrover_sql::{FormatOptions, KeywordCase, LintRule};
@@ -20,21 +20,52 @@ pub struct AppSettings {
     /// Why the file couldn't be read or written; the settings in use are then the last good
     /// ones (or the defaults).
     error: Option<String>,
+    /// Another program changed the file and a save found it: the settings in use aren't saved
+    /// until **Reload** or **Keep mine**.
+    changed_on_disk: bool,
 }
 
 impl AppSettings {
-    pub fn apply(&mut self, event: &Event) {
-        let Event::SettingsLoaded { path, result } = event else {
-            return;
-        };
-        self.path = Some(path.clone());
-        match result {
-            Ok(settings) => {
-                self.settings = settings.clone();
-                self.error = None;
+    /// Takes in what the engine read or found, and returns what that calls for: reading the
+    /// file again when another program changed it and nothing here is waiting to be saved.
+    pub fn apply(&mut self, event: &Event) -> Option<Command> {
+        match event {
+            Event::SettingsLoaded { path, result } => {
+                self.path = Some(path.clone());
+                match result {
+                    Ok(settings) => {
+                        self.settings = settings.clone();
+                        self.error = None;
+                        self.changed_on_disk = false;
+                    }
+                    Err(error) => self.error = Some(error.clone()),
+                }
+                None
             }
-            Err(error) => self.error = Some(error.clone()),
+            Event::SettingsChangedOnDisk { noticed, .. } => {
+                if *noticed == Noticed::Looking && !self.changed_on_disk {
+                    return Some(Command::ReloadSettings);
+                }
+                self.changed_on_disk = true;
+                None
+            }
+            _ => None,
         }
+    }
+
+    /// Whether a save found the file changed by another program, and waits for **Reload** or
+    /// **Keep mine**.
+    pub fn changed_on_disk(&self) -> bool {
+        self.changed_on_disk
+    }
+
+    /// **Keep mine**: the commands that write the settings in use over the file's.
+    pub fn keep_mine(&mut self) -> [Command; 2] {
+        self.changed_on_disk = false;
+        [
+            Command::SeenOnDisk(Document::Settings),
+            Command::SaveSettings(self.settings.clone()),
+        ]
     }
 
     pub fn settings(&self) -> &Settings {
@@ -131,5 +162,29 @@ mod tests {
                 indent_width: 8,
             }
         );
+    }
+
+    #[test]
+    fn reads_a_changed_file_again_unless_a_save_found_it_and_then_asks() {
+        let mut settings = AppSettings::default();
+        let changed = |noticed| Event::SettingsChangedOnDisk {
+            settings: Settings::default(),
+            noticed,
+        };
+
+        let reload = settings.apply(&changed(Noticed::Looking));
+        assert!(matches!(reload, Some(Command::ReloadSettings)));
+        assert!(!settings.changed_on_disk());
+
+        assert!(settings.apply(&changed(Noticed::Saving)).is_none());
+        assert!(settings.changed_on_disk());
+        assert!(
+            settings.apply(&changed(Noticed::Looking)).is_none(),
+            "still asking"
+        );
+        let [seen, save] = settings.keep_mine();
+        assert!(matches!(seen, Command::SeenOnDisk(Document::Settings)));
+        assert!(matches!(save, Command::SaveSettings(_)));
+        assert!(!settings.changed_on_disk());
     }
 }

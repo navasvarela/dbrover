@@ -23,6 +23,12 @@ pub(super) struct ConfigFile {
     pub keep: bool,
     /// Why the last save failed, until a later one succeeds.
     pub save_error: Option<String>,
+    /// What another program did to the file, when the console had text it hadn't saved:
+    /// [`Disk::Changed`] holds saves back until **Reload** or **Keep mine**.
+    pub disk: Disk,
+    /// **Reload** or **Keep mine** was chosen, and the engine is yet to be told, before the
+    /// next save.
+    pub answered: bool,
 }
 
 /// A `.sql` file anywhere on disk, and what the console knows of it.
@@ -45,8 +51,9 @@ pub(super) struct SqlFile {
 }
 
 /// What another program did to the file since the console last read or wrote it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum Disk {
+    #[default]
     Unchanged,
     /// Changed while the console had unsaved changes: what the file holds now.
     Changed(String),

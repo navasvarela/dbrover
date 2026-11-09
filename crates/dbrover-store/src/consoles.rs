@@ -8,7 +8,9 @@ use std::{fs, io};
 use dbrover_core::DataSourceId;
 use serde::{Deserialize, Serialize};
 
-use crate::atomic::write_atomically;
+use crate::file_version::{
+    CheckedWrite, FileVersion, Snapshot, read_versioned, write_if_unchanged,
+};
 
 const EXTENSION: &str = "sql";
 
@@ -86,6 +88,14 @@ pub struct SavedConsole {
     pub text: String,
 }
 
+/// A console file as read at start-up, and its version, to notice later changes made by
+/// other programs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadConsole {
+    pub console: SavedConsole,
+    pub version: FileVersion,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ConsoleStoreError {
     #[error("could not read {}", path.display())]
@@ -100,6 +110,9 @@ pub enum ConsoleStoreError {
         #[source]
         source: io::Error,
     },
+    /// Another program wrote the file between DbRover reading it and writing it back.
+    #[error("{} changed on disk while it was being saved", path.display())]
+    ChangedWhileSaving { path: PathBuf },
 }
 
 /// The `consoles/` folder.
@@ -119,28 +132,48 @@ impl ConsoleFiles {
             .join(format!("{}.{EXTENSION}", key.name))
     }
 
-    /// Reads every console file. A missing folder means none were saved yet. Folders that
-    /// aren't a data source id and files that aren't `.sql` are skipped; each file that
-    /// can't be read is an error of its own, so one bad file doesn't hide the others.
+    /// Reads every console file, with the version of each. A missing folder means none were
+    /// saved yet. Folders that aren't a data source id and files that aren't `.sql` are
+    /// skipped; each file that can't be read is an error of its own, so one bad file doesn't
+    /// hide the others.
     ///
     /// # Errors
     ///
     /// [`ConsoleStoreError::Read`] if the folder exists but can't be listed.
     pub fn load_all(
         &self,
-    ) -> Result<Vec<Result<SavedConsole, ConsoleStoreError>>, ConsoleStoreError> {
+    ) -> Result<Vec<Result<ReadConsole, ConsoleStoreError>>, ConsoleStoreError> {
         let mut consoles = Vec::new();
         for (data_source, folder) in self.data_source_folders()? {
             for (name, path) in console_files(&folder)? {
                 let key = ConsoleKey { data_source, name };
-                consoles.push(
-                    fs::read_to_string(&path)
-                        .map(|text| SavedConsole { key, text })
-                        .map_err(|source| ConsoleStoreError::Read { path, source }),
-                );
+                let read = read_versioned(&path)
+                    .map_err(|source| ConsoleStoreError::Read { path, source })
+                    .map(|read| ReadConsole {
+                        console: SavedConsole {
+                            key,
+                            text: read.text.unwrap_or_default(),
+                        },
+                        version: read.version,
+                    });
+                consoles.push(read);
             }
         }
         Ok(consoles)
+    }
+
+    /// The console's file as it is now, to [`write_over`](Self::write_over) later: its text,
+    /// `None` if there is no file.
+    ///
+    /// # Errors
+    ///
+    /// [`ConsoleStoreError::Read`] if it can't be read.
+    pub fn read(&self, key: &ConsoleKey) -> Result<Snapshot<Option<String>>, ConsoleStoreError> {
+        let path = self.path(key);
+        let read =
+            read_versioned(&path).map_err(|source| ConsoleStoreError::Read { path, source })?;
+        let text = read.text.clone();
+        Ok(Snapshot::new(read, text))
     }
 
     fn data_source_folders(&self) -> Result<Vec<(DataSourceId, PathBuf)>, ConsoleStoreError> {
@@ -152,14 +185,26 @@ impl ConsoleFiles {
             .collect())
     }
 
-    /// Replaces the console's file with `text`, atomically.
+    /// Replaces the console's file with `text`, atomically, and returns its new version.
     ///
     /// # Errors
     ///
-    /// [`ConsoleStoreError::Write`] if the folder or file can't be written.
-    pub fn save(&self, key: &ConsoleKey, text: &str) -> Result<(), ConsoleStoreError> {
+    /// [`ConsoleStoreError::ChangedWhileSaving`] if the file is no longer what `read` holds,
+    /// and [`ConsoleStoreError::Write`] if the folder or file can't be written.
+    pub fn write_over(
+        &self,
+        key: &ConsoleKey,
+        read: &Snapshot<Option<String>>,
+        text: &str,
+    ) -> Result<FileVersion, ConsoleStoreError> {
         let path = self.path(key);
-        write_atomically(&path, text).map_err(|source| ConsoleStoreError::Write { path, source })
+        match write_if_unchanged(&path, read.version, text) {
+            Ok(CheckedWrite::Written(version)) => Ok(version),
+            Ok(CheckedWrite::ChangedOnDisk(_)) => {
+                Err(ConsoleStoreError::ChangedWhileSaving { path })
+            }
+            Err(source) => Err(ConsoleStoreError::Write { path, source }),
+        }
     }
 
     /// Removes the console's file. Succeeds if there was none.
@@ -254,9 +299,13 @@ mod tests {
         assert!(files.load_all().unwrap().is_empty());
         let (shop, crm) = (DataSourceId::generate(), DataSourceId::generate());
 
-        files.save(&key(shop, "console"), "select 1;").unwrap();
-        files.save(&key(shop, "console"), "select 2;").unwrap();
-        files.save(&key(crm, "console_2"), "").unwrap();
+        let save = |key: &ConsoleKey, text: &str| {
+            let read = files.read(key).unwrap();
+            files.write_over(key, &read, text).unwrap();
+        };
+        save(&key(shop, "console"), "select 1;");
+        save(&key(shop, "console"), "select 2;");
+        save(&key(crm, "console_2"), "");
         fs::write(
             dir.path()
                 .join("consoles")
@@ -271,7 +320,7 @@ mod tests {
             .load_all()
             .unwrap()
             .into_iter()
-            .map(Result::unwrap)
+            .map(|read| read.unwrap().console)
             .collect();
         loaded.sort_by(|a, b| a.key.cmp(&b.key));
         let mut expected = vec![
@@ -290,5 +339,32 @@ mod tests {
         files.delete(&key(shop, "console")).unwrap();
         files.delete(&key(shop, "console")).unwrap();
         assert_eq!(files.load_all().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn never_writes_over_a_file_changed_since_it_was_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = ConsoleFiles::new(dir.path().join("consoles"));
+        let console = key(DataSourceId::generate(), "console");
+        let read = files.read(&console).unwrap();
+        assert_eq!(
+            (read.value.as_deref(), read.version),
+            (None, FileVersion::Missing)
+        );
+        let written = files.write_over(&console, &read, "select 1;").unwrap();
+        fs::write(files.path(&console), "select 'pulled';").unwrap();
+
+        let stale = Snapshot {
+            version: written,
+            ..read
+        };
+        assert!(matches!(
+            files.write_over(&console, &stale, "select 2;"),
+            Err(ConsoleStoreError::ChangedWhileSaving { .. })
+        ));
+
+        let pulled = files.read(&console).unwrap();
+        assert_eq!(pulled.value.as_deref(), Some("select 'pulled';"));
+        assert_ne!(pulled.version, written);
     }
 }

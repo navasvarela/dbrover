@@ -1,13 +1,16 @@
+use std::io;
 use std::path::{Path, PathBuf};
-use std::{fs, io};
 
 use dbrover_core::DataSource;
 use serde::{Deserialize, Serialize};
 
 use crate::atomic::write_atomically;
+use crate::file_version::{
+    CheckedWrite, FileVersion, Snapshot, read_versioned, write_if_unchanged,
+};
 
 const HEADER: &str = "\
-# DbRover data sources. Safe to edit by hand while DbRover is closed.
+# DbRover data sources. DbRover picks up changes when its window comes back to the front.
 # Passwords are stored in the OS keychain, never in this file.
 # Comments are not preserved when DbRover saves this file.
 
@@ -29,6 +32,9 @@ pub enum StoreError {
     },
     #[error("could not serialize the data sources")]
     Serialize(#[source] toml::ser::Error),
+    /// Another program wrote the file between DbRover reading it and writing it back.
+    #[error("{} changed on disk while it was being saved; try again", path.display())]
+    ChangedWhileSaving { path: PathBuf },
     #[error("could not write {}", path.display())]
     Write {
         path: PathBuf,
@@ -70,21 +76,64 @@ impl DataSourceFile {
     ///
     /// [`StoreError::Read`] or [`StoreError::Parse`] if the file exists but can't be used.
     pub fn load(&self) -> Result<Vec<DataSource>, StoreError> {
-        let text = match fs::read_to_string(&self.path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(source) => {
-                return Err(StoreError::Read {
-                    path: self.path.clone(),
-                    source,
-                });
-            }
-        };
-        let contents: FileContents = toml::from_str(&text).map_err(|source| StoreError::Parse {
+        self.read().map(|snapshot| snapshot.value)
+    }
+
+    /// Reads all data sources with the file's version, to [`write_over`](Self::write_over)
+    /// later.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Read`] or [`StoreError::Parse`] if the file exists but can't be used.
+    pub fn read(&self) -> Result<Snapshot<Vec<DataSource>>, StoreError> {
+        let read = read_versioned(&self.path).map_err(|source| StoreError::Read {
             path: self.path.clone(),
             source,
         })?;
-        Ok(contents.data_sources)
+        let data_sources = match &read.text {
+            Some(text) => {
+                let contents: FileContents =
+                    toml::from_str(text).map_err(|source| StoreError::Parse {
+                        path: self.path.clone(),
+                        source,
+                    })?;
+                contents.data_sources
+            }
+            None => Vec::new(),
+        };
+        Ok(Snapshot::new(read, data_sources))
+    }
+
+    /// Writes `data_sources` over the file `read` came from, and returns its new version.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::ChangedWhileSaving`] if the file is no longer what `read` holds, and
+    /// [`StoreError::Write`] if it can't be written.
+    pub fn write_over(
+        &self,
+        read: &Snapshot<Vec<DataSource>>,
+        data_sources: &[DataSource],
+    ) -> Result<FileVersion, StoreError> {
+        let text = self.text_of(data_sources)?;
+        let written = write_if_unchanged(&self.path, read.version, &text).map_err(|source| {
+            StoreError::Write {
+                path: self.path.clone(),
+                source,
+            }
+        })?;
+        match written {
+            CheckedWrite::Written(version) => Ok(version),
+            CheckedWrite::ChangedOnDisk(_) => Err(StoreError::ChangedWhileSaving {
+                path: self.path.clone(),
+            }),
+        }
+    }
+
+    fn text_of(&self, data_sources: &[DataSource]) -> Result<String, StoreError> {
+        let body =
+            toml::to_string(&FileContentsRef { data_sources }).map_err(StoreError::Serialize)?;
+        Ok(format!("{HEADER}{body}"))
     }
 
     /// Replaces the file's contents with `data_sources`.
@@ -95,9 +144,7 @@ impl DataSourceFile {
     ///
     /// [`StoreError::Write`] if the directory or file can't be written.
     pub fn save(&self, data_sources: &[DataSource]) -> Result<(), StoreError> {
-        let body =
-            toml::to_string(&FileContentsRef { data_sources }).map_err(StoreError::Serialize)?;
-        write_atomically(&self.path, &format!("{HEADER}{body}")).map_err(|source| {
+        write_atomically(&self.path, &self.text_of(data_sources)?).map_err(|source| {
             StoreError::Write {
                 path: self.path.clone(),
                 source,
@@ -108,6 +155,8 @@ impl DataSourceFile {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use dbrover_core::{ConnectionConfig, DataSourceId, SqliteConfig};
 
     use super::*;
@@ -159,5 +208,23 @@ mod tests {
         fs::write(file.path(), "[[data_source]]\nname = 3").unwrap();
 
         assert!(matches!(file.load(), Err(StoreError::Parse { .. })));
+    }
+
+    #[test]
+    fn writes_only_over_the_file_as_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = DataSourceFile::new(dir.path().join("data_sources.toml"));
+        let read = file.read().unwrap();
+        assert_eq!(read.version, FileVersion::Missing);
+        let one = vec![sqlite("one")];
+        let written = file.write_over(&read, &one).unwrap();
+
+        let reread = file.read().unwrap();
+        assert_eq!((&reread.value, reread.version), (&one, written));
+        assert!(matches!(
+            file.write_over(&read, &[]),
+            Err(StoreError::ChangedWhileSaving { .. })
+        ));
+        assert_eq!(file.load().unwrap(), one);
     }
 }

@@ -51,9 +51,10 @@ keys, and adds a line when you trust a new one. See
 
 ## data_sources.toml
 
-You can edit this file by hand **while DbRover is closed**. DbRover reads it at start-up and
-rewrites it every time you save or delete a data source, so changes made while it runs are
-overwritten, and comments are not kept.
+You can edit this file by hand, or change it with `git pull`, while DbRover runs. DbRover
+reads it again when its window comes back to the front, and again just before each save or
+delete, which then changes only the data source you saved or deleted: data sources added or
+changed in the file meanwhile are kept, and the explorer shows them. Comments are not kept.
 
 ```toml
 [[data_source]]
@@ -112,13 +113,17 @@ An export (**File › Export data sources…**) is the same `[[data_source]]` ta
 `format_version = 1` line and the projects as `[[project]]` tables, as `projects.toml` writes
 them. See [Moving data sources to another machine](sharing.md).
 
-If the file can't be read — say, a typo while editing it — the explorer shows the error and
-DbRover refuses to save or delete anything, so it never overwrites your file with an empty list.
-Fix the file and restart DbRover.
+If the file can't be read at start-up — say, a typo while editing it — the explorer shows the
+error and DbRover refuses to save or delete anything, so it never overwrites your file with an
+empty list. Fix the file, then switch back to DbRover. A file that stops being readable while
+DbRover runs, such as one left with a merge's conflict markers, is never written over either:
+the log console says why, saves fail until it is fixed, and the explorer keeps the data sources
+it had.
 
 ## projects.toml
 
-Like `data_sources.toml`, edit it only while DbRover is closed; comments are not kept.
+Like `data_sources.toml`, DbRover reads it again when its window comes back to the front and
+before each save, which changes only the project you saved; comments are not kept.
 
 ```toml
 [mcp_defaults]

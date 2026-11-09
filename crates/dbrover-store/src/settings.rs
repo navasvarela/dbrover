@@ -9,8 +9,9 @@ use std::time::Duration;
 use dbrover_core::ByteSize;
 use serde::{Deserialize, Serialize};
 
-use crate::atomic::write_atomically;
-use crate::config_text::read_if_exists;
+use crate::file_version::{
+    CheckedWrite, FileVersion, Snapshot, read_versioned, write_if_unchanged,
+};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -208,6 +209,9 @@ pub enum SettingsError {
     },
     #[error("could not write the settings as TOML")]
     Serialize(#[source] toml::ser::Error),
+    /// Another program wrote the file between DbRover reading it and writing it back.
+    #[error("{} changed on disk while it was being saved", path.display())]
+    ChangedWhileSaving { path: PathBuf },
 }
 
 #[derive(Debug, Clone)]
@@ -232,30 +236,54 @@ impl SettingsFile {
     /// [`SettingsError::Read`] or [`SettingsError::Parse`] if the file exists but can't be
     /// used.
     pub fn load(&self) -> Result<Settings, SettingsError> {
-        let read = read_if_exists(&self.path).map_err(|source| SettingsError::Read {
-            path: self.path.clone(),
-            source,
-        })?;
-        let Some(text) = read else {
-            return Ok(Settings::default());
-        };
-        toml::from_str(&text).map_err(|source| SettingsError::Parse {
-            path: self.path.clone(),
-            source,
-        })
+        self.read().map(|snapshot| snapshot.value)
     }
 
-    /// Writes `settings`, replacing the file. Comments in a hand-edited file are lost.
+    /// The settings with the file's version, to [`write_over`](Self::write_over) later.
     ///
     /// # Errors
     ///
-    /// [`SettingsError::Write`] if the file can't be written.
-    pub fn save(&self, settings: &Settings) -> Result<(), SettingsError> {
-        let text = toml::to_string(settings).map_err(SettingsError::Serialize)?;
-        write_atomically(&self.path, &text).map_err(|source| SettingsError::Write {
+    /// As [`load`](Self::load).
+    pub fn read(&self) -> Result<Snapshot<Settings>, SettingsError> {
+        let read = read_versioned(&self.path).map_err(|source| SettingsError::Read {
             path: self.path.clone(),
             source,
-        })
+        })?;
+        let settings = match &read.text {
+            Some(text) => toml::from_str(text).map_err(|source| SettingsError::Parse {
+                path: self.path.clone(),
+                source,
+            })?,
+            None => Settings::default(),
+        };
+        Ok(Snapshot::new(read, settings))
+    }
+
+    /// Writes `settings` over the file `read` came from, and returns its new version.
+    /// Comments in a hand-edited file are lost.
+    ///
+    /// # Errors
+    ///
+    /// [`SettingsError::ChangedWhileSaving`] if the file is no longer what `read` holds, and
+    /// [`SettingsError::Write`] if it can't be written.
+    pub fn write_over(
+        &self,
+        read: &Snapshot<Settings>,
+        settings: &Settings,
+    ) -> Result<FileVersion, SettingsError> {
+        let text = toml::to_string(settings).map_err(SettingsError::Serialize)?;
+        let written = write_if_unchanged(&self.path, read.version, &text).map_err(|source| {
+            SettingsError::Write {
+                path: self.path.clone(),
+                source,
+            }
+        })?;
+        match written {
+            CheckedWrite::Written(version) => Ok(version),
+            CheckedWrite::ChangedOnDisk(_) => Err(SettingsError::ChangedWhileSaving {
+                path: self.path.clone(),
+            }),
+        }
     }
 }
 
@@ -350,7 +378,8 @@ mod tests {
             },
         };
 
-        file.save(&settings).unwrap();
+        let read = file.read().unwrap();
+        file.write_over(&read, &settings).unwrap();
         assert_eq!(file.load().unwrap(), settings);
         let text = std::fs::read_to_string(file.path()).unwrap();
         assert!(

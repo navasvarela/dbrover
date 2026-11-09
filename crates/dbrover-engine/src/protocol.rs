@@ -20,9 +20,18 @@ use dbrover_store::{
 };
 
 use crate::{
-    Export, ExportAll, ExportProgramRequest, HostKey, InstalledUpdate, PasswordNeeded,
+    Export, ExportAll, ExportProgramRequest, HostKey, InstalledUpdate, Noticed, PasswordNeeded,
     ProgramFailure, ProgramId, ProgramOutput, ProgramRequest, Release, WatchedFile,
 };
+
+/// A file in the settings folder that the app shows as one document, which the engine
+/// rewrites only over the version the app last saw (VC1b in `docs/version-control.md`).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Document {
+    Settings,
+    Console(ConsoleKey),
+    Diagram(DiagramKey),
+}
 
 /// Identifies a query console. Chosen by the UI, unique for the app's lifetime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -206,7 +215,8 @@ pub enum Command {
     /// Disconnects the console's connection, which rolls back its open transaction.
     CloseConsole(ConsoleId),
     /// Writes a console's text to its file. Saves are applied in the order sent. A failure is
-    /// reported as [`Event::ConsoleSaveFailed`].
+    /// reported as [`Event::ConsoleSaveFailed`], and a file another program changed since the
+    /// app last saw it isn't written but reported as [`Event::ConsoleChangedOnDisk`].
     SaveConsole {
         key: ConsoleKey,
         text: String,
@@ -214,7 +224,8 @@ pub enum Command {
     /// Removes a console's file, if it exists.
     DeleteConsoleFile(ConsoleKey),
     /// Writes a diagram's file. Saves are applied in the order sent. A failure is reported as
-    /// [`Event::DiagramSaveFailed`].
+    /// [`Event::DiagramSaveFailed`], and a file another program changed since the app last
+    /// saw it isn't written but reported as [`Event::DiagramChangedOnDisk`].
     SaveDiagram {
         key: DiagramKey,
         file: DiagramFile,
@@ -347,9 +358,20 @@ pub enum Command {
     },
     /// Reads `settings.toml` again. Answered by [`Event::SettingsLoaded`].
     ReloadSettings,
-    /// Replaces `settings.toml` with these settings, then reads it. Answered by
-    /// [`Event::SettingsLoaded`].
+    /// Replaces `settings.toml` with these settings. Answered by [`Event::SettingsLoaded`], or
+    /// by [`Event::SettingsChangedOnDisk`] if another program changed the file since the app
+    /// last saw it, which isn't written then.
     SaveSettings(Settings),
+    /// Reads the files in the settings folder again that another program may have changed
+    /// (a `git pull`), as the window comes back to the front. Changed data sources and
+    /// projects are answered with the events their own changes send, and changed documents
+    /// with [`Event::SettingsChangedOnDisk`], [`Event::ConsoleChangedOnDisk`] and
+    /// [`Event::DiagramChangedOnDisk`].
+    LookForOutsideChanges,
+    /// The app has taken in what a document's file holds after a `…ChangedOnDisk` event, by
+    /// showing it (**Reload**) or by keeping its own (**Keep mine**): saves of the document,
+    /// held until now, may write over that version.
+    SeenOnDisk(Document),
     /// Reads `actions.toml`, `snippets.toml` and `theme.toml` again. Answered by an
     /// [`Event::CustomFileLoaded`] for each.
     ReloadCustomFiles,
@@ -644,6 +666,26 @@ pub enum Event {
     ConsoleSaveFailed {
         key: ConsoleKey,
         error: String,
+    },
+    /// Another program changed a console's file since the app last saw it: what it holds now.
+    /// Saves of the console wait until [`Command::SeenOnDisk`].
+    ConsoleChangedOnDisk {
+        key: ConsoleKey,
+        text: String,
+        noticed: Noticed,
+    },
+    /// Another program changed a diagram's file since the app last saw it: what it holds now.
+    /// Saves of the diagram wait until [`Command::SeenOnDisk`].
+    DiagramChangedOnDisk {
+        key: DiagramKey,
+        file: DiagramFile,
+        noticed: Noticed,
+    },
+    /// Another program changed `settings.toml` since the app last saw it: what it holds now.
+    /// Saves of the settings wait until [`Command::SeenOnDisk`].
+    SettingsChangedOnDisk {
+        settings: Settings,
+        noticed: Noticed,
     },
     /// The answer to [`Command::OpenSqlFile`].
     SqlFileRead {

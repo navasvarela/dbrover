@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 
 use dbrover_core::{CatalogPath, CostEstimate, DataSource, DataSourceId, NodeKind, SafetyLevel};
 use dbrover_engine::{
-    Command, ConsoleId, CostApproval, Event, RunId, RunOrigin, RunPurpose, TransactionMode,
-    WatchedFile,
+    Command, ConsoleId, CostApproval, Document, Event, RunId, RunOrigin, RunPurpose,
+    TransactionMode, WatchedFile,
 };
 use dbrover_export::ExportSpec;
 use dbrover_language::QueryLanguage;
@@ -334,6 +334,7 @@ impl Consoles {
         let mut next_due: Option<Duration> = None;
         let mut saves = Vec::new();
         for console in self.open.values_mut() {
+            saves.extend(console.take_answer());
             match console.take_save(now, SAVE_DELAY) {
                 Ok(save) => saves.push(save),
                 Err(Some(wait)) => next_due = Some(next_due.map_or(wait, |next| next.min(wait))),
@@ -450,6 +451,16 @@ impl Consoles {
                     console.file_changed(contents.as_ref());
                 }
                 None
+            }
+            Event::ConsoleChangedOnDisk { key, text, noticed } => {
+                if let Some(console) = self.open.get_mut(key) {
+                    console.config_file_changed(text, *noticed);
+                    return None;
+                }
+                if let Some(saved) = self.saved.files.get_mut(key) {
+                    saved.clone_from(text);
+                }
+                Some(Command::SeenOnDisk(Document::Console(key.clone())))
             }
             _ => None,
         }
@@ -750,6 +761,7 @@ fn title(data_source: &str, name: &ConsoleName) -> String {
 #[cfg(test)]
 mod tests {
     use dbrover_core::{ConnectionConfig, SqliteConfig};
+    use dbrover_engine::Noticed;
     use dbrover_store::SavedConsole;
 
     use super::*;
@@ -1088,6 +1100,50 @@ mod tests {
         ));
         assert_eq!(next, None);
         assert!(consoles.unsaved().is_empty());
+    }
+
+    #[test]
+    fn a_console_follows_its_file_unless_it_has_unsaved_text_and_then_asks() {
+        let mut consoles = Consoles::default();
+        let key = consoles.open(&data_source("shop"), "select 1".to_owned());
+        let changed = |text: &str, noticed| Event::ConsoleChangedOnDisk {
+            key: key.clone(),
+            text: text.to_owned(),
+            noticed,
+        };
+        let seen = Command::SeenOnDisk(Document::Console(key.clone()));
+        let start = Instant::now();
+
+        consoles.apply(&changed("select 'pulled'", Noticed::Looking));
+        assert_eq!(consoles.open[&key].text(), "select 'pulled'");
+        let (commands, _) = consoles.due_saves(start);
+        assert!(
+            matches!(commands.as_slice(), [command] if format!("{command:?}") == format!("{seen:?}"))
+        );
+
+        consoles.open.get_mut(&key).unwrap().edited(start);
+        consoles.apply(&changed("select 'pulled again'", Noticed::Looking));
+        assert_eq!(
+            consoles.open[&key].text(),
+            "select 'pulled'",
+            "kept, and asked"
+        );
+        assert!(consoles.open[&key].disk().is_some());
+        let (commands, _) = consoles.due_saves(start + SAVE_DELAY * 2);
+        assert!(
+            commands.is_empty(),
+            "nothing is saved while it asks: {commands:?}"
+        );
+
+        consoles.open.get_mut(&key).unwrap().keep_mine();
+        let (commands, _) = consoles.due_saves(start + SAVE_DELAY * 4);
+        assert!(
+            matches!(
+                commands.as_slice(),
+                [Command::SeenOnDisk(_), Command::SaveConsole { text, .. }] if text == "select 'pulled'"
+            ),
+            "{commands:?}"
+        );
     }
 
     #[test]

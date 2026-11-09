@@ -4,18 +4,21 @@
 
 use std::collections::HashSet;
 use std::fmt;
+use std::io;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use std::{fs, io};
 
 use dbrover_core::ProjectId;
 use serde::{Deserialize, Serialize};
 
 use crate::atomic::write_atomically;
+use crate::file_version::{
+    CheckedWrite, FileVersion, Snapshot, read_versioned, write_if_unchanged,
+};
 
 const HEADER: &str = "\
-# DbRover projects. Safe to edit by hand while DbRover is closed.
+# DbRover projects. DbRover picks up changes when its window comes back to the front.
 # Which project a data source is in is written in data_sources.toml.
 # Comments are not preserved when DbRover saves this file.
 
@@ -425,6 +428,9 @@ pub enum ProjectStoreError {
     Invalid { path: PathBuf, reason: String },
     #[error("could not serialize the projects")]
     Serialize(#[source] toml::ser::Error),
+    /// Another program wrote the file between DbRover reading it and writing it back.
+    #[error("{} changed on disk while it was being saved; try again", path.display())]
+    ChangedWhileSaving { path: PathBuf },
     #[error("could not write {}", path.display())]
     Write {
         path: PathBuf,
@@ -456,20 +462,24 @@ impl ProjectFile {
     /// [`ProjectStoreError::Invalid`] if the file exists but can't be used. Callers must then
     /// not [`save`](Self::save) over it, or the user's projects are lost.
     pub fn load(&self) -> Result<Projects, ProjectStoreError> {
-        let text = match fs::read_to_string(&self.path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return Ok(Projects::default());
-            }
-            Err(source) => {
-                return Err(ProjectStoreError::Read {
-                    path: self.path.clone(),
-                    source,
-                });
-            }
+        self.read().map(|snapshot| snapshot.value)
+    }
+
+    /// Reads the projects with the file's version, to [`write_over`](Self::write_over) later.
+    ///
+    /// # Errors
+    ///
+    /// As [`load`](Self::load).
+    pub fn read(&self) -> Result<Snapshot<Projects>, ProjectStoreError> {
+        let read = read_versioned(&self.path).map_err(|source| ProjectStoreError::Read {
+            path: self.path.clone(),
+            source,
+        })?;
+        let Some(text) = &read.text else {
+            return Ok(Snapshot::new(read, Projects::default()));
         };
         let projects: Projects =
-            toml::from_str(&text).map_err(|source| ProjectStoreError::Parse {
+            toml::from_str(text).map_err(|source| ProjectStoreError::Parse {
                 path: self.path.clone(),
                 source,
             })?;
@@ -479,7 +489,33 @@ impl ProjectFile {
                 path: self.path.clone(),
                 reason,
             })?;
-        Ok(projects)
+        Ok(Snapshot::new(read, projects))
+    }
+
+    /// Writes `projects` over the file `read` came from, and returns its new version.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjectStoreError::ChangedWhileSaving`] if the file is no longer what `read` holds,
+    /// and [`ProjectStoreError::Write`] if it can't be written.
+    pub fn write_over(
+        &self,
+        read: &Snapshot<Projects>,
+        projects: &Projects,
+    ) -> Result<FileVersion, ProjectStoreError> {
+        let text = text_of(projects)?;
+        let written = write_if_unchanged(&self.path, read.version, &text).map_err(|source| {
+            ProjectStoreError::Write {
+                path: self.path.clone(),
+                source,
+            }
+        })?;
+        match written {
+            CheckedWrite::Written(version) => Ok(version),
+            CheckedWrite::ChangedOnDisk(_) => Err(ProjectStoreError::ChangedWhileSaving {
+                path: self.path.clone(),
+            }),
+        }
     }
 
     /// Replaces the file's contents. The defaults are always written out, so someone editing
@@ -491,8 +527,7 @@ impl ProjectFile {
     ///
     /// [`ProjectStoreError::Write`] if the directory or file can't be written.
     pub fn save(&self, projects: &Projects) -> Result<(), ProjectStoreError> {
-        let body = toml::to_string(projects).map_err(ProjectStoreError::Serialize)?;
-        write_atomically(&self.path, &format!("{HEADER}{body}")).map_err(|source| {
+        write_atomically(&self.path, &text_of(projects)?).map_err(|source| {
             ProjectStoreError::Write {
                 path: self.path.clone(),
                 source,
@@ -501,8 +536,15 @@ impl ProjectFile {
     }
 }
 
+fn text_of(projects: &Projects) -> Result<String, ProjectStoreError> {
+    let body = toml::to_string(projects).map_err(ProjectStoreError::Serialize)?;
+    Ok(format!("{HEADER}{body}"))
+}
+
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     fn slug(text: &str) -> ProjectSlug {
