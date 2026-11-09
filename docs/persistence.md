@@ -72,9 +72,12 @@ the default folder for that session (the app says so; `dbrover mcp` stops instea
   resolved when connecting; a port with one is written as a string (W1).
 - `project` and `mcp_login` are optional too. `mcp_login = { user = "…" }` is the database user
   `dbrover mcp` signs in as instead of the data source's own (see [MCP server](mcp-server.md)).
-- Comments and unknown fields are **not** preserved when DbRover rewrites the file (it is written
-  with `serde` + `toml`), and the file header says so. Switching to `toml_edit` to edit the
-  document in place is a follow-up if hand-editing becomes common.
+- Edited in place with `toml_edit` (VC1c): the data sources the file held and those to write
+  are both serialized as a whole file would be, and only the keys that differ are changed in
+  the file's own document, entries matched by `id`. Comments, blank lines and order survive; a
+  new entry goes at the end, a removed one takes its own lines. A header an earlier version
+  wrote ("Comments are not preserved…") is replaced by the current one. Unknown fields are
+  still refused when reading.
 
 ```toml
 [[data_source]]
@@ -158,7 +161,9 @@ read_only = true
   reported as `Event::SettingsChangedOnDisk`. Found when the window comes back to the front,
   the app reads it again; found by a save, the Settings window asks, **Reload** or **Keep
   mine**.
-- Rewriting the file drops comments in it.
+- Edited in place like `data_sources.toml` (VC1c): a save changes only the settings that
+  differ from what the file held, keeping comments and order; a section the file leaves out
+  gets only the settings changed in it.
 
 ```toml
 [format]

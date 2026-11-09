@@ -8,13 +8,22 @@ use crate::atomic::write_atomically;
 use crate::file_version::{
     CheckedWrite, FileVersion, Snapshot, read_versioned, write_if_unchanged,
 };
+use crate::in_place::{Header, InPlaceError, edit_in_place};
 
-const HEADER: &str = "\
-# DbRover data sources. DbRover picks up changes when its window comes back to the front.
+const HEADER: Header = Header {
+    current: "\
+# DbRover data sources. Edit by hand or keep in Git: DbRover picks up changes when its
+# window comes back to the front, and its saves keep your comments and order.
+# Passwords are stored in the OS keychain, never in this file.
+
+",
+    earlier: &["\
+# DbRover data sources. Safe to edit by hand while DbRover is closed.
 # Passwords are stored in the OS keychain, never in this file.
 # Comments are not preserved when DbRover saves this file.
 
-";
+"],
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -32,6 +41,12 @@ pub enum StoreError {
     },
     #[error("could not serialize the data sources")]
     Serialize(#[source] toml::ser::Error),
+    #[error("could not write the data sources into {}", path.display())]
+    Edit {
+        path: PathBuf,
+        #[source]
+        source: InPlaceError,
+    },
     /// Another program wrote the file between DbRover reading it and writing it back.
     #[error("{} changed on disk while it was being saved; try again", path.display())]
     ChangedWhileSaving { path: PathBuf },
@@ -115,7 +130,18 @@ impl DataSourceFile {
         read: &Snapshot<Vec<DataSource>>,
         data_sources: &[DataSource],
     ) -> Result<FileVersion, StoreError> {
-        let text = self.text_of(data_sources)?;
+        let text = edit_in_place(
+            read.text.as_deref(),
+            &FileContentsRef {
+                data_sources: &read.value,
+            },
+            &FileContentsRef { data_sources },
+            &HEADER,
+        )
+        .map_err(|source| StoreError::Edit {
+            path: self.path.clone(),
+            source,
+        })?;
         let written = write_if_unchanged(&self.path, read.version, &text).map_err(|source| {
             StoreError::Write {
                 path: self.path.clone(),
@@ -133,7 +159,7 @@ impl DataSourceFile {
     fn text_of(&self, data_sources: &[DataSource]) -> Result<String, StoreError> {
         let body =
             toml::to_string(&FileContentsRef { data_sources }).map_err(StoreError::Serialize)?;
-        Ok(format!("{HEADER}{body}"))
+        Ok(format!("{}{body}", HEADER.current))
     }
 
     /// Replaces the file's contents with `data_sources`.
@@ -226,5 +252,78 @@ mod tests {
             Err(StoreError::ChangedWhileSaving { .. })
         ));
         assert_eq!(file.load().unwrap(), one);
+    }
+
+    #[test]
+    fn a_save_changes_only_the_lines_of_what_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = DataSourceFile::new(dir.path().join("data_sources.toml"));
+        let (local, remote) = (sqlite("local"), sqlite("remote"));
+        file.save(&[local.clone(), remote.clone()]).unwrap();
+        let written = fs::read_to_string(file.path()).unwrap();
+        let by_hand = written
+            .replace(
+                "[[data_source]]\nid = \"",
+                "# Kept in our team's repository.\n[[data_source]]\nid = \"",
+            )
+            .replace("name = \"remote\"", "name = \"remote\" # the shared one");
+        fs::write(file.path(), &by_hand).unwrap();
+
+        let write = |data_sources: &[DataSource]| {
+            let read = file.read().unwrap();
+            file.write_over(&read, data_sources).unwrap();
+            fs::read_to_string(file.path()).unwrap()
+        };
+        let renamed = DataSource {
+            name: "remote eu".to_owned(),
+            ..remote.clone()
+        };
+        assert_eq!(
+            write(&[local.clone(), renamed.clone()]),
+            by_hand.replace(
+                "\"remote\" # the shared one",
+                "\"remote eu\" # the shared one"
+            )
+        );
+
+        let added = sqlite("added");
+        let with_added = write(&[local.clone(), renamed.clone(), added.clone()]);
+        assert!(
+            with_added.starts_with(&by_hand.replace("\"remote\" #", "\"remote eu\" #")),
+            "{with_added}"
+        );
+        assert!(
+            with_added.ends_with("path = \"/data/added.db\"\nread_only = false\n"),
+            "{with_added}"
+        );
+
+        let without_local = write(&[renamed.clone(), added.clone()]);
+        assert!(!without_local.contains("local"), "{without_local}");
+        assert_eq!(
+            without_local
+                .matches("# Kept in our team's repository.")
+                .count(),
+            1
+        );
+        assert_eq!(file.load().unwrap(), [renamed, added]);
+    }
+
+    #[test]
+    fn replaces_the_header_earlier_versions_wrote() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = DataSourceFile::new(dir.path().join("data_sources.toml"));
+        let one = sqlite("one");
+        file.save(std::slice::from_ref(&one)).unwrap();
+        let body = fs::read_to_string(file.path())
+            .unwrap()
+            .replace(HEADER.current, "");
+        fs::write(file.path(), format!("{}{body}", HEADER.earlier[0])).unwrap();
+
+        let read = file.read().unwrap();
+        file.write_over(&read, &[one, sqlite("two")]).unwrap();
+
+        let text = fs::read_to_string(file.path()).unwrap();
+        assert!(text.starts_with(HEADER.current), "{text}");
+        assert!(!text.contains("Comments are not preserved"), "{text}");
     }
 }

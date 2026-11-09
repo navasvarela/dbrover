@@ -16,14 +16,22 @@ use crate::atomic::write_atomically;
 use crate::file_version::{
     CheckedWrite, FileVersion, Snapshot, read_versioned, write_if_unchanged,
 };
+use crate::in_place::{Header, InPlaceError, edit_in_place};
 
-const HEADER: &str = "\
-# DbRover projects. DbRover picks up changes when its window comes back to the front.
+const HEADER: Header = Header {
+    current: "\
+# DbRover projects. Edit by hand or keep in Git: DbRover picks up changes when its window
+# comes back to the front, and its saves keep your comments and order.
+# Which project a data source is in is written in data_sources.toml.
+
+",
+    earlier: &["\
+# DbRover projects. Safe to edit by hand while DbRover is closed.
 # Which project a data source is in is written in data_sources.toml.
 # Comments are not preserved when DbRover saves this file.
 
-";
-
+"],
+};
 /// Everything `projects.toml` holds.
 ///
 /// Unknown keys are refused here and in every table below, rather than ignored, because a
@@ -428,6 +436,12 @@ pub enum ProjectStoreError {
     Invalid { path: PathBuf, reason: String },
     #[error("could not serialize the projects")]
     Serialize(#[source] toml::ser::Error),
+    #[error("could not write the projects into {}", path.display())]
+    Edit {
+        path: PathBuf,
+        #[source]
+        source: InPlaceError,
+    },
     /// Another program wrote the file between DbRover reading it and writing it back.
     #[error("{} changed on disk while it was being saved; try again", path.display())]
     ChangedWhileSaving { path: PathBuf },
@@ -503,7 +517,12 @@ impl ProjectFile {
         read: &Snapshot<Projects>,
         projects: &Projects,
     ) -> Result<FileVersion, ProjectStoreError> {
-        let text = text_of(projects)?;
+        let text = edit_in_place(read.text.as_deref(), &read.value, projects, &HEADER).map_err(
+            |source| ProjectStoreError::Edit {
+                path: self.path.clone(),
+                source,
+            },
+        )?;
         let written = write_if_unchanged(&self.path, read.version, &text).map_err(|source| {
             ProjectStoreError::Write {
                 path: self.path.clone(),
@@ -538,7 +557,7 @@ impl ProjectFile {
 
 fn text_of(projects: &Projects) -> Result<String, ProjectStoreError> {
     let body = toml::to_string(projects).map_err(ProjectStoreError::Serialize)?;
-    Ok(format!("{HEADER}{body}"))
+    Ok(format!("{}{body}", HEADER.current))
 }
 
 #[cfg(test)]
@@ -657,6 +676,36 @@ mod tests {
         assert!(text.contains("schemas = [\"public\"]"), "{text}");
         assert!(text.contains("schemas = \"all\""), "{text}");
         assert!(!file.path().with_extension("toml.tmp").exists());
+    }
+
+    #[test]
+    fn a_save_keeps_comments_and_edits_a_projects_own_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = ProjectFile::new(dir.path().join("projects.toml"));
+        let (shop, analytics) = (project("Shop"), project("Analytics"));
+        file.save(&Projects {
+            mcp_defaults: McpPermissions::default(),
+            projects: vec![shop.clone(), analytics.clone()],
+        })
+        .unwrap();
+        let by_hand = fs::read_to_string(file.path()).unwrap().replace(
+            "[mcp_defaults]\n",
+            "# Assistants may only look.\n[mcp_defaults]\n",
+        );
+        fs::write(file.path(), &by_hand).unwrap();
+
+        let read = file.read().unwrap();
+        let mut changed = read.value.clone();
+        changed.projects[1].mcp.max_rows = NonZeroU32::new(50);
+        file.write_over(&read, &changed).unwrap();
+
+        let text = fs::read_to_string(file.path()).unwrap();
+        assert!(text.starts_with(&by_hand), "{text}");
+        assert_eq!(
+            text.strip_prefix(by_hand.as_str()),
+            Some("\n[project.mcp]\nmax_rows = 50\n")
+        );
+        assert_eq!(file.load().unwrap(), changed);
     }
 
     #[test]

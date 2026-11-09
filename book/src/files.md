@@ -54,7 +54,9 @@ keys, and adds a line when you trust a new one. See
 You can edit this file by hand, or change it with `git pull`, while DbRover runs. DbRover
 reads it again when its window comes back to the front, and again just before each save or
 delete, which then changes only the data source you saved or deleted: data sources added or
-changed in the file meanwhile are kept, and the explorer shows them. Comments are not kept.
+changed in the file meanwhile are kept, and the explorer shows them. A save changes only the
+lines of the data source it saves: your comments, blank lines and the order you chose stay, and
+a new data source goes at the end.
 
 ```toml
 [[data_source]]
@@ -123,7 +125,8 @@ it had.
 ## projects.toml
 
 Like `data_sources.toml`, DbRover reads it again when its window comes back to the front and
-before each save, which changes only the project you saved; comments are not kept.
+before each save, which changes only the lines of the project or setting you saved, keeping
+your comments and order.
 
 ```toml
 [mcp_defaults]
