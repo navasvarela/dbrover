@@ -189,6 +189,14 @@ end. A diff then shows the one data source you edited. This was already a follow
 [Persistence](persistence.md#data-sources) "if hand-editing becomes common"; keeping the files
 in Git is that case. Unknown keys are still refused when reading, as today.
 
+Made precise while building it (VC1c): what the file held and what is written are both
+serialized as a whole file would be and compared key by key, so only a value that changed is
+rewritten, in DbRover's own spelling, and the rest of the file is left byte for byte; there is
+no first save that reformats the whole file. A section the file leaves out (all defaults) gets
+only the settings changed in it. The header earlier versions wrote at the top of
+`data_sources.toml` and `projects.toml`, which said comments are dropped, is replaced by one
+that says they are kept; any other comment there is the user's and stays.
+
 ### Keeping the history out of commits (VC1d)
 
 DbRover writes a `.gitignore` in the settings folder when it creates the folder, or when a
@@ -353,9 +361,9 @@ same two.
 - **Modification times that lie.** Some synced folders and network drives keep the time when
   the content changed. The hash is checked as well as the time, so a changed file is noticed
   whatever its time says, at the cost of reading a small file before each save.
-- **`toml_edit` and the files' existing format.** The first save after VC1c may reformat a file
-  once (quoting, spacing). The release notes say so; later saves change only the lines that
-  changed.
+- **`toml_edit` and the files' existing format.** A value DbRover changes is written in its
+  own spelling (quoting, spacing); everything else in the file stays as written. (Planned as a
+  one-off reformat on the first save; VC1c compares values instead, so there is none.)
 - **A `.gitignore` nobody wanted.** It is a small, commented file in DbRover's own folder,
   written once and never touched again; deleting it is respected.
 - **A large repository in the tree.** Reading a folder of thousands of files would stall a

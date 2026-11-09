@@ -2396,7 +2396,7 @@ after CI fixes, the reports track and W13, and links no Git library.
     `git pull` while it runs is no longer undone by the next save; data sources and projects
     merge per entry, the settings, consoles and diagrams offer **Reload** or **Keep mine**, and
     the check also runs when the window comes back to the front.
-  - **VC1c — Comments and order kept:** `data_sources.toml`, `projects.toml` and
+  - **VC1c — Comments and order kept:** built; `data_sources.toml`, `projects.toml` and
     `settings.toml` edited in place with `toml_edit`, so a save changes only its own lines.
   - **VC1d — A `.gitignore` for the history:** written when the settings folder is created or
     chosen, never replaced, so `history.sqlite` isn't committed.

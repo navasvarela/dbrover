@@ -86,6 +86,6 @@ fn a_pull_while_the_app_runs_is_shown_and_kept_by_the_next_save() {
     assert!(
         fs::read_to_string(dir.path().join("data_sources.toml"))
             .unwrap()
-            .contains("picks up changes when its window comes back to the front")
+            .contains("its saves keep your comments and order")
     );
 }

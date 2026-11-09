@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::file_version::{
     CheckedWrite, FileVersion, Snapshot, read_versioned, write_if_unchanged,
 };
+use crate::in_place::{Header, InPlaceError, edit_in_place};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -207,8 +208,12 @@ pub enum SettingsError {
         #[source]
         source: io::Error,
     },
-    #[error("could not write the settings as TOML")]
-    Serialize(#[source] toml::ser::Error),
+    #[error("could not write the settings into {}", path.display())]
+    Edit {
+        path: PathBuf,
+        #[source]
+        source: InPlaceError,
+    },
     /// Another program wrote the file between DbRover reading it and writing it back.
     #[error("{} changed on disk while it was being saved", path.display())]
     ChangedWhileSaving { path: PathBuf },
@@ -259,8 +264,8 @@ impl SettingsFile {
         Ok(Snapshot::new(read, settings))
     }
 
-    /// Writes `settings` over the file `read` came from, and returns its new version.
-    /// Comments in a hand-edited file are lost.
+    /// Writes `settings` over the file `read` came from, changing only the settings that
+    /// differ from `read`'s, and returns its new version. Comments and order are kept.
     ///
     /// # Errors
     ///
@@ -271,7 +276,11 @@ impl SettingsFile {
         read: &Snapshot<Settings>,
         settings: &Settings,
     ) -> Result<FileVersion, SettingsError> {
-        let text = toml::to_string(settings).map_err(SettingsError::Serialize)?;
+        let text = edit_in_place(read.text.as_deref(), &read.value, settings, &Header::NONE)
+            .map_err(|source| SettingsError::Edit {
+                path: self.path.clone(),
+                source,
+            })?;
         let written = write_if_unchanged(&self.path, read.version, &text).map_err(|source| {
             SettingsError::Write {
                 path: self.path.clone(),
@@ -396,5 +405,43 @@ mod tests {
 
         std::fs::write(file.path(), "[format]\nindent = 2\n").unwrap();
         assert!(matches!(file.load(), Err(SettingsError::Parse { .. })));
+    }
+
+    #[test]
+    fn a_save_changes_only_the_settings_that_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = SettingsFile::new(dir.path().join("settings.toml"));
+        let by_hand = "\
+# Shared by the team.
+[format]
+keyword_case = \"lower\" # our house style
+indent_width = 2
+";
+        std::fs::write(file.path(), by_hand).unwrap();
+        let write = |change: &dyn Fn(&mut Settings)| {
+            let read = file.read().unwrap();
+            let mut settings = read.value.clone();
+            change(&mut settings);
+            file.write_over(&read, &settings).unwrap();
+            std::fs::read_to_string(file.path()).unwrap()
+        };
+
+        assert_eq!(
+            write(&|settings| settings.format.indent_width = 4),
+            by_hand.replace("indent_width = 2", "indent_width = 4")
+        );
+        assert_eq!(
+            write(&|settings| settings.lint.ask_database = false),
+            format!(
+                "{}\n[lint]\nask_database = false\n",
+                by_hand.replace("indent_width = 2", "indent_width = 4")
+            )
+        );
+        let text = write(&|settings| settings.format.keyword_case = KeywordCase::Upper);
+        assert!(
+            text.contains("keyword_case = \"upper\" # our house style\n"),
+            "{text}"
+        );
+        assert!(text.starts_with("# Shared by the team.\n"), "{text}");
     }
 }

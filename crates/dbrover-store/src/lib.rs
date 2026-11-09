@@ -12,6 +12,7 @@ mod data_sources;
 mod diagrams;
 mod file_version;
 mod history;
+mod in_place;
 mod keymap;
 mod paths;
 mod portable;
@@ -47,6 +48,7 @@ pub use history::{
     OutputMetrics, ReplacedCell, ReportRun, RowChange, RowChangeKind, RunError, RunOrigin,
     RunOutcome, SourceMetrics, StepMetrics, redact_secrets,
 };
+pub use in_place::InPlaceError;
 pub use keymap::{KeymapBindings, KeymapError, KeymapFile};
 pub use paths::{APP_NAME, AppPaths, PREVIOUS_APP_NAME};
 pub use portable::{
