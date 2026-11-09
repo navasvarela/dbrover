@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use dbrover_report::{
-    Batch, LimitHit, LoadedColumn, Preview, RunEvent, RunFailure, RunRequest, SourceStart, Step,
-    TimedEvent, WrittenFile,
+    Batch, LimitHit, LoadedColumn, Preview, RunEvent, RunFailure, RunRequest, SourcePhases,
+    SourceStart, Step, TimedEvent, WrittenFile,
 };
 use dbrover_store::{ReportFiles, ReportName, RunOutcome, StepMetrics};
 use egui_kittest::kittest::NodeT;
@@ -71,11 +71,21 @@ file = "trial-balance-{since:%Y-%m}.csv"
 #[derive(Clone)]
 struct StandIn {
     requests: Arc<Mutex<Vec<RunRequest>>>,
-    script: Vec<RunEvent>,
+    script: Vec<TimedEvent>,
 }
 
 impl StandIn {
+    /// A run whose events come at once, as if all sent at its start.
     fn new(script: Vec<RunEvent>) -> Self {
+        Self::timed(
+            script
+                .into_iter()
+                .map(|event| event.at(Duration::ZERO))
+                .collect(),
+        )
+    }
+
+    fn timed(script: Vec<TimedEvent>) -> Self {
         Self {
             requests: Arc::new(Mutex::new(Vec::new())),
             script,
@@ -95,16 +105,15 @@ impl ReportLauncher for StandIn {
     }
 }
 
-struct Scripted(VecDeque<RunEvent>);
+struct Scripted(VecDeque<TimedEvent>);
 
 impl RunningReport for Scripted {
     fn try_next(&mut self) -> Option<TimedEvent> {
-        // A stand-in's events come at once, as if all sent at the run's start.
-        self.0.pop_front().map(|event| event.at(Duration::ZERO))
+        self.0.pop_front()
     }
 
     fn cancel(&mut self) {
-        self.0 = VecDeque::from([RunEvent::Cancelled]);
+        self.0 = VecDeque::from([RunEvent::Cancelled.at(Duration::ZERO)]);
     }
 }
 
@@ -861,6 +870,101 @@ fn shows_the_runs_side_by_side_with_the_step_that_dominates_and_the_hints() {
     let history = HistoryFile::new(dir.path().join("history.sqlite"));
     let report = ReportName::new("trial-balance").unwrap();
     assert!(history.open().unwrap().runs(&report, 5).unwrap().is_empty());
+}
+
+/// [`COMBINED`]'s run, timed: `entries` waits four seconds on SQLite before its first row.
+fn slow_first_row(out: &Path) -> Vec<TimedEvent> {
+    let mut script = combined_start();
+    for event in &mut script {
+        match event {
+            RunEvent::Started { sources, .. } => {
+                for source in sources {
+                    source.engine = Some("SQLite".to_owned());
+                }
+            }
+            RunEvent::SourceDone {
+                id,
+                elapsed_ms,
+                phases,
+                ..
+            } if id == "entries" => {
+                *elapsed_ms = 4_000;
+                *phases = Some(SourcePhases {
+                    connect_ms: 10,
+                    server_ms: 3_500,
+                    transfer_ms: 400,
+                    load_ms: 80,
+                    type_ms: 10,
+                });
+            }
+            _ => {}
+        }
+    }
+    let at = [0, 4_100, 150];
+    let mut timed: Vec<TimedEvent> = script
+        .into_iter()
+        .zip(at)
+        .map(|(event, at_ms)| TimedEvent { at_ms, event })
+        .collect();
+    timed.extend([
+        TimedEvent {
+            at_ms: 4_600,
+            event: RunEvent::CombineDone {
+                rows: 2,
+                bytes: 40,
+                first_row_ms: Some(300),
+                elapsed_ms: 450,
+                peak_memory: None,
+                peak_temp_size: None,
+                query_ms: Some(400),
+            },
+        },
+        TimedEvent {
+            at_ms: 4_620,
+            event: RunEvent::OutputWritten(WrittenFile {
+                path: out.join("trial-balance-2026-10.csv"),
+                rows: 2,
+                size: 48,
+                elapsed_ms: 20,
+                warnings: Vec::new(),
+            }),
+        },
+        TimedEvent {
+            at_ms: 4_690,
+            event: RunEvent::WorkerUsage {
+                peak_memory: Some(80 << 20),
+            },
+        },
+        TimedEvent {
+            at_ms: 4_700,
+            event: RunEvent::Finished { elapsed_ms: 4_700 },
+        },
+    ]);
+    timed
+}
+
+#[test]
+fn the_profile_draws_the_run_and_names_the_step_that_held_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let launcher = StandIn::timed(slow_first_row(&dir.path().join("out")));
+    let mut harness = start_with_reports(dir.path(), COMBINED, launcher);
+    open_and_fill(&mut harness, "2026-10-01");
+    harness.get_by_label("Profile").click();
+    step_until_visible(&mut harness, "No run yet. Each run's profile shows here");
+
+    harness.get_by_label("Run").click();
+    step_until_visible(&mut harness, "Last run");
+    harness.get_by_label("Profile").click();
+    step_until_visible(
+        &mut harness,
+        "Source entries held the run longest: 4.0 s of 4.7 s, 88% of it waiting on SQLite for \
+         its first row.",
+    );
+    for lane in ["Source entries", "Source accounts", "Combine", "Output 1"] {
+        harness.get_by_label(lane);
+    }
+    harness.get_by_label("Until the first row");
+    harness.get_by_label("The worker held at most 83.9 MB in memory.");
 }
 
 #[test]

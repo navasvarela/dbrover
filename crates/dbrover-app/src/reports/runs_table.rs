@@ -10,14 +10,14 @@ use dbrover_store::{ReportName, ReportRun, RunOrigin, RunOutcome, StepMetrics};
 use egui::{Grid, RichText, Ui};
 use jiff::tz::TimeZone;
 
-use super::insights::{self, StepKey};
+use super::insights::{self, StepKey, seconds};
 use super::{ReportAction, Reports};
 use crate::icons;
 use crate::theme::Palette;
 use crate::widgets;
 
 /// How a run's start heads its column, in the system's time zone.
-const STARTED_FORMAT: &str = "%Y-%m-%d %H:%M";
+pub(super) const STARTED_FORMAT: &str = "%Y-%m-%d %H:%M";
 
 pub fn show(
     ui: &mut Ui,
@@ -331,11 +331,6 @@ fn details(step: &StepMetrics) -> String {
             ByteCount(output.size)
         ),
     }
-}
-
-/// `1.2 s`, as the rest of the tab writes a time.
-fn seconds(ms: u64) -> String {
-    format!("{:.1} s", ms as f64 / 1000.0)
 }
 
 /// **Runs**, and **Clear history** beside it once there is a run to clear, which asks before
