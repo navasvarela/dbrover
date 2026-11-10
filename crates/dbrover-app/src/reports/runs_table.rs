@@ -10,6 +10,7 @@ use dbrover_store::{ReportName, ReportRun, RunOrigin, RunOutcome, StepMetrics};
 use egui::{Grid, RichText, Ui};
 use jiff::tz::TimeZone;
 
+use super::hints;
 use super::insights::{self, StepKey, seconds};
 use super::{ReportAction, Reports};
 use crate::icons;
@@ -58,9 +59,9 @@ pub fn show(
         ));
     }
     let quiet = quiet_hints(reports, name);
-    let (silenced, shown): (Vec<_>, Vec<_>) = insights::hints(&runs)
+    let (silenced, shown): (Vec<_>, Vec<_>) = hints::hints(&runs)
         .into_iter()
-        .partition(|hint| quiet.contains(&hint.id()));
+        .partition(|hint| quiet.contains(&hint.id));
     for hint in shown {
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
@@ -68,7 +69,7 @@ pub fn show(
             ui.label(hint.to_string()).on_hover_text(format!(
                 "To stop this hint for this report, add quiet_hints = [\"{}\"] to [report] in its \
                  file.",
-                hint.id()
+                hint.id
             ));
         });
     }

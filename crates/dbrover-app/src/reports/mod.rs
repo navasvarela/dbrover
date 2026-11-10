@@ -9,6 +9,7 @@
 
 mod file;
 mod highlight;
+mod hints;
 mod insights;
 mod launcher;
 pub mod live;
