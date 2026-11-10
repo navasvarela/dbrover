@@ -207,6 +207,7 @@ fn finished_run(folder: &Path) -> Vec<RunEvent> {
             warnings: Vec::new(),
             batches: None,
             phases: None,
+            scanned_bytes: None,
         },
         RunEvent::Preview(Preview {
             columns: vec!["account".to_owned(), "balance".to_owned()],
@@ -353,6 +354,7 @@ fn combined_start() -> Vec<RunEvent> {
         warnings: Vec::new(),
         batches: None,
         phases: None,
+        scanned_bytes: None,
     };
     vec![
         RunEvent::Started {
@@ -587,6 +589,7 @@ fn shows_a_lookup_waiting_then_its_batches_then_done() {
         warnings: Vec::new(),
         batches: None,
         phases: None,
+        scanned_bytes: None,
     };
 
     let dir = tempfile::tempdir().unwrap();
@@ -632,6 +635,7 @@ fn shows_a_lookup_waiting_then_its_batches_then_done() {
             warnings: Vec::new(),
             batches: Some(7),
             phases: None,
+            scanned_bytes: None,
         },
         RunEvent::CombineDone {
             rows: 3,

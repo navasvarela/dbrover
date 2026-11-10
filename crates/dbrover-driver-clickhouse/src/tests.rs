@@ -536,3 +536,33 @@ fn reads_progress_from_system_processes() {
     );
     assert_eq!(execution::read_progress(""), None);
 }
+
+/// `sql`'s result read to its end, and what it said it read.
+async fn read_to_end(
+    connection: &mut ClickHouseConnection,
+    sql: &str,
+) -> Option<dbrover_core::JobProgress> {
+    let mut cursor = connection.execute(sql).await.expect("runs");
+    while !cursor.is_exhausted() {
+        cursor.next_page(100_000).await.expect("reads");
+    }
+    let progress = cursor.progress();
+    cursor.finish().await.expect("ends");
+    progress
+}
+
+/// RS2f: a statement's result read to its end says what it read, from the summary header,
+/// when the header has all of it; a result larger than ClickHouse's output buffer says nothing.
+#[tokio::test]
+async fn says_what_a_statement_read_once_the_summary_has_all_of_it() {
+    let Some(server) = test_server() else { return };
+    let mut connection = server.connect().await;
+    let small = read_to_end(&mut connection, "SELECT count() FROM numbers(1000)").await;
+    assert_eq!(
+        small.and_then(|progress| progress.bytes_read),
+        Some(dbrover_core::ByteCount(8_000)),
+        "{small:?}"
+    );
+    let large = read_to_end(&mut connection, "SELECT number FROM numbers(3000000)").await;
+    assert_eq!(large, None);
+}

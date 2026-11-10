@@ -403,6 +403,7 @@ mod tests {
                 }),
                 limits: None,
                 columns: Vec::new(),
+                scanned_bytes: None,
             })],
             origin: RunOrigin::Command,
             version: Some(BlobId::of(b"[report]\n")),

@@ -475,6 +475,7 @@ impl RunRecord {
                 batches,
                 phases,
                 table,
+                scanned_bytes,
                 ..
             } => {
                 let record = self.source_record(id);
@@ -498,6 +499,7 @@ impl RunRecord {
                         }
                     }),
                     columns: table.iter().map(kept_column).collect(),
+                    scanned_bytes: *scanned_bytes,
                 })
             }
             RunEvent::SourceAttached { id, .. } => StepMetrics::Attached {
@@ -1316,6 +1318,7 @@ mod tests {
                     warnings: Vec::new(),
                     batches: None,
                     phases: None,
+                    scanned_bytes: None,
                 },
             );
             untimed(
@@ -1358,6 +1361,7 @@ mod tests {
                         limits: None,
                         waits_for: None,
                         columns: Vec::new(),
+                        scanned_bytes: None,
                     }),
                     StepMetrics::Output(OutputMetrics {
                         number: 1,
@@ -1429,6 +1433,7 @@ mod tests {
                     warnings: Vec::new(),
                     batches: None,
                     phases: Some(phases),
+                    scanned_bytes: None,
                 },
             ),
             (
@@ -1604,6 +1609,7 @@ mod tests {
                 warnings: vec!["a warning".to_owned()],
                 batches: None,
                 phases: None,
+                scanned_bytes: None,
             },
         );
         assert_eq!(record.rows, 0, "a loaded source's rows aren't the outputs'");

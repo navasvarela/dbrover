@@ -90,6 +90,11 @@ pub enum RunEvent {
         /// Where its time went; `None` from a worker older than RS1b.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         phases: Option<SourcePhases>,
+        /// The bytes its engine scanned, all its statements together, where the engine says
+        /// (ClickHouse, BigQuery, Athena, Trino); `None` elsewhere, and from a worker older
+        /// than RS2f.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scanned_bytes: Option<u64>,
     },
     /// A DuckDB file was attached for the combine step to read in place.
     SourceAttached {

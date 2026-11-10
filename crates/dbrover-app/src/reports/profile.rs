@@ -459,6 +459,7 @@ mod tests {
             }),
             limits: None,
             columns: Vec::new(),
+            scanned_bytes: None,
         }
     }
 

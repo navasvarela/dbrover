@@ -91,6 +91,13 @@ pub trait SourceReader {
     /// The next page of rows, or `None` once every row has been read.
     fn next_page(&mut self) -> impl Future<Output = Result<Option<Vec<Row>>, SourceError>>;
 
+    /// The bytes its engine scanned for the statement, as the engine reports them once every
+    /// row has been read (`docs/reports-at-scale.md`, RS2f): what a warehouse bills by.
+    /// `None`, the default, where the engine doesn't say.
+    fn scanned(&self) -> Option<u64> {
+        None
+    }
+
     /// Ends the source's statement and its connection, however far it was read. What fails
     /// here can only be logged: the run has its rows, or has already failed.
     fn close(self) -> impl Future<Output = ()>;
@@ -182,6 +189,7 @@ pub async fn run<O: SourceOpener>(
             let streamed = outputs
                 .stream(&mut reader, &Feed::Source(source), opened, events)
                 .await;
+            let scanned = reader.scanned();
             reader.close().await;
             let streamed = streamed?;
             events(source_done(
@@ -189,6 +197,7 @@ pub async fn run<O: SourceOpener>(
                 &streamed.read,
                 opened.elapsed(),
                 opening,
+                scanned,
             ));
             streamed.finish(events)
         }
@@ -237,6 +246,7 @@ fn source_done(
     read: &Count,
     elapsed: Duration,
     opening: Opening,
+    scanned: Option<u64>,
 ) -> RunEvent {
     RunEvent::SourceDone {
         id: source.id.clone(),
@@ -254,6 +264,7 @@ fn source_done(
             load_ms: 0,
             type_ms: 0,
         }),
+        scanned_bytes: scanned,
     }
 }
 

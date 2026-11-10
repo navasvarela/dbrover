@@ -261,6 +261,7 @@ mod tests {
                 warnings: Vec::new(),
                 batches: None,
                 phases: None,
+                scanned_bytes: None,
             },
             RunEvent::Progress {
                 step: Step::Combine,
@@ -370,6 +371,7 @@ mod tests {
                 warnings: vec!["amount has more digits than DuckDB keeps".to_owned()],
                 batches: Some(3),
                 phases: None,
+                scanned_bytes: None,
             },
             RunEvent::SourceAttached {
                 id: "prices".to_owned(),

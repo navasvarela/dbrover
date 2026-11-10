@@ -77,6 +77,7 @@ fn reader(columns: &[&str], rows: &[&[Option<&str>]]) -> MemoryReader {
         columns: columns.iter().map(|name| column(name)).collect(),
         pages: VecDeque::from([rows]),
         then: None,
+        scanned: None,
     }
 }
 

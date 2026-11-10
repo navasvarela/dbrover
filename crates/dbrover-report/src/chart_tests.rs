@@ -203,6 +203,7 @@ fn categories(count: usize) -> MemoryReader {
         columns: vec![column("category"), column("net")],
         pages: rows.chunks(100).map(<[Row]>::to_vec).collect(),
         then: None,
+        scanned: None,
     }
 }
 
@@ -395,6 +396,7 @@ async fn fails_past_eight_series_naming_the_values_past_the_eighth() {
         columns: vec![column("month"), column("category"), column("net")],
         pages: [rows].into(),
         then: None,
+        scanned: None,
     };
     let folder = tempfile::tempdir().unwrap();
     let (outcome, _) = run_charts(
@@ -466,6 +468,7 @@ async fn gaps_are_warnings_and_said_under_the_chart() {
         columns: vec![column("category"), column("net")],
         pages: [rows].into(),
         then: None,
+        scanned: None,
     };
     let folder = tempfile::tempdir().unwrap();
     let (outcome, events) =
@@ -565,6 +568,7 @@ async fn draws_a_charts_own_query_after_the_combine_step() {
         columns: vec![column("category"), column("net")],
         pages: [rows].into(),
         then: None,
+        scanned: None,
     };
     let plan = Plan::new(
         read_report(&combined(

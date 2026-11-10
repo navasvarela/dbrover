@@ -212,6 +212,10 @@ pub struct SourceMetrics {
     /// before RS2c.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub columns: Vec<KeptColumn>,
+    /// The bytes its engine scanned, where the engine says (RS2f): what a warehouse bills
+    /// by, and the funnel's first bar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scanned_bytes: Option<u64>,
 }
 
 /// A column of a source's table, as a run loaded it.
@@ -527,6 +531,7 @@ mod tests {
                     }),
                     waits_for: None,
                     columns: Vec::new(),
+                    scanned_bytes: None,
                 }),
                 StepMetrics::Attached {
                     id: "prices".to_owned(),

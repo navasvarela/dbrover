@@ -162,6 +162,7 @@ mod tests {
             warnings: Vec::new(),
             batches: None,
             phases: None,
+            scanned_bytes: None,
         };
         let cases = [
             (

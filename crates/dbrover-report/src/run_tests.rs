@@ -19,6 +19,8 @@ pub(crate) struct MemoryReader {
     pub(crate) columns: Vec<ExportColumn>,
     pub(crate) pages: VecDeque<Vec<Row>>,
     pub(crate) then: Option<SourceError>,
+    /// The bytes its engine says it scanned.
+    pub(crate) scanned: Option<u64>,
 }
 
 impl SourceReader for MemoryReader {
@@ -31,6 +33,10 @@ impl SourceReader for MemoryReader {
             Some(page) => Ok(Some(page)),
             None => self.then.take().map_or(Ok(None), Err),
         }
+    }
+
+    fn scanned(&self) -> Option<u64> {
+        self.scanned
     }
 
     async fn close(self) {}
@@ -96,6 +102,7 @@ fn ledger(count: usize, page: usize) -> MemoryReader {
         columns: vec![column("account"), column("balance")],
         pages: rows.chunks(page).map(<[Row]>::to_vec).collect(),
         then: None,
+        scanned: None,
     }
 }
 
@@ -415,6 +422,7 @@ fn events_are_json_lines_the_app_reads_back() {
                 load_ms: 150,
                 type_ms: 30,
             }),
+            scanned_bytes: None,
         },
         RunEvent::SourceAttached {
             id: "prices".to_owned(),

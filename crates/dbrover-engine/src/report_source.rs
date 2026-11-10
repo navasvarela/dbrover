@@ -206,6 +206,13 @@ impl SourceReader for ReportSource {
         Ok((!page.is_empty()).then_some(page))
     }
 
+    /// What the engine says the statement scanned, once it has ended: a job's statistics on
+    /// BigQuery and Athena, Trino's last answer, ClickHouse's summary header.
+    fn scanned(&self) -> Option<u64> {
+        let progress = self.cursor.as_ref()?.progress()?;
+        progress.bytes_read.map(|bytes| bytes.0)
+    }
+
     /// Ends the statement, rolls back the read-only transaction and disconnects. What fails
     /// here is only logged: the run is over either way.
     async fn close(self) {

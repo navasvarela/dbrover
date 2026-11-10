@@ -255,7 +255,18 @@ pub(crate) async fn execute(
 ) -> Result<Box<dyn ResultCursor>, DriverError> {
     let query_id = cancel.start();
     let (columns, lines, rows_changed) = match start(session, &query_id, sql).await {
-        Ok(Started::Rows { columns, lines }) => (columns, Some(lines), None),
+        Ok(Started::Rows { columns, mut lines }) => {
+            let scanned = lines.get_ref().summary().and_then(scanned);
+            return Ok(Box::new(ClickHouseCursor {
+                columns,
+                lines: Some(lines),
+                rows_changed: None,
+                query_id,
+                cancel: Arc::clone(cancel),
+                sql: sql.to_owned(),
+                scanned,
+            }));
+        }
         Ok(Started::Done { rows_changed }) => {
             cancel.end(&query_id);
             (Vec::new(), None, rows_changed)
@@ -272,7 +283,26 @@ pub(crate) async fn execute(
         query_id,
         cancel: Arc::clone(cancel),
         sql: sql.to_owned(),
+        scanned: None,
     }))
+}
+
+/// What a statement read, from the `X-ClickHouse-Summary` header, when the header has all of
+/// it (`docs/reports-at-scale.md`, RS2f). ClickHouse sends its headers before the rows, so the
+/// summary counts what was read by then: everything when the result fits ClickHouse's output
+/// buffer, as a source's reduced result does, but only the start of a larger one. It is
+/// complete once it has read every row it expected to (`total_rows_to_read`); otherwise it is
+/// left out, rather than shown as less than the statement read.
+fn scanned(summary: &clickhouse::QuerySummary) -> Option<JobProgress> {
+    let read_rows = summary.read_rows()?;
+    let expected = summary.total_rows_to_read().unwrap_or(0);
+    if read_rows < expected {
+        return None;
+    }
+    Some(JobProgress {
+        rows_read: Some(read_rows),
+        bytes_read: summary.read_bytes().map(ByteCount),
+    })
 }
 
 /// How a statement's response begins.
@@ -361,6 +391,8 @@ struct ClickHouseCursor {
     query_id: String,
     cancel: Arc<ClickHouseCancel>,
     sql: String,
+    /// What the statement read, when its summary has all of it.
+    scanned: Option<JobProgress>,
 }
 
 impl ClickHouseCursor {
@@ -402,6 +434,10 @@ impl ResultCursor for ClickHouseCursor {
 
     fn is_exhausted(&self) -> bool {
         self.lines.is_none()
+    }
+
+    fn progress(&self) -> Option<JobProgress> {
+        self.scanned
     }
 
     /// Stops the query if rows were left unread, so its session is free for the next

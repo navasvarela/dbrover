@@ -34,6 +34,11 @@ const MOST_PCT: u64 = 50;
 const MANY_BATCHES: u64 = 50;
 /// `round-wait`: how long a source waited for sources it doesn't read.
 const ROUND_WAIT_MS: u64 = 30_000;
+/// `scanned-more`: how many times what a source returned its engine must have scanned...
+const SCANNED_RATIO: u64 = 100;
+/// ... and at least this much, 100 MB: less costs too little, in time or on a bill, to ask
+/// about.
+const SCANNED_MIN_BYTES: u64 = 100_000_000;
 /// `near-limit`: how close to a limit a peak came without passing it.
 const NEAR_LIMIT_PCT: u64 = 90;
 
@@ -66,7 +71,7 @@ impl fmt::Display for Hint {
 type Rule = fn(&ReportRun) -> Vec<Hint>;
 
 /// Every rule, in the order their hints are listed.
-const RULES: [Rule; 9] = [
+const RULES: [Rule; 10] = [
     source_reads_more,
     combine_spilled,
     slow_first_row,
@@ -76,6 +81,7 @@ const RULES: [Rule; 9] = [
     writer_bound,
     near_limit,
     combine_plan,
+    scanned_more,
 ];
 
 /// The hints the newest finished run of `runs` gives.
@@ -138,6 +144,30 @@ fn combine_plan(run: &ReportRun) -> Vec<Hint> {
         })
         .collect();
     plan_hints(&plan, &facts)
+}
+
+/// `scanned-more`: a source's engine scanned far more than it returned. A question rather than
+/// advice, as `source-reads-more` is: an aggregate scans more than it returns on purpose.
+fn scanned_more(run: &ReportRun) -> Vec<Hint> {
+    sources(run)
+        .filter_map(|source| {
+            let scanned = source.scanned_bytes?;
+            let more = scanned >= SCANNED_MIN_BYTES
+                && u128::from(scanned) >= u128::from(source.bytes) * u128::from(SCANNED_RATIO);
+            more.then(|| Hint {
+                id: HintId::ScannedMore,
+                at: HintAt::Source(source.id.clone()),
+                text: format!(
+                    "The engine of source {} scanned {} to return {}. Does its query filter on its \
+                     table's partition or clustering column? An aggregate scans more than it \
+                     returns on purpose; a filter the table isn't organised by scans it all.",
+                    source.id,
+                    ByteCount(scanned),
+                    ByteCount(source.bytes)
+                ),
+            })
+        })
+        .collect()
 }
 
 /// `source-reads-more`: a source read far more rows than the outputs wrote.
@@ -459,6 +489,7 @@ mod tests {
             phases: None,
             limits: None,
             columns: Vec::new(),
+            scanned_bytes: None,
         }
     }
 
@@ -524,6 +555,34 @@ mod tests {
     /// The ids `run` hints with.
     fn ids(run: ReportRun) -> Vec<HintId> {
         hints(&[run]).into_iter().map(|hint| hint.id).collect()
+    }
+
+    #[test]
+    fn asks_whether_a_source_that_scanned_far_more_than_it_returned_filters_on_its_partitions() {
+        let scanning = |scanned: u64, bytes: u64| {
+            let mut source = source("events", 1_000, 1_000);
+            source.bytes = bytes;
+            source.scanned_bytes = Some(scanned);
+            ids(finished(1_000, vec![StepMetrics::Source(source)]))
+        };
+        assert_eq!(scanning(200_000_000, 2_000_000), [HintId::ScannedMore]);
+        assert_eq!(scanning(199_999_999, 2_000_000), []);
+        assert_eq!(scanning(99_999_999, 1), [], "too little to ask about");
+        let hint = &hints(&[finished(
+            1_000,
+            vec![StepMetrics::Source(SourceMetrics {
+                scanned_bytes: Some(1_200_000_000),
+                bytes: 4_000_000,
+                ..source("events", 1_000, 1_000)
+            })],
+        )])[0];
+        assert_eq!(hint.at, HintAt::Source("events".to_owned()));
+        assert!(
+            hint.text
+                .starts_with("The engine of source events scanned 1.2 GB to return 4.0 MB."),
+            "{}",
+            hint.text
+        );
     }
 
     #[test]
@@ -763,6 +822,7 @@ mod tests {
                 bytes: Some(1_000),
             })
             .collect();
+        tx.scanned_bytes = Some(tx.bytes.saturating_mul(1_000).max(SCANNED_MIN_BYTES));
         let slow = phased("slow", 5_000, 4_500, 0);
         let names = SourceMetrics {
             waits_for: Some("slow".to_owned()),
