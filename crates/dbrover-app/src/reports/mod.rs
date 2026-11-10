@@ -18,6 +18,7 @@ pub mod hints;
 pub mod insights;
 mod launcher;
 pub mod live;
+mod plan_hints;
 mod problems;
 pub mod profile;
 mod profile_view;

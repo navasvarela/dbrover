@@ -7,15 +7,18 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use dbrover_core::describe_error;
-use dbrover_report::{ExplainRequest, Explanation, KnownTable, RunEvent};
-use dbrover_store::{AppPaths, HistoryFile, ReportName};
+use dbrover_report::{ExplainRequest, Explanation, RunEvent};
+use dbrover_store::{AppPaths, HistoryFile, ReportName, ReportRun};
+use serde_json::{Value, json};
 
 use super::args::{ExplainArgs, OutputStyle};
+use super::kept;
 use super::outcome::Outcome;
 use super::stopping::Stopping;
 use super::{prepare, report_path, run_worker, start_logging};
 use crate::report_worker;
 use crate::reports::explanation;
+use crate::reports::hints::Hint;
 
 /// The runs read to find the newest finished one: enough to pass the failed and cancelled runs
 /// a report gathers while its author works on it.
@@ -42,8 +45,9 @@ pub fn explain(args: &ExplainArgs) -> Outcome {
             return Outcome::Report;
         }
     };
+    let runs = kept_runs(&paths, &report);
     prepared.request.explain = Some(ExplainRequest {
-        tables: known_tables(&paths, &report),
+        tables: explanation::known_tables(&runs),
     });
     let mut explained: Option<Explanation> = None;
     let outcome = run_worker(
@@ -58,15 +62,21 @@ pub fn explain(args: &ExplainArgs) -> Outcome {
         },
     );
     if let Some(explanation) = explained {
+        let quiet = kept::quiet_hints(&report);
+        let hints: Vec<Hint> = explanation::hints(&explanation, &runs)
+            .into_iter()
+            .filter(|hint| !quiet.contains(&hint.id))
+            .collect();
         // As for a run's files: a closed standard output isn't the explanation's failure.
-        let _ = print(&mut io::stdout().lock(), &explanation, args.style);
+        let _ = print(&mut io::stdout().lock(), &explanation, &hints, args.style);
     }
     outcome
 }
 
-/// The tables the history's newest finished run of the report loaded; none when it keeps no
-/// run of it, or can't be read, which leaves the combine unexplained and says why.
-fn known_tables(paths: &AppPaths, report: &Path) -> Vec<KnownTable> {
+/// The report's runs the history keeps, newest first: their tables plan the combine step, and
+/// their rows weigh its hints. None when it keeps no run of it, or can't be read, which leaves
+/// a combine over undeclared columns unexplained, and says why.
+fn kept_runs(paths: &AppPaths, report: &Path) -> Vec<ReportRun> {
     let Some(name) = report
         .file_stem()
         .and_then(|stem| stem.to_str())
@@ -78,7 +88,7 @@ fn known_tables(paths: &AppPaths, report: &Path) -> Vec<KnownTable> {
         .open()
         .and_then(|history| history.runs(&name, RUNS_READ))
     {
-        Ok(runs) => explanation::known_tables(&runs),
+        Ok(runs) => runs,
         Err(error) => {
             tracing::warn!("the history can't be read: {}", describe_error(&error));
             Vec::new()
@@ -86,12 +96,30 @@ fn known_tables(paths: &AppPaths, report: &Path) -> Vec<KnownTable> {
     }
 }
 
-fn print(out: &mut impl Write, explanation: &Explanation, style: OutputStyle) -> io::Result<()> {
+fn print(
+    out: &mut impl Write,
+    explanation: &Explanation,
+    hints: &[Hint],
+    style: OutputStyle,
+) -> io::Result<()> {
     match style {
-        OutputStyle::Human => out.write_all(explanation::text(explanation).as_bytes()),
+        OutputStyle::Human => out.write_all(explanation::text(explanation, hints).as_bytes()),
         OutputStyle::JsonLines => {
-            let text = serde_json::to_string(explanation).map_err(io::Error::other)?;
-            writeln!(out, "{text}")
+            let mut value = serde_json::to_value(explanation).map_err(io::Error::other)?;
+            let hints: Vec<Value> = hints
+                .iter()
+                .map(|hint| {
+                    json!({
+                        "id": hint.id.as_str(),
+                        "at": kept::hint_at(&hint.at),
+                        "text": hint.text,
+                    })
+                })
+                .collect();
+            if let Value::Object(object) = &mut value {
+                object.insert("hints".to_owned(), Value::Array(hints));
+            }
+            writeln!(out, "{value}")
         }
     }
 }

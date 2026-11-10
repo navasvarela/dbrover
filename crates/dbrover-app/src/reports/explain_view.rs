@@ -7,6 +7,7 @@ use dbrover_store::ReportName;
 use egui::{RichText, Ui};
 
 use super::explanation;
+use super::hints::Hint;
 use super::{ExplainState, Reports};
 use crate::icons;
 use crate::theme::Palette;
@@ -66,6 +67,26 @@ pub fn show(ui: &mut Ui, reports: &Reports, name: &ReportName) {
         Some(CombineExplanation::Failed { message }) => {
             ui.strong("The combine step");
             ui.colored_label(palette.error, format!("DuckDB couldn't plan it: {message}"));
+        }
+    }
+    let runs = match reports.runs(name) {
+        Some(Ok(runs)) => runs.as_slice(),
+        _ => &[],
+    };
+    let quiet = reports
+        .find(name)
+        .and_then(|listed| listed.read.as_ref().ok())
+        .map(|report| report.quiet_hints.clone())
+        .unwrap_or_default();
+    let hints: Vec<Hint> = explanation::hints(explanation, runs)
+        .into_iter()
+        .filter(|hint| !quiet.contains(&hint.id))
+        .collect();
+    if !hints.is_empty() {
+        ui.add_space(10.0);
+        ui.strong("Hints");
+        for hint in &hints {
+            widgets::status(ui, icons::LIGHTBULB, palette.primary, &hint.text);
         }
     }
 }

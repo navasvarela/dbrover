@@ -16,6 +16,7 @@ use dbrover_store::{
 };
 
 use super::insights::seconds;
+use super::plan_hints::{SourceFacts, plan_hints};
 
 /// `source-reads-more`: a source must read at least this many rows, below which filtering in
 /// its query saves too little to mention...
@@ -65,7 +66,7 @@ impl fmt::Display for Hint {
 type Rule = fn(&ReportRun) -> Vec<Hint>;
 
 /// Every rule, in the order their hints are listed.
-const RULES: [Rule; 8] = [
+const RULES: [Rule; 9] = [
     source_reads_more,
     combine_spilled,
     slow_first_row,
@@ -74,6 +75,7 @@ const RULES: [Rule; 8] = [
     round_wait,
     writer_bound,
     near_limit,
+    combine_plan,
 ];
 
 /// The hints the newest finished run of `runs` gives.
@@ -116,6 +118,26 @@ fn at_least(part: u64, whole: u64, pct: u64) -> bool {
 
 fn percent(part: u64, whole: u64) -> u64 {
     u64::try_from(u128::from(part) * 100 / u128::from(whole.max(1))).unwrap_or(u64::MAX)
+}
+
+/// `unused-columns`, `filter-one-source` and `aggregate-one-source`: what the combine step's
+/// plan did to one source alone (RS2e).
+fn combine_plan(run: &ReportRun) -> Vec<Hint> {
+    let Some(plan) = super::funnel::combine_plan(run) else {
+        return Vec::new();
+    };
+    let facts: Vec<SourceFacts> = sources(run)
+        .map(|source| SourceFacts {
+            id: source.id.clone(),
+            rows: Some(source.rows),
+            columns: source
+                .columns
+                .iter()
+                .map(|column| (column.name.clone(), column.bytes))
+                .collect(),
+        })
+        .collect();
+    plan_hints(&plan, &facts)
 }
 
 /// `source-reads-more`: a source read far more rows than the outputs wrote.
@@ -733,6 +755,14 @@ mod tests {
             max_bytes: u64::MAX,
             timeout_ms: u64::MAX,
         });
+        tx.columns = ["amount", "memo"]
+            .into_iter()
+            .map(|name| dbrover_store::KeptColumn {
+                name: name.to_owned(),
+                type_name: "VARCHAR".to_owned(),
+                bytes: Some(1_000),
+            })
+            .collect();
         let slow = phased("slow", 5_000, 4_500, 0);
         let names = SourceMetrics {
             waits_for: Some("slow".to_owned()),
@@ -746,7 +776,16 @@ mod tests {
                 StepMetrics::Source(tx),
                 StepMetrics::Source(slow),
                 StepMetrics::Source(names),
-                StepMetrics::Combine(combine(100, Some(1 << 20))),
+                StepMetrics::Combine(CombineMetrics {
+                    // An aggregate of tx alone, filtered as it is read, without its memo.
+                    plan: Some(
+                        r#"[{"name": "HASH_GROUP_BY", "children": [{"name": "SEQ_SCAN",
+                        "children": [], "extra_info": {"Table": "tx", "Projections": "amount",
+                        "Filters": "amount>0"}}]}]"#
+                            .to_owned(),
+                    ),
+                    ..combine(100, Some(1 << 20))
+                }),
                 StepMetrics::Output(output(1, "v.xlsx", 10, 40_000)),
             ],
         );

@@ -24,11 +24,17 @@ pub enum HintId {
     WriterBound,
     /// A peak came close to its limit without passing it (RS1e).
     NearLimit,
+    /// The combine step reads none of some of a source's columns (RS2e).
+    UnusedColumns,
+    /// The combine step filters one source's rows as it reads them (RS2e).
+    FilterOneSource,
+    /// The combine step aggregates one source's rows with nothing joined first (RS2e).
+    AggregateOneSource,
 }
 
 impl HintId {
     /// Every id, in the order the hints are listed.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 11] = [
         Self::SourceReadsMore,
         Self::CombineSpilled,
         Self::SlowFirstRow,
@@ -37,6 +43,9 @@ impl HintId {
         Self::RoundWait,
         Self::WriterBound,
         Self::NearLimit,
+        Self::UnusedColumns,
+        Self::FilterOneSource,
+        Self::AggregateOneSource,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -49,6 +58,9 @@ impl HintId {
             Self::RoundWait => "round-wait",
             Self::WriterBound => "writer-bound",
             Self::NearLimit => "near-limit",
+            Self::UnusedColumns => "unused-columns",
+            Self::FilterOneSource => "filter-one-source",
+            Self::AggregateOneSource => "aggregate-one-source",
         }
     }
 }
@@ -100,8 +112,8 @@ mod tests {
                 .unwrap_err()
                 .to_string(),
             "\"source-reads-more-rows\" isn't a hint's id; the ids are source-reads-more, \
-             combine-spilled, slow-first-row, load-bound, many-batches, round-wait, writer-bound \
-             and near-limit"
+             combine-spilled, slow-first-row, load-bound, many-batches, round-wait, writer-bound, \
+             near-limit, unused-columns, filter-one-source and aggregate-one-source"
         );
     }
 }
