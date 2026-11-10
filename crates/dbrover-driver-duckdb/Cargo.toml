@@ -15,6 +15,8 @@ dbrover-cloud.workspace = true
 dbrover-core.workspace = true
 # Only to read a statement's first word, to tell a change's row count from a result.
 dbrover-sql.workspace = true
+# The profiler's tree, written as DuckDB's JSON profile (RS2b).
+serde_json.workspace = true
 # The work folder of a Parquet export.
 tempfile.workspace = true
 thiserror.workspace = true
@@ -35,7 +37,8 @@ duckdb.workspace = true
 # A token endpoint on the loopback address, for signing in to the Google Cloud Storage stand-in.
 dbrover-cloud = { workspace = true, features = ["stand-in"] }
 dbrover-core = { workspace = true, features = ["conformance"] }
-serde_json.workspace = true
+# Pins the plans DuckDB writes to what dbrover-plan reads.
+dbrover-plan.workspace = true
 tempfile.workspace = true
 
 [lints]

@@ -7,6 +7,7 @@
 //! most, and writes itself as text ([`Plan::text`]), so whoever shows a plan only draws it.
 //! Nothing here talks to a database.
 
+mod duckdb;
 mod json;
 mod mysql;
 mod postgres;
@@ -125,6 +126,15 @@ impl Step {
         matches(self) || self.children.iter().any(|child| child.any(matches))
     }
 
+    /// The first step, in reading order (the step, then its children), that `matches`
+    /// accepts.
+    pub fn find(&self, matches: &dyn Fn(&Step) -> bool) -> Option<&Step> {
+        if matches(self) {
+            return Some(self);
+        }
+        self.children.iter().find_map(|child| child.find(matches))
+    }
+
     /// The operation and its target together, as one line of the text plan starts.
     pub fn title(&self) -> String {
         match &self.target {
@@ -165,6 +175,9 @@ pub enum PlanFormat {
     /// SQL Server's XML showplan, estimated (`SET SHOWPLAN_XML`) or actual
     /// (`SET STATISTICS XML`).
     SqlServerXml,
+    /// DuckDB's `EXPLAIN (FORMAT JSON)`, and the profiler's tree of a statement that ran, as
+    /// DuckDB's JSON profile writes it.
+    DuckDbJson,
 }
 
 impl PlanFormat {
@@ -178,13 +191,14 @@ impl PlanFormat {
             Self::PostgresJson => postgres::parse(text),
             Self::MysqlJson => mysql::parse(text),
             Self::SqlServerXml => sqlserver::parse(text),
+            Self::DuckDbJson => duckdb::parse(text),
         }
     }
 
     /// The name of the notation the plan is written in, for what copying it copies.
     pub fn notation(self) -> &'static str {
         match self {
-            Self::PostgresJson | Self::MysqlJson => "JSON",
+            Self::PostgresJson | Self::MysqlJson | Self::DuckDbJson => "JSON",
             Self::SqlServerXml => "XML",
         }
     }

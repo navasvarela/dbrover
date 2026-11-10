@@ -131,13 +131,16 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
             .await;
         reader.close().await;
         let streamed = streamed?;
-        let peaks = workspace.peaks().await.unwrap_or_else(|error| {
-            tracing::warn!(
-                "could not read the run's DuckDB's peaks: {}",
-                describe_error(&error)
-            );
-            WorkspacePeaks::default()
-        });
+        let peaks = match workspace.profile().await {
+            Ok(profile) => profile.peaks,
+            Err(error) => {
+                tracing::warn!(
+                    "could not read the run's DuckDB's peaks: {}",
+                    describe_error(&error)
+                );
+                WorkspacePeaks::default()
+            }
+        };
         events(RunEvent::CombineDone {
             rows: streamed.read.rows,
             bytes: streamed.read.bytes,

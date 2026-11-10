@@ -2509,6 +2509,7 @@ dependencies = [
  "async-trait",
  "dbrover-cloud",
  "dbrover-core",
+ "dbrover-plan",
  "dbrover-sql",
  "duckdb",
  "serde_json",

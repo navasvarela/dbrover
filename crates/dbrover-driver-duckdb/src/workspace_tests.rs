@@ -259,7 +259,7 @@ async fn spills_past_its_memory_limit_and_stops_at_its_temp_size() {
         .unwrap();
     let rows = query(&mut spilling, SORT_PAST_MEMORY).await.unwrap();
     assert_eq!(rows.len(), 1_000_000);
-    let peaks = spilling.peaks().await.unwrap();
+    let peaks = spilling.profile().await.unwrap().peaks;
     assert!(
         peaks.temp_size.is_some_and(|spilled| spilled > 0),
         "{peaks:?}"
@@ -288,9 +288,111 @@ async fn reports_its_peaks_once_locked_down() {
         .await
         .unwrap();
     assert_eq!(rows, [cells(&["4999950000"])]);
-    let peaks = workspace.peaks().await.unwrap();
+    let peaks = workspace.profile().await.unwrap().peaks;
     assert!(peaks.memory.is_some_and(|memory| memory > 0), "{peaks:?}");
     assert_eq!(peaks.temp_size, Some(0), "nothing spills with room");
+    workspace.close().await;
+}
+
+/// Two tables loaded as a run loads its sources, for a query that filters, aggregates and joins.
+async fn orders_and_regions(folder: &Path) -> Workspace {
+    let workspace = Workspace::open(&roomy(folder)).await.unwrap();
+    let mut orders = workspace
+        .loader(
+            "orders",
+            &["region".to_owned(), "amount".to_owned(), "note".to_owned()],
+        )
+        .await
+        .unwrap();
+    let rows = (0..1000)
+        .map(|index| {
+            let region = if index % 2 == 0 { "EU" } else { "US" };
+            cells(&[region, &index.to_string(), "n"])
+        })
+        .collect();
+    orders.append(rows).await.unwrap();
+    orders
+        .finish(&[DuckDbType::Varchar, DuckDbType::BigInt, DuckDbType::Varchar])
+        .await
+        .unwrap();
+    let mut regions = workspace
+        .loader("regions", &["code".to_owned(), "name".to_owned()])
+        .await
+        .unwrap();
+    regions
+        .append(vec![cells(&["EU", "Europe"]), cells(&["US", "Americas"])])
+        .await
+        .unwrap();
+    regions
+        .finish(&[DuckDbType::Varchar, DuckDbType::Varchar])
+        .await
+        .unwrap();
+    workspace.lock().await.unwrap();
+    workspace
+}
+
+const ORDERS_BY_REGION: &str = "SELECT r.name, sum(o.amount) AS total FROM orders o \
+     JOIN regions r ON r.code = o.region WHERE o.region = 'EU' GROUP BY r.name";
+
+/// Pins the profiler's metrics' names, and the JSON the workspace writes them as, to what
+/// `dbrover-plan` reads (`docs/reports-at-scale.md`, RS2b).
+#[tokio::test]
+async fn profiles_the_last_querys_operators_as_a_plan() {
+    let folder = tempfile::tempdir().unwrap();
+    let mut workspace = orders_and_regions(folder.path()).await;
+    let rows = query(&mut workspace, ORDERS_BY_REGION).await.unwrap();
+    assert_eq!(rows, [cells(&["Europe", "249500"])]);
+    let profile = workspace.profile().await.unwrap();
+    let text = profile.plan.unwrap();
+    let plan = dbrover_plan::PlanFormat::DuckDbJson.parse(&text).unwrap();
+    assert!(plan.is_analysed(), "{text}");
+    let scan = plan
+        .root
+        .find(&|step| step.target.as_deref() == Some("memory.main.orders"))
+        .unwrap_or_else(|| panic!("no scan of orders in {text}"));
+    assert_eq!(
+        scan.actual.and_then(|actual| actual.rows),
+        Some(500.0),
+        "{text}"
+    );
+    let details: Vec<(&str, &str)> = scan
+        .details
+        .iter()
+        .map(|detail| (detail.label.as_str(), detail.value.as_str()))
+        .collect();
+    assert!(
+        details.contains(&("Projections", "region\namount")),
+        "{text}"
+    );
+    assert!(
+        details
+            .iter()
+            .any(|(label, value)| *label == "Filters" && value.contains("region='EU'")),
+        "{text}"
+    );
+    workspace.close().await;
+}
+
+#[tokio::test]
+async fn explains_a_query_without_running_it() {
+    let folder = tempfile::tempdir().unwrap();
+    let mut workspace = orders_and_regions(folder.path()).await;
+    let text = workspace
+        .explain(
+            "SELECT * FROM orders WHERE amount > $1",
+            &[Some("10".to_owned())],
+        )
+        .await
+        .unwrap();
+    let plan = dbrover_plan::PlanFormat::DuckDbJson.parse(&text).unwrap();
+    assert!(!plan.is_analysed(), "{text}");
+    let scan = plan
+        .root
+        .find(&|step| step.target.as_deref() == Some("memory.main.orders"))
+        .unwrap_or_else(|| panic!("no scan of orders in {text}"));
+    assert!(scan.estimate.rows.is_some(), "{text}");
+    let missing = workspace.explain("SELECT nothing FROM orders", &[]).await;
+    assert!(missing.is_err());
     workspace.close().await;
 }
 

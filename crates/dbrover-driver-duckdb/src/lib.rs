@@ -8,6 +8,7 @@ mod catalog;
 mod errors;
 mod execution;
 mod parquet;
+mod profile;
 mod table;
 mod values;
 mod workspace;
@@ -32,6 +33,7 @@ pub use bucket::BucketError;
 pub use parquet::{ParquetCompression, ParquetWriter};
 pub use workspace::{
     DuckDbType, TableLoader, Workspace, WorkspaceLimit, WorkspaceLimits, WorkspacePeaks,
+    WorkspaceProfile,
 };
 
 const PRODUCT: &str = "DuckDB";
