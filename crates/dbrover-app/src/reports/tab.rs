@@ -19,7 +19,7 @@ use super::{
     CheckInputs, OnDisk, ReportAction, ReportFile, Reports, RunEnd, RunPanel, RunRecord, SaveError,
     StepRecord, StepState, runs_table,
 };
-use super::{compare_view, live, profile_view};
+use super::{compare_view, explain_view, live, profile_view};
 use crate::code_editor::highlight::Marks;
 use crate::code_editor::{self, EditorView, Severity, find_bar};
 use crate::console::LintOptions;
@@ -372,6 +372,7 @@ fn toolbar(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             more_menu(ui, reports, name, seen, actions);
             run_button(ui, seen, &ready, keymap, name, actions);
+            explain_button(ui, reports, name, seen, &ready, actions);
             let can_save = match seen.disk {
                 OnDisk::Unchanged => seen.unsaved,
                 OnDisk::Changed { .. } => false,
@@ -553,6 +554,32 @@ fn run_button(
     };
     if response.clicked() {
         actions.push(ReportAction::Run(name.clone()));
+    }
+}
+
+/// **Explain**: plans the saved report without running it, with the parameters typed.
+fn explain_button(
+    ui: &mut Ui,
+    reports: &Reports,
+    name: &ReportName,
+    seen: &Seen,
+    ready: &Result<(), String>,
+    actions: &mut Vec<ReportAction>,
+) {
+    let explaining = reports.is_explaining(name);
+    let can = ready.is_ok() && !seen.unsaved && !explaining;
+    let response = ui.add_enabled(can, egui::Button::new("Explain"));
+    let response = match ready {
+        Err(reason) => response.on_disabled_hover_text(reason),
+        Ok(()) if seen.unsaved => response.on_disabled_hover_text("Save the file to explain it"),
+        Ok(()) if explaining => response.on_disabled_hover_text("Explaining…"),
+        Ok(()) => response.on_hover_text(
+            "Plan the report without running it: each source's plan and estimated cost, and \
+             the combine step's plan",
+        ),
+    };
+    if response.clicked() {
+        actions.push(ReportAction::Explain(name.clone()));
     }
 }
 
@@ -933,6 +960,7 @@ fn run_panel(
             (RunPanel::Profile, "Profile"),
             (RunPanel::Compare, "Compare"),
             (RunPanel::Runs, past.as_str()),
+            (RunPanel::Explain, "Explain"),
         ] {
             if ui.selectable_label(shown == panel, label).clicked() {
                 reports.state_mut(name).run_panel = Some(panel);
@@ -954,6 +982,7 @@ fn run_panel(
             RunPanel::Profile => profile_view::show(ui, reports, name),
             RunPanel::Compare => compare_view::show(ui, reports, name),
             RunPanel::Runs => runs_table::show(ui, reports, name, actions),
+            RunPanel::Explain => explain_view::show(ui, reports, name),
         });
 }
 

@@ -268,6 +268,12 @@ fn column_type(column: &ExportColumn, seen: Seen) -> DuckDbType {
     }
 }
 
+/// The DuckDB type of a declared column before any value is seen, as an empty table of it is
+/// made to explain a report (RS2d).
+pub(crate) fn declared_column_type(declared: ColumnType) -> DuckDbType {
+    declared_type(declared, Seen::Nothing)
+}
+
 /// The DuckDB type of a declared column (`docs/reporting.md`, "Declared columns"). A
 /// `decimal` without its precision is typed by its values, which were checked to be numbers.
 fn declared_type(declared: ColumnType, seen: Seen) -> DuckDbType {

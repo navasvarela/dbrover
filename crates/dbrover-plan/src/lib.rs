@@ -7,6 +7,7 @@
 //! most, and writes itself as text ([`Plan::text`]), so whoever shows a plan only draws it.
 //! Nothing here talks to a database.
 
+mod clickhouse;
 mod duckdb;
 mod json;
 mod mysql;
@@ -180,6 +181,8 @@ pub enum PlanFormat {
     /// DuckDB's `EXPLAIN (FORMAT JSON)`, and the profiler's tree of a statement that ran, as
     /// DuckDB's JSON profile writes it.
     DuckDbJson,
+    /// ClickHouse's `EXPLAIN json = 1, indexes = 1`, with the granules each index kept.
+    ClickHouseJson,
 }
 
 impl PlanFormat {
@@ -194,15 +197,46 @@ impl PlanFormat {
             Self::MysqlJson => mysql::parse(text),
             Self::SqlServerXml => sqlserver::parse(text),
             Self::DuckDbJson => duckdb::parse(text),
+            Self::ClickHouseJson => clickhouse::parse(text),
         }
     }
 
     /// The name of the notation the plan is written in, for what copying it copies.
     pub fn notation(self) -> &'static str {
         match self {
-            Self::PostgresJson | Self::MysqlJson | Self::DuckDbJson => "JSON",
+            Self::PostgresJson | Self::MysqlJson | Self::DuckDbJson | Self::ClickHouseJson => {
+                "JSON"
+            }
             Self::SqlServerXml => "XML",
         }
+    }
+}
+
+impl PlanFormat {
+    /// Every format, for reading one back by its name.
+    pub const ALL: [Self; 5] = [
+        Self::PostgresJson,
+        Self::MysqlJson,
+        Self::SqlServerXml,
+        Self::DuckDbJson,
+        Self::ClickHouseJson,
+    ];
+
+    /// The format's name, as a plan kept or sent elsewhere is labelled with it:
+    /// `duckdb-json`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PostgresJson => "postgres-json",
+            Self::MysqlJson => "mysql-json",
+            Self::SqlServerXml => "sqlserver-xml",
+            Self::DuckDbJson => "duckdb-json",
+            Self::ClickHouseJson => "clickhouse-json",
+        }
+    }
+
+    /// The format [`as_str`](Self::as_str) names, if any.
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|format| format.as_str() == name)
     }
 }
 

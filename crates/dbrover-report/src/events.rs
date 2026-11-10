@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use dbrover_core::BlobId;
 use serde::{Deserialize, Serialize};
 
-use crate::Plan;
+use crate::{Explanation, Plan};
 
 /// An event as a line carries it: the event, and how long after the worker started it was
 /// sent.
@@ -128,6 +128,9 @@ pub enum RunEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         peak_memory: Option<u64>,
     },
+    /// What explaining the report found, for a request to explain it (RS2d), which ends with
+    /// [`RunEvent::Finished`] after it. Boxed: it is large beside the other events.
+    Explained(Box<Explanation>),
     /// The first rows the outputs were given.
     Preview(Preview),
     /// A file put in place.

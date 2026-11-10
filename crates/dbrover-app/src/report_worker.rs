@@ -17,8 +17,8 @@ use dbrover_core::{BlobId, DataSource, describe_error};
 use dbrover_engine::{PasswordCommands, ProcessRunner, SourceAccess, Tunnels};
 use dbrover_export::CustomFormat;
 use dbrover_report::{
-    LimitDefaults, Machine, Plan, RunEvent, RunFailure, RunFolders, RunRequest, RunValues, Step,
-    TimedEvent, read_report,
+    ExplainRequest, Explanation, LimitDefaults, Machine, Plan, RunEvent, RunFailure, RunFolders,
+    RunRequest, RunValues, Step, TimedEvent, read_report,
 };
 use dbrover_store::{AppPaths, CustomFile, CustomFileKind, DataSourceFile, os_keychain};
 
@@ -47,6 +47,14 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
             let paths = settings_paths(config_dir)?;
             let (plan, version, values) = prepare(&paths, &request)?;
             limits::limit_processor_time(plan.processor_time());
+            if let Some(explain) = &request.explain {
+                tracing::info!(report = %plan.name, %version, "explaining the report");
+                let explanation =
+                    explain_report(&paths, &plan, &values, explain, &request.staging)?;
+                // As for a run's end: whether anyone reads it changes nothing.
+                let _ = out.send(&RunEvent::Explained(Box::new(explanation)));
+                return Ok(());
+            }
             tracing::info!(report = %plan.name, %version, "running the report");
             let started = out.send(&plan.started(version, machine()));
             if started.is_err() {
@@ -217,14 +225,10 @@ impl Named {
     }
 }
 
-fn run_report(
-    paths: &AppPaths,
-    plan: &Plan,
-    values: &RunValues,
-    folders: RunFolders<'_>,
-    out: &mut Events<impl Write>,
-) -> Result<(), RunFailure> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
+/// The runtime a run or an explanation works in: two threads, the worker's process having
+/// one report to look after.
+fn runtime() -> Result<tokio::runtime::Runtime, RunFailure> {
+    tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .thread_name("dbrover-report")
         .enable_all()
@@ -234,8 +238,46 @@ fn run_report(
                 Step::Worker,
                 format!("could not start the runtime: {error}"),
             )
-        })?;
-    runtime.block_on(async {
+        })
+}
+
+/// Explains the report's sources on their data sources and its combine step over empty tables,
+/// DuckDB spilling, if it must, in `staging`, which is removed after.
+fn explain_report(
+    paths: &AppPaths,
+    plan: &Plan,
+    values: &RunValues,
+    request: &ExplainRequest,
+    staging: &Path,
+) -> Result<Explanation, RunFailure> {
+    let explanation = runtime()?.block_on(async {
+        let secrets = os_keychain();
+        let tunnels = Tunnels::new(paths.ssh_known_hosts_file());
+        let commands =
+            PasswordCommands::load(&paths.trusted_commands_file(), Arc::new(ProcessRunner)).await;
+        let access = SourceAccess {
+            secrets: &secrets,
+            tunnels: &tunnels,
+            commands: &commands,
+        };
+        dbrover_report::explain(plan, values, &access, &request.tables, staging).await
+    });
+    if let Err(error) = std::fs::remove_dir_all(staging)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        tracing::warn!("could not remove {}: {error}", staging.display());
+    }
+    Ok(explanation)
+}
+
+fn run_report(
+    paths: &AppPaths,
+    plan: &Plan,
+    values: &RunValues,
+    folders: RunFolders<'_>,
+    out: &mut Events<impl Write>,
+) -> Result<(), RunFailure> {
+    runtime()?.block_on(async {
         make_folder(folders.folder)?;
         let secrets = os_keychain();
         let tunnels = Tunnels::new(paths.ssh_known_hosts_file());

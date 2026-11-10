@@ -286,7 +286,7 @@ async fn check_cost(
 }
 
 /// What a failed connection may be missing, on an engine that signs in with a password.
-fn password_hint(uses_password: bool) -> &'static str {
+pub(crate) fn password_hint(uses_password: bool) -> &'static str {
     if uses_password {
         ". A report's run can't ask for a password: save it in the data source's settings, or \
          use a password command or a cloud sign-in"

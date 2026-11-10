@@ -47,6 +47,10 @@ const OPERATOR_METRICS: [&str; 6] = [
     "EXTRA_INFO",
 ];
 
+/// DuckDB's optimizers that plan from what a table holds: propagating its statistics, and
+/// pulling an empty result up through the operators above it.
+const STATISTICS_OPTIMIZERS: &str = "statistics_propagation,empty_result_pullup";
+
 /// The query's own metrics, beside its operators': its time and the rows it returned.
 const QUERY_METRICS: [&str; 2] = ["LATENCY", "ROWS_RETURNED"];
 
@@ -103,6 +107,46 @@ pub struct WorkspacePeaks {
     /// Bytes it held in its temporary folder at once, which `max_temp_size` bounds.
     pub temp_size: Option<u64>,
 }
+
+/// A type as [`DuckDbType`]'s `Display` writes it, read back: the type a run loaded a column
+/// as, which the history keeps by name.
+impl std::str::FromStr for DuckDbType {
+    type Err = UnknownDuckDbType;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let unknown = || UnknownDuckDbType(text.to_owned());
+        let plain = match text {
+            "BIGINT" => Some(Self::BigInt),
+            "HUGEINT" => Some(Self::HugeInt),
+            "DOUBLE" => Some(Self::Double),
+            "BOOLEAN" => Some(Self::Boolean),
+            "DATE" => Some(Self::Date),
+            "TIMESTAMP" => Some(Self::Timestamp),
+            "TIMESTAMP WITH TIME ZONE" => Some(Self::TimestampTz),
+            "VARCHAR" => Some(Self::Varchar),
+            _ => None,
+        };
+        if let Some(plain) = plain {
+            return Ok(plain);
+        }
+        let (precision, scale) = text
+            .strip_prefix("DECIMAL(")
+            .and_then(|rest| rest.strip_suffix(')'))
+            .and_then(|digits| digits.split_once(','))
+            .ok_or_else(unknown)?;
+        let precision: u8 = precision.trim().parse().map_err(|_| unknown())?;
+        let scale: u8 = scale.trim().parse().map_err(|_| unknown())?;
+        if precision == 0 || precision > Self::MAX_DECIMAL_DIGITS || scale > precision {
+            return Err(unknown());
+        }
+        Ok(Self::Decimal { precision, scale })
+    }
+}
+
+/// A type name [`DuckDbType`] doesn't read.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{0:?} isn't a type a report loads a column as")]
+pub struct UnknownDuckDbType(pub String);
 
 /// What the profiler measured of the last statement on [`Workspace::connection`].
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -293,6 +337,25 @@ impl Workspace {
                     .and_then(Iterator::collect)
                     .map_err(|error| statement_error(error, &sql))?;
                 Ok(values)
+            })
+            .await
+    }
+
+    /// Has DuckDB plan as if its tables held rows, for a query explained over empty tables
+    /// (RS2d). DuckDB otherwise sees from a table's statistics that it is empty, and plans a
+    /// filtered scan of it as an empty result, which hides the columns and filters the query
+    /// reads it with. Call it before [`Workspace::lock`], which freezes the settings.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError`] if DuckDB refuses the setting.
+    pub async fn plan_without_statistics(&self) -> Result<(), DriverError> {
+        self.connection
+            .run_blocking(|connection| {
+                let sql = format!("SET disabled_optimizers = '{STATISTICS_OPTIMIZERS}'");
+                connection
+                    .execute_batch(&sql)
+                    .map_err(|error| statement_error(error, &sql))
             })
             .await
     }

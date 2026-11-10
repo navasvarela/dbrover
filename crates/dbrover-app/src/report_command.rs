@@ -8,6 +8,7 @@
 //! code per outcome ([`Outcome`]).
 
 mod args;
+mod explain;
 pub(crate) mod history;
 mod human;
 mod kept;
@@ -52,6 +53,7 @@ pub fn main(request: Request) -> i32 {
         Request::List(args) => list(&args).code(),
         Request::Runs(args) => kept::runs(&args).code(),
         Request::Compare(args) => kept::compare(&args).code(),
+        Request::Explain(args) => explain::explain(&args).code(),
     }
 }
 
@@ -213,6 +215,7 @@ pub(crate) fn prepare(
         folder,
         defaults,
         memory_limit: None,
+        explain: None,
     };
     Ok(Prepared {
         plan,

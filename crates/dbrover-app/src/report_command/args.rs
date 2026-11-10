@@ -14,6 +14,8 @@ Usage: dbrover report run <report> [--param <name>=<value>]… [--output-dir <fo
        dbrover report list [--json] [--config-dir <folder>]
        dbrover report runs <report> [--json] [--config-dir <folder>]
        dbrover report compare <report> <run> <run> [--json] [--config-dir <folder>]
+       dbrover report explain <report> [--param <name>=<value>]… [--json]
+                              [--config-dir <folder>]
 
 list prints each report in the settings folder's reports folder: the name run takes, its
 title and parameters, and what keeps it from running, if anything. With --json, an object a
@@ -26,6 +28,11 @@ each run's whole profile, an object a line.
 compare prints two of those runs, by their ids, step by step: each step's time, rows, bytes
 and peaks in both, the changes past half marked, and the parameters and limits that differ.
 With --json, one object.
+
+explain plans a report without running it: each source's statement explained by its engine,
+with what its data source's cost guard estimates and whether a run would be refused, and the
+combine step planned by DuckDB over empty tables of each source's columns, with the hints
+its plan gives. Nothing reads a row. With --json, one object.
 
 Runs a report without opening a window, for cron, a scheduled task or a CI job, under the
 limits a run from the app has, and exits with a code that says how it ended.
@@ -68,6 +75,7 @@ pub enum Request {
     List(ListArgs),
     Runs(RunsArgs),
     Compare(CompareArgs),
+    Explain(ExplainArgs),
     Help,
     /// Arguments that can't be followed, with what was wrong.
     Invalid(String),
@@ -87,6 +95,59 @@ pub struct RunArgs {
     /// Where to write the run's profile once it ends.
     pub profile: Option<PathBuf>,
     pub config_dir: Option<PathBuf>,
+}
+
+/// `dbrover report explain`'s arguments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplainArgs {
+    pub report: ReportArg,
+    /// The parameters' values, as typed, each named once.
+    pub values: TypedValues,
+    pub style: OutputStyle,
+    pub config_dir: Option<PathBuf>,
+}
+
+impl ExplainArgs {
+    /// `None` when `--help` was asked for.
+    fn parse(args: impl Iterator<Item = String>) -> Result<Option<Self>, String> {
+        let mut args = args.peekable();
+        let mut report = None;
+        let mut values = TypedValues::new();
+        let mut style = OutputStyle::Human;
+        let mut config_dir = None;
+        while let Some(arg) = args.next() {
+            if let Some(folder) = parse_config_dir(&arg, &mut args) {
+                config_dir = Some(folder?);
+                continue;
+            }
+            if let Some(value) = option_value(&arg, &["--param", "-p"], &mut args) {
+                let (name, value) = parameter(&value?)?;
+                if values.insert(name.clone(), value).is_some() {
+                    return Err(format!("--param {name} is given twice"));
+                }
+                continue;
+            }
+            match arg.as_str() {
+                "--help" | "-h" => return Ok(None),
+                "--json" => style = OutputStyle::JsonLines,
+                option if option.starts_with('-') => {
+                    return Err(format!("unknown argument {option:?}"));
+                }
+                _ if report.is_some() => {
+                    return Err(format!("{arg:?}: explain takes one report"));
+                }
+                _ => report = Some(ReportArg::new(&arg)?),
+            }
+        }
+        let report =
+            report.ok_or_else(|| "dbrover report explain needs a report: its name".to_owned())?;
+        Ok(Some(Self {
+            report,
+            values,
+            style,
+            config_dir,
+        }))
+    }
 }
 
 /// `dbrover report runs`' arguments.
@@ -280,10 +341,15 @@ impl Request {
                 Ok(None) => Self::Help,
                 Err(problem) => Self::Invalid(problem),
             },
+            Some("explain") => match ExplainArgs::parse(args) {
+                Ok(Some(explain)) => Self::Explain(explain),
+                Ok(None) => Self::Help,
+                Err(problem) => Self::Invalid(problem),
+            },
             Some("--help" | "-h") => Self::Help,
             Some(other) => Self::Invalid(format!("unknown report command {other:?}")),
             None => Self::Invalid(
-                "dbrover report needs a command: run, list, runs or compare".to_owned(),
+                "dbrover report needs a command: run, list, runs, compare or explain".to_owned(),
             ),
         }
     }
@@ -445,6 +511,39 @@ mod tests {
     }
 
     #[test]
+    fn reads_an_explain_with_its_parameters() {
+        let cases: Vec<(&[&str], Request)> = vec![
+            (
+                &["explain", "sales", "-p", "since=2026-10-01", "--json"],
+                Request::Explain(ExplainArgs {
+                    report: named("sales"),
+                    values: [("since".to_owned(), "2026-10-01".to_owned())]
+                        .into_iter()
+                        .collect(),
+                    style: OutputStyle::JsonLines,
+                    config_dir: None,
+                }),
+            ),
+            (
+                &["explain"],
+                invalid("dbrover report explain needs a report: its name"),
+            ),
+            (
+                &["explain", "sales", "other"],
+                invalid("\"other\": explain takes one report"),
+            ),
+            (
+                &["explain", "sales", "--output-dir", "out"],
+                invalid("unknown argument \"--output-dir\""),
+            ),
+            (&["explain", "--help"], Request::Help),
+        ];
+        for (args, expected) in cases {
+            assert_eq!(parse(args), expected, "{args:?}");
+        }
+    }
+
+    #[test]
     fn reads_the_history_commands_and_a_profile_file() {
         let cases: Vec<(&[&str], Request)> = vec![
             (
@@ -593,7 +692,7 @@ mod tests {
             (&["--help"], Request::Help),
             (
                 &[],
-                invalid("dbrover report needs a command: run, list, runs or compare"),
+                invalid("dbrover report needs a command: run, list, runs, compare or explain"),
             ),
             (&["lists"], invalid("unknown report command \"lists\"")),
             (

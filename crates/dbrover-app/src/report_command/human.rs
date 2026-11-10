@@ -108,7 +108,10 @@ impl<O: Write, E: Write> HumanLines<O, E> {
                 }
             }
             RunEvent::Cancelled => self.error_line("Cancelled. No file was written."),
-            RunEvent::Progress { .. } | RunEvent::Preview(_) | RunEvent::WorkerUsage { .. } => {}
+            RunEvent::Progress { .. }
+            | RunEvent::Preview(_)
+            | RunEvent::WorkerUsage { .. }
+            | RunEvent::Explained(_) => {}
         }
     }
 
