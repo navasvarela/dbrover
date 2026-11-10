@@ -35,7 +35,7 @@ use crate::app::DbRoverApp;
 use crate::folder_switch::FolderInUse;
 use crate::log_console::{self, LogConsoleLayer};
 use crate::telemetry;
-use crate::test_support::{MemorySecrets, start_app, step_until_visible};
+use crate::test_support::{MemorySecrets, start_app, step_until, step_until_visible};
 
 mod site;
 
@@ -404,6 +404,14 @@ const SCENES: &[Scene] = &[
         play: report_runs,
         keeps_pointer: false,
         region: report_runs_region,
+        needs: &[],
+    },
+    Scene {
+        name: "report-profile",
+        data_sources: FixtureSources::Shop,
+        play: report_profile,
+        keeps_pointer: false,
+        region: whole_window,
         needs: &[],
     },
     Scene {
@@ -1658,6 +1666,109 @@ fn report_runs(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
     harness
         .ctx
         .data_mut(|data| data.insert_temp(height, RUNS_PANEL_HEIGHT));
+    harness.run_steps(SETTLE_STEPS);
+}
+
+/// The manual's first report, its newest run measured step by step, in the run panel's Profile.
+fn report_profile(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
+    use dbrover_store::{
+        CombineMetrics, OutputMetrics, ReportName, ReportRun, RunOrigin, RunOutcome, RunProfile,
+        SourceMetrics, SourcePhases, StepMetrics,
+    };
+
+    let output = |number: usize, file: &str, size: u64, elapsed_ms: u64, ended_ms: u64| {
+        StepMetrics::Output(OutputMetrics {
+            number,
+            file: file.to_owned(),
+            rows: 22,
+            size,
+            elapsed_ms,
+            started_ms: Some(1_260),
+            ended_ms: Some(ended_ms),
+        })
+    };
+    let profiled = ReportRun {
+        id: None,
+        report: ReportName::new("sales-by-category").unwrap(),
+        // 5 November 2026, 07:00 UTC: newer than report_page's runs.
+        started_at: jiff::Timestamp::from_second(1_793_516_400 + 4 * 86_400).unwrap(),
+        elapsed: std::time::Duration::from_millis(2_000),
+        outcome: RunOutcome::Finished,
+        params: [("since", "2026-10-01"), ("until", "2026-11-01")]
+            .into_iter()
+            .map(|(name, value)| (name.to_owned(), value.to_owned()))
+            .collect(),
+        steps: vec![
+            StepMetrics::Source(SourceMetrics {
+                id: "lines".to_owned(),
+                data_source: "shop".to_owned(),
+                rows: 246,
+                bytes: 6_500,
+                first_row_ms: Some(920),
+                elapsed_ms: 1_240,
+                batches: None,
+                started_ms: Some(10),
+                engine: Some("SQLite".to_owned()),
+                waits_for: None,
+                phases: Some(SourcePhases {
+                    connect_ms: 20,
+                    server_ms: 900,
+                    transfer_ms: 250,
+                    load_ms: 60,
+                    type_ms: 10,
+                }),
+                limits: None,
+            }),
+            StepMetrics::Combine(CombineMetrics {
+                rows: 22,
+                bytes: 900,
+                first_row_ms: Some(80),
+                elapsed_ms: 700,
+                peak_memory: Some(3_400_000),
+                peak_temp_size: Some(0),
+                started_ms: Some(1_260),
+                query_ms: Some(95),
+                limits: None,
+            }),
+            output(1, "sales-by-category-2026-10.xlsx", 7_400, 600, 1_960),
+            output(2, "sales-by-category-2026-10.csv", 1_100, 2, 1_962),
+        ],
+        origin: RunOrigin::App,
+        version: None,
+        profile: RunProfile {
+            peak_memory: Some(84_000_000),
+            timeout_ms: Some(1_800_000),
+            cores: Some(10),
+            dbrover: Some(env!("CARGO_PKG_VERSION").to_owned()),
+        },
+    };
+    HistoryFile::new(fixture.dir.path().join("history.sqlite"))
+        .open()
+        .unwrap()
+        .record_run(&profiled, dbrover_store::DEFAULT_RUNS_KEPT)
+        .unwrap();
+    report_page(harness, fixture);
+    let height = egui::Id::new(("report_run_panel_height", "sales-by-category"));
+    harness
+        .ctx
+        .data_mut(|data| data.insert_temp(height, RUNS_PANEL_HEIGHT));
+    // A pointer's click: the run panel's tab row takes it, as a person's would.
+    let at = harness.get_by_label("Profile").rect().center();
+    for pressed in [true, false] {
+        harness.input_mut().events.extend([
+            egui::Event::PointerMoved(at),
+            egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]);
+        harness.step();
+    }
+    step_until(harness, "the Profile showing", |harness| {
+        harness.query_all_by_label("Run").count() == 2
+    });
     harness.run_steps(SETTLE_STEPS);
 }
 

@@ -109,11 +109,16 @@ writes; and under both, the report's four past runs.](images/report-page.png)
 - **Beside it**, the problems, if there are any, then a field for each parameter, checked as
   you type, and **Output**: the folder its files go in, Downloads until you **Choose…** another,
   and the files the values make. Drag the panel's edge to widen it.
-- **Under both**, the run panel: **Last run**, **Preview** and **Past runs** (see
-  [Runs](#runs)). Drag the line above it to make it taller.
+- **Under both**, the run panel: **Last run**, **Preview**, **Profile**, **Compare** and **Past
+  runs** (see [Runs](#runs)). Drag the line above it to make it taller.
 
 While a report runs, **Last run** shows a line for each source and, if it has one, for the
-combine step: what each has read so far, and for how long, with a check once it is done. A
+combine step: what each has read so far, and for how long, with a check once it is done. Each
+second it also says how fast the step reads and what it is mostly doing, as *500 rows/s, 10.0
+KB/s · waiting on PostgreSQL (92%)*: waiting on its database (or on DuckDB, for the combine
+step), *loading into DuckDB*, or *writing the files*. A source still waiting for its first row
+says so too, so a query that keeps its database busy for minutes shows as that, not as
+nothing. A
 source loaded into DuckDB folds out its columns and the types they were given. Only one report
 runs at a time; the other tabs say which one. When it ends, **Last run** shows each file it
 wrote with its rows and size, and **Preview** the first rows; or the step that failed and why.
@@ -184,7 +189,9 @@ newest first:
 - a row for each source, the combine step and each output: its time and its rows, or for an
   output the file's size. Hover over a cell for everything the step measured: the bytes it read,
   how long its first row took, a lookup's batches, the combine step's peak memory and how much
-  it spilled to disk, the file's name. A step a run didn't reach shows —.
+  it spilled to disk, the file's name. A step a run didn't reach shows —. A step that took more
+  than 1.5 times its median over at least three finished runs listed is marked ▲, slower than
+  usual; its tooltip says how many times.
 
 An output's rows are written as they come, so its time is part of the step its rows come from;
 that step's time doesn't count the outputs', and a slow writer shows as its output.
@@ -194,22 +201,25 @@ step in every finished run listed, a line under the table names it, as *Source l
 most time in every run listed: 80% of the newest.* That is the step to look at first. Sources
 of one round run at the same time, so their shares can add up to more than the whole run.
 
-Under it, hints from the newest finished run say what to try:
+Under it, hints from the newest finished run say what to try, each in a sentence that names
+the step and the number behind it, such as *Source lines read 1,100,000 rows for 40 written. If
+the combine step drops most of them, filter them in the source's query, where its database can
+use an index.* Each has an id, and a threshold below which it says nothing:
 
-- **A source that reads far more than the report writes**, at least 10,000 rows and ten times
-  as many as the outputs write: *Source lines read 1,100,000 rows for 40 written. If the
-  combine step drops most of them, filter them in the source's query, where its database can
-  use an index.* A report that adds rows up reads more than it writes on purpose; the hint is
-  worth a look when the combine step filters or joins most of them away.
-- **A combine step that spilled to disk**: *Combine spilled 3.2 GB to disk, past its
-  memory_limit. A larger memory_limit in `[combine]`, or fewer rows from the sources, keeps it in
-  memory.* A step that spills still finishes, but disk is slower than memory, and
-  `max_temp_size` stops it once it spills too much.
+| Id | When | What to try |
+| --- | --- | --- |
+| `source-reads-more` | A source read at least 10,000 rows, and ten times what the outputs write. | Filter in the source's query. A report that adds rows up reads more than it writes on purpose, so this is a question to check, not a fault. |
+| `combine-spilled` | The combine step held something on disk, past its `memory_limit`. | A larger `memory_limit` in `[combine]`, or fewer rows from the sources. A step that spills still finishes, but disk is slower than memory, and `max_temp_size` stops it once it spills too much. |
+| `slow-first-row` | A source of at least 5 seconds spent 80% of them or more before its first row. | Its database is doing the work: explain the query in a console and look for an index. |
+| `load-bound` | A source of at least 5 seconds spent half of them or more loading into DuckDB. | Read fewer rows or columns, or aggregate in the source's query. |
+| `many-batches` | A lookup sent 50 statements or more. | A larger `batch_size`, or read the table whole and join it in the combine step. |
+| `round-wait` | A source waited 30 seconds or more after the source its lookup reads, for the rest of that round. | A round starts when the round before ends, so a slow source there holds every source after it. |
+| `writer-bound` | An output's writer took at least 5 seconds and half the run or more. | Excel is the slowest format to write; a CSV of the same rows is faster. |
+| `near-limit` | A source's rows, bytes or time, the combine step's memory, spill or time, or the run's time reached 90% of its limit without passing it. | Raise the limit it names before a larger month stops the run. |
 
-Each hint has an id: `source-reads-more` for the first, `combine-spilled` for the second; hover
-over a hint to see it. A report that reads far more than it writes on purpose, such as one that
-adds up a year of lines into twelve, can silence a hint in its file, and the tab then says how
-many it silences. **Quiet** beside a hint in the file does it for you:
+Hover over a hint to see its id. A report that reads far more than it writes on purpose, such
+as one that adds up a year of lines into twelve, can silence a hint in its file, and the tab
+then says how many it silences. **Quiet** beside a hint in the file does it for you:
 
 ```toml
 [report]
@@ -218,6 +228,40 @@ quiet_hints = ["source-reads-more"]
 ```
 
 **Clear history**, beside the heading, deletes every run of the report, after asking.
+
+### A run's profile
+
+![The Profile of Sales by category's newest run: a lane for the source, the combine step and the
+two files, each bar split into phases, and over them the sentence that says the source held the
+run longest, most of it waiting on SQLite for its first row.](images/report-profile.png)
+
+**Profile** draws one of the runs kept, the newest unless you pick another under **Run**: a lane
+for each source, the combine step and each output, on one time axis. Each bar is split into
+what its time went to:
+
+- a source: *connecting*; *until the first row*, the database working on the query; *receiving
+  rows*; *loading into DuckDB*; and *typing columns*, once every row is in;
+- the combine step: *until its first row*, DuckDB's own work; its *rows*; and *writing*, the
+  files' share of it;
+- an output: *waiting for rows* from the step that feeds it, then *writing*.
+
+A source that waited for the sources of the round before it, beyond the source its lookup reads,
+has that wait hatched. Hover over a stretch for its time.
+
+Above the lanes, one sentence names the run's bottleneck: *Source lines held the run longest:
+1.2 s of 2.0 s, 73% of it waiting on SQLite for its first row.* It is the step on the run's
+critical path, the chain of steps the run waited on from start to end, with the most time of
+its own, and the phase that held that step. A source that ran beside a slower one of its round
+isn't on the path, however long it took, since making it faster wouldn't end the run sooner.
+Under the lanes, the most memory the worker's process held. Runs kept before DbRover measured
+when each step ran say so, and have no profile.
+
+### Comparing two runs
+
+**Compare** sets two kept runs side by side, the newest and the one before unless you pick
+others: for the run and each step, its time, rows, bytes and the combine step's peaks in both,
+with the change, and a ▲ on a change of more than half. Under it, the parameters and the limits
+that differ, and whether the report's file changed between them (its version).
 
 Runs are kept in `history.sqlite` with the [query history](history.md), by the report's file
 name: edit the file and they carry on; rename it with **Rename…** and they move with it, but
@@ -733,7 +777,8 @@ on a Mac, `/usr/bin/dbrover` from the `.deb`, the AppImage itself, and
 | `--param <name>=<value>`, `-p` | A parameter's value, once for each, as the report's tab takes it: a date as `2026-10-01`, a timestamp as `"2026-10-01 12:00"`. A parameter missing, of the wrong type, or one the report doesn't take stops the command before anything runs. |
 | `--output-dir <folder>`, `-o` | Where the files go, made if it doesn't exist. Without it, the current folder. |
 | `--json` | The run's events on standard output, a JSON object a line (see below). |
-| `--progress` | On a terminal, a line on standard error that says what each running step has read so far, rewritten each second. In a pipe, cron's mail or with `--json`, nothing more is printed. |
+| `--progress` | On a terminal, a line on standard error that says what each running step has read so far, how fast and what it is waiting on, rewritten each second, as *Source lines: 30,000 rows, 780.0 KB, 2 s, 30,000 rows/s, 780.0 KB/s, waiting on PostgreSQL (92%)*. In a pipe, cron's mail or with `--json`, nothing more is printed. |
+| `--profile <file>` | Once a run that started ends, however it ends, writes its profile to `<file>` as JSON: each step's start, phases and limits, the machine, the bottleneck and the hints (see [Runs and profiles](#runs-and-profiles)). |
 | `--config-dir <folder>` | The settings folder to use, as for the app (see [Choosing the settings folder](files.md#choosing-the-settings-folder)). Without it, the one DbRover uses. |
 
 The report's data sources are the settings folder's, by the names the report gives them, and
@@ -759,6 +804,9 @@ With `--json`, standard output is the run's events instead, as the report's tab 
 `output_written` for each file, a chart's included, and last `finished`, `failed` or `cancelled`.
 `started` has the report file's Git blob id as `version`, the same the first line of the human
 output shortens, so a CI job's output names the version that ran; the run's log says it too.
+Every line has `at_ms`, when it was sent, in milliseconds from the run's start; `progress` has
+`busy`, the shares of the second before spent waiting, loading and writing; `source_done` has
+`phases`; and `worker_usage`, just before the end, the worker's `peak_memory`.
 `jq` picks out what a script needs:
 
 ```bash
@@ -805,6 +853,45 @@ stock              Stock — can't run, 1 problem:
 
 With `--json`, one object a report, a line each, with its `name`, `title`, `description`,
 `path`, `params`, `data_sources` and `problems`. `--config-dir` works as for `run`.
+
+### Runs and profiles
+
+`dbrover report runs <report>` lists the runs the history keeps of a report in the `reports`
+folder, newest first, each with its id and, under it, the step that held it:
+
+```text
+$ dbrover report runs sales-by-category
+12  2026-11-09 07:00  finished in 2.0 s, from the command line, version 3b18e51
+    Source lines held the run longest: 1.2 s of 2.0 s, 73% of it waiting on SQLite for its first row.
+11  2026-11-08 07:00  finished in 2.3 s, from the app, version 3b18e51
+    Source lines held the run longest: 1.3 s of 2.3 s, 70% of it waiting on SQLite for its first row.
+```
+
+`dbrover report compare <report> <run> <run>` sets two of them side by side by their ids, as
+**Compare** does, marking with `!` a change of more than half:
+
+```text
+$ dbrover report compare sales-by-category 11 12
+Run 11 (2026-11-08 07:00) and run 12 (2026-11-09 07:00)
+Both ran the same report file.
+Run           time                2.3 s → 2.0 s        −13%
+Source lines  time                1.3 s → 1.2 s        −8%
+              rows                  246 → 246          same
+```
+
+With `--json`, `runs` prints each run's whole profile, an object a line, the same that
+`report run --profile` writes: `id`, `report`, `started_at`, `elapsed_ms`, `outcome`, `params`,
+`version`, `machine` (the worker's `peak_memory`, the run's `timeout_ms`, the `cores` and the
+`dbrover` that ran it), `steps` as the history keeps them, `bottleneck` and `hints`, each with its
+`id`, the table it is `at`, its `text` and whether the file's `quiet_hints` silences it.
+`compare --json` prints one object. A CI job can keep each run's profile beside its logs:
+
+```bash
+dbrover report run sales-by-category -p since=2026-10-01 -p until=2026-11-01 \
+  --profile "profile-$(date +%F).json"
+```
+
+An unknown report or run id exits with 3.
 
 ### A command killed outright
 

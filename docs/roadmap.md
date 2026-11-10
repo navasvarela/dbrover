@@ -2342,28 +2342,61 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   example back byte for byte; **Save and run** writes and runs it; a change made in another
   editor shows in a clean tab and raises the banner in an unsaved one.
 
-Reports over sources of terabytes, and tools to see and tune a report's performance: planned,
-not scheduled, after RP5, in [Reports at scale](reports-at-scale.md). Terabytes stay in their
+Reports over sources of terabytes, and tools to see and tune a report's performance: planned in
+[Reports at scale](reports-at-scale.md); RS1 built on 2026-11-09, the rest not scheduled. Terabytes stay in their
 engines; the desktop combines reduced results. The tooling comes first, so the rest is chosen by
 measurement.
 
 - **RS0 — The plan:** [Reports at scale](reports-at-scale.md) and these entries.
-- **RS1 — Seeing a run:** a run profile with each step's phases and waits, a timeline, live
-  throughput and the bottleneck, hints as rules with ids that a report can silence, two runs
-  compared, `--progress` and `--profile` on the command line, and a benchmark of today's paths.
-  Started on 2026-11-09, in layers, one PR each; what today's code changed in the plan is in
-  [RS1 against today's code](reports-at-scale.md#rs1-against-todays-code):
-  - **RS1a — The plan:** RS1's decisions and risks against the code as of 0.31.0.
-  - **RS1b — The run profile:** a time on every event, each step's start, phases and limits,
-    the worker's peak memory, kept in `report_runs`.
-  - **RS1c — The timeline:** the tab's **Profile**, with the timeline and the bottleneck.
-  - **RS1d — Live progress:** throughput and what each step waits on, in the tab and on
-    `--progress`'s line.
-  - **RS1e — Hints as rules:** `slow-first-row`, `load-bound`, `many-batches`, `round-wait`,
-    `writer-bound` and `near-limit`, each silenced by `quiet_hints`.
-  - **RS1f — Comparing runs:** **Compare** in the tab, `--profile`, `dbrover report runs` and
-    `dbrover report compare`.
-  - **RS1g — Manual, demo note and benchmark.**
+- **RS1 — Seeing a run (M):** built on 2026-11-09, in one stack of seven layers; what today's
+  code changed in the plan is in
+  [RS1 against today's code](reports-at-scale.md#rs1-against-todays-code), and the baseline
+  numbers in [Benchmark](reports-at-scale.md#benchmark):
+  - **RS1a — The plan:** built; RS1's decisions and risks against the code as of 0.31.0.
+  - **RS1b — The run profile:** built; `at_ms` on every event, each source's phases (connect,
+    until the first row, the rest, loading, typing), the combine's wait on DuckDB, the limits
+    and machine in `started`, the worker's peak memory (`getrusage` through `nix`), kept in
+    `report_runs` (each step's entry, and a new `profile` column, schema 6).
+  - **RS1c — The timeline:** built; the tab's **Profile**, a lane a step split into phases, a
+    round's wait hatched, and the bottleneck on the run's critical path.
+  - **RS1d — Live progress:** built; each step's pace and what it mostly does, every second
+    (also while waiting for a first row), in the tab and on `--progress`'s line.
+  - **RS1e — Hints as rules:** built; `slow-first-row`, `load-bound`, `many-batches`,
+    `round-wait`, `writer-bound` and `near-limit` beside RP4's two, each silenced by
+    `quiet_hints`, each placed on the table of the file it is about.
+  - **RS1f — Comparing runs:** built; **Compare** in the tab, the runs table's slower-than-usual
+    mark, `--profile`, `dbrover report runs` and `dbrover report compare`.
+  - **RS1g — Manual, demo note and benchmark:** built; the manual's
+    [A run's profile](../book/src/reports.md#a-runs-profile), [Comparing two
+    runs](../book/src/reports.md#comparing-two-runs) and [Runs and
+    profiles](../book/src/reports.md#runs-and-profiles), one new picture, and an ignored
+    benchmark test.
+
+  **Exit:** a slow run shows, without guessing, which source or step held it and why: the
+  Profile's sentence names the step on the critical path and its phase (*Source lines held the
+  run longest: 1.2 s of 2.0 s, 73% of it waiting on SQLite for its first row*), and the hints
+  say what to change.
+
+  **RS1 demo note:** add the SQLite **shop** and `sales-by-category.toml` as the manual's [Your
+  first report](../book/src/reports.md#your-first-report) says, and run the report twice from its
+  tab. **Profile** draws the newest run: a lane for `lines`, the combine step and each file,
+  each bar in phases, and over them the sentence naming the step that held the run; hover a
+  stretch for its time. **Compare** sets the two runs side by side, every number *same* or
+  close; change `since` and run again, and pick the new run: `rows` changes and **Parameters
+  that differ** names `since`. Edit the file (a comment will do), run again, and **Compare** says
+  the file changed. For a slow source, point a report at a PostgreSQL table with
+  `SELECT pg_sleep(6), * FROM …` (or any query that keeps the server busy): while it runs, its
+  line says *waiting on PostgreSQL (100%)*; afterwards **Profile** names it as waiting for its
+  first row, and **Past runs** shows the `slow-first-row` hint; `quiet_hints =
+  ["slow-first-row"]` silences it. From a terminal: `dbrover report run sales-by-category -p
+  since=2026-10-01 -p until=2026-11-01 --progress --profile /tmp/p.json` keeps a live line with
+  each step's pace and writes the profile; `dbrover report runs sales-by-category` lists the runs
+  with their ids and bottlenecks, and `dbrover report compare sales-by-category <id> <id>` sets
+  two side by side. `--json`'s lines each carry `at_ms`. The benchmark, by hand, with the
+  repository's PostgreSQL and MySQL up: `set -a; . ./test-servers.env; set +a;
+  DBROVER_BENCH_ROWS=1000000 cargo test --release -p dbrover-engine --test report_benchmark --
+  --ignored --nocapture`. `cargo test -p dbrover-app regenerate_screenshots -- --ignored` with
+  `DBROVER_SCREENSHOTS_ONLY=report-profile` renders the manual's new picture.
 - **RS2 — Explaining a report:** each source's plan and estimated cost before a run, the
   combine's DuckDB plan in W10's view, bytes scanned on the engines that report them, and hints
   for unused columns and filters or aggregates that belong in a source.

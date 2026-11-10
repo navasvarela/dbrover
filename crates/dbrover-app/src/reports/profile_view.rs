@@ -21,6 +21,8 @@ const BAR_HEIGHT: f32 = 12.0;
 const MIN_BAR_WIDTH: f32 = 2.0;
 /// The space between the hatching's lines.
 const HATCH_STEP: f32 = 5.0;
+/// The room left beside the timeline for the lanes' labels: a step's name and its engine.
+const LABELS_WIDTH: f32 = 280.0;
 /// The narrowest the timeline is drawn, however narrow the panel.
 const MIN_TIMELINE_WIDTH: f32 = 240.0;
 
@@ -114,11 +116,11 @@ fn pick_run(ui: &mut Ui, runs: &[ReportRun], chosen: usize) -> usize {
 
 /// The lanes, a label each beside its bar, and the time axis under them.
 fn draw(ui: &mut Ui, palette: &Palette, timeline: &Timeline) {
+    let width = (ui.available_width() - LABELS_WIDTH).max(MIN_TIMELINE_WIDTH);
     Grid::new("report_profile_lanes")
         .num_columns(2)
         .spacing([12.0, 0.0])
         .show(ui, |ui| {
-            let width = (ui.available_width() - 160.0).max(MIN_TIMELINE_WIDTH);
             for (index, lane) in timeline.lanes.iter().enumerate() {
                 ui.vertical(|ui| {
                     ui.set_min_height(LANE_HEIGHT);
@@ -238,14 +240,19 @@ fn legend(ui: &mut Ui, palette: &Palette, timeline: &Timeline) {
     }
     let waited = timeline.lanes.iter().any(|lane| lane.waited.is_some());
     ui.horizontal_wrapped(|ui| {
+        // Each swatch beside its name, so a wrapped line never parts them.
         for phase in shown {
-            swatch(ui, color(palette, phase), false);
-            ui.weak(phase.name());
+            ui.horizontal(|ui| {
+                swatch(ui, color(palette, phase), false);
+                ui.weak(phase.name());
+            });
             ui.add_space(8.0);
         }
         if waited {
-            swatch(ui, palette.text_weak, true);
-            ui.weak("Waiting for the round before");
+            ui.horizontal(|ui| {
+                swatch(ui, palette.text_weak, true);
+                ui.weak("Waiting for the round before");
+            });
         }
     });
 }
