@@ -159,6 +159,7 @@ mod tests {
             phases: None,
             limits: None,
             waits_for: None,
+            columns: Vec::new(),
         })
     }
 
@@ -173,6 +174,7 @@ mod tests {
             started_ms: None,
             query_ms: None,
             limits: None,
+            plan: None,
         })
     }
 

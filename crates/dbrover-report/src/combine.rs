@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use dbrover_core::{CancelHandle, Connection, DriverError, ResultCursor, Row, describe_error};
 use dbrover_driver_duckdb::{
-    DuckDbType, TableLoader, Workspace, WorkspaceLimit, WorkspaceLimits, WorkspacePeaks,
+    DuckDbType, TableLoader, Workspace, WorkspaceLimit, WorkspaceLimits, WorkspaceProfile,
 };
 use dbrover_export::ExportColumn;
 use dbrover_language::Literal;
@@ -131,16 +131,14 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
             .await;
         reader.close().await;
         let streamed = streamed?;
-        let peaks = match workspace.profile().await {
-            Ok(profile) => profile.peaks,
-            Err(error) => {
-                tracing::warn!(
-                    "could not read the run's DuckDB's peaks: {}",
-                    describe_error(&error)
-                );
-                WorkspacePeaks::default()
-            }
-        };
+        let profile = workspace.profile().await.unwrap_or_else(|error| {
+            tracing::warn!(
+                "could not read the run's DuckDB's profile: {}",
+                describe_error(&error)
+            );
+            WorkspaceProfile::default()
+        });
+        let peaks = profile.peaks;
         events(RunEvent::CombineDone {
             rows: streamed.read.rows,
             bytes: streamed.read.bytes,
@@ -151,6 +149,7 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
             query_ms: Some(millis(
                 starting + streamed.read.waited_first + streamed.read.waited_rest,
             )),
+            plan: profile.plan,
         });
         let mut streamed = streamed;
         if let Err(failure) = self.query_charts(workspace, &mut streamed).await {
@@ -349,10 +348,23 @@ async fn attach(workspace: &Workspace, source: &AttachedSource) -> Result<(), Ru
     })
 }
 
-/// A source's table being loaded, as text, and the types its values say.
+/// A source's table being loaded, as text, the types its values say, and the bytes each
+/// column's values took.
 struct Table {
     loader: TableLoader,
     typer: ColumnTyper,
+    column_bytes: Vec<u64>,
+}
+
+impl Table {
+    /// Adds the bytes of each column's values in `page`.
+    fn count(&mut self, page: &[Row]) {
+        for row in page {
+            for (bytes, value) in self.column_bytes.iter_mut().zip(row) {
+                *bytes += value.as_ref().map_or(0, |value| value.len() as u64);
+            }
+        }
+    }
 }
 
 /// The time a source being loaded spent outside waiting for its rows, which its [`Count`]
@@ -466,6 +478,7 @@ impl Loading<'_> {
             self.read.add(&page);
             self.read.check(self.source)?;
             table.typer.see(&page);
+            table.count(&page);
             let (appended, appending) = timed(table.loader.append(page)).await;
             self.spent.load += appending;
             self.clock.loaded(appending);
@@ -510,7 +523,11 @@ impl Loading<'_> {
             .await
             .map_err(|error| self.duckdb_failure(&error))?;
         let typer = ColumnTyper::new(columns, self.source.columns.as_deref());
-        Ok(Table { loader, typer })
+        Ok(Table {
+            loader,
+            typer,
+            column_bytes: vec![0; columns.len()],
+        })
     }
 
     /// For a lookup that found no value: a source with declared columns sends nothing and
@@ -554,7 +571,12 @@ impl Loading<'_> {
         events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
     ) -> Result<LoadedTable, RunFailure> {
         let step = self.step();
-        let Some(Table { loader, typer }) = self.table else {
+        let Some(Table {
+            loader,
+            typer,
+            column_bytes,
+        }) = self.table
+        else {
             return Err(RunFailure::new(step, "the source sent no statement"));
         };
         let (types, warnings) = typer.types();
@@ -582,10 +604,12 @@ impl Loading<'_> {
             elapsed_ms: millis(self.opened.elapsed()),
             table: columns
                 .iter()
-                .map(|(name, column_type)| LoadedColumn {
+                .zip(&column_bytes)
+                .map(|((name, column_type), bytes)| LoadedColumn {
                     name: name.clone(),
                     type_name: column_type.to_string(),
                     declared,
+                    bytes: Some(*bytes),
                 })
                 .collect(),
             warnings,

@@ -11,10 +11,12 @@ mod duckdb;
 mod json;
 mod mysql;
 mod postgres;
+mod reads;
 mod sqlserver;
 mod text;
 mod weigh;
 
+pub use reads::TableRead;
 pub use text::format_rows;
 pub use weigh::{Heat, Line, Measure, Weight};
 

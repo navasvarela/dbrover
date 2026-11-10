@@ -324,6 +324,7 @@ mod tests {
             waits_for: None,
             phases: None,
             limits: None,
+            columns: Vec::new(),
         })
     }
 
@@ -342,6 +343,7 @@ mod tests {
                 max_temp_size: 1 << 30,
                 timeout_ms: 600_000,
             }),
+            plan: None,
         })
     }
 

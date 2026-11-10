@@ -458,6 +458,7 @@ mod tests {
                 type_ms: 0,
             }),
             limits: None,
+            columns: Vec::new(),
         }
     }
 
@@ -472,6 +473,7 @@ mod tests {
             started_ms: Some(started_ms),
             query_ms: Some(400),
             limits: None,
+            plan: None,
         }
     }
 

@@ -402,6 +402,7 @@ mod tests {
                     type_ms: 0,
                 }),
                 limits: None,
+                columns: Vec::new(),
             })],
             origin: RunOrigin::Command,
             version: Some(BlobId::of(b"[report]\n")),

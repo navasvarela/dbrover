@@ -368,11 +368,13 @@ async fn an_empty_lookup_sends_nothing_when_columns_are_declared() {
                     name: "account".to_owned(),
                     type_name: "BIGINT".to_owned(),
                     declared: true,
+                    bytes: Some(0),
                 },
                 LoadedColumn {
                     name: "balance".to_owned(),
                     type_name: "DECIMAL(18,2)".to_owned(),
                     declared: true,
+                    bytes: Some(0),
                 },
             ],
             Some(0)

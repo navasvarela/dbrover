@@ -1718,6 +1718,7 @@ fn report_profile(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture)
                     type_ms: 10,
                 }),
                 limits: None,
+                columns: Vec::new(),
             }),
             StepMetrics::Combine(CombineMetrics {
                 rows: 22,
@@ -1729,6 +1730,7 @@ fn report_profile(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture)
                 started_ms: Some(1_260),
                 query_ms: Some(95),
                 limits: None,
+                plan: None,
             }),
             output(1, "sales-by-category-2026-10.xlsx", 7_400, 600, 1_960),
             output(2, "sales-by-category-2026-10.csv", 1_100, 2, 1_962),
@@ -1837,6 +1839,7 @@ fn report_page(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
             phases: None,
             limits: None,
             waits_for: None,
+            columns: Vec::new(),
         })
     };
     let finished = |day: i64, origin, combine_ms, excel_ms| ReportRun {
@@ -1861,6 +1864,7 @@ fn report_page(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
                 started_ms: None,
                 query_ms: None,
                 limits: None,
+                plan: None,
             }),
             StepMetrics::Output(OutputMetrics {
                 number: 1,

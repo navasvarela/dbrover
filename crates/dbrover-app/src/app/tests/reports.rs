@@ -347,6 +347,7 @@ fn combined_start() -> Vec<RunEvent> {
                 name: name.to_owned(),
                 type_name: type_name.to_owned(),
                 declared: false,
+                bytes: None,
             })
             .collect(),
         warnings: Vec::new(),
@@ -387,6 +388,7 @@ fn shows_each_source_and_the_combine_step_of_a_combined_run() {
             peak_memory: Some(40 << 20),
             peak_temp_size: Some(0),
             query_ms: None,
+            plan: None,
         },
         RunEvent::Preview(Preview {
             columns: vec!["account".to_owned(), "balance".to_owned()],
@@ -624,6 +626,7 @@ fn shows_a_lookup_waiting_then_its_batches_then_done() {
                     name: name.to_owned(),
                     type_name: "VARCHAR".to_owned(),
                     declared: true,
+                    bytes: None,
                 })
                 .collect(),
             warnings: Vec::new(),
@@ -638,6 +641,7 @@ fn shows_a_lookup_waiting_then_its_batches_then_done() {
             peak_memory: None,
             peak_temp_size: None,
             query_ms: None,
+            plan: None,
         },
         RunEvent::Finished { elapsed_ms: 3_000 },
     ];
@@ -842,6 +846,7 @@ fn spilling_run(out: &Path) -> Vec<RunEvent> {
             peak_memory: Some(2 << 30),
             peak_temp_size: Some(3_200_000_000),
             query_ms: None,
+            plan: None,
         },
         RunEvent::OutputWritten(WrittenFile {
             path: out.join("trial-balance-2026-10.csv"),
@@ -950,6 +955,7 @@ fn slow_first_row(out: &Path) -> Vec<TimedEvent> {
                 peak_memory: None,
                 peak_temp_size: None,
                 query_ms: Some(400),
+                plan: None,
             },
         },
         TimedEvent {

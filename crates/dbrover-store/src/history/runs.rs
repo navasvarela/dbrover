@@ -207,6 +207,22 @@ pub struct SourceMetrics {
     /// The caps it ran under.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limits: Option<SourceCaps>,
+    /// The table it was loaded as for the combine step, which explaining the report plans the
+    /// combine over (RS2d); empty when the report has no combine step, and for a run kept
+    /// before RS2c.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub columns: Vec<KeptColumn>,
+}
+
+/// A column of a source's table, as a run loaded it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeptColumn {
+    pub name: String,
+    /// As DuckDB names it, as `DECIMAL(18,2)`.
+    pub type_name: String,
+    /// The bytes of its values the source returned, as text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
 }
 
 /// Where a source's time went, in milliseconds: see `dbrover_report::SourcePhases`.
@@ -261,6 +277,10 @@ pub struct CombineMetrics {
     /// The limits it ran under.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limits: Option<CombineCaps>,
+    /// Its query's plan, as DuckDB's profiler measured it, in DuckDB's JSON profile
+    /// (`dbrover_plan::PlanFormat::DuckDbJson`); `None` for a run kept before RS2c.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
 }
 
 /// A file the run wrote.
@@ -506,6 +526,7 @@ mod tests {
                         timeout_ms: 600_000,
                     }),
                     waits_for: None,
+                    columns: Vec::new(),
                 }),
                 StepMetrics::Attached {
                     id: "prices".to_owned(),
@@ -525,6 +546,7 @@ mod tests {
                         max_temp_size: 10 << 30,
                         timeout_ms: 600_000,
                     }),
+                    plan: None,
                 }),
                 StepMetrics::Output(OutputMetrics {
                     number: 1,

@@ -2806,6 +2806,7 @@ dependencies = [
  "dbrover-export",
  "dbrover-language",
  "dbrover-picture",
+ "dbrover-plan",
  "dbrover-sql",
  "futures-util",
  "jiff",

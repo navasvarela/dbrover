@@ -115,6 +115,11 @@ pub enum RunEvent {
         /// the rest of `elapsed_ms` went to the outputs. `None` from a worker older than RS1b.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         query_ms: Option<u64>,
+        /// The query's plan as DuckDB's profiler measured it, each operator with its time and
+        /// rows, as DuckDB's JSON profile writes it (`dbrover_plan::PlanFormat::DuckDbJson`);
+        /// `None` when DuckDB didn't say, and from a worker older than RS2c.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        plan: Option<String>,
     },
     /// What the worker process used, sent once just before the run's end.
     WorkerUsage {
@@ -253,6 +258,10 @@ pub struct LoadedColumn {
     /// Whether the report file declares the column's type, rather than the run typing it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub declared: bool,
+    /// The bytes of its values the source returned, as text, which says what dropping the
+    /// column from the source's query would save; `None` from a worker older than RS2c.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
 }
 
 /// Which of a lookup's batches a source is reading, counted from 1.
@@ -467,6 +476,7 @@ mod tests {
                     peak_memory: None,
                     peak_temp_size: None,
                     query_ms: None,
+                    plan: None,
                 },
             ),
             (

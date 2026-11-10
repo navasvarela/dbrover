@@ -290,6 +290,7 @@ file = "r.csv"
                     phases: None,
                     limits: None,
                     waits_for: None,
+                    columns: Vec::new(),
                 }),
                 StepMetrics::Combine(CombineMetrics {
                     rows: 10,
@@ -301,6 +302,7 @@ file = "r.csv"
                     started_ms: None,
                     query_ms: None,
                     limits: None,
+                    plan: None,
                 }),
                 StepMetrics::Output(OutputMetrics {
                     number: 1,

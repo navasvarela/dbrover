@@ -380,6 +380,7 @@ mod tests {
                 peak_memory: None,
                 peak_temp_size: None,
                 query_ms: None,
+                plan: None,
             },
             RunEvent::OutputWritten(WrittenFile {
                 path: PathBuf::from("/out/sales-2026-10.xlsx"),
