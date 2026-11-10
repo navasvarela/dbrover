@@ -1257,15 +1257,16 @@ fn writes_excel(writer: &OutputWriter) -> bool {
     }
 }
 
-/// `format = "csv"` or `"xlsx"`, with the output's other keys as that format's options.
+/// `format = "csv"`, `"xlsx"` or `"parquet"`, with the output's other keys as that format's
+/// options.
 fn read_format(format: &str, fields: Fields, problems: &mut Vec<Found>) -> Option<OutputWriter> {
     let format = match ExportFormat::from_id(format) {
-        Some(format @ (ExportFormat::Csv | ExportFormat::Xlsx)) => format,
+        Some(format @ (ExportFormat::Csv | ExportFormat::Xlsx | ExportFormat::Parquet)) => format,
         Some(other) => {
             problems.push(Found::at(
                 "format",
                 format!(
-                    "a report writes CSV or Excel files in RP1, not {}",
+                    "a report writes CSV, Excel or Parquet files, not {}",
                     other.name()
                 ),
             ));
@@ -1274,7 +1275,9 @@ fn read_format(format: &str, fields: Fields, problems: &mut Vec<Found>) -> Optio
         None => {
             problems.push(Found::at(
                 "format",
-                format!("{format:?} is not a format; a report writes \"csv\" or \"xlsx\""),
+                format!(
+                    "{format:?} is not a format; a report writes \"csv\", \"xlsx\" or \"parquet\""
+                ),
             ));
             return None;
         }

@@ -1302,6 +1302,7 @@ fn file_icon(path: &Path) -> &'static str {
     match path.extension().and_then(|extension| extension.to_str()) {
         Some("xlsx") => icons::FILE_XLS,
         Some("csv") => icons::FILE_CSV,
+        Some("parquet") => icons::TABLE,
         Some("svg" | "png") => icons::CHART_BAR,
         _ => icons::FILE_TXT,
     }

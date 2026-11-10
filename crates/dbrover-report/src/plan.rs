@@ -9,7 +9,7 @@ use std::time::Duration;
 use dbrover_core::{BlobId, ConnectionConfig, DataSource, DuckDbDatabase};
 use dbrover_export::{
     CellTarget, ColumnType, CsvOptions, CustomFormat, CustomFormatKind, ExportFormat, ExportSpec,
-    SchemaColumn, XlsxOptions,
+    ParquetOptions, SchemaColumn, XlsxOptions,
 };
 use dbrover_language::QueryLanguage;
 use dbrover_sql::{Dialect, ParameterValues, StatementKind};
@@ -272,11 +272,13 @@ pub struct PlannedOutput {
     pub continue_on_new_sheet: bool,
 }
 
-/// The formats a report writes in RP1, with their options.
+/// The formats a report writes, with their options.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputFormat {
     Csv(CsvOptions),
     Xlsx(XlsxOptions),
+    /// Written by the combine step's DuckDB with `COPY`, not by DbRover's writers (RS3d).
+    Parquet(ParquetOptions),
 }
 
 impl OutputFormat {
@@ -284,14 +286,23 @@ impl OutputFormat {
         match self {
             Self::Csv(options) => ExportSpec::Csv(options.clone()),
             Self::Xlsx(options) => ExportSpec::Xlsx(options.clone()),
+            Self::Parquet(options) => ExportSpec::Parquet(*options),
         }
     }
 
     /// Where its converted values go, which decides how finely times are written.
     pub fn target(&self) -> CellTarget {
         match self {
-            Self::Csv(_) => CellTarget::Text,
+            Self::Csv(_) | Self::Parquet(_) => CellTarget::Text,
             Self::Xlsx(_) => CellTarget::Excel,
+        }
+    }
+
+    /// The options of a file DuckDB writes itself, rather than a writer of DbRover's.
+    pub fn written_by_duckdb(&self) -> Option<ParquetOptions> {
+        match self {
+            Self::Parquet(options) => Some(*options),
+            Self::Csv(_) | Self::Xlsx(_) => None,
         }
     }
 
@@ -376,7 +387,13 @@ impl Plan {
                 limits: combine.limits.or(defaults.combine),
             }
         });
-        let outputs = plan_outputs(&report.outputs, presets, defaults.output, &mut problems);
+        let outputs = plan_outputs(
+            &report.outputs,
+            presets,
+            defaults.output,
+            combine.is_some(),
+            &mut problems,
+        );
         for (index, chart) in report.charts.iter().enumerate() {
             let Some(query) = &chart.query else {
                 continue;
@@ -914,6 +931,7 @@ fn plan_outputs(
     outputs: &[Output],
     presets: &[CustomFormat],
     defaults: OutputLimits,
+    combines: bool,
     problems: &mut Vec<ReportProblem>,
 ) -> Vec<PlannedOutput> {
     let first_columns = outputs.first().and_then(|first| match &first.columns {
@@ -941,6 +959,9 @@ fn plan_outputs(
                 continue;
             }
         };
+        if format.written_by_duckdb().is_some() {
+            check_parquet(output, &label, index, writer_key, combines, problems);
+        }
         if output.continue_on_new_sheet && !format.is_excel() {
             problems.push(ReportProblem::new(
                 format!("{label}: continue_on_new_sheet is for Excel outputs"),
@@ -963,6 +984,36 @@ fn plan_outputs(
     planned
 }
 
+/// What a Parquet output can't have: its columns are the combine step's, as DuckDB types
+/// them, so it needs a combine step and takes no `columns`.
+fn check_parquet(
+    output: &Output,
+    label: &str,
+    index: usize,
+    writer_key: &str,
+    combines: bool,
+    problems: &mut Vec<ReportProblem>,
+) {
+    if !combines {
+        problems.push(ReportProblem::new(
+            format!(
+                "{label}: a Parquet file is written by the combine step's DuckDB; add a \
+                 [combine] step, as query = \"SELECT * FROM <source>\""
+            ),
+            Place::key(Table::Output(index), writer_key),
+        ));
+    }
+    if output.columns != OutputColumns::All {
+        problems.push(ReportProblem::new(
+            format!(
+                "{label}: a Parquet output writes the combine step's columns as DuckDB types \
+                 them; name and cast them in the combine query instead"
+            ),
+            Place::key(Table::Output(index), "columns"),
+        ));
+    }
+}
+
 fn built_in(
     format: ExportFormat,
     options: &dbrover_export::ExportOptions,
@@ -970,8 +1021,9 @@ fn built_in(
     match format {
         ExportFormat::Csv => Ok(OutputFormat::Csv(options.csv.clone())),
         ExportFormat::Xlsx => Ok(OutputFormat::Xlsx(options.xlsx.clone())),
+        ExportFormat::Parquet => Ok(OutputFormat::Parquet(options.parquet)),
         other => Err(format!(
-            "a report writes CSV or Excel files in RP1, not {}",
+            "a report writes CSV, Excel or Parquet files, not {}",
             other.name()
         )),
     }
@@ -988,8 +1040,8 @@ fn find_preset(id: &str, presets: &[CustomFormat]) -> Result<OutputFormat, Strin
         CustomFormatKind::Preset(preset) => built_in(preset.format, &preset.options)
             .map_err(|problem| format!("the preset {id:?}: {problem}")),
         CustomFormatKind::Template(_) | CustomFormatKind::Program(_) => Err(format!(
-            "{id:?} in exports.toml is a template or a program; a report's output is a CSV or \
-             Excel preset in RP1"
+            "{id:?} in exports.toml is a template or a program; a report's output is a CSV, \
+             Excel or Parquet preset"
         )),
     }
 }

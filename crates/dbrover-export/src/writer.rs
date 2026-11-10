@@ -272,9 +272,23 @@ impl CompletedFile {
         })
     }
 
+    /// The file `path`, which another writer, such as DuckDB's `COPY`, writes at
+    /// [`Self::partial`] in `staging`, to be put in place with the files streamed beside it.
+    pub fn written_by_another(path: &Path, staging: &Path) -> Self {
+        Self {
+            path: path.to_owned(),
+            partial: staging.join(partial_name(path)),
+        }
+    }
+
     /// The file it will be put in place as.
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Where the file is until it is put in place.
+    pub fn partial(&self) -> &Path {
+        &self.partial
     }
 
     /// How many bytes the file holds.

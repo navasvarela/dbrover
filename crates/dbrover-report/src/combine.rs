@@ -27,6 +27,7 @@ use tokio::sync::mpsc;
 use crate::chart::ChartRun;
 use crate::declared::Shaped;
 use crate::live::{ProgressClock, waiting};
+use crate::parquet::{ParquetCopy, parquet_files};
 use crate::run::{Count, Feed, Outputs, Streamed, millis, timed};
 use crate::statement::{Statements, lookup_literal};
 use crate::typing::{ColumnTyper, DriverTypes};
@@ -113,18 +114,41 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
             let tables = try_join_all(loads).await?;
             loaded.extend(tables);
         }
+        let folders = self.outputs.folders;
+        let parquet = parquet_files(
+            self.outputs.plan,
+            self.outputs.values,
+            folders.folder,
+            folders.staging,
+        );
+        // DuckDB writes in the staging folder only when it writes the Parquet files there.
+        let writable = (!parquet.is_empty()).then_some(folders.staging);
         workspace
-            .lock()
+            .lock(writable)
             .await
             .map_err(|error| RunFailure::new(Step::Combine, describe_error(&error)))?;
 
         let started = Instant::now();
-        let query = self.combined.combine.query.sql();
+        let combine_query = self.combined.combine.query.sql();
+        let copied = if parquet.is_empty() {
+            None
+        } else {
+            let copy = ParquetCopy {
+                query: combine_query,
+                values: self.outputs.values,
+                limits: self.limits(),
+            };
+            Some(copy.write(workspace, parquet, events).await?)
+        };
+        let query = copied.as_ref().map_or_else(
+            || combine_query.to_owned(),
+            |copied| copied.read_back(self.streams_every_row()),
+        );
         let mut clock = ProgressClock::new();
         let (reader, starting) = waiting(
             Box::pin(CombineReader::start(
                 workspace,
-                query,
+                &query,
                 self.outputs.values,
                 DuckDbQuery::Combine,
                 self.limits(),
@@ -146,14 +170,17 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
             .stream(&mut reader, &Feed::Combine, started, events)
             .await;
         reader.close().await;
-        let streamed = streamed?;
-        let profile = workspace.profile().await.unwrap_or_else(|error| {
-            tracing::warn!(
-                "could not read the run's DuckDB's profile: {}",
-                describe_error(&error)
-            );
-            WorkspaceProfile::default()
-        });
+        let mut streamed = streamed?;
+        let read_ms = millis(starting + streamed.read.waited_first + streamed.read.waited_rest);
+        let (profile, query_ms) = match copied {
+            None => (read_profile(workspace).await, read_ms),
+            Some(copied) => {
+                // The preview may have read only its rows of the file.
+                streamed.read.rows = copied.rows;
+                streamed.add_copied(copied.files);
+                (copied.profile, millis(copied.query))
+            }
+        };
         let peaks = profile.peaks;
         events(RunEvent::CombineDone {
             rows: streamed.read.rows,
@@ -162,17 +189,24 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
             elapsed_ms: millis(started.elapsed()),
             peak_memory: peaks.memory,
             peak_temp_size: peaks.temp_size,
-            query_ms: Some(millis(
-                starting + streamed.read.waited_first + streamed.read.waited_rest,
-            )),
+            query_ms: Some(query_ms),
             plan: profile.plan,
         });
-        let mut streamed = streamed;
         if let Err(failure) = self.query_charts(workspace, &mut streamed).await {
             streamed.abandon();
             return Err(failure);
         }
         streamed.finish(events)
+    }
+
+    /// Whether anything but the preview reads every row of the result: an output DbRover
+    /// writes, or a chart drawn from the result rather than a query of its own.
+    fn streams_every_row(&self) -> bool {
+        let plan = self.outputs.plan;
+        plan.outputs
+            .iter()
+            .any(|output| output.format.written_by_duckdb().is_none())
+            || plan.charts.iter().any(|chart| chart.query.is_none())
     }
 
     /// Each chart with a query of its own, which runs in the locked-down workspace now the
@@ -432,8 +466,19 @@ async fn append_queued(
     (outcome, Instant::now())
 }
 
-/// A source's progress: what it has read since `opened`, and what it was busy with.
-fn progress(
+/// What the profiler measured of the last statement, or nothing when it can't be read.
+pub(crate) async fn read_profile(workspace: &Workspace) -> WorkspaceProfile {
+    workspace.profile().await.unwrap_or_else(|error| {
+        tracing::warn!(
+            "could not read the run's DuckDB's profile: {}",
+            describe_error(&error)
+        );
+        WorkspaceProfile::default()
+    })
+}
+
+/// A step's progress: what it has read since `opened`, and what it was busy with.
+pub(crate) fn progress(
     step: &Step,
     read: &Count,
     opened: Instant,
@@ -744,7 +789,7 @@ fn duckdb_failure(error: &DriverError, limits: &CombineLimits) -> SourceError {
 /// Which query of the run's DuckDB a [`CombineReader`] reads, which its timeout's message
 /// names.
 #[derive(Debug, Clone, Copy)]
-enum DuckDbQuery {
+pub(crate) enum DuckDbQuery {
     Combine,
     /// A chart's own query, under the combine step's limits.
     Chart,
@@ -752,7 +797,7 @@ enum DuckDbQuery {
 
 /// The rows of a query of the run's DuckDB, the combine step's or a chart's, read a page at a
 /// time until its timeout.
-struct CombineReader<'a> {
+pub(crate) struct CombineReader<'a> {
     cursor: Option<Box<dyn ResultCursor>>,
     columns: Vec<ExportColumn>,
     cancel: Arc<dyn CancelHandle>,
@@ -764,7 +809,7 @@ struct CombineReader<'a> {
 impl<'a> CombineReader<'a> {
     /// Starts `query` with `values` bound, in the locked-down workspace. It has the combine
     /// step's `timeout`, counted from now.
-    async fn start(
+    pub(crate) async fn start(
         workspace: &mut Workspace,
         query: &str,
         values: &RunValues,
@@ -796,6 +841,19 @@ impl<'a> CombineReader<'a> {
             query: query_of,
             limits,
         })
+    }
+}
+
+impl CombineReader<'_> {
+    /// Ends the statement: the rows a statement that changes or writes them says it did.
+    pub(crate) async fn finish(self) -> Result<Option<u64>, SourceError> {
+        let Some(cursor) = self.cursor else {
+            return Ok(None);
+        };
+        cursor
+            .finish()
+            .await
+            .map_err(|error| duckdb_failure(&error, self.limits))
     }
 }
 

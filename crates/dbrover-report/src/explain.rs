@@ -267,7 +267,7 @@ async fn plan_combine(
         .await
         .map_err(|error| describe_error(&error))?;
     workspace
-        .lock()
+        .lock(None)
         .await
         .map_err(|error| describe_error(&error))?;
     let prepared = dbrover_sql::bind(

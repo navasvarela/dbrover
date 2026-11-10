@@ -105,7 +105,7 @@ async fn loads_text_into_typed_columns_with_every_digit() {
         ])
         .await
         .unwrap();
-    workspace.lock().await.unwrap();
+    workspace.lock(None).await.unwrap();
 
     let types = query(
         &mut workspace,
@@ -249,7 +249,7 @@ async fn attaches_a_file_read_only() {
         .await
         .unwrap();
     workspace.attach("prices", &path).await.unwrap();
-    workspace.lock().await.unwrap();
+    workspace.lock(None).await.unwrap();
 
     let rows = query(
         &mut workspace,
@@ -282,7 +282,7 @@ async fn once_locked_reads_no_file_and_keeps_its_limits() {
     let mut workspace = Workspace::open(&on_file(folder.path()), &roomy(folder.path()))
         .await
         .unwrap();
-    workspace.lock().await.unwrap();
+    workspace.lock(None).await.unwrap();
 
     let attempts = [
         format!("SELECT * FROM read_csv('{}')", outside.display()),
@@ -354,7 +354,7 @@ async fn reports_its_peaks_once_locked_down() {
     let mut workspace = Workspace::open(&on_file(folder.path()), &roomy(folder.path()))
         .await
         .unwrap();
-    workspace.lock().await.unwrap();
+    workspace.lock(None).await.unwrap();
     let rows = query(&mut workspace, "SELECT sum(range) FROM range(100000)")
         .await
         .unwrap();
@@ -397,7 +397,7 @@ async fn orders_and_regions(folder: &Path) -> Workspace {
         .finish(&[DuckDbType::Varchar, DuckDbType::Varchar])
         .await
         .unwrap();
-    workspace.lock().await.unwrap();
+    workspace.lock(None).await.unwrap();
     workspace
 }
 
@@ -565,7 +565,7 @@ async fn keeps_tables_larger_than_its_memory_on_its_file() {
         .finish(&[DuckDbType::BigInt, DuckDbType::Varchar])
         .await
         .unwrap();
-    workspace.lock().await.unwrap();
+    workspace.lock(None).await.unwrap();
     let rows = query(
         &mut workspace,
         "SELECT count(*), sum(length(padding)) FROM wide",
@@ -625,4 +625,71 @@ async fn keeps_a_workspace_in_memory_when_asked() {
         .map(|entry| entry.unwrap().file_name())
         .collect();
     assert_eq!(files, ["spill"], "nothing but the spill folder");
+}
+
+/// RS3d, DuckDB 1.5.6's `allowed_directories`: once locked, the workspace writes Parquet in
+/// the one folder it was given, reads it back, and writes nowhere else, `..` included; locked
+/// without one, it writes nowhere.
+#[tokio::test]
+async fn writes_parquet_only_in_the_folder_it_was_locked_to() {
+    let folder = tempfile::tempdir().unwrap();
+    let staging = folder.path().join("staging");
+    let elsewhere = folder.path().join("elsewhere");
+    std::fs::create_dir_all(&staging).unwrap();
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let mut workspace = Workspace::open(&on_file(folder.path()), &roomy(folder.path()))
+        .await
+        .unwrap();
+    workspace.lock(Some(&staging)).await.unwrap();
+    let file = staging.join("out.parquet.partial");
+    let copy = crate::copy_to_parquet(
+        "SELECT range AS n, CAST(range / 4 AS DECIMAL(18,2)) AS quarter FROM range(5)\n-- the end;",
+        &file,
+        crate::ParquetCompression::Zstd,
+    );
+    let mut cursor = workspace.connection().execute(&copy).await.unwrap();
+    while !cursor.is_exhausted() {
+        cursor.next_page(10).await.unwrap();
+    }
+    assert_eq!(
+        cursor.finish().await.unwrap(),
+        Some(5),
+        "COPY says the rows it wrote"
+    );
+    let rows = query(
+        &mut workspace,
+        &format!(
+            "SELECT typeof(quarter), sum(quarter) FROM ({}) GROUP BY ALL",
+            crate::read_parquet(&file)
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(rows, [cells(&["DECIMAL(18,2)", "2.50"])]);
+    for outside in [
+        elsewhere.join("out.parquet"),
+        staging.join("..").join("elsewhere").join("sneaked.parquet"),
+    ] {
+        let copy = crate::copy_to_parquet("SELECT 1", &outside, crate::ParquetCompression::Snappy);
+        let error = query(&mut workspace, &copy).await.unwrap_err();
+        assert!(
+            describe_error(&error).contains("disabled by configuration"),
+            "{outside:?}: {error}"
+        );
+    }
+    assert!(std::fs::read_dir(&elsewhere).unwrap().next().is_none());
+    workspace.close().await;
+
+    let folder = tempfile::tempdir().unwrap();
+    let mut locked = Workspace::open(&on_file(folder.path()), &roomy(folder.path()))
+        .await
+        .unwrap();
+    locked.lock(None).await.unwrap();
+    let copy = crate::copy_to_parquet(
+        "SELECT 1",
+        &folder.path().join("x.parquet"),
+        crate::ParquetCompression::Zstd,
+    );
+    assert!(query(&mut locked, &copy).await.is_err());
+    locked.close().await;
 }

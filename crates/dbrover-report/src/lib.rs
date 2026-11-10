@@ -27,6 +27,7 @@ mod format;
 mod hints;
 mod limits;
 mod live;
+mod parquet;
 mod plan;
 mod problem;
 mod prql;
