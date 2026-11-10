@@ -10,6 +10,7 @@
 pub mod compare;
 mod compare_view;
 mod file;
+mod funnel;
 mod highlight;
 pub mod hints;
 pub mod insights;
@@ -37,8 +38,9 @@ use dbrover_report::{
 };
 use dbrover_sql::FormatOptions;
 use dbrover_store::{
-    CombineMetrics, DEFAULT_RUNS_KEPT, OutputMetrics, ReportFiles, ReportName, ReportRun,
-    ReportSettings, RunError, RunOrigin, RunOutcome, RunProfile, SourceMetrics, StepMetrics,
+    CombineMetrics, DEFAULT_RUNS_KEPT, KeptColumn, OutputMetrics, ReportFiles, ReportName,
+    ReportRun, ReportSettings, RunError, RunOrigin, RunOutcome, RunProfile, SourceMetrics,
+    StepMetrics,
 };
 use jiff::Timestamp;
 
@@ -219,8 +221,18 @@ pub struct ReportState {
     pub run_panel: Option<RunPanel>,
     /// Which of the runs listed **Profile** shows, counted from the newest.
     pub profile_run: usize,
+    /// The combine step's plan **Profile** draws, kept between frames for what is folded and
+    /// selected in it.
+    pub profile_plan: Option<ProfilePlan>,
     /// The two runs **Compare** shows.
     pub compare_runs: ComparedRuns,
+}
+
+/// A kept run's combine plan, as **Profile** draws it.
+pub struct ProfilePlan {
+    /// When the run started, which tells it from the others.
+    pub started_at: Timestamp,
+    pub view: crate::console::plan::PlanView,
 }
 
 /// The two runs **Compare** shows, each by its place among the runs listed, counted from the
@@ -436,6 +448,7 @@ impl RunRecord {
                 elapsed_ms,
                 batches,
                 phases,
+                table,
                 ..
             } => {
                 let record = self.source_record(id);
@@ -458,6 +471,7 @@ impl RunRecord {
                             timeout_ms: limits.timeout_ms,
                         }
                     }),
+                    columns: table.iter().map(kept_column).collect(),
                 })
             }
             RunEvent::SourceAttached { id, .. } => StepMetrics::Attached {
@@ -472,6 +486,7 @@ impl RunRecord {
                 peak_memory,
                 peak_temp_size,
                 query_ms,
+                plan,
             } => StepMetrics::Combine(CombineMetrics {
                 rows: *rows,
                 bytes: *bytes,
@@ -488,6 +503,7 @@ impl RunRecord {
                         max_temp_size: limits.max_temp_size,
                         timeout_ms: limits.timeout_ms,
                     }),
+                plan: plan.clone(),
             }),
             RunEvent::OutputWritten(file) => StepMetrics::Output(OutputMetrics {
                 // The outputs' files are put in place in the report's order.
@@ -630,6 +646,14 @@ fn kept_phases(phases: SourcePhases) -> dbrover_store::SourcePhases {
         transfer_ms,
         load_ms,
         type_ms,
+    }
+}
+
+fn kept_column(column: &LoadedColumn) -> KeptColumn {
+    KeptColumn {
+        name: column.name.clone(),
+        type_name: column.type_name.clone(),
+        bytes: column.bytes,
     }
 }
 
@@ -1212,6 +1236,7 @@ mod tests {
                         phases: None,
                         limits: None,
                         waits_for: None,
+                        columns: Vec::new(),
                     }),
                     StepMetrics::Output(OutputMetrics {
                         number: 1,
@@ -1295,6 +1320,7 @@ mod tests {
                     peak_memory: None,
                     peak_temp_size: None,
                     query_ms: Some(420),
+                    plan: None,
                 },
             ),
             (
@@ -1452,6 +1478,7 @@ mod tests {
                     name: "quantity".to_owned(),
                     type_name: "DECIMAL(21,18)".to_owned(),
                     declared: false,
+                    bytes: None,
                 }],
                 warnings: vec!["a warning".to_owned()],
                 batches: None,

@@ -443,6 +443,50 @@ async fn says_how_much_memory_and_disk_the_combine_step_used() {
     }
 }
 
+/// The combine query's plan in `combine_done`, each source's scan with the rows it passed on,
+/// and each loaded column's bytes in `source_done` (RS2c).
+#[tokio::test]
+async fn reports_the_combines_plan_and_each_columns_bytes() {
+    let folder = tempfile::tempdir().unwrap();
+    let plan = report("", VALUES, "");
+    let opener = MemoryOpener::of(vec![("tx", transactions()), ("prices", prices())]);
+    let (outcome, events) = run_with(&plan, &opener, folder.path()).await;
+    outcome.unwrap();
+    let text = events
+        .iter()
+        .find_map(|event| match event {
+            RunEvent::CombineDone { plan, .. } => plan.clone(),
+            _ => None,
+        })
+        .unwrap();
+    let combine = dbrover_plan::PlanFormat::DuckDbJson.parse(&text).unwrap();
+    let reads = combine.table_reads();
+    let tx = reads.iter().find(|read| read.table == "tx").unwrap();
+    assert!(tx.columns.contains(&"quantity".to_owned()), "{text}");
+    assert!(tx.rows.is_some(), "{text}");
+    let tx_columns = events
+        .iter()
+        .find_map(|event| match event {
+            RunEvent::SourceDone { id, table, .. } if id == "tx" => Some(table.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let bytes: Vec<(&str, Option<u64>)> = tx_columns
+        .iter()
+        .map(|column| (column.name.as_str(), column.bytes))
+        .collect();
+    // "1", "2", "3"; "BTC", "BTC", "ETH"; the quantities; three times of 19 characters.
+    assert_eq!(
+        bytes,
+        [
+            ("id", Some(3)),
+            ("asset", Some(9)),
+            ("quantity", Some(20 + 20 + 5)),
+            ("executed_at", Some(57)),
+        ]
+    );
+}
+
 #[tokio::test]
 async fn names_the_source_that_fails_to_load_and_the_failing_query() {
     let folder = tempfile::tempdir().unwrap();

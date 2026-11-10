@@ -404,6 +404,7 @@ fn events_are_json_lines_the_app_reads_back() {
                 name: "quantity".to_owned(),
                 type_name: "DECIMAL(38,18)".to_owned(),
                 declared: true,
+                bytes: None,
             }],
             warnings: Vec::new(),
             batches: Some(7),
@@ -427,6 +428,7 @@ fn events_are_json_lines_the_app_reads_back() {
             peak_memory: Some(2 << 30),
             peak_temp_size: Some(0),
             query_ms: Some(900),
+            plan: None,
         },
         RunEvent::WorkerUsage {
             peak_memory: Some(3 << 30),

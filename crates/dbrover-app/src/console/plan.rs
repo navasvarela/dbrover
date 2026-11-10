@@ -23,7 +23,7 @@ const COSTLIEST_TINT: f32 = 0.30;
 const WARM_TINT: f32 = 0.12;
 
 /// The plan of an explained statement, once it is read.
-pub(super) struct PlanView {
+pub(crate) struct PlanView {
     format: PlanFormat,
     /// `None` until the statement finishes; then the plan, or why its value isn't one.
     read: Option<Result<ReadPlan, String>>,
@@ -52,7 +52,7 @@ struct ReadPlan {
 }
 
 impl PlanView {
-    pub(super) fn new(format: PlanFormat) -> Self {
+    pub(crate) fn new(format: PlanFormat) -> Self {
         Self {
             format,
             read: None,
@@ -67,6 +67,11 @@ impl PlanView {
     /// Reads the plan from the rows the statement returned: one row of one value.
     pub(super) fn read(&mut self, rows: &[Row]) {
         let source = rows.first().and_then(|row| row.first()).cloned().flatten();
+        self.read_text(source);
+    }
+
+    /// Reads the plan from the value the database wrote it as, `None` when it wrote none.
+    pub(crate) fn read_text(&mut self, source: Option<String>) {
         let Some(source) = source else {
             self.read = Some(Err("the database returned no plan".to_owned()));
             return;
@@ -85,7 +90,7 @@ impl PlanView {
     }
 
     /// Why the value the database returned couldn't be read as a plan.
-    pub(super) fn failure(&self) -> Option<&str> {
+    pub(crate) fn failure(&self) -> Option<&str> {
         match &self.read {
             Some(Err(reason)) => Some(reason),
             _ => None,
@@ -119,7 +124,7 @@ impl ReadPlan {
 
 /// Whether the plan's bar offers Explain analyse, which runs the statement again.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum AnalyseButton {
+pub(crate) enum AnalyseButton {
     /// The console's language can't analyse a plan.
     Hidden,
     Enabled,
@@ -129,7 +134,7 @@ pub(super) enum AnalyseButton {
 
 /// Draws the plan, if it was read: the bar to switch views, analyse and copy, then the tree or
 /// the text. Returns whether Explain analyse was clicked.
-pub(super) fn show(ui: &mut Ui, view: &mut PlanView, analyse: AnalyseButton) -> bool {
+pub(crate) fn show(ui: &mut Ui, view: &mut PlanView, analyse: AnalyseButton) -> bool {
     let notation = view.format.notation();
     let Some(Ok(read)) = &mut view.read else {
         return false;

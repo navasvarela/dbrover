@@ -1,15 +1,20 @@
 //! The report's **Profile** (`docs/reports-at-scale.md`, "A timeline" and RS1c): one of the
 //! runs the history keeps, as a timeline of its steps, each bar split into its phases, with a
-//! wait for the round before hatched, and the step and phase that held the run named under it.
+//! wait for the round before hatched, and the step and phase that held the run named under it;
+//! then the data funnel and the combine step's plan (RS2c).
 
-use dbrover_store::{ReportName, ReportRun, RunOutcome};
+use dbrover_plan::PlanFormat;
+use dbrover_report::grouped;
+use dbrover_store::{ReportName, ReportRun, RunOutcome, StepMetrics};
 use egui::{Color32, Grid, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
 use jiff::tz::TimeZone;
 
-use super::Reports;
+use super::funnel::{self, Funnel};
 use super::insights::seconds;
 use super::profile::{self, Lane, Phase, Timeline};
 use super::runs_table::STARTED_FORMAT;
+use super::{ProfilePlan, Reports};
+use crate::console::plan::{self, AnalyseButton, PlanView};
 use crate::icons;
 use crate::theme::Palette;
 use crate::widgets;
@@ -25,6 +30,9 @@ const HATCH_STEP: f32 = 5.0;
 const LABELS_WIDTH: f32 = 280.0;
 /// The narrowest the timeline is drawn, however narrow the panel.
 const MIN_TIMELINE_WIDTH: f32 = 240.0;
+/// The height given to the combine step's plan: room for a dozen operators and the selected
+/// one's facts under them, as a console's plan has.
+const PLAN_HEIGHT: f32 = 360.0;
 
 pub fn show(ui: &mut Ui, reports: &mut Reports, name: &ReportName) {
     let palette = Palette::for_visuals(ui.visuals());
@@ -80,6 +88,101 @@ pub fn show(ui: &mut Ui, reports: &mut Reports, name: &ReportName) {
             dbrover_core::ByteCount(peak)
         ));
     }
+    if let Some(funnel) = funnel::funnel(run) {
+        ui.add_space(12.0);
+        draw_funnel(ui, &funnel);
+    }
+    combine_plan(ui, reports, name, run);
+}
+
+/// Each source's rows from what it returned to what the combine used, and what was written.
+fn draw_funnel(ui: &mut Ui, funnel: &Funnel) {
+    ui.strong("Data funnel");
+    ui.weak(
+        "What each source returned, and the rows of it the combine step's scans passed on. A \
+         wide drop says the source's query could filter more.",
+    );
+    ui.add_space(4.0);
+    Grid::new("report_profile_funnel")
+        .num_columns(3)
+        .spacing(vec2(24.0, 4.0))
+        .show(ui, |ui| {
+            ui.strong("Source");
+            ui.strong("Returned");
+            ui.strong("Used by the combine");
+            ui.end_row();
+            for line in &funnel.lines {
+                ui.label(&line.source);
+                ui.label(format!(
+                    "{} rows · {}",
+                    grouped(line.returned_rows),
+                    dbrover_core::ByteCount(line.returned_bytes)
+                ));
+                match line.used_rows {
+                    Some(used) => ui.label(format!(
+                        "{} rows ({})",
+                        grouped(used),
+                        share(used, line.returned_rows)
+                    )),
+                    None => ui.weak("not known"),
+                };
+                ui.end_row();
+            }
+        });
+    if let Some(written) = funnel.written_rows {
+        ui.weak(format!("The outputs wrote {} rows.", grouped(written)));
+    }
+}
+
+/// `used` as a share of `returned`: `12%`, `under 1%`.
+fn share(used: u64, returned: u64) -> String {
+    if returned == 0 {
+        return "of none".to_owned();
+    }
+    let percent = u128::from(used) * 100 / u128::from(returned);
+    if percent == 0 && used < returned {
+        "under 1%".to_owned()
+    } else {
+        format!("{percent}%")
+    }
+}
+
+/// The combine step's plan, drawn as W10 draws a plan, when the run kept one.
+fn combine_plan(ui: &mut Ui, reports: &mut Reports, name: &ReportName, run: &ReportRun) {
+    let Some(text) = run.steps.iter().find_map(|step| match step {
+        StepMetrics::Combine(combine) => combine.plan.clone(),
+        _ => None,
+    }) else {
+        return;
+    };
+    ui.add_space(12.0);
+    ui.strong("The combine step's plan");
+    ui.weak(
+        "DuckDB's operators as they ran the combine query, the costliest tinted. A scan says \
+         the columns it read and the filters it applied as it read.",
+    );
+    ui.add_space(4.0);
+    let state = reports.state_mut(name);
+    let kept = state
+        .profile_plan
+        .take()
+        .filter(|kept| kept.started_at == run.started_at);
+    let kept = kept.unwrap_or_else(|| {
+        let mut view = PlanView::new(PlanFormat::DuckDbJson);
+        view.read_text(Some(text));
+        ProfilePlan {
+            started_at: run.started_at,
+            view,
+        }
+    });
+    let kept = state.profile_plan.insert(kept);
+    if let Some(reason) = kept.view.failure() {
+        ui.weak(format!("The plan can't be read: {reason}"));
+        return;
+    }
+    ui.allocate_ui(vec2(ui.available_width(), PLAN_HEIGHT), |ui| {
+        plan::show(ui, &mut kept.view, AnalyseButton::Hidden);
+    });
 }
 
 /// A menu of the runs kept, newest first; returns the one picked.

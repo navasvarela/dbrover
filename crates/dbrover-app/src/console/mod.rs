@@ -15,7 +15,7 @@ mod edit;
 mod file;
 mod grid;
 mod keys;
-mod plan;
+pub(crate) mod plan;
 mod problems;
 mod results;
 mod snippet;

@@ -34,6 +34,8 @@ toml_parser.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+# Reads the combine step's plan a run reports (RS2c).
+dbrover-plan.workspace = true
 calamine.workspace = true
 # Decodes a chart's PNG to look at its pixels.
 resvg.workspace = true

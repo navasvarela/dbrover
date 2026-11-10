@@ -280,6 +280,7 @@ mod tests {
                 peak_memory: Some(1 << 20),
                 peak_temp_size: Some(0),
                 query_ms: None,
+                plan: None,
             },
             RunEvent::Preview(Preview {
                 columns: vec!["n".to_owned()],
