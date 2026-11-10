@@ -880,6 +880,7 @@ fn takes_the_limits_a_file_leaves_out_from_the_defaults() {
             max_size: ByteSize(5 << 20),
         },
         run_timeout: Duration::from_secs(90),
+        max_disk: ByteSize(1 << 30),
     };
     let report = read_report(VALUATION).unwrap();
     let plan = Plan::new(report, &valuation_sources(), &[], &defaults).unwrap();

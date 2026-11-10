@@ -4,6 +4,7 @@
 //! value would save every keystroke on the way.
 
 use std::num::{NonZeroU32, NonZeroU64};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use dbrover_core::ByteSize;
@@ -50,11 +51,13 @@ pub enum ReportDefault {
     CombineTimeout,
     MaxSize,
     RunTimeout,
+    MaxDisk,
+    WorkFolder,
     RunsKept,
 }
 
 impl ReportDefault {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 12] = [
         Self::MaxRows,
         Self::MaxBytes,
         Self::SourceTimeout,
@@ -64,6 +67,8 @@ impl ReportDefault {
         Self::CombineTimeout,
         Self::MaxSize,
         Self::RunTimeout,
+        Self::MaxDisk,
+        Self::WorkFolder,
         Self::RunsKept,
     ];
 
@@ -74,7 +79,11 @@ impl ReportDefault {
             Self::MemoryLimit | Self::MaxTempSize | Self::Threads | Self::CombineTimeout => {
                 "The combine step's DuckDB"
             }
-            Self::MaxSize | Self::RunTimeout | Self::RunsKept => "Outputs and runs",
+            Self::MaxSize
+            | Self::RunTimeout
+            | Self::MaxDisk
+            | Self::WorkFolder
+            | Self::RunsKept => "Outputs and runs",
         }
     }
 
@@ -89,6 +98,8 @@ impl ReportDefault {
             Self::CombineTimeout => "The combine query's time limit",
             Self::MaxSize => "Values an output may write",
             Self::RunTimeout => "A whole run's time limit",
+            Self::MaxDisk => "Disk a run may use",
+            Self::WorkFolder => "Work folder",
             Self::RunsKept => "Runs kept per report",
         }
     }
@@ -105,6 +116,14 @@ impl ReportDefault {
             Self::CombineTimeout => "timeout in [combine] overrides it.",
             Self::MaxSize => "An output's max_size overrides it.",
             Self::RunTimeout => "timeout in [report] overrides it.",
+            Self::MaxDisk => {
+                "Its DuckDB's file, what it spills and its files being written; max_disk in \
+                 [report] overrides it."
+            }
+            Self::WorkFolder => {
+                "Where each run keeps its DuckDB's file and spills, removed when it ends: a \
+                 roomier disk, say."
+            }
             Self::RunsKept => "Older runs are deleted as each new one is kept.",
         }
     }
@@ -121,6 +140,8 @@ impl ReportDefault {
             Self::CombineTimeout => "combine_timeout",
             Self::MaxSize => "max_size",
             Self::RunTimeout => "run_timeout",
+            Self::MaxDisk => "max_disk",
+            Self::WorkFolder => "work_folder",
             Self::RunsKept => "runs_kept",
         }
     }
@@ -190,6 +211,15 @@ impl ReportDefault {
                 &[10 * MINUTE, 30 * MINUTE, HOUR, 2 * HOUR, 4 * HOUR].map(Duration::from_secs),
                 duration,
             ),
+            Self::MaxDisk => choice(
+                ui,
+                id,
+                &mut settings.max_disk,
+                &constants.max_disk.to_string(),
+                &[5 * GIB, 20 * GIB, 50 * GIB, 100 * GIB, 500 * GIB].map(ByteSize),
+                |size| size.to_string(),
+            ),
+            Self::WorkFolder => work_folder(ui, &mut settings.work_folder),
             Self::RunsKept => choice(
                 ui,
                 id,
@@ -200,6 +230,26 @@ impl ReportDefault {
             ),
         }
     }
+}
+
+/// The folder chosen, or that runs use the data folder's, with buttons to choose another and
+/// to go back to the default.
+fn work_folder(ui: &mut Ui, folder: &mut Option<PathBuf>) {
+    ui.horizontal(|ui| {
+        let shown = folder.as_deref().map_or_else(
+            || "default: report-runs in DbRover's data folder".to_owned(),
+            |folder| folder.display().to_string(),
+        );
+        ui.label(shown);
+        if ui.button("Choose…").clicked()
+            && let Some(chosen) = crate::file_picker::pick_work_folder(folder.as_deref())
+        {
+            *folder = Some(chosen);
+        }
+        if folder.is_some() && ui.button("Use the default").clicked() {
+            *folder = None;
+        }
+    });
 }
 
 fn size_choice(ui: &mut Ui, id: &str, size: &mut Option<ByteSize>, default: ByteSize) {

@@ -49,21 +49,21 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
             limits::limit_processor_time(plan.processor_time());
             if let Some(explain) = &request.explain {
                 tracing::info!(report = %plan.name, %version, "explaining the report");
-                let explanation =
-                    explain_report(&paths, &plan, &values, explain, &request.staging)?;
+                let explanation = explain_report(&paths, &plan, &values, explain, &request.work)?;
                 // As for a run's end: whether anyone reads it changes nothing.
                 let _ = out.send(&RunEvent::Explained(Box::new(explanation)));
                 return Ok(());
             }
             tracing::info!(report = %plan.name, %version, "running the report");
-            let started = out.send(&plan.started(version, machine()));
-            if started.is_err() {
-                abandon(&request.staging);
-            }
             let folders = RunFolders {
                 folder: &request.folder,
                 staging: &request.staging,
+                work: &request.work,
             };
+            let started = out.send(&plan.started(version, machine()));
+            if started.is_err() {
+                abandon(folders);
+            }
             let ran = run_report(&paths, &plan, &values, folders, &mut out);
             planned = Some(plan);
             ran
@@ -242,13 +242,13 @@ fn runtime() -> Result<tokio::runtime::Runtime, RunFailure> {
 }
 
 /// Explains the report's sources on their data sources and its combine step over empty tables,
-/// DuckDB spilling, if it must, in `staging`, which is removed after.
+/// DuckDB spilling, if it must, in `work`, which is removed after.
 fn explain_report(
     paths: &AppPaths,
     plan: &Plan,
     values: &RunValues,
     request: &ExplainRequest,
-    staging: &Path,
+    work: &Path,
 ) -> Result<Explanation, RunFailure> {
     let explanation = runtime()?.block_on(async {
         let secrets = os_keychain();
@@ -260,13 +260,9 @@ fn explain_report(
             tunnels: &tunnels,
             commands: &commands,
         };
-        dbrover_report::explain(plan, values, &access, &request.tables, staging).await
+        dbrover_report::explain(plan, values, &access, &request.tables, work).await
     });
-    if let Err(error) = std::fs::remove_dir_all(staging)
-        && error.kind() != io::ErrorKind::NotFound
-    {
-        tracing::warn!("could not remove {}: {error}", staging.display());
-    }
+    remove(work);
     Ok(explanation)
 }
 
@@ -290,7 +286,7 @@ fn run_report(
         };
         dbrover_report::run(plan, values, &access, folders, &mut |event| {
             if out.send(&event).is_err() {
-                abandon(folders.staging);
+                abandon(folders);
             }
         })
         .await
@@ -299,17 +295,23 @@ fn run_report(
 }
 
 /// Stops a run nobody reads the events of any more: the app or command that started it was
-/// killed without killing it. Its staging folder goes, as a cancelled run's does, and nothing
-/// is put in place. Exits rather than unwinding the run: the sources' connections and DuckDB
-/// go with the process.
-fn abandon(staging: &Path) -> ! {
+/// killed without killing it. Its staging folder and work folder go, as a cancelled run's do,
+/// and nothing is put in place. Exits rather than unwinding the run: the sources' connections
+/// and DuckDB go with the process.
+fn abandon(folders: RunFolders<'_>) -> ! {
     tracing::warn!("nobody reads the run's events any more, so it stops");
-    if let Err(error) = std::fs::remove_dir_all(staging)
+    remove(folders.staging);
+    remove(folders.work);
+    std::process::exit(FAILED)
+}
+
+/// Removes a folder of the run's own, if it is there.
+fn remove(folder: &Path) {
+    if let Err(error) = std::fs::remove_dir_all(folder)
         && error.kind() != io::ErrorKind::NotFound
     {
-        tracing::warn!("could not remove {}: {error}", staging.display());
+        tracing::warn!("could not remove {}: {error}", folder.display());
     }
-    std::process::exit(FAILED)
 }
 
 fn make_folder(folder: &Path) -> Result<(), RunFailure> {

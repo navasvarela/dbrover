@@ -1,11 +1,11 @@
 //! A DuckDB database of one report run's own (`docs/reporting.md`, "RP2 — Several sources"):
-//! in memory, with its memory, threads and spilling bounded, the run's sources loaded into its
-//! tables, DuckDB files attached to it read-only, and then locked down for the query that
-//! combines them.
+//! on a file in the run's work folder (`docs/reports-at-scale.md`, RS3b), or in memory, with its
+//! memory, threads and spilling bounded, the run's sources loaded into its tables, DuckDB files
+//! attached to it read-only, and then locked down for the query that combines them.
 //!
 //! A run goes through it in this order:
 //!
-//! 1. [`Workspace::open`] sets its limits;
+//! 1. [`Workspace::open`] makes the database and sets its limits;
 //! 2. [`Workspace::attach`] attaches each DuckDB file, and [`Workspace::loader`] loads each
 //!    other source: its rows a page of text at a time, then each column cast to its type;
 //! 3. [`Workspace::lock`] turns off everything outside the database and freezes the limits;
@@ -60,6 +60,18 @@ const EXPLAIN_JSON: &str = "EXPLAIN (FORMAT JSON) ";
 
 /// The column of `EXPLAIN`'s answer holding the plan, after `explain_key`.
 const EXPLAIN_VALUE_COLUMN: usize = 1;
+
+/// Where a workspace keeps its tables.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceStore {
+    /// In memory, for a workspace whose tables stay small, such as one that explains a report
+    /// over empty tables.
+    Memory,
+    /// In a new database file at this path, which must not exist yet: tables larger than
+    /// `memory_limit` are written out to it as any database's pages are, not spilled. Whoever
+    /// opened the workspace removes the file after [`Workspace::close`].
+    File(PathBuf),
+}
 
 /// What bounds a workspace.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -197,22 +209,36 @@ impl fmt::Display for DuckDbType {
     }
 }
 
-/// A DuckDB database in memory, for one run.
+/// A DuckDB database for one run.
 pub struct Workspace {
     connection: DuckDbConnection,
 }
 
 impl Workspace {
-    /// Opens a database in memory under `limits`, with extensions neither downloaded nor
+    /// Makes a database in `store` under `limits`, with extensions neither downloaded nor
     /// loaded on their own, and its time zone UTC, so times with a zone read the same on
     /// every machine.
     ///
     /// # Errors
     ///
-    /// [`DriverError`] if DuckDB refuses a limit, such as a temporary folder it can't make.
-    pub async fn open(limits: &WorkspaceLimits) -> Result<Self, DriverError> {
+    /// [`DriverError`] if the file exists already or can't be made, or DuckDB refuses a limit,
+    /// such as a temporary folder it can't make.
+    pub async fn open(
+        store: &WorkspaceStore,
+        limits: &WorkspaceLimits,
+    ) -> Result<Self, DriverError> {
         std::fs::create_dir_all(&limits.temp_directory).map_err(connection_error)?;
-        let connection = crate::connect(&DuckDbConfig::new(DuckDbDatabase::InMemory)).await?;
+        let database = match store {
+            WorkspaceStore::Memory => DuckDbDatabase::InMemory,
+            WorkspaceStore::File(path) => {
+                crate::create_database(path).await?;
+                DuckDbDatabase::File {
+                    path: path.clone(),
+                    read_only: false,
+                }
+            }
+        };
+        let connection = crate::connect(&DuckDbConfig::new(database)).await?;
         let settings = [
             format!("SET memory_limit = '{}'", kibibytes(limits.memory_limit)),
             format!("SET threads = {}", limits.threads.max(1)),
@@ -225,6 +251,9 @@ impl Workspace {
                 kibibytes(limits.max_temp_size)
             ),
             "SET autoinstall_known_extensions = false".to_owned(),
+            // The file is removed once the run ends, so writing its last changes into it as
+            // the database closes would only cost time.
+            "PRAGMA disable_checkpoint_on_shutdown".to_owned(),
             "SET autoload_known_extensions = false".to_owned(),
             // Measures without writing anywhere, so it needs no file once external access is
             // off, and only what `profile` reads, which DuckDB measures as it runs anyway.

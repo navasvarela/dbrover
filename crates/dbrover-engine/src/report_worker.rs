@@ -5,7 +5,8 @@
 //! Three threads per run, each blocking on one thing:
 //! - the worker's standard output, one event a line, until it closes, then the exit status;
 //! - its standard error, a log line at a time, into the app's log;
-//! - a watchdog that kills the worker at the run's time limit, unless the run ends first.
+//! - a watchdog that wakes each second until the run ends, and kills the worker at the run's
+//!   time limit, or once its folders hold more than its disk budget (RS3b).
 //!
 //! Threads rather than tasks: the worker is a child process, whose pipes and exit status are
 //! blocking std calls, and a run ties up nothing of the engine's runtime.
@@ -13,13 +14,15 @@
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use dbrover_report::{LimitHit, RunEvent, RunFailure, RunRequest, Step, TimedEvent};
+use dbrover_report::{DiskBudget, LimitHit, RunEvent, RunFailure, RunRequest, Step, TimedEvent};
+
+use crate::report_disk::folder_size;
 
 /// Windows' `BELOW_NORMAL_PRIORITY_CLASS`: a report gives way to the app and everything else
 /// the user is doing. On Linux and macOS the worker lowers its own priority.
@@ -34,6 +37,10 @@ const KEPT_LOG_LINES: usize = 5;
 /// after its last line, so this is waited once or twice.
 const EXIT_POLL: Duration = Duration::from_millis(20);
 
+/// How often the watchdog looks at a run: soon enough after a limit that a run past its disk
+/// budget writes little more, and seldom enough that adding up its folders costs nothing.
+const WATCH_EVERY: Duration = Duration::from_secs(1);
+
 /// Why the app stopped the worker, if it did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -41,6 +48,8 @@ enum Stop {
     No = 0,
     Cancelled = 1,
     TimedOut = 2,
+    /// Its folders held more than its disk budget.
+    OutOfDisk = 3,
 }
 
 impl Stop {
@@ -48,9 +57,30 @@ impl Stop {
         match value {
             1 => Self::Cancelled,
             2 => Self::TimedOut,
+            3 => Self::OutOfDisk,
             _ => Self::No,
         }
     }
+}
+
+/// What the app watches a run for, and stops it at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RunWatch {
+    /// The whole run's time limit.
+    pub timeout: Duration,
+    /// What the run's work folder and staging folder may hold together; `None` watches no
+    /// disk, as when explaining a report, which writes no file.
+    pub disk: Option<DiskBudget>,
+}
+
+/// What the watchdog needs of a run: its limits, the folders it writes, and how to stop it.
+struct Watched {
+    watch: RunWatch,
+    folders: [PathBuf; 2],
+    child: Arc<Mutex<Child>>,
+    stop: Arc<AtomicU8>,
+    /// What the folders held when the watchdog stopped the run for its disk.
+    disk_used: Arc<AtomicU64>,
 }
 
 /// A report running in a worker process.
@@ -64,8 +94,8 @@ pub struct WorkerRun {
 
 impl WorkerRun {
     /// Starts `command` (the app's own executable, as `report-worker`) and sends it
-    /// `request`. `timeout` is the whole run's limit; `wake` is called after every event, so
-    /// the UI can look.
+    /// `request`, watching it for `watch`'s limits; `wake` is called after every event, so the
+    /// UI can look.
     ///
     /// # Errors
     ///
@@ -73,7 +103,7 @@ impl WorkerRun {
     pub fn start(
         mut command: Command,
         request: &RunRequest,
-        timeout: Duration,
+        watch: RunWatch,
         wake: impl Fn() + Send + Sync + 'static,
     ) -> io::Result<Self> {
         command
@@ -111,16 +141,28 @@ impl WorkerRun {
         let (events, received) = mpsc::channel();
         let (watchdog, stopped) = mpsc::channel();
         let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(wake);
+        let disk_used = Arc::new(AtomicU64::new(0));
         spawn_log_reader(stderr, Arc::clone(&log));
-        spawn_watchdog(stopped, timeout, Arc::clone(&child), Arc::clone(&stop));
+        spawn_watchdog(
+            stopped,
+            Watched {
+                watch,
+                folders: [request.work.clone(), request.staging.clone()],
+                child: Arc::clone(&child),
+                stop: Arc::clone(&stop),
+                disk_used: Arc::clone(&disk_used),
+            },
+            started,
+        );
         let reader = OutputReader {
-            staging: request.staging.clone(),
+            folders: [request.staging.clone(), request.work.clone()],
             child: Arc::clone(&child),
             stop: Arc::clone(&stop),
             log,
             events,
             wake,
-            timeout,
+            watch,
+            disk_used,
             started,
         };
         thread::Builder::new()
@@ -218,23 +260,18 @@ fn spawn_log_reader(stderr: ChildStderr, log: Arc<Mutex<Vec<String>>>) {
     }
 }
 
-/// Kills the worker once `timeout` passes, unless `stopped` says the run ended first.
-fn spawn_watchdog(
-    stopped: Receiver<()>,
-    timeout: Duration,
-    child: Arc<Mutex<Child>>,
-    stop: Arc<AtomicU8>,
-) {
+/// Looks at the run every [`WATCH_EVERY`] until `stopped` says it ended, and kills the worker
+/// at the first limit it passes.
+fn spawn_watchdog(stopped: Receiver<()>, watched: Watched, started: Instant) {
     let watch = move || {
-        if let Err(RecvTimeoutError::Timeout) = stopped.recv_timeout(timeout) {
-            let first = stop.compare_exchange(
-                Stop::No as u8,
-                Stop::TimedOut as u8,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            );
-            if first.is_ok() {
-                kill(&child);
+        loop {
+            match stopped.recv_timeout(WATCH_EVERY) {
+                Err(RecvTimeoutError::Timeout) => {}
+                Ok(()) | Err(RecvTimeoutError::Disconnected) => return,
+            }
+            if let Some(stop) = watched.passed(started.elapsed()) {
+                watched.stop(stop);
+                return;
             }
         }
     };
@@ -242,21 +279,52 @@ fn spawn_watchdog(
         .name("report-worker-watchdog".to_owned())
         .spawn(watch)
     {
-        tracing::warn!("could not watch the report worker's time: {error}");
+        tracing::warn!("could not watch the report worker: {error}");
+    }
+}
+
+impl Watched {
+    /// The limit the run has passed after `elapsed`, if it has.
+    fn passed(&self, elapsed: Duration) -> Option<Stop> {
+        if elapsed >= self.watch.timeout {
+            return Some(Stop::TimedOut);
+        }
+        let budget = self.watch.disk?;
+        let used: u64 = self.folders.iter().map(|folder| folder_size(folder)).sum();
+        if used > budget.bytes() {
+            self.disk_used.store(used, Ordering::SeqCst);
+            return Some(Stop::OutOfDisk);
+        }
+        None
+    }
+
+    /// Kills the worker for `stop`, unless the run was stopped already.
+    fn stop(&self, stop: Stop) {
+        let first = self.stop.compare_exchange(
+            Stop::No as u8,
+            stop as u8,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
+        if first.is_ok() {
+            kill(&self.child);
+        }
     }
 }
 
 /// Reads the worker's events until it exits, then says how the run ended if the worker
 /// didn't.
 struct OutputReader {
-    /// The run's staging folder, which a worker that ended without saying so may have left.
-    staging: PathBuf,
+    /// The run's staging folder and work folder, which a worker that ended without saying so
+    /// may have left.
+    folders: [PathBuf; 2],
     child: Arc<Mutex<Child>>,
     stop: Arc<AtomicU8>,
     log: Arc<Mutex<Vec<String>>>,
     events: Sender<TimedEvent>,
     wake: Arc<dyn Fn() + Send + Sync>,
-    timeout: Duration,
+    watch: RunWatch,
+    disk_used: Arc<AtomicU64>,
     /// When the worker was started, for the time of an event this side makes.
     started: Instant,
 }
@@ -283,10 +351,20 @@ impl OutputReader {
         if ended {
             return;
         }
-        self.remove_staging();
+        self.remove_folders();
         let event = match Stop::from_u8(self.stop.load(Ordering::SeqCst)) {
             Stop::Cancelled => RunEvent::Cancelled,
-            Stop::TimedOut => RunEvent::Failed(timed_out(self.timeout)),
+            Stop::TimedOut => RunEvent::Failed(timed_out(self.watch.timeout)),
+            Stop::OutOfDisk => {
+                let used = self.disk_used.load(Ordering::SeqCst);
+                match self.watch.disk {
+                    Some(budget) => RunEvent::Failed(budget.exceeded(used)),
+                    None => RunEvent::Failed(RunFailure::new(
+                        Step::Worker,
+                        "the run used more disk than it may, and was stopped",
+                    )),
+                }
+            }
             Stop::No => {
                 let log = self.log.lock().unwrap_or_else(PoisonError::into_inner);
                 RunEvent::Failed(RunFailure::new(Step::Worker, stopped(status, &log)))
@@ -296,15 +374,17 @@ impl OutputReader {
     }
 
     /// Removes what a killed worker had started writing, before the run's end is sent, so the
-    /// output folder is as it was by the time anyone looks.
-    fn remove_staging(&self) {
-        match std::fs::remove_dir_all(&self.staging) {
-            Ok(()) => tracing::info!("removed {}", self.staging.display()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => tracing::warn!(
-                "could not remove the report's staging folder {}: {error}",
-                self.staging.display()
-            ),
+    /// output folder is as it was by the time anyone looks, and the work folder is gone.
+    fn remove_folders(&self) {
+        for folder in &self.folders {
+            match std::fs::remove_dir_all(folder) {
+                Ok(()) => tracing::info!("removed {}", folder.display()),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => tracing::warn!(
+                    "could not remove the report's folder {}: {error}",
+                    folder.display()
+                ),
+            }
         }
     }
 

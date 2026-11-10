@@ -152,6 +152,7 @@ pub fn read_with_places(text: &str) -> Result<Report, Vec<ReportProblem>> {
             description: header.description,
             params: header.params,
             timeout: header.timeout,
+            max_disk: header.max_disk,
             quiet_hints: header.quiet_hints,
             sources,
             combine,
@@ -233,8 +234,12 @@ struct Header {
     description: Option<String>,
     params: Vec<Param>,
     timeout: Option<Duration>,
+    max_disk: Option<ByteSize>,
     quiet_hints: Vec<HintId>,
 }
+
+/// The keys `[report]` has, for the problem of one it hasn't.
+const REPORT_KEYS: &str = "name, description, params, timeout, max_disk and quiet_hints";
 
 fn read_header(table: toml::Table, problems: &mut Vec<ReportProblem>) -> Option<Header> {
     let mut fields = Fields::new(table);
@@ -247,42 +252,43 @@ fn read_header(table: toml::Table, problems: &mut Vec<ReportProblem>) -> Option<
     let description = fields.string("description");
     let params = fields.table("params").map(Option::unwrap_or_default);
     let timeout = fields.duration("timeout");
+    let max_disk = fields.byte_size("max_disk");
     let quiet_hints = read_quiet_hints(fields.take("quiet_hints"));
     for (key, place) in MISPLACED_REPORT_KEYS {
         if fields.take(key).is_some() {
             found.push(Found::at(key, place));
         }
     }
-    found.extend(fields.unknown(
-        "[report]",
-        "name, description, params, timeout and quiet_hints",
-    ));
+    found.extend(fields.unknown("[report]", REPORT_KEYS));
     let params = params.map(|params| read_params(params, &mut found));
-    let header = match (name, description, params, timeout, quiet_hints) {
-        (Ok(name), Ok(description), Ok(params), Ok(timeout), Ok(quiet_hints)) => Some(Header {
-            name,
-            description: description.filter(|text| !text.trim().is_empty()),
-            params,
-            timeout,
-            quiet_hints,
-        }),
-        (name, description, params, timeout, quiet_hints) => {
-            found.extend(name.err());
-            found.extend(description.err());
-            found.extend(params.err());
-            found.extend(timeout.err());
+    let name = kept(name, &mut found);
+    let description = kept(description, &mut found);
+    let params = kept(params, &mut found);
+    let timeout = kept(timeout, &mut found);
+    let max_disk = kept(max_disk, &mut found);
+    let quiet_hints = quiet_hints
+        .map_err(|quiet| {
             found.extend(
-                quiet_hints
-                    .err()
+                quiet
                     .into_iter()
-                    .flatten()
                     .map(|problem| Found::at("quiet_hints", problem)),
             );
-            None
-        }
-    };
+        })
+        .ok();
     problems.extend(placed(Table::Report, Some(label), found));
-    header
+    Some(Header {
+        name: name?,
+        description: description?.filter(|text| !text.trim().is_empty()),
+        params: params?,
+        timeout: timeout?,
+        max_disk: max_disk?,
+        quiet_hints: quiet_hints?,
+    })
+}
+
+/// `result`'s value, or `None` with its problem added to `found`.
+fn kept<T>(result: Result<T, Found>, found: &mut Vec<Found>) -> Option<T> {
+    result.map_err(|problem| found.push(problem)).ok()
 }
 
 /// `quiet_hints`, the ids of the hints the report's runs don't give, each a problem when it

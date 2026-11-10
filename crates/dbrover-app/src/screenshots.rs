@@ -1802,6 +1802,7 @@ fn report_problems(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture
                 settings_folder: fixture.dir.path().to_owned(),
             }),
             default_folder: PathBuf::from("/Users/ada/Downloads"),
+            work_root: fixture.dir.path().join("report-runs"),
         });
     harness.state_mut().close_log_console();
     step_until_visible(harness, "sales-by-category");
@@ -1922,6 +1923,7 @@ fn report_page(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
                 settings_folder: fixture.dir.path().to_owned(),
             }),
             default_folder: PathBuf::from("/Users/ada/Downloads"),
+            work_root: fixture.dir.path().join("report-runs"),
         });
     harness.state_mut().close_log_console();
     step_until_visible(harness, "Sales by category");

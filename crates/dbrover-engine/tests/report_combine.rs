@@ -154,9 +154,11 @@ async fn run_valuation(
         commands: &commands,
     };
     let staging = out.join(".run");
+    let work = staging.with_extension("work");
     let folders = RunFolders {
         folder: out,
         staging: &staging,
+        work: &work,
     };
     let mut events = Vec::new();
     run(&plan, &values, &access, folders, &mut |event| {

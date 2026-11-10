@@ -193,9 +193,11 @@ async fn run_with(
 ) -> (Result<RunSummary, RunFailure>, Vec<RunEvent>) {
     let mut events = Vec::new();
     let staging = folder.join(".run");
+    let work = staging.with_extension("work");
     let folders = RunFolders {
         folder,
         staging: &staging,
+        work: &work,
     };
     let outcome = run(plan, &october(plan), opener, folders, &mut |event| {
         events.push(event);
@@ -587,9 +589,11 @@ async fn says_where_each_sources_time_went() {
         later: Duration::from_millis(30),
     };
     let staging = folder.path().join(".run");
+    let work = staging.with_extension("work");
     let folders = RunFolders {
         folder: folder.path(),
         staging: &staging,
+        work: &work,
     };
     let mut events = Vec::new();
     let plan_values = october(&plan);
@@ -634,9 +638,11 @@ async fn says_each_second_what_a_source_waits_on_before_its_first_row() {
         later: Duration::ZERO,
     };
     let staging = folder.path().join(".run");
+    let work = staging.with_extension("work");
     let folders = RunFolders {
         folder: folder.path(),
         staging: &staging,
+        work: &work,
     };
     let mut events = Vec::new();
     let plan_values = october(&plan);

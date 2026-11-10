@@ -115,9 +115,11 @@ async fn run_example(
         commands: &commands,
     };
     let staging = out.join(".run");
+    let work = staging.with_extension("work");
     let folders = RunFolders {
         folder: out,
         staging: &staging,
+        work: &work,
     };
     run(&plan, &values, &access, folders, &mut |_| {})
         .await

@@ -2,7 +2,7 @@ use std::path::Path;
 
 use dbrover_core::{Connection, DriverError, describe_error};
 
-use crate::{DuckDbType, Workspace, WorkspaceLimit, WorkspaceLimits};
+use crate::{DuckDbType, Workspace, WorkspaceLimit, WorkspaceLimits, WorkspaceStore};
 
 const MIB: u64 = 1 << 20;
 
@@ -13,6 +13,11 @@ fn limits(folder: &Path, memory_limit: u64, max_temp_size: u64) -> WorkspaceLimi
         temp_directory: folder.join("spill"),
         max_temp_size,
     }
+}
+
+/// A run's database, on a file in `folder`.
+fn on_file(folder: &Path) -> WorkspaceStore {
+    WorkspaceStore::File(folder.join("workspace.duckdb"))
 }
 
 fn roomy(folder: &Path) -> WorkspaceLimits {
@@ -43,7 +48,9 @@ fn cells(values: &[&str]) -> Vec<Option<String>> {
 #[tokio::test]
 async fn loads_text_into_typed_columns_with_every_digit() {
     let folder = tempfile::tempdir().unwrap();
-    let mut workspace = Workspace::open(&roomy(folder.path())).await.unwrap();
+    let mut workspace = Workspace::open(&on_file(folder.path()), &roomy(folder.path()))
+        .await
+        .unwrap();
     let columns = ["id", "quantity", "booked_on", "settled"].map(str::to_owned);
     let mut loader = workspace.loader("tx", &columns).await.unwrap();
     loader
@@ -124,7 +131,9 @@ async fn loads_text_into_typed_columns_with_every_digit() {
 #[tokio::test]
 async fn reads_a_columns_distinct_values_in_order() {
     let folder = tempfile::tempdir().unwrap();
-    let workspace = Workspace::open(&roomy(folder.path())).await.unwrap();
+    let workspace = Workspace::open(&on_file(folder.path()), &roomy(folder.path()))
+        .await
+        .unwrap();
     let columns = ["asset", "amount"].map(str::to_owned);
     let mut loader = workspace.loader("tx", &columns).await.unwrap();
     loader
@@ -156,7 +165,9 @@ async fn reads_a_columns_distinct_values_in_order() {
 #[tokio::test]
 async fn names_the_value_that_does_not_fit_its_type() {
     let folder = tempfile::tempdir().unwrap();
-    let workspace = Workspace::open(&roomy(folder.path())).await.unwrap();
+    let workspace = Workspace::open(&on_file(folder.path()), &roomy(folder.path()))
+        .await
+        .unwrap();
     let mut loader = workspace
         .loader("tx", &["amount".to_owned()])
         .await
@@ -187,7 +198,9 @@ async fn attaches_a_file_read_only() {
         )
         .unwrap();
     }
-    let mut workspace = Workspace::open(&roomy(folder.path())).await.unwrap();
+    let mut workspace = Workspace::open(&on_file(folder.path()), &roomy(folder.path()))
+        .await
+        .unwrap();
     workspace.attach("prices", &path).await.unwrap();
     workspace.lock().await.unwrap();
 
@@ -219,7 +232,9 @@ async fn once_locked_reads_no_file_and_keeps_its_limits() {
     let folder = tempfile::tempdir().unwrap();
     let outside = folder.path().join("outside.csv");
     std::fs::write(&outside, "a\n1\n").unwrap();
-    let mut workspace = Workspace::open(&roomy(folder.path())).await.unwrap();
+    let mut workspace = Workspace::open(&on_file(folder.path()), &roomy(folder.path()))
+        .await
+        .unwrap();
     workspace.lock().await.unwrap();
 
     let attempts = [
@@ -254,9 +269,12 @@ const SORT_PAST_MEMORY: &str = "SELECT range, repeat('x', 100) AS padding \
 #[tokio::test]
 async fn spills_past_its_memory_limit_and_stops_at_its_temp_size() {
     let folder = tempfile::tempdir().unwrap();
-    let mut spilling = Workspace::open(&limits(folder.path(), 64 * MIB, 1024 * MIB))
-        .await
-        .unwrap();
+    let mut spilling = Workspace::open(
+        &on_file(folder.path()),
+        &limits(folder.path(), 64 * MIB, 1024 * MIB),
+    )
+    .await
+    .unwrap();
     let rows = query(&mut spilling, SORT_PAST_MEMORY).await.unwrap();
     assert_eq!(rows.len(), 1_000_000);
     let peaks = spilling.profile().await.unwrap().peaks;
@@ -266,9 +284,13 @@ async fn spills_past_its_memory_limit_and_stops_at_its_temp_size() {
     );
     spilling.close().await;
 
-    let mut full = Workspace::open(&limits(folder.path(), 64 * MIB, 2 * MIB))
-        .await
-        .unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let mut full = Workspace::open(
+        &on_file(folder.path()),
+        &limits(folder.path(), 64 * MIB, 2 * MIB),
+    )
+    .await
+    .unwrap();
     let error = query(&mut full, SORT_PAST_MEMORY).await.unwrap_err();
     assert_eq!(
         WorkspaceLimit::of(&error),
@@ -282,7 +304,9 @@ async fn spills_past_its_memory_limit_and_stops_at_its_temp_size() {
 #[tokio::test]
 async fn reports_its_peaks_once_locked_down() {
     let folder = tempfile::tempdir().unwrap();
-    let mut workspace = Workspace::open(&roomy(folder.path())).await.unwrap();
+    let mut workspace = Workspace::open(&on_file(folder.path()), &roomy(folder.path()))
+        .await
+        .unwrap();
     workspace.lock().await.unwrap();
     let rows = query(&mut workspace, "SELECT sum(range) FROM range(100000)")
         .await
@@ -296,7 +320,9 @@ async fn reports_its_peaks_once_locked_down() {
 
 /// Two tables loaded as a run loads its sources, for a query that filters, aggregates and joins.
 async fn orders_and_regions(folder: &Path) -> Workspace {
-    let workspace = Workspace::open(&roomy(folder)).await.unwrap();
+    let workspace = Workspace::open(&on_file(folder), &roomy(folder))
+        .await
+        .unwrap();
     let mut orders = workspace
         .loader(
             "orders",
@@ -348,7 +374,7 @@ async fn profiles_the_last_querys_operators_as_a_plan() {
     assert!(plan.is_analysed(), "{text}");
     let scan = plan
         .root
-        .find(&|step| step.target.as_deref() == Some("memory.main.orders"))
+        .find(&|step| step.target.as_deref() == Some("workspace.main.orders"))
         .unwrap_or_else(|| panic!("no scan of orders in {text}"));
     assert_eq!(
         scan.actual.and_then(|actual| actual.rows),
@@ -388,7 +414,7 @@ async fn explains_a_query_without_running_it() {
     assert!(!plan.is_analysed(), "{text}");
     let scan = plan
         .root
-        .find(&|step| step.target.as_deref() == Some("memory.main.orders"))
+        .find(&|step| step.target.as_deref() == Some("workspace.main.orders"))
         .unwrap_or_else(|| panic!("no scan of orders in {text}"));
     assert!(scan.estimate.rows.is_some(), "{text}");
     let missing = workspace.explain("SELECT nothing FROM orders", &[]).await;
@@ -466,4 +492,92 @@ fn tells_the_memory_limit_from_the_temp_size() {
     for (message, limit) in cases {
         assert_eq!(WorkspaceLimit::of(&error(message)), limit, "{message}");
     }
+}
+
+/// More rows than `memory_limit` holds, loaded as a run loads a source: on a file, DuckDB
+/// writes the table's pages out to it rather than failing or spilling.
+#[tokio::test]
+async fn keeps_tables_larger_than_its_memory_on_its_file() {
+    let folder = tempfile::tempdir().unwrap();
+    let store = on_file(folder.path());
+    let mut workspace = Workspace::open(&store, &limits(folder.path(), 16 * MIB, 256 * MIB))
+        .await
+        .unwrap();
+    let mut loader = workspace
+        .loader("wide", &["id".to_owned(), "padding".to_owned()])
+        .await
+        .unwrap();
+    for page in 0..200 {
+        let rows = (0..1000)
+            .map(|row| {
+                let id: u64 = page * 1000 + row;
+                cells(&[&id.to_string(), &noise(id)])
+            })
+            .collect();
+        loader.append(rows).await.unwrap();
+    }
+    loader
+        .finish(&[DuckDbType::BigInt, DuckDbType::Varchar])
+        .await
+        .unwrap();
+    workspace.lock().await.unwrap();
+    let rows = query(
+        &mut workspace,
+        "SELECT count(*), sum(length(padding)) FROM wide",
+    )
+    .await
+    .unwrap();
+    assert_eq!(rows, [cells(&["200000", "40000000"])]);
+    workspace.close().await;
+    let WorkspaceStore::File(file) = store else {
+        unreachable!("on_file makes a file store")
+    };
+    let size = std::fs::metadata(file).unwrap().len();
+    assert!(size > 16 * MIB, "the table is on the file: {size} bytes");
+}
+
+/// 200 hexadecimal digits that follow from `seed` but look like noise, so DuckDB can't
+/// compress a column of them to little (xorshift64).
+fn noise(seed: u64) -> String {
+    let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+    (0..13)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            format!("{state:016x}")
+        })
+        .collect::<String>()[..200]
+        .to_owned()
+}
+
+#[tokio::test]
+async fn refuses_a_file_that_exists_already() {
+    let folder = tempfile::tempdir().unwrap();
+    let store = on_file(folder.path());
+    let first = Workspace::open(&store, &roomy(folder.path()))
+        .await
+        .unwrap();
+    first.close().await;
+    assert!(
+        Workspace::open(&store, &roomy(folder.path()))
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn keeps_a_workspace_in_memory_when_asked() {
+    let folder = tempfile::tempdir().unwrap();
+    let mut workspace = Workspace::open(&WorkspaceStore::Memory, &roomy(folder.path()))
+        .await
+        .unwrap();
+    let rows = query(&mut workspace, "SELECT 1").await.unwrap();
+    assert_eq!(rows, [cells(&["1"])]);
+    workspace.close().await;
+    let files: Vec<_> = std::fs::read_dir(folder.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(files, ["spill"], "nothing but the spill folder");
 }

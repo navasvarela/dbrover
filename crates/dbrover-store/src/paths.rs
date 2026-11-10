@@ -140,6 +140,13 @@ impl AppPaths {
         self.folders.data.join("logs")
     }
 
+    /// Where report runs' work folders go, each run's DuckDB file and what it spills
+    /// (`docs/reports-at-scale.md`, RS3b), unless Settings › Reports chooses another folder.
+    /// Not guaranteed to exist yet.
+    pub fn report_runs_dir(&self) -> PathBuf {
+        self.folders.data.join("report-runs")
+    }
+
     /// Saved data sources. Not guaranteed to exist yet.
     pub fn data_sources_file(&self) -> PathBuf {
         self.folders.settings.join(DATA_SOURCES_FILE_NAME)

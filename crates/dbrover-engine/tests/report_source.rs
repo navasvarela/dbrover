@@ -151,9 +151,11 @@ async fn writes_a_trial_balance_from_sqlite_with_its_dates_bound() {
     let out = folder.path().join("out");
     std::fs::create_dir(&out).unwrap();
     let staging = out.join(".run");
+    let work = staging.with_extension("work");
     let folders = RunFolders {
         folder: &out,
         staging: &staging,
+        work: &work,
     };
     let summary = run(&plan, &values, &access.get(), folders, &mut |_| {})
         .await
@@ -247,9 +249,11 @@ async fn stops_a_slow_postgres_source_at_its_timeout() {
     let access = Access::new(secrets, folder.path());
     let started = Instant::now();
     let staging = folder.path().join(".run");
+    let work = staging.with_extension("work");
     let folders = RunFolders {
         folder: folder.path(),
         staging: &staging,
+        work: &work,
     };
     let outcome = run(&plan, &values, &access.get(), folders, &mut |_| {})
         .await

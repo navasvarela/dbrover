@@ -18,9 +18,9 @@ use crate::events::{CombineCaps, Machine, RunEvent, SourceCaps};
 use crate::problem::{Place, ReportProblem, Table, messages};
 use crate::run::millis;
 use crate::{
-    Chart, CombineLimits, CombineLimitsSet, CombineQuery, FileName, LimitDefaults, LimitSetIn,
-    Lookup, Output, OutputColumns, OutputLimits, OutputLimitsSet, OutputWriter, Param, Report,
-    Source, SourceColumn, SourceLimits, SourceLimitsSet, SourceRead, SourceStart, Step,
+    ByteSize, Chart, CombineLimits, CombineLimitsSet, CombineQuery, FileName, LimitDefaults,
+    LimitSetIn, Lookup, Output, OutputColumns, OutputLimits, OutputLimitsSet, OutputWriter, Param,
+    Report, Source, SourceColumn, SourceLimits, SourceLimitsSet, SourceRead, SourceStart, Step,
 };
 
 /// A report ready to run.
@@ -32,6 +32,8 @@ pub struct Plan {
     /// use, as the file lists them: the order the tab asks for them in.
     pub params: Vec<Param>,
     pub timeout: Duration,
+    /// The most disk the run's folders may hold (RS3b).
+    pub max_disk: ByteSize,
     pub logic: Logic,
     pub outputs: Vec<PlannedOutput>,
     /// The charts it draws, as its file lists them: a chart names nothing to look up.
@@ -45,6 +47,8 @@ pub struct Plan {
 struct FileLimits {
     /// `[report] timeout`.
     timeout: bool,
+    /// `[report] max_disk`.
+    max_disk: bool,
     /// By source id.
     sources: BTreeMap<String, SourceLimitsSet>,
     combine: CombineLimitsSet,
@@ -56,6 +60,7 @@ impl FileLimits {
     fn of(report: &Report) -> Self {
         Self {
             timeout: report.timeout.is_some(),
+            max_disk: report.max_disk.is_some(),
             sources: report
                 .sources
                 .iter()
@@ -78,6 +83,7 @@ impl FileLimits {
     fn sets(&self, step: &Step, key: &str) -> Option<bool> {
         match (step, key) {
             (Step::Worker | Step::Report, "timeout") => Some(self.timeout),
+            (Step::Worker | Step::Report, "max_disk") => Some(self.max_disk),
             (Step::Source { id }, _) => {
                 let set = self.sources.get(id).copied().unwrap_or_default();
                 match key {
@@ -409,6 +415,7 @@ impl Plan {
             description: report.description,
             params,
             timeout: report.timeout.unwrap_or(defaults.run_timeout),
+            max_disk: report.max_disk.unwrap_or(defaults.max_disk),
             logic,
             outputs,
             charts: report.charts,

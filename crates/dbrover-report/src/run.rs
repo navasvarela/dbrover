@@ -130,12 +130,14 @@ impl SourceError {
     }
 }
 
-/// Where a run writes: its files' folder, and a staging folder of its own inside it, on the
-/// same disk so a complete file is put in place by a rename.
+/// Where a run writes: its files' folder, a staging folder of its own inside it, on the same
+/// disk so a complete file is put in place by a rename, and a work folder of its own for its
+/// DuckDB, wherever the app keeps them.
 #[derive(Debug, Clone, Copy)]
 pub struct RunFolders<'a> {
     pub folder: &'a Path,
     pub staging: &'a Path,
+    pub work: &'a Path,
 }
 
 /// What a finished run read and wrote.
@@ -159,7 +161,8 @@ pub async fn run<O: SourceOpener>(
     folders: RunFolders<'_>,
     events: &mut dyn FnMut(RunEvent),
 ) -> Result<RunSummary, RunFailure> {
-    let _staging = Staging::make(folders)?;
+    let _staging = OwnFolder::make(folders.staging)?;
+    let _work = OwnFolder::make(folders.work)?;
     let outputs = Outputs {
         plan,
         values,
@@ -425,28 +428,26 @@ impl<'a> Streamed<'a> {
     }
 }
 
-/// The staging folder, made for the run and removed when it ends, however it ends.
-struct Staging<'a>(&'a Path);
+/// A folder of the run's own, its staging folder or its work folder, made for the run and
+/// removed when it ends, however it ends.
+struct OwnFolder<'a>(&'a Path);
 
-impl<'a> Staging<'a> {
-    fn make(folders: RunFolders<'a>) -> Result<Self, RunFailure> {
-        std::fs::create_dir_all(folders.staging).map_err(|error| {
+impl<'a> OwnFolder<'a> {
+    fn make(folder: &'a Path) -> Result<Self, RunFailure> {
+        std::fs::create_dir_all(folder).map_err(|error| {
             RunFailure::new(
                 Step::Worker,
-                format!(
-                    "could not make the folder {}: {error}",
-                    folders.staging.display()
-                ),
+                format!("could not make the folder {}: {error}", folder.display()),
             )
         })?;
-        Ok(Self(folders.staging))
+        Ok(Self(folder))
     }
 }
 
-impl Drop for Staging<'_> {
+impl Drop for OwnFolder<'_> {
     fn drop(&mut self) {
-        // Empty by now unless the run failed; what can't be removed is left for the app's
-        // side, which removes it again after the worker ends.
+        // The staging folder is empty by now unless the run failed; what can't be removed is
+        // left for the app's side, which removes it again after the worker ends.
         let _ = std::fs::remove_dir_all(self.0);
     }
 }

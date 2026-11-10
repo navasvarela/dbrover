@@ -1,7 +1,7 @@
 //! `dbrover report-worker` as the app runs it: the real binary, started through
 //! `dbrover_engine::WorkerRun`, on a settings folder with a SQLite ledger. The run itself is
 //! tested in dbrover-report and dbrover-engine; this checks the process around it: the request,
-//! the events, Cancel, the run's time limit and, on Linux, the memory limit.
+//! the events, Cancel, the run's time and disk limits and, on Linux, the memory limit.
 //!
 //! Unix only: the home folder is moved by setting `HOME`, which Windows ignores when it looks
 //! up the user's folders, and the tests must not read the real one's.
@@ -13,10 +13,11 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use dbrover_core::{BlobId, ConnectionConfig, DataSource, DataSourceId, SafetyLevel, SqliteConfig};
-use dbrover_engine::WorkerRun;
+use dbrover_engine::{RunWatch, WorkerRun};
 use dbrover_report::{
-    CombineExplanation, DEFAULT_RUN_TIMEOUT, ExplainRequest, ExplainedPlan, KnownTable,
-    LimitDefaults, LoadedColumn, RunEvent, RunRequest, SourceCaps, SourceLimits, SourceStart, Step,
+    ByteSize, CombineExplanation, DEFAULT_RUN_TIMEOUT, DiskBudget, ExplainRequest, ExplainedPlan,
+    KnownTable, LimitDefaults, LoadedColumn, RunEvent, RunRequest, SourceCaps, SourceLimits,
+    SourceStart, Step,
 };
 use dbrover_store::DataSourceFile;
 
@@ -102,6 +103,7 @@ impl Settings {
                 .collect(),
             folder: self.out(),
             staging: self.out().join(".run"),
+            work: self.home.path().join("report-runs").join("run"),
             defaults: LimitDefaults::default(),
             memory_limit: None,
             explain: None,
@@ -109,7 +111,15 @@ impl Settings {
     }
 
     fn start(&self, request: &RunRequest, timeout: Duration) -> WorkerRun {
-        WorkerRun::start(self.command(), request, timeout, || {}).unwrap()
+        let watch = RunWatch {
+            timeout,
+            disk: None,
+        };
+        self.start_watched(request, watch)
+    }
+
+    fn start_watched(&self, request: &RunRequest, watch: RunWatch) -> WorkerRun {
+        WorkerRun::start(self.command(), request, watch, || {}).unwrap()
     }
 }
 
@@ -173,6 +183,23 @@ threads = 1
 format = "csv"
 file = "combined-{since:%Y-%m}.csv"
 "##;
+
+/// Two quick sources, and a combine query that takes long enough to be watched.
+const SLOW_COMBINE: &str = r#"
+[report]
+name = "Slow combine"
+params = { since = "date", until = "date" }
+[[source]]
+id = "accounts"
+data_source = "ledger"
+query = "SELECT id, code FROM accounts WHERE :since < :until"
+[combine]
+query = "SELECT max(a.range * b.range) AS largest FROM range(1000000) a, range(1000000) b"
+threads = 1
+[[output]]
+format = "csv"
+file = "slow.csv"
+"#;
 
 /// A source that counts for a long time before returning its one row.
 const SLOW: &str = r#"
@@ -276,6 +303,37 @@ fn combines_two_sources_in_duckdb() {
         std::fs::read_to_string(settings.out().join("combined-2026-10.csv")).unwrap(),
         "account,balance\r\n1000,100.25\r\n4000,-100.25\r\n"
     );
+    let request = settings.request(&report);
+    assert!(!request.work.exists(), "the run's work folder is removed");
+}
+
+/// RS3b: the run's DuckDB is a file in its work folder, which the app's side measures each
+/// second; past the run's disk budget it stops the worker, and removes its folders.
+#[test]
+fn stops_a_run_past_its_disk() {
+    let settings = Settings::new();
+    let report = settings.write_report("slow-combine", SLOW_COMBINE);
+    let request = settings.request(&report);
+    let watch = RunWatch {
+        timeout: Duration::from_secs(120),
+        disk: Some(DiskBudget {
+            max_disk: ByteSize(1),
+            free: None,
+        }),
+    };
+    let events = all_events(&settings.start_watched(&request, watch));
+    let Some(RunEvent::Failed(failure)) = events.last() else {
+        panic!("{events:#?}");
+    };
+    assert_eq!(failure.step, Step::Worker);
+    assert_eq!(
+        failure.limit.as_ref().map(|limit| limit.key.as_str()),
+        Some("max_disk"),
+        "{failure:?}"
+    );
+    assert!(failure.message.contains("its max_disk"), "{failure}");
+    assert!(!request.work.exists(), "the run's work folder is removed");
+    assert_eq!(files_in(&settings.out()), Vec::<String>::new());
 }
 
 /// RS2d: a request to explain answers with each source's plan, as SQLite writes it, and the

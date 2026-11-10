@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
-use dbrover_engine::WorkerRun;
+use dbrover_engine::{RunWatch, WorkerRun};
 use dbrover_report::{Plan, RunEvent, RunFailure, RunRequest, Step, TimedEvent, TypedValues};
 use dbrover_store::{AppPaths, ReportName, ReportSettings, RunOrigin, SettingsFile};
 use tracing_appender::non_blocking::WorkerGuard;
@@ -88,6 +88,8 @@ fn list(args: &ListArgs) -> Outcome {
 pub(crate) struct Prepared {
     pub(crate) plan: Plan,
     pub(crate) request: RunRequest,
+    /// What the run is watched for, its disk measured where its work folder goes.
+    pub(crate) watch: RunWatch,
     pub(crate) runs_kept: NonZeroU32,
 }
 
@@ -197,8 +199,9 @@ pub(crate) fn prepare(
     values: &TypedValues,
     output_dir: Option<&Path>,
 ) -> Result<Prepared, Vec<String>> {
-    let settings = report_settings(paths)?;
-    let defaults = reports::limit_defaults(&settings);
+    let saved = report_settings(paths)?;
+    let settings = reports::RunSettings::of(&saved);
+    let defaults = settings.defaults;
     let (plan, _) = report_worker::plan(paths, report, &defaults)?;
     let mut problems = unknown_parameters(&plan, values);
     if let Err(more) = plan.values(values) {
@@ -208,19 +211,24 @@ pub(crate) fn prepare(
         return Err(problems);
     }
     let folder = output_dir.map_or_else(current_folder, absolute);
+    let default_work_root = paths.report_runs_dir();
+    let work_root = settings.work_root(&default_work_root);
     let request = RunRequest {
         report: report.to_owned(),
         values: values.clone(),
         staging: folder.join(reports::staging_name()),
+        work: reports::work_folder(work_root),
         folder,
         defaults,
         memory_limit: None,
         explain: None,
     };
+    let watch = reports::run_watch(&plan, work_root);
     Ok(Prepared {
         plan,
         request,
-        runs_kept: reports::runs_kept(&settings),
+        watch,
+        runs_kept: reports::runs_kept(&saved),
     })
 }
 
@@ -271,7 +279,7 @@ pub(crate) fn start_worker(paths: &AppPaths, prepared: &Prepared) -> io::Result<
     };
     let mut command = launcher.command();
     in_own_process_group(&mut command);
-    WorkerRun::start(command, &prepared.request, prepared.plan.timeout, || {})
+    WorkerRun::start(command, &prepared.request, prepared.watch, || {})
 }
 
 /// On Unix, the worker gets a process group of its own, so a Ctrl-C in the terminal reaches

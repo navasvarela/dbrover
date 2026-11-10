@@ -187,6 +187,7 @@ async fn run_plan(
         )
         .unwrap();
     let staging = folder.join(".run");
+    let work = staging.with_extension("work");
     let mut events = Vec::new();
     let outcome = run(
         plan,
@@ -195,6 +196,7 @@ async fn run_plan(
         RunFolders {
             folder,
             staging: &staging,
+            work: &work,
         },
         &mut |event| events.push(event),
     )

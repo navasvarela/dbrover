@@ -1,18 +1,16 @@
 //! How a report's run starts: a worker process in the app, a stand-in in UI tests.
 
+use dbrover_engine::{RunWatch, WorkerRun};
+use dbrover_report::{RunRequest, TimedEvent};
 use std::io;
 use std::path::PathBuf;
 use std::process::Command;
-use std::time::Duration;
-
-use dbrover_engine::WorkerRun;
-use dbrover_report::{RunRequest, TimedEvent};
 
 use crate::version::REPORT_WORKER;
 
 /// Starts runs.
 pub trait ReportLauncher {
-    /// Starts `request`, which may take up to `timeout`; `wake` is called whenever an event
+    /// Starts `request`, watched for `watch`'s limits; `wake` is called whenever an event
     /// comes.
     ///
     /// # Errors
@@ -21,7 +19,7 @@ pub trait ReportLauncher {
     fn start(
         &self,
         request: &RunRequest,
-        timeout: Duration,
+        watch: RunWatch,
         wake: Box<dyn Fn() + Send + Sync>,
     ) -> io::Result<Box<dyn RunningReport>>;
 }
@@ -65,10 +63,10 @@ impl ReportLauncher for ProcessLauncher {
     fn start(
         &self,
         request: &RunRequest,
-        timeout: Duration,
+        watch: RunWatch,
         wake: Box<dyn Fn() + Send + Sync>,
     ) -> io::Result<Box<dyn RunningReport>> {
-        let run = WorkerRun::start(self.command(), request, timeout, wake)?;
+        let run = WorkerRun::start(self.command(), request, watch, wake)?;
         Ok(Box::new(Worker(run)))
     }
 }

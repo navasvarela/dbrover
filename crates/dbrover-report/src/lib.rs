@@ -18,6 +18,7 @@
 mod chart;
 mod combine;
 mod declared;
+mod disk;
 mod embedded;
 mod events;
 mod explain;
@@ -37,6 +38,7 @@ mod statement;
 mod text;
 mod typing;
 
+pub use disk::DiskBudget;
 pub use embedded::{Embedded, PrqlToken, StepLanguage, embedded_code, prql_tokens};
 pub use events::{
     Batch, Busy, CombineCaps, LimitHit, LimitSetIn, LoadedColumn, Machine, Preview, RunEvent,
@@ -51,9 +53,9 @@ pub use format::{FormatReportError, FormattedReport, format_report};
 pub use hints::{HintId, UnknownHint};
 pub use limits::{
     ByteSize, CombineLimits, CombineLimitsSet, DEFAULT_COMBINE_TIMEOUT, DEFAULT_MAX_BYTES,
-    DEFAULT_MAX_ROWS, DEFAULT_MAX_SIZE, DEFAULT_MAX_TEMP_SIZE, DEFAULT_MEMORY_LIMIT,
-    DEFAULT_RUN_TIMEOUT, DEFAULT_SOURCE_TIMEOUT, LimitDefaults, OutputLimits, OutputLimitsSet,
-    SourceLimits, SourceLimitsSet,
+    DEFAULT_MAX_DISK, DEFAULT_MAX_ROWS, DEFAULT_MAX_SIZE, DEFAULT_MAX_TEMP_SIZE,
+    DEFAULT_MEMORY_LIMIT, DEFAULT_RUN_TIMEOUT, DEFAULT_SOURCE_TIMEOUT, LimitDefaults, OutputLimits,
+    OutputLimitsSet, SourceLimits, SourceLimitsSet,
 };
 pub use plan::{
     AttachedSource, Combined, Logic, OutputFormat, Plan, PlannedCombine, PlannedLookup,
