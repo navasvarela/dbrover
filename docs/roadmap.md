@@ -2343,7 +2343,7 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   editor shows in a clean tab and raises the banner in an unsaved one.
 
 Reports over sources of terabytes, and tools to see and tune a report's performance: planned in
-[Reports at scale](reports-at-scale.md); RS1 built on 2026-11-09, RS2 started on 2026-11-10, the rest not scheduled. Terabytes stay in their
+[Reports at scale](reports-at-scale.md); RS1 built on 2026-11-09, RS2 on 2026-11-10, the rest not scheduled. Terabytes stay in their
 engines; the desktop combines reduced results. The tooling comes first, so the rest is chosen by
 measurement.
 
@@ -2397,25 +2397,52 @@ measurement.
   DBROVER_BENCH_ROWS=1000000 cargo test --release -p dbrover-engine --test report_benchmark --
   --ignored --nocapture`. `cargo test -p dbrover-app regenerate_screenshots -- --ignored` with
   `DBROVER_SCREENSHOTS_ONLY=report-profile` renders the manual's new picture.
-- **RS2 — Explaining a report (M):** started on 2026-11-10, in one stack of seven layers; what
-  today's code changes in the plan is in
+- **RS2 — Explaining a report (M):** built on 2026-11-10, in one stack of seven layers; what
+  today's code changed in the plan is in
   [RS2 against today's code](reports-at-scale.md#rs2-against-todays-code). Each source's plan
   and estimated cost before a run, the combine's DuckDB plan in W10's view, bytes scanned on the
   engines that report them, and hints for unused columns and filters or aggregates that belong
   in a source:
-  - **RS2a — The plan:** RS2's decisions against the code as of RS1's merge.
-  - **RS2b — DuckDB's plans:** `dbrover-plan` reads DuckDB's `EXPLAIN (FORMAT JSON)` and the
-    profiler's operator tree, which the run's workspace now keeps after the combine query.
-  - **RS2c — The combine's plan in the Profile:** the plan kept with the run and drawn in W10's
-    view, a source's loaded columns kept, and the data funnel with what the combine used.
-  - **RS2d — Explain report:** the tab's **Explain** and `dbrover report explain`: each source
-    explained by its engine (W10's formats, DuckDB, and a new ClickHouse reader), the combine
-    over empty tables, and the cost guard's estimate beside each source's limit.
-  - **RS2e — Plan-based hints:** `unused-columns`, `filter-one-source` and
+  - **RS2a — The plan:** built; RS2's decisions against the code as of RS1's merge.
+  - **RS2b — DuckDB's plans:** built; `dbrover-plan` reads DuckDB's `EXPLAIN (FORMAT JSON)` and
+    the profiler's operator tree (`DuckDbJson`), which the run's workspace keeps after the
+    combine query (`Workspace::profile`, `Workspace::explain`).
+  - **RS2c — The combine's plan in the Profile:** built; the plan in `combine_done` and the
+    history, drawn in W10's view; each source's loaded columns and their bytes kept; the data
+    funnel with the rows the combine's scans passed on.
+  - **RS2d — Explain report:** built; the tab's **Explain** and `dbrover report explain`, in the
+    worker: each source explained by its engine (W10's formats, DuckDB, and a new reader of
+    ClickHouse's `EXPLAIN json = 1, indexes = 1`), the combine over empty tables, and the cost
+    guard's estimate beside each source's limit.
+  - **RS2e — Plan-based hints:** built; `unused-columns`, `filter-one-source` and
     `aggregate-one-source`, from a run's plan and from **Explain**'s.
-  - **RS2f — Bytes scanned:** ClickHouse, BigQuery, Athena and Trino, in the profile and the
-    funnel, and the `scanned-more` hint.
-  - **RS2g — Manual and demo note.**
+  - **RS2f — Bytes scanned:** built; ClickHouse (its summary, when complete), BigQuery, Athena
+    and Trino, in the history and the funnel, and the `scanned-more` hint.
+  - **RS2g — Manual and demo note:** built; the manual's [Explaining a
+    report](../book/src/reports.md#explaining-a-report) and [Explaining from the command
+    line](../book/src/reports.md#explaining-from-the-command-line), the funnel and plan in [A
+    run's profile](../book/src/reports.md#a-runs-profile), and four hints.
+
+  **Exit:** a report's sources and combine are explained before it runs, and its hints name the
+  columns and filters to move: **Explain** on a report whose combine reads a source's table with
+  `WHERE region = 'EU'` and leaves a wide column unread says *The combine step filters the rows of
+  source orders as it reads them: region='EU'* and *never reads the column memo of source
+  orders*, before any run of it on a source declaring its columns, and after its first run
+  otherwise.
+
+  **RS2 demo note:** with the SQLite **shop** and `sales-by-category.toml` from the manual's
+  [Your first report](../book/src/reports.md#your-first-report), click **Explain**: the source's
+  statement with its dates written in and SQLite's `EXPLAIN QUERY PLAN`, then *the combine step
+  isn't explained* until the report has run once. Run it, then **Explain** again: DuckDB's plan
+  of the combine step over empty tables. **Profile** now shows the data funnel (rows returned,
+  rows the combine's scan passed on) and the combine's plan; select its scan for the columns it
+  read. Add `WHERE category = 'Books'` to the combine query and run: **Past runs** shows
+  `filter-one-source` once the source returns 10,000 rows or more (a larger shop, or
+  `quiet_hints` to try silencing it). For bytes scanned, point a source at ClickHouse from the
+  repository's Docker Compose file (`SELECT * FROM numbers(1000)`): the funnel's *Scanned* says
+  8.0 KB. From a terminal: `dbrover report explain sales-by-category -p since=2026-10-01 -p
+  until=2026-11-01` prints the same, `--json` one object. Not checked against a real BigQuery,
+  Athena or Trino account: their bytes come from the job statistics C3 and C4 already read.
 - **RS3 — Larger than memory on one machine:** the run's DuckDB on a file, typed loading
   without the text copy, Parquet outputs written by DuckDB, a disk budget, a stall timeout,
   and keeping the machine awake.
