@@ -583,10 +583,12 @@ mod tests {
         }
     }
 
-    /// A stand-in for the worker: a shell running `script`, which reads no request.
-    fn stand_in(script: &str) -> Command {
-        let mut command = Command::new("sh");
-        command.args(["-c", script]);
+    /// A stand-in for the worker that reads no request and sends nothing, then exits after
+    /// `seconds`: `sleep` itself, not a shell running it, which some shells (dash, Ubuntu's
+    /// `sh`) run as a child that keeps the output open once the shell is killed.
+    fn stand_in(seconds: u32) -> Command {
+        let mut command = Command::new("sleep");
+        command.arg(seconds.to_string());
         command
     }
 
@@ -612,7 +614,7 @@ mod tests {
         let folder = tempfile::tempdir().unwrap();
         let started = Instant::now();
         let run = WorkerRun::start(
-            stand_in("sleep 30"),
+            stand_in(30),
             &request(folder.path()),
             watch(Duration::from_secs(1)),
             || {},
@@ -642,8 +644,7 @@ mod tests {
             "sh",
             ["-c", script.as_str()],
         ));
-        let run =
-            WorkerRun::start(stand_in("sleep 3"), &request(folder.path()), watched, || {}).unwrap();
+        let run = WorkerRun::start(stand_in(3), &request(folder.path()), watched, || {}).unwrap();
         let worker = run.child.lock().unwrap().id();
         assert!(matches!(last_event(&run), Some(RunEvent::Failed(_))));
         let written = std::fs::read_to_string(&pids).unwrap();
