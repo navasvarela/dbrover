@@ -23,6 +23,9 @@ pub const DEFAULT_SOURCE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub const DEFAULT_MAX_SIZE: ByteSize = ByteSize(1 << 30);
 /// How long a whole run may take before the app stops the worker.
 pub const DEFAULT_RUN_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// The most disk a run's work folder and staging folder may hold together: twice what DuckDB
+/// may spill by default, which leaves room for the run's database file and its files.
+pub const DEFAULT_MAX_DISK: ByteSize = ByteSize(20 << 30);
 
 /// How long the combine step's query may run.
 pub const DEFAULT_COMBINE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -41,6 +44,13 @@ pub struct LimitDefaults {
     pub output: OutputLimits,
     /// How long a whole run may take.
     pub run_timeout: Duration,
+    /// The most disk a run may use.
+    #[serde(default = "default_max_disk")]
+    pub max_disk: ByteSize,
+}
+
+fn default_max_disk() -> ByteSize {
+    DEFAULT_MAX_DISK
 }
 
 impl Default for LimitDefaults {
@@ -50,6 +60,7 @@ impl Default for LimitDefaults {
             combine: CombineLimits::default(),
             output: OutputLimits::default(),
             run_timeout: DEFAULT_RUN_TIMEOUT,
+            max_disk: DEFAULT_MAX_DISK,
         }
     }
 }

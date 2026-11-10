@@ -131,7 +131,8 @@ futures-util = { version = "0.3.34", default-features = false, features = ["std"
 # The report worker's priority and, on Linux, its memory and processor time
 # (`docs/reporting.md`, RP1): safe wrappers of setpriority and setrlimit, which the workspace's
 # `unsafe_code = "forbid"` rules out calling directly. The version tempfile already builds.
-rustix = { version = "1.1.5", default-features = false, features = ["std", "process"] }
+# `fs` for statvfs, a run's free disk space (`docs/reports-at-scale.md`, RS3b).
+rustix = { version = "1.1.5", default-features = false, features = ["std", "process", "fs"] }
 # The report worker's peak resident memory (`docs/reports-at-scale.md`, RS1b): a safe getrusage,
 # which rustix 1.1 doesn't have. The version russh already builds, with its `resource` feature.
 nix = { version = "0.31.3", default-features = false, features = ["resource"] }

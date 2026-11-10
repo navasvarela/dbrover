@@ -206,9 +206,11 @@ async fn run_once(engine: &Engine, declared: bool, folder: &std::path::Path) -> 
     };
     let out = folder.join("out");
     let staging = out.join(".run");
+    let work = staging.with_extension("work");
     let folders = RunFolders {
         folder: &out,
         staging: &staging,
+        work: &work,
     };
     let mut events = Vec::new();
     let started = std::time::Instant::now();

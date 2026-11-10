@@ -87,6 +87,7 @@ async fn run_report(
         commands: &commands,
     };
     let staging: PathBuf = out.join(".run");
+    let work = staging.with_extension("work");
     run(
         &plan,
         &values,
@@ -94,6 +95,7 @@ async fn run_report(
         RunFolders {
             folder: out,
             staging: &staging,
+            work: &work,
         },
         &mut |_| {},
     )

@@ -107,7 +107,7 @@ pub struct ExplorerSettings {
 /// The defaults of every report's limits, which a report's file overrides key by key, and how
 /// many runs of each report the history keeps (`docs/reporting.md`, "Settings › Reports").
 /// Each is `None` until changed, for DbRover's own default.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ReportSettings {
     /// The rows a source may return.
@@ -137,6 +137,13 @@ pub struct ReportSettings {
     /// How long a whole run may take.
     #[serde(skip_serializing_if = "Option::is_none", with = "written_duration")]
     pub run_timeout: Option<Duration>,
+    /// The most disk a run's folders may hold.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_disk: Option<ByteSize>,
+    /// Where each run's work folder goes, its DuckDB's file and what DuckDB spills, instead of
+    /// the data folder's `report-runs`: a roomier disk, say.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub work_folder: Option<PathBuf>,
     /// How many runs of each report the history keeps.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runs_kept: Option<NonZeroU32>,
@@ -341,6 +348,15 @@ mod tests {
                     ..ReportSettings::default()
                 }),
             ),
+            (
+                "[reports]\nmax_disk = \"50 GiB\"\nwork_folder = \"/Volumes/Big/runs\"\n",
+                Some(ReportSettings {
+                    max_disk: Some(ByteSize(50 << 30)),
+                    work_folder: Some(PathBuf::from("/Volumes/Big/runs")),
+                    ..ReportSettings::default()
+                }),
+            ),
+            ("[reports]\nmax_disk = \"0 GiB\"\n", None),
             ("[reports]\nmax_rows = 0\n", None),
             ("[reports]\nmemory_limit = \"0 GiB\"\n", None),
             ("[reports]\ncombine_timeout = \"0s\"\n", None),

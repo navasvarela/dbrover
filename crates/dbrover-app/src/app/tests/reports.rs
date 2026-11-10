@@ -97,7 +97,7 @@ impl ReportLauncher for StandIn {
     fn start(
         &self,
         request: &RunRequest,
-        _timeout: Duration,
+        _watch: dbrover_engine::RunWatch,
         _wake: Box<dyn Fn() + Send + Sync>,
     ) -> std::io::Result<Box<dyn RunningReport>> {
         self.requests.lock().unwrap().push(request.clone());
@@ -131,6 +131,7 @@ fn start_with_reports(dir: &Path, report: &str, launcher: StandIn) -> Harness<'s
         files,
         launcher: Box::new(launcher),
         default_folder: dir.join("out"),
+        work_root: dir.join("report-runs"),
     };
     let (_layer, feed) = log_console::pipeline();
     let config = engine_config(dir);

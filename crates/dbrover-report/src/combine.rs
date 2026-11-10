@@ -1,6 +1,6 @@
 //! A run with a combine step (`docs/reporting.md`, "RP2 — Several sources"):
 //!
-//! 1. open the run's DuckDB, with its temporary folder in the run's staging folder;
+//! 1. open the run's DuckDB on a file in the run's work folder, spilling beside it;
 //! 2. attach each DuckDB file, and load every other source in rounds, the sources of a round
 //!    at the same time, each under its caps, a batch of its lookup's values at a time, typing
 //!    its columns once its last row is in;
@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use dbrover_core::{CancelHandle, Connection, DriverError, ResultCursor, Row, describe_error};
 use dbrover_driver_duckdb::{
     DuckDbType, TableLoader, Workspace, WorkspaceLimit, WorkspaceLimits, WorkspaceProfile,
+    WorkspaceStore,
 };
 use dbrover_export::ExportColumn;
 use dbrover_language::Literal;
@@ -40,8 +41,11 @@ const PAGE_ROWS: usize = 1_000;
 /// How long an interrupted query gets to stop before the run gives up on it.
 const CANCEL_GRACE: Duration = Duration::from_secs(5);
 
-/// The folder in the run's staging folder that DuckDB spills to.
-const SPILL_FOLDER: &str = "duckdb";
+/// The run's database file, in its work folder.
+const WORKSPACE_FILE: &str = "workspace.duckdb";
+
+/// The folder in the run's work folder that DuckDB spills to.
+const SPILL_FOLDER: &str = "spill";
 
 /// A run with a combine step, and what its steps read.
 pub(crate) struct Combining<'a, O> {
@@ -57,12 +61,17 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
         events: &mut dyn FnMut(RunEvent),
     ) -> Result<RunSummary, RunFailure> {
         let limits = self.limits();
-        let mut workspace = Workspace::open(&WorkspaceLimits {
-            memory_limit: limits.memory_limit.0,
-            threads: limits.threads(),
-            temp_directory: self.outputs.folders.staging.join(SPILL_FOLDER),
-            max_temp_size: limits.max_temp_size.0,
-        })
+        let work = self.outputs.folders.work;
+        let store = WorkspaceStore::File(work.join(WORKSPACE_FILE));
+        let mut workspace = Workspace::open(
+            &store,
+            &WorkspaceLimits {
+                memory_limit: limits.memory_limit.0,
+                threads: limits.threads(),
+                temp_directory: work.join(SPILL_FOLDER),
+                max_temp_size: limits.max_temp_size.0,
+            },
+        )
         .await
         .map_err(|error| RunFailure::new(Step::Combine, describe_error(&error)))?;
         let outcome = self.combine(&mut workspace, events).await;

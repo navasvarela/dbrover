@@ -159,9 +159,11 @@ async fn run_into(
 ) -> (Result<RunSummary, RunFailure>, Vec<RunEvent>) {
     let mut events = Vec::new();
     let staging = folder.join(".run");
+    let work = staging.with_extension("work");
     let folders = RunFolders {
         folder,
         staging: &staging,
+        work: &work,
     };
     let opener = MemoryOpener::with("balances", reader);
     let outcome = run(plan, &values(plan), &opener, folders, &mut |event| {

@@ -32,6 +32,7 @@ pub mod read_write;
 mod registry;
 mod releases;
 mod repaint;
+mod report_disk;
 mod report_explain;
 mod report_files;
 mod report_source;
@@ -70,8 +71,9 @@ pub use protocol::{
 };
 pub use releases::{GithubReleases, Release, ReleaseError, ReleaseFeed};
 pub use repaint::Repaint;
+pub use report_disk::disk_budget;
 pub use report_source::{ReportSource, SourceAccess};
-pub use report_worker::{RunStopper, WorkerRun};
+pub use report_worker::{RunStopper, RunWatch, WorkerRun};
 pub use schema_snapshot::{read_schema, read_snapshot_file};
 pub use sql_files::WatchedFile;
 pub use stop_signals::StopSignals;

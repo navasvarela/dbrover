@@ -266,5 +266,6 @@ fn reports_setup(paths: &AppPaths) -> reports::ReportsSetup {
             settings_folder: paths.folders().settings.clone(),
         }),
         default_folder,
+        work_root: paths.report_runs_dir(),
     }
 }

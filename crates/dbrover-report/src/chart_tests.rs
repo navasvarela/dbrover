@@ -223,9 +223,11 @@ async fn run_charts(
     let typed: TypedValues = [("since".to_owned(), "2026-10-01".to_owned())].into();
     let values = plan.values(&typed).unwrap();
     let staging = folder.join(".run");
+    let work = staging.with_extension("work");
     let folders = RunFolders {
         folder,
         staging: &staging,
+        work: &work,
     };
     let opener = MemoryOpener::of(vec![("lines", reader)]);
     let mut events = Vec::new();
@@ -587,9 +589,11 @@ async fn draws_a_charts_own_query_after_the_combine_step() {
     let values = plan.values(&typed).unwrap();
     let folder = tempfile::tempdir().unwrap();
     let staging = folder.path().join(".run");
+    let work = staging.with_extension("work");
     let folders = RunFolders {
         folder: folder.path(),
         staging: &staging,
+        work: &work,
     };
     let opener = MemoryOpener::of(vec![("lines", reader)]);
     let mut events = Vec::new();
@@ -631,9 +635,11 @@ async fn a_charts_failing_query_fails_its_step_and_leaves_no_file() {
     let values = plan.values(&typed).unwrap();
     let folder = tempfile::tempdir().unwrap();
     let staging = folder.path().join(".run");
+    let work = staging.with_extension("work");
     let folders = RunFolders {
         folder: folder.path(),
         staging: &staging,
+        work: &work,
     };
     let opener = MemoryOpener::of(vec![("lines", reader)]);
     let failure = run(&plan, &values, &opener, folders, &mut |_| {})

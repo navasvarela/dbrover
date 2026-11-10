@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use dbrover_core::{BlobId, DataSource};
-use dbrover_engine::{Command, Event, ReportSaveFailure, ReportText, WatchedFile};
+use dbrover_engine::{Command, Event, ReportSaveFailure, ReportText, RunWatch, WatchedFile};
 use dbrover_export::CustomFormat;
 use dbrover_report::{
     Batch, Busy, CombineCaps, CombineLimits, ExplainRequest, Explanation, LimitDefaults,
@@ -92,6 +92,48 @@ pub fn limit_defaults(settings: &ReportSettings) -> LimitDefaults {
             max_size: settings.max_size.unwrap_or(constants.output.max_size),
         },
         run_timeout: settings.run_timeout.unwrap_or(constants.run_timeout),
+        max_disk: settings.max_disk.unwrap_or(constants.max_disk),
+    }
+}
+
+/// What a run takes from Settings › Reports: the limits' defaults, and where its work folder
+/// goes, when not in the data folder.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RunSettings {
+    pub defaults: LimitDefaults,
+    pub work_folder: Option<PathBuf>,
+}
+
+impl RunSettings {
+    pub fn of(settings: &ReportSettings) -> Self {
+        Self {
+            defaults: limit_defaults(settings),
+            work_folder: settings.work_folder.clone(),
+        }
+    }
+
+    /// The folder runs' work folders go in: the one chosen, else `default`.
+    pub fn work_root<'a>(&'a self, default: &'a Path) -> &'a Path {
+        self.work_folder.as_deref().unwrap_or(default)
+    }
+}
+
+/// A new run's work folder in `root`, named as its staging folder is, but not hidden.
+pub fn work_folder(root: &Path) -> PathBuf {
+    root.join(staging_name().trim_start_matches('.'))
+}
+
+/// What the app watches a run of `plan` for, its work folder going in `work_root`: its time
+/// limit, and the disk it may use, read from that disk's free space now.
+pub fn run_watch(plan: &Plan, work_root: &Path) -> RunWatch {
+    // The free space is read where the work folder will be; the worker reports a folder it
+    // can't make.
+    if let Err(error) = std::fs::create_dir_all(work_root) {
+        tracing::warn!("could not make {}: {error}", work_root.display());
+    }
+    RunWatch {
+        timeout: plan.timeout,
+        disk: Some(dbrover_engine::disk_budget(work_root, plan.max_disk)),
     }
 }
 
@@ -133,6 +175,9 @@ pub struct ReportsSetup {
     pub launcher: Box<dyn ReportLauncher>,
     /// Where a report's files go until one is chosen for it.
     pub default_folder: PathBuf,
+    /// Where runs' work folders go unless Settings › Reports chooses another folder: the data
+    /// folder's `report-runs`.
+    pub work_root: PathBuf,
 }
 
 /// The reports, their tabs' state, and the run going on.
@@ -1005,13 +1050,13 @@ impl Reports {
         self.running.as_ref().map(|running| &running.report)
     }
 
-    /// Starts `name`, planned as `plan` under `defaults`, in a worker with the values typed in
+    /// Starts `name`, planned as `plan` under `settings`, in a worker with the values typed in
     /// its tab, unless a report is running. `wake` asks the UI to look at the run's events.
     pub fn start(
         &mut self,
         name: &ReportName,
         plan: &Plan,
-        defaults: LimitDefaults,
+        settings: &RunSettings,
         wake: impl Fn() + Send + Sync + 'static,
     ) {
         if self.running.is_some() {
@@ -1028,16 +1073,19 @@ impl Reports {
             .state(name)
             .map(|state| state.values.clone())
             .unwrap_or_default();
+        let work_root = settings.work_root(&setup.work_root);
         let request = RunRequest {
             report: listed.path.clone(),
             values: values.clone(),
             staging: folder.join(staging_name()),
+            work: work_folder(work_root),
             folder,
-            defaults,
+            defaults: settings.defaults,
             memory_limit: None,
             explain: None,
         };
-        let started = setup.launcher.start(&request, plan.timeout, Box::new(wake));
+        let watch = run_watch(plan, work_root);
+        let started = setup.launcher.start(&request, watch, Box::new(wake));
         let mut record = RunRecord::new(values);
         match started {
             Ok(run) => {
@@ -1066,7 +1114,7 @@ impl Reports {
         &mut self,
         name: &ReportName,
         plan: &Plan,
-        defaults: LimitDefaults,
+        settings: &RunSettings,
         wake: impl Fn() + Send + Sync + 'static,
     ) {
         if self.explaining.is_some() {
@@ -1090,12 +1138,18 @@ impl Reports {
                 .map(|state| state.values.clone())
                 .unwrap_or_default(),
             staging: folder.join(staging_name()),
+            work: work_folder(settings.work_root(&setup.work_root)),
             folder,
-            defaults,
+            defaults: settings.defaults,
             memory_limit: None,
             explain: Some(ExplainRequest { tables }),
         };
-        let started = setup.launcher.start(&request, plan.timeout, Box::new(wake));
+        // Explaining writes no file, and spills little if anything: only its time is watched.
+        let watch = RunWatch {
+            timeout: plan.timeout,
+            disk: None,
+        };
+        let started = setup.launcher.start(&request, watch, Box::new(wake));
         let state = match started {
             Ok(run) => {
                 self.explaining = Some(Explaining {

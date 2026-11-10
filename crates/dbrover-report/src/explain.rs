@@ -17,7 +17,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use dbrover_core::describe_error;
-use dbrover_driver_duckdb::{DuckDbType, Workspace, WorkspaceLimits};
+use dbrover_driver_duckdb::{DuckDbType, Workspace, WorkspaceLimits, WorkspaceStore};
 use dbrover_language::Literal;
 use dbrover_sql::Dialect;
 use serde::{Deserialize, Serialize};
@@ -206,12 +206,16 @@ async fn explain_combine(
         }
     }
     let limits = &combined.combine.limits;
-    let opened = Workspace::open(&WorkspaceLimits {
-        memory_limit: limits.memory_limit.0,
-        threads: limits.threads(),
-        temp_directory: spill.to_path_buf(),
-        max_temp_size: limits.max_temp_size.0,
-    })
+    // Its tables are empty, so the database stays in memory.
+    let opened = Workspace::open(
+        &WorkspaceStore::Memory,
+        &WorkspaceLimits {
+            memory_limit: limits.memory_limit.0,
+            threads: limits.threads(),
+            temp_directory: spill.to_path_buf(),
+            max_temp_size: limits.max_temp_size.0,
+        },
+    )
     .await;
     let mut workspace = match opened {
         Ok(workspace) => workspace,

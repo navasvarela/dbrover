@@ -18,6 +18,10 @@ pub struct RunRequest {
     /// all complete. The run removes it; the app's side removes it again after a worker it had
     /// to kill, which couldn't.
     pub staging: PathBuf,
+    /// The run's work folder (`docs/reports-at-scale.md`, RS3b), which holds its DuckDB's file
+    /// and what DuckDB spills: made by the worker and removed when the run ends, and removed
+    /// again by the app's side after a worker it had to kill.
+    pub work: PathBuf,
     /// The limits where the report's file leaves one out, as Settings › Reports has them, so
     /// the worker reads no settings of its own and runs what the tab showed.
     #[serde(default)]
