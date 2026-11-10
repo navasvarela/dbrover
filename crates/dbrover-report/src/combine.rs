@@ -235,6 +235,7 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
             read: Count::default(),
             spent: Spent::default(),
             clock: ProgressClock::new(),
+            scanned: None,
         };
         let statements = Statements::new(self.outputs.plan, self.outputs.values, source);
         let deadline = opened + source.limits.timeout;
@@ -390,6 +391,8 @@ struct Loading<'a> {
     read: Count,
     spent: Spent,
     clock: ProgressClock,
+    /// The bytes its engine scanned for every statement so far, where it says.
+    scanned: Option<u64>,
 }
 
 /// A source's progress: what it has read since `opened`, and what it was busy with.
@@ -443,6 +446,9 @@ impl Loading<'_> {
         self.spent.connect += opening.connect;
         self.spent.start += opening.start;
         let filled = self.fill_from(&mut reader, workspace, batch, events).await;
+        if let Some(scanned) = reader.scanned() {
+            self.scanned = Some(self.scanned.unwrap_or(0).saturating_add(scanned));
+        }
         reader.close().await;
         filled
     }
@@ -615,6 +621,7 @@ impl Loading<'_> {
             warnings,
             batches,
             phases: Some(phases),
+            scanned_bytes: self.scanned,
         });
         Ok(LoadedTable {
             id: self.source.id.clone(),

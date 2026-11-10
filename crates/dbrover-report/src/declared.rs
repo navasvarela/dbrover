@@ -73,6 +73,10 @@ impl<R: SourceReader> SourceReader for Shaped<R> {
         }
     }
 
+    fn scanned(&self) -> Option<u64> {
+        self.inner.scanned()
+    }
+
     async fn close(self) {
         self.inner.close().await;
     }

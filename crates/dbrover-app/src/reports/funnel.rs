@@ -12,6 +12,8 @@ use dbrover_store::{ReportRun, StepMetrics};
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunnelLine {
     pub source: String,
+    /// The bytes its engine scanned, where the engine says (RS2f).
+    pub scanned_bytes: Option<u64>,
     pub returned_rows: u64,
     pub returned_bytes: u64,
     /// The rows the combine's scans of the source's table passed on; `None` when the run kept
@@ -35,6 +37,7 @@ pub fn funnel(run: &ReportRun) -> Option<Funnel> {
         .filter_map(|step| match step {
             StepMetrics::Source(source) => Some(FunnelLine {
                 source: source.id.clone(),
+                scanned_bytes: source.scanned_bytes,
                 returned_rows: source.rows,
                 returned_bytes: source.bytes,
                 used_rows: plan.as_ref().and_then(|plan| used_rows(plan, &source.id)),
@@ -129,6 +132,7 @@ mod tests {
             phases: None,
             limits: None,
             columns: Vec::new(),
+            scanned_bytes: None,
         })
     }
 

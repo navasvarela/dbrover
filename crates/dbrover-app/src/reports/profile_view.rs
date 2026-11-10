@@ -99,20 +99,26 @@ pub fn show(ui: &mut Ui, reports: &mut Reports, name: &ReportName) {
 fn draw_funnel(ui: &mut Ui, funnel: &Funnel) {
     ui.strong("Data funnel");
     ui.weak(
-        "What each source returned, and the rows of it the combine step's scans passed on. A \
-         wide drop says the source's query could filter more.",
+        "What each source's engine scanned, where it says, what the source returned, and the \
+         rows of it the combine step's scans passed on. A wide drop says the source's query \
+         could filter more.",
     );
     ui.add_space(4.0);
     Grid::new("report_profile_funnel")
-        .num_columns(3)
+        .num_columns(4)
         .spacing(vec2(24.0, 4.0))
         .show(ui, |ui| {
             ui.strong("Source");
+            ui.strong("Scanned");
             ui.strong("Returned");
             ui.strong("Used by the combine");
             ui.end_row();
             for line in &funnel.lines {
                 ui.label(&line.source);
+                match line.scanned_bytes {
+                    Some(scanned) => ui.label(dbrover_core::ByteCount(scanned).to_string()),
+                    None => ui.weak("not said"),
+                };
                 ui.label(format!(
                     "{} rows · {}",
                     grouped(line.returned_rows),

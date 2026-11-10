@@ -85,6 +85,7 @@ fn rows(columns: &[&str], pages: Vec<Vec<Row>>) -> TestReader {
             columns: columns.iter().map(|name| column(name)).collect(),
             pages: VecDeque::from(pages),
             then: None,
+            scanned: None,
         },
         shape: ResultShape::Rows,
     }
@@ -99,6 +100,7 @@ fn documents(documents: &[&str]) -> TestReader {
                 .map(|document| vec![Some((*document).to_owned())])
                 .collect()]),
             then: None,
+            scanned: None,
         },
         shape: ResultShape::Documents,
     }

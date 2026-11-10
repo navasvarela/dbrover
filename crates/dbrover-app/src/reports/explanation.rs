@@ -221,6 +221,7 @@ mod tests {
                 phases: None,
                 limits: None,
                 columns,
+                scanned_bytes: None,
             })],
             origin: RunOrigin::App,
             version: None,
