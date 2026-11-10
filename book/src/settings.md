@@ -14,7 +14,8 @@ The sidebar lists its pages:
   [problems](consoles.md) the console points out while you type.
 - **Query history**: how long [the history](history.md) keeps statements.
 - **Reports**: the limits every [report](reports.md#limits) runs under unless its file sets its
-  own, and how many runs of each report are kept.
+  own, where runs keep their work folders, whether a long run keeps the computer awake, and how
+  many runs of each report are kept.
 - **MCP**: what [AI assistants](mcp.md) may do in a project that doesn't say otherwise.
 - **Updates**: whether DbRover checks for a new release when it starts.
 - **Files**: the folder DbRover keeps your settings in, and **Choose…** to keep them elsewhere

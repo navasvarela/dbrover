@@ -2343,7 +2343,7 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   editor shows in a clean tab and raises the banner in an unsaved one.
 
 Reports over sources of terabytes, and tools to see and tune a report's performance: planned in
-[Reports at scale](reports-at-scale.md); RS1 built on 2026-11-09, RS2 on 2026-11-10, RS3 started on 2026-11-10, the rest not scheduled. Terabytes stay in their
+[Reports at scale](reports-at-scale.md); RS1 built on 2026-11-09, RS2 and RS3 on 2026-11-10, the rest not scheduled. Terabytes stay in their
 engines; the desktop combines reduced results. The tooling comes first, so the rest is chosen by
 measurement.
 
@@ -2443,22 +2443,79 @@ measurement.
   8.0 KB. From a terminal: `dbrover report explain sales-by-category -p since=2026-10-01 -p
   until=2026-11-01` prints the same, `--json` one object. Not checked against a real BigQuery,
   Athena or Trino account: their bytes come from the job statistics C3 and C4 already read.
-- **RS3 — Larger than memory on one machine (M):** started on 2026-11-10, in one stack of six
-  layers; what today's code changes in the plan is in
+- **RS3 — Larger than memory on one machine (M):** built on 2026-11-10, in one stack of six
+  layers; what today's code changed in the plan is in
   [RS3 against today's code](reports-at-scale.md#rs3-against-todays-code). The run's DuckDB on
   a file, typed loading without the text copy, Parquet outputs written by DuckDB, a disk budget,
   a stall timeout, and keeping the machine awake:
-  - **RS3a — The plan:** RS3's decisions against the code as of RS2's merge, with
+  - **RS3a — The plan:** built; RS3's decisions against the code as of RS2's merge, with
     `allowed_directories` checked against DuckDB 1.5.6.
-  - **RS3b — A work folder:** built; the run's DuckDB on a file in a work folder of its own, `max_disk`,
-    and the disk's free space.
-  - **RS3c — Typed loading:** built; tables made with the types known before the first row, each page
-    appended as one batch, only the other columns rewritten, and a bounded queue between a
-    source's reader and its loader.
-  - **RS3d — Parquet outputs:** built; written by DuckDB's `COPY` from the run's database, the other
-    outputs reading them back.
-  - **RS3e — Long runs:** built; `stall_timeout`, and keeping the machine awake.
-  - **RS3f — Manual and demo note,** the benchmark again on the typed path, and the exit test.
+  - **RS3b — A work folder:** built; the run's DuckDB on a file in a work folder of its own
+    (`report-runs` in the data folder, or Settings › Reports' **Work folder**), `max_disk`, and
+    the disk's free space, which the app's watchdog measures each second.
+  - **RS3c — Typed loading:** built; tables made with the types known before the first row,
+    each page appended as one Arrow batch of text, only the other columns rewritten, and a
+    queue of four pages between a source's reader and its loader.
+  - **RS3d — Parquet outputs:** built; written by DuckDB's `COPY` from the run's database, the
+    other outputs reading them back, with `allowed_directories` set to the staging folder.
+  - **RS3e — Long runs:** built; `stall_timeout`, from the worker's processor time on each
+    event, and keeping the machine awake with `caffeinate` or `systemd-inhibit`.
+  - **RS3f — Manual and demo note:** built; the manual's [Memory and
+    disk](../book/src/reports.md#memory-and-disk), [Long runs](../book/src/reports.md#long-runs)
+    and [Parquet files](../book/src/reports.md#parquet-files), RS1g's benchmark again on the
+    typed path, and the exit test.
+
+  **Exit:** a slow test loads 100 million generated rows across two sources, combines them past
+  `memory_limit` and writes Parquet, inside `max_disk`, with peak memory within the computed
+  bound: `crates/dbrover-app/tests/report_at_scale.rs`, through the real worker, passes: 100,000,000 rows, joined and sorted past a 1 GiB
+  `memory_limit` (4.1 GiB spilled) into 50,000,000 rows of Parquet, the run's folders at
+  5.3 GiB of a 40 GiB `max_disk`, the worker at 1.73 GiB of a 2.07 GiB bound (the numbers are
+  in [Benchmark](reports-at-scale.md#rs3s-exit-test)). Run it with `cargo test -p dbrover-app
+  --test report_at_scale -- --ignored --nocapture` (`--release` loads faster); RS1g's benchmark, rerun on the
+  typed path, is beside its baseline there too.
+
+  **RS3 demo note:** add a DuckDB data source **in memory**, named `generated`, and save this
+  as `reports/generated.toml`:
+
+  ```toml
+  [report]
+  name = "Generated"
+  stall_timeout = "5m"
+  max_disk = "20 GiB"
+
+  [[source]]
+  id = "events"
+  data_source = "generated"
+  query = """
+  SELECT range AS id, CAST(range % 100000 / 100 AS DECIMAL(18,2)) AS amount,
+         'label ' || (range % 1000) AS label
+  FROM range(20000000)
+  """
+  max_rows = 20000001
+  max_bytes = "4 GiB"
+
+  [combine]
+  query = "SELECT label, count(*) AS n, sum(amount) AS total FROM events GROUP BY label ORDER BY label"
+  memory_limit = "512 MiB"
+
+  [[output]]
+  format = "parquet"
+  file = "generated.parquet"
+
+  [[output]]
+  format = "csv"
+  file = "generated.csv"
+  ```
+
+  **Run** it. While it loads, `report-runs/` in DbRover's data folder holds the run's
+  `workspace.duckdb` and `spill/`; both go when it ends. The source's columns load as
+  `BIGINT`, `DECIMAL(18,2)` and `VARCHAR`, and the folder holds `generated.parquet` beside a
+  CSV of the same 1,000 rows, read back from it. After two minutes, `pmset -g assertions` on
+  macOS lists `caffeinate`, and `systemd-inhibit --list` on Linux a DbRover inhibitor, until the
+  run ends. Set `max_disk = "100 MB"` and run again: it stops at `max_disk`, its folders gone.
+  Settings › Reports has **A run without progress for**, **Keep the computer awake**, **Disk a
+  run may use** and **Work folder**. From a terminal, `dbrover report run generated` does the
+  same. Not checked on Windows, where `max_disk` alone bounds a run and nothing keeps it awake.
 - **RS4 — Partitions:** a source read in ranges of time or key, some at once, and a run
   combined and written one range at a time.
 - **RS5 — Resume:** large runs keep a work folder and resume after a crash or a kill from the

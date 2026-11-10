@@ -2,7 +2,8 @@
 //! source of generated rows per engine, loaded into the combine step's DuckDB and added up,
 //! with its columns typed from their values (the text path) and declared in the file (the
 //! typed path). Each run's profile says where its time went. These are the numbers RS3c's
-//! typed loading and RS6's columnar sources are judged by.
+//! typed loading and RS6's columnar sources are judged by; RS3f ran it again on RS3's typed
+//! loading, and both runs are in the plan's table.
 //!
 //! Slow, so ignored; run it by hand, with the servers of `docker compose up -d --wait postgres
 //! mysql` for those engines:
