@@ -2343,7 +2343,7 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   editor shows in a clean tab and raises the banner in an unsaved one.
 
 Reports over sources of terabytes, and tools to see and tune a report's performance: planned in
-[Reports at scale](reports-at-scale.md); RS1 built on 2026-11-09, RS2 on 2026-11-10, the rest not scheduled. Terabytes stay in their
+[Reports at scale](reports-at-scale.md); RS1 built on 2026-11-09, RS2 on 2026-11-10, RS3 started on 2026-11-10, the rest not scheduled. Terabytes stay in their
 engines; the desktop combines reduced results. The tooling comes first, so the rest is chosen by
 measurement.
 
@@ -2443,9 +2443,22 @@ measurement.
   8.0 KB. From a terminal: `dbrover report explain sales-by-category -p since=2026-10-01 -p
   until=2026-11-01` prints the same, `--json` one object. Not checked against a real BigQuery,
   Athena or Trino account: their bytes come from the job statistics C3 and C4 already read.
-- **RS3 — Larger than memory on one machine:** the run's DuckDB on a file, typed loading
-  without the text copy, Parquet outputs written by DuckDB, a disk budget, a stall timeout,
-  and keeping the machine awake.
+- **RS3 — Larger than memory on one machine (M):** started on 2026-11-10, in one stack of six
+  layers; what today's code changes in the plan is in
+  [RS3 against today's code](reports-at-scale.md#rs3-against-todays-code). The run's DuckDB on
+  a file, typed loading without the text copy, Parquet outputs written by DuckDB, a disk budget,
+  a stall timeout, and keeping the machine awake:
+  - **RS3a — The plan:** RS3's decisions against the code as of RS2's merge, with
+    `allowed_directories` checked against DuckDB 1.5.6.
+  - **RS3b — A work folder:** the run's DuckDB on a file in a work folder of its own, `max_disk`,
+    and the disk's free space.
+  - **RS3c — Typed loading:** tables made with the types known before the first row, each page
+    appended as one batch, only the other columns rewritten, and a bounded queue between a
+    source's reader and its loader.
+  - **RS3d — Parquet outputs:** written by DuckDB's `COPY` from the run's database, the other
+    outputs reading them back.
+  - **RS3e — Long runs:** `stall_timeout`, and keeping the machine awake.
+  - **RS3f — Manual and demo note,** the benchmark again on the typed path, and the exit test.
 - **RS4 — Partitions:** a source read in ranges of time or key, some at once, and a run
   combined and written one range at a time.
 - **RS5 — Resume:** large runs keep a work folder and resume after a crash or a kill from the
