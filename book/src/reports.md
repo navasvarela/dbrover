@@ -216,6 +216,15 @@ use an index.* Each has an id, and a threshold below which it says nothing:
 | `round-wait` | A source waited 30 seconds or more after the source its lookup reads, for the rest of that round. | A round starts when the round before ends, so a slow source there holds every source after it. |
 | `writer-bound` | An output's writer took at least 5 seconds and half the run or more. | Excel is the slowest format to write; a CSV of the same rows is faster. |
 | `near-limit` | A source's rows, bytes or time, the combine step's memory, spill or time, or the run's time reached 90% of its limit without passing it. | Raise the limit it names before a larger month stops the run. |
+| `unused-columns` | The combine step's plan never reads some of a source's columns, and they hold a fifth or more of the bytes it returned. | Drop them from the source's query: they are sent and loaded for nothing. |
+| `filter-one-source` | The combine step's plan filters a source's rows as it reads them, by a value or a parameter. | Move the filter into the source's query, where its database returns only the rows kept and can use an index. |
+| `aggregate-one-source` | The combine step aggregates one source with nothing joined to it first. | Aggregate in the source's query: it returns its groups instead of its rows, with the same result. |
+| `scanned-more` | A source's engine scanned at least 100 MB, and 100 times what it returned. | Check that the query filters on its table's partition or clustering column. An aggregate scans more than it returns on purpose, so this is a question too. |
+
+The plan's three hints need a source of at least 10,000 rows, and read the combine step's plan as
+DuckDB ran it: the columns each source's table was read for, the filters applied as it was read,
+and the aggregates. **Explain** gives them before a report has run (see [Explaining a
+report](#explaining-a-report)).
 
 Hover over a hint to see its id. A report that reads far more than it writes on purpose, such
 as one that adds up a year of lines into twelve, can silence a hint in its file, and the tab
@@ -256,12 +265,51 @@ isn't on the path, however long it took, since making it faster wouldn't end the
 Under the lanes, the most memory the worker's process held. Runs kept before DbRover measured
 when each step ran say so, and have no profile.
 
+Under it, the **data funnel**, a line a source: the bytes its engine **scanned**, where the engine
+says (ClickHouse, BigQuery, Athena and Trino); the rows and bytes it **returned**; and the rows of
+it the combine step's scans **passed on**, after the filters DuckDB applied as it read them, with
+their share of what it returned. A source that scanned 1.2 TB, returned 40 GB and passed on 300 MB
+should filter in its query. ClickHouse says what it scanned before it sends the rows, so for a
+result larger than about a megabyte it says only how it started, and the funnel shows nothing
+rather than too little.
+
+Last, **the combine step's plan**: DuckDB's operators as they ran the combine query, drawn as a
+console draws a plan, the costliest tinted, with each operator's time and rows. Select a scan to
+see the columns it read and its filters. Runs kept before DbRover kept the plan have none.
+
 ### Comparing two runs
 
 **Compare** sets two kept runs side by side, the newest and the one before unless you pick
 others: for the run and each step, its time, rows, bytes and the combine step's peaks in both,
 with the change, and a ▲ on a change of more than half. Under it, the parameters and the limits
 that differ, and whether the report's file changed between them (its version).
+
+### Explaining a report
+
+**Explain**, beside **Run**, plans the saved report with the parameters typed, without running
+it, and shows what it found under **Explain**:
+
+- **Each source's statement**, with the parameters' values written in, and its database's plan:
+  PostgreSQL, MySQL, MariaDB, SQL Server, DuckDB and ClickHouse as a plan, SQLite and Trino as
+  their own text. ClickHouse's says, for each index, how many of a table's granules it keeps.
+  Athena runs `EXPLAIN` as a query it bills, and BigQuery has none, so they aren't explained;
+  documents and DynamoDB have no plan to ask for.
+- **What it would cost**, where the data source's engine estimates it before a run: BigQuery's
+  dry run says how many bytes the query scans, and DynamoDB whether it reads a whole table.
+  Beside it, the data source's limit, and whether a run would refuse the source: a run has
+  nobody to ask.
+- **The combine step**, planned by DuckDB over empty tables of each source's columns: those the
+  file declares, else those the last finished run loaded. A source neither declares nor has
+  loaded yet leaves it unexplained, and says to run the report once. The plan says what the
+  combine reads of each table, not what it costs: the tables are empty, and DuckDB is told to
+  plan as if they held rows.
+- **Hints** from that plan: `unused-columns`, `filter-one-source` and `aggregate-one-source`, as
+  a run gives them, weighed by the last run's rows where there is one.
+
+A source with a lookup is explained with a list of one `NULL` in place of its values, which
+come from another source as the report runs. Explaining reads no row: databases plan, and the
+combine step's tables are empty. It connects as a run does, read-only where the database has
+such a mode.
 
 Runs are kept in `history.sqlite` with the [query history](history.md), by the report's file
 name: edit the file and they carry on; rename it with **Rename…** and they move with it, but
@@ -892,6 +940,32 @@ dbrover report run sales-by-category -p since=2026-10-01 -p until=2026-11-01 \
 ```
 
 An unknown report or run id exits with 3.
+
+### Explaining from the command line
+
+`dbrover report explain <report>` does what **Explain** does, with the parameters given with
+`-p` as for `run`:
+
+```text
+$ dbrover report explain sales-by-category -p since=2026-10-01 -p until=2026-11-01
+Source lines on shop:
+    SELECT … FROM lines WHERE sold_at >= '2026-10-01' AND sold_at < '2026-11-01'
+  Plan:
+    SCAN lines
+    …
+
+The combine step, planned by DuckDB over empty tables:
+    PROJECTION
+      HASH_GROUP_BY
+        SEQ_SCAN lines
+    …
+```
+
+With `--json`, one object: `sources`, each with its `id`, `data_source`, `statement`, `plan`
+(its `kind`: `drawn` with its `format` and `text`, `text`, `unexplained` with a `reason`, or
+`failed` with a `message`), its `estimate` and `notes`; `combine`, planned or why not; and
+`hints`. It exits as `run` does: 0 once explained, 3 when the report, a parameter or the
+settings folder is wrong.
 
 ### A command killed outright
 

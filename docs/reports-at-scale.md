@@ -1,6 +1,6 @@
 # Reports at scale
 
-Status: **RS1 built** (2026-11-09); **RS2 started** (2026-11-10); **the rest planned, not
+Status: **RS1 built** (2026-11-09); **RS2 built** (2026-11-10); **the rest planned, not
 scheduled.** Proposed on
 2026-11-04, to come after RP5 (PRQL) unless the order changes. Each milestone's decisions are confirmed when it starts, as in
 [Reports](reporting.md) and [Cloud and big data](cloud-data.md).
@@ -714,8 +714,21 @@ section wins.
 | A lookup's source explained with the statement its last run's first batch sent. | The profile keeps no statement. | A lookup's source is explained with a list of one `NULL`, as a run sends when its lookup finds no value, and its explanation says so. |
 | The combine explained over empty tables, with the last run's row counts as DuckDB's estimates. | DuckDB estimates from a table's own rows, and an empty table has none: it takes no row counts from outside. The history keeps no source's columns. | The combine is explained over empty tables of the columns the last finished run loaded (kept since RS2c), for its plan's shape (scans, the columns read, filters, aggregates), which the plan-based hints read. Its costs aren't shown. A source no run has loaded yet stops the combine's explanation, naming it. |
 | C0's cost guard over every estimate, beside the source's limit. | `estimate_cost` answers on DynamoDB (a whole table) and BigQuery (a dry run's bytes); a run refuses what the guard holds. | Each source's explanation shows its estimate, its data source's `ask_above_bytes`, and whether a run would be refused. |
-| Bytes scanned: ClickHouse's `X-ClickHouse-Summary`; each warehouse's own as it comes. | ClickHouse sends that header before the rows: it is complete only for a result that fits its output buffer, unless `wait_end_of_query` holds the whole result on the server. C3's and C4's cursors keep each job's final statistics. | RS2f adds `ResultCursor::scanned` (none by default). Job cursors give their job's bytes (BigQuery's `totalBytesProcessed`, Athena's `DataScannedInBytes`) and Trino its last `processedBytes`. ClickHouse gives the header's `read_bytes`, marked *at least* when it read fewer rows than its `total_rows_to_read`. So RS2f covers the three warehouses that came before RS2, not only ClickHouse. |
+| Bytes scanned: ClickHouse's `X-ClickHouse-Summary`; each warehouse's own as it comes. | ClickHouse sends that header before the rows: it is complete only for a result that fits its output buffer, unless `wait_end_of_query` holds the whole result on the server. C3's and C4's cursors keep each job's final statistics. | RS2f reads `ResultCursor::progress`, which job engines already answered once a statement ends: BigQuery's `totalBytesProcessed`, Athena's `DataScannedInBytes`, Trino's last `processedBytes`. ClickHouse's cursor now answers it from the header's `read_bytes`, and only when the header has all of it: when it read every row of its `total_rows_to_read`. A short summary is left out rather than shown as less than was scanned (this row first said *at least*; as built, nothing). So RS2f covers the three warehouses that came before RS2, not only ClickHouse. |
 | Plan-based hints, among the rules in the app. | RS1e's rules are pure functions of a kept run, in the app's `reports/hints.rs`. | RS2e's three rules join them, reading the combine's plan through a pure summary in `dbrover-plan` (each scan's table, columns and filters, and whether an aggregate reads one scan with no join under it). **Explain report** lists the same hints for the explained combine. |
+
+As built, three more facts of DuckDB 1.5.6, each pinned by a test:
+
+- The profiler writes some extra-information keys as DuckDB names them inside
+  (`__projections__`, `__estimated_cardinality__`), and a scan's table with its catalog and
+  schema (`memory.main.orders`); the reader names keys as `EXPLAIN` does, and the plan's table
+  reads drop the catalog and schema.
+- Planned over empty tables, DuckDB's statistics turn a filtered scan into an empty result,
+  which hides the very columns and filters the hints read. The explain's workspace switches off
+  the two optimizers that plan from what a table holds (`statistics_propagation` and
+  `empty_result_pullup`) before it is locked; a run's isn't touched.
+- DuckDB lists the filters a join derives under `Dynamic Filters`, apart from a scan's own
+  `Filters`, so `filter-one-source` reads only the latter.
 
 ## Benchmark
 
