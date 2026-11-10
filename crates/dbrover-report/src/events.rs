@@ -64,6 +64,10 @@ pub enum RunEvent {
         /// For a source whose lookup runs in batches, the one it is reading.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         batch: Option<Batch>,
+        /// What the step spent the time since its last progress event on; `None` from a
+        /// worker older than RS1d.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        busy: Option<Busy>,
     },
     /// A source returned its last row, and was loaded into DuckDB if the report combines.
     SourceDone {
@@ -192,6 +196,35 @@ pub struct Machine {
     pub cores: u32,
     /// DbRover's version, as `0.31.0`.
     pub dbrover: String,
+}
+
+/// What a running step spent a stretch of time on, each in percent of it. The rest is
+/// DbRover's own work between them, such as checking a page against the caps.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Busy {
+    /// Waiting on its engine: a source's database, or DuckDB for the combine step.
+    pub waiting_pct: u8,
+    /// Appending a source's rows to its table in DuckDB.
+    pub loading_pct: u8,
+    /// The outputs converting and writing rows.
+    pub writing_pct: u8,
+}
+
+/// A share smaller than this doesn't name what a step is doing: it is busy with no one thing.
+const BUSY_NAMED_PCT: u8 = 20;
+
+impl Busy {
+    /// What the step is mostly doing, as `waiting on PostgreSQL (92%)`; `engine` is what it
+    /// waits on. `None` when no one thing took a fifth of the time.
+    pub fn describe(&self, engine: &str) -> Option<String> {
+        let shares = [
+            (self.waiting_pct, format!("waiting on {engine}")),
+            (self.loading_pct, "loading into DuckDB".to_owned()),
+            (self.writing_pct, "writing the files".to_owned()),
+        ];
+        let (pct, doing) = shares.into_iter().max_by_key(|(pct, _)| *pct)?;
+        (pct >= BUSY_NAMED_PCT).then(|| format!("{doing} ({pct}%)"))
+    }
 }
 
 /// Where a source's time went, in milliseconds. The phases add up to about the source's time;

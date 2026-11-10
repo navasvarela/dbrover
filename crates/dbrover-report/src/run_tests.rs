@@ -388,6 +388,11 @@ fn events_are_json_lines_the_app_reads_back() {
             bytes: 100,
             elapsed_ms: 1000,
             batch: Some(Batch { number: 2, of: 7 }),
+            busy: Some(Busy {
+                waiting_pct: 90,
+                loading_pct: 5,
+                writing_pct: 0,
+            }),
         },
         RunEvent::SourceDone {
             id: "tx".to_owned(),

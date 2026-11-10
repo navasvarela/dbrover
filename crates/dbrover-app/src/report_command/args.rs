@@ -31,7 +31,8 @@ in .toml or holding a folder separator is a path.
       --json                   Writes the run's events to standard output as JSON Lines,
                                one object a line, the last saying how the run ended.
       --progress               On a terminal, keeps a line on standard error of what each
-                               running step has read so far, rewritten each second.
+                               running step has read so far, how fast, and what it waits
+                               on, rewritten each second.
       --config-dir <folder>    The settings folder whose data sources, export formats and
                                report limits the run uses, as for the app.
 

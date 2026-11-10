@@ -246,6 +246,7 @@ mod tests {
                 bytes: 1_000,
                 elapsed_ms: 1_000,
                 batch: None,
+                busy: None,
             },
             RunEvent::SourceDone {
                 id: "lines".to_owned(),
@@ -264,6 +265,7 @@ mod tests {
                 bytes: 500,
                 elapsed_ms: 2_000,
                 batch: None,
+                busy: None,
             },
             RunEvent::Finished { elapsed_ms: 2_100 },
         ];
@@ -353,6 +355,7 @@ mod tests {
                 bytes: 30,
                 elapsed_ms: 1_000,
                 batch: None,
+                busy: None,
             },
             RunEvent::SourceDone {
                 id: "lines".to_owned(),

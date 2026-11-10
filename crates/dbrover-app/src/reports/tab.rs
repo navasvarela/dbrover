@@ -15,11 +15,11 @@ use egui::{CollapsingHeader, Grid, Id, RichText, ScrollArea, TextEdit, Ui, vec2}
 
 use super::highlight::ReportHighlighter;
 use super::problems::{TextProblem, quiet_hint};
-use super::profile_view;
 use super::{
     CheckInputs, OnDisk, ReportAction, ReportFile, Reports, RunEnd, RunPanel, RunRecord, SaveError,
     StepRecord, StepState, runs_table,
 };
+use super::{live, profile_view};
 use crate::code_editor::highlight::Marks;
 use crate::code_editor::{self, EditorView, Severity, find_bar};
 use crate::console::LintOptions;
@@ -1142,7 +1142,12 @@ fn step_detail(step: &StepRecord) -> String {
             bytes,
             elapsed_ms,
         } => {
-            let read = amounts(rows, bytes, elapsed_ms);
+            let mut read = amounts(rows, bytes, elapsed_ms);
+            let waits_on = live::waits_on(&step.step, step.engine.as_deref());
+            let now = live::describe(&step.pace, step.busy.as_ref(), waits_on, " · ");
+            if !now.is_empty() {
+                read = format!("{read} · {now}");
+            }
             match step.batches {
                 Some(batch) => format!("batch {} of {} · {read}", batch.number, batch.of),
                 None => read,

@@ -576,3 +576,55 @@ async fn says_where_each_sources_time_went() {
     });
     assert!(query_ms.is_some());
 }
+
+#[tokio::test]
+async fn says_each_second_what_a_source_waits_on_before_its_first_row() {
+    let folder = tempfile::tempdir().unwrap();
+    let plan = report("", VALUES, "");
+    let opener = PacedOpener {
+        inner: MemoryOpener::of(vec![("tx", transactions()), ("prices", prices())]),
+        opening: Opening::default(),
+        // Past a progress event's second, with no row yet.
+        first: Duration::from_millis(1_300),
+        later: Duration::ZERO,
+    };
+    let staging = folder.path().join(".run");
+    let folders = RunFolders {
+        folder: folder.path(),
+        staging: &staging,
+    };
+    let mut events = Vec::new();
+    let plan_values = october(&plan);
+    run(&plan, &plan_values, &opener, folders, &mut |event| {
+        events.push(event);
+    })
+    .await
+    .unwrap();
+    let waits: Vec<(String, u64, Busy)> = events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::Progress {
+                step: Step::Source { id },
+                rows,
+                busy: Some(busy),
+                ..
+            } => Some((id.clone(), *rows, *busy)),
+            _ => None,
+        })
+        .collect();
+    // Both sources of the round wait at once, each saying so with no row read.
+    assert!(
+        waits
+            .iter()
+            .any(|(id, rows, busy)| id == "tx" && *rows == 0 && busy.waiting_pct >= 90),
+        "{waits:?}"
+    );
+    assert_eq!(
+        waits[0]
+            .2
+            .describe("PostgreSQL")
+            .as_deref()
+            .map(|text| text.starts_with("waiting on PostgreSQL")),
+        Some(true)
+    );
+}

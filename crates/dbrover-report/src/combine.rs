@@ -24,13 +24,14 @@ use futures_util::future::try_join_all;
 
 use crate::chart::ChartRun;
 use crate::declared::Shaped;
-use crate::run::{Count, Feed, Outputs, PROGRESS_EVERY, Streamed, millis, timed};
+use crate::live::{ProgressClock, waiting};
+use crate::run::{Count, Feed, Outputs, Streamed, millis, timed};
 use crate::statement::{Statements, lookup_literal};
 use crate::typing::ColumnTyper;
 use crate::{
-    AttachedSource, Batch, Chart, CombineLimits, Combined, LimitHit, LoadedColumn, PlannedLookup,
-    PlannedSource, QuerySource, RunEvent, RunFailure, RunSummary, RunValues, SourceError,
-    SourceOpener, SourcePhases, SourceReader, SourceStatement, Step,
+    AttachedSource, Batch, Busy, Chart, CombineLimits, Combined, LimitHit, LoadedColumn,
+    PlannedLookup, PlannedSource, QuerySource, RunEvent, RunFailure, RunSummary, RunValues,
+    SourceError, SourceOpener, SourcePhases, SourceReader, SourceStatement, Step,
 };
 
 /// Rows asked of the combine query at a time, as a source's are.
@@ -103,13 +104,25 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
 
         let started = Instant::now();
         let query = self.combined.combine.query.sql();
-        let (reader, starting) = timed(CombineReader::start(
-            workspace,
-            query,
-            self.outputs.values,
-            DuckDbQuery::Combine,
-            self.limits(),
-        ))
+        let mut clock = ProgressClock::new();
+        let (reader, starting) = waiting(
+            Box::pin(CombineReader::start(
+                workspace,
+                query,
+                self.outputs.values,
+                DuckDbQuery::Combine,
+                self.limits(),
+            )),
+            |so_far| {
+                events(progress(
+                    &Step::Combine,
+                    &Count::default(),
+                    started,
+                    None,
+                    clock.lap(so_far),
+                ));
+            },
+        )
         .await;
         let mut reader = reader.map_err(|error| error.at(Step::Combine))?;
         let streamed = self
@@ -219,6 +232,7 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
             table: None,
             read: Count::default(),
             spent: Spent::default(),
+            clock: ProgressClock::new(),
         };
         let statements = Statements::new(self.outputs.plan, self.outputs.values, source);
         let deadline = opened + source.limits.timeout;
@@ -360,6 +374,25 @@ struct Loading<'a> {
     /// What every statement has returned so far, which the source's caps hold.
     read: Count,
     spent: Spent,
+    clock: ProgressClock,
+}
+
+/// A source's progress: what it has read since `opened`, and what it was busy with.
+fn progress(
+    step: &Step,
+    read: &Count,
+    opened: Instant,
+    batch: Option<Batch>,
+    busy: Busy,
+) -> RunEvent {
+    RunEvent::Progress {
+        step: step.clone(),
+        rows: read.rows,
+        bytes: read.bytes,
+        elapsed_ms: millis(opened.elapsed()),
+        batch,
+        busy: Some(busy),
+    }
 }
 
 impl Loading<'_> {
@@ -383,9 +416,14 @@ impl Loading<'_> {
         batch: Option<Batch>,
         events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
     ) -> Result<(), RunFailure> {
-        let mut reader = Shaped::open(opener, statement)
-            .await
-            .map_err(|error| error.at(self.step()))?;
+        let step = self.step();
+        let (reader, opening_time) = waiting(Box::pin(Shaped::open(opener, statement)), |so_far| {
+            let busy = self.clock.lap(so_far);
+            (events.borrow_mut())(progress(&step, &self.read, self.opened, batch, busy));
+        })
+        .await;
+        self.clock.waited(opening_time);
+        let mut reader = reader.map_err(|error| error.at(step))?;
         let opening = reader.opening();
         self.spent.connect += opening.connect;
         self.spent.start += opening.start;
@@ -402,11 +440,16 @@ impl Loading<'_> {
         events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
     ) -> Result<(), RunFailure> {
         let mut table = self.take_table(reader.columns(), workspace, batch).await?;
-        let mut last_progress = Instant::now();
+        let step = self.step();
         let mut rows_seen = false;
         loop {
-            let (page, waited) = timed(reader.next_page()).await;
+            let (page, waited) = waiting(reader.next_page(), |so_far| {
+                let busy = self.clock.lap(so_far);
+                (events.borrow_mut())(progress(&step, &self.read, self.opened, batch, busy));
+            })
+            .await;
             self.read.waited(waited, !rows_seen);
+            self.clock.waited(waited);
             let Some(page) = page.map_err(|error| error.at(self.step()))? else {
                 break;
             };
@@ -422,18 +465,13 @@ impl Loading<'_> {
             table.typer.see(&page);
             let (appended, appending) = timed(table.loader.append(page)).await;
             self.spent.load += appending;
+            self.clock.loaded(appending);
             if let Err(error) = appended {
                 return Err(self.duckdb_failure(&error));
             }
-            if last_progress.elapsed() >= PROGRESS_EVERY {
-                last_progress = Instant::now();
-                (events.borrow_mut())(RunEvent::Progress {
-                    step: self.step(),
-                    rows: self.read.rows,
-                    bytes: self.read.bytes,
-                    elapsed_ms: millis(self.opened.elapsed()),
-                    batch,
-                });
+            if self.clock.due() {
+                let busy = self.clock.lap(Duration::ZERO);
+                (events.borrow_mut())(progress(&step, &self.read, self.opened, batch, busy));
             }
         }
         self.table = Some(table);

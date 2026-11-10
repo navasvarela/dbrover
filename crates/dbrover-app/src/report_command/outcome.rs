@@ -140,6 +140,7 @@ mod tests {
             bytes: 1,
             elapsed_ms: 1,
             batch: None,
+            busy: None,
         };
         assert_eq!(Outcome::of_end(&progress), None);
     }
