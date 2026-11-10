@@ -1721,6 +1721,11 @@ fn report_page(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
             first_row_ms: Some(elapsed_ms / 3),
             elapsed_ms,
             batches: None,
+            started_ms: None,
+            engine: None,
+            phases: None,
+            limits: None,
+            waits_for: None,
         })
     };
     let finished = |day: i64, origin, combine_ms, excel_ms| ReportRun {
@@ -1742,6 +1747,9 @@ fn report_page(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
                 elapsed_ms: combine_ms + excel_ms + 2,
                 peak_memory: Some(3_400_000),
                 peak_temp_size: Some(0),
+                started_ms: None,
+                query_ms: None,
+                limits: None,
             }),
             StepMetrics::Output(OutputMetrics {
                 number: 1,
@@ -1749,6 +1757,8 @@ fn report_page(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
                 rows: 22,
                 size: 7_400,
                 elapsed_ms: excel_ms,
+                started_ms: None,
+                ended_ms: None,
             }),
             StepMetrics::Output(OutputMetrics {
                 number: 2,
@@ -1756,10 +1766,13 @@ fn report_page(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
                 rows: 22,
                 size: 1_100,
                 elapsed_ms: 2,
+                started_ms: None,
+                ended_ms: None,
             }),
         ],
         origin,
         version: None,
+        profile: Default::default(),
     };
     let failed = ReportRun {
         outcome: RunOutcome::Failed(RunError {

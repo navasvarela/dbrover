@@ -18,7 +18,7 @@ use dbrover_core::{
     CancelHandle, Connection, CostGuard, ReadPace, ResultCursor, ResultShape, Row, describe_error,
 };
 use dbrover_export::ExportColumn;
-use dbrover_report::{LimitHit, SourceError, SourceOpener, SourceReader, SourceStatement};
+use dbrover_report::{LimitHit, Opening, SourceError, SourceOpener, SourceReader, SourceStatement};
 use dbrover_sql::Prepared;
 use dbrover_store::SecretStore;
 
@@ -60,6 +60,7 @@ pub struct ReportSource {
     deadline: Instant,
     timeout: Duration,
     id: String,
+    opening: Opening,
 }
 
 impl ReportSource {
@@ -85,6 +86,7 @@ impl ReportSource {
 
         let data_source = read_only::connection_config(source.data_source.clone());
         let config = &data_source.config;
+        let connecting = Instant::now();
         let mut connection = open_data_source(
             &data_source,
             access.secrets,
@@ -100,6 +102,8 @@ impl ReportSource {
                 password_hint(config.uses_password())
             ))
         })?;
+        let connect = connecting.elapsed();
+        let starting = Instant::now();
         let mode = match read_only::guard(config.driver(), Storage::of(config)) {
             Guard::Session(mode) => Some(mode),
             Guard::Login | Guard::CheckOnly => None,
@@ -150,6 +154,10 @@ impl ReportSource {
             deadline,
             timeout: source.limits.timeout,
             id: source.id.clone(),
+            opening: Opening {
+                connect,
+                start: starting.elapsed(),
+            },
         })
     }
 }
@@ -178,6 +186,10 @@ impl SourceReader for ReportSource {
 
     fn shape(&self) -> ResultShape {
         self.shape
+    }
+
+    fn opening(&self) -> Opening {
+        self.opening
     }
 
     async fn next_page(&mut self) -> Result<Option<Vec<Row>>, SourceError> {

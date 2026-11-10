@@ -4,6 +4,7 @@
 //! go until a report has a folder of its own.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use dbrover_engine::WorkerRun;
 use dbrover_mcp::{ReportListing, ReportRunner, RunningReport};
@@ -84,19 +85,21 @@ impl RunningReport for McpRun {
         if self.ended {
             return None;
         }
-        let mut event = self.run.wait_next().unwrap_or_else(|| {
+        let mut timed = self.run.wait_next().unwrap_or_else(|| {
             // `WorkerRun` ends every run with an event of its own; this is a bug, not an end.
             RunEvent::Failed(RunFailure::new(
                 Step::Worker,
                 "the run's events stopped before it ended",
             ))
+            .at(Duration::ZERO)
         });
-        if let RunEvent::Failed(failure) = &mut event {
+        if let RunEvent::Failed(failure) = &mut timed.event {
             failure.place_limit(&self.plan);
         }
         if let Some(history) = &mut self.history {
-            history.event(&event);
+            history.event(&timed);
         }
+        let event = timed.event;
         if event.ends_run() {
             self.ended = true;
             if let Some(history) = self.history.take()

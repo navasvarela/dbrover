@@ -17,9 +17,9 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use dbrover_report::{LimitHit, RunEvent, RunFailure, RunRequest, Step};
+use dbrover_report::{LimitHit, RunEvent, RunFailure, RunRequest, Step, TimedEvent};
 
 /// Windows' `BELOW_NORMAL_PRIORITY_CLASS`: a report gives way to the app and everything else
 /// the user is doing. On Linux and macOS the worker lowers its own priority.
@@ -55,7 +55,7 @@ impl Stop {
 
 /// A report running in a worker process.
 pub struct WorkerRun {
-    events: Receiver<RunEvent>,
+    events: Receiver<TimedEvent>,
     child: Arc<Mutex<Child>>,
     stop: Arc<AtomicU8>,
     /// Dropped when the run ends, which wakes the watchdog to leave.
@@ -85,6 +85,7 @@ impl WorkerRun {
             use std::os::windows::process::CommandExt;
             command.creation_flags(crate::programs::CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS);
         }
+        let started = Instant::now();
         let mut child = command.spawn()?;
         let mut line = serde_json::to_string(request).map_err(io::Error::other)?;
         line.push('\n');
@@ -120,6 +121,7 @@ impl WorkerRun {
             events,
             wake,
             timeout,
+            started,
         };
         thread::Builder::new()
             .name("report-worker-out".to_owned())
@@ -133,18 +135,18 @@ impl WorkerRun {
     }
 
     /// The next event, if one has come.
-    pub fn try_next(&self) -> Option<RunEvent> {
+    pub fn try_next(&self) -> Option<TimedEvent> {
         self.events.try_recv().ok()
     }
 
     /// The next event, waiting up to `wait` for it.
-    pub fn next_within(&self, wait: Duration) -> Option<RunEvent> {
+    pub fn next_within(&self, wait: Duration) -> Option<TimedEvent> {
         self.events.recv_timeout(wait).ok()
     }
 
     /// The next event, waiting for it as long as the run lasts; `None` once the event that
     /// ends the run has been taken.
-    pub fn wait_next(&self) -> Option<RunEvent> {
+    pub fn wait_next(&self) -> Option<TimedEvent> {
         self.events.recv().ok()
     }
 
@@ -252,9 +254,11 @@ struct OutputReader {
     child: Arc<Mutex<Child>>,
     stop: Arc<AtomicU8>,
     log: Arc<Mutex<Vec<String>>>,
-    events: Sender<RunEvent>,
+    events: Sender<TimedEvent>,
     wake: Arc<dyn Fn() + Send + Sync>,
     timeout: Duration,
+    /// When the worker was started, for the time of an event this side makes.
+    started: Instant,
 }
 
 impl OutputReader {
@@ -262,10 +266,10 @@ impl OutputReader {
         let mut ended = false;
         for line in BufReader::new(stdout).lines() {
             let Ok(line) = line else { break };
-            match serde_json::from_str::<RunEvent>(&line) {
-                Ok(event) => {
-                    ended |= event.ends_run();
-                    self.send(event);
+            match serde_json::from_str::<TimedEvent>(&line) {
+                Ok(timed) => {
+                    ended |= timed.event.ends_run();
+                    self.send(timed);
                 }
                 Err(error) => {
                     tracing::warn!(
@@ -288,7 +292,7 @@ impl OutputReader {
                 RunEvent::Failed(RunFailure::new(Step::Worker, stopped(status, &log)))
             }
         };
-        self.send(event);
+        self.send(event.at(self.started.elapsed()));
     }
 
     /// Removes what a killed worker had started writing, before the run's end is sent, so the
@@ -321,7 +325,7 @@ impl OutputReader {
         }
     }
 
-    fn send(&self, event: RunEvent) {
+    fn send(&self, event: TimedEvent) {
         // The receiver is gone once the app stops watching the run, which is fine.
         let _ = self.events.send(event);
         (self.wake)();

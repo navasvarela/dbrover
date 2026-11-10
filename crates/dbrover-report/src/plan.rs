@@ -6,7 +6,7 @@ use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use dbrover_core::{ConnectionConfig, DataSource, DuckDbDatabase};
+use dbrover_core::{BlobId, ConnectionConfig, DataSource, DuckDbDatabase};
 use dbrover_export::{
     CellTarget, ColumnType, CsvOptions, CustomFormat, CustomFormatKind, ExportFormat, ExportSpec,
     SchemaColumn, XlsxOptions,
@@ -14,7 +14,9 @@ use dbrover_export::{
 use dbrover_language::QueryLanguage;
 use dbrover_sql::{Dialect, ParameterValues, StatementKind};
 
+use crate::events::{CombineCaps, Machine, RunEvent, SourceCaps};
 use crate::problem::{Place, ReportProblem, Table, messages};
+use crate::run::millis;
 use crate::{
     Chart, CombineLimits, CombineLimitsSet, CombineQuery, FileName, LimitDefaults, LimitSetIn,
     Lookup, Output, OutputColumns, OutputLimits, OutputLimitsSet, OutputWriter, Param, Report,
@@ -149,6 +151,44 @@ impl Combined {
             rounds[round].push(source);
         }
         rounds
+    }
+}
+
+impl SourceStart {
+    fn query(source: &QuerySource) -> Self {
+        Self {
+            id: source.id.clone(),
+            data_source: source.data_source.name.clone(),
+            attached: false,
+            waits_for: source.lookup.as_ref().map(|lookup| lookup.from.clone()),
+            engine: Some(engine(&source.data_source)),
+            limits: Some(SourceCaps::from(&source.limits)),
+        }
+    }
+}
+
+/// The engine a data source runs, as DbRover names it.
+fn engine(data_source: &DataSource) -> String {
+    data_source.config.driver().display_name().to_owned()
+}
+
+impl From<&SourceLimits> for SourceCaps {
+    fn from(limits: &SourceLimits) -> Self {
+        Self {
+            max_rows: limits.max_rows,
+            max_bytes: limits.max_bytes.0,
+            timeout_ms: millis(limits.timeout),
+        }
+    }
+}
+
+impl From<&CombineLimits> for CombineCaps {
+    fn from(limits: &CombineLimits) -> Self {
+        Self {
+            memory_limit: limits.memory_limit.0,
+            max_temp_size: limits.max_temp_size.0,
+            timeout_ms: millis(limits.timeout),
+        }
     }
 }
 
@@ -408,27 +448,44 @@ impl Plan {
         }
     }
 
+    /// The event that starts a run of this plan: what it runs and under which limits, the Git
+    /// blob id of the file's text (`version`), and the machine it runs on.
+    pub fn started(&self, version: BlobId, machine: Machine) -> RunEvent {
+        let combine_limits = match &self.logic {
+            Logic::Direct(_) => None,
+            Logic::Combine(combined) => Some(CombineCaps::from(&combined.combine.limits)),
+        };
+        RunEvent::Started {
+            report: self.name.clone(),
+            sources: self.source_starts(),
+            combine: combine_limits.is_some(),
+            combine_sql: self.compiled_combine().map(str::to_owned),
+            version: Some(version),
+            combine_limits,
+            timeout_ms: Some(millis(self.timeout)),
+            machine: Some(machine),
+        }
+    }
+
     /// Each source, as the run's start lists them.
     pub fn source_starts(&self) -> Vec<SourceStart> {
-        let start = |source: &PlannedSource| SourceStart {
-            id: source.id().to_owned(),
-            data_source: source.data_source().name.clone(),
-            attached: matches!(source, PlannedSource::Attached(_)),
-            waits_for: match source {
-                PlannedSource::Query(source) => {
-                    source.lookup.as_ref().map(|lookup| lookup.from.clone())
-                }
-                PlannedSource::Attached(_) => None,
-            },
-        };
         match &self.logic {
-            Logic::Direct(source) => vec![SourceStart {
-                id: source.id.clone(),
-                data_source: source.data_source.name.clone(),
-                attached: false,
-                waits_for: None,
-            }],
-            Logic::Combine(combined) => combined.sources.iter().map(start).collect(),
+            Logic::Direct(source) => vec![SourceStart::query(source)],
+            Logic::Combine(combined) => combined
+                .sources
+                .iter()
+                .map(|source| match source {
+                    PlannedSource::Query(source) => SourceStart::query(source),
+                    PlannedSource::Attached(attached) => SourceStart {
+                        id: attached.id.clone(),
+                        data_source: attached.data_source.name.clone(),
+                        attached: true,
+                        waits_for: None,
+                        engine: Some(engine(&attached.data_source)),
+                        limits: None,
+                    },
+                })
+                .collect(),
         }
     }
 

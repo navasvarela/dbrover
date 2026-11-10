@@ -3,12 +3,14 @@
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use calamine::{Data, Reader, Xlsx, open_workbook};
 use dbrover_core::{
     Connection, ConnectionConfig, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase, Row,
     SafetyLevel, SqliteConfig,
 };
+use dbrover_export::ExportColumn;
 
 use super::*;
 use crate::run_tests::{MemoryOpener, MemoryReader, column, files_in};
@@ -465,4 +467,112 @@ async fn names_the_source_that_fails_to_load_and_the_failing_query() {
     assert_eq!(failure.step, Step::Combine);
     assert!(failure.message.contains("nothing"), "{failure}");
     assert_eq!(files_in(folder.path()), Vec::<String>::new());
+}
+
+/// A reader that takes `first` before its first page and `later` before each other, and says
+/// opening it took `opening`, as a slow database would.
+struct Paced {
+    inner: MemoryReader,
+    opening: Opening,
+    first: Duration,
+    later: Duration,
+    pages_read: usize,
+}
+
+impl SourceReader for Paced {
+    fn columns(&self) -> &[ExportColumn] {
+        self.inner.columns()
+    }
+
+    fn opening(&self) -> Opening {
+        self.opening
+    }
+
+    async fn next_page(&mut self) -> Result<Option<Vec<Row>>, SourceError> {
+        let pause = if self.pages_read == 0 {
+            self.first
+        } else {
+            self.later
+        };
+        tokio::time::sleep(pause).await;
+        self.pages_read += 1;
+        self.inner.next_page().await
+    }
+
+    async fn close(self) {}
+}
+
+/// Paces every source of a [`MemoryOpener`] the same way.
+struct PacedOpener {
+    inner: MemoryOpener,
+    opening: Opening,
+    first: Duration,
+    later: Duration,
+}
+
+impl SourceOpener for PacedOpener {
+    type Reader = Paced;
+
+    async fn open(&self, statement: &SourceStatement<'_>) -> Result<Paced, SourceError> {
+        Ok(Paced {
+            inner: self.inner.open(statement).await?,
+            opening: self.opening,
+            first: self.first,
+            later: self.later,
+            pages_read: 0,
+        })
+    }
+}
+
+#[tokio::test]
+async fn says_where_each_sources_time_went() {
+    let folder = tempfile::tempdir().unwrap();
+    let plan = report("", VALUES, "");
+    let mut tx = transactions();
+    // Two pages, so the second is a transfer, and an empty end.
+    let rows = tx.pages.pop_front().unwrap();
+    tx.pages = VecDeque::from([rows[..1].to_vec(), rows[1..].to_vec()]);
+    let opener = PacedOpener {
+        inner: MemoryOpener::of(vec![("tx", tx), ("prices", prices())]),
+        opening: Opening {
+            connect: Duration::from_millis(7),
+            start: Duration::from_millis(11),
+        },
+        first: Duration::from_millis(60),
+        later: Duration::from_millis(30),
+    };
+    let staging = folder.path().join(".run");
+    let folders = RunFolders {
+        folder: folder.path(),
+        staging: &staging,
+    };
+    let mut events = Vec::new();
+    let plan_values = october(&plan);
+    run(&plan, &plan_values, &opener, folders, &mut |event| {
+        events.push(event);
+    })
+    .await
+    .unwrap();
+    let phases = |id: &str| {
+        events
+            .iter()
+            .find_map(|event| match event {
+                RunEvent::SourceDone {
+                    id: done, phases, ..
+                } if done == id => *phases,
+                _ => None,
+            })
+            .unwrap()
+    };
+    let tx = phases("tx");
+    assert_eq!(tx.connect_ms, 7, "{tx:?}");
+    // The statement's start, then its first page.
+    assert!(tx.server_ms >= 11 + 60, "{tx:?}");
+    // The second page, then the end of the rows.
+    assert!(tx.transfer_ms >= 30 + 30, "{tx:?}");
+    let query_ms = events.iter().find_map(|event| match event {
+        RunEvent::CombineDone { query_ms, .. } => *query_ms,
+        _ => None,
+    });
+    assert!(query_ms.is_some());
 }

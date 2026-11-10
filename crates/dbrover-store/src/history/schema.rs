@@ -8,8 +8,8 @@ use rusqlite::TransactionBehavior;
 
 /// The schema this DbRover writes. 0 is every file from before provenance (W4), with or without
 /// `source`; 3 adds report runs (RP4); 4 where a run came from (RP6g); 5 the version of the
-/// report file each run ran (VC1e).
-const VERSION: i32 = 5;
+/// report file each run ran (VC1e); 6 a run's own profile (RS1b).
+const VERSION: i32 = 6;
 
 /// The table as the first DbRover with MCP made it; [`COLUMNS`] adds the rest.
 const TABLE: &str = "
@@ -92,6 +92,10 @@ pub(super) fn migrate(connection: &mut rusqlite::Connection) -> rusqlite::Result
         // before it.
         if !has_column(&transaction, "report_runs", "version")? {
             transaction.execute("ALTER TABLE report_runs ADD COLUMN version TEXT", [])?;
+        }
+        // What a run measured of itself, as JSON (RS1b); `NULL` in runs from before it.
+        if !has_column(&transaction, "report_runs", "profile")? {
+            transaction.execute("ALTER TABLE report_runs ADD COLUMN profile TEXT", [])?;
         }
         transaction.pragma_update(None, "user_version", VERSION)?;
     }

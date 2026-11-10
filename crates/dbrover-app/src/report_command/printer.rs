@@ -3,8 +3,9 @@
 //! the types the app reads, so there is no format of the command's own to keep.
 
 use std::io::{self, IsTerminal as _, Write};
+use std::time::Instant;
 
-use dbrover_report::{RunEvent, RunFailure, Step, TypedValues};
+use dbrover_report::{RunEvent, RunFailure, Step, TimedEvent, TypedValues};
 
 use super::args::OutputStyle;
 use super::human::HumanLines;
@@ -12,7 +13,7 @@ use crate::report_worker::Events;
 
 pub trait Printer {
     /// One of the run's events, as the worker sent it or the command made it.
-    fn event(&mut self, event: &RunEvent);
+    fn event(&mut self, event: &TimedEvent);
 
     /// What kept the run from starting: the report, its parameters or the settings folder.
     /// `heading` says which, for a person.
@@ -32,15 +33,15 @@ pub fn for_style(style: OutputStyle, values: &TypedValues, progress: bool) -> Bo
                 Box::new(lines)
             }
         }
-        OutputStyle::JsonLines => Box::new(Events::new(io::stdout().lock())),
+        OutputStyle::JsonLines => Box::new(Events::new(io::stdout().lock(), Instant::now())),
     }
 }
 
 impl<W: Write> Printer for Events<W> {
-    fn event(&mut self, event: &RunEvent) {
+    fn event(&mut self, event: &TimedEvent) {
         // A closed standard output (`| head`) isn't the run's failure: its exit code says how
         // it ended.
-        let _ = self.send(event);
+        let _ = self.forward(event);
     }
 
     /// As the worker says it: a run that failed in the report step, a problem a line.

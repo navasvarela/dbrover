@@ -81,6 +81,27 @@ pub fn limit_processor_time(limit: Duration) {
     let _ = limit;
 }
 
+/// The most memory the worker's process has held resident at once, in bytes; `None` where the
+/// system doesn't say (Windows) or the call fails.
+pub fn peak_memory() -> Option<u64> {
+    #[cfg(unix)]
+    {
+        use nix::sys::resource::{UsageWho, getrusage};
+        let usage = getrusage(UsageWho::RUSAGE_SELF)
+            .inspect_err(|error| tracing::warn!("could not read the worker's memory: {error}"))
+            .ok()?;
+        let max_rss = u64::try_from(usage.max_rss()).ok()?;
+        // `ru_maxrss` is in bytes on macOS, and in kibibytes on Linux and the BSDs.
+        if cfg!(target_os = "macos") {
+            Some(max_rss)
+        } else {
+            Some(max_rss.saturating_mul(1024))
+        }
+    }
+    #[cfg(not(unix))]
+    None
+}
+
 /// Lowers the soft limit of `resource` to `value`, keeping the hard limit, so nothing the
 /// worker inherited is raised.
 #[cfg(target_os = "linux")]

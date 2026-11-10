@@ -105,6 +105,7 @@ mod tests {
             table: Vec::new(),
             warnings: Vec::new(),
             batches: None,
+            phases: None,
         };
         let cases = [
             (

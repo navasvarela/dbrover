@@ -5,7 +5,7 @@
 use std::io::Write;
 
 use dbrover_core::{BlobId, ByteCount};
-use dbrover_report::{RunEvent, RunFailure, Step, TypedValues, WrittenFile, grouped};
+use dbrover_report::{RunEvent, RunFailure, Step, TimedEvent, TypedValues, WrittenFile, grouped};
 
 use super::printer::Printer;
 use super::progress::{CLEAR_LINE, LiveLine};
@@ -25,7 +25,8 @@ pub struct HumanLines<O: Write, E: Write> {
 }
 
 impl<O: Write, E: Write> Printer for HumanLines<O, E> {
-    fn event(&mut self, event: &RunEvent) {
+    fn event(&mut self, timed: &TimedEvent) {
+        let event = &timed.event;
         let live_changed = self.live.as_mut().is_some_and(|live| live.apply(event));
         let shown_before = self.live_shown;
         self.lines(event);
@@ -107,7 +108,7 @@ impl<O: Write, E: Write> HumanLines<O, E> {
                 }
             }
             RunEvent::Cancelled => self.error_line("Cancelled. No file was written."),
-            RunEvent::Progress { .. } | RunEvent::Preview(_) => {}
+            RunEvent::Progress { .. } | RunEvent::Preview(_) | RunEvent::WorkerUsage { .. } => {}
         }
     }
 
@@ -230,6 +231,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn keeps_a_live_line_under_the_finished_steps() {
@@ -254,6 +256,7 @@ mod tests {
                 table: Vec::new(),
                 warnings: Vec::new(),
                 batches: None,
+                phases: None,
             },
             RunEvent::Progress {
                 step: Step::Combine,
@@ -265,7 +268,7 @@ mod tests {
             RunEvent::Finished { elapsed_ms: 2_100 },
         ];
         for event in &events {
-            human.event(event);
+            human.event(&event.clone().at(Duration::ZERO));
         }
         let err = String::from_utf8(human.err).unwrap();
         assert_eq!(
@@ -285,6 +288,9 @@ mod tests {
             combine: true,
             combine_sql: combine_sql.map(str::to_owned),
             version: None,
+            combine_limits: None,
+            timeout_ms: None,
+            machine: None,
         };
         let failed = RunEvent::Failed(RunFailure::new(
             Step::Combine,
@@ -319,7 +325,7 @@ mod tests {
             .collect();
         let mut human = HumanLines::new(Vec::new(), Vec::new(), values);
         for event in events {
-            human.event(event);
+            human.event(&event.clone().at(Duration::ZERO));
         }
         let HumanLines { out, err, .. } = human;
         (
@@ -337,6 +343,9 @@ mod tests {
                 combine: true,
                 combine_sql: None,
                 version: None,
+                combine_limits: None,
+                timeout_ms: None,
+                machine: None,
             },
             RunEvent::Progress {
                 step: Step::Combine,
@@ -354,6 +363,7 @@ mod tests {
                 table: Vec::new(),
                 warnings: vec!["amount has more digits than DuckDB keeps".to_owned()],
                 batches: Some(3),
+                phases: None,
             },
             RunEvent::SourceAttached {
                 id: "prices".to_owned(),
@@ -366,6 +376,7 @@ mod tests {
                 elapsed_ms: 40,
                 peak_memory: None,
                 peak_temp_size: None,
+                query_ms: None,
             },
             RunEvent::OutputWritten(WrittenFile {
                 path: PathBuf::from("/out/sales-2026-10.xlsx"),
@@ -463,6 +474,9 @@ mod tests {
             combine: false,
             combine_sql: None,
             version: None,
+            combine_limits: None,
+            timeout_ms: None,
+            machine: None,
         };
         assert_eq!(lines(&[], &[started]).1, "Stock\n");
         assert_eq!(

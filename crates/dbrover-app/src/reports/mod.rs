@@ -25,14 +25,14 @@ use dbrover_core::{BlobId, DataSource};
 use dbrover_engine::{Command, Event, ReportSaveFailure, ReportText, WatchedFile};
 use dbrover_export::CustomFormat;
 use dbrover_report::{
-    Batch, CombineLimits, LimitDefaults, LoadedColumn, OutputLimits, Plan, Preview, Report,
-    RunEvent, RunFailure, RunRequest, SourceLimits, SourceStart, Step, TypedValues, WrittenFile,
-    read_report,
+    Batch, CombineCaps, CombineLimits, LimitDefaults, LoadedColumn, OutputLimits, Plan, Preview,
+    Report, RunEvent, RunFailure, RunRequest, SourceCaps, SourceLimits, SourcePhases, SourceStart,
+    Step, TimedEvent, TypedValues, WrittenFile, read_report,
 };
 use dbrover_sql::FormatOptions;
 use dbrover_store::{
     CombineMetrics, DEFAULT_RUNS_KEPT, OutputMetrics, ReportFiles, ReportName, ReportRun,
-    ReportSettings, RunError, RunOrigin, RunOutcome, SourceMetrics, StepMetrics,
+    ReportSettings, RunError, RunOrigin, RunOutcome, RunProfile, SourceMetrics, StepMetrics,
 };
 use jiff::Timestamp;
 
@@ -249,6 +249,10 @@ pub struct RunRecord {
     pub measured: Vec<StepMetrics>,
     /// The Git blob id of the report file's text that runs, as the run's start said.
     pub version: Option<BlobId>,
+    /// The combine step's limits, as the run's start said.
+    combine_limits: Option<CombineCaps>,
+    /// What the run measured of itself so far.
+    profile: RunProfile,
 }
 
 /// A source or the combine step, as far as the run has gone.
@@ -267,6 +271,10 @@ pub struct StepRecord {
     pub warnings: Vec<String>,
     /// For a combine step in PRQL, the SQL it compiled to, which is what ran.
     pub sql: Option<String>,
+    /// A source's engine, as the run's start named it.
+    pub engine: Option<String>,
+    /// A source's caps, as the run's start gave them.
+    pub limits: Option<SourceCaps>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -308,6 +316,8 @@ impl RunRecord {
             end: None,
             measured: Vec::new(),
             version: None,
+            combine_limits: None,
+            profile: RunProfile::default(),
         }
     }
 
@@ -335,21 +345,55 @@ impl RunRecord {
             steps: self.measured.clone(),
             origin,
             version: self.version,
+            profile: self.profile.clone(),
         })
+    }
+
+    /// The source `id`, as the run's start listed it.
+    fn source_record(&self, id: &str) -> Option<&StepRecord> {
+        self.steps
+            .iter()
+            .find(|record| matches!(&record.step, Step::Source { id: step } if step == id))
     }
 
     /// The data source of the source `id`, as the run's start named it.
     fn data_source_of(&self, id: &str) -> String {
-        self.steps
-            .iter()
-            .find(|record| matches!(&record.step, Step::Source { id: step } if step == id))
+        self.source_record(id)
             .and_then(|record| record.data_source.clone())
             .unwrap_or_default()
     }
 
-    /// Keeps what a step measured, from the event that says it is done.
-    fn measure(&mut self, event: &RunEvent) {
+    /// When the step whose rows the outputs write started: the combine step, or the report's
+    /// one source without it, which has finished by the time a file is written.
+    fn feed_started_ms(&self) -> Option<u64> {
+        self.measured.iter().rev().find_map(|step| match step {
+            StepMetrics::Combine(combine) => combine.started_ms,
+            StepMetrics::Source(source) if !self.combines() => source.started_ms,
+            _ => None,
+        })
+    }
+
+    /// Keeps what a step measured, from the event that says it is done, sent `at_ms` into
+    /// the run; and what the run measured of itself.
+    fn measure(&mut self, event: &RunEvent, at_ms: u64) {
+        let started_ms = |elapsed_ms: u64| Some(at_ms.saturating_sub(elapsed_ms));
         let measured = match event {
+            RunEvent::Started {
+                timeout_ms,
+                machine,
+                combine_limits,
+                ..
+            } => {
+                self.combine_limits = *combine_limits;
+                self.profile.timeout_ms = *timeout_ms;
+                self.profile.cores = machine.as_ref().map(|machine| machine.cores);
+                self.profile.dbrover = machine.as_ref().map(|machine| machine.dbrover.clone());
+                return;
+            }
+            RunEvent::WorkerUsage { peak_memory } => {
+                self.profile.peak_memory = *peak_memory;
+                return;
+            }
             RunEvent::SourceDone {
                 id,
                 rows,
@@ -357,16 +401,31 @@ impl RunRecord {
                 first_row_ms,
                 elapsed_ms,
                 batches,
+                phases,
                 ..
-            } => StepMetrics::Source(SourceMetrics {
-                id: id.clone(),
-                data_source: self.data_source_of(id),
-                rows: *rows,
-                bytes: *bytes,
-                first_row_ms: *first_row_ms,
-                elapsed_ms: *elapsed_ms,
-                batches: *batches,
-            }),
+            } => {
+                let record = self.source_record(id);
+                StepMetrics::Source(SourceMetrics {
+                    id: id.clone(),
+                    data_source: self.data_source_of(id),
+                    rows: *rows,
+                    bytes: *bytes,
+                    first_row_ms: *first_row_ms,
+                    elapsed_ms: *elapsed_ms,
+                    batches: *batches,
+                    started_ms: started_ms(*elapsed_ms),
+                    engine: record.and_then(|record| record.engine.clone()),
+                    waits_for: record.and_then(|record| record.waits_for.clone()),
+                    phases: phases.map(kept_phases),
+                    limits: record.and_then(|record| record.limits).map(|limits| {
+                        dbrover_store::SourceCaps {
+                            max_rows: limits.max_rows,
+                            max_bytes: limits.max_bytes,
+                            timeout_ms: limits.timeout_ms,
+                        }
+                    }),
+                })
+            }
             RunEvent::SourceAttached { id, .. } => StepMetrics::Attached {
                 id: id.clone(),
                 data_source: self.data_source_of(id),
@@ -378,6 +437,7 @@ impl RunRecord {
                 elapsed_ms,
                 peak_memory,
                 peak_temp_size,
+                query_ms,
             } => StepMetrics::Combine(CombineMetrics {
                 rows: *rows,
                 bytes: *bytes,
@@ -385,6 +445,15 @@ impl RunRecord {
                 elapsed_ms: *elapsed_ms,
                 peak_memory: *peak_memory,
                 peak_temp_size: *peak_temp_size,
+                started_ms: started_ms(*elapsed_ms),
+                query_ms: *query_ms,
+                limits: self
+                    .combine_limits
+                    .map(|limits| dbrover_store::CombineCaps {
+                        memory_limit: limits.memory_limit,
+                        max_temp_size: limits.max_temp_size,
+                        timeout_ms: limits.timeout_ms,
+                    }),
             }),
             RunEvent::OutputWritten(file) => StepMetrics::Output(OutputMetrics {
                 // The outputs' files are put in place in the report's order.
@@ -396,6 +465,8 @@ impl RunRecord {
                 rows: file.rows,
                 size: file.size,
                 elapsed_ms: file.elapsed_ms,
+                started_ms: self.feed_started_ms(),
+                ended_ms: Some(at_ms),
             }),
             _ => return,
         };
@@ -412,8 +483,9 @@ impl RunRecord {
     }
 
     /// Takes in the run's next event.
-    pub fn apply(&mut self, event: RunEvent) {
-        self.measure(&event);
+    pub fn apply(&mut self, timed: TimedEvent) {
+        let TimedEvent { at_ms, event } = timed;
+        self.measure(&event, at_ms);
         match event {
             RunEvent::Started {
                 sources,
@@ -492,6 +564,7 @@ impl RunRecord {
                 }
             }
             RunEvent::Preview(preview) => self.preview = Some(preview),
+            RunEvent::WorkerUsage { .. } => {}
             RunEvent::OutputWritten(file) => self.files.push(file),
             RunEvent::Finished { elapsed_ms } => self.end = Some(RunEnd::Finished { elapsed_ms }),
             RunEvent::Failed(failure) => {
@@ -502,6 +575,24 @@ impl RunRecord {
             }
             RunEvent::Cancelled => self.end = Some(RunEnd::Cancelled),
         }
+    }
+}
+
+/// A source's phases as the history keeps them.
+fn kept_phases(phases: SourcePhases) -> dbrover_store::SourcePhases {
+    let SourcePhases {
+        connect_ms,
+        server_ms,
+        transfer_ms,
+        load_ms,
+        type_ms,
+    } = phases;
+    dbrover_store::SourcePhases {
+        connect_ms,
+        server_ms,
+        transfer_ms,
+        load_ms,
+        type_ms,
     }
 }
 
@@ -517,12 +608,16 @@ impl StepRecord {
             table: Vec::new(),
             warnings: Vec::new(),
             sql: None,
+            engine: None,
+            limits: None,
         }
     }
 
     fn source(source: SourceStart) -> Self {
         Self {
             waits_for: source.waits_for,
+            engine: source.engine,
+            limits: source.limits,
             ..Self::new(
                 Step::Source { id: source.id },
                 Some(source.data_source),
@@ -885,11 +980,11 @@ impl Reports {
     pub fn poll(&mut self, kept: NonZeroU32) -> Option<Command> {
         let running = self.running.as_mut()?;
         let mut events = Vec::new();
-        while let Some(mut event) = running.run.try_next() {
-            if let RunEvent::Failed(failure) = &mut event {
+        while let Some(mut timed) = running.run.try_next() {
+            if let RunEvent::Failed(failure) = &mut timed.event {
                 failure.place_limit(&running.plan);
             }
-            events.push(event);
+            events.push(timed);
         }
         let report = running.report.clone();
         let record = self.state_mut(&report).last_run.as_mut()?;
@@ -962,6 +1057,11 @@ fn opener(path: &Path) -> std::process::Command {
 mod tests {
     use super::*;
 
+    /// Takes in `event` as sent at the run's start, for a run whose times don't matter.
+    fn untimed(record: &mut RunRecord, event: RunEvent) {
+        record.apply(event.at(Duration::ZERO));
+    }
+
     #[test]
     fn opens_a_path_with_the_platforms_opener() {
         let command = opener(Path::new("/Users/ada/My Reports/sales.xlsx"));
@@ -1000,40 +1100,55 @@ mod tests {
         for (end, outcome, elapsed) in cases {
             let params: TypedValues = [("since".to_owned(), "2026-10-01".to_owned())].into();
             let mut record = RunRecord::new(params.clone());
-            record.apply(RunEvent::Started {
-                report: "Trial balance".to_owned(),
-                sources: vec![SourceStart {
+            untimed(
+                &mut record,
+                RunEvent::Started {
+                    report: "Trial balance".to_owned(),
+                    sources: vec![SourceStart {
+                        id: "balances".to_owned(),
+                        data_source: "ledger".to_owned(),
+                        attached: false,
+                        waits_for: None,
+                        engine: None,
+                        limits: None,
+                    }],
+                    combine: false,
+                    combine_sql: None,
+                    version: None,
+                    combine_limits: None,
+                    timeout_ms: None,
+                    machine: None,
+                },
+            );
+            untimed(
+                &mut record,
+                RunEvent::SourceDone {
                     id: "balances".to_owned(),
-                    data_source: "ledger".to_owned(),
-                    attached: false,
-                    waits_for: None,
-                }],
-                combine: false,
-                combine_sql: None,
-                version: None,
-            });
-            record.apply(RunEvent::SourceDone {
-                id: "balances".to_owned(),
-                rows: 20,
-                bytes: 400,
-                first_row_ms: Some(3),
-                elapsed_ms: 50,
-                table: Vec::new(),
-                warnings: Vec::new(),
-                batches: None,
-            });
-            record.apply(RunEvent::OutputWritten(WrittenFile {
-                path: PathBuf::from("/out/tb-2026-10.csv"),
-                rows: 20,
-                size: 512,
-                elapsed_ms: 2,
-                warnings: Vec::new(),
-            }));
+                    rows: 20,
+                    bytes: 400,
+                    first_row_ms: Some(3),
+                    elapsed_ms: 50,
+                    table: Vec::new(),
+                    warnings: Vec::new(),
+                    batches: None,
+                    phases: None,
+                },
+            );
+            untimed(
+                &mut record,
+                RunEvent::OutputWritten(WrittenFile {
+                    path: PathBuf::from("/out/tb-2026-10.csv"),
+                    rows: 20,
+                    size: 512,
+                    elapsed_ms: 2,
+                    warnings: Vec::new(),
+                }),
+            );
             assert!(
                 record.to_report_run(&report, RunOrigin::App).is_none(),
                 "still running"
             );
-            record.apply(end);
+            untimed(&mut record, end);
 
             let run = record.to_report_run(&report, RunOrigin::App).unwrap();
             assert_eq!(run.outcome, outcome);
@@ -1052,6 +1167,12 @@ mod tests {
                         first_row_ms: Some(3),
                         elapsed_ms: 50,
                         batches: None,
+                        // Sent at the run's start, as `untimed` sends every event.
+                        started_ms: Some(0),
+                        engine: None,
+                        phases: None,
+                        limits: None,
+                        waits_for: None,
                     }),
                     StepMetrics::Output(OutputMetrics {
                         number: 1,
@@ -1059,6 +1180,8 @@ mod tests {
                         rows: 20,
                         size: 512,
                         elapsed_ms: 2,
+                        started_ms: Some(0),
+                        ended_ms: Some(0),
                     }),
                 ]
             );
@@ -1066,17 +1189,150 @@ mod tests {
     }
 
     #[test]
+    fn keeps_each_steps_place_in_the_run_its_phases_and_its_limits() {
+        let caps = SourceCaps {
+            max_rows: 1_000,
+            max_bytes: 1 << 20,
+            timeout_ms: 60_000,
+        };
+        let combine_caps = CombineCaps {
+            memory_limit: 1 << 30,
+            max_temp_size: 1 << 32,
+            timeout_ms: 600_000,
+        };
+        let phases = SourcePhases {
+            connect_ms: 10,
+            server_ms: 700,
+            transfer_ms: 200,
+            load_ms: 80,
+            type_ms: 10,
+        };
+        let mut record = RunRecord::new(TypedValues::new());
+        let events = [
+            (
+                0,
+                RunEvent::Started {
+                    report: "Valuation".to_owned(),
+                    sources: vec![SourceStart {
+                        id: "tx".to_owned(),
+                        data_source: "ledger".to_owned(),
+                        attached: false,
+                        waits_for: None,
+                        engine: Some("PostgreSQL".to_owned()),
+                        limits: Some(caps),
+                    }],
+                    combine: true,
+                    combine_sql: None,
+                    version: None,
+                    combine_limits: Some(combine_caps),
+                    timeout_ms: Some(1_800_000),
+                    machine: Some(dbrover_report::Machine {
+                        cores: 10,
+                        dbrover: "0.31.0".to_owned(),
+                    }),
+                },
+            ),
+            (
+                1_020,
+                RunEvent::SourceDone {
+                    id: "tx".to_owned(),
+                    rows: 10,
+                    bytes: 100,
+                    first_row_ms: Some(710),
+                    elapsed_ms: 1_000,
+                    table: Vec::new(),
+                    warnings: Vec::new(),
+                    batches: None,
+                    phases: Some(phases),
+                },
+            ),
+            (
+                1_500,
+                RunEvent::CombineDone {
+                    rows: 3,
+                    bytes: 30,
+                    first_row_ms: Some(400),
+                    elapsed_ms: 450,
+                    peak_memory: None,
+                    peak_temp_size: None,
+                    query_ms: Some(420),
+                },
+            ),
+            (
+                1_510,
+                RunEvent::OutputWritten(WrittenFile {
+                    path: PathBuf::from("/out/v.csv"),
+                    rows: 3,
+                    size: 40,
+                    elapsed_ms: 30,
+                    warnings: Vec::new(),
+                }),
+            ),
+            (
+                1_515,
+                RunEvent::WorkerUsage {
+                    peak_memory: Some(90 << 20),
+                },
+            ),
+            (1_516, RunEvent::Finished { elapsed_ms: 1_516 }),
+        ];
+        for (at_ms, event) in events {
+            record.apply(TimedEvent { at_ms, event });
+        }
+        let report = ReportName::new("valuation").unwrap();
+        let run = record.to_report_run(&report, RunOrigin::App).unwrap();
+        let [
+            StepMetrics::Source(source),
+            StepMetrics::Combine(combine),
+            StepMetrics::Output(output),
+        ] = run.steps.as_slice()
+        else {
+            panic!("{:?}", run.steps);
+        };
+        assert_eq!(source.started_ms, Some(20));
+        assert_eq!(source.engine.as_deref(), Some("PostgreSQL"));
+        assert_eq!(source.phases, Some(kept_phases(phases)));
+        assert_eq!(source.limits.map(|limits| limits.max_rows), Some(1_000));
+        assert_eq!(combine.started_ms, Some(1_050));
+        assert_eq!(combine.query_ms, Some(420));
+        assert_eq!(
+            combine.limits.map(|limits| limits.memory_limit),
+            Some(1 << 30)
+        );
+        // A file is started with the rows of the step that feeds it.
+        assert_eq!(
+            (output.started_ms, output.ended_ms),
+            (Some(1_050), Some(1_510))
+        );
+        assert_eq!(
+            run.profile,
+            RunProfile {
+                peak_memory: Some(90 << 20),
+                timeout_ms: Some(1_800_000),
+                cores: Some(10),
+                dbrover: Some("0.31.0".to_owned()),
+            }
+        );
+    }
+
+    #[test]
     fn keeps_the_version_the_runs_start_named() {
         let version = BlobId::of(b"[report]\n");
         let mut record = RunRecord::new(TypedValues::new());
-        record.apply(RunEvent::Started {
-            report: "Values".to_owned(),
-            sources: Vec::new(),
-            combine: false,
-            combine_sql: None,
-            version: Some(version),
-        });
-        record.apply(RunEvent::Finished { elapsed_ms: 1 });
+        untimed(
+            &mut record,
+            RunEvent::Started {
+                report: "Values".to_owned(),
+                sources: Vec::new(),
+                combine: false,
+                combine_sql: None,
+                version: Some(version),
+                combine_limits: None,
+                timeout_ms: None,
+                machine: None,
+            },
+        );
+        untimed(&mut record, RunEvent::Finished { elapsed_ms: 1 });
 
         let report = ReportName::new("values").unwrap();
         let run = record.to_report_run(&report, RunOrigin::Command).unwrap();
@@ -1090,34 +1346,48 @@ mod tests {
             data_source: "ledger".to_owned(),
             attached,
             waits_for: None,
+            engine: None,
+            limits: None,
         };
         let mut record = RunRecord::new(TypedValues::new());
-        record.apply(RunEvent::Started {
-            report: "Valuation".to_owned(),
-            sources: vec![source("tx", false), source("prices", true)],
-            combine: true,
-            combine_sql: None,
-            version: None,
-        });
+        untimed(
+            &mut record,
+            RunEvent::Started {
+                report: "Valuation".to_owned(),
+                sources: vec![source("tx", false), source("prices", true)],
+                combine: true,
+                combine_sql: None,
+                version: None,
+                combine_limits: None,
+                timeout_ms: None,
+                machine: None,
+            },
+        );
         let states = |record: &RunRecord| -> Vec<StepState> {
             record.steps.iter().map(|step| step.state).collect()
         };
         assert_eq!(states(&record), [StepState::Waiting; 3]);
         assert!(record.combines());
 
-        record.apply(RunEvent::SourceAttached {
-            id: "prices".to_owned(),
-            path: PathBuf::from("/tmp/prices.duckdb"),
-        });
-        record.apply(RunEvent::Progress {
-            step: Step::Source {
-                id: "tx".to_owned(),
+        untimed(
+            &mut record,
+            RunEvent::SourceAttached {
+                id: "prices".to_owned(),
+                path: PathBuf::from("/tmp/prices.duckdb"),
             },
-            rows: 1_000,
-            bytes: 20_000,
-            elapsed_ms: 1_000,
-            batch: None,
-        });
+        );
+        untimed(
+            &mut record,
+            RunEvent::Progress {
+                step: Step::Source {
+                    id: "tx".to_owned(),
+                },
+                rows: 1_000,
+                bytes: 20_000,
+                elapsed_ms: 1_000,
+                batch: None,
+            },
+        );
         assert_eq!(
             states(&record),
             [
@@ -1130,27 +1400,31 @@ mod tests {
                 StepState::Waiting
             ]
         );
-        record.apply(RunEvent::SourceDone {
-            id: "tx".to_owned(),
-            rows: 1_500,
-            bytes: 30_000,
-            first_row_ms: Some(10),
-            elapsed_ms: 1_200,
-            table: vec![LoadedColumn {
-                name: "quantity".to_owned(),
-                type_name: "DECIMAL(21,18)".to_owned(),
-                declared: false,
-            }],
-            warnings: vec!["a warning".to_owned()],
-            batches: None,
-        });
+        untimed(
+            &mut record,
+            RunEvent::SourceDone {
+                id: "tx".to_owned(),
+                rows: 1_500,
+                bytes: 30_000,
+                first_row_ms: Some(10),
+                elapsed_ms: 1_200,
+                table: vec![LoadedColumn {
+                    name: "quantity".to_owned(),
+                    type_name: "DECIMAL(21,18)".to_owned(),
+                    declared: false,
+                }],
+                warnings: vec!["a warning".to_owned()],
+                batches: None,
+                phases: None,
+            },
+        );
         assert_eq!(record.rows, 0, "a loaded source's rows aren't the outputs'");
         assert_eq!(record.steps[0].table.len(), 1);
         assert_eq!(record.steps[0].warnings, ["a warning"]);
-        record.apply(RunEvent::Failed(RunFailure::new(
-            Step::Combine,
-            "no memory",
-        )));
+        untimed(
+            &mut record,
+            RunEvent::Failed(RunFailure::new(Step::Combine, "no memory")),
+        );
         assert_eq!(record.steps[2].state, StepState::Failed);
         assert!(matches!(record.end, Some(RunEnd::Failed(_))));
     }

@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use dbrover_report::{
     Batch, LimitHit, LoadedColumn, Preview, RunEvent, RunFailure, RunRequest, SourceStart, Step,
-    WrittenFile,
+    TimedEvent, WrittenFile,
 };
 use dbrover_store::{ReportFiles, ReportName, RunOutcome, StepMetrics};
 use egui_kittest::kittest::NodeT;
@@ -98,8 +98,9 @@ impl ReportLauncher for StandIn {
 struct Scripted(VecDeque<RunEvent>);
 
 impl RunningReport for Scripted {
-    fn try_next(&mut self) -> Option<RunEvent> {
-        self.0.pop_front()
+    fn try_next(&mut self) -> Option<TimedEvent> {
+        // A stand-in's events come at once, as if all sent at the run's start.
+        self.0.pop_front().map(|event| event.at(Duration::ZERO))
     }
 
     fn cancel(&mut self) {
@@ -177,10 +178,15 @@ fn finished_run(folder: &Path) -> Vec<RunEvent> {
                 data_source: "shop".to_owned(),
                 attached: false,
                 waits_for: None,
+                engine: None,
+                limits: None,
             }],
             combine: false,
             combine_sql: None,
             version: None,
+            combine_limits: None,
+            timeout_ms: None,
+            machine: None,
         },
         RunEvent::SourceDone {
             id: "balances".to_owned(),
@@ -191,6 +197,7 @@ fn finished_run(folder: &Path) -> Vec<RunEvent> {
             table: Vec::new(),
             warnings: Vec::new(),
             batches: None,
+            phases: None,
         },
         RunEvent::Preview(Preview {
             columns: vec!["account".to_owned(), "balance".to_owned()],
@@ -316,6 +323,8 @@ fn combined_start() -> Vec<RunEvent> {
         data_source: "shop".to_owned(),
         attached: false,
         waits_for: None,
+        engine: None,
+        limits: None,
     };
     let loaded = |id: &str, rows, table: Vec<(&str, &str)>| RunEvent::SourceDone {
         id: id.to_owned(),
@@ -333,6 +342,7 @@ fn combined_start() -> Vec<RunEvent> {
             .collect(),
         warnings: Vec::new(),
         batches: None,
+        phases: None,
     };
     vec![
         RunEvent::Started {
@@ -341,6 +351,9 @@ fn combined_start() -> Vec<RunEvent> {
             combine: true,
             combine_sql: None,
             version: None,
+            combine_limits: None,
+            timeout_ms: None,
+            machine: None,
         },
         loaded(
             "entries",
@@ -364,6 +377,7 @@ fn shows_each_source_and_the_combine_step_of_a_combined_run() {
             elapsed_ms: 15,
             peak_memory: Some(40 << 20),
             peak_temp_size: Some(0),
+            query_ms: None,
         },
         RunEvent::Preview(Preview {
             columns: vec!["account".to_owned(), "balance".to_owned()],
@@ -493,17 +507,24 @@ fn shows_a_lookup_waiting_then_its_batches_then_done() {
                 data_source: "shop".to_owned(),
                 attached: false,
                 waits_for: None,
+                engine: None,
+                limits: None,
             },
             SourceStart {
                 id: "accounts".to_owned(),
                 data_source: "shop".to_owned(),
                 attached: false,
                 waits_for: Some("entries".to_owned()),
+                engine: None,
+                limits: None,
             },
         ],
         combine: true,
         combine_sql: None,
         version: None,
+        combine_limits: None,
+        timeout_ms: None,
+        machine: None,
     };
     let progress = |id: &str, batch| RunEvent::Progress {
         step: Step::Source { id: id.to_owned() },
@@ -521,6 +542,7 @@ fn shows_a_lookup_waiting_then_its_batches_then_done() {
         table: Vec::new(),
         warnings: Vec::new(),
         batches: None,
+        phases: None,
     };
 
     let dir = tempfile::tempdir().unwrap();
@@ -564,6 +586,7 @@ fn shows_a_lookup_waiting_then_its_batches_then_done() {
                 .collect(),
             warnings: Vec::new(),
             batches: Some(7),
+            phases: None,
         },
         RunEvent::CombineDone {
             rows: 3,
@@ -572,6 +595,7 @@ fn shows_a_lookup_waiting_then_its_batches_then_done() {
             elapsed_ms: 10,
             peak_memory: None,
             peak_temp_size: None,
+            query_ms: None,
         },
         RunEvent::Finished { elapsed_ms: 3_000 },
     ];
@@ -711,10 +735,15 @@ fn cancel_stops_the_running_report() {
             data_source: "shop".to_owned(),
             attached: false,
             waits_for: None,
+            engine: None,
+            limits: None,
         }],
         combine: false,
         combine_sql: None,
         version: None,
+        combine_limits: None,
+        timeout_ms: None,
+        machine: None,
     }]);
     let mut harness = start_with_reports(dir.path(), TRIAL_BALANCE, launcher);
 
@@ -770,6 +799,7 @@ fn spilling_run(out: &Path) -> Vec<RunEvent> {
             elapsed_ms: 903,
             peak_memory: Some(2 << 30),
             peak_temp_size: Some(3_200_000_000),
+            query_ms: None,
         },
         RunEvent::OutputWritten(WrittenFile {
             path: out.join("trial-balance-2026-10.csv"),
@@ -1046,6 +1076,7 @@ fn renaming_a_report_keeps_its_runs() {
                 steps: Vec::new(),
                 origin: dbrover_store::RunOrigin::Command,
                 version: None,
+                profile: Default::default(),
             },
             dbrover_store::DEFAULT_RUNS_KEPT,
         )

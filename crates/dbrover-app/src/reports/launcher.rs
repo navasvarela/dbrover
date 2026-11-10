@@ -6,7 +6,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use dbrover_engine::WorkerRun;
-use dbrover_report::{RunEvent, RunRequest};
+use dbrover_report::{RunRequest, TimedEvent};
 
 use crate::version::REPORT_WORKER;
 
@@ -29,7 +29,7 @@ pub trait ReportLauncher {
 /// A run going on.
 pub trait RunningReport {
     /// The next event, if one has come; the last one ends the run.
-    fn try_next(&mut self) -> Option<RunEvent>;
+    fn try_next(&mut self) -> Option<TimedEvent>;
     fn cancel(&mut self);
 }
 
@@ -76,7 +76,7 @@ impl ReportLauncher for ProcessLauncher {
 struct Worker(WorkerRun);
 
 impl RunningReport for Worker {
-    fn try_next(&mut self) -> Option<RunEvent> {
+    fn try_next(&mut self) -> Option<TimedEvent> {
         self.0.try_next()
     }
 

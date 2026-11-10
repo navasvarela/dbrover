@@ -284,6 +284,11 @@ file = "r.csv"
                     first_row_ms: Some(10),
                     elapsed_ms: 1_000,
                     batches: None,
+                    started_ms: None,
+                    engine: None,
+                    phases: None,
+                    limits: None,
+                    waits_for: None,
                 }),
                 StepMetrics::Combine(CombineMetrics {
                     rows: 10,
@@ -292,6 +297,9 @@ file = "r.csv"
                     elapsed_ms: 500,
                     peak_memory: Some(1_000_000),
                     peak_temp_size: Some(3_000_000),
+                    started_ms: None,
+                    query_ms: None,
+                    limits: None,
                 }),
                 StepMetrics::Output(OutputMetrics {
                     number: 1,
@@ -299,10 +307,13 @@ file = "r.csv"
                     rows: 10,
                     size: 100,
                     elapsed_ms: 1,
+                    started_ms: None,
+                    ended_ms: None,
                 }),
             ],
             origin: RunOrigin::App,
             version: None,
+            profile: Default::default(),
         }
     }
 

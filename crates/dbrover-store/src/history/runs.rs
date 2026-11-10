@@ -1,6 +1,11 @@
 //! Report runs: what each run of a report measured, in the history's `report_runs` table
 //! (`docs/reporting.md`, "Run history"). The app records a run once it ends, however it ends,
 //! and only the newest runs of each report are kept.
+//!
+//! A run's profile (`docs/reports-at-scale.md`, RS1b) is its steps, each with when it started
+//! in the run, its phases and its limits, kept in `steps` as RP4's numbers are, and the run's
+//! own numbers in `profile`. Every field RS1b added is optional, so a run kept before it reads
+//! as one that measured less, and a DbRover from before it reads a newer run's steps.
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
@@ -37,7 +42,40 @@ pub struct ReportRun {
     /// The Git blob id of the report file's text that ran: `git log --find-object` with it
     /// lists the commits that had exactly that file. `None` for runs from before VC1e.
     pub version: Option<BlobId>,
+    /// What the run measured of itself, beside its steps.
+    pub profile: RunProfile,
 }
+
+/// What a run measured of itself, as against each of its steps: where it ran, its time limit
+/// and the worker's memory. Empty for a run kept before RS1b.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunProfile {
+    /// The most memory the worker's process held resident at once; `None` where the system
+    /// doesn't say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_memory: Option<u64>,
+    /// The run's time limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+    /// The processor's cores the worker was offered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cores: Option<u32>,
+    /// The DbRover that ran it, as `0.31.0`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dbrover: Option<String>,
+}
+
+/// The profile as `report_runs.profile` holds it: the run's numbers, and the format they are
+/// written in, for a later DbRover that changes it.
+#[derive(Serialize, Deserialize)]
+struct StoredProfile {
+    format: u32,
+    #[serde(flatten)]
+    profile: RunProfile,
+}
+
+/// The format of [`StoredProfile`] this DbRover writes.
+const PROFILE_FORMAT: u32 = 1;
 
 /// What started a run.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -133,6 +171,51 @@ pub struct SourceMetrics {
     /// For a source with a lookup, the statements it sent, one a batch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batches: Option<u64>,
+    /// When it was opened, from the run's start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_ms: Option<u64>,
+    /// Its data source's engine, as `PostgreSQL`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
+    /// The source its lookup reads, which it waited for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waits_for: Option<String>,
+    /// Where its time went.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phases: Option<SourcePhases>,
+    /// The caps it ran under.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<SourceCaps>,
+}
+
+/// Where a source's time went, in milliseconds: see `dbrover_report::SourcePhases`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourcePhases {
+    pub connect_ms: u64,
+    /// From sending its statement to its first row.
+    pub server_ms: u64,
+    /// Waiting for the rest of its rows.
+    pub transfer_ms: u64,
+    /// Appending to its table in DuckDB.
+    pub load_ms: u64,
+    /// Typing its table's columns.
+    pub type_ms: u64,
+}
+
+/// A source's caps, as the run applied them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceCaps {
+    pub max_rows: u64,
+    pub max_bytes: u64,
+    pub timeout_ms: u64,
+}
+
+/// The combine step's limits, as the run applied them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CombineCaps {
+    pub memory_limit: u64,
+    pub max_temp_size: u64,
+    pub timeout_ms: u64,
 }
 
 /// The combine step.
@@ -148,6 +231,15 @@ pub struct CombineMetrics {
     /// The most it held spilled to disk at once, when DuckDB said.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peak_temp_size: Option<u64>,
+    /// When its query started, from the run's start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_ms: Option<u64>,
+    /// Waiting on DuckDB for the query's rows; the rest of its time went to the outputs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_ms: Option<u64>,
+    /// The limits it ran under.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<CombineCaps>,
 }
 
 /// A file the run wrote.
@@ -162,6 +254,13 @@ pub struct OutputMetrics {
     pub size: u64,
     /// In its writer, overlapping the time of the step its rows came from.
     pub elapsed_ms: u64,
+    /// When the step its rows came from started, which is when the file was started, from
+    /// the run's start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_ms: Option<u64>,
+    /// When the file was put in place, from the run's start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_ms: Option<u64>,
 }
 
 impl History {
@@ -179,8 +278,9 @@ impl History {
         let transaction = self.connection.unchecked_transaction()?;
         transaction.execute(
             "INSERT INTO report_runs
-                 (report, started_at, elapsed_ms, outcome, params, steps, failure, origin, version)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                 (report, started_at, elapsed_ms, outcome, params, steps, failure, origin, version,
+                  profile)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 run.report.as_str(),
                 format_timestamp(run.started_at),
@@ -191,6 +291,10 @@ impl History {
                 failure,
                 run.origin.as_str(),
                 run.version.map(|version| version.to_string()),
+                to_json(&StoredProfile {
+                    format: PROFILE_FORMAT,
+                    profile: run.profile.clone(),
+                })?,
             ],
         )?;
         delete_older_runs(&transaction, &run.report, kept)?;
@@ -206,7 +310,7 @@ impl History {
     /// [`HistoryError::Database`] if the query fails.
     pub fn runs(&self, report: &ReportName, limit: usize) -> Result<Vec<ReportRun>, HistoryError> {
         let mut statement = self.connection.prepare_cached(
-            "SELECT started_at, elapsed_ms, outcome, params, steps, failure, origin, version
+            "SELECT started_at, elapsed_ms, outcome, params, steps, failure, origin, version, profile
              FROM report_runs
              WHERE report = ?1 ORDER BY started_at DESC, id DESC LIMIT ?2",
         )?;
@@ -292,6 +396,7 @@ struct StoredRun {
     failure: Option<String>,
     origin: Option<String>,
     version: Option<String>,
+    profile: Option<String>,
 }
 
 impl StoredRun {
@@ -305,6 +410,7 @@ impl StoredRun {
             failure: row.get(5)?,
             origin: row.get(6)?,
             version: row.get(7)?,
+            profile: row.get(8)?,
         })
     }
 
@@ -319,6 +425,12 @@ impl StoredRun {
             origin: RunOrigin::from_stored(self.origin.as_deref()),
             // An id that doesn't parse (edited by hand) is shown as no id, not as no run.
             version: self.version.and_then(|version| version.parse().ok()),
+            // Likewise a profile: the run's steps still say most of what it measured.
+            profile: self
+                .profile
+                .and_then(|profile| serde_json::from_str::<StoredProfile>(&profile).ok())
+                .map(|stored| stored.profile)
+                .unwrap_or_default(),
         })
     }
 }
@@ -353,6 +465,21 @@ mod tests {
                     first_row_ms: Some(40),
                     elapsed_ms: 3_100,
                     batches: None,
+                    started_ms: Some(12),
+                    engine: Some("PostgreSQL".to_owned()),
+                    phases: Some(SourcePhases {
+                        connect_ms: 30,
+                        server_ms: 40,
+                        transfer_ms: 2_000,
+                        load_ms: 900,
+                        type_ms: 130,
+                    }),
+                    limits: Some(SourceCaps {
+                        max_rows: 1_000_000,
+                        max_bytes: 1 << 30,
+                        timeout_ms: 600_000,
+                    }),
+                    waits_for: None,
                 }),
                 StepMetrics::Attached {
                     id: "prices".to_owned(),
@@ -365,6 +492,13 @@ mod tests {
                     elapsed_ms: 1_000,
                     peak_memory: Some(2_400_000_000),
                     peak_temp_size: Some(3_200_000_000),
+                    started_ms: Some(3_120),
+                    query_ms: Some(990),
+                    limits: Some(CombineCaps {
+                        memory_limit: 2 << 30,
+                        max_temp_size: 10 << 30,
+                        timeout_ms: 600_000,
+                    }),
                 }),
                 StepMetrics::Output(OutputMetrics {
                     number: 1,
@@ -372,10 +506,18 @@ mod tests {
                     rows: 40,
                     size: 2_100,
                     elapsed_ms: 2,
+                    started_ms: Some(3_120),
+                    ended_ms: Some(4_125),
                 }),
             ],
             origin: RunOrigin::App,
             version: None,
+            profile: RunProfile {
+                peak_memory: Some(2_600_000_000),
+                timeout_ms: Some(1_800_000),
+                cores: Some(10),
+                dbrover: Some("0.31.0".to_owned()),
+            },
         }
     }
 
@@ -569,6 +711,68 @@ mod tests {
             .map(|run| run.version)
             .collect();
         assert_eq!(versions, [Some(ran), None]);
+    }
+
+    #[test]
+    fn reads_a_run_from_before_profiles_as_one_that_measured_less() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = HistoryFile::new(dir.path().join("history.sqlite"));
+        drop(file.open().unwrap());
+        // A version 5 file, with a run as 0.31.0 kept it.
+        let version_5 = rusqlite::Connection::open(file.path()).unwrap();
+        version_5
+            .execute_batch(
+                r#"ALTER TABLE report_runs DROP COLUMN profile; PRAGMA user_version = 5;
+                 INSERT INTO report_runs (report, started_at, elapsed_ms, outcome, params, steps)
+                 VALUES ('values', '2026-10-01T00:00:00Z', 5, 'finished', '{}',
+                   '[{"step":"source","id":"tx","data_source":"ledger","rows":3,"bytes":30,
+                      "first_row_ms":1,"elapsed_ms":4}]');"#,
+            )
+            .unwrap();
+        drop(version_5);
+
+        let history = file.open().unwrap();
+        let [old] = history
+            .runs(&name("values"), 10)
+            .unwrap()
+            .try_into()
+            .unwrap();
+        assert_eq!(old.profile, RunProfile::default());
+        let [StepMetrics::Source(source)] = old.steps.as_slice() else {
+            panic!("{:?}", old.steps);
+        };
+        assert_eq!((source.started_ms, source.phases), (None, None));
+
+        // And a newer run's steps read as RP4's, for a DbRover from before RS1b.
+        let new = run("values", 1, RunOutcome::Finished);
+        history.record_run(&new, DEFAULT_RUNS_KEPT).unwrap();
+        let steps: String = rusqlite::Connection::open(file.path())
+            .unwrap()
+            .query_row(
+                "SELECT steps FROM report_runs ORDER BY id DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        /// A step as RP4 read one, strictly by its tag.
+        #[derive(Deserialize)]
+        #[serde(tag = "step", rename_all = "snake_case")]
+        enum Rp4Step {
+            Source { id: String },
+            Attached { id: String },
+            Combine { rows: u64 },
+            Output { number: usize },
+        }
+        let read: Vec<Rp4Step> = serde_json::from_str(&steps).unwrap();
+        let named: Vec<String> = read
+            .into_iter()
+            .map(|step| match step {
+                Rp4Step::Source { id } | Rp4Step::Attached { id } => id,
+                Rp4Step::Combine { rows } => format!("combine {rows}"),
+                Rp4Step::Output { number } => format!("output {number}"),
+            })
+            .collect();
+        assert_eq!(named, ["tx", "prices", "combine 40", "output 1"]);
     }
 
     #[test]

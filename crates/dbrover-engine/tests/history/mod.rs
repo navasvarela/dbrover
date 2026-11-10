@@ -313,6 +313,7 @@ fn keeps_a_reports_newest_runs_and_clears_them() {
         steps: Vec::new(),
         origin: dbrover_store::RunOrigin::App,
         version: None,
+        profile: Default::default(),
     };
     let record = |run: ReportRun| Command::RecordReportRun {
         run: Box::new(run),

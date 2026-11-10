@@ -4,6 +4,7 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use calamine::{Data, Reader, Xlsx, open_workbook};
 use dbrover_core::{
@@ -360,10 +361,26 @@ fn events_are_json_lines_the_app_reads_back() {
                 data_source: "ledger".to_owned(),
                 attached: false,
                 waits_for: Some("tx".to_owned()),
+                engine: Some("PostgreSQL".to_owned()),
+                limits: Some(SourceCaps {
+                    max_rows: 1_000_000,
+                    max_bytes: 1 << 30,
+                    timeout_ms: 600_000,
+                }),
             }],
             combine: false,
             combine_sql: None,
             version: None,
+            combine_limits: Some(CombineCaps {
+                memory_limit: 2 << 30,
+                max_temp_size: 10 << 30,
+                timeout_ms: 600_000,
+            }),
+            timeout_ms: Some(1_800_000),
+            machine: Some(Machine {
+                cores: 8,
+                dbrover: "0.31.0".to_owned(),
+            }),
         },
         RunEvent::Progress {
             step: Step::Combine,
@@ -385,6 +402,13 @@ fn events_are_json_lines_the_app_reads_back() {
             }],
             warnings: Vec::new(),
             batches: Some(7),
+            phases: Some(SourcePhases {
+                connect_ms: 20,
+                server_ms: 300,
+                transfer_ms: 500,
+                load_ms: 150,
+                type_ms: 30,
+            }),
         },
         RunEvent::SourceAttached {
             id: "prices".to_owned(),
@@ -397,6 +421,10 @@ fn events_are_json_lines_the_app_reads_back() {
             elapsed_ms: 1000,
             peak_memory: Some(2 << 30),
             peak_temp_size: Some(0),
+            query_ms: Some(900),
+        },
+        RunEvent::WorkerUsage {
+            peak_memory: Some(3 << 30),
         },
         RunEvent::Failed(RunFailure::at_limit(
             Step::Source {
@@ -411,13 +439,20 @@ fn events_are_json_lines_the_app_reads_back() {
             },
         )),
     ];
-    let line = serde_json::to_string(&events[5]).unwrap();
+    let line = serde_json::to_string(&events[6]).unwrap();
     assert_eq!(
         line,
         r#"{"event":"failed","step":{"step":"source","id":"balances"},"message":"too many","limit":{"key":"max_rows","value":"120 rows","raise_in":"the [[source]] \"balances\""}}"#
     );
-    for event in events {
+    for event in events.into_iter().chain([RunEvent::Cancelled]) {
         let line = serde_json::to_string(&event).unwrap();
+        assert_eq!(serde_json::from_str::<RunEvent>(&line).unwrap(), event);
+        // A line as the worker writes it carries its time beside the event's own fields, and a
+        // reader of plain events still reads it.
+        let timed = event.clone().at(Duration::from_millis(1_234));
+        let line = serde_json::to_string(&timed).unwrap();
+        assert!(line.starts_with(r#"{"at_ms":1234,"event":"#), "{line}");
+        assert_eq!(serde_json::from_str::<TimedEvent>(&line).unwrap(), timed);
         assert_eq!(serde_json::from_str::<RunEvent>(&line).unwrap(), event);
     }
 }

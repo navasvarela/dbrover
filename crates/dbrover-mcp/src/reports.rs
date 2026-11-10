@@ -234,7 +234,9 @@ fn outcome_json(events: &[RunEvent], max_rows: usize) -> Value {
             }
             RunEvent::Failed(failure) => end = failed_json(failure),
             RunEvent::Cancelled => end = json!({"outcome": "cancelled"}),
-            RunEvent::Started { .. } | RunEvent::Progress { .. } => {}
+            // The worker's memory and the steps' phases are RS8's, with the run profile.
+            RunEvent::Started { .. } | RunEvent::Progress { .. } | RunEvent::WorkerUsage { .. } => {
+            }
         }
     }
     if let Value::Object(end) = &mut end {
@@ -277,6 +279,7 @@ mod tests {
                 elapsed_ms: 5,
                 peak_memory: Some(1 << 20),
                 peak_temp_size: Some(0),
+                query_ms: None,
             },
             RunEvent::Preview(Preview {
                 columns: vec!["n".to_owned()],

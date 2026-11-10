@@ -14,7 +14,10 @@ use std::time::{Duration, Instant};
 
 use dbrover_core::{BlobId, ConnectionConfig, DataSource, DataSourceId, SafetyLevel, SqliteConfig};
 use dbrover_engine::WorkerRun;
-use dbrover_report::{LimitDefaults, RunEvent, RunRequest, SourceLimits, SourceStart, Step};
+use dbrover_report::{
+    DEFAULT_RUN_TIMEOUT, LimitDefaults, RunEvent, RunRequest, SourceCaps, SourceLimits,
+    SourceStart, Step,
+};
 use dbrover_store::DataSourceFile;
 
 const BINARY: &str = env!("CARGO_BIN_EXE_dbrover");
@@ -187,15 +190,27 @@ format = "csv"
 file = "slow.csv"
 "#;
 
-/// Every event of the run, up to the one that ends it.
+/// Every event of the run, up to the one that ends it, but the worker's usage, which comes
+/// just before a finished run's end. Their times never go back.
 fn all_events(run: &WorkerRun) -> Vec<RunEvent> {
     let mut events = Vec::new();
+    let mut last_at = 0;
+    let mut usage_seen = false;
     loop {
-        let event = run
+        let timed = run
             .next_within(EVENT_WAIT)
             .unwrap_or_else(|| panic!("no event within {EVENT_WAIT:?} after {events:#?}"));
-        let ends = event.ends_run();
-        events.push(event);
+        assert!(timed.at_ms >= last_at, "{timed:?} after {last_at} ms");
+        last_at = timed.at_ms;
+        if let RunEvent::WorkerUsage { .. } = timed.event {
+            usage_seen = true;
+            continue;
+        }
+        let ends = timed.event.ends_run();
+        if let RunEvent::Finished { .. } = timed.event {
+            assert!(usage_seen, "a finished run says what the worker used");
+        }
+        events.push(timed.event);
         if ends {
             return events;
         }
@@ -213,6 +228,7 @@ fn kind(event: &RunEvent) -> &'static str {
         RunEvent::OutputWritten(_) => "written",
         RunEvent::Finished { .. } => "finished",
         RunEvent::Failed(_) => "failed",
+        RunEvent::WorkerUsage { .. } => "usage",
         RunEvent::Cancelled => "cancelled",
     }
 }
@@ -265,7 +281,7 @@ fn wait_until_started(run: &WorkerRun) {
     let started = run
         .next_within(EVENT_WAIT)
         .expect("the worker said nothing");
-    assert_eq!(kind(&started), "started", "{started:?}");
+    assert_eq!(kind(&started.event), "started", "{started:?}");
 }
 
 #[test]
@@ -291,6 +307,14 @@ fn runs_a_report_and_reports_each_step() {
         ],
         "{events:#?}"
     );
+    let RunEvent::Started {
+        machine: Some(machine),
+        ..
+    } = &events[0]
+    else {
+        panic!("{:?}", events[0]);
+    };
+    assert_eq!(machine.dbrover, env!("CARGO_PKG_VERSION"));
     assert_eq!(
         events[0],
         RunEvent::Started {
@@ -300,12 +324,22 @@ fn runs_a_report_and_reports_each_step() {
                 data_source: "ledger".to_owned(),
                 attached: false,
                 waits_for: None,
+                engine: Some("SQLite".to_owned()),
+                limits: Some(SourceCaps::from(&SourceLimits::default())),
             }],
             combine: false,
             combine_sql: None,
             version: Some(BlobId::of(&std::fs::read(&report).unwrap())),
+            combine_limits: None,
+            timeout_ms: Some(u64::try_from(DEFAULT_RUN_TIMEOUT.as_millis()).unwrap()),
+            machine: Some(machine.clone()),
         }
     );
+    let phases = events.iter().find_map(|event| match event {
+        RunEvent::SourceDone { phases, .. } => *phases,
+        _ => None,
+    });
+    assert!(phases.is_some(), "{events:#?}");
     assert_eq!(
         files_in(&settings.out()),
         ["trial-balance-2026-10.csv", "trial-balance-2026-10.xlsx"]

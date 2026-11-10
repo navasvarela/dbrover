@@ -24,13 +24,13 @@ use futures_util::future::try_join_all;
 
 use crate::chart::ChartRun;
 use crate::declared::Shaped;
-use crate::run::{Count, Feed, Outputs, PROGRESS_EVERY, Streamed, millis};
+use crate::run::{Count, Feed, Outputs, PROGRESS_EVERY, Streamed, millis, timed};
 use crate::statement::{Statements, lookup_literal};
 use crate::typing::ColumnTyper;
 use crate::{
     AttachedSource, Batch, Chart, CombineLimits, Combined, LimitHit, LoadedColumn, PlannedLookup,
     PlannedSource, QuerySource, RunEvent, RunFailure, RunSummary, RunValues, SourceError,
-    SourceOpener, SourceReader, SourceStatement, Step,
+    SourceOpener, SourcePhases, SourceReader, SourceStatement, Step,
 };
 
 /// Rows asked of the combine query at a time, as a source's are.
@@ -103,15 +103,15 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
 
         let started = Instant::now();
         let query = self.combined.combine.query.sql();
-        let mut reader = CombineReader::start(
+        let (reader, starting) = timed(CombineReader::start(
             workspace,
             query,
             self.outputs.values,
             DuckDbQuery::Combine,
             self.limits(),
-        )
-        .await
-        .map_err(|error| error.at(Step::Combine))?;
+        ))
+        .await;
+        let mut reader = reader.map_err(|error| error.at(Step::Combine))?;
         let streamed = self
             .outputs
             .stream(&mut reader, &Feed::Combine, started, events)
@@ -132,6 +132,9 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
             elapsed_ms: millis(started.elapsed()),
             peak_memory: peaks.memory,
             peak_temp_size: peaks.temp_size,
+            query_ms: Some(millis(
+                starting + streamed.read.waited_first + streamed.read.waited_rest,
+            )),
         });
         let mut streamed = streamed;
         if let Err(failure) = self.query_charts(workspace, &mut streamed).await {
@@ -215,6 +218,7 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
             opened,
             table: None,
             read: Count::default(),
+            spent: Spent::default(),
         };
         let statements = Statements::new(self.outputs.plan, self.outputs.values, source);
         let deadline = opened + source.limits.timeout;
@@ -227,9 +231,9 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
                 None
             }
             Some(lookup) => {
-                let values = lookup_values(lookup, workspace, loaded)
-                    .await
-                    .map_err(|error| error.at(loading.step()))?;
+                let (values, reading) = timed(lookup_values(lookup, workspace, loaded)).await;
+                loading.spent.load += reading;
+                let values = values.map_err(|error| error.at(loading.step()))?;
                 let batches: Vec<&[Literal]> = values.chunks(lookup.batch_size.get()).collect();
                 let of = batches.len() as u64;
                 for (index, batch) in batches.into_iter().enumerate() {
@@ -334,6 +338,17 @@ struct Table {
     typer: ColumnTyper,
 }
 
+/// The time a source being loaded spent outside waiting for its rows, which its [`Count`]
+/// holds.
+#[derive(Default)]
+struct Spent {
+    connect: Duration,
+    /// Each statement's start, up to its cursor; its wait for the first page is in `Count`.
+    start: Duration,
+    load: Duration,
+    typing: Duration,
+}
+
 /// A source being loaded into its table.
 struct Loading<'a> {
     source: &'a QuerySource,
@@ -344,6 +359,7 @@ struct Loading<'a> {
     table: Option<Table>,
     /// What every statement has returned so far, which the source's caps hold.
     read: Count,
+    spent: Spent,
 }
 
 impl Loading<'_> {
@@ -370,6 +386,9 @@ impl Loading<'_> {
         let mut reader = Shaped::open(opener, statement)
             .await
             .map_err(|error| error.at(self.step()))?;
+        let opening = reader.opening();
+        self.spent.connect += opening.connect;
+        self.spent.start += opening.start;
         let filled = self.fill_from(&mut reader, workspace, batch, events).await;
         reader.close().await;
         filled
@@ -384,21 +403,26 @@ impl Loading<'_> {
     ) -> Result<(), RunFailure> {
         let mut table = self.take_table(reader.columns(), workspace, batch).await?;
         let mut last_progress = Instant::now();
-        while let Some(page) = reader
-            .next_page()
-            .await
-            .map_err(|error| error.at(self.step()))?
-        {
+        let mut rows_seen = false;
+        loop {
+            let (page, waited) = timed(reader.next_page()).await;
+            self.read.waited(waited, !rows_seen);
+            let Some(page) = page.map_err(|error| error.at(self.step()))? else {
+                break;
+            };
             if page.is_empty() {
                 continue;
             }
+            rows_seen = true;
             self.read
                 .first_row
                 .get_or_insert_with(|| self.opened.elapsed());
             self.read.add(&page);
             self.read.check(self.source)?;
             table.typer.see(&page);
-            if let Err(error) = table.loader.append(page).await {
+            let (appended, appending) = timed(table.loader.append(page)).await;
+            self.spent.load += appending;
+            if let Err(error) = appended {
                 return Err(self.duckdb_failure(&error));
             }
             if last_progress.elapsed() >= PROGRESS_EVERY {
@@ -499,10 +523,16 @@ impl Loading<'_> {
             .map(str::to_owned)
             .zip(types.iter().copied())
             .collect();
-        loader
-            .finish(&types)
-            .await
-            .map_err(|error| duckdb_failure(&error, self.limits).at(step))?;
+        let (typed, typing) = timed(loader.finish(&types)).await;
+        typed.map_err(|error| duckdb_failure(&error, self.limits).at(step))?;
+        let spent = &self.spent;
+        let phases = SourcePhases {
+            connect_ms: millis(spent.connect),
+            server_ms: millis(spent.start + self.read.waited_first),
+            transfer_ms: millis(self.read.waited_rest),
+            load_ms: millis(spent.load),
+            type_ms: millis(spent.typing + typing),
+        };
         (events.borrow_mut())(RunEvent::SourceDone {
             id: self.source.id.clone(),
             rows: self.read.rows,
@@ -519,6 +549,7 @@ impl Loading<'_> {
                 .collect(),
             warnings,
             batches,
+            phases: Some(phases),
         });
         Ok(LoadedTable {
             id: self.source.id.clone(),
