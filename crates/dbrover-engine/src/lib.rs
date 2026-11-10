@@ -32,6 +32,7 @@ pub mod read_write;
 mod registry;
 mod releases;
 mod repaint;
+mod report_explain;
 mod report_files;
 mod report_source;
 mod report_worker;

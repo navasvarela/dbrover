@@ -20,6 +20,7 @@ mod combine;
 mod declared;
 mod embedded;
 mod events;
+mod explain;
 mod file_name;
 mod format;
 mod hints;
@@ -41,6 +42,10 @@ pub use events::{
     Batch, Busy, CombineCaps, LimitHit, LimitSetIn, LoadedColumn, Machine, Preview, RunEvent,
     RunFailure, SourceCaps, SourcePhases, SourceStart, Step, TimedEvent, WrittenFile,
 };
+pub use explain::{
+    CombineExplanation, Estimate, ExplainedPlan, Explanation, KnownTable, SourceExplained,
+    SourceExplainer, SourceExplanation, explain,
+};
 pub use file_name::FileName;
 pub use format::{FormatReportError, FormattedReport, format_report};
 pub use hints::{HintId, UnknownHint};
@@ -60,7 +65,7 @@ pub use report::{
     Chart, ChartPicture, Combine, CombineQuery, Lookup, Output, OutputColumns, OutputWriter, Param,
     Report, Source, SourceColumn, SourceRead,
 };
-pub use request::RunRequest;
+pub use request::{ExplainRequest, RunRequest};
 pub use run::{
     Opening, PREVIEW_ROWS, RunFolders, RunSummary, SourceError, SourceOpener, SourceReader,
     SourceStatement, grouped, run,

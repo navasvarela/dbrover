@@ -397,6 +397,30 @@ async fn explains_a_query_without_running_it() {
 }
 
 #[test]
+fn reads_back_every_type_it_names() {
+    let types = [
+        DuckDbType::BigInt,
+        DuckDbType::HugeInt,
+        DuckDbType::Decimal {
+            precision: 18,
+            scale: 2,
+        },
+        DuckDbType::Double,
+        DuckDbType::Boolean,
+        DuckDbType::Date,
+        DuckDbType::Timestamp,
+        DuckDbType::TimestampTz,
+        DuckDbType::Varchar,
+    ];
+    for column_type in types {
+        assert_eq!(column_type.to_string().parse(), Ok(column_type));
+    }
+    for unknown in ["INTEGER", "DECIMAL(39,2)", "DECIMAL(2,3)", "DECIMAL(x)"] {
+        assert!(unknown.parse::<DuckDbType>().is_err(), "{unknown}");
+    }
+}
+
+#[test]
 fn names_types_as_duckdb_casts_to_them() {
     let names = [
         (DuckDbType::BigInt, "BIGINT"),

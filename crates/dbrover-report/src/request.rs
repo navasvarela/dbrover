@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{LimitDefaults, TypedValues};
+use crate::{KnownTable, LimitDefaults, TypedValues};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunRequest {
@@ -26,4 +26,16 @@ pub struct RunRequest {
     /// on Linux, where it is enforced. Nothing in the app sets it; tests do.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_limit: Option<u64>,
+    /// Explain the report rather than run it (RS2d): the worker answers with one
+    /// [`RunEvent::Explained`](crate::RunEvent::Explained) and writes no file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explain: Option<ExplainRequest>,
+}
+
+/// What explaining a report needs beside the report: what the app's history knows of it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExplainRequest {
+    /// Each source's table as the last finished run loaded it, for the combine step's plan.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tables: Vec<KnownTable>,
 }

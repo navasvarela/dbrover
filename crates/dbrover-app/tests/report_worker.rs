@@ -15,8 +15,8 @@ use std::time::{Duration, Instant};
 use dbrover_core::{BlobId, ConnectionConfig, DataSource, DataSourceId, SafetyLevel, SqliteConfig};
 use dbrover_engine::WorkerRun;
 use dbrover_report::{
-    DEFAULT_RUN_TIMEOUT, LimitDefaults, RunEvent, RunRequest, SourceCaps, SourceLimits,
-    SourceStart, Step,
+    CombineExplanation, DEFAULT_RUN_TIMEOUT, ExplainRequest, ExplainedPlan, KnownTable,
+    LimitDefaults, LoadedColumn, RunEvent, RunRequest, SourceCaps, SourceLimits, SourceStart, Step,
 };
 use dbrover_store::DataSourceFile;
 
@@ -104,6 +104,7 @@ impl Settings {
             staging: self.out().join(".run"),
             defaults: LimitDefaults::default(),
             memory_limit: None,
+            explain: None,
         }
     }
 
@@ -230,6 +231,7 @@ fn kind(event: &RunEvent) -> &'static str {
         RunEvent::Failed(_) => "failed",
         RunEvent::WorkerUsage { .. } => "usage",
         RunEvent::Cancelled => "cancelled",
+        RunEvent::Explained(_) => "explained",
     }
 }
 
@@ -274,6 +276,63 @@ fn combines_two_sources_in_duckdb() {
         std::fs::read_to_string(settings.out().join("combined-2026-10.csv")).unwrap(),
         "account,balance\r\n1000,100.25\r\n4000,-100.25\r\n"
     );
+}
+
+/// RS2d: a request to explain answers with each source's plan, as SQLite writes it, and the
+/// combine step planned by DuckDB over empty tables of the columns the last run loaded; it
+/// writes no file and leaves no staging folder.
+#[test]
+fn explains_a_report_without_running_it() {
+    let settings = Settings::new();
+    let report = settings.write_report("combined", COMBINED);
+    let column = |name: &str, type_name: &str| LoadedColumn {
+        name: name.to_owned(),
+        type_name: type_name.to_owned(),
+        declared: false,
+        bytes: None,
+    };
+    let mut request = settings.request(&report);
+    request.explain = Some(ExplainRequest {
+        tables: vec![
+            KnownTable {
+                id: "accounts".to_owned(),
+                columns: vec![column("id", "BIGINT"), column("code", "VARCHAR")],
+            },
+            KnownTable {
+                id: "entries".to_owned(),
+                columns: vec![
+                    column("account_id", "BIGINT"),
+                    column("debit", "DECIMAL(18,2)"),
+                    column("credit", "DECIMAL(18,2)"),
+                ],
+            },
+        ],
+    });
+    let run = settings.start(&request, Duration::from_secs(120));
+    let events = all_events(&run);
+    let kinds: Vec<&str> = events.iter().map(kind).collect();
+    assert_eq!(kinds, ["explained", "finished"], "{events:#?}");
+    let Some(RunEvent::Explained(explanation)) = events.first() else {
+        unreachable!("checked above");
+    };
+    let entries = &explanation.sources[1];
+    assert_eq!(entries.id, "entries");
+    assert!(
+        entries
+            .explained
+            .statement
+            .contains("booked_on >= '2026-10-01'"),
+        "{entries:?}"
+    );
+    let ExplainedPlan::Text { text } = &entries.explained.plan else {
+        panic!("{entries:?}");
+    };
+    assert!(text.contains("SCAN entries"), "{text}");
+    let Some(CombineExplanation::Planned { text }) = &explanation.combine else {
+        panic!("{:?}", explanation.combine);
+    };
+    assert!(text.contains("HASH_GROUP_BY"), "{text}");
+    assert_eq!(files_in(&settings.out()), Vec::<String>::new());
 }
 
 /// Waits until the run has started its source, so what follows happens mid-run.

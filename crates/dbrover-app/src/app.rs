@@ -1311,6 +1311,7 @@ impl DbRoverApp {
                 self.send_if(save);
             }
             ReportAction::Run(name) => self.run_report(&name, ctx),
+            ReportAction::Explain(name) => self.explain_report(&name, ctx),
             ReportAction::Save(name) => {
                 let save = self.reports.save(&name);
                 self.send_if(save);
@@ -1362,6 +1363,30 @@ impl DbRoverApp {
     /// Starts the report in its worker, if it plans against the data sources as they are, and
     /// reads the reports folder again so the tab shows the file the worker runs.
     fn run_report(&mut self, name: &dbrover_store::ReportName, ctx: &egui::Context) {
+        let Some((plan, defaults)) = self.plan_report(name) else {
+            return;
+        };
+        let ctx = ctx.clone();
+        self.reports
+            .start(name, &plan, defaults, move || ctx.request_repaint());
+        self.send_if(self.reports.reload());
+    }
+
+    /// Explains the report in a worker, if it plans against the data sources as they are.
+    fn explain_report(&mut self, name: &dbrover_store::ReportName, ctx: &egui::Context) {
+        let Some((plan, defaults)) = self.plan_report(name) else {
+            return;
+        };
+        let ctx = ctx.clone();
+        self.reports
+            .explain(name, &plan, defaults, move || ctx.request_repaint());
+    }
+
+    /// The report planned against the data sources as they are, under Settings' limits.
+    fn plan_report(
+        &self,
+        name: &dbrover_store::ReportName,
+    ) -> Option<(dbrover_report::Plan, dbrover_report::LimitDefaults)> {
         let data_sources: Vec<dbrover_core::DataSource> = self
             .state
             .data_sources
@@ -1375,12 +1400,9 @@ impl DbRoverApp {
             .find(name)
             .map(|listed| listed.plan(&data_sources, self.custom_files.exports(), &defaults));
         let Some(Ok(plan)) = plan else {
-            return;
+            return None;
         };
-        let ctx = ctx.clone();
-        self.reports
-            .start(name, &plan, defaults, move || ctx.request_repaint());
-        self.send_if(self.reports.reload());
+        Some((plan, defaults))
     }
 
     fn handle_diagram_action(&mut self, action: DiagramAction) {
@@ -3035,6 +3057,7 @@ impl eframe::App for DbRoverApp {
             .reports
             .poll(reports::runs_kept(&self.settings.settings().reports));
         self.send_if(record);
+        self.reports.poll_explain();
         if let Some(text) = self.copied_by_program.take() {
             ctx.copy_text(text);
         }

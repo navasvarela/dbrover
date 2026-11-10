@@ -672,3 +672,98 @@ async fn says_each_second_what_a_source_waits_on_before_its_first_row() {
         Some(true)
     );
 }
+
+/// Explains each source as its statement, with nothing to plan it with.
+struct EchoExplainer;
+
+impl SourceExplainer for EchoExplainer {
+    async fn explain(&self, statement: &SourceStatement<'_>) -> SourceExplained {
+        SourceExplained {
+            statement: statement.query.clone(),
+            plan: ExplainedPlan::Text {
+                text: format!("explained {}", statement.source.id),
+            },
+            estimate: None,
+        }
+    }
+}
+
+fn loaded(id: &str, columns: &[(&str, &str)]) -> KnownTable {
+    KnownTable {
+        id: id.to_owned(),
+        columns: columns
+            .iter()
+            .map(|(name, type_name)| LoadedColumn {
+                name: (*name).to_owned(),
+                type_name: (*type_name).to_owned(),
+                declared: false,
+                bytes: None,
+            })
+            .collect(),
+    }
+}
+
+/// RS2d: each source explained by its explainer, and the combine planned over empty tables of
+/// the columns the last run loaded, with what it reads of each.
+#[tokio::test]
+async fn explains_each_source_and_plans_the_combine_over_the_last_runs_tables() {
+    let folder = tempfile::tempdir().unwrap();
+    let plan = report("", VALUES, "");
+    let known = [
+        loaded(
+            "tx",
+            &[
+                ("id", "BIGINT"),
+                ("asset", "VARCHAR"),
+                ("quantity", "DECIMAL(38,18)"),
+                ("executed_at", "TIMESTAMP"),
+            ],
+        ),
+        loaded(
+            "prices",
+            &[("asset", "VARCHAR"), ("price", "DECIMAL(18,8)")],
+        ),
+    ];
+    let explanation = explain(
+        &plan,
+        &october(&plan),
+        &EchoExplainer,
+        &known,
+        &folder.path().join("spill"),
+    )
+    .await;
+    let ids: Vec<&str> = explanation
+        .sources
+        .iter()
+        .map(|source| source.id.as_str())
+        .collect();
+    assert_eq!(ids, ["tx", "prices"]);
+    assert_eq!(
+        explanation.sources[0].explained.statement,
+        "SELECT * FROM tx WHERE executed_at >= :since"
+    );
+    let Some(CombineExplanation::Planned { text }) = &explanation.combine else {
+        panic!("{:?}", explanation.combine);
+    };
+    let combine = dbrover_plan::PlanFormat::DuckDbJson.parse(text).unwrap();
+    assert!(!combine.is_analysed());
+    let reads = combine.table_reads();
+    let tx = reads.iter().find(|read| read.table == "tx").expect(text);
+    assert!(tx.columns.contains(&"quantity".to_owned()), "{text}");
+
+    let unknown = explain(
+        &plan,
+        &october(&plan),
+        &EchoExplainer,
+        &known[1..],
+        &folder.path().join("spill"),
+    )
+    .await;
+    let Some(CombineExplanation::Unknown { reason }) = unknown.combine else {
+        panic!("{:?}", unknown.combine);
+    };
+    assert!(
+        reason.starts_with("Source tx declares no columns"),
+        "{reason}"
+    );
+}

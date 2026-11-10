@@ -1,0 +1,66 @@
+[
+  {
+    "Plan": {
+      "Node Type": "Expression",
+      "Node Id": "Expression_8",
+      "Description": "(Project names + Projection)",
+      "Plans": [
+        {
+          "Node Type": "Aggregating",
+          "Node Id": "Aggregating_4",
+          "Plans": [
+            {
+              "Node Type": "Expression",
+              "Node Id": "Expression_3",
+              "Description": "Before GROUP BY",
+              "Plans": [
+                {
+                  "Node Type": "Expression",
+                  "Node Id": "Expression_9",
+                  "Description": "(WHERE + Change column names to column identifiers)",
+                  "Plans": [
+                    {
+                      "Node Type": "ReadFromMergeTree",
+                      "Node Id": "ReadFromMergeTree_0",
+                      "Description": "dbrover.events",
+                      "Indexes": [
+                        {
+                          "Type": "MinMax",
+                          "Keys": ["ts"],
+                          "Condition": "(ts in [1772323200, +Inf))",
+                          "Initial Parts": 46,
+                          "Selected Parts": 44,
+                          "Initial Granules": 46,
+                          "Selected Granules": 44
+                        },
+                        {
+                          "Type": "Partition",
+                          "Keys": ["toYYYYMM(ts)"],
+                          "Condition": "(toYYYYMM(ts) in [202603, +Inf))",
+                          "Initial Parts": 44,
+                          "Selected Parts": 44,
+                          "Initial Granules": 44,
+                          "Selected Granules": 44
+                        },
+                        {
+                          "Type": "PrimaryKey",
+                          "Keys": ["region", "ts"],
+                          "Condition": "and((region in ['EU', 'EU']), (ts in [1772323200, +Inf)))",
+                          "Search Algorithm": "binary search",
+                          "Initial Parts": 44,
+                          "Selected Parts": 44,
+                          "Initial Granules": 44,
+                          "Selected Granules": 44
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+]

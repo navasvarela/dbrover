@@ -287,3 +287,57 @@ async fn values_postgres_transactions_at_duckdb_prices() {
     // places: the values make it a decimal of just the digits they need.
     assert_eq!(quantity.as_deref(), Some("DECIMAL(21,18)"));
 }
+
+/// RS2d: a source on a DuckDB file explained by DuckDB itself, its plan drawn with the
+/// filter its scan applies, and nothing read.
+#[tokio::test]
+async fn explains_a_duckdb_source_with_the_filter_its_scan_applies() {
+    let folder = tempfile::tempdir().unwrap();
+    let data_source = prices(folder.path()).await;
+    let text = r#"
+[report]
+name = "Bitcoin"
+
+[[source]]
+id = "btc"
+data_source = "prices"
+query = "SELECT hour, price_usd FROM hourly_prices WHERE asset = 'BTC'"
+
+[[output]]
+format = "csv"
+file = "btc.csv"
+"#;
+    let plan = Plan::new(
+        read_report(text).unwrap(),
+        &[data_source],
+        &[],
+        &LimitDefaults::default(),
+    )
+    .unwrap();
+    let values = plan.values(&Default::default()).unwrap();
+    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecrets::default());
+    let tunnels = Tunnels::new(folder.path().join("known_hosts"));
+    let commands = PasswordCommands::new(TrustedCommands::default(), Arc::new(ProcessRunner));
+    let access = SourceAccess {
+        secrets: &secrets,
+        tunnels: &tunnels,
+        commands: &commands,
+    };
+    let explanation =
+        dbrover_report::explain(&plan, &values, &access, &[], &folder.path().join("spill")).await;
+    assert_eq!(explanation.combine, None);
+    let explained = &explanation.sources[0].explained;
+    let dbrover_report::ExplainedPlan::Drawn { format, text } = &explained.plan else {
+        panic!("{explained:?}");
+    };
+    assert_eq!(format, "duckdb-json");
+    let drawn = dbrover_plan::PlanFormat::DuckDbJson.parse(text).unwrap();
+    let reads = drawn.table_reads();
+    assert_eq!(reads[0].table, "hourly_prices", "{text}");
+    assert!(
+        reads[0].filters.iter().any(|filter| filter.contains("BTC")),
+        "{text}"
+    );
+    assert_eq!(explained.estimate, None);
+    assert!(!folder.path().join("btc.csv").exists());
+}

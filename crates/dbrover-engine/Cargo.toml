@@ -30,6 +30,8 @@ dbrover-driver-sqlserver.workspace = true
 dbrover-driver-trino.workspace = true
 dbrover-export.workspace = true
 dbrover-language.workspace = true
+# Names the plan formats a report's explained sources are in (RS2d).
+dbrover-plan.workspace = true
 dbrover-report.workspace = true
 dbrover-schema.workspace = true
 dbrover-sql.workspace = true
@@ -52,8 +54,6 @@ calamine.workspace = true
 # Its stand-in token endpoint signs the cloud sign-in tests in without an account.
 dbrover-cloud = { workspace = true, features = ["stand-in"] }
 dbrover-language = { workspace = true, features = ["test-language"] }
-# Reads the plans the explain tests get back, as the app does.
-dbrover-plan.workspace = true
 rusqlite.workspace = true
 tempfile.workspace = true
 uuid.workspace = true

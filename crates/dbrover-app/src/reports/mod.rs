@@ -9,6 +9,8 @@
 
 pub mod compare;
 mod compare_view;
+mod explain_view;
+pub mod explanation;
 mod file;
 mod funnel;
 mod highlight;
@@ -32,9 +34,10 @@ use dbrover_core::{BlobId, DataSource};
 use dbrover_engine::{Command, Event, ReportSaveFailure, ReportText, WatchedFile};
 use dbrover_export::CustomFormat;
 use dbrover_report::{
-    Batch, Busy, CombineCaps, CombineLimits, LimitDefaults, LoadedColumn, OutputLimits, Plan,
-    Preview, Report, RunEvent, RunFailure, RunRequest, SourceCaps, SourceLimits, SourcePhases,
-    SourceStart, Step, TimedEvent, TypedValues, WrittenFile, read_report,
+    Batch, Busy, CombineCaps, CombineLimits, ExplainRequest, Explanation, LimitDefaults,
+    LoadedColumn, OutputLimits, Plan, Preview, Report, RunEvent, RunFailure, RunRequest,
+    SourceCaps, SourceLimits, SourcePhases, SourceStart, Step, TimedEvent, TypedValues,
+    WrittenFile, read_report,
 };
 use dbrover_sql::FormatOptions;
 use dbrover_store::{
@@ -105,6 +108,8 @@ pub enum ReportAction {
     Reload,
     OpenFolder,
     Run(ReportName),
+    /// Plans the report without running it (RS2d).
+    Explain(ReportName),
     Cancel,
     ChooseFolder(ReportName),
     /// Opens a file or folder with the system's own app.
@@ -136,6 +141,8 @@ pub struct Reports {
     listing: Listing,
     states: BTreeMap<ReportName, ReportState>,
     running: Option<Running>,
+    /// The report being explained, in a worker of its own, beside any run.
+    explaining: Option<Explaining>,
     /// A report just created, whose tab opens once the listing has it.
     to_open: Option<ReportName>,
     /// Each report's newest runs, as the history last listed them.
@@ -226,6 +233,22 @@ pub struct ReportState {
     pub profile_plan: Option<ProfilePlan>,
     /// The two runs **Compare** shows.
     pub compare_runs: ComparedRuns,
+    /// What **Explain** found, the last time it was asked.
+    pub explanation: Option<ExplainState>,
+}
+
+/// Where **Explain** is.
+pub enum ExplainState {
+    Explaining,
+    Explained(Box<Explanation>),
+    /// The worker couldn't explain the report: its file, a parameter, or the worker itself.
+    Failed(String),
+}
+
+/// A report being explained by a worker.
+struct Explaining {
+    report: ReportName,
+    run: Box<dyn RunningReport>,
 }
 
 /// A kept run's combine plan, as **Profile** draws it.
@@ -260,6 +283,8 @@ pub enum RunPanel {
     Profile,
     Compare,
     Runs,
+    /// What **Explain** found.
+    Explain,
 }
 
 /// What the app does after the reports took in an event.
@@ -617,7 +642,7 @@ impl RunRecord {
                 }
             }
             RunEvent::Preview(preview) => self.preview = Some(preview),
-            RunEvent::WorkerUsage { .. } => {}
+            RunEvent::WorkerUsage { .. } | RunEvent::Explained(_) => {}
             RunEvent::OutputWritten(file) => self.files.push(file),
             RunEvent::Finished { elapsed_ms } => self.end = Some(RunEnd::Finished { elapsed_ms }),
             RunEvent::Failed(failure) => {
@@ -1007,6 +1032,7 @@ impl Reports {
             folder,
             defaults,
             memory_limit: None,
+            explain: None,
         };
         let started = setup.launcher.start(&request, plan.timeout, Box::new(wake));
         let mut record = RunRecord::new(values);
@@ -1029,6 +1055,100 @@ impl Reports {
         state.last_run = Some(record);
         // The run panel follows the run, whichever tab was picked before.
         state.run_panel = None;
+    }
+
+    /// Explains `name`, planned as `plan`, in a worker with the values typed in its tab, with
+    /// the tables its newest finished run loaded, unless one is being explained already.
+    pub fn explain(
+        &mut self,
+        name: &ReportName,
+        plan: &Plan,
+        defaults: LimitDefaults,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) {
+        if self.explaining.is_some() {
+            return;
+        }
+        let (Some(setup), Some(listed), Some(folder)) = (
+            self.setup.as_ref(),
+            self.find(name),
+            self.output_folder(name),
+        ) else {
+            return;
+        };
+        let tables = match self.runs(name) {
+            Some(Ok(runs)) => explanation::known_tables(runs),
+            _ => Vec::new(),
+        };
+        let request = RunRequest {
+            report: listed.path.clone(),
+            values: self
+                .state(name)
+                .map(|state| state.values.clone())
+                .unwrap_or_default(),
+            staging: folder.join(staging_name()),
+            folder,
+            defaults,
+            memory_limit: None,
+            explain: Some(ExplainRequest { tables }),
+        };
+        let started = setup.launcher.start(&request, plan.timeout, Box::new(wake));
+        let state = match started {
+            Ok(run) => {
+                self.explaining = Some(Explaining {
+                    report: name.clone(),
+                    run,
+                });
+                ExplainState::Explaining
+            }
+            Err(error) => ExplainState::Failed(format!("could not start the worker: {error}")),
+        };
+        let report = self.state_mut(name);
+        report.explanation = Some(state);
+        report.run_panel = Some(RunPanel::Explain);
+    }
+
+    /// Whether `name` is being explained now.
+    pub fn is_explaining(&self, name: &ReportName) -> bool {
+        self.explaining
+            .as_ref()
+            .is_some_and(|explaining| &explaining.report == name)
+    }
+
+    /// Takes in what the explaining worker said since the last frame.
+    pub fn poll_explain(&mut self) {
+        let Some(explaining) = self.explaining.as_mut() else {
+            return;
+        };
+        let mut found = None;
+        let mut ended = false;
+        while let Some(timed) = explaining.run.try_next() {
+            ended |= timed.event.ends_run();
+            match timed.event {
+                RunEvent::Explained(explanation) => {
+                    found = Some(ExplainState::Explained(explanation));
+                }
+                RunEvent::Failed(failure) => {
+                    found = Some(ExplainState::Failed(failure.to_string()))
+                }
+                RunEvent::Cancelled => {
+                    found = Some(ExplainState::Failed("Cancelled.".to_owned()));
+                }
+                _ => {}
+            }
+        }
+        let report = explaining.report.clone();
+        if ended {
+            self.explaining = None;
+            found = found.or_else(|| {
+                Some(ExplainState::Failed(
+                    "the worker ended without explaining the report".to_owned(),
+                ))
+            });
+        }
+        if let Some(found) = found {
+            self.state_mut(&report).explanation = Some(found);
+        }
     }
 
     pub fn cancel(&mut self) {
