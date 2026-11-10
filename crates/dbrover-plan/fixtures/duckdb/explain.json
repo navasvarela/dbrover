@@ -1,0 +1,38 @@
+[
+    {
+        "name": "PROJECTION",
+        "children": [
+            {
+                "name": "HASH_GROUP_BY",
+                "children": [
+                    {
+                        "name": "SEQ_SCAN ",
+                        "children": [],
+                        "extra_info": {
+                            "Table": "orders",
+                            "Type": "Sequential Scan",
+                            "Projections": [
+                                "region",
+                                "amount"
+                            ],
+                            "Filters": "region='EU'",
+                            "Estimated Cardinality": "1000"
+                        }
+                    }
+                ],
+                "extra_info": {
+                    "Groups": "#0",
+                    "Aggregates": "sum(#1)",
+                    "Estimated Cardinality": "100"
+                }
+            }
+        ],
+        "extra_info": {
+            "Projections": [
+                "region",
+                "total"
+            ],
+            "Estimated Cardinality": "100"
+        }
+    }
+]

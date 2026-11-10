@@ -10,14 +10,17 @@
 //!    other source: its rows a page of text at a time, then each column cast to its type;
 //! 3. [`Workspace::lock`] turns off everything outside the database and freezes the limits;
 //! 4. the combine query runs on [`Workspace::connection`], as any statement on a connection;
-//! 5. [`Workspace::peaks`] says the most memory and disk the database used, as DuckDB's
-//!    profiler measured them.
+//! 5. [`Workspace::profile`] says the most memory and disk the database used, as DuckDB's
+//!    profiler measured them, and the query's plan with what each operator did.
+//!
+//! [`Workspace::explain`] plans a query without running it, for a report explained before it
+//! runs (`docs/reports-at-scale.md`, RS2).
 
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use dbrover_core::{Connection, DriverError, DuckDbConfig, DuckDbDatabase, Row};
+use dbrover_core::{Cell, Connection, DriverError, DuckDbConfig, DuckDbDatabase, Row};
 
 use crate::errors::statement_error;
 use crate::{DuckDbConnection, connection_error, poisoned};
@@ -27,10 +30,32 @@ use crate::{DuckDbConnection, connection_error, poisoned};
 /// a letter and this one is dropped before the combine query runs.
 const LOAD_SCHEMA: &str = "dbrover_load";
 
-/// The profiler's metrics a workspace keeps, by DuckDB's names, which [`Workspace::peaks`]
+/// The profiler's metrics a workspace keeps, by DuckDB's names, which [`Workspace::profile`]
 /// reads. Both are the database's peaks since it opened, not the last statement's alone.
 const PEAK_MEMORY_METRIC: &str = "SYSTEM_PEAK_BUFFER_MEMORY";
 const PEAK_TEMP_SIZE_METRIC: &str = "SYSTEM_PEAK_TEMP_DIR_SIZE";
+
+/// The profiler's metrics of each operator, which make the query's plan: what it is, what it
+/// works on, its time and the rows it returned. DuckDB measures them as it runs anyway; asking
+/// for them only keeps them.
+const OPERATOR_METRICS: [&str; 6] = [
+    "OPERATOR_NAME",
+    "OPERATOR_TYPE",
+    "OPERATOR_TIMING",
+    "OPERATOR_CARDINALITY",
+    "OPERATOR_ROWS_SCANNED",
+    "EXTRA_INFO",
+];
+
+/// The query's own metrics, beside its operators': its time and the rows it returned.
+const QUERY_METRICS: [&str; 2] = ["LATENCY", "ROWS_RETURNED"];
+
+/// What goes before a query to have DuckDB plan it and write the plan as JSON, which
+/// `dbrover-plan` reads.
+const EXPLAIN_JSON: &str = "EXPLAIN (FORMAT JSON) ";
+
+/// The column of `EXPLAIN`'s answer holding the plan, after `explain_key`.
+const EXPLAIN_VALUE_COLUMN: usize = 1;
 
 /// What bounds a workspace.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +102,15 @@ pub struct WorkspacePeaks {
     pub memory: Option<u64>,
     /// Bytes it held in its temporary folder at once, which `max_temp_size` bounds.
     pub temp_size: Option<u64>,
+}
+
+/// What the profiler measured of the last statement on [`Workspace::connection`].
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct WorkspaceProfile {
+    pub peaks: WorkspacePeaks,
+    /// The statement's plan, each operator with its time and rows, as DuckDB's JSON profile
+    /// writes it; `None` for a statement that ran no operator.
+    pub plan: Option<String>,
 }
 
 /// The type a loaded column is cast to.
@@ -149,12 +183,9 @@ impl Workspace {
             "SET autoinstall_known_extensions = false".to_owned(),
             "SET autoload_known_extensions = false".to_owned(),
             // Measures without writing anywhere, so it needs no file once external access is
-            // off, and only what `peaks` reads, which costs nothing per statement.
+            // off, and only what `profile` reads, which DuckDB measures as it runs anyway.
             "PRAGMA enable_profiling = 'no_output'".to_owned(),
-            format!(
-                "SET custom_profiling_settings = '{{\"{PEAK_MEMORY_METRIC}\": \"true\", \
-                 \"{PEAK_TEMP_SIZE_METRIC}\": \"true\"}}'"
-            ),
+            format!("SET custom_profiling_settings = '{}'", profiling_settings()),
             format!("CREATE SCHEMA {LOAD_SCHEMA}"),
         ];
         connection
@@ -288,25 +319,49 @@ impl Workspace {
             .await
     }
 
-    /// The most memory and disk the database has used since it opened, once a statement on
-    /// [`Workspace::connection`] has finished: the profiler measures a statement as it ends.
+    /// The most memory and disk the database has used since it opened, and the plan of the
+    /// last statement on [`Workspace::connection`], once it has finished: the profiler
+    /// measures a statement as it ends.
     ///
     /// # Errors
     ///
     /// [`DriverError`] if the connection is in use or has failed.
-    pub async fn peaks(&self) -> Result<WorkspacePeaks, DriverError> {
+    pub async fn profile(&self) -> Result<WorkspaceProfile, DriverError> {
         self.connection
             .run_blocking(|connection| {
                 let Some(info) = connection.get_profiling_info() else {
-                    return Ok(WorkspacePeaks::default());
+                    return Ok(WorkspaceProfile::default());
                 };
                 let metric = |name: &str| info.metrics.get(name)?.parse::<u64>().ok();
-                Ok(WorkspacePeaks {
-                    memory: metric(PEAK_MEMORY_METRIC),
-                    temp_size: metric(PEAK_TEMP_SIZE_METRIC),
+                Ok(WorkspaceProfile {
+                    peaks: WorkspacePeaks {
+                        memory: metric(PEAK_MEMORY_METRIC),
+                        temp_size: metric(PEAK_TEMP_SIZE_METRIC),
+                    },
+                    plan: crate::profile::to_json(&info),
                 })
             })
             .await
+    }
+
+    /// How DuckDB would run `sql` with `values` bound, without running it: its plan as
+    /// `EXPLAIN (FORMAT JSON)` writes it, which `dbrover-plan` reads.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError`] if DuckDB can't plan the query, as when it names a table or column the
+    /// database doesn't have.
+    pub async fn explain(&mut self, sql: &str, values: &[Cell]) -> Result<String, DriverError> {
+        let explained = format!("{EXPLAIN_JSON}{sql}");
+        let mut cursor = self.connection.execute_bound(&explained, values).await?;
+        let mut rows = Vec::new();
+        while !cursor.is_exhausted() {
+            rows.extend(cursor.next_page(EXPLAIN_PAGE_ROWS).await?);
+        }
+        cursor.finish().await?;
+        rows.into_iter()
+            .find_map(|mut row| row.get_mut(EXPLAIN_VALUE_COLUMN)?.take())
+            .ok_or_else(|| connection_error("DuckDB's EXPLAIN answered with no plan"))
     }
 
     /// The database's connection, to run a query on and to cancel it.
@@ -403,6 +458,20 @@ impl TableLoader {
         .await
         .map_err(connection_error)?
     }
+}
+
+/// Rows asked of `EXPLAIN` at a time: it answers with one.
+const EXPLAIN_PAGE_ROWS: usize = 10;
+
+/// `custom_profiling_settings`' JSON: every metric the workspace keeps, switched on.
+fn profiling_settings() -> String {
+    let metrics: Vec<String> = [PEAK_MEMORY_METRIC, PEAK_TEMP_SIZE_METRIC]
+        .into_iter()
+        .chain(QUERY_METRICS)
+        .chain(OPERATOR_METRICS)
+        .map(|metric| format!("\"{metric}\": \"true\""))
+        .collect();
+    format!("{{{}}}", metrics.join(", "))
 }
 
 /// `"name"`, quoted as DuckDB quotes an identifier, so any column name works.

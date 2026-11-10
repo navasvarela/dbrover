@@ -1,0 +1,45 @@
+{
+    "query_name": "SELECT region, sum(amount) AS total FROM orders GROUP BY region",
+    "latency": 0.009,
+    "rows_returned": 2,
+    "children": [
+        {
+            "operator_name": "PROJECTION",
+            "operator_type": "PROJECTION",
+            "operator_timing": 0.001,
+            "operator_cardinality": 2,
+            "extra_info": {
+                "Projections": ["region", "total"],
+                "Estimated Cardinality": "2"
+            },
+            "children": [
+                {
+                    "operator_name": "HASH_GROUP_BY",
+                    "operator_type": "HASH_GROUP_BY",
+                    "operator_timing": 0.002,
+                    "operator_cardinality": 2,
+                    "extra_info": {
+                        "Groups": "#0",
+                        "Aggregates": "sum(#1)",
+                        "Estimated Cardinality": "2"
+                    },
+                    "children": [
+                        {
+                            "operator_name": "TABLE_SCAN",
+                            "operator_type": "TABLE_SCAN",
+                            "operator_timing": 0.005,
+                            "operator_cardinality": 1000,
+                            "extra_info": {
+                                "Table": "orders",
+                                "Type": "Sequential Scan",
+                                "Projections": ["region", "amount"],
+                                "Estimated Cardinality": "1000"
+                            },
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}
