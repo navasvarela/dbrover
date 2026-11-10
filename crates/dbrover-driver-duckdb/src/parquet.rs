@@ -45,7 +45,7 @@ pub enum ParquetCompression {
 }
 
 impl ParquetCompression {
-    fn as_sql(self) -> &'static str {
+    pub(crate) fn as_sql(self) -> &'static str {
         match self {
             Self::Zstd => "zstd",
             Self::Snappy => "snappy",

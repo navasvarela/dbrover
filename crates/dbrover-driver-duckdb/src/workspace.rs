@@ -28,6 +28,7 @@ use duckdb::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use duckdb::arrow::record_batch::RecordBatch;
 
 use crate::errors::statement_error;
+use crate::parquet::ParquetCompression;
 use crate::{DuckDbConnection, connection_error, poisoned};
 
 /// The schema a source's table is made in, which the combine query reads unqualified.
@@ -408,19 +409,31 @@ impl Workspace {
 
     /// Cuts the database off from everything outside it, files and extensions included, and
     /// freezes its settings, so the query that runs next reads only what was loaded and
-    /// attached, within the limits it was opened with.
+    /// attached, within the limits it was opened with. `writable`, when given, is the one
+    /// folder it may still write files in, and read them back from: the run's staging folder,
+    /// for the Parquet files DuckDB writes itself (RS3d).
     ///
     /// # Errors
     ///
     /// [`DriverError`] if DuckDB refuses a setting.
-    pub async fn lock(&self) -> Result<(), DriverError> {
+    pub async fn lock(&self, writable: Option<&Path>) -> Result<(), DriverError> {
+        // DuckDB takes `allowed_directories` only while external access is on.
+        let allowed = writable.map(|folder| {
+            let mut folder = folder.to_string_lossy().into_owned();
+            if !folder.ends_with(std::path::MAIN_SEPARATOR) {
+                folder.push(std::path::MAIN_SEPARATOR);
+            }
+            format!("SET allowed_directories = [{}]; ", string_literal(&folder))
+        });
+        let sql = format!(
+            "{}SET enable_external_access = false; SET lock_configuration = true",
+            allowed.unwrap_or_default()
+        );
         self.connection
-            .run_blocking(|connection| {
-                let sql = "SET enable_external_access = false; \
-                           SET lock_configuration = true";
+            .run_blocking(move |connection| {
                 connection
-                    .execute_batch(sql)
-                    .map_err(|error| statement_error(error, sql))
+                    .execute_batch(&sql)
+                    .map_err(|error| statement_error(error, &sql))
             })
             .await
     }
@@ -644,6 +657,28 @@ fn profiling_settings() -> String {
         .map(|metric| format!("\"{metric}\": \"true\""))
         .collect();
     format!("{{{}}}", metrics.join(", "))
+}
+
+/// The statement that writes what `query` returns to a Parquet file at `file`, compressed
+/// with `compression`, run in a workspace locked to the file's folder; it answers with the
+/// rows it wrote.
+pub fn copy_to_parquet(query: &str, file: &Path, compression: ParquetCompression) -> String {
+    // The query goes on lines of its own, so a comment closing it can't swallow the bracket;
+    // a statement's closing semicolon would end the COPY early.
+    let query = query.trim_end().trim_end_matches(';');
+    format!(
+        "COPY (\n{query}\n) TO {} (FORMAT parquet, COMPRESSION {})",
+        string_literal(&file.to_string_lossy()),
+        compression.as_sql()
+    )
+}
+
+/// The query that reads back every row of the Parquet file at `file`.
+pub fn read_parquet(file: &Path) -> String {
+    format!(
+        "SELECT * FROM read_parquet({})",
+        string_literal(&file.to_string_lossy())
+    )
 }
 
 /// `"name"`, quoted as DuckDB quotes an identifier, so any column name works.

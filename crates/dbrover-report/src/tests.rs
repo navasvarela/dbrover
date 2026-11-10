@@ -7,7 +7,7 @@ use dbrover_core::{
 };
 use dbrover_export::{
     ColumnType, CustomFormat, CustomFormatId, CustomFormatKind, DecimalSpec, ExportFormat,
-    FieldSeparator, Preset, SheetName,
+    FieldSeparator, ParquetOptions, Preset, SheetName,
 };
 
 use dbrover_language::QueryLanguage;
@@ -373,12 +373,8 @@ fn names_every_problem_with_its_place() {
             "output 1: needs a format",
         ),
         (
-            one_source(
-                "",
-                "SELECT 1",
-                "format = \"parquet\"\nfile = \"out.parquet\"",
-            ),
-            "output 1: a report writes CSV or Excel files in RP1, not Parquet",
+            one_source("", "SELECT 1", "format = \"markdown\"\nfile = \"out.md\""),
+            "output 1: a report writes CSV, Excel or Parquet files, not Markdown",
         ),
         (
             one_source(
@@ -634,7 +630,9 @@ fn checks_presets_against_exports_toml() {
     .unwrap_err();
     assert_eq!(
         not_csv,
-        ["output 1: the preset \"notes\": a report writes CSV or Excel files in RP1, not Markdown"]
+        [
+            "output 1: the preset \"notes\": a report writes CSV, Excel or Parquet files, not Markdown"
+        ]
     );
     let not_excel = Plan::new(
         report("preset = \"semicolon-csv\"\nfile = \"x.csv\"\ncontinue_on_new_sheet = true"),
@@ -1278,5 +1276,58 @@ fn places_every_syntax_error_and_keeps_the_messages_callers_print() {
             .into_iter()
             .map(|(message, _)| message)
             .collect::<Vec<_>>()
+    );
+}
+
+/// RS3d: DuckDB writes a Parquet output from the combine step, with the columns it gives them:
+/// a report without one, or a Parquet output naming its columns, is refused.
+#[test]
+fn plans_parquet_only_from_a_combine_step_and_with_its_columns() {
+    let planned = |text: &str| {
+        Plan::new(
+            read_report(text).unwrap(),
+            &[sqlite("ledger")],
+            &[],
+            &LimitDefaults::default(),
+        )
+    };
+    let alone = one_source(
+        "",
+        "SELECT 1",
+        "format = \"parquet\"\nfile = \"out.parquet\"",
+    );
+    let problems = planned(&alone).unwrap_err();
+    assert!(
+        problems[0].starts_with(
+            "output 1: a Parquet file is written by the combine step's DuckDB; add a [combine]"
+        ),
+        "{problems:?}"
+    );
+    let combined = |output: &str| {
+        one_source("", "SELECT 1 AS n", output).replace(
+            "[[output]]",
+            "[combine]\nquery = \"SELECT * FROM s\"\n[[output]]",
+        )
+    };
+    let plan = planned(&combined(
+        "format = \"parquet\"\ncompression = \"snappy\"\nfile = \"out.parquet\"",
+    ))
+    .unwrap();
+    assert_eq!(
+        plan.outputs[0].format.written_by_duckdb(),
+        Some(ParquetOptions {
+            compression: dbrover_export::ParquetCompression::Snappy
+        })
+    );
+    let named = planned(&combined(
+        "format = \"parquet\"\nfile = \"out.parquet\"\ncolumns = [{ name = \"N\", from = \"n\" }]",
+    ))
+    .unwrap_err();
+    assert_eq!(
+        named,
+        [
+            "output 1: a Parquet output writes the combine step's columns as DuckDB types them; \
+          name and cast them in the combine query instead"
+        ]
     );
 }

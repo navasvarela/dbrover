@@ -839,3 +839,147 @@ async fn loads_many_pages_through_the_queue_with_phases_that_add_up() {
         "every digit of every page: {preview:?}"
     );
 }
+
+/// [`TWO_SOURCES`] writing `outputs` instead of its CSV and Excel files.
+fn report_writing(outputs: &str) -> Plan {
+    let head = TWO_SOURCES
+        .split("[[output]]")
+        .next()
+        .unwrap()
+        .replace("{tx_limits}", "")
+        .replace("{query}", VALUES)
+        .replace("{combine_limits}", "");
+    Plan::new(
+        read_report(&format!("{head}{outputs}")).unwrap(),
+        &[ledger()],
+        &[],
+        &LimitDefaults::default(),
+    )
+    .unwrap()
+}
+
+/// The rows of a Parquet file, each column as DuckDB writes it as text, and its columns' types.
+async fn parquet_rows(file: &Path) -> Vec<Row> {
+    let mut connection =
+        dbrover_driver_duckdb::connect(&DuckDbConfig::new(DuckDbDatabase::InMemory))
+            .await
+            .unwrap();
+    let sql = format!(
+        "SELECT typeof(quantity), * FROM read_parquet('{}') ORDER BY id",
+        file.display()
+    );
+    let mut cursor = connection.execute(&sql).await.unwrap();
+    let mut rows = Vec::new();
+    while !cursor.is_exhausted() {
+        rows.extend(cursor.next_page(100).await.unwrap());
+    }
+    cursor.finish().await.unwrap();
+    Box::new(connection).close().await.unwrap();
+    rows
+}
+
+/// RS3d: DuckDB writes the Parquet outputs from the combine query, with its parameter bound,
+/// the first from the query and the second from the first; the CSV beside them reads the same
+/// rows back, and the files are put in place in the outputs' order.
+#[tokio::test]
+async fn writes_parquet_by_copy_and_csv_from_it() {
+    let folder = tempfile::tempdir().unwrap();
+    let plan = report_writing(
+        r#"
+[[output]]
+format = "parquet"
+file = "values.parquet"
+
+[[output]]
+format = "csv"
+file = "values.csv"
+
+[[output]]
+format = "parquet"
+compression = "snappy"
+file = "values-snappy.parquet"
+"#,
+    );
+    let opener = MemoryOpener::of(vec![("tx", transactions()), ("prices", prices())]);
+    let (outcome, events) = run_with(&plan, &opener, folder.path()).await;
+    let summary = outcome.unwrap();
+    assert_eq!(summary.rows, 3);
+    let written: Vec<String> = summary
+        .files
+        .iter()
+        .map(|file| {
+            file.path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    assert_eq!(
+        written,
+        ["values.parquet", "values.csv", "values-snappy.parquet"]
+    );
+    assert!(
+        summary.files.iter().all(|file| file.rows == 3),
+        "{summary:?}"
+    );
+    for file in ["values.parquet", "values-snappy.parquet"] {
+        let rows = parquet_rows(&folder.path().join(file)).await;
+        assert_eq!(rows.len(), 3, "{file}");
+        assert_eq!(
+            rows[0][0].as_deref(),
+            Some("DECIMAL(21,18)"),
+            "typed: {rows:?}"
+        );
+        assert_eq!(rows[0][2].as_deref(), Some("1.234567890123456789"));
+    }
+    let csv = std::fs::read_to_string(folder.path().join("values.csv")).unwrap();
+    assert!(csv.contains("1.234567890123456789"), "{csv}");
+    let combine_done = events.iter().find_map(|event| match event {
+        RunEvent::CombineDone { rows, plan, .. } => Some((*rows, plan.is_some())),
+        _ => None,
+    });
+    assert_eq!(
+        combine_done,
+        Some((3, true)),
+        "the combine query's plan is kept"
+    );
+}
+
+/// With Parquet the only output, the preview reads a screenful back, not every row; the run
+/// still counts every row the combine step wrote.
+#[tokio::test]
+async fn previews_a_parquet_only_run_from_its_file() {
+    let folder = tempfile::tempdir().unwrap();
+    let plan = report_writing("[[output]]\nformat = \"parquet\"\nfile = \"values.parquet\"\n");
+    let opener = MemoryOpener::of(vec![("tx", transactions()), ("prices", prices())]);
+    let (outcome, events) = run_with(&plan, &opener, folder.path()).await;
+    assert_eq!(outcome.unwrap().rows, 3);
+    let preview = events.iter().find_map(|event| match event {
+        RunEvent::Preview(preview) => Some(preview.rows.len()),
+        _ => None,
+    });
+    assert_eq!(preview, Some(3));
+    assert_eq!(files_in(folder.path()), ["values.parquet"]);
+}
+
+#[tokio::test]
+async fn stops_at_a_parquet_files_max_size_and_leaves_no_file() {
+    let folder = tempfile::tempdir().unwrap();
+    let plan = report_writing(
+        "[[output]]\nformat = \"parquet\"\nfile = \"values.parquet\"\nmax_size = \"10 B\"\n",
+    );
+    let opener = MemoryOpener::of(vec![("tx", transactions()), ("prices", prices())]);
+    let (outcome, _) = run_with(&plan, &opener, folder.path()).await;
+    let failure = outcome.unwrap_err();
+    assert_eq!(
+        failure.limit.as_ref().map(|limit| limit.key.as_str()),
+        Some("max_size"),
+        "{failure:?}"
+    );
+    assert!(
+        failure.message.contains("the Parquet file came to"),
+        "{failure}"
+    );
+    assert!(files_in(folder.path()).is_empty());
+}

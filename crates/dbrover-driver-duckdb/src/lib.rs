@@ -33,7 +33,8 @@ pub use bucket::BucketError;
 pub use parquet::{ParquetCompression, ParquetWriter};
 pub use workspace::{
     DuckDbType, LoadColumn, TableLoader, UnknownDuckDbType, Workspace, WorkspaceLimit,
-    WorkspaceLimits, WorkspacePeaks, WorkspaceProfile, WorkspaceStore,
+    WorkspaceLimits, WorkspacePeaks, WorkspaceProfile, WorkspaceStore, copy_to_parquet,
+    read_parquet,
 };
 
 const PRODUCT: &str = "DuckDB";

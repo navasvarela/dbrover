@@ -370,6 +370,7 @@ impl<'a> Outputs<'a> {
         }
         Ok(Streamed {
             outputs,
+            copied: Vec::new(),
             charts,
             folders,
             read,
@@ -382,6 +383,8 @@ impl<'a> Outputs<'a> {
 /// to every chart.
 pub(crate) struct Streamed<'a> {
     outputs: Vec<OutputRun<'a>>,
+    /// Files DuckDB wrote whole before the rows streamed, still under their partial names.
+    copied: Vec<Completed>,
     charts: Vec<ChartRun<'a>>,
     folders: RunFolders<'a>,
     /// What the feed returned.
@@ -395,16 +398,38 @@ impl<'a> Streamed<'a> {
         self.charts.push(chart);
     }
 
+    /// Files written whole elsewhere, to be put in place with the others.
+    pub(crate) fn add_copied(&mut self, copied: Vec<Completed>) {
+        self.copied.extend(copied);
+    }
+
     /// Removes every output's file, for a run that failed after its rows were written.
     pub(crate) fn abandon(self) {
         self.outputs.into_iter().for_each(OutputRun::abandon);
+        self.copied
+            .into_iter()
+            .for_each(|copied| copied.file.abandon());
     }
 
     /// Completes every file, draws every chart, and puts them all in place, sending the preview
     /// and each file.
     pub(crate) fn finish(self, events: &mut dyn FnMut(RunEvent)) -> Result<RunSummary, RunFailure> {
         events(RunEvent::Preview(self.preview));
-        let mut completed = complete_outputs(self.outputs)?;
+        let mut completed = match complete_outputs(self.outputs) {
+            Ok(completed) => completed,
+            Err(failure) => {
+                self.copied
+                    .into_iter()
+                    .for_each(|copied| copied.file.abandon());
+                return Err(failure);
+            }
+        };
+        completed.extend(self.copied);
+        // In the file's order of outputs, wherever each was written.
+        completed.sort_by_key(|done| match &done.step {
+            Step::Output { number, .. } => *number,
+            _ => usize::MAX,
+        });
         let mut charts = self.charts;
         charts.sort_by_key(ChartRun::number);
         for chart in charts {
@@ -577,7 +602,14 @@ fn start_outputs<'a>(
     folders: RunFolders<'_>,
 ) -> Result<Vec<OutputRun<'a>>, RunFailure> {
     let mut started: Vec<OutputRun<'a>> = Vec::new();
-    for (index, (output, file)) in plan.outputs.iter().zip(&values.files).enumerate() {
+    // DuckDB writes the Parquet outputs itself, before the rows come here (RS3d).
+    let written_here = plan
+        .outputs
+        .iter()
+        .zip(&values.files)
+        .enumerate()
+        .filter(|(_, (output, _))| output.format.written_by_duckdb().is_none());
+    for (index, (output, file)) in written_here {
         let step = Step::Output {
             number: index + 1,
             file: file.clone(),

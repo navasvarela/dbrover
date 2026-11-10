@@ -2455,7 +2455,7 @@ measurement.
   - **RS3c — Typed loading:** built; tables made with the types known before the first row, each page
     appended as one batch, only the other columns rewritten, and a bounded queue between a
     source's reader and its loader.
-  - **RS3d — Parquet outputs:** written by DuckDB's `COPY` from the run's database, the other
+  - **RS3d — Parquet outputs:** built; written by DuckDB's `COPY` from the run's database, the other
     outputs reading them back.
   - **RS3e — Long runs:** `stall_timeout`, and keeping the machine awake.
   - **RS3f — Manual and demo note,** the benchmark again on the typed path, and the exit test.
