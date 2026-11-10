@@ -1001,6 +1001,35 @@ fn the_profile_draws_the_run_and_names_the_step_that_held_it() {
 }
 
 #[test]
+fn compares_two_runs_step_by_step() {
+    let dir = tempfile::tempdir().unwrap();
+    let launcher = StandIn::new(spilling_run(&dir.path().join("out")));
+    let mut harness = start_with_reports(dir.path(), COMBINED, launcher);
+    open_and_fill(&mut harness, "2026-10-01");
+    harness.get_by_label("Compare").click();
+    step_until_visible(&mut harness, "Two runs are needed to compare.");
+    for run in 1..=2 {
+        harness.get_by_label("Run").click();
+        step_until_visible(&mut harness, "Last run");
+        harness.get_by_label_contains("Past runs").click();
+        step_until(&mut harness, &format!("run {run} listed"), |harness| {
+            harness.query_all_by_label("finished").count() == run
+        });
+    }
+    harness.get_by_label("Compare").click();
+    step_until_visible(&mut harness, "Before");
+    for label in ["After", "Source entries", "Combine", "Output 1"] {
+        assert!(
+            harness.query_all_by_label(label).next().is_some(),
+            "{label}"
+        );
+    }
+    // Two runs of one script: every number is the same.
+    assert!(harness.query_all_by_label("same").count() >= 3);
+    assert_eq!(harness.query_all_by_label_contains("▲").count(), 0);
+}
+
+#[test]
 fn a_report_that_silences_a_hint_says_so_instead() {
     let dir = tempfile::tempdir().unwrap();
     let launcher = StandIn::new(spilling_run(&dir.path().join("out")));
@@ -1214,6 +1243,7 @@ fn renaming_a_report_keeps_its_runs() {
                 origin: dbrover_store::RunOrigin::Command,
                 version: None,
                 profile: Default::default(),
+                id: None,
             },
             dbrover_store::DEFAULT_RUNS_KEPT,
         )

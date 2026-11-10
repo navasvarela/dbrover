@@ -66,7 +66,7 @@ impl RunHistory {
 
 /// The name the app lists the report file `report` by, if it is in `reports`: its file name
 /// without `.toml`.
-fn listed_name(reports: &Path, report: &Path) -> Option<ReportName> {
+pub(super) fn listed_name(reports: &Path, report: &Path) -> Option<ReportName> {
     let folder = report.parent()?.canonicalize().ok()?;
     if folder != reports.canonicalize().ok()? || report.extension()? != "toml" {
         return None;

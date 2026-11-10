@@ -49,7 +49,7 @@ pub use history::{
     CombineCaps, CombineMetrics, DEFAULT_RUNS_KEPT, History, HistoryEntry, HistoryError,
     HistoryExportError, HistoryFile, HistoryOutcome, HistoryQuery, HistorySource,
     HistorySourceKind, NamedCell, OutputMetrics, ReplacedCell, ReportRun, RowChange, RowChangeKind,
-    RunError, RunOrigin, RunOutcome, RunProfile, SourceCaps, SourceMetrics, SourcePhases,
+    RunError, RunId, RunOrigin, RunOutcome, RunProfile, SourceCaps, SourceMetrics, SourcePhases,
     StepMetrics, redact_secrets,
 };
 pub use in_place::InPlaceError;

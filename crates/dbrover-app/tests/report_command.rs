@@ -752,4 +752,88 @@ mod runs {
         assert_eq!(elsewhere.status.code(), Some(0), "{}", describe(&elsewhere));
         assert_eq!(settings.runs("sales-by-category").len(), 1);
     }
+
+    /// `--profile` writes the run's profile, and `runs` and `compare` read the runs kept.
+    #[test]
+    fn writes_a_profile_lists_the_runs_kept_and_compares_two() {
+        let settings = Settings::new();
+        let profile = settings.home.path().join("profile.json");
+        let profile_arg = profile.display().to_string();
+        for _ in 0..2 {
+            let ran = settings.run(
+                &[
+                    &["sales-by-category", "--profile", profile_arg.as_str()][..],
+                    &OCTOBER,
+                ]
+                .concat(),
+            );
+            assert_eq!(ran.status.code(), Some(0), "{}", describe(&ran));
+        }
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&profile).unwrap()).unwrap();
+        assert_eq!(written["format"], 1);
+        assert_eq!(written["outcome"], "finished");
+        assert_eq!(written["machine"]["dbrover"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(written["steps"][0]["step"], "source");
+        assert_eq!(written["steps"][0]["engine"], "SQLite");
+        assert!(
+            written["steps"][0]["phases"]["server_ms"].is_u64(),
+            "{written}"
+        );
+        assert!(written["steps"][0]["started_ms"].is_u64(), "{written}");
+        assert!(written["bottleneck"].is_string(), "{written}");
+
+        let ids: Vec<String> = settings
+            .runs("sales-by-category")
+            .iter()
+            .map(|run| run.id.unwrap().to_string())
+            .collect();
+        assert_eq!(ids.len(), 2);
+
+        let listed = settings
+            .subcommand("runs", &["sales-by-category"])
+            .output()
+            .unwrap();
+        assert_eq!(listed.status.code(), Some(0), "{}", describe(&listed));
+        let text = String::from_utf8(listed.stdout).unwrap();
+        let firsts: Vec<&str> = text
+            .lines()
+            .filter(|line| !line.starts_with(' '))
+            .map(|line| line.split_whitespace().next().unwrap_or_default())
+            .collect();
+        assert_eq!(firsts, ids, "{text}");
+        assert!(text.contains("held the run longest"), "{text}");
+
+        let json = settings
+            .subcommand("runs", &["sales-by-category", "--json"])
+            .output()
+            .unwrap();
+        let lines: Vec<serde_json::Value> = String::from_utf8(json.stdout)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0]["id"].to_string(), ids[0]);
+
+        let compared = settings
+            .subcommand("compare", &["sales-by-category", &ids[1], &ids[0]])
+            .output()
+            .unwrap();
+        assert_eq!(compared.status.code(), Some(0), "{}", describe(&compared));
+        let text = String::from_utf8(compared.stdout).unwrap();
+        assert!(text.contains("Both ran the same report file."), "{text}");
+        assert!(text.contains("Source "), "{text}");
+
+        let unknown = settings
+            .subcommand("compare", &["sales-by-category", &ids[0], "999999"])
+            .output()
+            .unwrap();
+        assert_eq!(unknown.status.code(), Some(3), "{}", describe(&unknown));
+        assert!(
+            String::from_utf8(unknown.stderr)
+                .unwrap()
+                .contains("keeps no run 999999"),
+        );
+    }
 }

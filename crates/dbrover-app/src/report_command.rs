@@ -10,6 +10,7 @@
 mod args;
 pub(crate) mod history;
 mod human;
+mod kept;
 pub(crate) mod list;
 mod outcome;
 mod printer;
@@ -24,7 +25,7 @@ use std::time::Instant;
 
 use dbrover_engine::WorkerRun;
 use dbrover_report::{Plan, RunEvent, RunFailure, RunRequest, Step, TimedEvent, TypedValues};
-use dbrover_store::{AppPaths, ReportSettings, RunOrigin, SettingsFile};
+use dbrover_store::{AppPaths, ReportName, ReportSettings, RunOrigin, SettingsFile};
 use tracing_appender::non_blocking::WorkerGuard;
 
 pub use args::Request;
@@ -33,7 +34,7 @@ use self::args::{ListArgs, ReportArg, RunArgs, USAGE};
 use self::history::RunHistory;
 use self::outcome::Outcome;
 use self::stopping::Stopping;
-use crate::reports::{self, ProcessLauncher};
+use crate::reports::{self, ProcessLauncher, RunRecord};
 use crate::{report_worker, telemetry, version};
 
 /// Does what `request` asks, and returns the process's exit code.
@@ -49,6 +50,8 @@ pub fn main(request: Request) -> i32 {
         }
         Request::Run(args) => run(&args).code(),
         Request::List(args) => list(&args).code(),
+        Request::Runs(args) => kept::runs(&args).code(),
+        Request::Compare(args) => kept::compare(&args).code(),
     }
 }
 
@@ -115,17 +118,49 @@ fn run(args: &RunArgs) -> Outcome {
         prepared.runs_kept,
         RunOrigin::Command,
     );
+    // The run as the history keeps it, for `--profile`, whether or not the history keeps it.
+    let mut profiled = args
+        .profile
+        .as_ref()
+        .map(|_| RunRecord::new(args.values.clone()));
     let outcome = run_worker(&paths, &prepared, &stopping, &mut |event| {
         printer.event(event);
         if let Some(history) = &mut history {
             history.event(event);
+        }
+        if let Some(record) = &mut profiled {
+            record.apply(event.clone());
         }
     });
     tracing::info!("{} ended: {outcome:?}", report.display());
     if let Some(history) = history {
         keep(history);
     }
+    if let (Some(file), Some(record)) = (&args.profile, &profiled) {
+        write_profile(file, record, &report);
+    }
     outcome
+}
+
+/// Writes the run's profile to `file`. One that can't be written is a warning on standard
+/// error, as a run the history can't keep is.
+fn write_profile(file: &Path, record: &RunRecord, report: &Path) {
+    let name = report
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .and_then(ReportName::new);
+    let run = name.and_then(|name| record.to_report_run(&name, RunOrigin::Command));
+    let written = match run {
+        Some(run) => kept::write_profile(file, &run, report).map_err(|error| error.to_string()),
+        None => Err("the report's file has no name a report can have".to_owned()),
+    };
+    if let Err(problem) = written {
+        tracing::warn!("the run's profile isn't written: {problem}");
+        eprintln!(
+            "The run's profile isn't written to {}: {problem}",
+            file.display()
+        );
+    }
 }
 
 /// Writes the run in the history. One that can't be written is a warning on standard error,

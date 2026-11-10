@@ -26,9 +26,30 @@ pub const DEFAULT_RUNS_KEPT: NonZeroU32 = match NonZeroU32::new(20) {
     None => panic!("the runs kept must not be zero"),
 };
 
+/// A kept run's id: its row in `report_runs`, which `dbrover report compare` names it by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct RunId(pub i64);
+
+impl std::fmt::Display for RunId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::str::FromStr for RunId {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        text.parse().map(Self)
+    }
+}
+
 /// One run of a report, as it ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReportRun {
+    /// Its id once the history keeps it; `None` for a run being recorded.
+    pub id: Option<RunId>,
     pub report: ReportName,
     pub started_at: Timestamp,
     /// From asking for the run to its end.
@@ -310,7 +331,8 @@ impl History {
     /// [`HistoryError::Database`] if the query fails.
     pub fn runs(&self, report: &ReportName, limit: usize) -> Result<Vec<ReportRun>, HistoryError> {
         let mut statement = self.connection.prepare_cached(
-            "SELECT started_at, elapsed_ms, outcome, params, steps, failure, origin, version, profile
+            "SELECT started_at, elapsed_ms, outcome, params, steps, failure, origin, version, profile,
+                    id
              FROM report_runs
              WHERE report = ?1 ORDER BY started_at DESC, id DESC LIMIT ?2",
         )?;
@@ -397,6 +419,7 @@ struct StoredRun {
     origin: Option<String>,
     version: Option<String>,
     profile: Option<String>,
+    id: i64,
 }
 
 impl StoredRun {
@@ -411,11 +434,13 @@ impl StoredRun {
             origin: row.get(6)?,
             version: row.get(7)?,
             profile: row.get(8)?,
+            id: row.get(9)?,
         })
     }
 
     fn into_run(self, report: ReportName) -> Option<ReportRun> {
         Some(ReportRun {
+            id: Some(RunId(self.id)),
             report,
             started_at: self.started_at.parse().ok()?,
             elapsed: Duration::from_millis(u64::try_from(self.elapsed_ms).ok()?),
@@ -449,6 +474,7 @@ mod tests {
     /// A run of `report` started `minute` minutes into October 2026.
     fn run(report: &str, minute: i64, outcome: RunOutcome) -> ReportRun {
         ReportRun {
+            id: None,
             report: name(report),
             started_at: Timestamp::from_second(1_790_812_800 + minute * 60).unwrap(),
             elapsed: Duration::from_millis(4_250),
@@ -542,9 +568,14 @@ mod tests {
         for run in &runs {
             history.record_run(run, DEFAULT_RUNS_KEPT).unwrap();
         }
+        // Each comes back with its id, in the order it was kept.
+        let kept = |index: usize, id| ReportRun {
+            id: Some(RunId(id)),
+            ..runs[index].clone()
+        };
         let read = history.runs(&name("values"), 10).unwrap();
-        assert_eq!(read, [runs[1].clone(), runs[2].clone(), runs[0].clone()]);
-        assert_eq!(history.runs(&name("values"), 1).unwrap(), [runs[1].clone()]);
+        assert_eq!(read, [kept(1, 2), kept(2, 3), kept(0, 1)]);
+        assert_eq!(history.runs(&name("values"), 1).unwrap(), [kept(1, 2)]);
         assert!(history.runs(&name("other"), 10).unwrap().is_empty());
     }
 
