@@ -17,6 +17,8 @@ pub(crate) struct ProgressClock {
     writing: Duration,
     /// How much of the wait going on now an earlier lap already counted.
     wait_counted: Duration,
+    /// How much of the wait for the loader going on now an earlier lap already counted.
+    load_counted: Duration,
 }
 
 impl ProgressClock {
@@ -27,6 +29,7 @@ impl ProgressClock {
             loading: Duration::ZERO,
             writing: Duration::ZERO,
             wait_counted: Duration::ZERO,
+            load_counted: Duration::ZERO,
         }
     }
 
@@ -36,8 +39,10 @@ impl ProgressClock {
         self.wait_counted = Duration::ZERO;
     }
 
+    /// A wait of `time` for DuckDB to load what came before, which has ended.
     pub(crate) fn loaded(&mut self, time: Duration) {
-        self.loading += time;
+        self.loading += time.saturating_sub(self.load_counted);
+        self.load_counted = Duration::ZERO;
     }
 
     pub(crate) fn wrote(&mut self, time: Duration) {
@@ -49,10 +54,21 @@ impl ProgressClock {
         self.since.elapsed() >= PROGRESS_EVERY
     }
 
-    /// The shares of the time since the last lap, `waiting_now` being how long the wait going
-    /// on has lasted so far, and starts the next lap.
+    /// The shares of the time since the last lap, `waiting_now` being how long the wait for
+    /// the engine going on has lasted so far, and starts the next lap.
     pub(crate) fn lap(&mut self, waiting_now: Duration) -> Busy {
         self.waiting += waiting_now.saturating_sub(self.wait_counted);
+        self.end_lap(waiting_now, Duration::ZERO)
+    }
+
+    /// As [`Self::lap`], during a wait for DuckDB to load what came before, which has lasted
+    /// `loading_now` so far.
+    pub(crate) fn lap_loading(&mut self, loading_now: Duration) -> Busy {
+        self.loading += loading_now.saturating_sub(self.load_counted);
+        self.end_lap(Duration::ZERO, loading_now)
+    }
+
+    fn end_lap(&mut self, waiting_now: Duration, loading_now: Duration) -> Busy {
         let interval = self.since.elapsed();
         let busy = Busy {
             waiting_pct: percent(self.waiting, interval),
@@ -61,6 +77,7 @@ impl ProgressClock {
         };
         *self = Self {
             wait_counted: waiting_now,
+            load_counted: loading_now,
             ..Self::new()
         };
         busy

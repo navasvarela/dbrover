@@ -23,15 +23,17 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
+# `appender-arrow` appends a page of a report's source as one batch (RS3c); `arrow` and `num`,
+# which it needs, are in the build already.
 # DuckDB compiled from its C++ sources, which takes 10 to 14 minutes on CI's runners, unless the
 # build passes `--cfg dbrover_prebuilt_duckdb` in RUSTFLAGS: then libduckdb-sys links the library
 # packaging/duckdb/fetch.sh downloaded and checked. A cfg rather than a feature, because a
 # feature can only add `bundled`, never take it away. See docs/duckdb-prebuilt.md.
 [target.'cfg(not(dbrover_prebuilt_duckdb))'.dependencies]
-duckdb = { workspace = true, features = ["bundled", "parquet", "json"] }
+duckdb = { workspace = true, features = ["bundled", "parquet", "json", "appender-arrow"] }
 
 [target.'cfg(dbrover_prebuilt_duckdb)'.dependencies]
-duckdb.workspace = true
+duckdb = { workspace = true, features = ["appender-arrow"] }
 
 [dev-dependencies]
 # A token endpoint on the loopback address, for signing in to the Google Cloud Storage stand-in.

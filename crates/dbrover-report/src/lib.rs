@@ -38,6 +38,7 @@ mod statement;
 mod text;
 mod typing;
 
+pub use combine::QUEUE_PAGES;
 pub use disk::DiskBudget;
 pub use embedded::{Embedded, PrqlToken, StepLanguage, embedded_code, prql_tokens};
 pub use events::{

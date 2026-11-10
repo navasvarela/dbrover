@@ -7,7 +7,9 @@
 //!
 //! 1. [`Workspace::open`] makes the database and sets its limits;
 //! 2. [`Workspace::attach`] attaches each DuckDB file, and [`Workspace::loader`] loads each
-//!    other source: its rows a page of text at a time, then each column cast to its type;
+//!    other source: into a table of the types known before its first row, a page of text at a
+//!    time, which DuckDB casts as it appends; then each other column is given the type its
+//!    values chose (`docs/reports-at-scale.md`, RS3c);
 //! 3. [`Workspace::lock`] turns off everything outside the database and freezes the limits;
 //! 4. the combine query runs on [`Workspace::connection`], as any statement on a connection;
 //! 5. [`Workspace::profile`] says the most memory and disk the database used, as DuckDB's
@@ -21,14 +23,15 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use dbrover_core::{Cell, Connection, DriverError, DuckDbConfig, DuckDbDatabase, Row};
+use duckdb::arrow::array::{ArrayRef, StringArray};
+use duckdb::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use duckdb::arrow::record_batch::RecordBatch;
 
 use crate::errors::statement_error;
 use crate::{DuckDbConnection, connection_error, poisoned};
 
-/// The schema each source's text is appended to, before its columns are cast into a table of
-/// the source's name in `main`. Not a name a report's source can have, since those start with
-/// a letter and this one is dropped before the combine query runs.
-const LOAD_SCHEMA: &str = "dbrover_load";
+/// The schema a source's table is made in, which the combine query reads unqualified.
+const MAIN_SCHEMA: &str = "main";
 
 /// The profiler's metrics a workspace keeps, by DuckDB's names, which [`Workspace::profile`]
 /// reads. Both are the database's peaks since it opened, not the last statement's alone.
@@ -259,7 +262,6 @@ impl Workspace {
             // off, and only what `profile` reads, which DuckDB measures as it runs anyway.
             "PRAGMA enable_profiling = 'no_output'".to_owned(),
             format!("SET custom_profiling_settings = '{}'", profiling_settings()),
-            format!("CREATE SCHEMA {LOAD_SCHEMA}"),
         ];
         connection
             .run_blocking(move |connection| {
@@ -306,8 +308,9 @@ impl Workspace {
             .await
     }
 
-    /// Starts loading the table `table`, with `columns`, each of text until
-    /// [`TableLoader::finish`] gives it its type.
+    /// Starts loading the table `table`, with `columns`: those of a known type in it, which
+    /// DuckDB casts each value to as it is appended, and the others as text until
+    /// [`TableLoader::finish`] gives them theirs.
     ///
     /// # Errors
     ///
@@ -315,14 +318,22 @@ impl Workspace {
     pub async fn loader(
         &self,
         table: &str,
-        columns: &[String],
+        columns: &[LoadColumn],
     ) -> Result<TableLoader, DriverError> {
-        let loading = format!("{LOAD_SCHEMA}.{}", identifier(table));
-        let column_list: Vec<String> = columns
+        let types: Vec<DuckDbType> = columns
             .iter()
-            .map(|column| format!("{} VARCHAR", identifier(column)))
+            .map(|column| column.known.unwrap_or(DuckDbType::Varchar))
             .collect();
-        let sql = format!("CREATE TABLE {loading} ({})", column_list.join(", "));
+        let definitions: Vec<String> = columns
+            .iter()
+            .zip(&types)
+            .map(|(column, column_type)| format!("{} {column_type}", identifier(&column.name)))
+            .collect();
+        let sql = format!(
+            "CREATE TABLE {MAIN_SCHEMA}.{} ({})",
+            identifier(table),
+            definitions.join(", ")
+        );
         let own = self
             .connection
             .run_blocking(move |connection| {
@@ -332,10 +343,16 @@ impl Workspace {
                 connection.try_clone().map_err(connection_error)
             })
             .await?;
+        let fields: Vec<Field> = columns
+            .iter()
+            .map(|column| Field::new(&column.name, DataType::Utf8, true))
+            .collect();
         Ok(TableLoader {
             connection: Arc::new(Mutex::new(own)),
             table: table.to_owned(),
-            columns: columns.to_vec(),
+            columns: columns.iter().map(|column| column.name.clone()).collect(),
+            types,
+            text: Arc::new(Schema::new(fields)),
         })
     }
 
@@ -399,14 +416,11 @@ impl Workspace {
     pub async fn lock(&self) -> Result<(), DriverError> {
         self.connection
             .run_blocking(|connection| {
-                let sql = format!(
-                    "DROP SCHEMA IF EXISTS {LOAD_SCHEMA} CASCADE; \
-                     SET enable_external_access = false; \
-                     SET lock_configuration = true"
-                );
+                let sql = "SET enable_external_access = false; \
+                           SET lock_configuration = true";
                 connection
-                    .execute_batch(&sql)
-                    .map_err(|error| statement_error(error, &sql))
+                    .execute_batch(sql)
+                    .map_err(|error| statement_error(error, sql))
             })
             .await
     }
@@ -472,43 +486,74 @@ impl Workspace {
     }
 }
 
+/// A column of a table about to be loaded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadColumn {
+    pub name: String,
+    /// Its type, when known before its first value: declared in the report's file, or a type
+    /// its driver states exactly. `None` loads it as text, for its values to choose.
+    pub known: Option<DuckDbType>,
+}
+
+impl LoadColumn {
+    /// A column whose values choose its type.
+    pub fn text(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            known: None,
+        }
+    }
+}
+
 /// A table being loaded, on a connection of its own, so tables load at the same time.
 pub struct TableLoader {
     connection: Arc<Mutex<duckdb::Connection>>,
     table: String,
     columns: Vec<String>,
+    /// Each column's type in the table now.
+    types: Vec<DuckDbType>,
+    /// The page's shape as appended: every column text, which DuckDB casts to the table's.
+    text: SchemaRef,
 }
 
 impl TableLoader {
-    /// Appends `rows`, each value text, to the table.
+    /// Appends `rows`, each value text, to the table, as one batch: DuckDB casts each value to
+    /// its column's type.
     ///
     /// # Errors
     ///
-    /// [`DriverError`] if a row hasn't as many values as the table has columns, or DuckDB
-    /// runs out of memory.
+    /// [`DriverError`] if a row hasn't as many values as the table has columns, a value doesn't
+    /// cast to its column's type, or DuckDB runs out of memory.
     pub async fn append(&mut self, rows: Vec<Row>) -> Result<(), DriverError> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let batch = text_batch(&self.text, &rows)?;
         let connection = Arc::clone(&self.connection);
         let table = self.table.clone();
         tokio::task::spawn_blocking(move || {
             let connection = connection.lock().map_err(|_| poisoned())?;
             let mut appender = connection
-                .appender_to_db(&table, LOAD_SCHEMA)
+                .appender_to_db(&table, MAIN_SCHEMA)
                 .map_err(connection_error)?;
-            for row in &rows {
-                appender
-                    .append_row(duckdb::appender_params_from_iter(
-                        row.iter().map(Option::as_deref),
-                    ))
-                    .map_err(connection_error)?;
+            match appender.append_record_batch(batch) {
+                Ok(()) => appender.flush().map_err(connection_error),
+                // DuckDB says only that the batch's text didn't cast to some column's type,
+                // and appended none of it. Row by row, its error names the value.
+                Err(error) => {
+                    tracing::debug!("appending a page as one batch failed: {error}");
+                    drop(appender);
+                    append_rows(&connection, &table, &rows)
+                }
             }
-            appender.flush().map_err(connection_error)
         })
         .await
         .map_err(connection_error)?
     }
 
-    /// Makes the table, in `main`, with each column cast to its type in `types`, in the
-    /// columns' order, and drops its text.
+    /// Gives each column its type in `types`, in the columns' order: a column loaded as text
+    /// whose values chose another type is rewritten, alone; the rest of the table stays as it
+    /// was loaded.
     ///
     /// # Errors
     ///
@@ -523,24 +568,21 @@ impl TableLoader {
                 self.table
             )));
         }
-        let loading = format!("{LOAD_SCHEMA}.{}", identifier(&self.table));
-        let casts: Vec<String> = self
+        let table = format!("{MAIN_SCHEMA}.{}", identifier(&self.table));
+        let changes: Vec<String> = self
             .columns
             .iter()
-            .zip(types)
-            .map(|(column, column_type)| {
+            .zip(self.types.iter().zip(types))
+            .filter(|(_, (loaded, wanted))| loaded != wanted)
+            .map(|(column, (_, wanted))| {
                 let column = identifier(column);
-                match column_type {
-                    DuckDbType::Varchar => column,
-                    other => format!("CAST({column} AS {other}) AS {column}"),
-                }
+                format!("ALTER TABLE {table} ALTER {column} TYPE {wanted} USING CAST({column} AS {wanted})")
             })
             .collect();
-        let sql = format!(
-            "CREATE TABLE main.{} AS SELECT {} FROM {loading}; DROP TABLE {loading}",
-            identifier(&self.table),
-            casts.join(", ")
-        );
+        if changes.is_empty() {
+            return Ok(());
+        }
+        let sql = changes.join("; ");
         tokio::task::spawn_blocking(move || {
             let connection = self.connection.lock().map_err(|_| poisoned())?;
             connection
@@ -550,6 +592,44 @@ impl TableLoader {
         .await
         .map_err(connection_error)?
     }
+}
+
+/// Appends `rows` one at a time, for the error DuckDB gives of the first value that doesn't
+/// cast to its column's type.
+fn append_rows(
+    connection: &duckdb::Connection,
+    table: &str,
+    rows: &[Row],
+) -> Result<(), DriverError> {
+    let mut appender = connection
+        .appender_to_db(table, MAIN_SCHEMA)
+        .map_err(connection_error)?;
+    for row in rows {
+        appender
+            .append_row(duckdb::appender_params_from_iter(
+                row.iter().map(Option::as_deref),
+            ))
+            .map_err(connection_error)?;
+    }
+    appender.flush().map_err(connection_error)
+}
+
+/// `rows` as one batch of text columns in `schema`'s shape.
+fn text_batch(schema: &SchemaRef, rows: &[Row]) -> Result<RecordBatch, DriverError> {
+    let width = schema.fields().len();
+    if let Some(row) = rows.iter().find(|row| row.len() != width) {
+        return Err(connection_error(format!(
+            "a row of {} values for a table of {width} columns",
+            row.len()
+        )));
+    }
+    let columns: Vec<ArrayRef> = (0..width)
+        .map(|index| {
+            let values: StringArray = rows.iter().map(|row| row[index].as_deref()).collect();
+            Arc::new(values) as ArrayRef
+        })
+        .collect();
+    RecordBatch::try_new(Arc::clone(schema), columns).map_err(connection_error)
 }
 
 /// Rows asked of `EXPLAIN` at a time: it answers with one.

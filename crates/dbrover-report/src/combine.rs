@@ -15,20 +15,21 @@ use std::time::{Duration, Instant};
 
 use dbrover_core::{CancelHandle, Connection, DriverError, ResultCursor, Row, describe_error};
 use dbrover_driver_duckdb::{
-    DuckDbType, TableLoader, Workspace, WorkspaceLimit, WorkspaceLimits, WorkspaceProfile,
-    WorkspaceStore,
+    DuckDbType, LoadColumn, TableLoader, Workspace, WorkspaceLimit, WorkspaceLimits,
+    WorkspaceProfile, WorkspaceStore,
 };
 use dbrover_export::ExportColumn;
 use dbrover_language::Literal;
 use dbrover_sql::Dialect;
 use futures_util::future::try_join_all;
+use tokio::sync::mpsc;
 
 use crate::chart::ChartRun;
 use crate::declared::Shaped;
 use crate::live::{ProgressClock, waiting};
 use crate::run::{Count, Feed, Outputs, Streamed, millis, timed};
 use crate::statement::{Statements, lookup_literal};
-use crate::typing::ColumnTyper;
+use crate::typing::{ColumnTyper, DriverTypes};
 use crate::{
     AttachedSource, Batch, Busy, Chart, CombineLimits, Combined, LimitHit, LoadedColumn,
     PlannedLookup, PlannedSource, QuerySource, RunEvent, RunFailure, RunSummary, RunValues,
@@ -37,6 +38,12 @@ use crate::{
 
 /// Rows asked of the combine query at a time, as a source's are.
 const PAGE_ROWS: usize = 1_000;
+
+/// The pages a source's reader may be ahead of its loader: enough that receiving and appending
+/// overlap, few enough that a fast network never piles rows up in the worker. With the page
+/// being read and the one being appended, a source holds at most two more than this at once,
+/// which is what bounds the worker's memory outside DuckDB (`docs/reports-at-scale.md`, RS3c).
+pub const QUEUE_PAGES: usize = 4;
 
 /// How long an interrupted query gets to stop before the run gives up on it.
 const CANCEL_GRACE: Duration = Duration::from_secs(5);
@@ -384,6 +391,8 @@ struct Spent {
     connect: Duration,
     /// Each statement's start, up to its cursor; its wait for the first page is in `Count`.
     start: Duration,
+    /// Held by DuckDB: waiting for room in the queue, and for the last pages to be appended,
+    /// and reading a lookup's values. Appending itself overlaps receiving, so it isn't counted.
     load: Duration,
     typing: Duration,
 }
@@ -402,6 +411,25 @@ struct Loading<'a> {
     clock: ProgressClock,
     /// The bytes its engine scanned for every statement so far, where it says.
     scanned: Option<u64>,
+}
+
+/// Appends the pages `queued` to `table` as they come, until the reader ends; and when it was
+/// done. Stops at the first page DuckDB refuses, which closes the queue.
+async fn append_queued(
+    table: &mut Table,
+    mut queued: mpsc::Receiver<Vec<Row>>,
+) -> (Result<(), DriverError>, Instant) {
+    let mut outcome = Ok(());
+    while let Some(page) = queued.recv().await {
+        table.typer.see(&page);
+        table.count(&page);
+        if let Err(error) = table.loader.append(page).await {
+            outcome = Err(error);
+            break;
+        }
+    }
+    queued.close();
+    (outcome, Instant::now())
 }
 
 /// A source's progress: what it has read since `opened`, and what it was busy with.
@@ -462,6 +490,9 @@ impl Loading<'_> {
         filled
     }
 
+    /// Reads `reader`'s pages into the table: the reader and the loader take turns at the
+    /// source's task, joined by a queue of [`QUEUE_PAGES`], so the next page is received while
+    /// DuckDB appends the last one.
     async fn fill_from<R: SourceReader>(
         &mut self,
         reader: &mut R,
@@ -470,9 +501,31 @@ impl Loading<'_> {
         events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
     ) -> Result<(), RunFailure> {
         let mut table = self.take_table(reader.columns(), workspace, batch).await?;
+        let (pages, queued) = mpsc::channel(QUEUE_PAGES);
+        let ((read, read_ended), (appended, appended_ended)) = tokio::join!(
+            self.read_into(reader, pages, batch, events),
+            append_queued(&mut table, queued),
+        );
+        // What DuckDB still had to append once the last page was read held the source too.
+        self.spent.load += appended_ended.saturating_duration_since(read_ended);
+        self.table = Some(table);
+        // A loader that failed stopped the reader: its error is the one to tell.
+        appended.map_err(|error| self.duckdb_failure(&error))?;
+        read
+    }
+
+    /// Reads `reader`'s pages into `pages`, under the source's caps, until it has no more,
+    /// fails, or the loader stops; and when it ended.
+    async fn read_into<R: SourceReader>(
+        &mut self,
+        reader: &mut R,
+        pages: mpsc::Sender<Vec<Row>>,
+        batch: Option<Batch>,
+        events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
+    ) -> (Result<(), RunFailure>, Instant) {
         let step = self.step();
         let mut rows_seen = false;
-        loop {
+        let outcome = loop {
             let (page, waited) = waiting(reader.next_page(), |so_far| {
                 let busy = self.clock.lap(so_far);
                 (events.borrow_mut())(progress(&step, &self.read, self.opened, batch, busy));
@@ -480,8 +533,10 @@ impl Loading<'_> {
             .await;
             self.read.waited(waited, !rows_seen);
             self.clock.waited(waited);
-            let Some(page) = page.map_err(|error| error.at(self.step()))? else {
-                break;
+            let page = match page {
+                Ok(Some(page)) => page,
+                Ok(None) => break Ok(()),
+                Err(error) => break Err(error.at(step.clone())),
             };
             if page.is_empty() {
                 continue;
@@ -491,22 +546,26 @@ impl Loading<'_> {
                 .first_row
                 .get_or_insert_with(|| self.opened.elapsed());
             self.read.add(&page);
-            self.read.check(self.source)?;
-            table.typer.see(&page);
-            table.count(&page);
-            let (appended, appending) = timed(table.loader.append(page)).await;
-            self.spent.load += appending;
-            self.clock.loaded(appending);
-            if let Err(error) = appended {
-                return Err(self.duckdb_failure(&error));
+            if let Err(failure) = self.read.check(self.source) {
+                break Err(failure);
+            }
+            let (sent, room) = waiting(pages.send(page), |so_far| {
+                let busy = self.clock.lap_loading(so_far);
+                (events.borrow_mut())(progress(&step, &self.read, self.opened, batch, busy));
+            })
+            .await;
+            self.spent.load += room;
+            self.clock.loaded(room);
+            if sent.is_err() {
+                // The loader failed, and says why.
+                break Ok(());
             }
             if self.clock.due() {
                 let busy = self.clock.lap(Duration::ZERO);
                 (events.borrow_mut())(progress(&step, &self.read, self.opened, batch, busy));
             }
-        }
-        self.table = Some(table);
-        Ok(())
+        };
+        (outcome, Instant::now())
     }
 
     /// The table for `columns`: made for the first statement, whose columns a later batch's
@@ -533,11 +592,20 @@ impl Loading<'_> {
                 ),
             ));
         }
+        let drivers = DriverTypes::of(self.source.data_source.config.driver());
+        let typer = ColumnTyper::new(columns, self.source.columns.as_deref(), drivers);
+        let load_columns: Vec<LoadColumn> = names
+            .into_iter()
+            .zip(typer.known())
+            .map(|(name, known)| LoadColumn {
+                name,
+                known: *known,
+            })
+            .collect();
         let loader = workspace
-            .loader(&self.source.id, &names)
+            .loader(&self.source.id, &load_columns)
             .await
             .map_err(|error| self.duckdb_failure(&error))?;
-        let typer = ColumnTyper::new(columns, self.source.columns.as_deref());
         Ok(Table {
             loader,
             typer,
