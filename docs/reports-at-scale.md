@@ -1,6 +1,7 @@
 # Reports at scale
 
-Status: **RS1 built** (2026-11-09); **the rest planned, not scheduled.** Proposed on
+Status: **RS1 built** (2026-11-09); **RS2 started** (2026-11-10); **the rest planned, not
+scheduled.** Proposed on
 2026-11-04, to come after RP5 (PRQL) unless the order changes. Each milestone's decisions are confirmed when it starts, as in
 [Reports](reporting.md) and [Cloud and big data](cloud-data.md).
 
@@ -696,6 +697,25 @@ Where the code changes the plan, the plan above still says what it said; this se
 | DuckDB's memory from `duckdb_memory()` once a second. | The run's DuckDB has one connection, busy loading or running the combine. | Left for RS3, where the workspace on a file gets a second connection; RS1 keeps DuckDB's two peaks at the end, as RP4 did. |
 | `dbrover report compare <report> <run> <run>`. | Runs have no id outside SQLite. | A run is named by its `report_runs` row id, which the history now returns with each run and `dbrover report runs` lists. |
 | A benchmark of the text and typed paths, per engine. | Every source loads as text, then is cast; declared columns (RP3) only choose the types. | RS1g measures SQLite, DuckDB, PostgreSQL and MySQL (from the repository's Docker Compose file), each with inferred and declared columns, on data made by DuckDB's `range()`. These are the numbers RS3c's typed loading and RS6's columnar path are judged by. |
+
+## RS2 against today's code
+
+Settled on 2026-11-10, when RS2 started, by reading the plan against the code as of RS1's merge
+(0340e72). Where the code changes the plan, the plan above still says what it said; this
+section wins.
+
+| The plan said | Today's code | RS2 does |
+| --- | --- | --- |
+| DuckDB's operator tree from its profiler, through `duckdb-rs` (a risk to check). | `duckdb-rs` 1.10506 (DuckDB 1.5.6) answers `get_profiling_info()` with a tree of operators, each a map of metrics. The workspace already profiles every statement (`no_output`), but `custom_profiling_settings` names only its two peaks. | RS2b adds each operator's name, type, time, rows and extra information to those settings, and the workspace writes the tree as JSON in the shape of DuckDB's own JSON profile (its metric names in lower case). `dbrover-plan` reads that and `EXPLAIN (FORMAT JSON)` as one format, `DuckDbJson`; a workspace test pins the metrics' names. |
+| The combine's plan and the columns each scan used, in the profile. | `combine_done` carries the two peaks; a source's entry in `steps` keeps no columns. | `combine_done` carries the plan's JSON, and the combine's entry in `steps` keeps it; a source's entry keeps the columns it loaded, each with its type and the bytes received for it, which `unused-columns` weighs. No schema change: `steps` is JSON, and older versions ignore the new fields. |
+| The Profile's data funnel. | RS1c drew the timeline and the bottleneck; there is no funnel. | RS2c draws it: rows and bytes each source returned, the rows its scan passed on in the combine's plan, and the rows written. RS2f adds the bytes scanned. |
+| Explain report, in the tab and `dbrover report explain`. | A run happens in `dbrover report-worker`; the app's own process never connects for a report. | Explaining happens in the worker too: the request says `explain`, and the worker answers with one `explained` event. The tab's button and the command both start it, so the guards and the connections are a run's. |
+| Each source through W10's formats and new DuckDB and ClickHouse readers; Trino's, Athena's, BigQuery's and Snowflake's as C3 to C6 bring them. | W10 reads PostgreSQL, MySQL, MariaDB and SQL Server. C3 (Athena, Trino) and C4 (BigQuery) are built. `Dialect::plan_request` has no DuckDB or ClickHouse; BigQuery's dry run is its `estimate_cost`. | RS2d draws PostgreSQL, MySQL, MariaDB and SQL Server through W10, DuckDB through RS2b's reader and ClickHouse through a new reader of `EXPLAIN json = 1, indexes = 1`. SQLite and Trino show their `EXPLAIN` as text. BigQuery shows its dry run's bytes. Athena's `EXPLAIN` runs as a query, so it is left out with the engines that have no `EXPLAIN`, and the source says so. Readers of Trino's and Athena's `EXPLAIN (TYPE IO)` wait for a report that needs them. |
+| A lookup's source explained with the statement its last run's first batch sent. | The profile keeps no statement. | A lookup's source is explained with a list of one `NULL`, as a run sends when its lookup finds no value, and its explanation says so. |
+| The combine explained over empty tables, with the last run's row counts as DuckDB's estimates. | DuckDB estimates from a table's own rows, and an empty table has none: it takes no row counts from outside. The history keeps no source's columns. | The combine is explained over empty tables of the columns the last finished run loaded (kept since RS2c), for its plan's shape (scans, the columns read, filters, aggregates), which the plan-based hints read. Its costs aren't shown. A source no run has loaded yet stops the combine's explanation, naming it. |
+| C0's cost guard over every estimate, beside the source's limit. | `estimate_cost` answers on DynamoDB (a whole table) and BigQuery (a dry run's bytes); a run refuses what the guard holds. | Each source's explanation shows its estimate, its data source's `ask_above_bytes`, and whether a run would be refused. |
+| Bytes scanned: ClickHouse's `X-ClickHouse-Summary`; each warehouse's own as it comes. | ClickHouse sends that header before the rows: it is complete only for a result that fits its output buffer, unless `wait_end_of_query` holds the whole result on the server. C3's and C4's cursors keep each job's final statistics. | RS2f adds `ResultCursor::scanned` (none by default). Job cursors give their job's bytes (BigQuery's `totalBytesProcessed`, Athena's `DataScannedInBytes`) and Trino its last `processedBytes`. ClickHouse gives the header's `read_bytes`, marked *at least* when it read fewer rows than its `total_rows_to_read`. So RS2f covers the three warehouses that came before RS2, not only ClickHouse. |
+| Plan-based hints, among the rules in the app. | RS1e's rules are pure functions of a kept run, in the app's `reports/hints.rs`. | RS2e's three rules join them, reading the combine's plan through a pure summary in `dbrover-plan` (each scan's table, columns and filters, and whether an aggregate reads one scan with no join under it). **Explain report** lists the same hints for the explained combine. |
 
 ## Benchmark
 
