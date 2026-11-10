@@ -37,7 +37,10 @@ impl DiskBudget {
     }
 
     fn free_share(&self) -> Option<u64> {
-        self.free.map(|free| free.0 / 100 * FREE_SPACE_SHARE_PCT)
+        let free = u128::from(self.free?.0);
+        // In u128, so the share is exact and a disk's size can't overflow it.
+        let share = free * u128::from(FREE_SPACE_SHARE_PCT) / 100;
+        Some(u64::try_from(share).unwrap_or(u64::MAX))
     }
 
     /// The failure of a run whose folders came to `used` bytes, past [`Self::bytes`].
