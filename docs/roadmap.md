@@ -2351,6 +2351,19 @@ measurement.
 - **RS1 — Seeing a run:** a run profile with each step's phases and waits, a timeline, live
   throughput and the bottleneck, hints as rules with ids that a report can silence, two runs
   compared, `--progress` and `--profile` on the command line, and a benchmark of today's paths.
+  Started on 2026-11-09, in layers, one PR each; what today's code changed in the plan is in
+  [RS1 against today's code](reports-at-scale.md#rs1-against-todays-code):
+  - **RS1a — The plan:** RS1's decisions and risks against the code as of 0.31.0.
+  - **RS1b — The run profile:** a time on every event, each step's start, phases and limits,
+    the worker's peak memory, kept in `report_runs`.
+  - **RS1c — The timeline:** the tab's **Profile**, with the timeline and the bottleneck.
+  - **RS1d — Live progress:** throughput and what each step waits on, in the tab and on
+    `--progress`'s line.
+  - **RS1e — Hints as rules:** `slow-first-row`, `load-bound`, `many-batches`, `round-wait`,
+    `writer-bound` and `near-limit`, each silenced by `quiet_hints`.
+  - **RS1f — Comparing runs:** **Compare** in the tab, `--profile`, `dbrover report runs` and
+    `dbrover report compare`.
+  - **RS1g — Manual, demo note and benchmark.**
 - **RS2 — Explaining a report:** each source's plan and estimated cost before a run, the
   combine's DuckDB plan in W10's view, bytes scanned on the engines that report them, and hints
   for unused columns and filters or aggregates that belong in a source.

@@ -676,6 +676,27 @@ runs the small cases.
   **Exit:** a report built on the valuation example writes gains by wallet that equal a sum
   over the valuation's own CSV file; a cycle of two reports is a problem in both files.
 
+## RS1 against today's code
+
+Settled on 2026-11-09, when RS1 started, by reading the plan against the code as of 0.31.0.
+Where the code changes the plan, the plan above still says what it said; this section wins.
+
+| The plan said | Today's code | RS1 does |
+| --- | --- | --- |
+| Record the report file's hash with each run. | VC1e keeps the Git blob id of the text each run ran (`report_runs.version`, the `started` event's `version`). | Uses it as the file's hash. No second hash. |
+| Hint ids and `quiet_hints` (RS1e). | RP4g gave the two hints their ids and reads `[report] quiet_hints`, refusing an unknown id. | RS1e adds six ids to `HintId`; the file format doesn't change. |
+| `--progress` (RS1d), which RP6 left for later. | RP6i built it: a line of rows, bytes and seconds per running step. | RS1d adds throughput and what each step waits on to that line. |
+| The hints' rules in `dbrover-report`. | RP4's hints are computed in the app (`reports/insights.rs`) from the history's `ReportRun`, a `dbrover-store` type; `dbrover-report` and `dbrover-store` don't depend on each other. | The rules are pure functions of a kept run in the app's `reports/hints.rs`. RS8 moves them where `dbrover mcp` can call them. |
+| The profile in `report_runs`' `steps`, "so no schema change". | `steps` is a JSON array that 0.31 reads strictly: an object there would make it skip every newer run. | Each step's entry gains its start, phases and limits, which older versions ignore. The run's own numbers (the worker's peak memory, the machine's cores, DbRover's version, the run's time limit) go in a new nullable `profile` column, as VC1e added `version`: history schema 6. |
+| Timestamps on every event. | Events say how long a step took, never when it ran. | Every line the worker writes carries `at_ms`, from the worker's start, around the event as it was: readers that ignore it (MCP, scripts reading `--json`) are unchanged. |
+| A step's waits, measured by the bounded queues. | There are no queues until RS3c: a source reads a page, appends it to DuckDB, then reads the next, in one task. | RS1 measures where a step's time went: connecting, waiting on its engine for the first row, waiting for the rest, appending to DuckDB, typing its columns. "Waiting for room" comes with RS3c's queues. |
+| The combine's phases and plan. | The combine step reports its first row's time, its peaks and its total. | RS1 splits it into the query until its first row and the rows to the outputs; DuckDB's operator tree is RS2. |
+| `near-limit`, and the limits that differ between two runs. | The history keeps no limits. | The `started` event carries each source's caps, the combine's limits and the run's time limit, and the profile keeps them. |
+| The worker's peak resident memory through `getrusage`, via `rustix`. | `rustix` 1.1 has no `getrusage`; `nix` 0.31, already in the build through `russh`, has it behind its `resource` feature. | `ru_maxrss` through `nix` on Linux and macOS, sent as the run ends; unknown on Windows. The machine's memory isn't recorded: there is no portable call without a new dependency. |
+| DuckDB's memory from `duckdb_memory()` once a second. | The run's DuckDB has one connection, busy loading or running the combine. | Left for RS3, where the workspace on a file gets a second connection; RS1 keeps DuckDB's two peaks at the end, as RP4 did. |
+| `dbrover report compare <report> <run> <run>`. | Runs have no id outside SQLite. | A run is named by its `report_runs` row id, which the history now returns with each run and `dbrover report runs` lists. |
+| A benchmark of the text and typed paths, per engine. | Every source loads as text, then is cast; declared columns (RP3) only choose the types. | RS1g measures SQLite, DuckDB, PostgreSQL and MySQL (from the repository's Docker Compose file), each with inferred and declared columns, on data made by DuckDB's `range()`. These are the numbers RS3c's typed loading and RS6's columnar path are judged by. |
+
 ## Recommended path
 
 1. **RS1 and RS2 first.** They help every report that exists today, need no new dependency,
