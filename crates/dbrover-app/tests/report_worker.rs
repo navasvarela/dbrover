@@ -113,7 +113,9 @@ impl Settings {
     fn start(&self, request: &RunRequest, timeout: Duration) -> WorkerRun {
         let watch = RunWatch {
             timeout,
+            stall_timeout: timeout,
             disk: None,
+            keep_awake: None,
         };
         self.start_watched(request, watch)
     }
@@ -316,6 +318,8 @@ fn stops_a_run_past_its_disk() {
     let request = settings.request(&report);
     let watch = RunWatch {
         timeout: Duration::from_secs(120),
+        stall_timeout: Duration::from_secs(120),
+        keep_awake: None,
         disk: Some(DiskBudget {
             max_disk: ByteSize(1),
             free: None,

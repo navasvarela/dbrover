@@ -34,6 +34,8 @@ pub struct Plan {
     pub timeout: Duration,
     /// The most disk the run's folders may hold (RS3b).
     pub max_disk: ByteSize,
+    /// How long the run may go without progress (RS3e).
+    pub stall_timeout: Duration,
     pub logic: Logic,
     pub outputs: Vec<PlannedOutput>,
     /// The charts it draws, as its file lists them: a chart names nothing to look up.
@@ -49,6 +51,8 @@ struct FileLimits {
     timeout: bool,
     /// `[report] max_disk`.
     max_disk: bool,
+    /// `[report] stall_timeout`.
+    stall_timeout: bool,
     /// By source id.
     sources: BTreeMap<String, SourceLimitsSet>,
     combine: CombineLimitsSet,
@@ -61,6 +65,7 @@ impl FileLimits {
         Self {
             timeout: report.timeout.is_some(),
             max_disk: report.max_disk.is_some(),
+            stall_timeout: report.stall_timeout.is_some(),
             sources: report
                 .sources
                 .iter()
@@ -84,6 +89,7 @@ impl FileLimits {
         match (step, key) {
             (Step::Worker | Step::Report, "timeout") => Some(self.timeout),
             (Step::Worker | Step::Report, "max_disk") => Some(self.max_disk),
+            (Step::Worker | Step::Report, "stall_timeout") => Some(self.stall_timeout),
             (Step::Source { id }, _) => {
                 let set = self.sources.get(id).copied().unwrap_or_default();
                 match key {
@@ -433,6 +439,7 @@ impl Plan {
             params,
             timeout: report.timeout.unwrap_or(defaults.run_timeout),
             max_disk: report.max_disk.unwrap_or(defaults.max_disk),
+            stall_timeout: report.stall_timeout.unwrap_or(defaults.stall_timeout),
             logic,
             outputs,
             charts: report.charts,

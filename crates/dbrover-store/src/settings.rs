@@ -140,6 +140,12 @@ pub struct ReportSettings {
     /// The most disk a run's folders may hold.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_disk: Option<ByteSize>,
+    /// How long a run may go without progress before it is stopped as stuck.
+    #[serde(skip_serializing_if = "Option::is_none", with = "written_duration")]
+    pub stall_timeout: Option<Duration>,
+    /// Whether a long run keeps the machine from sleeping; `None` for yes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keep_awake: Option<bool>,
     /// Where each run's work folder goes, its DuckDB's file and what DuckDB spills, instead of
     /// the data folder's `report-runs`: a roomier disk, say.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -349,9 +355,12 @@ mod tests {
                 }),
             ),
             (
-                "[reports]\nmax_disk = \"50 GiB\"\nwork_folder = \"/Volumes/Big/runs\"\n",
+                "[reports]\nmax_disk = \"50 GiB\"\nwork_folder = \"/Volumes/Big/runs\"\n\
+                 stall_timeout = \"30m\"\nkeep_awake = false\n",
                 Some(ReportSettings {
                     max_disk: Some(ByteSize(50 << 30)),
+                    stall_timeout: Some(Duration::from_secs(30 * 60)),
+                    keep_awake: Some(false),
                     work_folder: Some(PathBuf::from("/Volumes/Big/runs")),
                     ..ReportSettings::default()
                 }),

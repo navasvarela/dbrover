@@ -2457,7 +2457,7 @@ measurement.
     source's reader and its loader.
   - **RS3d — Parquet outputs:** built; written by DuckDB's `COPY` from the run's database, the other
     outputs reading them back.
-  - **RS3e — Long runs:** `stall_timeout`, and keeping the machine awake.
+  - **RS3e — Long runs:** built; `stall_timeout`, and keeping the machine awake.
   - **RS3f — Manual and demo note,** the benchmark again on the typed path, and the exit test.
 - **RS4 — Partitions:** a source read in ranges of time or key, some at once, and a run
   combined and written one range at a time.

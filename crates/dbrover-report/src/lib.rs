@@ -56,8 +56,8 @@ pub use hints::{HintId, UnknownHint};
 pub use limits::{
     ByteSize, CombineLimits, CombineLimitsSet, DEFAULT_COMBINE_TIMEOUT, DEFAULT_MAX_BYTES,
     DEFAULT_MAX_DISK, DEFAULT_MAX_ROWS, DEFAULT_MAX_SIZE, DEFAULT_MAX_TEMP_SIZE,
-    DEFAULT_MEMORY_LIMIT, DEFAULT_RUN_TIMEOUT, DEFAULT_SOURCE_TIMEOUT, LimitDefaults, OutputLimits,
-    OutputLimitsSet, SourceLimits, SourceLimitsSet,
+    DEFAULT_MEMORY_LIMIT, DEFAULT_RUN_TIMEOUT, DEFAULT_SOURCE_TIMEOUT, DEFAULT_STALL_TIMEOUT,
+    LimitDefaults, OutputLimits, OutputLimitsSet, SourceLimits, SourceLimitsSet,
 };
 pub use plan::{
     AttachedSource, Combined, Logic, OutputFormat, Plan, PlannedCombine, PlannedLookup,

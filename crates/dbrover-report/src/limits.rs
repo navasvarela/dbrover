@@ -23,6 +23,10 @@ pub const DEFAULT_SOURCE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub const DEFAULT_MAX_SIZE: ByteSize = ByteSize(1 << 30);
 /// How long a whole run may take before the app stops the worker.
 pub const DEFAULT_RUN_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// How long a run may go without progress, no row, batch or work in DuckDB, before it is
+/// stopped as stuck: as long as a source's statement may take by default, so a run whose
+/// source waits on its engine that long fails at the source's own limit first.
+pub const DEFAULT_STALL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// The most disk a run's work folder and staging folder may hold together: twice what DuckDB
 /// may spill by default, which leaves room for the run's database file and its files.
 pub const DEFAULT_MAX_DISK: ByteSize = ByteSize(20 << 30);
@@ -47,10 +51,17 @@ pub struct LimitDefaults {
     /// The most disk a run may use.
     #[serde(default = "default_max_disk")]
     pub max_disk: ByteSize,
+    /// How long a run may go without progress.
+    #[serde(default = "default_stall_timeout")]
+    pub stall_timeout: Duration,
 }
 
 fn default_max_disk() -> ByteSize {
     DEFAULT_MAX_DISK
+}
+
+fn default_stall_timeout() -> Duration {
+    DEFAULT_STALL_TIMEOUT
 }
 
 impl Default for LimitDefaults {
@@ -61,6 +72,7 @@ impl Default for LimitDefaults {
             output: OutputLimits::default(),
             run_timeout: DEFAULT_RUN_TIMEOUT,
             max_disk: DEFAULT_MAX_DISK,
+            stall_timeout: DEFAULT_STALL_TIMEOUT,
         }
     }
 }

@@ -223,7 +223,7 @@ pub(crate) fn prepare(
         memory_limit: None,
         explain: None,
     };
-    let watch = reports::run_watch(&plan, work_root);
+    let watch = reports::run_watch(&plan, &settings, work_root);
     Ok(Prepared {
         plan,
         request,
@@ -279,7 +279,7 @@ pub(crate) fn start_worker(paths: &AppPaths, prepared: &Prepared) -> io::Result<
     };
     let mut command = launcher.command();
     in_own_process_group(&mut command);
-    WorkerRun::start(command, &prepared.request, prepared.watch, || {})
+    WorkerRun::start(command, &prepared.request, prepared.watch.clone(), || {})
 }
 
 /// On Unix, the worker gets a process group of its own, so a Ctrl-C in the terminal reaches

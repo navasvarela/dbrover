@@ -37,7 +37,7 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
         eprintln!("{error:#}");
     }
     let started = Instant::now();
-    let mut out = Events::new(io::stdout().lock(), started);
+    let mut out = Events::new(io::stdout().lock(), started).measuring(limits::processor_time_ms);
     // Kept to say, of a limit the run stops at, whether the file or Settings set it.
     let mut planned: Option<Plan> = None;
     let outcome = read_request()
@@ -108,11 +108,25 @@ pub(crate) struct Events<W: Write> {
     out: W,
     /// When the run started, which each event's time counts from.
     started: Instant,
+    /// The processor time the process has used, which each event says (RS3e).
+    processor_time: fn() -> Option<u64>,
 }
 
 impl<W: Write> Events<W> {
     pub(crate) fn new(out: W, started: Instant) -> Self {
-        Self { out, started }
+        Self {
+            out,
+            started,
+            processor_time: || None,
+        }
+    }
+
+    /// These events, each saying the processor time `processor_time` reads when it is sent.
+    pub(crate) fn measuring(self, processor_time: fn() -> Option<u64>) -> Self {
+        Self {
+            processor_time,
+            ..self
+        }
     }
 
     /// Writes `event`, sent now.
@@ -121,7 +135,9 @@ impl<W: Write> Events<W> {
     ///
     /// As [`Self::forward`].
     pub(crate) fn send(&mut self, event: &RunEvent) -> io::Result<()> {
-        self.forward(&event.clone().at(self.started.elapsed()))
+        let mut timed = event.clone().at(self.started.elapsed());
+        timed.cpu_ms = (self.processor_time)();
+        self.forward(&timed)
     }
 
     /// Writes `event` with the time it already has, as the worker that sent it wrote it.

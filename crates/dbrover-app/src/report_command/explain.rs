@@ -17,8 +17,8 @@ use super::outcome::Outcome;
 use super::stopping::Stopping;
 use super::{prepare, report_path, run_worker, start_logging};
 use crate::report_worker;
-use crate::reports::explanation;
 use crate::reports::hints::Hint;
+use crate::reports::{self, explanation};
 
 /// The runs read to find the newest finished one: enough to pass the failed and cancelled runs
 /// a report gathers while its author works on it.
@@ -49,8 +49,7 @@ pub fn explain(args: &ExplainArgs) -> Outcome {
     prepared.request.explain = Some(ExplainRequest {
         tables: explanation::known_tables(&runs),
     });
-    // Explaining writes no file: only its time is watched, as in the app.
-    prepared.watch.disk = None;
+    prepared.watch = reports::explain_watch(&prepared.plan);
     let mut explained: Option<Explanation> = None;
     let outcome = run_worker(
         &paths,

@@ -947,11 +947,12 @@ fn slow_first_row(out: &Path) -> Vec<TimedEvent> {
     let mut timed: Vec<TimedEvent> = script
         .into_iter()
         .zip(at)
-        .map(|(event, at_ms)| TimedEvent { at_ms, event })
+        .map(|(event, at_ms)| event.at(Duration::from_millis(at_ms)))
         .collect();
     timed.extend([
         TimedEvent {
             at_ms: 4_600,
+            cpu_ms: None,
             event: RunEvent::CombineDone {
                 rows: 2,
                 bytes: 40,
@@ -965,6 +966,7 @@ fn slow_first_row(out: &Path) -> Vec<TimedEvent> {
         },
         TimedEvent {
             at_ms: 4_620,
+            cpu_ms: None,
             event: RunEvent::OutputWritten(WrittenFile {
                 path: out.join("trial-balance-2026-10.csv"),
                 rows: 2,
@@ -975,12 +977,14 @@ fn slow_first_row(out: &Path) -> Vec<TimedEvent> {
         },
         TimedEvent {
             at_ms: 4_690,
+            cpu_ms: None,
             event: RunEvent::WorkerUsage {
                 peak_memory: Some(80 << 20),
             },
         },
         TimedEvent {
             at_ms: 4_700,
+            cpu_ms: None,
             event: RunEvent::Finished { elapsed_ms: 4_700 },
         },
     ]);

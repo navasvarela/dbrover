@@ -20,6 +20,9 @@ pub struct Report {
     /// The most disk the run's work folder and staging folder may hold together, when the file
     /// says (`docs/reports-at-scale.md`, RS3b).
     pub max_disk: Option<ByteSize>,
+    /// How long the run may go without progress before the app stops it as stuck, when the
+    /// file says (RS3e).
+    pub stall_timeout: Option<Duration>,
     /// The hints its runs don't give, for a report that, say, reads more than it writes on
     /// purpose.
     pub quiet_hints: Vec<HintId>,
