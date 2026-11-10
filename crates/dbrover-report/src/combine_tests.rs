@@ -774,3 +774,68 @@ async fn explains_each_source_and_plans_the_combine_over_the_last_runs_tables() 
         "{reason}"
     );
 }
+
+/// RS3c: a source of many pages loads through the queue to its loader, every row in; and its
+/// phases still add up to no more than its time, since appending overlaps receiving and only
+/// what DuckDB held the source counts as loading.
+#[tokio::test]
+async fn loads_many_pages_through_the_queue_with_phases_that_add_up() {
+    let folder = tempfile::tempdir().unwrap();
+    let plan = report(
+        "",
+        "SELECT count(*) AS id, sum(quantity) AS quantity, 0 AS value FROM tx",
+        "",
+    );
+    let mut tx = transactions();
+    let rows = tx.pages.pop_front().unwrap();
+    tx.pages = (0..50).map(|_| rows.clone()).collect();
+    let opener = PacedOpener {
+        inner: MemoryOpener::of(vec![("tx", tx), ("prices", prices())]),
+        opening: Opening::default(),
+        first: Duration::ZERO,
+        later: Duration::from_millis(2),
+    };
+    let staging = folder.path().join(".run");
+    let work = staging.with_extension("work");
+    let folders = RunFolders {
+        folder: folder.path(),
+        staging: &staging,
+        work: &work,
+    };
+    let mut events = Vec::new();
+    run(&plan, &october(&plan), &opener, folders, &mut |event| {
+        events.push(event);
+    })
+    .await
+    .unwrap();
+    let (elapsed_ms, phases) = events
+        .iter()
+        .find_map(|event| match event {
+            RunEvent::SourceDone {
+                id,
+                elapsed_ms,
+                phases,
+                ..
+            } if id == "tx" => Some((*elapsed_ms, (*phases)?)),
+            _ => None,
+        })
+        .unwrap();
+    let added =
+        phases.connect_ms + phases.server_ms + phases.transfer_ms + phases.load_ms + phases.type_ms;
+    // Each phase is rounded down to a millisecond on its own.
+    assert!(added <= elapsed_ms + 5, "{phases:?} in {elapsed_ms} ms");
+    let preview = events
+        .iter()
+        .find_map(|event| match event {
+            RunEvent::Preview(preview) => preview.rows.first().cloned(),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(preview[0].as_deref(), Some("150"), "{preview:?}");
+    assert!(
+        preview[1]
+            .as_deref()
+            .is_some_and(|total| total.starts_with("12586.72839450617283950")),
+        "every digit of every page: {preview:?}"
+    );
+}

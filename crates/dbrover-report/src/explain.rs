@@ -17,7 +17,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use dbrover_core::describe_error;
-use dbrover_driver_duckdb::{DuckDbType, Workspace, WorkspaceLimits, WorkspaceStore};
+use dbrover_driver_duckdb::{DuckDbType, LoadColumn, Workspace, WorkspaceLimits, WorkspaceStore};
 use dbrover_language::Literal;
 use dbrover_sql::Dialect;
 use serde::{Deserialize, Serialize};
@@ -250,17 +250,15 @@ async fn plan_combine(
         }
     }
     for (id, columns) in tables {
-        let names: Vec<String> = columns.iter().map(|(name, _)| name.clone()).collect();
-        let types: Vec<DuckDbType> = columns
+        let columns: Vec<LoadColumn> = columns
             .iter()
-            .map(|(_, column_type)| *column_type)
+            .map(|(name, column_type)| LoadColumn {
+                name: name.clone(),
+                known: Some(*column_type),
+            })
             .collect();
-        let loader = workspace
-            .loader(id, &names)
-            .await
-            .map_err(|error| describe_error(&error))?;
-        loader
-            .finish(&types)
+        workspace
+            .loader(id, &columns)
             .await
             .map_err(|error| describe_error(&error))?;
     }

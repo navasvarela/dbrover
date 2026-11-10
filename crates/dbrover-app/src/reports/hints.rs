@@ -237,7 +237,8 @@ fn slow_first_row(run: &ReportRun) -> Vec<Hint> {
         .collect()
 }
 
-/// `load-bound`: a source spent most of its time in DuckDB, appending and typing its rows.
+/// `load-bound`: a source spent most of its time held by DuckDB: waiting for it to append its
+/// rows, and typing them.
 fn load_bound(run: &ReportRun) -> Vec<Hint> {
     sources(run)
         .filter_map(|source| {
@@ -249,8 +250,8 @@ fn load_bound(run: &ReportRun) -> Vec<Hint> {
                 id: HintId::LoadBound,
                 at: HintAt::Source(source.id.clone()),
                 text: format!(
-                    "Source {} spent {} of its {} loading its {} rows into DuckDB. Every row is \
-                     loaded as text, then typed: read fewer rows or columns in its query, or \
+                    "Source {} spent {} of its {} waiting for DuckDB to load its {} rows, which \
+                     its database sent faster: read fewer rows or columns in its query, or \
                      aggregate there.",
                     source.id,
                     seconds(loading),

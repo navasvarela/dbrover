@@ -2,7 +2,7 @@ use std::path::Path;
 
 use dbrover_core::{Connection, DriverError, describe_error};
 
-use crate::{DuckDbType, Workspace, WorkspaceLimit, WorkspaceLimits, WorkspaceStore};
+use crate::{DuckDbType, LoadColumn, Workspace, WorkspaceLimit, WorkspaceLimits, WorkspaceStore};
 
 const MIB: u64 = 1 << 20;
 
@@ -38,6 +38,11 @@ async fn query(
     Ok(rows)
 }
 
+/// Columns whose values choose their types.
+fn text(names: &[&str]) -> Vec<LoadColumn> {
+    names.iter().map(|name| LoadColumn::text(*name)).collect()
+}
+
 fn cells(values: &[&str]) -> Vec<Option<String>> {
     values
         .iter()
@@ -51,7 +56,24 @@ async fn loads_text_into_typed_columns_with_every_digit() {
     let mut workspace = Workspace::open(&on_file(folder.path()), &roomy(folder.path()))
         .await
         .unwrap();
-    let columns = ["id", "quantity", "booked_on", "settled"].map(str::to_owned);
+    let decimal = DuckDbType::Decimal {
+        precision: 38,
+        scale: 18,
+    };
+    // Two columns of a type known before their first value, cast as they are appended, and
+    // two typed by their values once loaded.
+    let columns = [
+        LoadColumn::text("id"),
+        LoadColumn {
+            name: "quantity".to_owned(),
+            known: Some(decimal),
+        },
+        LoadColumn::text("booked_on"),
+        LoadColumn {
+            name: "settled".to_owned(),
+            known: Some(DuckDbType::Boolean),
+        },
+    ];
     let mut loader = workspace.loader("tx", &columns).await.unwrap();
     loader
         .append(vec![
@@ -77,10 +99,7 @@ async fn loads_text_into_typed_columns_with_every_digit() {
     loader
         .finish(&[
             DuckDbType::BigInt,
-            DuckDbType::Decimal {
-                precision: 38,
-                scale: 18,
-            },
+            decimal,
             DuckDbType::Date,
             DuckDbType::Boolean,
         ])
@@ -88,6 +107,13 @@ async fn loads_text_into_typed_columns_with_every_digit() {
         .unwrap();
     workspace.lock().await.unwrap();
 
+    let types = query(
+        &mut workspace,
+        "SELECT typeof(id), typeof(booked_on), typeof(settled) FROM tx LIMIT 1",
+    )
+    .await
+    .unwrap();
+    assert_eq!(types, [cells(&["BIGINT", "DATE", "BOOLEAN"])]);
     let rows = query(
         &mut workspace,
         "SELECT typeof(quantity), quantity * 2, booked_on, settled FROM tx ORDER BY id",
@@ -117,14 +143,11 @@ async fn loads_text_into_typed_columns_with_every_digit() {
             ]),
         ]
     );
-    // The text the rows arrived as is gone once the run's query starts.
-    let schemas = query(
-        &mut workspace,
-        "SELECT schema_name FROM duckdb_schemas() WHERE schema_name = 'dbrover_load'",
-    )
-    .await
-    .unwrap();
-    assert!(schemas.is_empty(), "{schemas:?}");
+    // The table was typed in place: no copy of it, as text or otherwise, is left.
+    let tables = query(&mut workspace, "SELECT table_name FROM duckdb_tables()")
+        .await
+        .unwrap();
+    assert_eq!(tables, [cells(&["tx"])]);
     workspace.close().await;
 }
 
@@ -134,8 +157,10 @@ async fn reads_a_columns_distinct_values_in_order() {
     let workspace = Workspace::open(&on_file(folder.path()), &roomy(folder.path()))
         .await
         .unwrap();
-    let columns = ["asset", "amount"].map(str::to_owned);
-    let mut loader = workspace.loader("tx", &columns).await.unwrap();
+    let mut loader = workspace
+        .loader("tx", &text(&["asset", "amount"]))
+        .await
+        .unwrap();
     loader
         .append(vec![
             cells(&["eth", "10"]),
@@ -168,15 +193,37 @@ async fn names_the_value_that_does_not_fit_its_type() {
     let workspace = Workspace::open(&on_file(folder.path()), &roomy(folder.path()))
         .await
         .unwrap();
-    let mut loader = workspace
-        .loader("tx", &["amount".to_owned()])
-        .await
-        .unwrap();
+    let mut loader = workspace.loader("tx", &text(&["amount"])).await.unwrap();
     loader.append(vec![cells(&["twelve"])]).await.unwrap();
     let error = loader.finish(&[DuckDbType::BigInt]).await.unwrap_err();
     assert!(describe_error(&error).contains("twelve"), "{error}");
+    let known = LoadColumn {
+        name: "amount".to_owned(),
+        known: Some(DuckDbType::Decimal {
+            precision: 18,
+            scale: 2,
+        }),
+    };
+    let mut typed = workspace.loader("typed", &[known]).await.unwrap();
+    let error = typed
+        .append(vec![cells(&["1.50"]), cells(&["eleven"])])
+        .await
+        .unwrap_err();
+    let message = describe_error(&error);
+    assert!(
+        message.contains("eleven") && message.contains("DECIMAL(18,2)"),
+        "a value that doesn't fit fails as it is appended: {message}"
+    );
+    let short_row = workspace
+        .loader("short", &text(&["a", "b"]))
+        .await
+        .unwrap()
+        .append(vec![cells(&["1"])])
+        .await
+        .unwrap_err();
+    assert!(describe_error(&short_row).contains("a row of 1 values"));
     let wrong_count = workspace
-        .loader("other", &["a".to_owned()])
+        .loader("other", &text(&["a"]))
         .await
         .unwrap()
         .finish(&[])
@@ -324,10 +371,7 @@ async fn orders_and_regions(folder: &Path) -> Workspace {
         .await
         .unwrap();
     let mut orders = workspace
-        .loader(
-            "orders",
-            &["region".to_owned(), "amount".to_owned(), "note".to_owned()],
-        )
+        .loader("orders", &text(&["region", "amount", "note"]))
         .await
         .unwrap();
     let rows = (0..1000)
@@ -342,7 +386,7 @@ async fn orders_and_regions(folder: &Path) -> Workspace {
         .await
         .unwrap();
     let mut regions = workspace
-        .loader("regions", &["code".to_owned(), "name".to_owned()])
+        .loader("regions", &text(&["code", "name"]))
         .await
         .unwrap();
     regions
@@ -495,16 +539,17 @@ fn tells_the_memory_limit_from_the_temp_size() {
 }
 
 /// More rows than `memory_limit` holds, loaded as a run loads a source: on a file, DuckDB
-/// writes the table's pages out to it rather than failing or spilling.
+/// writes the table's pages out to it, and typing a column rewrites that column alone, so
+/// little is spilled.
 #[tokio::test]
 async fn keeps_tables_larger_than_its_memory_on_its_file() {
     let folder = tempfile::tempdir().unwrap();
     let store = on_file(folder.path());
-    let mut workspace = Workspace::open(&store, &limits(folder.path(), 16 * MIB, 256 * MIB))
+    let mut workspace = Workspace::open(&store, &limits(folder.path(), 16 * MIB, 4 * MIB))
         .await
         .unwrap();
     let mut loader = workspace
-        .loader("wide", &["id".to_owned(), "padding".to_owned()])
+        .loader("wide", &text(&["id", "padding"]))
         .await
         .unwrap();
     for page in 0..200 {

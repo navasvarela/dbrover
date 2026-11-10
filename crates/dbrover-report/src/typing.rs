@@ -5,8 +5,12 @@
 //! The values decide because PostgreSQL's text protocol reports no types at all, and
 //! `numeric`'s precision is per value. A column is typed after its last row is in, so one
 //! decimal with more places than the rest widens the whole column rather than failing it.
+//!
+//! A column whose type is known before its first value, declared in the file or stated
+//! exactly by its driver, is made of that type and loaded into it (RS3c); only the others are
+//! typed by their values.
 
-use dbrover_core::ValueKind;
+use dbrover_core::{DriverKind, ValueKind};
 use dbrover_driver_duckdb::DuckDbType;
 use dbrover_export::{ColumnType, ExportColumn};
 
@@ -169,24 +173,68 @@ fn has_offset(time: &str) -> bool {
     time.contains(['+', 'Z', 'z', '[']) || time.get(2..).is_some_and(|rest| rest.contains('-'))
 }
 
+/// How far a driver's column types hold before any value is seen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DriverTypes {
+    /// Every value is of its column's type, as in PostgreSQL or DuckDB.
+    Strict,
+    /// A column's type is a preference its values may ignore, as SQLite's affinities are: a
+    /// `REAL` column can hold text.
+    Affinities,
+}
+
+impl DriverTypes {
+    pub(crate) fn of(driver: DriverKind) -> Self {
+        match driver {
+            DriverKind::Sqlite => Self::Affinities,
+            _ => Self::Strict,
+        }
+    }
+}
+
 /// The types of a source's columns, worked out a page at a time as it loads.
 pub(crate) struct ColumnTyper {
     columns: Vec<(ExportColumn, Seen)>,
     /// Each column's declared type, when the source declares its columns.
     declared: Option<Vec<ColumnType>>,
+    /// Each column's type, when known before its first value; its values aren't looked at.
+    known: Vec<Option<DuckDbType>>,
 }
 
 impl ColumnTyper {
-    /// For `columns`, typed by `declared` when the source declares them, in the same order.
-    pub(crate) fn new(columns: &[ExportColumn], declared: Option<&[SourceColumn]>) -> Self {
+    /// For `columns`, typed by `declared` when the source declares them, in the same order,
+    /// else by what `drivers` says of the columns' types and by their values.
+    pub(crate) fn new(
+        columns: &[ExportColumn],
+        declared: Option<&[SourceColumn]>,
+        drivers: DriverTypes,
+    ) -> Self {
+        let declared: Option<Vec<ColumnType>> =
+            declared.map(|declared| declared.iter().map(|column| column.column_type).collect());
+        let known = match &declared {
+            Some(types) => types
+                .iter()
+                .map(|declared| known_declared(*declared))
+                .collect(),
+            None => columns
+                .iter()
+                .map(|column| known_from_driver(column, drivers))
+                .collect(),
+        };
         Self {
             columns: columns
                 .iter()
                 .map(|column| (column.clone(), Seen::Nothing))
                 .collect(),
-            declared: declared
-                .map(|declared| declared.iter().map(|column| column.column_type).collect()),
+            declared,
+            known,
         }
+    }
+
+    /// Each column's type when it is known before its first value, which its table is made
+    /// with; `None` for a column its values type.
+    pub(crate) fn known(&self) -> &[Option<DuckDbType>] {
+        &self.known
     }
 
     /// The columns' names, in their order.
@@ -201,8 +249,9 @@ impl ColumnTyper {
 
     pub(crate) fn see(&mut self, page: &[dbrover_core::Row]) {
         for row in page {
-            for ((_, seen), value) in self.columns.iter_mut().zip(row) {
-                if let Some(value) = value {
+            let columns = self.columns.iter_mut().zip(&self.known);
+            for (((_, seen), known), value) in columns.zip(row) {
+                if let (None, Some(value)) = (known, value) {
                     *seen = seen.widen(Seen::of(value));
                 }
             }
@@ -218,6 +267,9 @@ impl ColumnTyper {
             .iter()
             .enumerate()
             .map(|(index, (column, seen))| {
+                if let Some(Some(known)) = self.known.get(index) {
+                    return *known;
+                }
                 let declared = self.declared.as_ref().and_then(|types| types.get(index));
                 let chosen = match declared {
                     Some(declared) => declared_type(*declared, *seen),
@@ -265,6 +317,28 @@ fn column_type(column: &ExportColumn, seen: Seen) -> DuckDbType {
         | ValueKind::Timestamp
         | ValueKind::TimestampWithZone
         | ValueKind::Undeclared => seen.duckdb_type(),
+    }
+}
+
+/// A declared column's type before any value is seen; `None` for a `decimal` without its
+/// precision, which its values give.
+fn known_declared(declared: ColumnType) -> Option<DuckDbType> {
+    match declared {
+        ColumnType::Decimal(None) => None,
+        other => Some(declared_type(other, Seen::Nothing)),
+    }
+}
+
+/// The type a driver states exactly for `column`: a decimal with its precision, or a float,
+/// which only a float holds. Everything else, its values decide, as [`column_type`] does.
+fn known_from_driver(column: &ExportColumn, drivers: DriverTypes) -> Option<DuckDbType> {
+    if drivers == DriverTypes::Affinities {
+        return None;
+    }
+    match column.kind {
+        ValueKind::Decimal => declared_decimal(column.type_name.as_deref()),
+        ValueKind::Float => Some(DuckDbType::Double),
+        _ => None,
     }
 }
 
@@ -323,7 +397,8 @@ mod tests {
             kind,
             excel_format: None,
         };
-        let mut typer = ColumnTyper::new(std::slice::from_ref(&column), None);
+        let mut typer =
+            ColumnTyper::new(std::slice::from_ref(&column), None, DriverTypes::Affinities);
         let rows: Vec<dbrover_core::Row> = values
             .iter()
             .map(|value| vec![value.map(str::to_owned)])
@@ -434,13 +509,76 @@ mod tests {
     }
 
     #[test]
+    fn knows_a_columns_type_before_its_values_where_its_driver_or_the_file_says_it() {
+        let column = |kind, type_name: &str| ExportColumn {
+            name: "c".to_owned(),
+            type_name: Some(type_name.to_owned()),
+            kind,
+            excel_format: None,
+        };
+        let columns = [
+            column(ValueKind::Decimal, "numeric(18,2)"),
+            column(ValueKind::Decimal, "numeric"),
+            column(ValueKind::Float, "double precision"),
+            column(ValueKind::Integer, "bigint"),
+            column(ValueKind::Text, "text"),
+        ];
+        let decimal = DuckDbType::Decimal {
+            precision: 18,
+            scale: 2,
+        };
+        let strict = ColumnTyper::new(&columns, None, DriverTypes::Strict);
+        assert_eq!(
+            strict.known(),
+            [Some(decimal), None, Some(DuckDbType::Double), None, None]
+        );
+        let sqlite = ColumnTyper::new(&columns, None, DriverTypes::Affinities);
+        assert_eq!(
+            sqlite.known(),
+            [None; 5],
+            "SQLite's types are only affinities"
+        );
+
+        let declared = [
+            ("amount", ColumnType::Decimal(None)),
+            ("count", ColumnType::Integer),
+            ("day", ColumnType::Date),
+        ]
+        .map(|(name, column_type)| SourceColumn {
+            name: name.to_owned(),
+            from: name.to_owned(),
+            column_type,
+            default: None,
+        });
+        let typer = ColumnTyper::new(&columns[..3], Some(&declared), DriverTypes::Affinities);
+        assert_eq!(
+            typer.known(),
+            [None, Some(DuckDbType::BigInt), Some(DuckDbType::Date)]
+        );
+    }
+
+    #[test]
+    fn keeps_a_known_type_whatever_the_values_look_like() {
+        let column = ExportColumn {
+            name: "ratio".to_owned(),
+            type_name: Some("Float64".to_owned()),
+            kind: ValueKind::Float,
+            excel_format: None,
+        };
+        let mut typer = ColumnTyper::new(&[column], None, DriverTypes::Strict);
+        // ClickHouse's infinity, which DuckDB casts and the values' reading doesn't know.
+        typer.see(&[vec![Some("inf".to_owned())]]);
+        assert_eq!(typer.types().0, [DuckDbType::Double]);
+    }
+
+    #[test]
     fn warns_about_numbers_too_precise_for_duckdb() {
         let column = ExportColumn::text("amount");
         let undeclared = ExportColumn {
             kind: ValueKind::Undeclared,
             ..column
         };
-        let mut typer = ColumnTyper::new(&[undeclared], None);
+        let mut typer = ColumnTyper::new(&[undeclared], None, DriverTypes::Strict);
         typer.see(&[
             vec![Some("123456789012345678901.123456789012345678".to_owned())],
             vec![Some("1".to_owned())],

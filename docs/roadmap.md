@@ -2452,7 +2452,7 @@ measurement.
     `allowed_directories` checked against DuckDB 1.5.6.
   - **RS3b — A work folder:** built; the run's DuckDB on a file in a work folder of its own, `max_disk`,
     and the disk's free space.
-  - **RS3c — Typed loading:** tables made with the types known before the first row, each page
+  - **RS3c — Typed loading:** built; tables made with the types known before the first row, each page
     appended as one batch, only the other columns rewritten, and a bounded queue between a
     source's reader and its loader.
   - **RS3d — Parquet outputs:** written by DuckDB's `COPY` from the run's database, the other
