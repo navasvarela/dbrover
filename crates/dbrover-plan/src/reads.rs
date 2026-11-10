@@ -23,7 +23,32 @@ pub struct TableRead {
     pub rows: Option<f64>,
 }
 
+/// Words in the names of DuckDB's operators that aggregate, and that join.
+const AGGREGATES: [&str; 2] = ["GROUP_BY", "AGGREGATE"];
+const JOINS: &str = "JOIN";
+
 impl Plan {
+    /// The tables an aggregate reads alone: an aggregate step with one scan under it and no
+    /// join, which is where moving the aggregate into that table's own query keeps the result
+    /// the same. Each table once, in reading order.
+    pub fn tables_aggregated_alone(&self) -> Vec<String> {
+        let mut tables: Vec<String> = Vec::new();
+        let mut steps = vec![&self.root];
+        while let Some(step) = steps.pop() {
+            if is_aggregate(step) && !step.any(&|below| below.operation.contains(JOINS)) {
+                let mut reads = Vec::new();
+                add_reads(step, &mut reads);
+                if let [read] = reads.as_slice()
+                    && !tables.contains(&read.table)
+                {
+                    tables.push(read.table.clone());
+                }
+            }
+            steps.extend(step.children.iter().rev());
+        }
+        tables
+    }
+
     /// Every scan of a table, in reading order. A step is a scan when it names a table (its
     /// target) and has no step under it.
     pub fn table_reads(&self) -> Vec<TableRead> {
@@ -31,6 +56,10 @@ impl Plan {
         add_reads(&self.root, &mut reads);
         reads
     }
+}
+
+fn is_aggregate(step: &Step) -> bool {
+    AGGREGATES.iter().any(|word| step.operation.contains(word))
 }
 
 fn add_reads(step: &Step, reads: &mut Vec<TableRead>) {
@@ -101,5 +130,17 @@ mod tests {
         let reads = plan.table_reads();
         assert_eq!(reads.len(), 1);
         assert_eq!(reads[0].rows, Some(1000.0));
+        assert_eq!(plan.tables_aggregated_alone(), ["orders"]);
+    }
+
+    #[test]
+    fn doesnt_count_an_aggregate_over_a_join() {
+        let text = r#"[{"name": "HASH_GROUP_BY", "extra_info": {}, "children": [
+            {"name": "HASH_JOIN", "extra_info": {}, "children": [
+              {"name": "SEQ_SCAN", "extra_info": {"Table": "tx"}, "children": []},
+              {"name": "SEQ_SCAN", "extra_info": {"Table": "prices"}, "children": []}]}]}]"#;
+        let plan = PlanFormat::DuckDbJson.parse(text).unwrap();
+        assert_eq!(plan.table_reads().len(), 2);
+        assert!(plan.tables_aggregated_alone().is_empty());
     }
 }

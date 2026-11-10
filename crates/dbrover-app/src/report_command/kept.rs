@@ -152,7 +152,7 @@ fn listed(paths: &AppPaths, report: &ReportArg) -> Result<ReportName, Problem> {
 }
 
 /// The hints `report`'s file silences; none when it can't be read.
-fn quiet_hints(report: &Path) -> Vec<HintId> {
+pub(super) fn quiet_hints(report: &Path) -> Vec<HintId> {
     std::fs::read_to_string(report)
         .ok()
         .and_then(|text| read_report(&text).ok())
@@ -324,7 +324,7 @@ pub fn profile_json(run: &ReportRun, quiet: &[HintId]) -> Value {
     })
 }
 
-fn hint_at(at: &HintAt) -> String {
+pub(super) fn hint_at(at: &HintAt) -> String {
     match at {
         HintAt::Report => "report".to_owned(),
         HintAt::Source(id) => format!("source {id}"),

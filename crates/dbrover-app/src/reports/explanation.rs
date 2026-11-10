@@ -10,6 +10,9 @@ use dbrover_report::{
 };
 use dbrover_store::{ReportRun, RunOutcome, StepMetrics};
 
+use super::hints::Hint;
+use super::plan_hints::{SourceFacts, plan_hints};
+
 /// The tables the newest finished run of `runs` loaded, which the combine step is planned over
 /// for a source whose file declares no columns.
 pub fn known_tables(runs: &[ReportRun]) -> Vec<KnownTable> {
@@ -62,9 +65,45 @@ pub fn combine_plan(explanation: &Explanation) -> Option<Result<Plan, String>> {
     }
 }
 
+/// The hints the combine step's explained plan gives, with what the newest finished run of
+/// `runs` knows of each source: its rows, and its columns' bytes. A source no run has read
+/// gets every hint its plan shows.
+pub fn hints(explanation: &Explanation, runs: &[ReportRun]) -> Vec<Hint> {
+    let Some(Ok(plan)) = combine_plan(explanation) else {
+        return Vec::new();
+    };
+    let last = runs.iter().find(|run| run.outcome == RunOutcome::Finished);
+    let facts: Vec<SourceFacts> = explanation
+        .sources
+        .iter()
+        .map(|explained| {
+            let ran = last.and_then(|run| {
+                run.steps.iter().find_map(|step| match step {
+                    StepMetrics::Source(source) if source.id == explained.id => Some(source),
+                    _ => None,
+                })
+            });
+            SourceFacts {
+                id: explained.id.clone(),
+                rows: ran.map(|source| source.rows),
+                columns: ran
+                    .map(|source| {
+                        source
+                            .columns
+                            .iter()
+                            .map(|column| (column.name.clone(), column.bytes))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            }
+        })
+        .collect();
+    plan_hints(&plan, &facts)
+}
+
 /// The explanation as text for a person: each source's statement, its plan and its estimate,
 /// then the combine step's plan.
-pub fn text(explanation: &Explanation) -> String {
+pub fn text(explanation: &Explanation, hints: &[Hint]) -> String {
     let mut out = String::new();
     for source in &explanation.sources {
         source_text(&mut out, source);
@@ -85,6 +124,12 @@ pub fn text(explanation: &Explanation) -> String {
         }
         Some(CombineExplanation::Failed { message }) => {
             let _ = writeln!(out, "DuckDB couldn't plan the combine step: {message}");
+        }
+    }
+    if !hints.is_empty() {
+        out.push_str("\nHints:\n");
+        for hint in hints {
+            let _ = writeln!(out, "  {} ({})", hint.text, hint.id);
         }
     }
     out
@@ -227,7 +272,7 @@ mod tests {
             }),
         };
         assert_eq!(
-            text(&explanation),
+            text(&explanation, &[]),
             "Source events on warehouse:\n    SELECT * FROM events\n  Not explained: BigQuery \
              has no EXPLAIN.\n  Cost: This scans 2.0 GB, billed whatever it returns.\n  Its \
              data source asks above 1.0 GB: a run would refuse this source.\n\nThe combine \

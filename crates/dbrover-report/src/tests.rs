@@ -956,8 +956,8 @@ fn names_every_problem_with_several_sources() {
         (
             VALUATION.replace("[report]\n", "[report]\nquiet_hints = [\"spills\"]\n"),
             "[report]: quiet_hints: \"spills\" isn't a hint's id; the ids are source-reads-more, \
-             combine-spilled, slow-first-row, load-bound, many-batches, round-wait, writer-bound \
-             and near-limit",
+             combine-spilled, slow-first-row, load-bound, many-batches, round-wait, writer-bound, \
+             near-limit, unused-columns, filter-one-source and aggregate-one-source",
         ),
         (
             VALUATION.replace(
