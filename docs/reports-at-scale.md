@@ -1,6 +1,6 @@
 # Reports at scale
 
-Status: **RS1 built** (2026-11-09); **RS2 built** (2026-11-10); **RS3 started** (2026-11-10);
+Status: **RS1 built** (2026-11-09); **RS2 built** (2026-11-10); **RS3 built** (2026-11-10);
 **the rest planned, not scheduled.** Proposed on
 2026-11-04, to come after RP5 (PRQL) unless the order changes. Each milestone's decisions are confirmed when it starts, as in
 [Reports](reporting.md) and [Cloud and big data](cloud-data.md).
@@ -752,6 +752,29 @@ the plan above still says what it said; this section wins.
 | DuckDB's memory from `duckdb_memory()` once a second, left for RS3 by RS1. | `duckdb_memory()` reads zero once a statement ends; sampling during one needs a second connection on a busy database. | Left out: the profile keeps DuckDB's peaks and the worker's, which the exit test needs. Sampling waits for a view that would show it. |
 | A work folder kept after a failed run past `resumable_above`, and its manifest. | — | RS5. RS3's work folder is always removed. |
 
+As built, five more facts of DuckDB 1.5.6, each pinned by a test:
+
+- A transaction's new rows stay in memory, spilled to the temporary folder, until it commits:
+  RP2's `CREATE TABLE … AS SELECT` of a large source, and a table loaded in one transaction,
+  counted against `max_temp_size` on a file workspace. Loading commits each page, which DuckDB
+  writes to the file, and `ALTER … TYPE` rewrites one column; a workspace test loads a table
+  four times its `memory_limit` under a 4 MiB spill limit.
+- Appending an Arrow batch of text into typed columns casts it, but a value that doesn't cast
+  fails the whole batch with *type mismatch in AppendDataChunk*, naming no value. The loader
+  then appends that page row by row, whose error names it.
+- A database on a file is its own catalog, named after the file: the profiler's tables read
+  `workspace.main.orders` rather than `memory.main.orders`, which the plan's readers drop.
+- `COPY (query) TO` takes the combine query's bound parameters (`$1`) as the query does, and
+  answers with the rows it wrote, which the driver reads as a change's count.
+- `allowed_directories` holds DuckDB's own spill folder as well as the one set.
+- DuckDB's buffer pool passes `memory_limit` at its peak, while a source loads: it allocates
+  before it writes pages out. On a workspace on a file loading 50 million rows its own peak
+  measure read 0.95 GB under a limit of 512 MiB, 2.0 GiB under 1 GiB and 1.2 GiB under 2 GiB,
+  while its use between statements stayed at the limit; a workspace in memory reached 2 GiB
+  under 1 GiB with 30 million rows. So the memory bound counts DuckDB at twice
+  `memory_limit`: 2 × `memory_limit` + the queues + the worker's own, which the exit test
+  measures as the peak of the same report over 1,000 rows (about 70 MB).
+
 ## Benchmark
 
 RS1g's baseline, the numbers RS3c's typed loading and RS6's columnar sources are judged by.
@@ -799,6 +822,71 @@ What it says:
   bytes: the Profile tells the two apart.
 - **DuckDB's memory** peaked at under 1 GB for 10 million rows of about 40 bytes each, inside the
   2 GiB default `memory_limit`, with no spill.
+
+### RS3's typed path
+
+RS3f ran the same benchmark again on 2026-11-10, on the same machine and servers, with RS3c's
+typed loading: tables made with the types known before the first row, a page appended as one
+Arrow batch, only the other columns rewritten, and the reader a few pages ahead of the loader.
+The workspace is now a file in the run's work folder (RS3b). 10,000,000 rows, in seconds:
+
+| Engine | Columns | Rows | Run (s) | Source (s) | Until first row | Receiving | Loading | Typing | Combine (s) | Rows a second | DuckDB peak | Run before |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| DuckDB | inferred | 10,000,000 | 8.31 | 8.28 | 0.01 | 4.16 | 3.66 | 0.42 | 0.01 | 1,208,313 | 536 MB | 12.48 |
+| DuckDB | declared | 10,000,000 | 8.67 | 8.66 | 0.00 | 8.39 | 0.23 | 0.00 | 0.01 | 1,155,134 | 92 MB | 16.32 |
+| SQLite | inferred | 10,000,000 | 9.12 | 9.10 | 0.00 | 7.21 | 1.28 | 0.58 | 0.01 | 1,098,538 | 704 MB | 14.65 |
+| SQLite | declared | 10,000,000 | 10.84 | 10.82 | 0.00 | 10.60 | 0.19 | 0.00 | 0.01 | 924,129 | 227 MB | 18.47 |
+| PostgreSQL | inferred | 10,000,000 | 10.42 | 10.40 | 0.70 | 2.01 | 7.05 | 0.61 | 0.01 | 961,723 | 721 MB | 11.40 |
+| PostgreSQL | declared | 10,000,000 | 7.70 | 7.68 | 0.34 | 6.60 | 0.71 | 0.00 | 0.01 | 1,302,252 | 89 MB | 15.57 |
+| MySQL | inferred | 10,000,000 | 9.64 | 9.62 | 0.28 | 3.38 | 5.34 | 0.57 | 0.01 | 1,039,609 | 722 MB | 11.60 |
+| MySQL | declared | 10,000,000 | 8.55 | 8.53 | 0.09 | 7.89 | 0.52 | 0.00 | 0.01 | 1,172,470 | 262 MB | 15.53 |
+
+*Loading* is now what DuckDB held the source (RS3c): the reader waiting for room in the queue,
+and for the last pages to be appended, not the appending itself, which overlaps *receiving*. So
+the two columns can't be added up against RS1g's: the run's time is what to compare.
+
+What it says:
+
+- **Every run is faster,** by 9% (PostgreSQL inferred) to 51% (PostgreSQL declared): the
+  appender no longer holds the reader up, and DuckDB casts a typed page faster than it stores
+  its text.
+- **Declared columns turned from a cost into a saving,** as RS1g hoped: 4 seconds slower than
+  inferred before, they are now as fast or faster, since every column is typed before its first
+  row and nothing is rewritten after the last (*typing* 0.00). DuckDB's peak falls from about
+  980 MB to 90 to 260 MB, with no second copy of the table.
+- **Inferred columns** still load the columns their values type as text, and rewrite them at
+  the end (0.4 to 0.6 s for two of four columns, `id` and `ts`, against 0.14 s for RS1g's
+  in-memory copy of all four, on a file now). On PostgreSQL the source sends faster than DuckDB
+  takes text, so *loading* dominates: declaring its columns halves the run.
+- **The engines' own time** is unchanged; *receiving* now holds the declared columns' check in
+  Rust (RS1g), which the queue overlaps with appending.
+
+RS6's columnar path is judged against these rows a second.
+
+### RS3's exit test
+
+`crates/dbrover-app/tests/report_at_scale.rs`, an ignored test run by hand, sends a report to
+the real worker as the app does: two sources of 50,000,000 generated rows each, on an in-memory
+DuckDB data source, joined on their ids and sorted, under a `memory_limit` of 1 GiB, written as
+Parquet by `COPY`, with `max_disk = "40 GiB"`. Measured on 2026-11-10, in a debug build of
+DbRover (DuckDB is the prebuilt release library either way):
+
+| What | Measured | Bound |
+| --- | ---: | ---: |
+| Rows loaded | 100,000,000 (two sources of 50,000,000) | — |
+| Loading both sources, at once | 660 s | — |
+| The combine step: join, sort and `COPY` to Parquet | 4.7 s, 50,000,000 rows | — |
+| The Parquet file | 192 MB | `max_size` 20 GiB |
+| DuckDB spilled | 4.1 GiB | `max_temp_size` 30 GiB |
+| The run's folders at most (work folder and staging, sampled twice a second) | 5.3 GiB | `max_disk` 40 GiB |
+| DuckDB's own peak | 2.0 GiB | `memory_limit` 1 GiB |
+| The worker's peak resident memory | 1.73 GiB | 2.07 GiB: 2 × `memory_limit`, the queues' 2 MB, the worker's own 70 MB |
+
+The load is the text path of a debug build, at about 75,000 rows a second for each source;
+the benchmark above is the release build's. The combine step went past its `memory_limit`, as
+it was meant to, and spilled; DuckDB's own peak passed the limit while the sources loaded, as
+the as-built notes under [RS3 against today's code](#rs3-against-todays-code) say, which is why
+the bound counts DuckDB at twice it. The run's work folder was gone after it.
 
 ## Recommended path
 

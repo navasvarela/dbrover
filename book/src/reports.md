@@ -211,7 +211,7 @@ use an index.* Each has an id, and a threshold below which it says nothing:
 | `source-reads-more` | A source read at least 10,000 rows, and ten times what the outputs write. | Filter in the source's query. A report that adds rows up reads more than it writes on purpose, so this is a question to check, not a fault. |
 | `combine-spilled` | The combine step held something on disk, past its `memory_limit`. | A larger `memory_limit` in `[combine]`, or fewer rows from the sources. A step that spills still finishes, but disk is slower than memory, and `max_temp_size` stops it once it spills too much. |
 | `slow-first-row` | A source of at least 5 seconds spent 80% of them or more before its first row. | Its database is doing the work: explain the query in a console and look for an index. |
-| `load-bound` | A source of at least 5 seconds spent half of them or more loading into DuckDB. | Read fewer rows or columns, or aggregate in the source's query. |
+| `load-bound` | A source of at least 5 seconds spent half of them or more waiting for DuckDB to load its rows, which its database sent faster. | Read fewer rows or columns, or aggregate in the source's query. |
 | `many-batches` | A lookup sent 50 statements or more. | A larger `batch_size`, or read the table whole and join it in the combine step. |
 | `round-wait` | A source waited 30 seconds or more after the source its lookup reads, for the rest of that round. | A round starts when the round before ends, so a slow source there holds every source after it. |
 | `writer-bound` | An output's writer took at least 5 seconds and half the run or more. | Excel is the slowest format to write; a CSV of the same rows is faster. |
@@ -371,6 +371,8 @@ columns = "same"
 | `description` | A sentence under the name. |
 | `params` | Each parameter and its type, as `{ since = "date", until = "date" }`. |
 | `timeout` | How long a whole run may take, as `"30m"` or `"1h"`. 30 minutes unless you say. |
+| `stall_timeout` | How long a run may go without progress before it is stopped as stuck: no row, no batch, no work in DuckDB. 10 minutes unless you say. See [Long runs](#long-runs). |
+| `max_disk` | The most disk a run may use for its DuckDB, what DuckDB spills and its files being written, as `"50 GiB"`. 20 GiB unless you say. See [Limits](#limits). |
 | `quiet_hints` | The ids of the hints its runs don't give, as `["source-reads-more"]` (see [Runs](#runs)). |
 
 A parameter's type is `text`, `integer`, `decimal`, `boolean`, `date` or `timestamp`. A date is
@@ -419,8 +421,8 @@ See [Several sources](#several-sources).
 
 | Key | What it is |
 | --- | --- |
-| `format` | `"xlsx"` or `"csv"`, with that format's options beside it, as `exports.toml` names them: `sheet_name`, `header`, `freeze_header` and `autofilter` for Excel; `separator`, `quoting`, `header`, `null_text`, `line_ending` and `bom` for CSV. |
-| `preset` | Instead of `format`: a CSV or Excel preset of yours in `exports.toml`, by its id, with its options (see [Your own export formats](export-formats.md)). |
+| `format` | `"xlsx"`, `"csv"` or `"parquet"`, with that format's options beside it, as `exports.toml` names them: `sheet_name`, `header`, `freeze_header` and `autofilter` for Excel; `separator`, `quoting`, `header`, `null_text`, `line_ending` and `bom` for CSV; `compression` (`"zstd"` or `"snappy"`) for Parquet, which needs a `[combine]` step (see [Parquet files](#parquet-files)). |
+| `preset` | Instead of `format`: a CSV, Excel or Parquet preset of yours in `exports.toml`, by its id, with its options (see [Your own export formats](export-formats.md)). |
 | `file` | The file's name. `{since}` puts a parameter's value in it, and `{since:%Y-%m}` formats a date or timestamp parameter. |
 | `columns` | The columns it writes, below. Without it, every column of the query, as it comes; with `"same"`, the first output's. |
 | `max_size` | The most data it may write, as `"1 GiB"`. 1 GiB unless you say. |
@@ -625,6 +627,7 @@ numbered, under a combine step's error, and `--json`'s `started` event has it as
 
 Each loaded column gets a type, shown in the tab when you fold out the source:
 
+- **The type you declare** in the source's `columns` (see [Declared columns](#declared-columns)).
 - **The data source's type,** where it says more than the values: a `decimal(18,2)` stays
   `DECIMAL(18,2)`, a float stays `DOUBLE`, and a text column stays text, so codes such as `0042`
   or `1000` keep their form. Text whose every value is a date or a time, as SQLite keeps them,
@@ -636,6 +639,14 @@ Each loaded column gets a type, shown in the tab when you fold out the source:
 
 A number of more than 38 digits, which no DuckDB `DECIMAL` holds, loads as text, and the tab
 warns about its column; cast it in the combine query to what it should be.
+
+A column whose type is known before its first row (declared, or a data source's decimal with
+its precision, or a float on any engine but SQLite, whose types are only preferences) is made
+with that type, and DuckDB converts each value as it loads: a value that doesn't fit stops the
+run there, naming it. Only the other columns load as text first, and only those whose values
+choose another type are rewritten once their last row is in, so a large source is written into
+DuckDB once, not twice. While DuckDB loads one page of a source, the next page is already being
+read, a few pages ahead at most.
 
 ### Exact numbers in DuckDB
 
@@ -650,6 +661,32 @@ digits:
 
 The outputs then round each value once, as their column's type says: `battery-flows.toml`'s Excel file
 writes values as `decimal(38,2)`, and its CSV file every digit.
+
+### Parquet files
+
+A report with a `[combine]` step can write Parquet, the typed, compressed file that DuckDB,
+pandas, Polars and Spark read:
+
+```toml
+[[output]]
+format = "parquet"
+file = "ledger-{since:%Y}.parquet"
+compression = "zstd"
+```
+
+DuckDB writes it itself, straight from the combine query, in parallel, so a result of hundreds
+of millions of rows never passes through DbRover. Its columns are the combine query's, as
+DuckDB types them, so a Parquet output has no `columns`: name and cast them in the query
+instead (`CAST(amount AS DECIMAL(18,2)) AS amount`). `compression` is `"zstd"`, smaller and the
+default, or `"snappy"`, for tools that read only that. `max_size` holds the file's size.
+
+The combine query runs once: a CSV or Excel output, the preview and the charts of the same
+report read their rows back from the Parquet file. A report without `[combine]` can't write
+Parquet; give it one, as `query = "SELECT * FROM sales"`.
+
+A run that writes Parquet lets DuckDB write files in the run's staging folder in the output
+folder, besides its own spill folder, and nowhere else: a combine query can't read or write any
+other file on your disk.
 
 ## Lookups
 
@@ -748,7 +785,7 @@ consoles and their transactions carry on. The limits, cheapest first:
 | The combine step | DuckDB's memory, threads and spilled data; its time | `memory_limit`, `threads`, `max_temp_size`, `timeout` in `[combine]` |
 | Each output | its data; Excel's rows a sheet | `max_size`, `continue_on_new_sheet` in `[[output]]` |
 | Each chart | its kind's rows (250 bars, 50,000 points) and eight series; its `query`, the combine step's limits | `limit` in `[[chart]]`, or fewer rows from the query |
-| The run | its time | `timeout` in `[report]` |
+| The run | its time; its time without progress; its disk | `timeout`, `stall_timeout`, `max_disk` in `[report]` |
 | The process | a lower priority; on Linux, half the machine's memory and the run's time on each processor thread | — |
 
 A limit a report's file doesn't set has a default for every report, in **Settings › Reports**:
@@ -764,6 +801,10 @@ A limit a report's file doesn't set has a default for every report, in **Setting
 | The combine query's time limit | `timeout` in `[combine]` | 10 minutes |
 | Values an output may write | `max_size` | 1 GiB |
 | A whole run's time limit | `timeout` in `[report]` | 30 minutes |
+| A run without progress for | `stall_timeout` in `[report]` | 10 minutes |
+| Keep the computer awake | — | on, during runs past two minutes |
+| Disk a run may use | `max_disk` in `[report]` | 20 GiB |
+| Work folder | — | `report-runs` in DbRover's data folder |
 
 Each is a menu of a few values around DbRover's own. They are saved in `settings.toml`'s
 `[reports]`, written as a report file writes them, so you can set any value there by hand:
@@ -776,13 +817,58 @@ runs_kept = 50
 ```
 
 The keys there are `max_rows`, `max_bytes`, `source_timeout`, `memory_limit`, `max_temp_size`,
-`threads`, `combine_timeout`, `max_size`, `run_timeout` and `runs_kept`. A run uses the defaults
-in force when you click **Run**.
+`threads`, `combine_timeout`, `max_size`, `run_timeout`, `stall_timeout`, `keep_awake`,
+`max_disk`, `work_folder` and `runs_kept`. A run uses the defaults in force when you click
+**Run**.
 
-DuckDB spills what doesn't fit in its `memory_limit` to a folder inside the output folder, which
-goes with the run. On macOS and Windows, which don't cap a process's memory, `memory_limit` is
-what keeps a large combine step from filling your machine's memory: lower it on a small
-machine, raise it for a report that combines millions of rows.
+### Memory and disk
+
+A report with a `[combine]` step keeps its DuckDB on disk, as a file in a work folder of the
+run's own, so the sources' tables can be far larger than `memory_limit`: DuckDB keeps in memory
+what the query needs and reads the rest from the file. What a sort or a join can't hold in
+memory spills beside it, up to `max_temp_size`. The work folder is in `report-runs` in DbRover's
+data folder, or the **Work folder** you choose in Settings › Reports (a roomier disk, say), and
+it is removed when the run ends, however it ends. Files are written in a folder inside the
+output folder, and renamed into place once every one is complete.
+
+`max_disk` bounds all of that together: the run's DuckDB, what it spills and its files being
+written. When the run starts, DbRover reads the free space of the work folder's disk, and the
+run may use `max_disk` or 90% of that free space, whichever is less, so it never fills your
+disk. Past it, the run stops, and says whether `max_disk` or the disk was the bound. DbRover
+can't read a disk's free space on Windows, where `max_disk` alone bounds a run.
+
+On macOS and Windows, which don't cap a process's memory, `memory_limit` is what keeps a large
+combine step from filling your machine's memory: lower it on a small machine, raise it for a
+report that combines millions of rows. DuckDB may go past `memory_limit` for a moment while it
+loads a large source, up to about twice it, before it writes pages out to its file; outside
+DuckDB, a run holds only a few pages of each source it is reading. So a run takes at most about
+twice its `memory_limit`: set it to half the memory you can give a report.
+
+### Long runs
+
+A run longer than a few minutes isn't stuck just because it is slow, so beside its `timeout`
+(the most a whole run may take) a run has a `stall_timeout`: the most it may go without
+progress. Progress is a row or a batch from a source, a step starting or ending, a file
+written, or DuckDB at work, loading, sorting or joining, even without a row to show. A run that
+waits on its database for longer than that before the first row is stopped as stuck, so a
+warehouse query that takes long to start needs a longer `stall_timeout`, as well as its
+source's `timeout`. On Windows, where DbRover can't see DuckDB at work, only a run that stops
+reporting anything is stuck.
+
+For a long report, raise `timeout` and keep `stall_timeout` short:
+
+```toml
+[report]
+name = "Ledger, the whole year"
+timeout = "3h"
+stall_timeout = "15m"
+max_disk = "100 GiB"
+```
+
+While a run goes on past two minutes, DbRover keeps the computer from going to sleep: on macOS
+with `caffeinate`, and on Linux, where it has systemd, with `systemd-inhibit`. Both are the
+system's own, need no administrator, and let go the moment the run ends. A laptop whose lid is
+closed may still sleep. **Keep the computer awake** in Settings › Reports turns it off.
 
 A run stopped by a limit names it, its value, and who set it: the report's file, as "It stopped
 at max_rows = 100,000 rows, set in the `[[source]]` "sales" of the report's file. To allow more,
@@ -972,8 +1058,8 @@ settings folder is wrong.
 Ctrl-C and SIGTERM stop the run cleanly. A command killed outright, by SIGKILL or a CI runner's
 hard stop, can't: on Linux its worker dies with it, and elsewhere the worker stops at its next
 event, about a second later, once it finds nobody reading them. Either way, a file it was
-writing stays in a hidden `.dbrover-report-…` folder inside the output folder on Linux, and is
-removed elsewhere.
+writing stays in a hidden `.dbrover-report-…` folder inside the output folder on Linux, and its
+DuckDB in a `dbrover-report-…` folder in `report-runs`; elsewhere both are removed.
 
 ### Passwords
 
