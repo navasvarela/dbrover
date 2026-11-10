@@ -153,6 +153,7 @@ pub fn read_with_places(text: &str) -> Result<Report, Vec<ReportProblem>> {
             params: header.params,
             timeout: header.timeout,
             max_disk: header.max_disk,
+            stall_timeout: header.stall_timeout,
             quiet_hints: header.quiet_hints,
             sources,
             combine,
@@ -235,11 +236,13 @@ struct Header {
     params: Vec<Param>,
     timeout: Option<Duration>,
     max_disk: Option<ByteSize>,
+    stall_timeout: Option<Duration>,
     quiet_hints: Vec<HintId>,
 }
 
 /// The keys `[report]` has, for the problem of one it hasn't.
-const REPORT_KEYS: &str = "name, description, params, timeout, max_disk and quiet_hints";
+const REPORT_KEYS: &str =
+    "name, description, params, timeout, stall_timeout, max_disk and quiet_hints";
 
 fn read_header(table: toml::Table, problems: &mut Vec<ReportProblem>) -> Option<Header> {
     let mut fields = Fields::new(table);
@@ -253,6 +256,7 @@ fn read_header(table: toml::Table, problems: &mut Vec<ReportProblem>) -> Option<
     let params = fields.table("params").map(Option::unwrap_or_default);
     let timeout = fields.duration("timeout");
     let max_disk = fields.byte_size("max_disk");
+    let stall_timeout = fields.duration("stall_timeout");
     let quiet_hints = read_quiet_hints(fields.take("quiet_hints"));
     for (key, place) in MISPLACED_REPORT_KEYS {
         if fields.take(key).is_some() {
@@ -266,6 +270,7 @@ fn read_header(table: toml::Table, problems: &mut Vec<ReportProblem>) -> Option<
     let params = kept(params, &mut found);
     let timeout = kept(timeout, &mut found);
     let max_disk = kept(max_disk, &mut found);
+    let stall_timeout = kept(stall_timeout, &mut found);
     let quiet_hints = quiet_hints
         .map_err(|quiet| {
             found.extend(
@@ -282,6 +287,7 @@ fn read_header(table: toml::Table, problems: &mut Vec<ReportProblem>) -> Option<
         params: params?,
         timeout: timeout?,
         max_disk: max_disk?,
+        stall_timeout: stall_timeout?,
         quiet_hints: quiet_hints?,
     })
 }

@@ -6,7 +6,9 @@
 //! - the worker's standard output, one event a line, until it closes, then the exit status;
 //! - its standard error, a log line at a time, into the app's log;
 //! - a watchdog that wakes each second until the run ends, and kills the worker at the run's
-//!   time limit, or once its folders hold more than its disk budget (RS3b).
+//!   time limit, once its folders hold more than its disk budget (RS3b), or once it has gone
+//!   without progress for its stall timeout (RS3e); a run that goes on long enough, it keeps
+//!   the machine awake for (RS3e).
 //!
 //! Threads rather than tasks: the worker is a child process, whose pipes and exit status are
 //! blocking std calls, and a run ties up nothing of the engine's runtime.
@@ -22,6 +24,8 @@ use std::time::{Duration, Instant};
 
 use dbrover_report::{DiskBudget, LimitHit, RunEvent, RunFailure, RunRequest, Step, TimedEvent};
 
+use crate::keep_awake::KeepAwake;
+use crate::report_activity::Activity;
 use crate::report_disk::folder_size;
 
 /// Windows' `BELOW_NORMAL_PRIORITY_CLASS`: a report gives way to the app and everything else
@@ -50,6 +54,8 @@ enum Stop {
     TimedOut = 2,
     /// Its folders held more than its disk budget.
     OutOfDisk = 3,
+    /// It went without progress for its stall timeout.
+    Stalled = 4,
 }
 
 impl Stop {
@@ -58,25 +64,32 @@ impl Stop {
             1 => Self::Cancelled,
             2 => Self::TimedOut,
             3 => Self::OutOfDisk,
+            4 => Self::Stalled,
             _ => Self::No,
         }
     }
 }
 
 /// What the app watches a run for, and stops it at.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunWatch {
     /// The whole run's time limit.
     pub timeout: Duration,
+    /// How long the run may go without progress (`report_activity`).
+    pub stall_timeout: Duration,
     /// What the run's work folder and staging folder may hold together; `None` watches no
     /// disk, as when explaining a report, which writes no file.
     pub disk: Option<DiskBudget>,
+    /// What keeps the machine awake during a long run; `None` lets it sleep.
+    pub keep_awake: Option<KeepAwake>,
 }
 
-/// What the watchdog needs of a run: its limits, the folders it writes, and how to stop it.
+/// What the watchdog needs of a run: its limits, the folders it writes, its progress, and how
+/// to stop it.
 struct Watched {
     watch: RunWatch,
     folders: [PathBuf; 2],
+    activity: Arc<Mutex<Activity>>,
     child: Arc<Mutex<Child>>,
     stop: Arc<AtomicU8>,
     /// What the folders held when the watchdog stopped the run for its disk.
@@ -142,12 +155,14 @@ impl WorkerRun {
         let (watchdog, stopped) = mpsc::channel();
         let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(wake);
         let disk_used = Arc::new(AtomicU64::new(0));
+        let activity = Arc::new(Mutex::new(Activity::new(started)));
         spawn_log_reader(stderr, Arc::clone(&log));
         spawn_watchdog(
             stopped,
             Watched {
-                watch,
+                watch: watch.clone(),
                 folders: [request.work.clone(), request.staging.clone()],
+                activity: Arc::clone(&activity),
                 child: Arc::clone(&child),
                 stop: Arc::clone(&stop),
                 disk_used: Arc::clone(&disk_used),
@@ -155,6 +170,8 @@ impl WorkerRun {
             started,
         );
         let reader = OutputReader {
+            activity,
+            run_ended: watchdog.clone(),
             folders: [request.staging.clone(), request.work.clone()],
             child: Arc::clone(&child),
             stop: Arc::clone(&stop),
@@ -260,20 +277,25 @@ fn spawn_log_reader(stderr: ChildStderr, log: Arc<Mutex<Vec<String>>>) {
     }
 }
 
-/// Looks at the run every [`WATCH_EVERY`] until `stopped` says it ended, and kills the worker
-/// at the first limit it passes.
+/// Looks at the run every [`WATCH_EVERY`] until `stopped` says it ended, kills the worker at
+/// the first limit it passes, and keeps the machine awake once the run has gone on long enough.
 fn spawn_watchdog(stopped: Receiver<()>, watched: Watched, started: Instant) {
     let watch = move || {
-        loop {
-            match stopped.recv_timeout(WATCH_EVERY) {
-                Err(RecvTimeoutError::Timeout) => {}
-                Ok(()) | Err(RecvTimeoutError::Disconnected) => return,
-            }
-            if let Some(stop) = watched.passed(started.elapsed()) {
+        let mut awake = KeptAwake::default();
+        // Until the run ends, or the run that started the watchdog is gone.
+        while let Err(RecvTimeoutError::Timeout) = stopped.recv_timeout(WATCH_EVERY) {
+            let elapsed = started.elapsed();
+            if let Some(stop) = watched.passed(elapsed) {
                 watched.stop(stop);
-                return;
+                break;
+            }
+            if let Some(keep_awake) = &watched.watch.keep_awake
+                && elapsed >= keep_awake.after
+            {
+                awake.start(keep_awake, &watched.child);
             }
         }
+        awake.stop();
     };
     if let Err(error) = thread::Builder::new()
         .name("report-worker-watchdog".to_owned())
@@ -283,11 +305,52 @@ fn spawn_watchdog(stopped: Receiver<()>, watched: Watched, started: Instant) {
     }
 }
 
+/// The program keeping the machine awake for a run, once started.
+#[derive(Default)]
+struct KeptAwake {
+    started: bool,
+    program: Option<Child>,
+}
+
+impl KeptAwake {
+    /// Starts `keep_awake` on the worker, the first time only.
+    fn start(&mut self, keep_awake: &KeepAwake, worker: &Mutex<Child>) {
+        if std::mem::replace(&mut self.started, true) {
+            return;
+        }
+        let pid = worker.lock().unwrap_or_else(PoisonError::into_inner).id();
+        match keep_awake.command(pid).spawn() {
+            Ok(program) => {
+                tracing::info!("keeping the machine awake while the report runs");
+                self.program = Some(program);
+            }
+            Err(error) => tracing::warn!("could not keep the machine awake: {error}"),
+        }
+    }
+
+    /// Ends the program, which would end with the worker anyway.
+    fn stop(self) {
+        if let Some(mut program) = self.program {
+            // One that has ended already can't be killed, which is what was wanted.
+            let _ = program.kill();
+            let _ = program.wait();
+        }
+    }
+}
+
 impl Watched {
     /// The limit the run has passed after `elapsed`, if it has.
     fn passed(&self, elapsed: Duration) -> Option<Stop> {
         if elapsed >= self.watch.timeout {
             return Some(Stop::TimedOut);
+        }
+        let idle = self
+            .activity
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .idle(Instant::now());
+        if idle >= self.watch.stall_timeout {
+            return Some(Stop::Stalled);
         }
         let budget = self.watch.disk?;
         let used: u64 = self.folders.iter().map(|folder| folder_size(folder)).sum();
@@ -315,6 +378,11 @@ impl Watched {
 /// Reads the worker's events until it exits, then says how the run ended if the worker
 /// didn't.
 struct OutputReader {
+    /// The run's last progress, which each event may move on.
+    activity: Arc<Mutex<Activity>>,
+    /// Tells the watchdog the worker has exited, so it stops watching, and lets the machine
+    /// sleep again, even while the run's events are still being read.
+    run_ended: Sender<()>,
     /// The run's staging folder and work folder, which a worker that ended without saying so
     /// may have left.
     folders: [PathBuf; 2],
@@ -337,6 +405,10 @@ impl OutputReader {
             match serde_json::from_str::<TimedEvent>(&line) {
                 Ok(timed) => {
                     ended |= timed.event.ends_run();
+                    self.activity
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .observe(&timed, Instant::now());
                     self.send(timed);
                 }
                 Err(error) => {
@@ -348,6 +420,8 @@ impl OutputReader {
         }
         // Standard output closed: the worker is exiting, or was killed.
         let status = self.wait();
+        // The watchdog may have left already, which is all this asks.
+        let _ = self.run_ended.send(());
         if ended {
             return;
         }
@@ -355,6 +429,7 @@ impl OutputReader {
         let event = match Stop::from_u8(self.stop.load(Ordering::SeqCst)) {
             Stop::Cancelled => RunEvent::Cancelled,
             Stop::TimedOut => RunEvent::Failed(timed_out(self.watch.timeout)),
+            Stop::Stalled => RunEvent::Failed(stalled(self.watch.stall_timeout)),
             Stop::OutOfDisk => {
                 let used = self.disk_used.load(Ordering::SeqCst);
                 match self.watch.disk {
@@ -413,10 +488,7 @@ impl OutputReader {
 }
 
 fn timed_out(timeout: Duration) -> RunFailure {
-    let value = match jiff::SignedDuration::try_from(timeout) {
-        Ok(duration) => format!("{duration:#}"),
-        Err(_) => format!("{}s", timeout.as_secs()),
-    };
+    let value = friendly(timeout);
     RunFailure::at_limit(
         Step::Worker,
         format!("the run passed its time limit of {value} and was stopped"),
@@ -427,6 +499,32 @@ fn timed_out(timeout: Duration) -> RunFailure {
             set_in: None,
         },
     )
+}
+
+fn stalled(stall_timeout: Duration) -> RunFailure {
+    let value = friendly(stall_timeout);
+    RunFailure::at_limit(
+        Step::Worker,
+        format!(
+            "the run went {value} without a row, a batch or work in DuckDB, its stall_timeout, \
+             and was stopped as stuck; a source that waits on its engine longer before its \
+             first row needs stall_timeout raised with its timeout"
+        ),
+        LimitHit {
+            key: "stall_timeout".to_owned(),
+            value,
+            raise_in: "[report]".to_owned(),
+            set_in: None,
+        },
+    )
+}
+
+/// `10m`, `1h 30m`, as a report file writes a duration.
+fn friendly(duration: Duration) -> String {
+    match jiff::SignedDuration::try_from(duration) {
+        Ok(duration) => format!("{duration:#}"),
+        Err(_) => format!("{}s", duration.as_secs()),
+    }
 }
 
 /// Why a worker that ended without saying so stopped, with the last thing it logged.
@@ -461,5 +559,109 @@ fn describe_exit(status: ExitStatus) -> String {
     match status.code() {
         Some(code) => format!("the worker stopped with exit code {code} without saying why"),
         None => "the worker stopped without saying why".to_owned(),
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::path::Path;
+
+    use dbrover_report::{LimitDefaults, RunRequest};
+
+    use super::*;
+
+    fn request(folder: &Path) -> RunRequest {
+        RunRequest {
+            report: folder.join("report.toml"),
+            values: Default::default(),
+            folder: folder.to_owned(),
+            staging: folder.join(".run"),
+            work: folder.join("work"),
+            defaults: LimitDefaults::default(),
+            memory_limit: None,
+            explain: None,
+        }
+    }
+
+    /// A stand-in for the worker: a shell running `script`, which reads no request.
+    fn stand_in(script: &str) -> Command {
+        let mut command = Command::new("sh");
+        command.args(["-c", script]);
+        command
+    }
+
+    fn watch(stall_timeout: Duration) -> RunWatch {
+        RunWatch {
+            timeout: Duration::from_secs(60),
+            stall_timeout,
+            disk: None,
+            keep_awake: None,
+        }
+    }
+
+    fn last_event(run: &WorkerRun) -> Option<RunEvent> {
+        let mut last = None;
+        while let Some(timed) = run.wait_next() {
+            last = Some(timed.event);
+        }
+        last
+    }
+
+    #[test]
+    fn stops_a_worker_that_sends_nothing_for_its_stall_timeout() {
+        let folder = tempfile::tempdir().unwrap();
+        let started = Instant::now();
+        let run = WorkerRun::start(
+            stand_in("sleep 30"),
+            &request(folder.path()),
+            watch(Duration::from_secs(1)),
+            || {},
+        )
+        .unwrap();
+        let Some(RunEvent::Failed(failure)) = last_event(&run) else {
+            panic!("the run should fail");
+        };
+        assert_eq!(
+            failure.limit.as_ref().map(|limit| limit.key.as_str()),
+            Some("stall_timeout"),
+            "{failure:?}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn keeps_the_machine_awake_with_its_program_until_the_worker_ends() {
+        let folder = tempfile::tempdir().unwrap();
+        let pids = folder.path().join("pids");
+        // Writes the worker's pid as it was given, and its own, then waits far longer than the
+        // run: the watchdog must end it.
+        let script = format!("echo {{pid}} $$ > '{}'; exec sleep 30", pids.display());
+        let mut watched = watch(Duration::from_secs(60));
+        watched.keep_awake = Some(KeepAwake::with_program(
+            Duration::ZERO,
+            "sh",
+            ["-c", script.as_str()],
+        ));
+        let run =
+            WorkerRun::start(stand_in("sleep 3"), &request(folder.path()), watched, || {}).unwrap();
+        let worker = run.child.lock().unwrap().id();
+        assert!(matches!(last_event(&run), Some(RunEvent::Failed(_))));
+        let written = std::fs::read_to_string(&pids).unwrap();
+        let mut written = written.split_whitespace();
+        assert_eq!(written.next(), Some(worker.to_string().as_str()));
+        let program = written.next().unwrap().to_owned();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while is_running(&program) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(50));
+        }
+        assert!(!is_running(&program), "the program ends with the run");
+    }
+
+    fn is_running(pid: &str) -> bool {
+        Command::new("kill")
+            .args(["-0", pid])
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
     }
 }

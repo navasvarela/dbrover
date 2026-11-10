@@ -20,6 +20,11 @@ pub struct TimedEvent {
     /// makes (a cancelled run, a worker that died), by the app's clock from starting it.
     #[serde(default)]
     pub at_ms: u64,
+    /// The processor time the worker had used when it sent the event, its threads' together, in
+    /// milliseconds (RS3e): what tells a busy DuckDB from a stuck run. `None` where the system
+    /// doesn't say (Windows), for an event the app's side makes, and from an older worker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_ms: Option<u64>,
     #[serde(flatten)]
     pub event: RunEvent,
 }
@@ -162,6 +167,7 @@ impl RunEvent {
         TimedEvent {
             at_ms: u64::try_from(at.as_millis()).unwrap_or(u64::MAX),
             event: self,
+            cpu_ms: None,
         }
     }
 }

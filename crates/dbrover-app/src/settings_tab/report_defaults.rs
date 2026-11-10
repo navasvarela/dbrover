@@ -51,13 +51,15 @@ pub enum ReportDefault {
     CombineTimeout,
     MaxSize,
     RunTimeout,
+    StallTimeout,
+    KeepAwake,
     MaxDisk,
     WorkFolder,
     RunsKept,
 }
 
 impl ReportDefault {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 14] = [
         Self::MaxRows,
         Self::MaxBytes,
         Self::SourceTimeout,
@@ -67,6 +69,8 @@ impl ReportDefault {
         Self::CombineTimeout,
         Self::MaxSize,
         Self::RunTimeout,
+        Self::StallTimeout,
+        Self::KeepAwake,
         Self::MaxDisk,
         Self::WorkFolder,
         Self::RunsKept,
@@ -81,6 +85,8 @@ impl ReportDefault {
             }
             Self::MaxSize
             | Self::RunTimeout
+            | Self::StallTimeout
+            | Self::KeepAwake
             | Self::MaxDisk
             | Self::WorkFolder
             | Self::RunsKept => "Outputs and runs",
@@ -98,6 +104,8 @@ impl ReportDefault {
             Self::CombineTimeout => "The combine query's time limit",
             Self::MaxSize => "Values an output may write",
             Self::RunTimeout => "A whole run's time limit",
+            Self::StallTimeout => "A run without progress for",
+            Self::KeepAwake => "Keep the computer awake",
             Self::MaxDisk => "Disk a run may use",
             Self::WorkFolder => "Work folder",
             Self::RunsKept => "Runs kept per report",
@@ -116,6 +124,11 @@ impl ReportDefault {
             Self::CombineTimeout => "timeout in [combine] overrides it.",
             Self::MaxSize => "An output's max_size overrides it.",
             Self::RunTimeout => "timeout in [report] overrides it.",
+            Self::StallTimeout => {
+                "Is stopped as stuck: no row, batch or work in DuckDB. stall_timeout in [report] \
+                 overrides it."
+            }
+            Self::KeepAwake => "While a run goes on past two minutes, on macOS and Linux.",
             Self::MaxDisk => {
                 "Its DuckDB's file, what it spills and its files being written; max_disk in \
                  [report] overrides it."
@@ -140,6 +153,8 @@ impl ReportDefault {
             Self::CombineTimeout => "combine_timeout",
             Self::MaxSize => "max_size",
             Self::RunTimeout => "run_timeout",
+            Self::StallTimeout => "stall_timeout",
+            Self::KeepAwake => "keep_awake",
             Self::MaxDisk => "max_disk",
             Self::WorkFolder => "work_folder",
             Self::RunsKept => "runs_kept",
@@ -211,6 +226,16 @@ impl ReportDefault {
                 &[10 * MINUTE, 30 * MINUTE, HOUR, 2 * HOUR, 4 * HOUR].map(Duration::from_secs),
                 duration,
             ),
+            Self::StallTimeout => {
+                time_choice(ui, id, &mut settings.stall_timeout, constants.stall_timeout);
+            }
+            Self::KeepAwake => {
+                let mut on = settings.keep_awake.unwrap_or(true);
+                if ui.checkbox(&mut on, "During long runs").changed() {
+                    // Unset is the default, on.
+                    settings.keep_awake = (!on).then_some(false);
+                }
+            }
             Self::MaxDisk => choice(
                 ui,
                 id,

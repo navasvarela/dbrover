@@ -249,6 +249,7 @@ mod tests {
                 Setting::Report(ReportDefault::SourceTimeout),
                 Setting::Report(ReportDefault::CombineTimeout),
                 Setting::Report(ReportDefault::RunTimeout),
+                Setting::Report(ReportDefault::StallTimeout),
                 Setting::McpDefaults
             ]
         );

@@ -102,6 +102,24 @@ pub fn peak_memory() -> Option<u64> {
     None
 }
 
+/// The processor time the worker has used so far, its threads' together, user and system, in
+/// milliseconds; `None` where the system doesn't say (Windows) or the call fails.
+pub fn processor_time_ms() -> Option<u64> {
+    #[cfg(unix)]
+    {
+        use nix::sys::resource::{UsageWho, getrusage};
+        let usage = getrusage(UsageWho::RUSAGE_SELF).ok()?;
+        let millis = |time: nix::sys::time::TimeVal| {
+            let seconds = u64::try_from(time.tv_sec()).ok()?;
+            let micros = u64::try_from(time.tv_usec()).ok()?;
+            Some(seconds * 1000 + micros / 1000)
+        };
+        Some(millis(usage.user_time())? + millis(usage.system_time())?)
+    }
+    #[cfg(not(unix))]
+    None
+}
+
 /// Lowers the soft limit of `resource` to `value`, keeping the hard limit, so nothing the
 /// worker inherited is raised.
 #[cfg(target_os = "linux")]

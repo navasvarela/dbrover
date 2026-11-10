@@ -32,7 +32,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use dbrover_core::{BlobId, DataSource};
-use dbrover_engine::{Command, Event, ReportSaveFailure, ReportText, RunWatch, WatchedFile};
+use dbrover_engine::{
+    Command, Event, KeepAwake, ReportSaveFailure, ReportText, RunWatch, WatchedFile,
+};
 use dbrover_export::CustomFormat;
 use dbrover_report::{
     Batch, Busy, CombineCaps, CombineLimits, ExplainRequest, Explanation, LimitDefaults,
@@ -93,15 +95,17 @@ pub fn limit_defaults(settings: &ReportSettings) -> LimitDefaults {
         },
         run_timeout: settings.run_timeout.unwrap_or(constants.run_timeout),
         max_disk: settings.max_disk.unwrap_or(constants.max_disk),
+        stall_timeout: settings.stall_timeout.unwrap_or(constants.stall_timeout),
     }
 }
 
-/// What a run takes from Settings › Reports: the limits' defaults, and where its work folder
-/// goes, when not in the data folder.
+/// What a run takes from Settings › Reports: the limits' defaults, where its work folder
+/// goes, when not in the data folder, and what keeps the machine awake during a long run.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunSettings {
     pub defaults: LimitDefaults,
     pub work_folder: Option<PathBuf>,
+    pub keep_awake: Option<KeepAwake>,
 }
 
 impl RunSettings {
@@ -109,6 +113,11 @@ impl RunSettings {
         Self {
             defaults: limit_defaults(settings),
             work_folder: settings.work_folder.clone(),
+            keep_awake: settings
+                .keep_awake
+                .unwrap_or(true)
+                .then(KeepAwake::system)
+                .flatten(),
         }
     }
 
@@ -124,8 +133,9 @@ pub fn work_folder(root: &Path) -> PathBuf {
 }
 
 /// What the app watches a run of `plan` for, its work folder going in `work_root`: its time
-/// limit, and the disk it may use, read from that disk's free space now.
-pub fn run_watch(plan: &Plan, work_root: &Path) -> RunWatch {
+/// limits, the disk it may use, read from that disk's free space now, and what keeps the
+/// machine awake.
+pub fn run_watch(plan: &Plan, settings: &RunSettings, work_root: &Path) -> RunWatch {
     // The free space is read where the work folder will be; the worker reports a folder it
     // can't make.
     if let Err(error) = std::fs::create_dir_all(work_root) {
@@ -133,7 +143,20 @@ pub fn run_watch(plan: &Plan, work_root: &Path) -> RunWatch {
     }
     RunWatch {
         timeout: plan.timeout,
+        stall_timeout: plan.stall_timeout,
         disk: Some(dbrover_engine::disk_budget(work_root, plan.max_disk)),
+        keep_awake: settings.keep_awake.clone(),
+    }
+}
+
+/// What the app watches a report being explained for: its time limits only, since it writes
+/// no file and doesn't run for long.
+pub fn explain_watch(plan: &Plan) -> RunWatch {
+    RunWatch {
+        timeout: plan.timeout,
+        stall_timeout: plan.stall_timeout,
+        disk: None,
+        keep_awake: None,
     }
 }
 
@@ -607,7 +630,7 @@ impl RunRecord {
 
     /// Takes in the run's next event.
     pub fn apply(&mut self, timed: TimedEvent) {
-        let TimedEvent { at_ms, event } = timed;
+        let TimedEvent { at_ms, event, .. } = timed;
         self.measure(&event, at_ms);
         match event {
             RunEvent::Started {
@@ -1084,7 +1107,7 @@ impl Reports {
             memory_limit: None,
             explain: None,
         };
-        let watch = run_watch(plan, work_root);
+        let watch = run_watch(plan, settings, work_root);
         let started = setup.launcher.start(&request, watch, Box::new(wake));
         let mut record = RunRecord::new(values);
         match started {
@@ -1144,12 +1167,9 @@ impl Reports {
             memory_limit: None,
             explain: Some(ExplainRequest { tables }),
         };
-        // Explaining writes no file, and spills little if anything: only its time is watched.
-        let watch = RunWatch {
-            timeout: plan.timeout,
-            disk: None,
-        };
-        let started = setup.launcher.start(&request, watch, Box::new(wake));
+        let started = setup
+            .launcher
+            .start(&request, explain_watch(plan), Box::new(wake));
         let state = match started {
             Ok(run) => {
                 self.explaining = Some(Explaining {
@@ -1522,7 +1542,7 @@ mod tests {
             (1_516, RunEvent::Finished { elapsed_ms: 1_516 }),
         ];
         for (at_ms, event) in events {
-            record.apply(TimedEvent { at_ms, event });
+            record.apply(event.at(Duration::from_millis(at_ms)));
         }
         let report = ReportName::new("valuation").unwrap();
         let run = record.to_report_run(&report, RunOrigin::App).unwrap();
