@@ -15,6 +15,7 @@ use egui::{CollapsingHeader, Grid, Id, RichText, ScrollArea, TextEdit, Ui, vec2}
 
 use super::highlight::ReportHighlighter;
 use super::problems::{TextProblem, quiet_hint};
+use super::profile_view;
 use super::{
     CheckInputs, OnDisk, ReportAction, ReportFile, Reports, RunEnd, RunPanel, RunRecord, SaveError,
     StepRecord, StepState, runs_table,
@@ -929,6 +930,7 @@ fn run_panel(
         for (panel, label) in [
             (RunPanel::LastRun, "Last run"),
             (RunPanel::Preview, "Preview"),
+            (RunPanel::Profile, "Profile"),
             (RunPanel::Runs, past.as_str()),
         ] {
             if ui.selectable_label(shown == panel, label).clicked() {
@@ -948,6 +950,7 @@ fn run_panel(
                 last_run(ui, reports, name, actions);
             }
             RunPanel::Preview => preview(ui, reports, name),
+            RunPanel::Profile => profile_view::show(ui, reports, name),
             RunPanel::Runs => runs_table::show(ui, reports, name, actions),
         });
 }

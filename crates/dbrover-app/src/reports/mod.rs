@@ -12,6 +12,8 @@ mod highlight;
 mod insights;
 mod launcher;
 mod problems;
+mod profile;
+mod profile_view;
 mod rename_dialog;
 mod runs_table;
 mod tab;
@@ -211,6 +213,8 @@ pub struct ReportState {
     pub file_hidden: bool,
     /// The run panel's tab the user picked last; `None` follows the report's runs.
     pub run_panel: Option<RunPanel>,
+    /// Which of the runs listed **Profile** shows, counted from the newest.
+    pub profile_run: usize,
 }
 
 /// The run panel's tabs.
@@ -218,6 +222,7 @@ pub struct ReportState {
 pub enum RunPanel {
     LastRun,
     Preview,
+    Profile,
     Runs,
 }
 

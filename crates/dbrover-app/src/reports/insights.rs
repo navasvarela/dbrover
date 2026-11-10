@@ -96,6 +96,11 @@ pub fn own_time(run: &ReportRun, step: &StepMetrics) -> Option<u64> {
     }
 }
 
+/// `1.2 s`, as the report's tab writes a time.
+pub fn seconds(ms: u64) -> String {
+    format!("{:.1} s", ms as f64 / 1000.0)
+}
+
 /// Whether a source's rows go straight to the outputs: a run without a combine step.
 fn feeds_outputs(run: &ReportRun) -> bool {
     !run.steps
