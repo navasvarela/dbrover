@@ -7,7 +7,9 @@
 
 use std::fmt;
 
-use dbrover_store::{CombineMetrics, OutputMetrics, ReportRun, SourceMetrics, StepMetrics};
+use dbrover_store::{
+    CombineMetrics, OutputMetrics, PartMetrics, ReportRun, SourceMetrics, StepMetrics,
+};
 
 use super::insights::{StepKey, own_time, seconds};
 
@@ -95,6 +97,40 @@ pub struct Lane {
     /// A source that waited for an unrelated source of the round before: from the end of the
     /// source it reads, or the run's start, to its own start.
     pub waited: Option<(u64, u64)>,
+    /// A partitioned step's ranges, each where it ran on the lane (RS4f).
+    pub ranges: Vec<RangeSpan>,
+}
+
+/// Where one range of a partitioned step ran.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RangeSpan {
+    pub number: u64,
+    pub of: u64,
+    /// Its first value and the first past it; empty for a range whose bounds a run that
+    /// stopped never said.
+    pub from: String,
+    pub to: String,
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub rows: u64,
+}
+
+impl RangeSpan {
+    /// What hovering it says: `Range 7 of 12, 2026-07-01 to 2026-08-01: 48.0 s, 1,000 rows`.
+    pub fn describe(&self) -> String {
+        let bounds = if self.from.is_empty() {
+            String::new()
+        } else {
+            format!(", {} to {}", self.from, self.to)
+        };
+        format!(
+            "Range {} of {}{bounds}: {}, {} rows",
+            self.number,
+            self.of,
+            seconds(self.end_ms.saturating_sub(self.start_ms)),
+            dbrover_report::grouped(self.rows)
+        )
+    }
 }
 
 /// A run's steps on one time axis.
@@ -120,20 +156,47 @@ fn lane(run: &ReportRun, step: &StepMetrics) -> Option<Lane> {
     match step {
         StepMetrics::Source(source) => {
             let start = source.started_ms?;
+            let ranges = ranges(&source.parts);
+            let segments = if one_after_another(&ranges) {
+                per_range(&ranges, |start, span| {
+                    let range = SourceMetrics {
+                        elapsed_ms: span,
+                        ..source.clone()
+                    };
+                    source_segments(run, &range, start)
+                })
+            } else {
+                source_segments(run, source, start)
+            };
             Some(Lane {
                 step: key,
                 engine: source.engine.clone(),
-                segments: source_segments(run, source, start),
+                segments,
                 waited: waited(run, source, start),
+                ranges,
             })
         }
         StepMetrics::Combine(combine) => {
             let start = combine.started_ms?;
+            let ranges = ranges(&combine.parts);
+            let outputs = outputs_ms(run);
+            let segments = if one_after_another(&ranges) {
+                per_range(&ranges, |start, span| {
+                    let range = CombineMetrics {
+                        elapsed_ms: span,
+                        ..combine.clone()
+                    };
+                    combine_segments(&range, start, outputs)
+                })
+            } else {
+                combine_segments(combine, start, outputs)
+            };
             Some(Lane {
                 step: key,
                 engine: None,
-                segments: combine_segments(combine, start, outputs_ms(run)),
+                segments,
                 waited: None,
+                ranges,
             })
         }
         StepMetrics::Output(output) => Some(Lane {
@@ -141,9 +204,49 @@ fn lane(run: &ReportRun, step: &StepMetrics) -> Option<Lane> {
             engine: None,
             segments: output_segments(output)?,
             waited: None,
+            ranges: Vec::new(),
         }),
         StepMetrics::Attached { .. } => None,
     }
+}
+
+/// Where each of `parts` ran, for those that say when they started.
+fn ranges(parts: &[PartMetrics]) -> Vec<RangeSpan> {
+    let of = parts.len() as u64;
+    parts
+        .iter()
+        .filter_map(|part| {
+            let start = part.started_ms?;
+            Some(RangeSpan {
+                number: part.number,
+                of,
+                from: part.from.clone(),
+                to: part.to.clone(),
+                start_ms: start,
+                end_ms: start + part.elapsed_ms,
+                rows: part.rows,
+            })
+        })
+        .collect()
+}
+
+/// Whether `ranges` ran one after another, as a partitioned run's or a source's read one at a
+/// time do, rather than at once.
+fn one_after_another(ranges: &[RangeSpan]) -> bool {
+    !ranges.is_empty()
+        && ranges
+            .windows(2)
+            .all(|pair| pair[1].start_ms + WAIT_SLACK_MS >= pair[0].end_ms)
+}
+
+/// A bar a range, each split as `segments` splits a step's whole bar: a range's phases aren't
+/// measured apart, so each takes its step's shares. Between ranges, a partitioned run's step
+/// waits for the other steps of the next range, and draws nothing.
+fn per_range(ranges: &[RangeSpan], segments: impl Fn(u64, u64) -> Vec<Segment>) -> Vec<Segment> {
+    ranges
+        .iter()
+        .flat_map(|range| segments(range.start_ms, range.end_ms - range.start_ms))
+        .collect()
 }
 
 /// The time every output spent in its writer.
@@ -378,16 +481,24 @@ fn critical_path(run: &ReportRun) -> Vec<&StepMetrics> {
     path
 }
 
-/// When a step ran, from the run's start.
+/// When a step ran, from the run's start: for a step of a partitioned run, from its first
+/// range's start to its last range's end.
 fn span(step: &StepMetrics) -> Option<(u64, u64)> {
+    let ends = |start: u64, elapsed_ms: u64, parts: &[PartMetrics]| {
+        let last = parts
+            .iter()
+            .filter_map(|part| Some(part.started_ms? + part.elapsed_ms))
+            .max();
+        (start, last.unwrap_or(start + elapsed_ms))
+    };
     match step {
         StepMetrics::Source(source) => {
             let start = source.started_ms?;
-            Some((start, start + source.elapsed_ms))
+            Some(ends(start, source.elapsed_ms, &source.parts))
         }
         StepMetrics::Combine(combine) => {
             let start = combine.started_ms?;
-            Some((start, start + combine.elapsed_ms))
+            Some(ends(start, combine.elapsed_ms, &combine.parts))
         }
         StepMetrics::Output(output) => Some((output.started_ms?, output.ended_ms?)),
         StepMetrics::Attached { .. } => None,
@@ -505,6 +616,75 @@ mod tests {
             profile: Default::default(),
             id: None,
         }
+    }
+
+    fn part(number: u64, started_ms: u64, elapsed_ms: u64) -> PartMetrics {
+        PartMetrics {
+            number,
+            from: format!("2026-{number:02}-01"),
+            to: format!("2026-{:02}-01", number + 1),
+            rows: 100,
+            bytes: 1_000,
+            first_row_ms: None,
+            elapsed_ms,
+            started_ms: Some(started_ms),
+            scanned_bytes: None,
+            peak_memory: None,
+            peak_temp_size: None,
+        }
+    }
+
+    #[test]
+    fn draws_a_partitioned_runs_ranges_as_bars_of_their_own() {
+        // Three months, the second six times longer; between ranges, each step waits for the
+        // other.
+        let mut events = source("events", 0, 1_600, None);
+        events.parts = vec![part(1, 0, 200), part(2, 400, 1_200), part(3, 1_800, 200)];
+        let mut combined = combine(200, 600);
+        combined.parts = vec![part(1, 200, 200), part(2, 1_600, 200), part(3, 2_000, 200)];
+        let kept = run(
+            2_200,
+            vec![StepMetrics::Source(events), StepMetrics::Combine(combined)],
+        );
+        let drawn = timeline(&kept).unwrap();
+        let source_lane = &drawn.lanes[0];
+        let spans: Vec<(u64, u64)> = source_lane
+            .ranges
+            .iter()
+            .map(|range| (range.start_ms, range.end_ms))
+            .collect();
+        assert_eq!(spans, [(0, 200), (400, 1_600), (1_800, 2_000)]);
+        assert!(
+            source_lane
+                .segments
+                .iter()
+                .all(|segment| segment.end_ms <= 200 || segment.start_ms >= 400),
+            "nothing drawn between ranges: {:?}",
+            source_lane.segments
+        );
+        assert_eq!(
+            source_lane.segments.last().map(|segment| segment.end_ms),
+            Some(2_000)
+        );
+        assert_eq!(
+            source_lane.ranges[1].describe(),
+            "Range 2 of 3, 2026-02-01 to 2026-03-01: 1.2 s, 100 rows"
+        );
+        assert_eq!(drawn.lanes[1].ranges.len(), 3);
+
+        // Read at once, a source's ranges overlap: its bar stays whole, its ranges under it.
+        let mut at_once = source("events", 0, 1_000, None);
+        at_once.parts = vec![part(1, 0, 900), part(2, 10, 950), part(3, 20, 400)];
+        let kept = run(1_000, vec![StepMetrics::Source(at_once)]);
+        let lane = &timeline(&kept).unwrap().lanes[0];
+        assert_eq!(lane.ranges.len(), 3);
+        assert_eq!(
+            (
+                lane.segments.first().map(|segment| segment.start_ms),
+                lane.segments.last().map(|segment| segment.end_ms)
+            ),
+            (Some(0), Some(1_000))
+        );
     }
 
     /// Two sources in the first round, a lookup reading the shorter one in the second, the
