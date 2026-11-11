@@ -59,6 +59,9 @@ pub enum RunEvent {
         /// Where the run runs; `None` from a worker older than RS1b.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         machine: Option<Machine>,
+        /// For a partitioned run, how it goes through its ranges (RS4d).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        partition: Option<RunPartitionStart>,
     },
     /// What a step has returned so far, about once a second.
     Progress {
@@ -202,6 +205,14 @@ pub struct SourceStart {
     /// How it reads its ranges, for a partitioned source (RS4c).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partition: Option<PartitionStart>,
+}
+
+/// How a partitioned run goes through its ranges, one at a time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunPartitionStart {
+    /// The word for one range, as `month`.
+    pub unit: String,
+    pub ranges: u64,
 }
 
 /// How a partitioned source reads its ranges.
@@ -374,6 +385,11 @@ pub struct Preview {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WrittenFile {
+    /// The output it is a file of, counted from 1 as the report's problems count them: one of
+    /// a partitioned run's outputs writes a file a range (RS4d). `None` for a chart's picture,
+    /// and from a worker older than RS4d.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<usize>,
     pub path: PathBuf,
     pub rows: u64,
     /// The file's size on disk.
@@ -575,6 +591,7 @@ mod tests {
             (
                 r#"{"event":"output_written","path":"tb.csv","rows":3,"size":40}"#,
                 RunEvent::OutputWritten(WrittenFile {
+                    output: None,
                     path: PathBuf::from("tb.csv"),
                     rows: 3,
                     size: 40,

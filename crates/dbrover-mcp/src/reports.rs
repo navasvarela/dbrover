@@ -294,6 +294,7 @@ mod tests {
                 more: false,
             }),
             RunEvent::OutputWritten(WrittenFile {
+                output: None,
                 path: PathBuf::from("/out/n.csv"),
                 rows: 3,
                 size: 8,

@@ -39,8 +39,8 @@ use dbrover_export::CustomFormat;
 use dbrover_report::{
     Batch, Busy, CombineCaps, CombineLimits, ExplainRequest, Explanation, LimitDefaults,
     LoadedColumn, OutputLimits, PartDone, Parts, Plan, Preview, Report, RunEvent, RunFailure,
-    RunRequest, SourceCaps, SourceLimits, SourcePhases, SourceStart, Step, TimedEvent, TypedValues,
-    WrittenFile, read_report,
+    RunPartitionStart, RunRequest, SourceCaps, SourceLimits, SourcePhases, SourceStart, Step,
+    TimedEvent, TypedValues, WrittenFile, read_report,
 };
 use dbrover_sql::FormatOptions;
 use dbrover_store::{
@@ -390,6 +390,8 @@ pub struct RunRecord {
     profile: RunProfile,
     /// The ranges of partitioned steps that ended, until their step does.
     parts: Vec<(Step, PartMetrics)>,
+    /// How a partitioned run goes through its ranges, as its start said.
+    run_partition: Option<RunPartitionStart>,
 }
 
 /// A source or the combine step, as far as the run has gone.
@@ -464,6 +466,7 @@ impl RunRecord {
             combine_limits: None,
             profile: RunProfile::default(),
             parts: Vec::new(),
+            run_partition: None,
         }
     }
 
@@ -529,8 +532,10 @@ impl RunRecord {
                 timeout_ms,
                 machine,
                 combine_limits,
+                partition,
                 ..
             } => {
+                self.run_partition.clone_from(partition);
                 self.combine_limits = *combine_limits;
                 self.profile.timeout_ms = *timeout_ms;
                 self.profile.cores = machine.as_ref().map(|machine| machine.cores);
@@ -578,6 +583,10 @@ impl RunRecord {
                     parts: self.take_parts(&Step::Source { id: id.clone() }),
                 })
             }
+            RunEvent::PartDone(part) if self.run_partition.is_some() => {
+                self.bound_parts(part);
+                return;
+            }
             RunEvent::PartDone(part) => {
                 self.parts.push((part.step.clone(), kept_part(part, at_ms)));
                 return;
@@ -612,10 +621,12 @@ impl RunRecord {
                         timeout_ms: limits.timeout_ms,
                     }),
                 plan: plan.clone(),
+                parts: Vec::new(),
             }),
             RunEvent::OutputWritten(file) => StepMetrics::Output(OutputMetrics {
-                // The outputs' files are put in place in the report's order.
-                number: self.files.len() + 1,
+                // The outputs' files are put in place in the report's order, a partitioned
+                // run's in the ranges' order within an output.
+                number: file.output.unwrap_or(self.files.len() + 1),
                 file: file.path.file_name().map_or_else(
                     || file.path.display().to_string(),
                     |name| name.to_string_lossy().into_owned(),
@@ -628,7 +639,73 @@ impl RunRecord {
             }),
             _ => return,
         };
-        self.measured.push(measured);
+        self.keep(measured);
+    }
+
+    /// Keeps `measured`. In a partitioned run (RS4d) every range runs the steps again: a step
+    /// done in a later range adds to what it measured in the ranges before, and each range is
+    /// kept on its own, numbered in the ranges' order.
+    fn keep(&mut self, measured: StepMetrics) {
+        if self.run_partition.is_none() {
+            self.measured.push(measured);
+            return;
+        }
+        match measured {
+            StepMetrics::Source(source) => {
+                let kept = self.measured.iter_mut().find_map(|step| match step {
+                    StepMetrics::Source(kept) if kept.id == source.id => Some(kept),
+                    _ => None,
+                });
+                match kept {
+                    Some(kept) => add_source(kept, source),
+                    None => {
+                        let part = source_part(&source, 1);
+                        self.measured.push(StepMetrics::Source(SourceMetrics {
+                            parts: vec![part],
+                            ..source
+                        }));
+                    }
+                }
+            }
+            StepMetrics::Combine(combine) => {
+                let kept = self.measured.iter_mut().find_map(|step| match step {
+                    StepMetrics::Combine(kept) => Some(kept),
+                    _ => None,
+                });
+                match kept {
+                    Some(kept) => add_combine(kept, combine),
+                    None => {
+                        let part = combine_part(&combine, 1);
+                        self.measured.push(StepMetrics::Combine(CombineMetrics {
+                            parts: vec![part],
+                            ..combine
+                        }));
+                    }
+                }
+            }
+            StepMetrics::Attached { id, data_source } => {
+                let attached = |step: &StepMetrics| matches!(step, StepMetrics::Attached { id: kept, .. } if *kept == id);
+                if !self.measured.iter().any(attached) {
+                    self.measured
+                        .push(StepMetrics::Attached { id, data_source });
+                }
+            }
+            output @ StepMetrics::Output(_) => self.measured.push(output),
+        }
+    }
+
+    /// Gives the ranges numbered as `part` the bounds a partitioned run's range says, once it
+    /// is done.
+    fn bound_parts(&mut self, part: &PartDone) {
+        let parts = self.measured.iter_mut().flat_map(|step| match step {
+            StepMetrics::Source(source) => source.parts.iter_mut(),
+            StepMetrics::Combine(combine) => combine.parts.iter_mut(),
+            StepMetrics::Attached { .. } | StepMetrics::Output(_) => [].iter_mut(),
+        });
+        for kept in parts.filter(|kept| kept.number == part.number) {
+            kept.from.clone_from(&part.from);
+            kept.to.clone_from(&part.to);
+        }
     }
 
     /// The ranges `step` read, in their order, which are its own from now on.
@@ -648,6 +725,32 @@ impl RunRecord {
 
     fn step_mut(&mut self, step: &Step) -> Option<&mut StepRecord> {
         self.steps.iter_mut().find(|record| record.step == *step)
+    }
+
+    /// The step whose rows the outputs write: the combine step, or the one source without it.
+    fn feed_mut(&mut self) -> Option<&mut StepRecord> {
+        if self.combines() {
+            self.step_mut(&Step::Combine)
+        } else {
+            self.steps.first_mut()
+        }
+    }
+
+    /// In a partitioned run, what `step` measured in every range so far: its rows, bytes and
+    /// time; `None` in a run that isn't partitioned, whose events say it all.
+    fn totals(&self, step: &Step) -> Option<(u64, u64, u64)> {
+        self.run_partition.as_ref()?;
+        self.measured
+            .iter()
+            .find_map(|measured| match (measured, step) {
+                (StepMetrics::Source(source), Step::Source { id }) if source.id == *id => {
+                    Some((source.rows, source.bytes, source.elapsed_ms))
+                }
+                (StepMetrics::Combine(combine), Step::Combine) => {
+                    Some((combine.rows, combine.bytes, combine.elapsed_ms))
+                }
+                _ => None,
+            })
     }
 
     /// Takes in the run's next event.
@@ -670,6 +773,16 @@ impl RunRecord {
                         ..StepRecord::new(Step::Combine, None, false)
                     });
                 }
+                if let Some(partition) = self.run_partition.clone()
+                    && let Some(feed) = self.feed_mut()
+                {
+                    feed.unit = Some(partition.unit);
+                    feed.parts = Some(Parts {
+                        done: 0,
+                        running: 1,
+                        of: partition.ranges,
+                    });
+                }
             }
             RunEvent::Progress {
                 step,
@@ -680,8 +793,12 @@ impl RunRecord {
                 parts,
                 busy,
             } => {
+                // A partitioned run's ranges are its own, which the step's progress doesn't say.
+                let partitioned = self.run_partition.is_some();
                 if let Some(record) = self.step_mut(&step) {
-                    record.parts = parts;
+                    if !partitioned {
+                        record.parts = parts;
+                    }
                     record.state = StepState::Running {
                         rows,
                         bytes,
@@ -703,21 +820,27 @@ impl RunRecord {
                 parts,
                 ..
             } => {
+                let step = Step::Source { id };
+                let (rows, bytes, elapsed_ms) =
+                    self.totals(&step).unwrap_or((rows, bytes, elapsed_ms));
                 if !self.combines() {
                     self.rows = rows;
                 }
-                if let Some(record) = self.step_mut(&Step::Source { id }) {
+                let partitioned = self.run_partition.is_some();
+                if let Some(record) = self.step_mut(&step) {
                     record.state = StepState::Done {
                         rows,
                         bytes,
                         elapsed_ms,
                     };
                     record.batches = batches.map(|of| Batch { number: of, of });
-                    record.parts = parts.map(|of| Parts {
-                        done: of,
-                        running: 0,
-                        of,
-                    });
+                    if !partitioned {
+                        record.parts = parts.map(|of| Parts {
+                            done: of,
+                            running: 0,
+                            of,
+                        });
+                    }
                     record.table = table;
                     record.warnings = warnings;
                 }
@@ -733,6 +856,9 @@ impl RunRecord {
                 elapsed_ms,
                 ..
             } => {
+                let (rows, bytes, elapsed_ms) = self
+                    .totals(&Step::Combine)
+                    .unwrap_or((rows, bytes, elapsed_ms));
                 self.rows = rows;
                 if let Some(record) = self.step_mut(&Step::Combine) {
                     record.state = StepState::Done {
@@ -740,6 +866,15 @@ impl RunRecord {
                         bytes,
                         elapsed_ms,
                     };
+                }
+            }
+            RunEvent::PartDone(part) if self.run_partition.is_some() => {
+                if let Some(feed) = self.feed_mut() {
+                    feed.parts = Some(Parts {
+                        done: part.number,
+                        running: u64::from(part.number < part.of),
+                        of: part.of,
+                    });
                 }
             }
             RunEvent::Preview(preview) => self.preview = Some(preview),
@@ -775,6 +910,86 @@ fn kept_phases(phases: SourcePhases) -> dbrover_store::SourcePhases {
     }
 }
 
+/// Adds a later range's `source` to what its earlier ranges measured.
+fn add_source(kept: &mut SourceMetrics, source: SourceMetrics) {
+    let part = source_part(&source, kept.parts.len() as u64 + 1);
+    kept.rows += source.rows;
+    kept.bytes += source.bytes;
+    kept.elapsed_ms += source.elapsed_ms;
+    kept.first_row_ms = kept.first_row_ms.or(source.first_row_ms);
+    kept.batches = sum(kept.batches, source.batches);
+    kept.scanned_bytes = sum(kept.scanned_bytes, source.scanned_bytes);
+    kept.phases = match (kept.phases, source.phases) {
+        (Some(kept), Some(more)) => Some(dbrover_store::SourcePhases {
+            connect_ms: kept.connect_ms + more.connect_ms,
+            server_ms: kept.server_ms + more.server_ms,
+            transfer_ms: kept.transfer_ms + more.transfer_ms,
+            load_ms: kept.load_ms + more.load_ms,
+            type_ms: kept.type_ms + more.type_ms,
+        }),
+        (kept, more) => kept.or(more),
+    };
+    kept.columns = source.columns;
+    kept.parts.push(part);
+}
+
+/// Adds a later range's `combine` to what its earlier ranges measured; its peaks are the
+/// largest range's.
+fn add_combine(kept: &mut CombineMetrics, combine: CombineMetrics) {
+    let part = combine_part(&combine, kept.parts.len() as u64 + 1);
+    kept.rows += combine.rows;
+    kept.bytes += combine.bytes;
+    kept.elapsed_ms += combine.elapsed_ms;
+    kept.first_row_ms = kept.first_row_ms.or(combine.first_row_ms);
+    kept.query_ms = sum(kept.query_ms, combine.query_ms);
+    kept.peak_memory = kept.peak_memory.max(combine.peak_memory);
+    kept.peak_temp_size = kept.peak_temp_size.max(combine.peak_temp_size);
+    kept.plan = combine.plan.or(kept.plan.take());
+    kept.parts.push(part);
+}
+
+fn sum(kept: Option<u64>, more: Option<u64>) -> Option<u64> {
+    match (kept, more) {
+        (Some(kept), Some(more)) => Some(kept + more),
+        (kept, more) => kept.or(more),
+    }
+}
+
+/// One range of a partitioned run's source, numbered `number`; its bounds come with the
+/// range's end.
+fn source_part(source: &SourceMetrics, number: u64) -> PartMetrics {
+    PartMetrics {
+        number,
+        from: String::new(),
+        to: String::new(),
+        rows: source.rows,
+        bytes: source.bytes,
+        first_row_ms: source.first_row_ms,
+        elapsed_ms: source.elapsed_ms,
+        started_ms: source.started_ms,
+        scanned_bytes: source.scanned_bytes,
+        peak_memory: None,
+        peak_temp_size: None,
+    }
+}
+
+/// One range of a partitioned run's combine step, numbered `number`.
+fn combine_part(combine: &CombineMetrics, number: u64) -> PartMetrics {
+    PartMetrics {
+        number,
+        from: String::new(),
+        to: String::new(),
+        rows: combine.rows,
+        bytes: combine.bytes,
+        first_row_ms: combine.first_row_ms,
+        elapsed_ms: combine.elapsed_ms,
+        started_ms: combine.started_ms,
+        scanned_bytes: None,
+        peak_memory: combine.peak_memory,
+        peak_temp_size: combine.peak_temp_size,
+    }
+}
+
 /// A range as the history keeps it, from the event that ended it `at_ms` into the run.
 fn kept_part(part: &PartDone, at_ms: u64) -> PartMetrics {
     PartMetrics {
@@ -787,6 +1002,8 @@ fn kept_part(part: &PartDone, at_ms: u64) -> PartMetrics {
         elapsed_ms: part.elapsed_ms,
         started_ms: Some(at_ms.saturating_sub(part.elapsed_ms)),
         scanned_bytes: part.scanned_bytes,
+        peak_memory: None,
+        peak_temp_size: None,
     }
 }
 
@@ -1427,6 +1644,7 @@ mod tests {
                     combine_limits: None,
                     timeout_ms: None,
                     machine: None,
+                    partition: None,
                 },
             );
             untimed(
@@ -1448,6 +1666,7 @@ mod tests {
             untimed(
                 &mut record,
                 RunEvent::OutputWritten(WrittenFile {
+                    output: None,
                     path: PathBuf::from("/out/tb-2026-10.csv"),
                     rows: 20,
                     size: 512,
@@ -1545,6 +1764,7 @@ mod tests {
                         cores: 10,
                         dbrover: "0.31.0".to_owned(),
                     }),
+                    partition: None,
                 },
             ),
             (
@@ -1579,6 +1799,7 @@ mod tests {
             (
                 1_510,
                 RunEvent::OutputWritten(WrittenFile {
+                    output: None,
                     path: PathBuf::from("/out/v.csv"),
                     rows: 3,
                     size: 40,
@@ -1648,6 +1869,7 @@ mod tests {
                 combine_limits: None,
                 timeout_ms: None,
                 machine: None,
+                partition: None,
             },
         );
         untimed(&mut record, RunEvent::Finished { elapsed_ms: 1 });
@@ -1685,6 +1907,7 @@ mod tests {
                 combine_limits: None,
                 timeout_ms: None,
                 machine: None,
+                partition: None,
             },
         );
         assert_eq!(record.steps[0].unit.as_deref(), Some("month"));
@@ -1750,6 +1973,125 @@ mod tests {
     }
 
     #[test]
+    fn sums_a_partitioned_runs_steps_and_keeps_each_range() {
+        let mut record = RunRecord::new(TypedValues::new());
+        record.apply(
+            RunEvent::Started {
+                report: "Events".to_owned(),
+                sources: vec![SourceStart {
+                    id: "events".to_owned(),
+                    data_source: "warehouse".to_owned(),
+                    attached: false,
+                    waits_for: None,
+                    engine: None,
+                    limits: None,
+                    partition: None,
+                }],
+                combine: true,
+                combine_sql: None,
+                version: None,
+                combine_limits: None,
+                timeout_ms: None,
+                machine: None,
+                partition: Some(RunPartitionStart {
+                    unit: "month".to_owned(),
+                    ranges: 2,
+                }),
+            }
+            .at(Duration::ZERO),
+        );
+        let combine_parts = |record: &RunRecord| record.steps[1].parts;
+        assert_eq!(
+            combine_parts(&record),
+            Some(Parts {
+                done: 0,
+                running: 1,
+                of: 2
+            })
+        );
+        let range = |number: u64, at_ms: u64, peak: u64| {
+            [
+                RunEvent::SourceDone {
+                    id: "events".to_owned(),
+                    rows: 100 * number,
+                    bytes: 1_000 * number,
+                    first_row_ms: Some(5),
+                    elapsed_ms: 300,
+                    table: Vec::new(),
+                    warnings: Vec::new(),
+                    batches: None,
+                    parts: None,
+                    phases: None,
+                    scanned_bytes: Some(10),
+                },
+                RunEvent::CombineDone {
+                    rows: 10 * number,
+                    bytes: 100 * number,
+                    first_row_ms: Some(1),
+                    elapsed_ms: 100,
+                    peak_memory: Some(peak),
+                    peak_temp_size: Some(0),
+                    query_ms: Some(50),
+                    plan: None,
+                },
+                RunEvent::PartDone(PartDone {
+                    step: Step::Combine,
+                    number,
+                    of: 2,
+                    from: format!("2026-0{number}-01"),
+                    to: format!("2026-0{}-01", number + 1),
+                    rows: 10 * number,
+                    bytes: 100 * number,
+                    first_row_ms: None,
+                    elapsed_ms: 400,
+                    scanned_bytes: None,
+                }),
+            ]
+            .map(|event| event.at(Duration::from_millis(at_ms)))
+        };
+        for event in range(1, 400, 900).into_iter().chain(range(2, 800, 700)) {
+            record.apply(event);
+        }
+        assert_eq!(
+            combine_parts(&record),
+            Some(Parts {
+                done: 2,
+                running: 0,
+                of: 2
+            })
+        );
+        assert_eq!(record.rows, 30, "every range's rows");
+        let [StepMetrics::Source(source), StepMetrics::Combine(combine)] =
+            record.measured.as_slice()
+        else {
+            panic!("{:?}", record.measured);
+        };
+        assert_eq!(
+            (source.rows, source.elapsed_ms, source.scanned_bytes),
+            (300, 600, Some(20))
+        );
+        let source_ranges: Vec<(u64, &str, &str, u64)> = source
+            .parts
+            .iter()
+            .map(|part| (part.number, part.from.as_str(), part.to.as_str(), part.rows))
+            .collect();
+        assert_eq!(
+            source_ranges,
+            [
+                (1, "2026-01-01", "2026-02-01", 100),
+                (2, "2026-02-01", "2026-03-01", 200)
+            ]
+        );
+        assert_eq!(
+            (combine.rows, combine.peak_memory, combine.query_ms),
+            (30, Some(900), Some(100)),
+            "the combine step's peak is its largest range's"
+        );
+        let peaks: Vec<Option<u64>> = combine.parts.iter().map(|part| part.peak_memory).collect();
+        assert_eq!(peaks, [Some(900), Some(700)]);
+    }
+
+    #[test]
     fn follows_each_step_of_a_combined_run() {
         let source = |id: &str, attached| SourceStart {
             id: id.to_owned(),
@@ -1772,6 +2114,7 @@ mod tests {
                 combine_limits: None,
                 timeout_ms: None,
                 machine: None,
+                partition: None,
             },
         );
         let states = |record: &RunRecord| -> Vec<StepState> {

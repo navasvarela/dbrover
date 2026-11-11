@@ -346,6 +346,7 @@ mod tests {
                 timeout_ms: 600_000,
             }),
             plan: None,
+            parts: Vec::new(),
         })
     }
 

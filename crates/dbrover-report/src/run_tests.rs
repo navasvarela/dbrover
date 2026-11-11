@@ -391,6 +391,7 @@ fn events_are_json_lines_the_app_reads_back() {
                 cores: 8,
                 dbrover: "0.31.0".to_owned(),
             }),
+            partition: None,
         },
         RunEvent::Progress {
             step: Step::Combine,

@@ -232,6 +232,83 @@ async fn reads_a_sqlite_ledger_a_week_at_a_time_with_each_range_bound() {
     );
 }
 
+/// October run a week at a time, each week's entries combined on their own and written to a
+/// file of the week's (RS4d). A week without entries loads its columns as text, since SQLite
+/// says no column's type, so the combine query casts what it adds up.
+const WEEKLY_FILES: &str = r##"
+[report]
+name = "Weekly entries"
+params = { since = "date", until = "date" }
+partition = { from = ":since", to = ":until", every = "1 week" }
+
+[[source]]
+id = "entries"
+data_source = "ledger"
+query = """
+SELECT debit, credit FROM entries WHERE booked_on >= :part_from AND booked_on < :part_to
+"""
+
+[combine]
+query = """
+SELECT :part_from AS week, count(*) AS entries,
+       coalesce(sum(CAST(debit AS DECIMAL(18,3))), 0) AS debit
+FROM entries
+"""
+
+[[output]]
+format = "csv"
+file = "week-{part_from:%m-%d}.csv"
+
+[[output]]
+format = "csv"
+file = "weeks.csv"
+"##;
+
+#[tokio::test]
+async fn runs_a_sqlite_ledger_a_week_at_a_time_into_a_file_a_week() {
+    let folder = tempfile::tempdir().unwrap();
+    let ledger = ledger(folder.path());
+    let plan = plan(WEEKLY_FILES, &ledger);
+    let values = october(&plan);
+    let access = Access::new(Arc::new(MemorySecrets::default()), folder.path());
+    let out = folder.path().join("out");
+    let staging = out.join(".run");
+    let work = out.join(".work");
+    let folders = RunFolders {
+        folder: &out,
+        staging: &staging,
+        work: &work,
+    };
+    run(&plan, &values, &access.get(), folders, &mut |_| {})
+        .await
+        .unwrap();
+    let mut written: Vec<String> = std::fs::read_dir(&out)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    written.sort();
+    assert_eq!(
+        written,
+        [
+            "week-10-01.csv",
+            "week-10-08.csv",
+            "week-10-15.csv",
+            "week-10-22.csv",
+            "week-10-29.csv",
+            "weeks.csv"
+        ]
+    );
+    assert_eq!(
+        std::fs::read_to_string(out.join("weeks.csv")).unwrap(),
+        "week,entries,debit\r\n\
+         2026-10-01,2,100.250\r\n\
+         2026-10-08,0,0.000\r\n\
+         2026-10-15,2,50.125\r\n\
+         2026-10-22,0,0.000\r\n\
+         2026-10-29,0,0.000\r\n"
+    );
+}
+
 #[tokio::test]
 async fn refuses_a_statement_that_writes_before_sending_it() {
     let folder = tempfile::tempdir().unwrap();
