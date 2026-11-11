@@ -190,9 +190,9 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-packager@${{ env.CARGO_PACKAGER_VERSION }}
-      - run: |
-          sudo apt-get update
-          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev file
+      - uses: ./.github/actions/apt-install
+        with:
+          packages: libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev file
       - uses: ./.github/actions/duckdb
       - run: packaging/duckdb/fetch.sh x86_64-unknown-linux-gnu "$RUNNER_TEMP/duckdb" | tee -a "$GITHUB_ENV"
       - run: cargo build --release --locked -p dbrover-app

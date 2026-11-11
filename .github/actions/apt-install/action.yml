@@ -1,0 +1,38 @@
+name: Ubuntu packages
+description: >-
+  Installs the given packages with apt-get. If the runner's package mirror can't be reached,
+  it tries again from archive.ubuntu.com directly.
+inputs:
+  packages:
+    description: Package names, separated by spaces.
+    required: true
+runs:
+  using: composite
+  steps:
+    # GitHub's Ubuntu runners fetch packages only through their Azure mirror, listed in
+    # /etc/apt/apt-mirrors.txt. On 2026-11-11 that name stopped resolving for hours, and every
+    # Linux job failed before it built anything. `--error-on=any` matters here: without it,
+    # `apt-get update` warns about indexes it couldn't fetch, exits 0 anyway, and the install
+    # then fails on stale or missing indexes instead of falling back. The retries and the
+    # timeout keep one slow mirror from holding the job; a Linux job once sat in `apt-get
+    # update` for 80 minutes.
+    - shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        set -uo pipefail
+        read -ra packages <<< "$PACKAGES"
+        apt() { sudo apt-get -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 "$@"; }
+        install() { apt update --error-on=any && apt install -y "${packages[@]}"; }
+        if install; then
+          exit 0
+        fi
+        echo "::warning::The runner's package mirror failed; installing from archive.ubuntu.com instead."
+        for sources in /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list; do
+          if [ -f "$sources" ]; then
+            sudo sed -i -E \
+              's#mirror\+file:/etc/apt/apt-mirrors\.txt|https?://azure\.archive\.ubuntu\.com/ubuntu/?#http://archive.ubuntu.com/ubuntu/#g' \
+              "$sources"
+          fi
+        done
+        install

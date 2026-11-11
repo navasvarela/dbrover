@@ -52,9 +52,9 @@ jobs:
         run: |
           packaging/duckdb/fetch.sh "$(rustc -vV | sed -n 's/^host: //p')" "$RUNNER_TEMP/duckdb" \
             | tee -a "$GITHUB_ENV"
-      - run: |
-          sudo apt-get update
-          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
+      - uses: ./.github/actions/apt-install
+        with:
+          packages: libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
       - name: Start the database servers
         env:
           DBROVER_MONGO_TAG: "7.0"

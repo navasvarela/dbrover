@@ -148,9 +148,9 @@ jobs:
         run: echo "$DUCKDB_LIB_DIR" >> "$GITHUB_PATH"
       # Headers eframe's windowing backends link against on Linux (same list egui's own CI uses).
       - if: env.CODE != 'false' && runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
       # One container per database server in docker-compose.yml, and its test URL in
       # test-servers.env; a new engine adds to those two files, not to this one. GitHub only
       # runs containers on Linux runners, so on macOS and Windows the URLs stay unset and the
