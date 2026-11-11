@@ -1603,10 +1603,11 @@ folder, beside the app's and `dbrover mcp`'s, never to the terminal.
 | 3 | The run couldn't start: the report file isn't found or has problems, a data source it names isn't found, a parameter is missing, unknown or of the wrong type, or the settings folder can't be used. | `failed` in the report step |
 | 4 | A source failed: connecting to its data source (a password, the network, a sign-in) or its query (the database's error, a statement that doesn't only read, the cost guard). | `failed` in a source, no limit |
 | 5 | A guardrail stopped a step: `max_rows`, `max_bytes`, a source's or the combine step's `timeout`, `memory_limit`, `max_temp_size`, `max_size`, Excel's rows. | `failed` with the limit, in a step |
-| 6 | The run was stopped from outside: its own time limit (`[report] timeout`), Ctrl-C, SIGTERM or SIGHUP. | `failed` in the worker with the limit, or `cancelled` |
+| 6 | The run was stopped from outside: its own time limit (`[report] timeout`), going `stall_timeout` without progress, using more disk than `max_disk` or the disk allows, Ctrl-C, SIGTERM or SIGHUP. | `failed` in the worker with the limit, or `cancelled` |
 
 A step's limit (5) is told from the run's (6) by where the run ended: the worker stops itself at
-a step's limit and says which, while the run's time limit is enforced by killing the worker.
+a step's limit and says which, while the run's own limits, `timeout`, `stall_timeout` and
+`max_disk`, are enforced by the app's watchdog killing the worker, so they end in the worker.
 
 ### Run history
 

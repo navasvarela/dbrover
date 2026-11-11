@@ -66,7 +66,8 @@ Exit codes:
      settings folder
   4  a source failed: connecting to its data source, or its query
   5  a guardrail stopped a step, such as max_rows; the message names the key to raise
-  6  the run was stopped: its own time limit, Ctrl-C or SIGTERM";
+  6  the run was stopped: its own time limit, its stall_timeout without progress, more disk
+     than its max_disk or the disk allows, Ctrl-C, SIGTERM or SIGHUP";
 
 /// What the command line asks of `dbrover report`.
 #[derive(Debug, Clone, PartialEq, Eq)]
