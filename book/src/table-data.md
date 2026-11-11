@@ -85,7 +85,8 @@ The grid shows *Sorted and filtered by the database*, rows page in 500 at a time
 the rows can still be edited. Untick **In the database** to run the query as you wrote it again.
 
 Only queries that start with `SELECT`, `WITH` or `VALUES` can be wrapped, and only when no two
-columns have the same name (SQL Server can't wrap a `WITH` either). Otherwise the switch is
+columns have the same name (SQL Server can't wrap a `WITH` either). CQL is never wrapped, and
+nor is a result of documents or of a language other than SQL. Otherwise the switch is
 disabled; hover over it to see why. It is also disabled while changes are waiting to be
 submitted, since running the query again would lose them. The database sorts by its own rules,
 which may differ from the grid's: where `NULL`s go, for example.
@@ -123,8 +124,8 @@ batch that failed instead. Empty values are imported as `NULL`; everything else 
 for the database to convert to the column's type, as when you type into a cell.
 
 A **careful** data source asks before importing. A **read-only** one can't be imported into,
-and nor can a ClickHouse table, since ClickHouse has no transaction to undo a failed import
-with; the dialog says so.
+and nor can a table on ClickHouse, Cassandra and ScyllaDB, Athena, Trino or BigQuery, which
+have no transaction to undo a failed import with; the dialog says so.
 
 ## Redis keys
 

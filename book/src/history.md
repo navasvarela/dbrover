@@ -1,8 +1,8 @@
 # The query history
 
 DbRover keeps every statement it sends to a database: what you run in a console, what the grid
-submits, what the explorer's helpers run, the statement behind an export, a CSV import, and
-what an AI assistant runs through [`dbrover mcp`](mcp.md). Each is kept with its data source,
+submits, what the explorer's helpers run, the statement behind an export, a CSV import, what
+your [custom actions](customising.md#actions) run, and what an AI assistant runs through [`dbrover mcp`](mcp.md). Each is kept with its data source,
 time, duration, row count and outcome, and with where it came from. Only the statements are
 kept, never the rows they returned.
 
@@ -20,7 +20,7 @@ The row above the list narrows it down:
 - **This data source / Every data source**: every data source's statements at once, each named
   beside its statement. A data source you have since removed shows as *Removed data source*.
 - **All sources** or one kind: **Consoles**, **Grid edits**, **Object helpers**, **Imports**,
-  **Exports**, **MCP clients**, or **Earlier DbRover** for statements recorded before DbRover
+  **Exports**, **MCP clients**, **Actions**, or **Earlier DbRover** for statements recorded before DbRover
   kept where they came from.
 - **Any time**, or the last hour, 24 hours, 7 days or 30 days.
 - **Search statements**: any part of the statement, ignoring case.
@@ -66,13 +66,14 @@ end of that clause, so `VALID UNTIL '2027-01-01'` after a password shows as `'<r
 
 **Export history › As CSV…** or **As JSON…** writes everything the current search finds, not
 just the 500 listed, with one record per statement: `executed_at` (UTC), `data_source`,
-`data_source_id`, `source` (`console`, `grid`, `object`, `import`, `export`, `mcp`, or `app`
-for earlier DbRover), `detail` (the assistant or the file), `outcome`, `duration_ms`, `rows`,
+`data_source_id`, `source` (`console`, `grid`, `object`, `import`, `export`, `mcp`, `action`, or
+`app` for earlier DbRover), `detail` (the assistant, the file or the action's id), `outcome`, `duration_ms`, `rows`,
 `sql`, and `change`, a grid edit's values as JSON.
 
 ## How long it is kept
 
-By default the history keeps everything. **View › Settings… › Query history** limits it:
+By default the history keeps everything. **Settings › Query history** (**View → Settings…**, or **DbRover → Settings…** on a Mac) limits
+it:
 
 - **Keep statements for** 30 days, 90 days, a year or two years;
 - **Keep per data source** the newest 10,000, 100,000 or 1,000,000 statements.

@@ -61,6 +61,9 @@ You don't have to type the start of a name: `cid` finds `customer_id`, matching 
 letters of its words. Names that start with what you typed come first, and the ones you picked
 lately come before the rest.
 
+Your own [snippets](customising.md#snippets) from `snippets.toml` are in the list too; accepting
+one inserts its text, and Tab and ⇧Tab move through its fields.
+
 Names come from what the explorer has loaded for the data source. When a suggestion needs a
 part that isn't loaded yet, DbRover loads it in the background (the list says "Loading the
 catalog…"), which connects the explorer if it wasn't.
@@ -114,9 +117,10 @@ whether it would accept each statement, without running it, so the database's ow
 show up too ("The database says: …"). This never happens while results are still loading or a
 transaction is open.
 
-**View → Settings… › Editor** switches each kind of warning off, and asking the database too.
+**Settings › Editor** (**View → Settings…**, or **DbRover → Settings…** on a Mac) switches each
+kind of warning off, and asking the database too.
 
-**View → Settings… › Editor** chooses how keywords are written (UPPER, lower, or as you typed them) and
+**Settings › Editor** also chooses how keywords are written (UPPER, lower, or as you typed them) and
 how many spaces each level is indented. They're saved in `settings.toml` (see
 [Where DbRover keeps its files](files.md)).
 
@@ -130,10 +134,10 @@ The toolbar's buttons, and their shortcuts while the editor has focus:
 | --- | --- | --- |
 | **Run** (▷) | ⌘↵ | Runs the selected text if there is a selection, otherwise the statement at the cursor. |
 | **Run all** (▷▷) | ⇧⌘↵ | Runs every statement in the console, in order, stopping at the first one that fails. |
-| **Explain** | ⌥⌘E | Shows how the database would run the statement at the cursor: on PostgreSQL, MySQL, MariaDB and SQL Server its plan as a tree of steps, the costliest highlighted, with **Text** for the plan as text, buttons to copy either, and **Explain analyse** (⇧⌥⌘E, everywhere but MySQL before 8.3), which runs the statement and adds what each step did (see [Reading query plans](explain-plans.md)); `EXPLAIN QUERY PLAN` on SQLite, `EXPLAIN` on DuckDB, whose plan is drawn as a tree in text, and `EXPLAIN` on ClickHouse, one step of the plan per row. |
+| **Explain** | ⌥⌘E | Shows how the database would run the statement at the cursor: on PostgreSQL, MySQL, MariaDB and SQL Server its plan as a tree of steps, the costliest highlighted, with **Text** for the plan as text, buttons to copy either, and **Explain analyse** (⇧⌥⌘E, everywhere but MySQL before 8.3), which runs the statement and adds what each step did (see [Reading query plans](explain-plans.md)); `EXPLAIN QUERY PLAN` on SQLite, `EXPLAIN` on DuckDB, whose plan is drawn as a tree in text, and `EXPLAIN` on ClickHouse, Athena and Trino, one step of the plan per row. Not shown where the console's language has no explain: CQL, BigQuery, Redis and DynamoDB. |
 | **Cancel** (□) | ⌘. | Stops the running statement, or discards rows not yet loaded. |
 | **History** | — | Opens the data source's query history. |
-| **Format** | ⌥⌘L | Formats the selected text, or the statement at the cursor (see [The editor](#the-editor)). |
+| **Format** | ⌥⌘L | Formats the selected text, or the statement at the cursor (see [The editor](#the-editor)). Shown for SQL and CQL. |
 
 On Linux and Windows, use Ctrl instead of ⌘. Hover over a button to see its current shortcut;
 all of them can be changed (see [Keyboard shortcuts](shortcuts.md)).
@@ -399,7 +403,7 @@ browse one as a tree.
 
 The database checks each `SELECT`, `INSERT`, `UPDATE` and `DELETE` as you type, by preparing it,
 which runs nothing: a misspelt column or table is underlined before you run the statement. CQL
-has no `EXPLAIN`, so Explain is off, and its rows can't be sorted and filtered in the database:
+has no `EXPLAIN`, so there is no Explain button, and its rows can't be sorted and filtered in the database:
 clicking a column's header sorts the rows loaded. A `TRUNCATE` asks first, as a `DELETE` without
 `WHERE` does elsewhere.
 
@@ -410,6 +414,12 @@ each `SELECT` with `USING TIMEOUT`, so the server stops too.
 
 The toolbar shows how the last run went: **Done in 12 ms**, **Failed** or **Cancelled**. While a
 statement runs, Run, Run all and Explain are disabled.
+
+### DynamoDB, Athena, Trino and BigQuery
+
+Their consoles are described in their own chapters, with what each reads when you choose
+**Open data**, how it explains a statement, and the cost guard that asks before an expensive
+one: [DynamoDB](dynamodb.md), [Athena and Trino](athena-trino.md) and [BigQuery](bigquery.md).
 
 ## Transactions
 
@@ -423,7 +433,9 @@ Below the toolbar, each console has a transaction mode:
 ClickHouse consoles have no transaction mode: ClickHouse's transactions are experimental and
 off unless the server is set up for them, so every statement takes effect as it runs. Nor do
 Redis consoles: see [Redis commands](#redis-commands). Nor do Cassandra and ScyllaDB's: see
-[CQL](#cql-cassandra-and-scylladb).
+[CQL](#cql-cassandra-and-scylladb). Nor do [DynamoDB](dynamodb.md), [Athena and
+Trino](athena-trino.md) or [BigQuery](bigquery.md), each of which runs every statement on its
+own.
 
 While a transaction is open, the console says **● Transaction open**, in either mode, and you
 can't switch modes. On PostgreSQL, a statement that fails inside a transaction leaves it
@@ -494,8 +506,9 @@ doesn't, yet).
   Tick **In the database** to sort and filter every row instead; see
   [Sorting and filtering in the database](table-data.md#sorting-and-filtering-in-the-database).
 - **Exporting.** **Export…** saves the rows as shown, sorted and filtered, or every row the
-  query returns, as CSV, Excel, TSV, Markdown, SQL, JSON, JSON Lines, Parquet or HTML; see
-  [Exporting and copying rows](exporting.md).
+  query returns, as CSV, Excel, TSV, Markdown, SQL, JSON, JSON Lines, Parquet or HTML.
+  **Run to file…** (⌥⌘↵) runs the statement straight into a file instead, without the grid;
+  see [Exporting and copying rows](exporting.md).
 
 ### Large results
 
@@ -663,7 +676,8 @@ You can change values in the grid when the result is a `SELECT` from a single ta
 `GROUP BY` or `DISTINCT`), the table has a primary key, and the result includes the key's
 columns. Otherwise the grid says **Read-only**; hover over it to see why. ClickHouse results are
 always read-only: a ClickHouse table's primary key is its sort order, which several rows may
-share, so nothing tells one row from another.
+share, so nothing tells one row from another. Athena, Trino and BigQuery results are always
+read-only too.
 
 - Double-click a cell, or select it and press F2 or Enter, to edit it. Enter or a click
   elsewhere keeps the new text; Esc drops it. **Set NULL** in the cell's menu sets `NULL`

@@ -78,9 +78,13 @@ PostgreSQL's own `EXPLAIN` is, whichever database it came from. **Tree** goes ba
   drops, so Explain analyse on a query that returns many rows still takes as long as fetching
   them. Its steps are named as Management Studio names them, with the logical operation after the
   physical one when it says more: **Hash Match (Aggregate)**.
-- **SQLite, DuckDB, ClickHouse and MongoDB** keep their plan as the database writes it, in the
+- **SQLite, DuckDB, ClickHouse, Athena, Trino, MongoDB, and Elasticsearch and OpenSearch**
+  (whose plan is the `"profile": true` answer) keep their plan as the database writes it, in the
   grid (see [Query consoles](consoles.md#running-sql)). Their plans don't estimate costs to
   compare, and they have no Explain analyse.
+- **Cassandra and ScyllaDB, BigQuery, DynamoDB and Redis** have no Explain: the button isn't
+  shown. BigQuery says what a query would scan before it runs instead (see
+  [BigQuery](bigquery.md#what-a-query-costs)).
 
 If the database answers with something DbRover can't read as a plan, it shows the answer in the
 grid as it came, with the reason above it.
