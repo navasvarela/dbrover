@@ -10,7 +10,10 @@ use dbrover_export::ColumnType;
 use dbrover_language::Literal;
 use dbrover_sql::ParameterValues;
 
-use crate::{Plan, QuerySource, RunValues, SourceStatement};
+use crate::{
+    CostCheck, PART_FROM, PART_TO, PartRange, Plan, QuerySource, RangeKind, RunValues,
+    SourceStatement, WholePeriod,
+};
 
 /// What a source's statements are made from.
 pub(crate) struct Statements<'a> {
@@ -30,22 +33,51 @@ impl<'a> Statements<'a> {
 
     /// The source's one statement, when it has no lookup. Its timeout runs from `started`.
     pub(crate) fn whole(&self, started: Instant) -> SourceStatement<'a> {
-        self.statement(None, started + self.source.limits.timeout)
+        self.statement(&Extra::None, started + self.source.limits.timeout)
     }
 
     /// The statement that reads `batch` of the source's lookup values, by `deadline`.
     pub(crate) fn batch(&self, batch: &[Literal], deadline: Instant) -> SourceStatement<'a> {
-        self.statement(Some(batch), deadline)
+        self.statement(&Extra::Batch(batch), deadline)
     }
 
-    fn statement(&self, batch: Option<&[Literal]>, deadline: Instant) -> SourceStatement<'a> {
+    /// The statement that reads `range` of the source's partition, of `kind`, under the
+    /// source's timeout from `started`; `cost` is what the cost guard judges before it.
+    pub(crate) fn range(
+        &self,
+        range: &PartRange,
+        kind: RangeKind,
+        started: Instant,
+        cost: CostCheck,
+    ) -> SourceStatement<'a> {
+        let statement = self.statement(
+            &Extra::Range { range, kind },
+            started + self.source.limits.timeout,
+        );
+        SourceStatement { cost, ..statement }
+    }
+
+    /// What the cost guard judges for the first of a partitioned source's ranges: the source's
+    /// statement over `whole`, its whole period.
+    pub(crate) fn whole_period(&self, whole: &PartRange, kind: RangeKind) -> CostCheck {
+        let statement = self.statement(&Extra::Range { range: whole, kind }, Instant::now());
+        CostCheck::WholePeriod(Box::new(WholePeriod {
+            query: statement.query,
+            parameters: statement.parameters,
+        }))
+    }
+
+    fn statement(&self, extra: &Extra<'_>, deadline: Instant) -> SourceStatement<'a> {
         let language = self.source.language;
         let lookup = self
             .source
-            .lookup
-            .as_ref()
+            .split
+            .lookup()
             .map(|lookup| lookup.parameter.as_str());
-        let list = batch.map(|values| language.list(values));
+        let list = match extra {
+            Extra::Batch(values) => Some(language.list(values)),
+            Extra::None | Extra::Range { .. } => None,
+        };
         let bound = language.dialect().is_some();
         let query = language.replace_parameters(&self.source.query, |name| {
             if Some(name) == lookup {
@@ -54,18 +86,27 @@ impl<'a> Statements<'a> {
             if bound {
                 return None;
             }
-            self.parameter(name)
+            extra
+                .range_literal(name)
+                .or_else(|| self.parameter(name))
                 .map(|literal| language.literal(&literal))
         });
+        let parameters = if bound {
+            let mut parameters = self.values.parameters.clone();
+            if let Extra::Range { range, .. } = extra {
+                parameters.set(PART_FROM, Some(range.from.clone()));
+                parameters.set(PART_TO, Some(range.to.clone()));
+            }
+            parameters
+        } else {
+            ParameterValues::default()
+        };
         SourceStatement {
             source: self.source,
             query,
-            parameters: if bound {
-                self.values.parameters.clone()
-            } else {
-                ParameterValues::default()
-            },
+            parameters,
             deadline,
+            cost: CostCheck::Statement,
         }
     }
 
@@ -83,6 +124,32 @@ impl<'a> Statements<'a> {
             ColumnType::Date => Literal::Date(text),
             ColumnType::Timestamp => Literal::Timestamp(text),
         })
+    }
+}
+
+/// What a statement binds beside the report's parameters.
+enum Extra<'a> {
+    None,
+    /// A batch of a lookup's values, written in as a list.
+    Batch(&'a [Literal]),
+    /// A range of a partition, bound as `:part_from` and `:part_to`.
+    Range {
+        range: &'a PartRange,
+        kind: RangeKind,
+    },
+}
+
+impl Extra<'_> {
+    /// `:part_from` or `:part_to` as a literal, for a language without bound parameters.
+    fn range_literal(&self, name: &str) -> Option<Literal> {
+        let Self::Range { range, kind } = self else {
+            return None;
+        };
+        match name {
+            PART_FROM => Some(kind.literal(&range.from)),
+            PART_TO => Some(kind.literal(&range.to)),
+            _ => None,
+        }
     }
 }
 

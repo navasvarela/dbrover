@@ -11,11 +11,13 @@ use dbrover_export::{ColumnType, CustomFormatId, ExportFormat, IfInvalid, Preset
 use dbrover_chart::ChartSpec;
 use dbrover_driver_duckdb::DuckDbType;
 
+use crate::partition::read_partition;
 use crate::problem::{Place, ReportProblem, Table, messages, syntax_problems};
 use crate::{
     ByteSize, Chart, ChartPicture, Combine, CombineLimitsSet, CombineQuery, FileName, HintId,
-    Lookup, Output, OutputColumns, OutputLimitsSet, OutputWriter, Param, Report, Source,
-    SourceColumn, SourceLimitsSet, SourceRead, grouped,
+    Lookup, Output, OutputColumns, OutputLimitsSet, OutputWriter, PART_FROM, PART_TO, Param,
+    PlannedPartition, Report, Source, SourceColumn, SourceLimitsSet, SourcePartition, SourceRead,
+    SourceSplit, grouped,
 };
 
 /// Keys a file may put in the wrong table, and where each goes, so it says so rather than
@@ -109,6 +111,7 @@ pub fn read_with_places(text: &str) -> Result<Report, Vec<ReportProblem>> {
         }
     };
     check_lookups(&sources, &positions, &params, &mut problems);
+    check_partitions(&sources, &positions, &params, has_combine, &mut problems);
     let combine = match combine {
         Ok(Some(combine)) => read_combine(combine, &mut problems),
         Ok(None) => None,
@@ -468,14 +471,15 @@ fn read_source(
     let max_rows = fields.count("max_rows");
     let max_bytes = fields.byte_size("max_bytes");
     let timeout = fields.duration("timeout");
-    let lookup = fields.take("lookup").map(read_lookup).transpose();
+    let split = read_split(&mut fields);
     let columns = fields.take("columns").map(read_source_columns).transpose();
     found.extend(fields.unknown(
         "a source",
-        "id, data_source, query, lookup, columns, attach, max_rows, max_bytes and timeout",
+        "id, data_source, query, lookup, partition, max_rows_per_part, columns, attach, \
+         max_rows, max_bytes and timeout",
     ));
-    let read = match (attach, query, max_rows, max_bytes, timeout, lookup, columns) {
-        (Ok(Some(true)), query, max_rows, max_bytes, timeout, lookup, columns) => {
+    let read = match (attach, query, max_rows, max_bytes, timeout, split, columns) {
+        (Ok(Some(true)), query, max_rows, max_bytes, timeout, split, columns) => {
             if !matches!(query, Ok(None)) {
                 found.push(Found::at(
                     "query",
@@ -499,24 +503,24 @@ fn read_source(
                     ));
                 }
             }
-            let query_keys = [
-                ("lookup", lookup.map(|value| value.is_some())),
-                ("columns", columns.map(|value| value.is_some())),
-            ];
-            for (key, set) in query_keys {
-                if !matches!(set, Ok(false)) {
-                    found.push(Found::at(
-                        key,
-                        format!(
-                            "{key} is for a source's query, and an attached source has none; \
-                             [combine] reads its tables as they are"
-                        ),
-                    ));
-                }
+            let split_key = match &split {
+                Ok(SourceSplit::Whole) => None,
+                Ok(SourceSplit::Lookup(_)) => Some("lookup"),
+                Ok(SourceSplit::Partition(_)) | Err(_) => Some("partition"),
+            };
+            let columns_key = (!matches!(columns, Ok(None))).then_some("columns");
+            for key in [split_key, columns_key].into_iter().flatten() {
+                found.push(Found::at(
+                    key,
+                    format!(
+                        "{key} is for a source's query, and an attached source has none; \
+                         [combine] reads its tables as they are"
+                    ),
+                ));
             }
             Ok(SourceRead::Attach)
         }
-        (Ok(_), Ok(query), Ok(max_rows), Ok(max_bytes), Ok(timeout), Ok(lookup), Ok(columns)) => {
+        (Ok(_), Ok(query), Ok(max_rows), Ok(max_bytes), Ok(timeout), Ok(split), Ok(columns)) => {
             query
                 .filter(|query| !query.trim().is_empty())
                 .map(|query| SourceRead::Query {
@@ -526,7 +530,7 @@ fn read_source(
                         max_bytes,
                         timeout,
                     },
-                    lookup,
+                    split,
                     columns,
                 })
                 .ok_or_else(|| {
@@ -536,20 +540,14 @@ fn read_source(
                     )]
                 })
         }
-        (attach, query, max_rows, max_bytes, timeout, lookup, columns) => {
+        (attach, query, max_rows, max_bytes, timeout, split, columns) => {
             let mut errors = Vec::new();
             errors.extend(attach.err());
             errors.extend(query.err());
             errors.extend(max_rows.err());
             errors.extend(max_bytes.err());
             errors.extend(timeout.err());
-            errors.extend(
-                lookup
-                    .err()
-                    .into_iter()
-                    .flatten()
-                    .map(|problem| Found::at("lookup", problem)),
-            );
+            errors.extend(split.err().into_iter().flatten());
             errors.extend(
                 columns
                     .err()
@@ -576,6 +574,53 @@ fn read_source(
     let source = source.filter(|_| found.is_empty());
     problems.extend(placed(Table::Source(position), Some(&label), found));
     source
+}
+
+/// How a source's query is split: `lookup`, or `partition` and its `max_rows_per_part`, or
+/// neither.
+fn read_split(fields: &mut Fields) -> Result<SourceSplit, Vec<Found>> {
+    let lookup = fields.take("lookup").map(read_lookup).transpose();
+    let partition = fields.take("partition").map(read_partition).transpose();
+    let max_rows_per_part = fields.count("max_rows_per_part");
+    match (lookup, partition, max_rows_per_part) {
+        (Ok(Some(_)), Ok(Some(_)), _) => Err(vec![Found::at(
+            "partition",
+            "a source reads by a lookup or in ranges, not both; partition the source the \
+             lookup reads, or join in [combine]",
+        )]),
+        (Ok(Some(lookup)), Ok(None), Ok(None)) => Ok(SourceSplit::Lookup(lookup)),
+        (Ok(None), Ok(Some(partition)), Ok(max_rows_per_part)) => {
+            Ok(SourceSplit::Partition(SourcePartition {
+                partition,
+                max_rows_per_part,
+            }))
+        }
+        (Ok(_), Ok(None), Ok(Some(_))) => Err(vec![Found::at(
+            "max_rows_per_part",
+            "max_rows_per_part bounds each range of a partitioned source; add a partition, \
+             or use max_rows",
+        )]),
+        (Ok(None), Ok(None), Ok(None)) => Ok(SourceSplit::Whole),
+        (lookup, partition, max_rows_per_part) => {
+            let mut found: Vec<Found> = Vec::new();
+            found.extend(
+                lookup
+                    .err()
+                    .into_iter()
+                    .flatten()
+                    .map(|problem| Found::at("lookup", problem)),
+            );
+            found.extend(
+                partition
+                    .err()
+                    .into_iter()
+                    .flatten()
+                    .map(|problem| Found::at("partition", problem)),
+            );
+            found.extend(max_rows_per_part.err());
+            Err(found)
+        }
+    }
 }
 
 /// `lookup = { from = "tx", column = "asset_id", as = "asset_ids" }`.
@@ -772,11 +817,10 @@ fn check_lookups(
 ) {
     for (index, source) in sources.iter().enumerate() {
         let place = || Place::key(Table::Source(positions[index]), "lookup");
-        let SourceRead::Query {
-            lookup: Some(lookup),
-            ..
-        } = &source.read
-        else {
+        let SourceRead::Query { split, .. } = &source.read else {
+            continue;
+        };
+        let Some(lookup) = split.lookup() else {
             continue;
         };
         let label = format!("source {:?}", source.id);
@@ -819,6 +863,54 @@ fn check_lookups(
             )),
         };
         problems.extend(problem.map(|message| ReportProblem::new(message, place())));
+    }
+}
+
+/// What a partitioned source's ranges need of the rest of the file: bounds of the report's
+/// parameters, of one kind; no parameter named as the ranges' own; and a combine step to load
+/// the ranges for.
+fn check_partitions(
+    sources: &[Source],
+    positions: &[usize],
+    params: &BTreeMap<&str, ColumnType>,
+    has_combine: bool,
+    problems: &mut Vec<ReportProblem>,
+) {
+    for (index, source) in sources.iter().enumerate() {
+        let SourceRead::Query {
+            split: SourceSplit::Partition(split),
+            ..
+        } = &source.read
+        else {
+            continue;
+        };
+        let label = format!("source {:?}", source.id);
+        let mut found = Vec::new();
+        if let Err(problem) = PlannedPartition::plan(split.partition.clone(), params) {
+            found.push(format!("partition: {problem}"));
+        }
+        if let Some(taken) = [PART_FROM, PART_TO]
+            .into_iter()
+            .find(|name| params.contains_key(name))
+        {
+            found.push(format!(
+                "partition: each range binds :{PART_FROM} and :{PART_TO}, so [report] params \
+                 can't name {taken}"
+            ));
+        }
+        if !has_combine {
+            found.push(
+                "partition: a partitioned source loads its ranges into one table for a \
+                 [combine] query; add one, as query = \"SELECT * FROM <source>\""
+                    .to_owned(),
+            );
+        }
+        let place = Place::key(Table::Source(positions[index]), "partition");
+        problems.extend(
+            found
+                .into_iter()
+                .map(|problem| ReportProblem::new(format!("{label}: {problem}"), place.clone())),
+        );
     }
 }
 

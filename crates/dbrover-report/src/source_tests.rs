@@ -167,7 +167,7 @@ fn round_ids(plan: &Plan) -> Vec<Vec<&str>> {
 fn reads_and_plans_the_valuation_with_a_lookup_into_two_rounds() {
     let report = read_report(VALUATION).unwrap();
     let SourceRead::Query {
-        lookup: Some(lookup),
+        split: SourceSplit::Lookup(lookup),
         columns: Some(columns),
         ..
     } = &report.sources[1].read
@@ -203,7 +203,7 @@ fn reads_and_plans_the_valuation_with_a_lookup_into_two_rounds() {
     let assets = combined(&plan).rounds()[1][0];
     assert_eq!(assets.language, QueryLanguage::PartiQl);
     assert_eq!(
-        assets.lookup.as_ref().map(|lookup| lookup.batch_size.get()),
+        assets.split.lookup().map(|lookup| lookup.batch_size.get()),
         Some(100),
         "a PartiQL statement takes 100 values"
     );
@@ -279,7 +279,7 @@ file = "out.csv"
     );
     let b = combined(&plan).rounds()[1][0];
     assert_eq!(
-        b.lookup.as_ref().map(|lookup| lookup.batch_size.get()),
+        b.split.lookup().map(|lookup| lookup.batch_size.get()),
         Some(10)
     );
 }

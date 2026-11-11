@@ -25,7 +25,10 @@ use serde::{Deserialize, Serialize};
 use crate::events::LoadedColumn;
 use crate::statement::Statements;
 use crate::typing::declared_column_type;
-use crate::{Combined, Logic, Plan, PlannedSource, QuerySource, RunValues, SourceStatement};
+use crate::{
+    Combined, CostCheck, Logic, Plan, PlannedSource, PlannedSplit, QuerySource, RunValues,
+    SourceStatement,
+};
 
 /// What explaining a report found.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,9 +163,28 @@ async fn explain_source(
 ) -> SourceExplanation {
     let statements = Statements::new(plan, values, source);
     let now = Instant::now();
-    let (statement, notes) = match &source.lookup {
-        None => (statements.whole(now), Vec::new()),
-        Some(lookup) => (
+    let (statement, notes) = match &source.split {
+        PlannedSplit::Whole => (statements.whole(now), Vec::new()),
+        PlannedSplit::Partition(partition) => match values.ranges.get(&source.id) {
+            Some(ranges) => (
+                statements.range(
+                    &ranges.whole,
+                    partition.partition.kind,
+                    now,
+                    CostCheck::Statement,
+                ),
+                vec![format!(
+                    "It reads {} ranges, {} each; it was explained over all of them together, \
+                     from {} to {}, as the cost guard judges it.",
+                    ranges.ranges.len(),
+                    partition.partition.partition.every,
+                    ranges.whole.from,
+                    ranges.whole.to
+                )],
+            ),
+            None => (statements.whole(now), Vec::new()),
+        },
+        PlannedSplit::Lookup(lookup) => (
             statements.batch(&[Literal::Null], now + source.limits.timeout),
             vec![format!(
                 "Its lookup's values come from {:?} as the report runs, so it was explained \

@@ -69,6 +69,10 @@ pub enum RunEvent {
         /// For a source whose lookup runs in batches, the one it is reading.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         batch: Option<Batch>,
+        /// For a partitioned source, how many of its ranges are done and being read (RS4b);
+        /// `None` from a worker older than RS4b.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parts: Option<Parts>,
         /// What the step spent the time since its last progress event on; `None` from a
         /// worker older than RS1d.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -92,6 +96,9 @@ pub enum RunEvent {
         /// How many statements a source with a lookup sent, one a batch of its values.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         batches: Option<u64>,
+        /// How many ranges a partitioned source read, one statement each (RS4b).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parts: Option<u64>,
         /// Where its time went; `None` from a worker older than RS1b.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         phases: Option<SourcePhases>,
@@ -276,6 +283,16 @@ pub struct LoadedColumn {
     /// column from the source's query would save; `None` from a worker older than RS2c.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bytes: Option<u64>,
+}
+
+/// How far a partitioned source has read its ranges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Parts {
+    /// Ranges whose rows are all in.
+    pub done: u64,
+    /// Ranges being read now.
+    pub running: u64,
+    pub of: u64,
 }
 
 /// Which of a lookup's batches a source is reading, counted from 1.

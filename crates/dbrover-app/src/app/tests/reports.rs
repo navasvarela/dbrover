@@ -207,6 +207,7 @@ fn finished_run(folder: &Path) -> Vec<RunEvent> {
             table: Vec::new(),
             warnings: Vec::new(),
             batches: None,
+            parts: None,
             phases: None,
             scanned_bytes: None,
         },
@@ -354,6 +355,7 @@ fn combined_start() -> Vec<RunEvent> {
             .collect(),
         warnings: Vec::new(),
         batches: None,
+        parts: None,
         phases: None,
         scanned_bytes: None,
     };
@@ -526,6 +528,7 @@ fn says_how_fast_a_running_source_reads_and_what_it_waits_on() {
         bytes: rows * 20,
         elapsed_ms,
         batch: None,
+        parts: None,
         busy: Some(Busy {
             waiting_pct,
             loading_pct: 4,
@@ -578,6 +581,7 @@ fn shows_a_lookup_waiting_then_its_batches_then_done() {
         bytes: 20_000,
         elapsed_ms: 1_000,
         batch,
+        parts: None,
         busy: None,
     };
     let entries_done = RunEvent::SourceDone {
@@ -589,6 +593,7 @@ fn shows_a_lookup_waiting_then_its_batches_then_done() {
         table: Vec::new(),
         warnings: Vec::new(),
         batches: None,
+        parts: None,
         phases: None,
         scanned_bytes: None,
     };
@@ -635,6 +640,7 @@ fn shows_a_lookup_waiting_then_its_batches_then_done() {
                 .collect(),
             warnings: Vec::new(),
             batches: Some(7),
+            parts: None,
             phases: None,
             scanned_bytes: None,
         },

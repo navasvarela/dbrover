@@ -1,7 +1,7 @@
 //! A report's source on real data sources (`docs/reporting.md`, RP1d): a trial balance on a
-//! SQLite ledger written to CSV and Excel with its parameters bound, a statement that writes
-//! refused before it is sent, and, on the PostgreSQL test server, a slow source stopped at its
-//! timeout.
+//! SQLite ledger written to CSV and Excel with its parameters bound, the same ledger read a
+//! week at a time (RS4b), a statement that writes refused before it is sent, and, on the
+//! PostgreSQL test server, a slow source stopped at its timeout.
 // Helpers panic on failure like assertions do; clippy's test exemption covers only `#[test]`
 // functions themselves.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -16,8 +16,8 @@ use common::{MemorySecrets, postgres_test_server, sqlite_data_source};
 use dbrover_core::{ConnectionConfig, DataSource, DataSourceId, SafetyLevel};
 use dbrover_engine::{PasswordCommands, ProcessRunner, ReportSource, SourceAccess, Tunnels};
 use dbrover_report::{
-    LimitDefaults, Logic, Plan, RunFolders, RunValues, SourceError, SourceOpener, SourceStatement,
-    read_report, run,
+    CostCheck, LimitDefaults, Logic, Plan, RunEvent, RunFolders, RunValues, SourceError,
+    SourceOpener, SourceStatement, read_report, run,
 };
 use dbrover_store::{Secret, SecretStore, TrustedCommands};
 
@@ -137,6 +137,7 @@ async fn open(
         query: source.query.clone(),
         parameters: values.parameters.clone(),
         deadline: Instant::now() + source.limits.timeout,
+        cost: CostCheck::Statement,
     };
     access.get().open(&statement).await
 }
@@ -170,6 +171,65 @@ async fn writes_a_trial_balance_from_sqlite_with_its_dates_bound() {
          4000,Sales,0.00,150.38,-150.38\r\n"
     );
     assert!(out.join("trial-balance-2026-10.xlsx").is_file());
+}
+
+/// October's entries read a week at a time, each week a statement with its dates bound by the
+/// SQLite driver, and added up in the combine step.
+const BY_WEEK: &str = r##"
+[report]
+name = "October by week"
+params = { since = "date", until = "date" }
+
+[[source]]
+id = "entries"
+data_source = "ledger"
+query = """
+SELECT account_id, booked_on, debit, credit FROM entries
+WHERE booked_on >= :part_from AND booked_on < :part_to
+"""
+partition = { from = ":since", to = ":until", every = "1 week" }
+
+[combine]
+query = "SELECT count(*) AS entries, sum(debit) AS debit, sum(credit) AS credit FROM entries"
+
+[[output]]
+format = "csv"
+file = "october.csv"
+"##;
+
+#[tokio::test]
+async fn reads_a_sqlite_ledger_a_week_at_a_time_with_each_range_bound() {
+    let folder = tempfile::tempdir().unwrap();
+    let ledger = ledger(folder.path());
+    let plan = plan(BY_WEEK, &ledger);
+    let values = october(&plan);
+    let access = Access::new(Arc::new(MemorySecrets::default()), folder.path());
+    let out = folder.path().join("out");
+    let staging = out.join(".run");
+    let work = out.join(".work");
+    let folders = RunFolders {
+        folder: &out,
+        staging: &staging,
+        work: &work,
+    };
+    let mut parts = None;
+    run(&plan, &values, &access.get(), folders, &mut |event| {
+        if let RunEvent::SourceDone { parts: done, .. } = event {
+            parts = done;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(out.join("october.csv")).unwrap(),
+        "entries,debit,credit\r\n4,150.375,150.375\r\n",
+        "October's four entries, none of September's or November's"
+    );
+    assert_eq!(
+        parts,
+        Some(5),
+        "five weeks from October 1st, the last cut at November 1st"
+    );
 }
 
 #[tokio::test]

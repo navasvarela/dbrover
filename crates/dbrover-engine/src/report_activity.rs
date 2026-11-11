@@ -4,8 +4,8 @@
 //! Progress events come every second, also while a step waits on its engine (RS1d), so their
 //! arrival says nothing. A run has progressed when:
 //! - an event other than progress came: a step started or ended, or a file was written;
-//! - a progress event says more rows or bytes than the step's last, another batch, or another
-//!   step;
+//! - a progress event says more rows or bytes than the step's last, another batch or range,
+//!   or another step;
 //! - the worker used at least [`BUSY_PROCESSOR`] of processor time since the last progress,
 //!   which is DuckDB at work (loading, typing, a long combine query) without a row to show;
 //! - or the worker doesn't say its processor time (Windows): then every event counts, and only
@@ -13,7 +13,7 @@
 
 use std::time::{Duration, Instant};
 
-use dbrover_report::{Batch, RunEvent, Step, TimedEvent};
+use dbrover_report::{Batch, Parts, RunEvent, Step, TimedEvent};
 
 /// The processor time that counts as the worker being at work since the last progress: far more
 /// than its runtime and its once-a-second events use while it waits, and less than one busy
@@ -28,6 +28,7 @@ pub(crate) struct Activity {
     rows: u64,
     bytes: u64,
     batch: Option<Batch>,
+    parts: Option<Parts>,
     /// The worker's processor time at the last progress.
     cpu_ms: Option<u64>,
 }
@@ -40,6 +41,7 @@ impl Activity {
             rows: 0,
             bytes: 0,
             batch: None,
+            parts: None,
             cpu_ms: None,
         }
     }
@@ -55,6 +57,7 @@ impl Activity {
             rows,
             bytes,
             batch,
+            parts,
             ..
         } = &timed.event
         {
@@ -62,6 +65,7 @@ impl Activity {
             self.rows = *rows;
             self.bytes = *bytes;
             self.batch = *batch;
+            self.parts = *parts;
         }
     }
 
@@ -71,6 +75,7 @@ impl Activity {
             rows,
             bytes,
             batch,
+            parts,
             ..
         } = &timed.event
         else {
@@ -79,7 +84,8 @@ impl Activity {
         let moved = self.step.as_ref() != Some(step)
             || *rows > self.rows
             || *bytes > self.bytes
-            || *batch != self.batch;
+            || *batch != self.batch
+            || *parts != self.parts;
         moved || self.worked(timed.cpu_ms)
     }
 
@@ -114,6 +120,7 @@ mod tests {
                 bytes: rows * 10,
                 elapsed_ms: 0,
                 batch: None,
+                parts: None,
                 busy: None,
             },
         }

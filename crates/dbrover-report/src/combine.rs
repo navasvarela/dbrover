@@ -32,9 +32,10 @@ use crate::run::{Count, Feed, Outputs, Streamed, millis, timed};
 use crate::statement::{Statements, lookup_literal};
 use crate::typing::{ColumnTyper, DriverTypes};
 use crate::{
-    AttachedSource, Batch, Busy, Chart, CombineLimits, Combined, LimitHit, LoadedColumn,
-    PlannedLookup, PlannedSource, QuerySource, RunEvent, RunFailure, RunSummary, RunValues,
-    SourceError, SourceOpener, SourcePhases, SourceReader, SourceStatement, Step,
+    AttachedSource, Batch, Busy, Chart, CombineLimits, Combined, CostCheck, LimitHit, LimitSetIn,
+    LoadedColumn, Parts, PlannedLookup, PlannedSource, PlannedSourcePartition, PlannedSplit,
+    QuerySource, RunEvent, RunFailure, RunSummary, RunValues, SourceError, SourceOpener,
+    SourcePhases, SourceRanges, SourceReader, SourceStatement, Step, grouped,
 };
 
 /// Rows asked of the combine query at a time, as a source's are.
@@ -158,7 +159,6 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
                     &Step::Combine,
                     &Count::default(),
                     started,
-                    None,
                     clock.lap(so_far),
                 ));
             },
@@ -286,18 +286,19 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
             spent: Spent::default(),
             clock: ProgressClock::new(),
             scanned: None,
+            at: At::Whole,
         };
         let statements = Statements::new(self.outputs.plan, self.outputs.values, source);
         let deadline = opened + source.limits.timeout;
-        let batches = match &source.lookup {
-            None => {
+        let sent = match &source.split {
+            PlannedSplit::Whole => {
                 let statement = statements.whole(opened);
                 loading
-                    .fill(self.opener, &statement, workspace, None, events)
+                    .fill(self.opener, &statement, workspace, events)
                     .await?;
-                None
+                Sent::Whole
             }
-            Some(lookup) => {
+            PlannedSplit::Lookup(lookup) => {
                 let (values, reading) = timed(lookup_values(lookup, workspace, loaded)).await;
                 loading.spent.load += reading;
                 let values = values.map_err(|error| error.at(loading.step()))?;
@@ -305,12 +306,12 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
                 let of = batches.len() as u64;
                 for (index, batch) in batches.into_iter().enumerate() {
                     let statement = statements.batch(batch, deadline);
-                    let batch = Batch {
+                    loading.at = At::Batch(Batch {
                         number: index as u64 + 1,
                         of,
-                    };
+                    });
                     loading
-                        .fill(self.opener, &statement, workspace, Some(batch), events)
+                        .fill(self.opener, &statement, workspace, events)
                         .await?;
                 }
                 if of == 0 {
@@ -318,10 +319,24 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
                         .load_nothing(&statements, deadline, self.opener, workspace, events)
                         .await?;
                 }
-                Some(of)
+                Sent::Batches(of)
+            }
+            PlannedSplit::Partition(partition) => {
+                let ranges = self.outputs.values.ranges.get(&source.id).ok_or_else(|| {
+                    RunFailure::new(loading.step(), "the run's values have no ranges for it")
+                })?;
+                let reading = Ranges {
+                    statements: &statements,
+                    ranges,
+                    partition,
+                };
+                reading
+                    .load(&mut loading, self.opener, workspace, events)
+                    .await?;
+                Sent::Parts(ranges.ranges.len() as u64)
             }
         };
-        loading.finish(batches, events).await
+        loading.finish(sent, events).await
     }
 }
 
@@ -445,6 +460,98 @@ struct Loading<'a> {
     clock: ProgressClock,
     /// The bytes its engine scanned for every statement so far, where it says.
     scanned: Option<u64>,
+    /// Which of its statements it is sending.
+    at: At,
+}
+
+/// Which of a source's statements is being read, for its progress and its caps.
+#[derive(Debug, Clone, Copy)]
+enum At {
+    Whole,
+    Batch(Batch),
+    /// A range of a partitioned source, the rows it has returned so far, and the most it may.
+    Range {
+        parts: Parts,
+        number: u64,
+        rows: u64,
+        max_rows: Option<u64>,
+    },
+}
+
+impl At {
+    fn batch(self) -> Option<Batch> {
+        match self {
+            Self::Batch(batch) => Some(batch),
+            Self::Whole | Self::Range { .. } => None,
+        }
+    }
+
+    fn parts(self) -> Option<Parts> {
+        match self {
+            Self::Range { parts, .. } => Some(parts),
+            Self::Whole | Self::Batch(_) => None,
+        }
+    }
+
+    /// The statement's number, for a message about one of several.
+    fn number(self) -> u64 {
+        match self {
+            Self::Whole => 1,
+            Self::Batch(batch) => batch.number,
+            Self::Range { number, .. } => number,
+        }
+    }
+}
+
+/// What statements a loaded source sent.
+enum Sent {
+    Whole,
+    /// One a batch of its lookup's values.
+    Batches(u64),
+    /// One a range of its partition.
+    Parts(u64),
+}
+
+/// A partitioned source's ranges, read one after another into its table (RS4b).
+struct Ranges<'s, 'a> {
+    statements: &'s Statements<'a>,
+    ranges: &'s SourceRanges,
+    partition: &'s PlannedSourcePartition,
+}
+
+impl Ranges<'_, '_> {
+    /// Reads each range in turn. The first range's statement has the cost guard judge the
+    /// whole period, so a source too costly to read is refused before any range runs.
+    async fn load<O: SourceOpener>(
+        &self,
+        loading: &mut Loading<'_>,
+        opener: &O,
+        workspace: &Workspace,
+        events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
+    ) -> Result<(), RunFailure> {
+        let kind = self.partition.partition.kind;
+        let of = self.ranges.ranges.len() as u64;
+        for (done, range) in (0..).zip(&self.ranges.ranges) {
+            let cost = if done == 0 {
+                self.statements.whole_period(&self.ranges.whole, kind)
+            } else {
+                CostCheck::Judged
+            };
+            let statement = self.statements.range(range, kind, Instant::now(), cost);
+            loading.at = At::Range {
+                parts: Parts {
+                    done,
+                    running: 1,
+                    of,
+                },
+                number: range.number,
+                rows: 0,
+                max_rows: self.partition.max_rows_per_part,
+            };
+            loading.fill(opener, &statement, workspace, events).await?;
+        }
+        Ok(())
+    }
 }
 
 /// Appends the pages `queued` to `table` as they come, until the reader ends; and when it was
@@ -478,19 +585,19 @@ pub(crate) async fn read_profile(workspace: &Workspace) -> WorkspaceProfile {
 }
 
 /// A step's progress: what it has read since `opened`, and what it was busy with.
-pub(crate) fn progress(
-    step: &Step,
-    read: &Count,
-    opened: Instant,
-    batch: Option<Batch>,
-    busy: Busy,
-) -> RunEvent {
+pub(crate) fn progress(step: &Step, read: &Count, opened: Instant, busy: Busy) -> RunEvent {
+    progress_at(step, read, opened, At::Whole, busy)
+}
+
+/// A source's progress, on the statement `at`.
+fn progress_at(step: &Step, read: &Count, opened: Instant, at: At, busy: Busy) -> RunEvent {
     RunEvent::Progress {
         step: step.clone(),
         rows: read.rows,
         bytes: read.bytes,
         elapsed_ms: millis(opened.elapsed()),
-        batch,
+        batch: at.batch(),
+        parts: at.parts(),
         busy: Some(busy),
     }
 }
@@ -506,20 +613,61 @@ impl Loading<'_> {
         duckdb_failure(error, self.limits).at(self.step())
     }
 
+    /// Counts `rows` against the range being read, which `max_rows_per_part` bounds.
+    fn count_range(&mut self, rows: usize) -> Result<(), RunFailure> {
+        let At::Range {
+            number,
+            rows: so_far,
+            max_rows,
+            parts,
+        } = self.at
+        else {
+            return Ok(());
+        };
+        let rows = so_far.saturating_add(rows as u64);
+        self.at = At::Range {
+            parts,
+            number,
+            rows,
+            max_rows,
+        };
+        match max_rows {
+            Some(max) if rows > max => {
+                let value = format!("{} rows", grouped(max));
+                Err(RunFailure::at_limit(
+                    self.step(),
+                    format!(
+                        "range {number} of {} returned more than {value}, its max_rows_per_part; \
+                         narrow its ranges with a smaller every, filter in its query, or raise \
+                         max_rows_per_part",
+                        parts.of
+                    ),
+                    LimitHit {
+                        key: "max_rows_per_part".to_owned(),
+                        value,
+                        raise_in: format!("the [[source]] {:?}", self.source.id),
+                        set_in: Some(LimitSetIn::File),
+                    },
+                ))
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// Runs `statement` and appends its rows to the table, a page at a time, watching the
-    /// source's caps. `batch` is which of the lookup's batches it reads.
+    /// source's caps.
     async fn fill<O: SourceOpener>(
         &mut self,
         opener: &O,
         statement: &SourceStatement<'_>,
         workspace: &Workspace,
-        batch: Option<Batch>,
         events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
     ) -> Result<(), RunFailure> {
         let step = self.step();
+        let at = self.at;
         let (reader, opening_time) = waiting(Box::pin(Shaped::open(opener, statement)), |so_far| {
             let busy = self.clock.lap(so_far);
-            (events.borrow_mut())(progress(&step, &self.read, self.opened, batch, busy));
+            (events.borrow_mut())(progress_at(&step, &self.read, self.opened, at, busy));
         })
         .await;
         self.clock.waited(opening_time);
@@ -527,7 +675,7 @@ impl Loading<'_> {
         let opening = reader.opening();
         self.spent.connect += opening.connect;
         self.spent.start += opening.start;
-        let filled = self.fill_from(&mut reader, workspace, batch, events).await;
+        let filled = self.fill_from(&mut reader, workspace, events).await;
         if let Some(scanned) = reader.scanned() {
             self.scanned = Some(self.scanned.unwrap_or(0).saturating_add(scanned));
         }
@@ -542,13 +690,12 @@ impl Loading<'_> {
         &mut self,
         reader: &mut R,
         workspace: &Workspace,
-        batch: Option<Batch>,
         events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
     ) -> Result<(), RunFailure> {
-        let mut table = self.take_table(reader.columns(), workspace, batch).await?;
+        let mut table = self.take_table(reader.columns(), workspace).await?;
         let (pages, queued) = mpsc::channel(QUEUE_PAGES);
         let ((read, read_ended), (appended, appended_ended)) = tokio::join!(
-            self.read_into(reader, pages, batch, events),
+            self.read_into(reader, pages, events),
             append_queued(&mut table, queued),
         );
         // What DuckDB still had to append once the last page was read held the source too.
@@ -565,15 +712,15 @@ impl Loading<'_> {
         &mut self,
         reader: &mut R,
         pages: mpsc::Sender<Vec<Row>>,
-        batch: Option<Batch>,
         events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
     ) -> (Result<(), RunFailure>, Instant) {
         let step = self.step();
+        let at = self.at;
         let mut rows_seen = false;
         let outcome = loop {
             let (page, waited) = waiting(reader.next_page(), |so_far| {
                 let busy = self.clock.lap(so_far);
-                (events.borrow_mut())(progress(&step, &self.read, self.opened, batch, busy));
+                (events.borrow_mut())(progress_at(&step, &self.read, self.opened, at, busy));
             })
             .await;
             self.read.waited(waited, !rows_seen);
@@ -594,9 +741,12 @@ impl Loading<'_> {
             if let Err(failure) = self.read.check(self.source) {
                 break Err(failure);
             }
+            if let Err(failure) = self.count_range(page.len()) {
+                break Err(failure);
+            }
             let (sent, room) = waiting(pages.send(page), |so_far| {
                 let busy = self.clock.lap_loading(so_far);
-                (events.borrow_mut())(progress(&step, &self.read, self.opened, batch, busy));
+                (events.borrow_mut())(progress_at(&step, &self.read, self.opened, at, busy));
             })
             .await;
             self.spent.load += room;
@@ -607,7 +757,7 @@ impl Loading<'_> {
             }
             if self.clock.due() {
                 let busy = self.clock.lap(Duration::ZERO);
-                (events.borrow_mut())(progress(&step, &self.read, self.opened, batch, busy));
+                (events.borrow_mut())(progress_at(&step, &self.read, self.opened, at, busy));
             }
         };
         (outcome, Instant::now())
@@ -619,7 +769,6 @@ impl Loading<'_> {
         &mut self,
         columns: &[ExportColumn],
         workspace: &Workspace,
-        batch: Option<Batch>,
     ) -> Result<Table, RunFailure> {
         let names: Vec<String> = columns.iter().map(|column| column.name.clone()).collect();
         if let Some(table) = self.table.take() {
@@ -627,11 +776,14 @@ impl Loading<'_> {
             if first == names {
                 return Ok(table);
             }
-            let number = batch.map_or(1, |batch| batch.number);
+            let (statement, number) = match self.at {
+                At::Range { number, .. } => ("range", number),
+                At::Whole | At::Batch(_) => ("batch", self.at.number()),
+            };
             return Err(RunFailure::new(
                 self.step(),
                 format!(
-                    "batch {number} returned the columns {}, unlike the first batch's {}",
+                    "{statement} {number} returned the columns {}, unlike the first {statement}'s {}",
                     names.join(", "),
                     first.join(", ")
                 ),
@@ -680,13 +832,14 @@ impl Loading<'_> {
                         excel_format: None,
                     })
                     .collect();
-                let table = self.take_table(&columns, workspace, None).await?;
+                let table = self.take_table(&columns, workspace).await?;
                 self.table = Some(table);
                 Ok(())
             }
             None => {
                 let statement = statements.batch(&[Literal::Null], deadline);
-                self.fill(opener, &statement, workspace, None, events).await
+                self.at = At::Whole;
+                self.fill(opener, &statement, workspace, events).await
             }
         }
     }
@@ -695,7 +848,7 @@ impl Loading<'_> {
     /// a lookup sent.
     async fn finish(
         self,
-        batches: Option<u64>,
+        sent: Sent,
         events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
     ) -> Result<LoadedTable, RunFailure> {
         let step = self.step();
@@ -741,7 +894,14 @@ impl Loading<'_> {
                 })
                 .collect(),
             warnings,
-            batches,
+            batches: match sent {
+                Sent::Batches(batches) => Some(batches),
+                Sent::Whole | Sent::Parts(_) => None,
+            },
+            parts: match sent {
+                Sent::Parts(parts) => Some(parts),
+                Sent::Whole | Sent::Batches(_) => None,
+            },
             phases: Some(phases),
             scanned_bytes: self.scanned,
         });
