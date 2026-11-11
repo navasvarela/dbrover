@@ -108,6 +108,8 @@ pub enum RunEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scanned_bytes: Option<u64>,
     },
+    /// A range of a partitioned source returned its last row (RS4c).
+    PartDone(PartDone),
     /// A DuckDB file was attached for the combine step to read in place.
     SourceAttached {
         id: String,
@@ -197,6 +199,39 @@ pub struct SourceStart {
     /// from a worker older than RS1b.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limits: Option<SourceCaps>,
+    /// How it reads its ranges, for a partitioned source (RS4c).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partition: Option<PartitionStart>,
+}
+
+/// How a partitioned source reads its ranges.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PartitionStart {
+    /// The word for one range, as `month`, or `range` when a range isn't one unit of the
+    /// calendar.
+    pub unit: String,
+    /// How many ranges it reads at once.
+    pub parallel: u32,
+}
+
+/// What one range of a partition read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PartDone {
+    pub step: Step,
+    /// Counted from 1, in the order of the ranges.
+    pub number: u64,
+    pub of: u64,
+    /// Its bounds in their plain form: the first value in it and the first past it.
+    pub from: String,
+    pub to: String,
+    pub rows: u64,
+    pub bytes: u64,
+    /// From opening its statement to its first row; `None` when it returned none.
+    pub first_row_ms: Option<u64>,
+    pub elapsed_ms: u64,
+    /// The bytes its engine scanned, where the engine says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scanned_bytes: Option<u64>,
 }
 
 /// A source's caps as a run applies them, whoever set them.
@@ -293,6 +328,33 @@ pub struct Parts {
     /// Ranges being read now.
     pub running: u64,
     pub of: u64,
+}
+
+impl Parts {
+    /// Where the source is, in `unit`s (`month`): `month 7 of 12`, `months 7–9 of 12` while
+    /// three are read at once, `12 months` once every one is done.
+    pub fn describe(&self, unit: &str) -> String {
+        let Self { done, running, of } = *self;
+        if done >= of {
+            return counted(of, unit);
+        }
+        let first = done + 1;
+        let last = (done + running).clamp(first, of);
+        if first == last {
+            format!("{unit} {first} of {of}")
+        } else {
+            format!("{unit}s {first}–{last} of {of}")
+        }
+    }
+}
+
+/// `1 month`, `12 months`.
+pub fn counted(count: u64, unit: &str) -> String {
+    if count == 1 {
+        format!("1 {unit}")
+    } else {
+        format!("{count} {unit}s")
+    }
 }
 
 /// Which of a lookup's batches a source is reading, counted from 1.
@@ -532,6 +594,21 @@ mod tests {
 
     /// A limit's `set_in` came with RP4h: older lines have none, and a limit without one
     /// writes none, so older readers see the line they knew.
+    #[test]
+    fn says_where_a_partitioned_source_is_in_its_units() {
+        let cases = [
+            ((0, 1, 12), "month 1 of 12"),
+            ((6, 1, 12), "month 7 of 12"),
+            ((6, 3, 12), "months 7–9 of 12"),
+            ((11, 3, 12), "month 12 of 12"),
+            ((12, 0, 12), "12 months"),
+            ((1, 0, 1), "1 month"),
+        ];
+        for ((done, running, of), said) in cases {
+            assert_eq!(Parts { done, running, of }.describe("month"), said);
+        }
+    }
+
     #[test]
     fn reads_a_limit_from_before_it_said_who_set_it() {
         let line = r#"{"key":"max_rows","value":"10 rows","raise_in":"[combine]"}"#;

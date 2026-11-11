@@ -1179,9 +1179,10 @@ fn step_detail(step: &StepRecord) -> String {
             if !now.is_empty() {
                 read = format!("{read} · {now}");
             }
-            match step.batches {
-                Some(batch) => format!("batch {} of {} · {read}", batch.number, batch.of),
-                None => read,
+            match (step.batches, step.parts) {
+                (Some(batch), _) => format!("batch {} of {} · {read}", batch.number, batch.of),
+                (None, Some(parts)) => format!("{} · {read}", parts.describe(unit(step))),
+                (None, None) => read,
             }
         }
         StepState::Done {
@@ -1190,15 +1191,23 @@ fn step_detail(step: &StepRecord) -> String {
             elapsed_ms,
         } => {
             let read = amounts(rows, bytes, elapsed_ms);
-            match step.batches {
-                Some(Batch { of: 1, .. }) => format!("1 batch · {read}"),
-                Some(batch) => format!("{} batches · {read}", batch.of),
-                None => read,
+            match (step.batches, step.parts) {
+                (Some(Batch { of: 1, .. }), _) => format!("1 batch · {read}"),
+                (Some(batch), _) => format!("{} batches · {read}", batch.of),
+                (None, Some(parts)) => {
+                    format!("{} · {read}", dbrover_report::counted(parts.of, unit(step)))
+                }
+                (None, None) => read,
             }
         }
         StepState::Attached => "attached, read in place".to_owned(),
         StepState::Failed => "failed".to_owned(),
     }
+}
+
+/// The word for one of a partitioned step's ranges.
+fn unit(step: &StepRecord) -> &str {
+    step.unit.as_deref().unwrap_or("range")
 }
 
 /// `1,500 rows, 30 KB · 1.2 s`.

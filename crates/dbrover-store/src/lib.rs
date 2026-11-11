@@ -48,9 +48,9 @@ pub use gitignore::{GITIGNORE, GitStatus, GitignoreAdded, add_gitignore};
 pub use history::{
     CombineCaps, CombineMetrics, DEFAULT_RUNS_KEPT, History, HistoryEntry, HistoryError,
     HistoryExportError, HistoryFile, HistoryOutcome, HistoryQuery, HistorySource,
-    HistorySourceKind, KeptColumn, NamedCell, OutputMetrics, ReplacedCell, ReportRun, RowChange,
-    RowChangeKind, RunError, RunId, RunOrigin, RunOutcome, RunProfile, SourceCaps, SourceMetrics,
-    SourcePhases, StepMetrics, redact_secrets,
+    HistorySourceKind, KeptColumn, NamedCell, OutputMetrics, PartMetrics, ReplacedCell, ReportRun,
+    RowChange, RowChangeKind, RunError, RunId, RunOrigin, RunOutcome, RunProfile, SourceCaps,
+    SourceMetrics, SourcePhases, StepMetrics, redact_secrets,
 };
 pub use in_place::InPlaceError;
 pub use keymap::{KeymapBindings, KeymapError, KeymapFile};

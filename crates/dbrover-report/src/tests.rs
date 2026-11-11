@@ -798,6 +798,7 @@ fn reads_and_plans_the_valuation() {
                 waits_for: None,
                 engine: Some("PostgreSQL".to_owned()),
                 limits: Some(SourceCaps::from(&SourceLimits::default())),
+                partition: None,
             },
             SourceStart {
                 id: "prices".to_owned(),
@@ -806,6 +807,7 @@ fn reads_and_plans_the_valuation() {
                 waits_for: None,
                 engine: Some("DuckDB".to_owned()),
                 limits: None,
+                partition: None,
             },
         ]
     );

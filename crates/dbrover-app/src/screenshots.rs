@@ -1720,6 +1720,7 @@ fn report_profile(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture)
                 limits: None,
                 columns: Vec::new(),
                 scanned_bytes: None,
+                parts: Vec::new(),
             }),
             StepMetrics::Combine(CombineMetrics {
                 rows: 22,
@@ -1843,6 +1844,7 @@ fn report_page(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
             waits_for: None,
             columns: Vec::new(),
             scanned_bytes: None,
+            parts: Vec::new(),
         })
     };
     let finished = |day: i64, origin, combine_ms, excel_ms| ReportRun {

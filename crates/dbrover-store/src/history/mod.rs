@@ -17,8 +17,9 @@ pub use change::{NamedCell, ReplacedCell, RowChange, RowChangeKind};
 pub use export::HistoryExportError;
 pub use redact::redact_secrets;
 pub use runs::{
-    CombineCaps, CombineMetrics, DEFAULT_RUNS_KEPT, KeptColumn, OutputMetrics, ReportRun, RunError,
-    RunId, RunOrigin, RunOutcome, RunProfile, SourceCaps, SourceMetrics, SourcePhases, StepMetrics,
+    CombineCaps, CombineMetrics, DEFAULT_RUNS_KEPT, KeptColumn, OutputMetrics, PartMetrics,
+    ReportRun, RunError, RunId, RunOrigin, RunOutcome, RunProfile, SourceCaps, SourceMetrics,
+    SourcePhases, StepMetrics,
 };
 pub use source::{HistorySource, HistorySourceKind};
 

@@ -190,6 +190,7 @@ fn outcome_json(events: &[RunEvent], max_rows: usize) -> Value {
                 bytes,
                 elapsed_ms,
                 batches,
+                parts,
                 ..
             } => steps.push(json!({
                 "step": format!("source {id}"),
@@ -197,6 +198,7 @@ fn outcome_json(events: &[RunEvent], max_rows: usize) -> Value {
                 "bytes": bytes,
                 "elapsed_ms": elapsed_ms,
                 "batches": batches,
+                "ranges": parts,
             })),
             RunEvent::SourceAttached { id, .. } => {
                 steps.push(json!({"step": format!("source {id}"), "attached": true}));
@@ -234,9 +236,11 @@ fn outcome_json(events: &[RunEvent], max_rows: usize) -> Value {
             }
             RunEvent::Failed(failure) => end = failed_json(failure),
             RunEvent::Cancelled => end = json!({"outcome": "cancelled"}),
-            // The worker's memory and the steps' phases are RS8's, with the run profile.
+            // The worker's memory, the steps' phases and each range's numbers are RS8's, with
+            // the run profile.
             RunEvent::Started { .. }
             | RunEvent::Progress { .. }
+            | RunEvent::PartDone(_)
             | RunEvent::WorkerUsage { .. }
             | RunEvent::Explained(_) => {}
         }

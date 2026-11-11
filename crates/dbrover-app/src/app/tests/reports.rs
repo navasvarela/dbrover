@@ -190,6 +190,7 @@ fn finished_run(folder: &Path) -> Vec<RunEvent> {
                 waits_for: None,
                 engine: None,
                 limits: None,
+                partition: None,
             }],
             combine: false,
             combine_sql: None,
@@ -337,6 +338,7 @@ fn combined_start() -> Vec<RunEvent> {
         waits_for: None,
         engine: None,
         limits: None,
+        partition: None,
     };
     let loaded = |id: &str, rows, table: Vec<(&str, &str)>| RunEvent::SourceDone {
         id: id.to_owned(),
@@ -558,6 +560,7 @@ fn shows_a_lookup_waiting_then_its_batches_then_done() {
                 waits_for: None,
                 engine: None,
                 limits: None,
+                partition: None,
             },
             SourceStart {
                 id: "accounts".to_owned(),
@@ -566,6 +569,7 @@ fn shows_a_lookup_waiting_then_its_batches_then_done() {
                 waits_for: Some("entries".to_owned()),
                 engine: None,
                 limits: None,
+                partition: None,
             },
         ],
         combine: true,
@@ -794,6 +798,7 @@ fn cancel_stops_the_running_report() {
             waits_for: None,
             engine: None,
             limits: None,
+            partition: None,
         }],
         combine: false,
         combine_sql: None,

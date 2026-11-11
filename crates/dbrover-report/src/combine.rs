@@ -24,6 +24,8 @@ use dbrover_sql::Dialect;
 use futures_util::future::try_join_all;
 use tokio::sync::mpsc;
 
+mod ranges;
+
 use crate::chart::ChartRun;
 use crate::declared::Shaped;
 use crate::live::{ProgressClock, waiting};
@@ -32,10 +34,9 @@ use crate::run::{Count, Feed, Outputs, Streamed, millis, timed};
 use crate::statement::{Statements, lookup_literal};
 use crate::typing::{ColumnTyper, DriverTypes};
 use crate::{
-    AttachedSource, Batch, Busy, Chart, CombineLimits, Combined, CostCheck, LimitHit, LimitSetIn,
-    LoadedColumn, Parts, PlannedLookup, PlannedSource, PlannedSourcePartition, PlannedSplit,
-    QuerySource, RunEvent, RunFailure, RunSummary, RunValues, SourceError, SourceOpener,
-    SourcePhases, SourceRanges, SourceReader, SourceStatement, Step, grouped,
+    AttachedSource, Batch, Busy, Chart, CombineLimits, Combined, LimitHit, LoadedColumn, Parts,
+    PlannedLookup, PlannedSource, PlannedSplit, QuerySource, RunEvent, RunFailure, RunSummary,
+    RunValues, SourceError, SourceOpener, SourcePhases, SourceReader, SourceStatement, Step,
 };
 
 /// Rows asked of the combine query at a time, as a source's are.
@@ -325,7 +326,7 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
                 let ranges = self.outputs.values.ranges.get(&source.id).ok_or_else(|| {
                     RunFailure::new(loading.step(), "the run's values have no ranges for it")
                 })?;
-                let reading = Ranges {
+                let reading = ranges::Ranges {
                     statements: &statements,
                     ranges,
                     partition,
@@ -464,41 +465,27 @@ struct Loading<'a> {
     at: At,
 }
 
-/// Which of a source's statements is being read, for its progress and its caps.
+/// Which of a source's statements is being read, for its progress.
 #[derive(Debug, Clone, Copy)]
 enum At {
     Whole,
     Batch(Batch),
-    /// A range of a partitioned source, the rows it has returned so far, and the most it may.
-    Range {
-        parts: Parts,
-        number: u64,
-        rows: u64,
-        max_rows: Option<u64>,
-    },
+    /// Ranges of a partitioned source, several of which may be read at once.
+    Parts(Parts),
 }
 
 impl At {
     fn batch(self) -> Option<Batch> {
         match self {
             Self::Batch(batch) => Some(batch),
-            Self::Whole | Self::Range { .. } => None,
+            Self::Whole | Self::Parts(_) => None,
         }
     }
 
     fn parts(self) -> Option<Parts> {
         match self {
-            Self::Range { parts, .. } => Some(parts),
+            Self::Parts(parts) => Some(parts),
             Self::Whole | Self::Batch(_) => None,
-        }
-    }
-
-    /// The statement's number, for a message about one of several.
-    fn number(self) -> u64 {
-        match self {
-            Self::Whole => 1,
-            Self::Batch(batch) => batch.number,
-            Self::Range { number, .. } => number,
         }
     }
 }
@@ -510,48 +497,6 @@ enum Sent {
     Batches(u64),
     /// One a range of its partition.
     Parts(u64),
-}
-
-/// A partitioned source's ranges, read one after another into its table (RS4b).
-struct Ranges<'s, 'a> {
-    statements: &'s Statements<'a>,
-    ranges: &'s SourceRanges,
-    partition: &'s PlannedSourcePartition,
-}
-
-impl Ranges<'_, '_> {
-    /// Reads each range in turn. The first range's statement has the cost guard judge the
-    /// whole period, so a source too costly to read is refused before any range runs.
-    async fn load<O: SourceOpener>(
-        &self,
-        loading: &mut Loading<'_>,
-        opener: &O,
-        workspace: &Workspace,
-        events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
-    ) -> Result<(), RunFailure> {
-        let kind = self.partition.partition.kind;
-        let of = self.ranges.ranges.len() as u64;
-        for (done, range) in (0..).zip(&self.ranges.ranges) {
-            let cost = if done == 0 {
-                self.statements.whole_period(&self.ranges.whole, kind)
-            } else {
-                CostCheck::Judged
-            };
-            let statement = self.statements.range(range, kind, Instant::now(), cost);
-            loading.at = At::Range {
-                parts: Parts {
-                    done,
-                    running: 1,
-                    of,
-                },
-                number: range.number,
-                rows: 0,
-                max_rows: self.partition.max_rows_per_part,
-            };
-            loading.fill(opener, &statement, workspace, events).await?;
-        }
-        Ok(())
-    }
 }
 
 /// Appends the pages `queued` to `table` as they come, until the reader ends; and when it was
@@ -611,47 +556,6 @@ impl Loading<'_> {
 
     fn duckdb_failure(&self, error: &DriverError) -> RunFailure {
         duckdb_failure(error, self.limits).at(self.step())
-    }
-
-    /// Counts `rows` against the range being read, which `max_rows_per_part` bounds.
-    fn count_range(&mut self, rows: usize) -> Result<(), RunFailure> {
-        let At::Range {
-            number,
-            rows: so_far,
-            max_rows,
-            parts,
-        } = self.at
-        else {
-            return Ok(());
-        };
-        let rows = so_far.saturating_add(rows as u64);
-        self.at = At::Range {
-            parts,
-            number,
-            rows,
-            max_rows,
-        };
-        match max_rows {
-            Some(max) if rows > max => {
-                let value = format!("{} rows", grouped(max));
-                Err(RunFailure::at_limit(
-                    self.step(),
-                    format!(
-                        "range {number} of {} returned more than {value}, its max_rows_per_part; \
-                         narrow its ranges with a smaller every, filter in its query, or raise \
-                         max_rows_per_part",
-                        parts.of
-                    ),
-                    LimitHit {
-                        key: "max_rows_per_part".to_owned(),
-                        value,
-                        raise_in: format!("the [[source]] {:?}", self.source.id),
-                        set_in: Some(LimitSetIn::File),
-                    },
-                ))
-            }
-            _ => Ok(()),
-        }
     }
 
     /// Runs `statement` and appends its rows to the table, a page at a time, watching the
@@ -741,9 +645,6 @@ impl Loading<'_> {
             if let Err(failure) = self.read.check(self.source) {
                 break Err(failure);
             }
-            if let Err(failure) = self.count_range(page.len()) {
-                break Err(failure);
-            }
             let (sent, room) = waiting(pages.send(page), |so_far| {
                 let busy = self.clock.lap_loading(so_far);
                 (events.borrow_mut())(progress_at(&step, &self.read, self.opened, at, busy));
@@ -776,14 +677,11 @@ impl Loading<'_> {
             if first == names {
                 return Ok(table);
             }
-            let (statement, number) = match self.at {
-                At::Range { number, .. } => ("range", number),
-                At::Whole | At::Batch(_) => ("batch", self.at.number()),
-            };
+            let number = self.at.batch().map_or(1, |batch| batch.number);
             return Err(RunFailure::new(
                 self.step(),
                 format!(
-                    "{statement} {number} returned the columns {}, unlike the first {statement}'s {}",
+                    "batch {number} returned the columns {}, unlike the first batch's {}",
                     names.join(", "),
                     first.join(", ")
                 ),
