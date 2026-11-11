@@ -2,9 +2,10 @@
 //! may say, the ranges a run's values make, the statement each range sends and what the cost
 //! guard judges, the table the ranges make together, and `max_rows_per_part`.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use dbrover_core::{ConnectionConfig, DataSource, DataSourceId, Row, SafetyLevel, SqliteConfig};
 
@@ -95,12 +96,40 @@ struct Sent {
 struct Ranged {
     sent: RefCell<Vec<Sent>>,
     extra: Option<(String, usize)>,
+    open: Rc<Cell<usize>>,
+    most_open: Rc<Cell<usize>>,
+}
+
+/// A range's rows, given up a page at a time with a yield between, so ranges read at once
+/// interleave; it counts itself open until it is closed.
+struct GaugedReader {
+    inner: MemoryReader,
+    open: Rc<Cell<usize>>,
+}
+
+impl SourceReader for GaugedReader {
+    fn columns(&self) -> &[dbrover_export::ExportColumn] {
+        self.inner.columns()
+    }
+
+    async fn next_page(&mut self) -> Result<Option<Vec<Row>>, SourceError> {
+        tokio::task::yield_now().await;
+        self.inner.next_page().await
+    }
+
+    fn scanned(&self) -> Option<u64> {
+        self.inner.scanned()
+    }
+
+    async fn close(self) {
+        self.open.set(self.open.get() - 1);
+    }
 }
 
 impl SourceOpener for Ranged {
-    type Reader = MemoryReader;
+    type Reader = GaugedReader;
 
-    async fn open(&self, statement: &SourceStatement<'_>) -> Result<MemoryReader, SourceError> {
+    async fn open(&self, statement: &SourceStatement<'_>) -> Result<GaugedReader, SourceError> {
         let bound = |name: &str| statement.parameters.get(name).cloned().flatten();
         let (from, to) = (bound(PART_FROM), bound(PART_TO));
         self.sent.borrow_mut().push(Sent {
@@ -122,14 +151,20 @@ impl SourceOpener for Ranged {
             .chain(std::iter::repeat_n(from, extra))
             .map(|id| vec![Some(id.to_string()), Some("1".to_owned())])
             .collect();
-        Ok(MemoryReader {
-            columns: vec![column("id"), column("amount")],
-            pages: rows
-                .chunks(400)
-                .map(<[Row]>::to_vec)
-                .collect::<VecDeque<_>>(),
-            then: None,
-            scanned: None,
+        self.open.set(self.open.get() + 1);
+        self.most_open
+            .set(self.most_open.get().max(self.open.get()));
+        Ok(GaugedReader {
+            inner: MemoryReader {
+                columns: vec![column("id"), column("amount")],
+                pages: rows
+                    .chunks(400)
+                    .map(<[Row]>::to_vec)
+                    .collect::<VecDeque<_>>(),
+                then: None,
+                scanned: Some(8 * (to - from)),
+            },
+            open: Rc::clone(&self.open),
         })
     }
 }
@@ -201,6 +236,13 @@ fn names_every_problem_with_a_partition() {
         (
             events_report(r#"{ from = ":first", to = ":last", every = 0 }"#, ""),
             "every must be greater than zero",
+        ),
+        (
+            events_report(
+                r#"{ from = ":first", to = ":last", every = 1000, parallel = 17 }"#,
+                "",
+            ),
+            "parallel is how many ranges run at once, 1 to 16",
         ),
         (
             events_report(r#"{ from = 2026-01-01T00:00:00Z, to = ":last", every = 1 }"#, ""),
@@ -374,9 +416,9 @@ async fn stops_at_a_range_past_max_rows_per_part_naming_it() {
         }
     );
     assert!(
-        failure
-            .message
-            .starts_with("range 2 of 3 returned more than 1,200 rows, its max_rows_per_part"),
+        failure.message.starts_with(
+            "range 2 of 3 (1000 to 2000) returned more than 1,200 rows, its max_rows_per_part"
+        ),
         "{}",
         failure.message
     );
@@ -387,4 +429,87 @@ async fn stops_at_a_range_past_max_rows_per_part_naming_it() {
     );
     assert!(!folder.path().join("events.csv").exists());
     assert_eq!(opener.sent.borrow().len(), 2, "range 3 never ran");
+}
+
+#[tokio::test]
+async fn reads_ranges_at_once_up_to_parallel_into_the_same_table() {
+    let folder = tempfile::tempdir().unwrap();
+    let plan = plan(&events_report(
+        r#"{ from = ":first", to = ":last", every = 200, parallel = 3 }"#,
+        "",
+    ))
+    .unwrap();
+    let opener = Ranged::default();
+    let (outcome, events) = run_plan(&plan, &opener, folder.path()).await;
+    outcome.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(folder.path().join("events.csv")).unwrap(),
+        "events,total,first,last\r\n2500,2500,0,2499\r\n",
+        "the same table as one range at a time"
+    );
+    assert_eq!(opener.sent.borrow().len(), 13);
+    assert_eq!(
+        opener.most_open.get(),
+        3,
+        "never more than parallel at once"
+    );
+    assert_eq!(opener.open.get(), 0, "every range's statement closed");
+
+    let mut parts: Vec<&PartDone> = events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::PartDone(part) => Some(part),
+            _ => None,
+        })
+        .collect();
+    parts.sort_unstable_by_key(|part| part.number);
+    let said = |part: &PartDone| {
+        (
+            part.number,
+            part.of,
+            part.from.clone(),
+            part.to.clone(),
+            part.rows,
+            part.scanned_bytes,
+        )
+    };
+    assert_eq!(parts.len(), 13);
+    assert_eq!(
+        said(parts[0]),
+        (1, 13, "0".to_owned(), "200".to_owned(), 200, Some(1_600))
+    );
+    assert_eq!(
+        said(parts[12]),
+        (13, 13, "2400".to_owned(), "2500".to_owned(), 100, Some(800))
+    );
+    let done = events.iter().find_map(|event| match event {
+        RunEvent::SourceDone {
+            rows,
+            parts,
+            scanned_bytes,
+            ..
+        } => Some((*rows, *parts, *scanned_bytes)),
+        _ => None,
+    });
+    assert_eq!(done, Some((2_500, Some(13), Some(20_000))));
+}
+
+#[test]
+fn says_how_a_partitioned_source_reads_as_the_run_starts() {
+    let plan = plan(
+        &events_report(
+            r#"{ from = ":since", to = ":until", every = "1 month", parallel = 2 }"#,
+            "",
+        )
+        .replace(":part_from", "date(:part_from)"),
+    )
+    .unwrap();
+    let starts = plan.source_starts();
+    assert_eq!(
+        starts[0].partition,
+        Some(PartitionStart {
+            unit: "month".to_owned(),
+            parallel: 2,
+        })
+    );
 }

@@ -313,6 +313,9 @@ fn details(step: &StepMetrics) -> String {
                     .map(|ms| format!("First row after {}", seconds(ms))),
             );
             lines.extend(source.batches.map(|batches| format!("{batches} batches")));
+            if !source.parts.is_empty() {
+                lines.push(dbrover_report::counted(source.parts.len() as u64, "range"));
+            }
             lines.join("\n")
         }
         StepMetrics::Attached { data_source, .. } => {

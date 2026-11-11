@@ -222,6 +222,7 @@ mod tests {
                 limits: None,
                 columns,
                 scanned_bytes: None,
+                parts: Vec::new(),
             })],
             origin: RunOrigin::App,
             version: None,

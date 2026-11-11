@@ -5,7 +5,9 @@
 use std::io::Write;
 
 use dbrover_core::{BlobId, ByteCount};
-use dbrover_report::{RunEvent, RunFailure, Step, TimedEvent, TypedValues, WrittenFile, grouped};
+use dbrover_report::{
+    RunEvent, RunFailure, Step, TimedEvent, TypedValues, WrittenFile, counted, grouped,
+};
 
 use super::printer::Printer;
 use super::progress::{CLEAR_LINE, LiveLine};
@@ -65,12 +67,14 @@ impl<O: Write, E: Write> HumanLines<O, E> {
                 elapsed_ms,
                 warnings,
                 batches,
+                parts,
                 ..
             } => {
-                let batches = match batches {
-                    Some(1) => ", 1 batch".to_owned(),
-                    Some(batches) => format!(", {batches} batches"),
-                    None => String::new(),
+                let batches = match (batches, parts) {
+                    (Some(1), _) => ", 1 batch".to_owned(),
+                    (Some(batches), _) => format!(", {batches} batches"),
+                    (None, Some(parts)) => format!(", {}", counted(*parts, "range")),
+                    (None, None) => String::new(),
                 };
                 let line = format!(
                     "Source {id}: {}{batches}",
@@ -111,6 +115,7 @@ impl<O: Write, E: Write> HumanLines<O, E> {
             RunEvent::Progress { .. }
             | RunEvent::Preview(_)
             | RunEvent::WorkerUsage { .. }
+            | RunEvent::PartDone(_)
             | RunEvent::Explained(_) => {}
         }
     }

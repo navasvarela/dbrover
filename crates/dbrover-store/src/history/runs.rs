@@ -216,6 +216,30 @@ pub struct SourceMetrics {
     /// by, and the funnel's first bar.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scanned_bytes: Option<u64>,
+    /// For a partitioned source, each range it read, in the order of the ranges (RS4c); empty
+    /// otherwise, and for a run kept before RS4c.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<PartMetrics>,
+}
+
+/// One range of a partition, as a run read it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PartMetrics {
+    /// Counted from 1.
+    pub number: u64,
+    /// Its bounds, in their plain form: the first value in it and the first past it.
+    pub from: String,
+    pub to: String,
+    pub rows: u64,
+    pub bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_row_ms: Option<u64>,
+    pub elapsed_ms: u64,
+    /// When it was opened, from the run's start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scanned_bytes: Option<u64>,
 }
 
 /// A column of a source's table, as a run loaded it.
@@ -532,6 +556,7 @@ mod tests {
                     waits_for: None,
                     columns: Vec::new(),
                     scanned_bytes: None,
+                    parts: Vec::new(),
                 }),
                 StepMetrics::Attached {
                     id: "prices".to_owned(),

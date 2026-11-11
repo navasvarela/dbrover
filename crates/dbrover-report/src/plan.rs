@@ -14,7 +14,7 @@ use dbrover_export::{
 use dbrover_language::QueryLanguage;
 use dbrover_sql::{Dialect, ParameterValues, StatementKind};
 
-use crate::events::{CombineCaps, Machine, RunEvent, SourceCaps};
+use crate::events::{CombineCaps, Machine, PartitionStart, RunEvent, SourceCaps};
 use crate::problem::{Place, ReportProblem, Table, messages};
 use crate::run::millis;
 use crate::{
@@ -176,6 +176,10 @@ impl SourceStart {
             waits_for: source.split.lookup().map(|lookup| lookup.from.clone()),
             engine: Some(engine(&source.data_source)),
             limits: Some(SourceCaps::from(&source.limits)),
+            partition: source.split.partition().map(|split| PartitionStart {
+                unit: split.partition.partition.every.unit().to_owned(),
+                parallel: u32::try_from(split.parallel().get()).unwrap_or(u32::MAX),
+            }),
         }
     }
 }
@@ -284,6 +288,16 @@ impl PlannedSplit {
 pub struct PlannedSourcePartition {
     pub partition: PlannedPartition,
     pub max_rows_per_part: Option<u64>,
+}
+
+impl PlannedSourcePartition {
+    /// How many of its ranges are read at once: one unless the file says.
+    pub fn parallel(&self) -> NonZeroUsize {
+        self.partition
+            .partition
+            .parallel
+            .unwrap_or(NonZeroUsize::MIN)
+    }
 }
 
 /// A lookup, with the most values a statement of its source takes.
@@ -573,6 +587,7 @@ impl Plan {
                         waits_for: None,
                         engine: Some(engine(&attached.data_source)),
                         limits: None,
+                        partition: None,
                     },
                 })
                 .collect(),

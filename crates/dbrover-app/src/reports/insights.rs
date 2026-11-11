@@ -161,6 +161,7 @@ mod tests {
             waits_for: None,
             columns: Vec::new(),
             scanned_bytes: None,
+            parts: Vec::new(),
         })
     }
 

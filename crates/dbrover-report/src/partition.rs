@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::num::{NonZeroU32, NonZeroU64};
+use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 
 use dbrover_export::ColumnType;
 use dbrover_language::Literal;
@@ -31,7 +31,14 @@ pub struct Partition {
     pub from: RangeBound,
     pub to: RangeBound,
     pub every: Every,
+    /// How many ranges a source reads at once, when the file says (RS4c).
+    pub parallel: Option<NonZeroUsize>,
 }
+
+/// The most ranges of a source read at once. Each holds a connection to the source's engine and
+/// a page in the worker, and a desktop's network and DuckDB's one appender stop gaining long
+/// before this many.
+pub const MAX_PARALLEL: usize = 16;
 
 /// Where a partition starts or ends: one of the report's parameters, or a value of its own.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -458,20 +465,49 @@ pub(crate) fn read_partition(value: toml::Value) -> Result<Partition, Vec<String
     let from = read_bound(table.remove("from"), "from");
     let to = read_bound(table.remove("to"), "to");
     let every = read_every(table.remove("every"));
+    let parallel = read_parallel(table.remove("parallel"));
     let mut problems: Vec<String> = table
         .keys()
         .map(|key| {
-            format!("partition: {key:?} is not part of a partition, which has from, to and every")
+            format!(
+                "partition: {key:?} is not part of a partition, which has from, to, every and \
+                 parallel"
+            )
         })
         .collect();
-    match (from, to, every) {
-        (Ok(from), Ok(to), Ok(every)) if problems.is_empty() => Ok(Partition { from, to, every }),
-        (from, to, every) => {
+    match (from, to, every, parallel) {
+        (Ok(from), Ok(to), Ok(every), Ok(parallel)) if problems.is_empty() => Ok(Partition {
+            from,
+            to,
+            every,
+            parallel,
+        }),
+        (from, to, every, parallel) => {
             problems.extend(from.err());
             problems.extend(to.err());
             problems.extend(every.err());
+            problems.extend(parallel.err());
             Err(problems)
         }
+    }
+}
+
+/// `parallel`: 1 to [`MAX_PARALLEL`].
+fn read_parallel(value: Option<toml::Value>) -> Result<Option<NonZeroUsize>, String> {
+    match value {
+        None => Ok(None),
+        Some(toml::Value::Integer(count)) => usize::try_from(count)
+            .ok()
+            .filter(|count| *count <= MAX_PARALLEL)
+            .and_then(NonZeroUsize::new)
+            .map(Some)
+            .ok_or_else(|| {
+                format!("partition: parallel is how many ranges run at once, 1 to {MAX_PARALLEL}")
+            }),
+        Some(other) => Err(format!(
+            "partition: parallel is a whole number, 1 to {MAX_PARALLEL}, not a {}",
+            other.type_str()
+        )),
     }
 }
 
@@ -553,7 +589,16 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        PlannedPartition::plan(Partition { from, to, every }, &params).unwrap()
+        PlannedPartition::plan(
+            Partition {
+                from,
+                to,
+                every,
+                parallel: None,
+            },
+            &params,
+        )
+        .unwrap()
     }
 
     fn param(name: &str) -> RangeBound {
@@ -639,7 +684,15 @@ mod tests {
             ),
         ];
         for (from, to, every, problem) in cases {
-            let planned = PlannedPartition::plan(Partition { from, to, every }, &params);
+            let planned = PlannedPartition::plan(
+                Partition {
+                    from,
+                    to,
+                    every,
+                    parallel: None,
+                },
+                &params,
+            );
             assert!(
                 planned.as_ref().is_err_and(|error| error.contains(problem)),
                 "{problem}: {planned:?}"

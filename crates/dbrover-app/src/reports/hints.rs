@@ -491,6 +491,7 @@ mod tests {
             limits: None,
             columns: Vec::new(),
             scanned_bytes: None,
+            parts: Vec::new(),
         }
     }
 
@@ -573,6 +574,7 @@ mod tests {
             1_000,
             vec![StepMetrics::Source(SourceMetrics {
                 scanned_bytes: Some(1_200_000_000),
+                parts: Vec::new(),
                 bytes: 4_000_000,
                 ..source("events", 1_000, 1_000)
             })],

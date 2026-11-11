@@ -38,15 +38,15 @@ use dbrover_engine::{
 use dbrover_export::CustomFormat;
 use dbrover_report::{
     Batch, Busy, CombineCaps, CombineLimits, ExplainRequest, Explanation, LimitDefaults,
-    LoadedColumn, OutputLimits, Plan, Preview, Report, RunEvent, RunFailure, RunRequest,
-    SourceCaps, SourceLimits, SourcePhases, SourceStart, Step, TimedEvent, TypedValues,
+    LoadedColumn, OutputLimits, PartDone, Parts, Plan, Preview, Report, RunEvent, RunFailure,
+    RunRequest, SourceCaps, SourceLimits, SourcePhases, SourceStart, Step, TimedEvent, TypedValues,
     WrittenFile, read_report,
 };
 use dbrover_sql::FormatOptions;
 use dbrover_store::{
-    CombineMetrics, DEFAULT_RUNS_KEPT, KeptColumn, OutputMetrics, ReportFiles, ReportName,
-    ReportRun, ReportSettings, RunError, RunOrigin, RunOutcome, RunProfile, SourceMetrics,
-    StepMetrics,
+    CombineMetrics, DEFAULT_RUNS_KEPT, KeptColumn, OutputMetrics, PartMetrics, ReportFiles,
+    ReportName, ReportRun, ReportSettings, RunError, RunOrigin, RunOutcome, RunProfile,
+    SourceMetrics, StepMetrics,
 };
 use jiff::Timestamp;
 
@@ -388,6 +388,8 @@ pub struct RunRecord {
     combine_limits: Option<CombineCaps>,
     /// What the run measured of itself so far.
     profile: RunProfile,
+    /// The ranges of partitioned steps that ended, until their step does.
+    parts: Vec<(Step, PartMetrics)>,
 }
 
 /// A source or the combine step, as far as the run has gone.
@@ -401,6 +403,10 @@ pub struct StepRecord {
     pub state: StepState,
     /// The lookup's batch being read, while the source runs, or how many it ran, once done.
     pub batches: Option<Batch>,
+    /// A partitioned source's ranges done and being read, or how many it read, once done.
+    pub parts: Option<Parts>,
+    /// The word for one of a partitioned source's ranges, as `month`.
+    pub unit: Option<String>,
     /// A loaded source's table in DuckDB, its columns and their types.
     pub table: Vec<LoadedColumn>,
     pub warnings: Vec<String>,
@@ -457,6 +463,7 @@ impl RunRecord {
             version: None,
             combine_limits: None,
             profile: RunProfile::default(),
+            parts: Vec::new(),
         }
     }
 
@@ -568,7 +575,12 @@ impl RunRecord {
                     }),
                     columns: table.iter().map(kept_column).collect(),
                     scanned_bytes: *scanned_bytes,
+                    parts: self.take_parts(&Step::Source { id: id.clone() }),
                 })
+            }
+            RunEvent::PartDone(part) => {
+                self.parts.push((part.step.clone(), kept_part(part, at_ms)));
+                return;
             }
             RunEvent::SourceAttached { id, .. } => StepMetrics::Attached {
                 id: id.clone(),
@@ -619,6 +631,16 @@ impl RunRecord {
         self.measured.push(measured);
     }
 
+    /// The ranges `step` read, in their order, which are its own from now on.
+    fn take_parts(&mut self, step: &Step) -> Vec<PartMetrics> {
+        let (mut taken, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.parts)
+            .into_iter()
+            .partition(|(of, _)| of == step);
+        self.parts = kept;
+        taken.sort_by_key(|(_, part)| part.number);
+        taken.into_iter().map(|(_, part)| part).collect()
+    }
+
     /// Whether a combine step makes the rows the outputs write.
     pub fn combines(&self) -> bool {
         self.steps.iter().any(|step| step.step == Step::Combine)
@@ -655,10 +677,11 @@ impl RunRecord {
                 bytes,
                 elapsed_ms,
                 batch,
-                parts: _,
+                parts,
                 busy,
             } => {
                 if let Some(record) = self.step_mut(&step) {
+                    record.parts = parts;
                     record.state = StepState::Running {
                         rows,
                         bytes,
@@ -677,6 +700,7 @@ impl RunRecord {
                 table,
                 warnings,
                 batches,
+                parts,
                 ..
             } => {
                 if !self.combines() {
@@ -689,6 +713,11 @@ impl RunRecord {
                         elapsed_ms,
                     };
                     record.batches = batches.map(|of| Batch { number: of, of });
+                    record.parts = parts.map(|of| Parts {
+                        done: of,
+                        running: 0,
+                        of,
+                    });
                     record.table = table;
                     record.warnings = warnings;
                 }
@@ -714,7 +743,7 @@ impl RunRecord {
                 }
             }
             RunEvent::Preview(preview) => self.preview = Some(preview),
-            RunEvent::WorkerUsage { .. } | RunEvent::Explained(_) => {}
+            RunEvent::WorkerUsage { .. } | RunEvent::Explained(_) | RunEvent::PartDone(_) => {}
             RunEvent::OutputWritten(file) => self.files.push(file),
             RunEvent::Finished { elapsed_ms } => self.end = Some(RunEnd::Finished { elapsed_ms }),
             RunEvent::Failed(failure) => {
@@ -746,6 +775,21 @@ fn kept_phases(phases: SourcePhases) -> dbrover_store::SourcePhases {
     }
 }
 
+/// A range as the history keeps it, from the event that ended it `at_ms` into the run.
+fn kept_part(part: &PartDone, at_ms: u64) -> PartMetrics {
+    PartMetrics {
+        number: part.number,
+        from: part.from.clone(),
+        to: part.to.clone(),
+        rows: part.rows,
+        bytes: part.bytes,
+        first_row_ms: part.first_row_ms,
+        elapsed_ms: part.elapsed_ms,
+        started_ms: Some(at_ms.saturating_sub(part.elapsed_ms)),
+        scanned_bytes: part.scanned_bytes,
+    }
+}
+
 fn kept_column(column: &LoadedColumn) -> KeptColumn {
     KeptColumn {
         name: column.name.clone(),
@@ -763,6 +807,8 @@ impl StepRecord {
             waits_for: None,
             state: StepState::Waiting,
             batches: None,
+            parts: None,
+            unit: None,
             table: Vec::new(),
             warnings: Vec::new(),
             sql: None,
@@ -778,6 +824,7 @@ impl StepRecord {
             waits_for: source.waits_for,
             engine: source.engine,
             limits: source.limits,
+            unit: source.partition.map(|partition| partition.unit),
             ..Self::new(
                 Step::Source { id: source.id },
                 Some(source.data_source),
@@ -1372,6 +1419,7 @@ mod tests {
                         waits_for: None,
                         engine: None,
                         limits: None,
+                        partition: None,
                     }],
                     combine: false,
                     combine_sql: None,
@@ -1438,6 +1486,7 @@ mod tests {
                         waits_for: None,
                         columns: Vec::new(),
                         scanned_bytes: None,
+                        parts: Vec::new(),
                     }),
                     StepMetrics::Output(OutputMetrics {
                         number: 1,
@@ -1485,6 +1534,7 @@ mod tests {
                         waits_for: None,
                         engine: Some("PostgreSQL".to_owned()),
                         limits: Some(caps),
+                        partition: None,
                     }],
                     combine: true,
                     combine_sql: None,
@@ -1608,6 +1658,98 @@ mod tests {
     }
 
     #[test]
+    fn keeps_each_range_of_a_partitioned_source_in_its_order() {
+        let mut record = RunRecord::new(TypedValues::new());
+        let events = Step::Source {
+            id: "events".to_owned(),
+        };
+        untimed(
+            &mut record,
+            RunEvent::Started {
+                report: "Events".to_owned(),
+                sources: vec![SourceStart {
+                    id: "events".to_owned(),
+                    data_source: "warehouse".to_owned(),
+                    attached: false,
+                    waits_for: None,
+                    engine: None,
+                    limits: None,
+                    partition: Some(dbrover_report::PartitionStart {
+                        unit: "month".to_owned(),
+                        parallel: 2,
+                    }),
+                }],
+                combine: true,
+                combine_sql: None,
+                version: None,
+                combine_limits: None,
+                timeout_ms: None,
+                machine: None,
+            },
+        );
+        assert_eq!(record.steps[0].unit.as_deref(), Some("month"));
+        let part = |number: u64, from: &str, to: &str| PartDone {
+            step: events.clone(),
+            number,
+            of: 2,
+            from: from.to_owned(),
+            to: to.to_owned(),
+            rows: 10 * number,
+            bytes: 100 * number,
+            first_row_ms: Some(5),
+            elapsed_ms: 400,
+            scanned_bytes: None,
+        };
+        // Read at once, the second range ended first.
+        record.apply(
+            RunEvent::PartDone(part(2, "2026-02-01", "2026-03-01")).at(Duration::from_millis(900)),
+        );
+        record.apply(
+            RunEvent::PartDone(part(1, "2026-01-01", "2026-02-01"))
+                .at(Duration::from_millis(1_000)),
+        );
+        record.apply(
+            RunEvent::SourceDone {
+                id: "events".to_owned(),
+                rows: 30,
+                bytes: 300,
+                first_row_ms: Some(5),
+                elapsed_ms: 1_000,
+                table: Vec::new(),
+                warnings: Vec::new(),
+                batches: None,
+                parts: Some(2),
+                phases: None,
+                scanned_bytes: None,
+            }
+            .at(Duration::from_millis(1_000)),
+        );
+        assert_eq!(
+            record.steps[0].parts,
+            Some(Parts {
+                done: 2,
+                running: 0,
+                of: 2
+            })
+        );
+        let Some(StepMetrics::Source(source)) = record.measured.first() else {
+            panic!("{:?}", record.measured);
+        };
+        let kept: Vec<(u64, &str, u64, Option<u64>)> = source
+            .parts
+            .iter()
+            .map(|part| (part.number, part.from.as_str(), part.rows, part.started_ms))
+            .collect();
+        assert_eq!(
+            kept,
+            [
+                (1, "2026-01-01", 10, Some(600)),
+                (2, "2026-02-01", 20, Some(500))
+            ]
+        );
+    }
+
+    #[test]
     fn follows_each_step_of_a_combined_run() {
         let source = |id: &str, attached| SourceStart {
             id: id.to_owned(),
@@ -1616,6 +1758,7 @@ mod tests {
             waits_for: None,
             engine: None,
             limits: None,
+            partition: None,
         };
         let mut record = RunRecord::new(TypedValues::new());
         untimed(

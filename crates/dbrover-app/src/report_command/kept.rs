@@ -404,6 +404,7 @@ mod tests {
                 limits: None,
                 columns: Vec::new(),
                 scanned_bytes: None,
+                parts: Vec::new(),
             })],
             origin: RunOrigin::Command,
             version: Some(BlobId::of(b"[report]\n")),

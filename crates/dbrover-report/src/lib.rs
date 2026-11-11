@@ -44,8 +44,9 @@ pub use combine::QUEUE_PAGES;
 pub use disk::DiskBudget;
 pub use embedded::{Embedded, PrqlToken, StepLanguage, embedded_code, prql_tokens};
 pub use events::{
-    Batch, Busy, CombineCaps, LimitHit, LimitSetIn, LoadedColumn, Machine, Parts, Preview,
-    RunEvent, RunFailure, SourceCaps, SourcePhases, SourceStart, Step, TimedEvent, WrittenFile,
+    Batch, Busy, CombineCaps, LimitHit, LimitSetIn, LoadedColumn, Machine, PartDone,
+    PartitionStart, Parts, Preview, RunEvent, RunFailure, SourceCaps, SourcePhases, SourceStart,
+    Step, TimedEvent, WrittenFile, counted,
 };
 pub use explain::{
     CombineExplanation, Estimate, ExplainedPlan, Explanation, KnownTable, SourceExplained,
@@ -61,8 +62,8 @@ pub use limits::{
     LimitDefaults, OutputLimits, OutputLimitsSet, SourceLimits, SourceLimitsSet,
 };
 pub use partition::{
-    CalendarUnit, Every, MAX_RANGES, PART_FROM, PART_TO, PartRange, Partition, PlannedPartition,
-    RangeBound, RangeKind,
+    CalendarUnit, Every, MAX_PARALLEL, MAX_RANGES, PART_FROM, PART_TO, PartRange, Partition,
+    PlannedPartition, RangeBound, RangeKind,
 };
 pub use plan::{
     AttachedSource, Combined, Logic, OutputFormat, Plan, PlannedCombine, PlannedLookup,

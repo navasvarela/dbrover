@@ -376,6 +376,7 @@ fn events_are_json_lines_the_app_reads_back() {
                     max_bytes: 1 << 30,
                     timeout_ms: 600_000,
                 }),
+                partition: None,
             }],
             combine: false,
             combine_sql: None,

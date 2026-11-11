@@ -17,6 +17,8 @@ pub const CLEAR_LINE: &str = "\r\x1b[2K";
 pub struct LiveLine {
     /// Each source's engine, as the run's start named it.
     engines: Vec<(String, String)>,
+    /// Each partitioned source's word for one range, as `month`.
+    units: Vec<(String, String)>,
     running: Vec<Running>,
 }
 
@@ -36,6 +38,13 @@ impl LiveLine {
                     .iter()
                     .filter_map(|source| Some((source.id.clone(), source.engine.clone()?)))
                     .collect();
+                self.units = sources
+                    .iter()
+                    .filter_map(|source| {
+                        let partition = source.partition.as_ref()?;
+                        Some((source.id.clone(), partition.unit.clone()))
+                    })
+                    .collect();
                 false
             }
             RunEvent::Progress {
@@ -44,10 +53,11 @@ impl LiveLine {
                 bytes,
                 elapsed_ms,
                 batch,
-                parts: _,
+                parts,
                 busy,
             } => {
                 let engine = self.engine(step).map(str::to_owned);
+                let unit = self.unit(step).to_owned();
                 let running = match self
                     .running
                     .iter_mut()
@@ -66,6 +76,9 @@ impl LiveLine {
                 };
                 running.pace.see(*elapsed_ms, *rows, *bytes);
                 let mut text = amounts(step, *rows, *bytes, *elapsed_ms, *batch);
+                if let Some(parts) = parts {
+                    text = format!("{text}, {}", parts.describe(&unit));
+                }
                 let waits_on = live::waits_on(step, engine.as_deref());
                 let now = live::describe(&running.pace, busy.as_ref(), waits_on, ", ");
                 if !now.is_empty() {
@@ -90,6 +103,14 @@ impl LiveLine {
             .iter()
             .find(|(source, _)| source == id)
             .map(|(_, engine)| engine.as_str())
+    }
+
+    fn unit(&self, step: &Step) -> &str {
+        let found = match step {
+            Step::Source { id } => self.units.iter().find(|(source, _)| source == id),
+            _ => None,
+        };
+        found.map_or("range", |(_, unit)| unit.as_str())
     }
 
     fn end(&mut self, step: &Step) -> bool {
@@ -132,7 +153,7 @@ fn amounts(step: &Step, rows: u64, bytes: u64, elapsed_ms: u64, batch: Option<Ba
 
 #[cfg(test)]
 mod tests {
-    use dbrover_report::{Busy, SourceStart};
+    use dbrover_report::{Busy, PartitionStart, Parts, SourceStart};
 
     use super::*;
 
@@ -242,6 +263,7 @@ mod tests {
                 waits_for: None,
                 engine: Some("PostgreSQL".to_owned()),
                 limits: None,
+                partition: None,
             }],
             combine: true,
             combine_sql: None,
@@ -253,6 +275,55 @@ mod tests {
         for (event, expected) in cases {
             line.apply(&event);
             assert_eq!(line.text().as_deref(), expected, "{event:?}");
+        }
+    }
+
+    #[test]
+    fn says_which_ranges_a_partitioned_source_reads() {
+        let mut line = LiveLine::default();
+        line.apply(&RunEvent::Started {
+            report: "Events".to_owned(),
+            sources: vec![SourceStart {
+                id: "events".to_owned(),
+                data_source: "warehouse".to_owned(),
+                attached: false,
+                waits_for: None,
+                engine: None,
+                limits: None,
+                partition: Some(PartitionStart {
+                    unit: "month".to_owned(),
+                    parallel: 2,
+                }),
+            }],
+            combine: true,
+            combine_sql: None,
+            version: None,
+            combine_limits: None,
+            timeout_ms: None,
+            machine: None,
+        });
+        let cases = [
+            ((6, 1), "Source events: 40 rows, 1.0 KB, 4 s, month 7 of 12"),
+            (
+                (6, 2),
+                "Source events: 40 rows, 1.0 KB, 4 s, months 7–8 of 12",
+            ),
+        ];
+        for ((done, running), expected) in cases {
+            line.apply(&RunEvent::Progress {
+                step: source("events"),
+                rows: 40,
+                bytes: 40 * 26,
+                elapsed_ms: 4_200,
+                batch: None,
+                parts: Some(Parts {
+                    done,
+                    running,
+                    of: 12,
+                }),
+                busy: None,
+            });
+            assert_eq!(line.text().as_deref(), Some(expected));
         }
     }
 }
