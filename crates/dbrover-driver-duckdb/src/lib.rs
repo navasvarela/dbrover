@@ -34,7 +34,7 @@ pub use parquet::{ParquetCompression, ParquetWriter};
 pub use workspace::{
     DuckDbType, LoadColumn, TableLoader, UnknownDuckDbType, Workspace, WorkspaceLimit,
     WorkspaceLimits, WorkspacePeaks, WorkspaceProfile, WorkspaceStore, copy_to_parquet,
-    read_parquet,
+    read_parquet, read_parquet_files,
 };
 
 const PRODUCT: &str = "DuckDB";

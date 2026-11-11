@@ -406,6 +406,8 @@ pub struct RunValues {
     pub ranges: BTreeMap<String, SourceRanges>,
     /// A partitioned run's ranges (RS4d), whose values [`Plan::range_values`] makes.
     pub run_ranges: Option<SourceRanges>,
+    /// The number of the range of a partitioned run these values are for.
+    pub part: Option<u64>,
 }
 
 /// A partitioned source's ranges for a run, and the whole period they cover together.
@@ -519,7 +521,6 @@ impl Plan {
             );
             if partition.is_some() {
                 check_reads_ranges(&sent, &mut problems);
-                check_appended_parquet(&outputs, &mut problems);
             }
             ordered_params(&report.params, &sent, &mut problems)
         } else {
@@ -695,6 +696,7 @@ impl Plan {
             charts,
             ranges,
             run_ranges,
+            part: None,
         })
     }
 
@@ -837,6 +839,7 @@ impl Plan {
             charts,
             ranges: values.ranges.clone(),
             run_ranges: None,
+            part: Some(range.number),
         })
     }
 
@@ -1198,23 +1201,6 @@ fn check_reads_ranges(sent: &[Sent<'_>], problems: &mut Vec<ReportProblem>) {
             ),
             Place::key(Table::Report, "partition"),
         ));
-    }
-}
-
-/// A partitioned run's Parquet outputs each write a file a range for now: one file appended to
-/// by every range comes with RS4e.
-fn check_appended_parquet(outputs: &[PlannedOutput], problems: &mut Vec<ReportProblem>) {
-    for (index, output) in outputs.iter().enumerate() {
-        if output.format.written_by_duckdb().is_some() && !output.is_per_range() {
-            problems.push(ReportProblem::new(
-                format!(
-                    "output {}: a partitioned run writes a Parquet file a range; name the file \
-                     by its range, as events-{{part_from:%Y-%m}}.parquet",
-                    index + 1
-                ),
-                Place::key(Table::Output(index), "file"),
-            ));
-        }
     }
 }
 
