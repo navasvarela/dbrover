@@ -298,7 +298,28 @@ fn lane_bar(ui: &mut Ui, palette: &Palette, total_ms: u64, lane: &Lane, width: f
                 seconds(segment.end_ms)
             ));
     }
+    // A partitioned step's ranges as a strip under its bar, a mark a range, so the long one
+    // stands out and hovering it names it (RS4f).
+    for (range_index, range) in lane.ranges.iter().enumerate() {
+        let below = bar(range.start_ms, range.end_ms);
+        let strip = Rect::from_min_max(
+            pos2(below.left(), below.bottom() + RANGE_GAP),
+            pos2(
+                (below.right() - RANGE_GAP).max(below.left() + MIN_BAR_WIDTH),
+                below.bottom() + RANGE_GAP + RANGE_HEIGHT,
+            ),
+        );
+        painter.rect_filled(strip, 1.0, palette.text_weak);
+        let id = ui.id().with(("report_profile_range", index, range_index));
+        ui.interact(strip, id, Sense::hover())
+            .on_hover_text(range.describe());
+    }
 }
+
+/// The strip of a partitioned step's ranges under its bar: its height, and the gap above it
+/// and between ranges, in points; small enough to fit within the lane's height.
+const RANGE_HEIGHT: f32 = 3.0;
+const RANGE_GAP: f32 = 1.0;
 
 /// Where `ms` falls in the run, from 0 to 1.
 fn fraction(ms: u64, total_ms: u64) -> f32 {

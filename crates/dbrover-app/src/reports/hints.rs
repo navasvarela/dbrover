@@ -12,7 +12,7 @@ use std::fmt;
 use dbrover_core::ByteCount;
 use dbrover_report::{HintId, grouped};
 use dbrover_store::{
-    CombineMetrics, OutputMetrics, ReportRun, RunOutcome, SourceMetrics, StepMetrics,
+    CombineMetrics, OutputMetrics, PartMetrics, ReportRun, RunOutcome, SourceMetrics, StepMetrics,
 };
 
 use super::insights::seconds;
@@ -41,6 +41,13 @@ const SCANNED_RATIO: u64 = 100;
 const SCANNED_MIN_BYTES: u64 = 100_000_000;
 /// `near-limit`: how close to a limit a peak came without passing it.
 const NEAR_LIMIT_PCT: u64 = 90;
+/// `range-skew`: how many times its step's median range a range took...
+const SKEW_RATIO: u64 = 5;
+/// ... with at least this many ranges, below which a median says little...
+const SKEW_MIN_RANGES: usize = 3;
+/// ... and at least this long, ten seconds: twice [`MIN_HINTED_MS`], since a range of a few
+/// seconds against ranges of under one is noise more than skew.
+const SKEW_MIN_MS: u64 = 10_000;
 
 /// The table of the report's file a hint is about.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,7 +78,7 @@ impl fmt::Display for Hint {
 type Rule = fn(&ReportRun) -> Vec<Hint>;
 
 /// Every rule, in the order their hints are listed.
-const RULES: [Rule; 10] = [
+const RULES: [Rule; 11] = [
     source_reads_more,
     combine_spilled,
     slow_first_row,
@@ -82,6 +89,7 @@ const RULES: [Rule; 10] = [
     near_limit,
     combine_plan,
     scanned_more,
+    range_skew,
 ];
 
 /// The hints the newest finished run of `runs` gives.
@@ -261,6 +269,60 @@ fn load_bound(run: &ReportRun) -> Vec<Hint> {
             })
         })
         .collect()
+}
+
+/// `range-skew`: a range of a partitioned source, or of a partitioned run's combine step, took
+/// far longer than its step's median range (RS4f).
+fn range_skew(run: &ReportRun) -> Vec<Hint> {
+    let sources = sources(run).map(|source| {
+        (
+            HintAt::Source(source.id.clone()),
+            format!("Source {}", source.id),
+            source.parts.as_slice(),
+        )
+    });
+    let combine = combine(run).map(|combine| {
+        (
+            HintAt::Combine,
+            "The combine step".to_owned(),
+            combine.parts.as_slice(),
+        )
+    });
+    sources
+        .chain(combine)
+        .filter_map(|(at, step, parts)| {
+            let (slowest, median) = skewed(parts)?;
+            Some(Hint {
+                id: HintId::RangeSkew,
+                at,
+                text: format!(
+                    "{step}'s range {} ({} to {}) took {}, {}× the median range's {}. Split it \
+                     with a smaller every, or check what its data holds that the others don't.",
+                    slowest.number,
+                    slowest.from,
+                    slowest.to,
+                    seconds(slowest.elapsed_ms),
+                    slowest.elapsed_ms / median.max(1),
+                    seconds(median)
+                ),
+            })
+        })
+        .collect()
+}
+
+/// The slowest of `parts` and the median range's time, when it took [`SKEW_RATIO`] times that
+/// and at least [`SKEW_MIN_MS`].
+fn skewed(parts: &[PartMetrics]) -> Option<(&PartMetrics, u64)> {
+    if parts.len() < SKEW_MIN_RANGES {
+        return None;
+    }
+    let mut times: Vec<u64> = parts.iter().map(|part| part.elapsed_ms).collect();
+    times.sort_unstable();
+    let median = times[times.len() / 2];
+    let slowest = parts.iter().max_by_key(|part| part.elapsed_ms)?;
+    let skewed = slowest.elapsed_ms >= SKEW_MIN_MS
+        && u128::from(slowest.elapsed_ms) >= u128::from(median) * u128::from(SKEW_RATIO);
+    skewed.then_some((slowest, median))
 }
 
 /// `many-batches`: a lookup sent many statements.
@@ -808,6 +870,64 @@ mod tests {
         );
     }
 
+    fn part(number: u64, elapsed_ms: u64) -> PartMetrics {
+        PartMetrics {
+            number,
+            from: format!("2026-{number:02}-01"),
+            to: format!("2026-{:02}-01", number + 1),
+            rows: 1_000,
+            bytes: 10_000,
+            first_row_ms: None,
+            elapsed_ms,
+            started_ms: None,
+            scanned_bytes: None,
+            peak_memory: None,
+            peak_temp_size: None,
+        }
+    }
+
+    #[test]
+    fn hints_at_a_range_far_slower_than_its_steps_median() {
+        let ranged = |times: &[u64]| {
+            let parts: Vec<PartMetrics> = times
+                .iter()
+                .zip(1..)
+                .map(|(elapsed_ms, number)| part(number, *elapsed_ms))
+                .collect();
+            finished(
+                60_000,
+                vec![StepMetrics::Source(SourceMetrics {
+                    parts,
+                    ..source("events", 10, 100)
+                })],
+            )
+        };
+        let cases: [(&[u64], bool); 5] = [
+            // Six times the median and over ten seconds.
+            (&[2_000, 2_000, 2_000, 12_000], true),
+            // Five times exactly is enough.
+            (&[2_000, 2_000, 10_000], true),
+            // Just under five times.
+            (&[2_100, 2_100, 10_000], false),
+            // Far slower, but too short to matter.
+            (&[100, 100, 9_000], false),
+            // Two ranges say nothing of a median.
+            (&[1_000, 60_000], false),
+        ];
+        for (times, hinted) in cases {
+            let found = ids(ranged(times)).contains(&HintId::RangeSkew);
+            assert_eq!(found, hinted, "{times:?}");
+        }
+        let text = &hints(&[ranged(&[2_000, 2_000, 2_000, 12_000])])[0].text;
+        assert!(
+            text.starts_with(
+                "Source events's range 4 (2026-04-01 to 2026-05-01) took 12.0 s, 6× the median \
+                 range's 2.0 s."
+            ),
+            "{text}"
+        );
+    }
+
     #[test]
     fn every_id_has_a_rule() {
         // A run that trips every rule at once.
@@ -827,6 +947,11 @@ mod tests {
             })
             .collect();
         tx.scanned_bytes = Some(tx.bytes.saturating_mul(1_000).max(SCANNED_MIN_BYTES));
+        tx.parts = [1_000, 1_000, 12_000]
+            .into_iter()
+            .zip(1..)
+            .map(|(elapsed_ms, number)| part(number, elapsed_ms))
+            .collect();
         let slow = phased("slow", 5_000, 4_500, 0);
         let names = SourceMetrics {
             waits_for: Some("slow".to_owned()),

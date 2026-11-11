@@ -32,11 +32,13 @@ pub enum HintId {
     AggregateOneSource,
     /// A source's engine scanned far more than it returned (RS2f).
     ScannedMore,
+    /// One range of a partition took far longer than its others (RS4f).
+    RangeSkew,
 }
 
 impl HintId {
     /// Every id, in the order the hints are listed.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::SourceReadsMore,
         Self::CombineSpilled,
         Self::SlowFirstRow,
@@ -49,6 +51,7 @@ impl HintId {
         Self::FilterOneSource,
         Self::AggregateOneSource,
         Self::ScannedMore,
+        Self::RangeSkew,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -65,6 +68,7 @@ impl HintId {
             Self::FilterOneSource => "filter-one-source",
             Self::AggregateOneSource => "aggregate-one-source",
             Self::ScannedMore => "scanned-more",
+            Self::RangeSkew => "range-skew",
         }
     }
 }
@@ -117,8 +121,8 @@ mod tests {
                 .to_string(),
             "\"source-reads-more-rows\" isn't a hint's id; the ids are source-reads-more, \
              combine-spilled, slow-first-row, load-bound, many-batches, round-wait, writer-bound, \
-             near-limit, unused-columns, filter-one-source, aggregate-one-source and \
-             scanned-more"
+             near-limit, unused-columns, filter-one-source, aggregate-one-source, scanned-more \
+             and range-skew"
         );
     }
 }
