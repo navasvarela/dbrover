@@ -31,8 +31,9 @@ use crate::test_support::step_until_visible;
 /// shows a picture.
 const SITE_WINDOW_SIZE: Vec2 = Vec2::new(1024.0, 720.0);
 
-/// Wider than `SITE_WINDOW_SIZE`, because a query plan's columns, **Time** last, don't fit
-/// beside the explorer in a window 1024 points wide.
+/// Wider than `SITE_WINDOW_SIZE`, because a query plan's columns, **Time** last, a run
+/// profile's timeline and an ER diagram's tables don't fit beside the explorer in a window 1024
+/// points wide.
 const PLAN_WINDOW_SIZE: Vec2 = Vec2::new(1280.0, 720.0);
 
 /// A scene of the manual's that the feature tour shows, the window it plays in, and the part of
@@ -81,10 +82,28 @@ const TOUR_STILLS: &[TourStill] = &[
         window: SITE_WINDOW_SIZE,
         region: dialog,
     },
+    TourStill {
+        scene: "report-profile",
+        window: PLAN_WINDOW_SIZE,
+        region: report_profile,
+    },
+    TourStill {
+        scene: "chart",
+        window: SITE_WINDOW_SIZE,
+        region: console,
+    },
+    TourStill {
+        scene: "er-diagram",
+        window: PLAN_WINDOW_SIZE,
+        region: diagram,
+    },
 ];
 
 /// Room around a cropped region of the console, which the console's own background fills.
 const CROP_MARGIN: f32 = 16.0;
+/// Room above a report's run tabs or a diagram's toolbar: any more shows the line or the tab
+/// above them.
+const TOP_MARGIN: f32 = 8.0;
 /// Room around a dialog for its rounded corners: any more shows the app behind it.
 const DIALOG_MARGIN: f32 = 4.0;
 
@@ -145,6 +164,33 @@ fn plan(harness: &Harness<'static, DbRoverApp>) -> Option<Rect> {
     Some(Rect::from_min_max(
         Pos2::new(area.min.x, toggles.min.y - CROP_MARGIN),
         area.max,
+    ))
+}
+
+/// A report's run panel, from its **Last run** tab down to the profile's time axis, without
+/// the report's file and parameters above it. The legend under the axis is left out: it is one
+/// line that runs past the panel's edge at any width that keeps the text legible on the page.
+fn report_profile(harness: &Harness<'static, DbRoverApp>) -> Option<Rect> {
+    let tabs = harness.query_by_label("Last run")?.rect();
+    let axis = harness.query_by_label("0 s")?.rect();
+    Some(Rect::from_min_max(
+        Pos2::new(tabs.min.x - CROP_MARGIN, tabs.min.y - TOP_MARGIN),
+        Pos2::new(harness.ctx.content_rect().max.x, axis.max.y + CROP_MARGIN),
+    ))
+}
+
+/// The diagram tab, from its toolbar down to the log console.
+fn diagram(harness: &Harness<'static, DbRoverApp>) -> Option<Rect> {
+    let toolbar = harness.query_by_label("Arrange")?.rect();
+    let log_search = harness
+        .query_by(|node| node.placeholder() == Some("Search"))?
+        .rect();
+    Some(Rect::from_min_max(
+        Pos2::new(toolbar.min.x - CROP_MARGIN, toolbar.min.y - TOP_MARGIN),
+        Pos2::new(
+            harness.ctx.content_rect().max.x,
+            log_search.min.y - LOG_CONSOLE_HEADER,
+        ),
     ))
 }
 

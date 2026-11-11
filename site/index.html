@@ -128,6 +128,42 @@
         </figure>
       </article>
 
+      <article class="row wide">
+        <div class="copy">
+          <div>
+            <p class="eyebrow">Reports</p>
+            <h3>Several databases, one file, every month</h3>
+            <p>A report is a query you run again and again with new values, and the files it
+              writes each time. It reads one data source or several, combines them in DuckDB SQL
+              or PRQL, and writes CSV, Excel and Parquet files, with charts of them as SVG or
+              PNG. It runs in a process of its own, within limits you can see, from its tab or
+              from <code>dbrover report run</code> in a terminal, cron or CI.</p>
+          </div>
+          <div>
+            <ul>
+              <li><strong>Profile</strong> draws a run on a timeline and names its bottleneck:
+                the step that held the run longest, and what it waited on.</li>
+              <li>Each step's pace while it runs, and every run kept, to compare with the next,
+                with a mark on a step slower than usual.</li>
+              <li>Hints that say what to try, such as filtering in the source's query, each
+                with an id a report can silence.</li>
+              <li><strong>Explain</strong> plans a report before it runs: each source's plan,
+                what a warehouse would scan, and the combine step's plan.</li>
+              <li>Larger than memory: DuckDB works on disk, within the space a run may use, and
+                the computer stays awake through a long run.</li>
+            </ul>
+            <a class="more" href="manual/reports.html">Reports in the manual</a>
+          </div>
+        </div>
+        <figure class="window">
+          <picture>
+            <source srcset="media/report-profile-light.webp" media="(prefers-color-scheme: light)">
+            <img src="media/report-profile-dark.webp" width="1400" height="349" loading="lazy"
+                 alt="A report run's profile: a lane for the source, the combine step and the two files on one time axis, and the sentence naming the source that held the run longest">
+          </picture>
+        </figure>
+      </article>
+
       <article class="row">
         <div class="copy">
           <p class="eyebrow">Staying safe</p>
@@ -179,6 +215,32 @@
             <source srcset="media/problems-light.webp" media="(prefers-color-scheme: light)">
             <img src="media/problems-dark.webp" width="1400" height="450" loading="lazy"
                  alt="A console with a wavy underline under = NULL, explained as never true: use IS NULL">
+          </picture>
+        </figure>
+      </article>
+
+      <article class="row">
+        <div class="copy">
+          <p class="eyebrow">Charts</p>
+          <h3>A chart from any result</h3>
+          <p><strong>Chart</strong>, beside <strong>Grid</strong>, draws the rows as bars, lines
+            or a scatter, and follows the grid as you sort, filter and load more. Nothing runs
+            again.</p>
+          <ul>
+            <li>A column to split the rows into series, and stacked bars, with no pivot in the
+              query.</li>
+            <li>Write the chart above its query, in a comment, and the query opens as that chart
+              on any machine, reviewed with it in a pull request.</li>
+            <li>Export as SVG or PNG; reports draw charts of their files, and an assistant can
+              ask for one over MCP.</li>
+          </ul>
+          <a class="more" href="manual/consoles.html#charts">Charts in the manual</a>
+        </div>
+        <figure class="window">
+          <picture>
+            <source srcset="media/chart-light.webp" media="(prefers-color-scheme: light)">
+            <img src="media/chart-dark.webp" width="1400" height="755" loading="lazy"
+                 alt="A console's revenue by month, charted as bars">
           </picture>
         </figure>
       </article>
@@ -248,6 +310,38 @@ db.orders.<span class="k">find</span>({status: <span class="s">"open"</span>}).<
 
       <article class="row">
         <div class="copy">
+          <p class="eyebrow">Cloud data</p>
+          <h3>Warehouses and data lakes, with the bill in view</h3>
+          <p>Athena, BigQuery and Trino are data sources like any other, and a DuckDB data
+            source reads Parquet, CSV and JSON files and Iceberg and Delta tables in Amazon S3,
+            Google Cloud Storage or Azure Blob Storage, joined with its own tables.</p>
+          <ul>
+            <li>A cost guard: BigQuery's dry run says what a query would scan before it runs,
+              and asks above your limit; Athena stops a query that passes it.</li>
+            <li>DynamoDB asks before a statement reads a whole table.</li>
+            <li>Progress as a statement runs, with the rows and bytes read so far.</li>
+            <li>Buckets in the explorer beside the database, signed in with the account already
+              on your machine.</li>
+          </ul>
+          <a class="more" href="manual/cloud.html">Cloud sign-in and costs in the manual</a>
+        </div>
+        <figure class="code-card" aria-label="A DuckDB query joining Parquet files in S3 with a local table, and a BigQuery query">
+<pre><code><span class="c">-- DuckDB, reading a bucket</span>
+<span class="k">SELECT</span> c.name, <span class="k">sum</span>(o.total) <span class="k">AS</span> total
+<span class="k">FROM</span> <span class="s">'s3://sales/2026/*.parquet'</span> o
+<span class="k">JOIN</span> customers c <span class="k">ON</span> c.id = o.customer_id
+<span class="k">GROUP BY</span> c.name;
+
+<span class="c">-- BigQuery: 1.2 GB to scan, asked first above your limit</span>
+<span class="k">SELECT</span> country, <span class="k">count</span>(*)
+<span class="k">FROM</span> analytics.events
+<span class="k">WHERE</span> day >= <span class="s">'2026-10-01'</span>
+<span class="k">GROUP BY</span> country;</code></pre>
+        </figure>
+      </article>
+
+      <article class="row">
+        <div class="copy">
           <p class="eyebrow">The results grid</p>
           <h3>A grid that edits, and asks the database</h3>
           <p>Rows arrive 500 at a time. Sort and filter the rows loaded, or tick <strong>In the
@@ -293,6 +387,32 @@ db.orders.<span class="k">find</span>({status: <span class="s">"open"</span>}).<
             <source srcset="media/modify-table-light.webp" media="(prefers-color-scheme: light)">
             <img src="media/modify-table-dark.webp" width="1303" height="1023" loading="lazy"
                  alt="Modify table on orders, with a column renamed and one added, and the ALTER TABLE statements it will run">
+          </picture>
+        </figure>
+      </article>
+
+      <article class="row">
+        <div class="copy">
+          <p class="eyebrow">Diagrams and schema compare</p>
+          <h3>See a schema whole, and what changed</h3>
+          <p>A diagram draws the tables you pick, or a whole schema, with their columns and the
+            foreign keys between them, laid out for you and saved as you arrange it.</p>
+          <ul>
+            <li>Diagrams on PostgreSQL, MySQL, MariaDB, SQLite, SQL Server and DuckDB, exported
+              as SVG or PNG.</li>
+            <li><strong>Compare schema</strong> sets two PostgreSQL schemas side by side and
+              writes the script that turns one into the other, for you to read and run.</li>
+            <li>Save a schema as a snapshot, a text file to keep in Git and compare with
+              later, or check it from
+              <code>dbrover schema compare</code> in CI.</li>
+          </ul>
+          <a class="more" href="manual/diagrams.html">ER diagrams in the manual</a>
+        </div>
+        <figure class="window">
+          <picture>
+            <source srcset="media/er-diagram-light.webp" media="(prefers-color-scheme: light)">
+            <img src="media/er-diagram-dark.webp" width="1400" height="604" loading="lazy"
+                 alt="The shop's tables as a diagram, orders pointing at customers, and order items at orders and products">
           </picture>
         </figure>
       </article>
