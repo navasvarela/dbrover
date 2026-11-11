@@ -456,6 +456,7 @@ fn runs_a_report_and_reports_each_step() {
             combine_limits: None,
             timeout_ms: Some(u64::try_from(DEFAULT_RUN_TIMEOUT.as_millis()).unwrap()),
             machine: Some(machine.clone()),
+            partition: None,
         }
     );
     let phases = events.iter().find_map(|event| match event {

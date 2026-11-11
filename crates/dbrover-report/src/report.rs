@@ -28,6 +28,8 @@ pub struct Report {
     /// The hints its runs don't give, for a report that, say, reads more than it writes on
     /// purpose.
     pub quiet_hints: Vec<HintId>,
+    /// The ranges the whole run goes through one at a time, when the file says (RS4d).
+    pub partition: Option<Partition>,
     /// As the file lists them: one without `combine`, one or more with it.
     pub sources: Vec<Source>,
     /// The query that combines the sources' tables into the rows the outputs write.

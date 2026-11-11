@@ -821,7 +821,17 @@ fn reads_and_plans_the_valuation() {
         timeout_ms,
         machine: started_on,
         ..
-    } = plan.started(BlobId::of(b""), machine.clone())
+    } = plan.started(
+        &RunValues {
+            parameters: dbrover_sql::ParameterValues::default(),
+            files: Vec::new(),
+            charts: Vec::new(),
+            ranges: std::collections::BTreeMap::new(),
+            run_ranges: None,
+        },
+        BlobId::of(b""),
+        machine.clone(),
+    )
     else {
         panic!("not a start");
     };

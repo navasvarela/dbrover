@@ -60,7 +60,7 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
                 staging: &request.staging,
                 work: &request.work,
             };
-            let started = out.send(&plan.started(version, machine()));
+            let started = out.send(&plan.started(&values, version, machine()));
             if started.is_err() {
                 abandon(folders);
             }

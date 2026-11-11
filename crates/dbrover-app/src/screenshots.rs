@@ -1733,6 +1733,7 @@ fn report_profile(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture)
                 query_ms: Some(95),
                 limits: None,
                 plan: None,
+                parts: Vec::new(),
             }),
             output(1, "sales-by-category-2026-10.xlsx", 7_400, 600, 1_960),
             output(2, "sales-by-category-2026-10.csv", 1_100, 2, 1_962),
@@ -1870,6 +1871,7 @@ fn report_page(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
                 query_ms: None,
                 limits: None,
                 plan: None,
+                parts: Vec::new(),
             }),
             StepMetrics::Output(OutputMetrics {
                 number: 1,

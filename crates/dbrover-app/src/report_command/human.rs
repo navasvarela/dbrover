@@ -24,6 +24,8 @@ pub struct HumanLines<O: Write, E: Write> {
     live: Option<LiveLine>,
     /// Whether the live line is on the terminal now, to clear before another line.
     live_shown: bool,
+    /// Whether the run goes through ranges one at a time, each of which gets a line.
+    partitioned: bool,
 }
 
 impl<O: Write, E: Write> Printer for HumanLines<O, E> {
@@ -54,8 +56,10 @@ impl<O: Write, E: Write> HumanLines<O, E> {
                 report,
                 combine_sql,
                 version,
+                partition,
                 ..
             } => {
+                self.partitioned = partition.is_some();
                 let line = started(report, &self.values, version.as_ref());
                 self.error_line(&line);
                 self.combine_sql.clone_from(combine_sql);
@@ -95,6 +99,17 @@ impl<O: Write, E: Write> HumanLines<O, E> {
                 let line = format!("Combine: {}", amounts(*rows, *bytes, *elapsed_ms));
                 self.error_line(&line);
             }
+            RunEvent::PartDone(part) if self.partitioned => {
+                let line = format!(
+                    "Range {} of {}, {} to {}: {}",
+                    part.number,
+                    part.of,
+                    part.from,
+                    part.to,
+                    amounts(part.rows, part.bytes, part.elapsed_ms)
+                );
+                self.error_line(&line);
+            }
             RunEvent::OutputWritten(file) => self.written(file),
             RunEvent::Finished { elapsed_ms } => {
                 self.error_line(&format!("Finished in {}.", seconds(*elapsed_ms)));
@@ -129,6 +144,7 @@ impl<O: Write, E: Write> HumanLines<O, E> {
             combine_sql: None,
             live: None,
             live_shown: false,
+            partitioned: false,
         }
     }
 
@@ -305,6 +321,7 @@ mod tests {
             combine_limits: None,
             timeout_ms: None,
             machine: None,
+            partition: None,
         };
         let failed = RunEvent::Failed(RunFailure::new(
             Step::Combine,
@@ -360,6 +377,7 @@ mod tests {
                 combine_limits: None,
                 timeout_ms: None,
                 machine: None,
+                partition: None,
             },
             RunEvent::Progress {
                 step: Step::Combine,
@@ -398,6 +416,7 @@ mod tests {
                 plan: None,
             },
             RunEvent::OutputWritten(WrittenFile {
+                output: None,
                 path: PathBuf::from("/out/sales-2026-10.xlsx"),
                 rows: 27,
                 size: 9_000,
@@ -405,6 +424,7 @@ mod tests {
                 warnings: vec!["2 cells of Amount written as text".to_owned()],
             }),
             RunEvent::OutputWritten(WrittenFile {
+                output: None,
                 path: PathBuf::from("/out/sales-2026-10.csv"),
                 rows: 27,
                 size: 1_500,
@@ -496,6 +516,7 @@ mod tests {
             combine_limits: None,
             timeout_ms: None,
             machine: None,
+            partition: None,
         };
         assert_eq!(lines(&[], &[started]).1, "Stock\n");
         assert_eq!(

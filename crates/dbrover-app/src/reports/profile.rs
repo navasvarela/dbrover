@@ -476,6 +476,7 @@ mod tests {
             query_ms: Some(400),
             limits: None,
             plan: None,
+            parts: Vec::new(),
         }
     }
 

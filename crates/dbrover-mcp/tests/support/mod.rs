@@ -147,6 +147,7 @@ impl dbrover_mcp::ReportRunner for StandInReports {
         std::fs::write(&path, "n\n1\n").map_err(|error| vec![error.to_string()])?;
         let events = vec![
             RunEvent::OutputWritten(WrittenFile {
+                output: None,
                 path,
                 rows: 1,
                 size: 4,

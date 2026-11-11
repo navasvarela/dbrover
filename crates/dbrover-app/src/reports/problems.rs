@@ -305,6 +305,7 @@ file = "r.csv"
                     query_ms: None,
                     limits: None,
                     plan: None,
+                    parts: Vec::new(),
                 }),
                 StepMetrics::Output(OutputMetrics {
                     number: 1,

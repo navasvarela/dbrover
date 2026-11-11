@@ -173,6 +173,7 @@ fn open_and_fill(harness: &mut Harness<'_, DbRoverApp>, since: &str) {
 fn finished_run(folder: &Path) -> Vec<RunEvent> {
     let written = |name: &str, size| {
         RunEvent::OutputWritten(WrittenFile {
+            output: None,
             path: folder.join(name),
             rows: 2,
             size,
@@ -198,6 +199,7 @@ fn finished_run(folder: &Path) -> Vec<RunEvent> {
             combine_limits: None,
             timeout_ms: None,
             machine: None,
+            partition: None,
         },
         RunEvent::SourceDone {
             id: "balances".to_owned(),
@@ -305,6 +307,7 @@ fn lists_a_reports_chart_with_its_files() {
     let out = dir.path().join("out");
     let mut script = finished_run(&out);
     let chart = RunEvent::OutputWritten(WrittenFile {
+        output: None,
         path: out.join("balances-2026-10.svg"),
         rows: 2,
         size: 2_400,
@@ -371,6 +374,7 @@ fn combined_start() -> Vec<RunEvent> {
             combine_limits: None,
             timeout_ms: None,
             machine: None,
+            partition: None,
         },
         loaded(
             "entries",
@@ -403,6 +407,7 @@ fn shows_each_source_and_the_combine_step_of_a_combined_run() {
             more: true,
         }),
         RunEvent::OutputWritten(WrittenFile {
+            output: None,
             path: out.join("trial-balance-2026-10.csv"),
             rows: 2,
             size: 48,
@@ -578,6 +583,7 @@ fn shows_a_lookup_waiting_then_its_batches_then_done() {
         combine_limits: None,
         timeout_ms: None,
         machine: None,
+        partition: None,
     };
     let progress = |id: &str, batch| RunEvent::Progress {
         step: Step::Source { id: id.to_owned() },
@@ -806,6 +812,7 @@ fn cancel_stops_the_running_report() {
         combine_limits: None,
         timeout_ms: None,
         machine: None,
+        partition: None,
     }]);
     let mut harness = start_with_reports(dir.path(), TRIAL_BALANCE, launcher);
 
@@ -865,6 +872,7 @@ fn spilling_run(out: &Path) -> Vec<RunEvent> {
             plan: None,
         },
         RunEvent::OutputWritten(WrittenFile {
+            output: None,
             path: out.join("trial-balance-2026-10.csv"),
             rows: 2,
             size: 48,
@@ -979,6 +987,7 @@ fn slow_first_row(out: &Path) -> Vec<TimedEvent> {
             at_ms: 4_620,
             cpu_ms: None,
             event: RunEvent::OutputWritten(WrittenFile {
+                output: None,
                 path: out.join("trial-balance-2026-10.csv"),
                 rows: 2,
                 size: 48,

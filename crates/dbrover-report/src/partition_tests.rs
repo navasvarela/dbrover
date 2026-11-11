@@ -513,3 +513,347 @@ fn says_how_a_partitioned_source_reads_as_the_run_starts() {
         })
     );
 }
+
+/// Events by key, the whole run a range at a time (RS4d); `{report}` goes in `[report]` and
+/// `{outputs}` after the combine step.
+const BY_RANGE: &str = r#"
+[report]
+name = "Events by range"
+params = { first = "integer", last = "integer" }
+{report}
+
+[[source]]
+id = "events"
+data_source = "events"
+query = "SELECT id, amount FROM events WHERE id >= :part_from AND id < :part_to"
+
+[combine]
+query = "SELECT id, amount * 2 AS doubled FROM events ORDER BY id"
+
+{outputs}
+"#;
+
+fn by_range(report: &str, outputs: &str) -> Result<Plan, Vec<String>> {
+    plan(
+        &BY_RANGE
+            .replace("{report}", report)
+            .replace("{outputs}", outputs),
+    )
+}
+
+const EVERY_THOUSAND: &str = r#"partition = { from = ":first", to = ":last", every = 1000 }"#;
+
+const RANGE_KEYS: [(&str, &str); 2] = [("first", "0"), ("last", "2500")];
+
+async fn run_values(
+    plan: &Plan,
+    values: &[(&str, &str)],
+    opener: &Ranged,
+    folder: &Path,
+) -> (Result<RunSummary, RunFailure>, Vec<RunEvent>) {
+    let values = plan.values(&typed(values)).unwrap();
+    let staging = folder.join(".run");
+    let work = folder.join(".work");
+    let mut events = Vec::new();
+    let outcome = run(
+        plan,
+        &values,
+        opener,
+        RunFolders {
+            folder,
+            staging: &staging,
+            work: &work,
+        },
+        &mut |event| events.push(event),
+    )
+    .await;
+    assert!(!staging.exists(), "the run leaves no staging folder");
+    assert!(!work.exists(), "the run leaves no work folder");
+    (outcome, events)
+}
+
+fn files(folder: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(folder)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn names_every_problem_with_a_partitioned_run() {
+    let csv = "[[output]]\nformat = \"csv\"\nfile = \"events.csv\"";
+    let cases = [
+        (
+            by_range(
+                r#"partition = { from = ":first", to = ":last", every = 1000, parallel = 2 }"#,
+                csv,
+            ),
+            "a run's ranges go one at a time",
+        ),
+        (
+            by_range(EVERY_THOUSAND, csv).map(|_| ()).and_then(|()| {
+                plan(
+                    &BY_RANGE
+                        .replace("{report}", EVERY_THOUSAND)
+                        .replace("{outputs}", csv)
+                        .replace(
+                            "AND id < :part_to\"",
+                            "AND id < :part_to\"\npartition = { from = \":first\", to = \
+                             \":last\", every = 10 }",
+                        ),
+                )
+            }),
+            "the run is partitioned already",
+        ),
+        (
+            by_range(
+                EVERY_THOUSAND,
+                &format!("{csv}\n\n[[chart]]\nfile = \"c.svg\"\nquery = \"SELECT 1 AS x\""),
+            ),
+            "in a partitioned run, the sources' tables hold one range at a time",
+        ),
+        (
+            plan(
+                &BY_RANGE
+                    .replace("{report}", EVERY_THOUSAND)
+                    .replace("{outputs}", csv)
+                    .replace(":part_from AND id < :part_to", ":first AND id < :last"),
+            ),
+            "no query uses :part_from or :part_to",
+        ),
+        (
+            by_range(
+                EVERY_THOUSAND,
+                "[[output]]\nformat = \"parquet\"\nfile = \"events.parquet\"",
+            ),
+            "a partitioned run writes a Parquet file a range",
+        ),
+        (
+            by_range(
+                EVERY_THOUSAND,
+                "[[output]]\nformat = \"csv\"\nfile = \"events-{part_from:%Y}.csv\"",
+            ),
+            "{part_from:%Y}: only a date or timestamp parameter takes a format",
+        ),
+    ];
+    for (planned, problem) in cases {
+        let problems = planned.unwrap_err();
+        assert!(
+            problems.iter().any(|found| found.contains(problem)),
+            "{problem}: {problems:?}"
+        );
+    }
+
+    let by_thousands = by_range(
+        r#"partition = { from = ":first", to = ":last", every = 1000 }"#,
+        "[[output]]\nformat = \"csv\"\nfile = \"events-{last}.csv\"\n\n[[output]]\nformat = \
+         \"csv\"\nfile = \"events-{part_from}.csv\"",
+    )
+    .unwrap();
+    let values = by_thousands.values(&typed(&RANGE_KEYS)).unwrap();
+    assert_eq!(values.files, ["events-2500.csv", "events-0.csv"]);
+    let ranges = values.run_ranges.as_ref().unwrap();
+    let second = by_thousands
+        .range_values(&values, &ranges.ranges[1])
+        .unwrap();
+    assert_eq!(second.files, ["events-2500.csv", "events-1000.csv"]);
+    assert_eq!(
+        second.parameters.get(PART_FROM),
+        Some(&Some("1000".to_owned()))
+    );
+}
+
+#[tokio::test]
+async fn a_partitioned_run_writes_what_the_unpartitioned_run_writes() {
+    let appended = "[[output]]\nformat = \"csv\"\nfile = \"events.csv\"\n\n\
+                    [[output]]\nformat = \"xlsx\"\nfile = \"events.xlsx\"\n\n\
+                    [[output]]\nformat = \"csv\"\nfile = \"events-{part_from}.csv\"";
+    let partitioned = by_range(EVERY_THOUSAND, appended).unwrap();
+    let whole_folder = tempfile::tempdir().unwrap();
+    let whole = plan(
+        &BY_RANGE
+            .replace("{report}", "")
+            .replace(
+                "params = { first = \"integer\", last = \"integer\" }",
+                "params = { part_from = \"integer\", part_to = \"integer\" }",
+            )
+            .replace(
+                "{outputs}",
+                "[[output]]\nformat = \"csv\"\nfile = \"events.csv\"",
+            ),
+    )
+    .unwrap();
+    let (outcome, _) = run_values(
+        &whole,
+        &[("part_from", "0"), ("part_to", "2500")],
+        &Ranged::default(),
+        whole_folder.path(),
+    )
+    .await;
+    outcome.unwrap();
+
+    let folder = tempfile::tempdir().unwrap();
+    let opener = Ranged::default();
+    let (outcome, events) = run_values(&partitioned, &RANGE_KEYS, &opener, folder.path()).await;
+    let summary = outcome.unwrap();
+    assert_eq!(summary.rows, 2_500);
+    let read = |folder: &Path, name: &str| std::fs::read_to_string(folder.join(name)).unwrap();
+    assert_eq!(
+        read(folder.path(), "events.csv"),
+        read(whole_folder.path(), "events.csv"),
+        "every range's rows appended to one file, its header once"
+    );
+    assert_eq!(
+        files(folder.path()),
+        [
+            "events-0.csv",
+            "events-1000.csv",
+            "events-2000.csv",
+            "events.csv",
+            "events.xlsx"
+        ]
+    );
+    assert_eq!(read(folder.path(), "events-2000.csv").lines().count(), 501);
+    let mut workbook: calamine::Xlsx<_> =
+        calamine::open_workbook(folder.path().join("events.xlsx")).unwrap();
+    let sheet = calamine::Reader::worksheet_range_at(&mut workbook, 0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(sheet.height(), 2_501, "a header and every range's rows");
+
+    let written: Vec<(Option<usize>, u64)> = events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::OutputWritten(file) => Some((file.output, file.rows)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        written,
+        [
+            (Some(1), 2_500),
+            (Some(2), 2_500),
+            (Some(3), 1_000),
+            (Some(3), 1_000),
+            (Some(3), 500)
+        ],
+        "in the outputs' order, then the ranges'"
+    );
+    let ranges: Vec<(Step, u64, u64)> = events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::PartDone(part) => Some((part.step.clone(), part.number, part.rows)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        ranges,
+        [
+            (Step::Combine, 1, 1_000),
+            (Step::Combine, 2, 1_000),
+            (Step::Combine, 3, 500)
+        ]
+    );
+    let combined = events
+        .iter()
+        .filter(|event| matches!(event, RunEvent::CombineDone { .. }))
+        .count();
+    assert_eq!(combined, 3, "a combine step a range");
+}
+
+#[tokio::test]
+async fn a_range_that_fails_leaves_no_file_of_any_range() {
+    let folder = tempfile::tempdir().unwrap();
+    let plan = plan(
+        &BY_RANGE
+            .replace("{report}", EVERY_THOUSAND)
+            .replace(
+                "{outputs}",
+                "[[output]]\nformat = \"csv\"\nfile = \"events.csv\"\n\n\
+                 [[output]]\nformat = \"csv\"\nfile = \"events-{part_from}.csv\"",
+            )
+            .replace(
+                "AND id < :part_to\"",
+                "AND id < :part_to\"\nmax_rows = 1500",
+            ),
+    )
+    .unwrap();
+    // Each range holds 1,000 rows, under the source's caps; a range's tables are its own.
+    let (outcome, _) = run_values(&plan, &RANGE_KEYS, &Ranged::default(), folder.path()).await;
+    outcome.unwrap();
+    let opener = Ranged {
+        extra: Some(("2000".to_owned(), 1_200)),
+        ..Ranged::default()
+    };
+    let failed = tempfile::tempdir().unwrap();
+    let (outcome, _) = run_values(&plan, &RANGE_KEYS, &opener, failed.path()).await;
+    let failure = outcome.unwrap_err();
+    assert_eq!(
+        failure.limit.map(|limit| limit.key),
+        Some("max_rows".to_owned())
+    );
+    assert!(
+        files(failed.path()).is_empty(),
+        "nothing of ranges 1 and 2: {:?}",
+        files(failed.path())
+    );
+}
+
+#[tokio::test]
+async fn writes_a_parquet_file_a_range_and_reads_a_lone_source_a_range_at_a_time() {
+    let folder = tempfile::tempdir().unwrap();
+    let parquet = by_range(
+        EVERY_THOUSAND,
+        "[[output]]\nformat = \"parquet\"\nfile = \"events-{part_from}.parquet\"\n\n\
+         [[output]]\nformat = \"csv\"\nfile = \"events.csv\"",
+    )
+    .unwrap();
+    let (outcome, events) =
+        run_values(&parquet, &RANGE_KEYS, &Ranged::default(), folder.path()).await;
+    assert_eq!(outcome.unwrap().rows, 2_500);
+    assert_eq!(
+        files(folder.path()),
+        [
+            "events-0.parquet",
+            "events-1000.parquet",
+            "events-2000.parquet",
+            "events.csv"
+        ]
+    );
+    let parquet_rows: Vec<u64> = events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::OutputWritten(file) if file.output == Some(1) => Some(file.rows),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(parquet_rows, [1_000, 1_000, 500]);
+
+    let lone = tempfile::tempdir().unwrap();
+    let direct = plan(
+        &BY_RANGE
+            .replace("{report}", EVERY_THOUSAND)
+            .replace(
+                "[combine]\nquery = \"SELECT id, amount * 2 AS doubled FROM events ORDER BY id\"",
+                "",
+            )
+            .replace(
+                "{outputs}",
+                "[[output]]\nformat = \"csv\"\nfile = \"events.csv\"",
+            ),
+    )
+    .unwrap();
+    let opener = Ranged::default();
+    let (outcome, events) = run_values(&direct, &RANGE_KEYS, &opener, lone.path()).await;
+    assert_eq!(outcome.unwrap().rows, 2_500);
+    assert_eq!(opener.sent.borrow().len(), 3);
+    let csv = std::fs::read_to_string(lone.path().join("events.csv")).unwrap();
+    assert_eq!(csv.lines().count(), 2_501);
+    let sources_done = events
+        .iter()
+        .filter(|event| matches!(event, RunEvent::SourceDone { .. }))
+        .count();
+    assert_eq!(sources_done, 3, "the source is read once a range");
+}

@@ -164,6 +164,7 @@ mod tests {
             query_ms: None,
             limits: None,
             plan: plan.map(str::to_owned),
+            parts: Vec::new(),
         })
     }
 

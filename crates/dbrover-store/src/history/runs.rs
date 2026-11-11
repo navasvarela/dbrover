@@ -240,6 +240,12 @@ pub struct PartMetrics {
     pub started_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scanned_bytes: Option<u64>,
+    /// For a range of a partitioned run's combine step, the most memory its DuckDB held, and
+    /// the most it spilled (RS4d).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_memory: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_temp_size: Option<u64>,
 }
 
 /// A column of a source's table, as a run loaded it.
@@ -306,9 +312,14 @@ pub struct CombineMetrics {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limits: Option<CombineCaps>,
     /// Its query's plan, as DuckDB's profiler measured it, in DuckDB's JSON profile
-    /// (`dbrover_plan::PlanFormat::DuckDbJson`); `None` for a run kept before RS2c.
+    /// (`dbrover_plan::PlanFormat::DuckDbJson`); `None` for a run kept before RS2c. For a
+    /// partitioned run, the last range's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan: Option<String>,
+    /// For a partitioned run, each range it combined, in the order of the ranges (RS4d); empty
+    /// otherwise, and for a run kept before RS4d.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<PartMetrics>,
 }
 
 /// A file the run wrote.
@@ -577,6 +588,7 @@ mod tests {
                         timeout_ms: 600_000,
                     }),
                     plan: None,
+                    parts: Vec::new(),
                 }),
                 StepMetrics::Output(OutputMetrics {
                     number: 1,

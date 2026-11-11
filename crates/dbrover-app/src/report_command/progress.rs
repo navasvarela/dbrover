@@ -4,7 +4,7 @@
 //! it is mostly doing, as the report's tab says them.
 
 use dbrover_core::ByteCount;
-use dbrover_report::{Batch, RunEvent, Step, grouped};
+use dbrover_report::{Batch, Parts, RunEvent, Step, grouped};
 
 use crate::reports::live::{self, Pace};
 
@@ -19,6 +19,8 @@ pub struct LiveLine {
     engines: Vec<(String, String)>,
     /// Each partitioned source's word for one range, as `month`.
     units: Vec<(String, String)>,
+    /// A partitioned run's word for one range, and how far it has gone through them.
+    run_parts: Option<(String, Parts)>,
     running: Vec<Running>,
 }
 
@@ -33,7 +35,17 @@ impl LiveLine {
     /// Takes in `event`. Returns whether the line's text changed.
     pub fn apply(&mut self, event: &RunEvent) -> bool {
         match event {
-            RunEvent::Started { sources, .. } => {
+            RunEvent::Started {
+                sources, partition, ..
+            } => {
+                self.run_parts = partition.as_ref().map(|partition| {
+                    let parts = Parts {
+                        done: 0,
+                        running: 1,
+                        of: partition.ranges,
+                    };
+                    (partition.unit.clone(), parts)
+                });
                 self.engines = sources
                     .iter()
                     .filter_map(|source| Some((source.id.clone(), source.engine.clone()?)))
@@ -87,6 +99,16 @@ impl LiveLine {
                 running.text = text;
                 true
             }
+            RunEvent::PartDone(part) if self.run_parts.is_some() => {
+                if let Some((_, parts)) = &mut self.run_parts {
+                    *parts = Parts {
+                        done: part.number,
+                        running: u64::from(part.number < part.of),
+                        of: part.of,
+                    };
+                }
+                true
+            }
             RunEvent::SourceDone { id, .. } => self.end(&Step::Source { id: id.clone() }),
             RunEvent::CombineDone { .. } => self.end(&Step::Combine),
             // Nothing runs once the run has ended, however it ended.
@@ -129,8 +151,20 @@ impl LiveLine {
             .iter()
             .map(|running| running.text.as_str())
             .collect();
-        Some(steps.join(" · "))
+        let steps = steps.join(" · ");
+        Some(match &self.run_parts {
+            Some((unit, parts)) => format!("{}: {steps}", capitalised(&parts.describe(unit))),
+            None => steps,
+        })
     }
+}
+
+/// `Month 3 of 12` from `month 3 of 12`.
+fn capitalised(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
 }
 
 /// `Source lines: 120,000 rows, 3.1 MB, 4 s`, with a lookup's batch.
@@ -153,7 +187,7 @@ fn amounts(step: &Step, rows: u64, bytes: u64, elapsed_ms: u64, batch: Option<Ba
 
 #[cfg(test)]
 mod tests {
-    use dbrover_report::{Busy, PartitionStart, Parts, SourceStart};
+    use dbrover_report::{Busy, PartitionStart, SourceStart};
 
     use super::*;
 
@@ -271,11 +305,52 @@ mod tests {
             combine_limits: None,
             timeout_ms: None,
             machine: None,
+            partition: None,
         });
         for (event, expected) in cases {
             line.apply(&event);
             assert_eq!(line.text().as_deref(), expected, "{event:?}");
         }
+    }
+
+    #[test]
+    fn says_which_range_a_partitioned_run_is_on() {
+        let mut line = LiveLine::default();
+        line.apply(&RunEvent::Started {
+            report: "Events".to_owned(),
+            sources: Vec::new(),
+            combine: true,
+            combine_sql: None,
+            version: None,
+            combine_limits: None,
+            timeout_ms: None,
+            machine: None,
+            partition: Some(dbrover_report::RunPartitionStart {
+                unit: "month".to_owned(),
+                ranges: 12,
+            }),
+        });
+        line.apply(&progress(Step::Combine, 13, None));
+        assert_eq!(
+            line.text().as_deref(),
+            Some("Month 1 of 12: Combine: 13 rows, 338 bytes, 4 s")
+        );
+        line.apply(&RunEvent::PartDone(dbrover_report::PartDone {
+            step: Step::Combine,
+            number: 6,
+            of: 12,
+            from: "2026-06-01".to_owned(),
+            to: "2026-07-01".to_owned(),
+            rows: 13,
+            bytes: 338,
+            first_row_ms: None,
+            elapsed_ms: 4_000,
+            scanned_bytes: None,
+        }));
+        assert_eq!(
+            line.text().as_deref(),
+            Some("Month 7 of 12: Combine: 13 rows, 338 bytes, 4 s")
+        );
     }
 
     #[test]
@@ -301,6 +376,7 @@ mod tests {
             combine_limits: None,
             timeout_ms: None,
             machine: None,
+            partition: None,
         });
         let cases = [
             ((6, 1), "Source events: 40 rows, 1.0 KB, 4 s, month 7 of 12"),

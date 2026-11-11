@@ -520,6 +520,7 @@ mod tests {
             query_ms: None,
             limits: None,
             plan: None,
+            parts: Vec::new(),
         }
     }
 

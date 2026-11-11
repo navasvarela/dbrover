@@ -28,8 +28,8 @@ use crate::declared::Shaped;
 use crate::live::{ProgressClock, waiting};
 use crate::statement::Statements;
 use crate::{
-    LimitHit, Logic, Plan, PlannedOutput, Preview, QuerySource, RunEvent, RunFailure, RunValues,
-    SourcePhases, Step, WrittenFile,
+    LimitHit, Logic, PartDone, Plan, PlannedOutput, Preview, QuerySource, RunEvent, RunFailure,
+    RunValues, SourcePhases, SourceRanges, Step, WrittenFile,
 };
 
 /// How many rows the preview keeps: a screenful or two, enough to see a report is right.
@@ -175,6 +175,10 @@ pub struct RunSummary {
 /// Runs `plan` with `values`, opening its sources with `opener`, writing into `folders`, and
 /// sending each step to `events` but the run's start and end, which the caller sends.
 ///
+/// A partitioned run (RS4d) runs once a range, each range's rows going to the same outputs:
+/// a file per range for an output whose name says the range, one file for the others. Every
+/// file is put in place once the last range is done, so a run that fails leaves none.
+///
 /// # Errors
 ///
 /// [`RunFailure`] naming the step that failed and, for a guardrail, which one.
@@ -187,11 +191,64 @@ pub async fn run<O: SourceOpener>(
 ) -> Result<RunSummary, RunFailure> {
     let _staging = OwnFolder::make(folders.staging)?;
     let _work = OwnFolder::make(folders.work)?;
-    let outputs = Outputs {
-        plan,
-        values,
-        folders,
+    let mut sink = Sink::new(plan, folders);
+    let ran = match &values.run_ranges {
+        None => run_once(plan, values, opener, &mut sink, events).await,
+        Some(ranges) => run_ranges(plan, values, ranges, opener, &mut sink, events).await,
     };
+    match ran {
+        Ok(()) => sink.finish(events),
+        Err(failure) => {
+            sink.abandon();
+            Err(failure)
+        }
+    }
+}
+
+/// Runs each of a partitioned run's `ranges` in turn into `sink`, and says what each wrote.
+async fn run_ranges<'a, O: SourceOpener>(
+    plan: &'a Plan,
+    values: &RunValues,
+    ranges: &SourceRanges,
+    opener: &O,
+    sink: &mut Sink<'a>,
+    events: &mut dyn FnMut(RunEvent),
+) -> Result<(), RunFailure> {
+    let of = ranges.ranges.len() as u64;
+    for range in &ranges.ranges {
+        let range_values = plan
+            .range_values(values, range)
+            .map_err(|problem| RunFailure::new(Step::Report, problem))?;
+        let started = Instant::now();
+        let before = sink.written();
+        run_once(plan, &range_values, opener, sink, events).await?;
+        sink.end_range()?;
+        let after = sink.written();
+        events(RunEvent::PartDone(PartDone {
+            step: plan.feed_step(),
+            number: range.number,
+            of,
+            from: range.from.clone(),
+            to: range.to.clone(),
+            rows: after.rows - before.rows,
+            bytes: after.bytes - before.bytes,
+            first_row_ms: None,
+            elapsed_ms: millis(started.elapsed()),
+            scanned_bytes: None,
+        }));
+    }
+    Ok(())
+}
+
+/// Runs `plan` once with `values`, its rows going to `sink`: the whole run, or one range of a
+/// partitioned run.
+async fn run_once<'a, O: SourceOpener>(
+    plan: &'a Plan,
+    values: &RunValues,
+    opener: &O,
+    sink: &mut Sink<'a>,
+    events: &mut dyn FnMut(RunEvent),
+) -> Result<(), RunFailure> {
     match &plan.logic {
         Logic::Direct(source) => {
             let opened = Instant::now();
@@ -214,28 +271,31 @@ pub async fn run<O: SourceOpener>(
             .await;
             let mut reader = reader.map_err(|error| error.at(step()))?;
             let opening = reader.opening();
-            let streamed = outputs
-                .stream(&mut reader, &Feed::Source(source), opened, events)
+            let streamed = sink
+                .stream(&mut reader, &Feed::Source(source), values, opened, events)
                 .await;
             let scanned = reader.scanned();
             reader.close().await;
-            let streamed = streamed?;
+            let read = streamed?;
+            sink.count(&read);
             events(source_done(
                 source,
-                &streamed.read,
+                &read,
                 opened.elapsed(),
                 opening,
                 scanned,
             ));
-            streamed.finish(events)
+            Ok(())
         }
         Logic::Combine(combined) => {
             let combining = crate::combine::Combining {
-                outputs,
+                plan,
+                values,
+                folders: sink.folders(),
                 combined,
                 opener,
             };
-            combining.run(events).await
+            combining.run(sink, events).await
         }
     }
 }
@@ -297,48 +357,85 @@ fn source_done(
     }
 }
 
-/// What writing a run's files needs: the outputs, the files the values name, and where.
-#[derive(Clone, Copy)]
-pub(crate) struct Outputs<'a> {
-    pub(crate) plan: &'a Plan,
-    pub(crate) values: &'a RunValues,
-    pub(crate) folders: RunFolders<'a>,
+/// Where a run's rows go: every output and chart, and the preview, across every range of a
+/// partitioned run. Its files wait under their partial names until [`Sink::finish`] puts them
+/// all in place.
+pub(crate) struct Sink<'a> {
+    plan: &'a Plan,
+    folders: RunFolders<'a>,
+    /// The result's columns, as the first feed gave them, which every later range's must be.
+    columns: Option<Vec<String>>,
+    /// The outputs being written, each started by the first feed after it was last completed.
+    outputs: Vec<OutputRun<'a>>,
+    /// Files complete and waiting to be put in place: those DuckDB wrote whole, and each range's
+    /// own.
+    done: Vec<Completed>,
+    /// Started by the first feed.
+    charts: Option<Vec<ChartRun<'a>>>,
+    preview: Option<Preview>,
+    /// What every feed gave the outputs.
+    written: Count,
 }
 
-impl<'a> Outputs<'a> {
-    /// Writes `reader`'s rows, a page at a time, into every output and the preview, leaving
-    /// the files under their partial names for [`Streamed::finish`]. `opened` is when the
-    /// feed started, for the time to its first row.
+/// The rows and bytes a run has given its outputs so far.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Written {
+    pub(crate) rows: u64,
+    pub(crate) bytes: u64,
+}
+
+impl<'a> Sink<'a> {
+    pub(crate) fn new(plan: &'a Plan, folders: RunFolders<'a>) -> Self {
+        Self {
+            plan,
+            folders,
+            columns: None,
+            outputs: Vec::new(),
+            done: Vec::new(),
+            charts: None,
+            preview: None,
+            written: Count::default(),
+        }
+    }
+
+    pub(crate) fn folders(&self) -> RunFolders<'a> {
+        self.folders
+    }
+
+    pub(crate) fn written(&self) -> Written {
+        Written {
+            rows: self.written.rows,
+            bytes: self.written.bytes,
+        }
+    }
+
+    /// Counts what a feed gave the outputs, once its caller knows: a combine step that wrote
+    /// Parquet counts the rows `COPY` wrote, not the preview's it read back.
+    pub(crate) fn count(&mut self, read: &Count) {
+        self.written.rows += read.rows;
+        self.written.bytes += read.bytes;
+    }
+
+    /// Writes `reader`'s rows, a page at a time, into every output and the preview, starting
+    /// each output that isn't being written yet with the files `values` name. `opened` is when
+    /// the feed started, for the time to its first row. Returns what the feed read.
     ///
     /// The caller closes `reader` and says the feed is done in between, so the feed's event
     /// can tell what only its end shows, such as the combine step's peaks.
     pub(crate) async fn stream<R: SourceReader>(
-        self,
+        &mut self,
         reader: &mut R,
         feed: &Feed<'_>,
+        values: &RunValues,
         opened: Instant,
         events: &mut dyn FnMut(RunEvent),
-    ) -> Result<Streamed<'a>, RunFailure> {
-        let Self {
-            plan,
-            values,
-            folders,
-        } = self;
-        let mut outputs = start_outputs(plan, values, reader.columns(), folders)?;
-        let mut charts = start_charts(plan, values, reader.columns());
+    ) -> Result<Count, RunFailure> {
         let step = feed.step();
+        self.check_columns(reader.columns(), &step)?;
+        self.start(values, reader.columns())?;
         let mut read = Count::default();
-        let mut preview = Preview {
-            columns: reader
-                .columns()
-                .iter()
-                .map(|column| column.name.clone())
-                .collect(),
-            rows: Vec::new(),
-            more: false,
-        };
         let mut clock = ProgressClock::new();
-        let streamed = loop {
+        loop {
             let (page, waited) = waiting(reader.next_page(), |so_far| {
                 events(RunEvent::Progress {
                     step: step.clone(),
@@ -355,30 +452,28 @@ impl<'a> Outputs<'a> {
             clock.waited(waited);
             let page = match page {
                 Ok(Some(page)) => page,
-                Ok(None) => break Ok(()),
-                Err(error) => break Err(error.at(step.clone())),
+                Ok(None) => return Ok(read),
+                Err(error) => return Err(error.at(step)),
             };
             if page.is_empty() {
                 continue;
             }
             read.first_row.get_or_insert_with(|| opened.elapsed());
             read.add(&page);
-            if let Err(failure) = feed.check(&read) {
-                break Err(failure);
+            feed.check(&read)?;
+            if let Some(preview) = &mut self.preview {
+                keep_for_preview(preview, &page);
             }
-            keep_for_preview(&mut preview, &page);
             let (written, writing) = timed(async {
-                outputs
+                self.outputs
                     .iter_mut()
                     .try_for_each(|output| output.write(&page))
             })
             .await;
             clock.wrote(writing);
-            if let Err(failure) = written {
-                break Err(failure);
-            }
-            if let Err(failure) = charts.iter_mut().try_for_each(|chart| chart.add(&page)) {
-                break Err(failure);
+            written?;
+            for chart in self.charts.iter_mut().flatten() {
+                chart.add(&page)?;
             }
             if clock.due() {
                 events(RunEvent::Progress {
@@ -391,91 +486,123 @@ impl<'a> Outputs<'a> {
                     busy: Some(clock.lap(Duration::ZERO)),
                 });
             }
-        };
-        if let Err(failure) = streamed {
-            outputs.into_iter().for_each(OutputRun::abandon);
-            return Err(failure);
         }
-        Ok(Streamed {
-            outputs,
-            copied: Vec::new(),
-            charts,
-            folders,
-            read,
-            preview,
-        })
     }
-}
 
-/// Every row written to every output, whose files wait under their partial names, and given
-/// to every chart.
-pub(crate) struct Streamed<'a> {
-    outputs: Vec<OutputRun<'a>>,
-    /// Files DuckDB wrote whole before the rows streamed, still under their partial names.
-    copied: Vec<Completed>,
-    charts: Vec<ChartRun<'a>>,
-    folders: RunFolders<'a>,
-    /// What the feed returned.
-    pub(crate) read: Count,
-    preview: Preview,
-}
+    /// Whether `columns` are the first feed's, which an output appended to by every range was
+    /// started with.
+    fn check_columns(&mut self, columns: &[ExportColumn], step: &Step) -> Result<(), RunFailure> {
+        let names: Vec<String> = columns.iter().map(|column| column.name.clone()).collect();
+        match &self.columns {
+            None => {
+                self.columns = Some(names);
+                Ok(())
+            }
+            Some(first) if *first == names => Ok(()),
+            Some(first) => Err(RunFailure::new(
+                step.clone(),
+                format!(
+                    "this range returned the columns {}, unlike the first range's {}",
+                    names.join(", "),
+                    first.join(", ")
+                ),
+            )),
+        }
+    }
 
-impl<'a> Streamed<'a> {
+    /// Starts each output not being written, the charts and the preview, with `columns`.
+    fn start(&mut self, values: &RunValues, columns: &[ExportColumn]) -> Result<(), RunFailure> {
+        let running: Vec<usize> = self.outputs.iter().map(|output| output.number).collect();
+        let started = start_outputs(self.plan, values, columns, self.folders, &running)?;
+        self.outputs.extend(started);
+        self.outputs.sort_by_key(|output| output.number);
+        if self.charts.is_none() {
+            self.charts = Some(start_charts(self.plan, values, columns));
+        }
+        self.preview.get_or_insert_with(|| Preview {
+            columns: columns.iter().map(|column| column.name.clone()).collect(),
+            rows: Vec::new(),
+            more: false,
+        });
+        Ok(())
+    }
+
     /// A chart that read its rows elsewhere, its own query's, to draw with the others.
     pub(crate) fn add_chart(&mut self, chart: ChartRun<'a>) {
-        self.charts.push(chart);
+        self.charts.get_or_insert_with(Vec::new).push(chart);
     }
 
     /// Files written whole elsewhere, to be put in place with the others.
     pub(crate) fn add_copied(&mut self, copied: Vec<Completed>) {
-        self.copied.extend(copied);
+        self.done.extend(copied);
     }
 
-    /// Removes every output's file, for a run that failed after its rows were written.
+    /// Ends a range of a partitioned run: completes the files of the outputs whose name says
+    /// the range, so the next range starts its own.
+    pub(crate) fn end_range(&mut self) -> Result<(), RunFailure> {
+        let (per_range, appended): (Vec<_>, Vec<_>) = std::mem::take(&mut self.outputs)
+            .into_iter()
+            .partition(|output| output.output.is_per_range());
+        self.outputs = appended;
+        let completed = complete_outputs(per_range)?;
+        self.done.extend(completed);
+        Ok(())
+    }
+
+    /// Removes every output's file, for a run that failed.
     pub(crate) fn abandon(self) {
         self.outputs.into_iter().for_each(OutputRun::abandon);
-        self.copied
-            .into_iter()
-            .for_each(|copied| copied.file.abandon());
+        self.done.into_iter().for_each(|done| done.file.abandon());
     }
 
     /// Completes every file, draws every chart, and puts them all in place, sending the preview
     /// and each file.
     pub(crate) fn finish(self, events: &mut dyn FnMut(RunEvent)) -> Result<RunSummary, RunFailure> {
-        events(RunEvent::Preview(self.preview));
-        let mut completed = match complete_outputs(self.outputs) {
-            Ok(completed) => completed,
+        let Self {
+            outputs,
+            mut done,
+            charts,
+            preview,
+            folders,
+            written,
+            ..
+        } = self;
+        events(RunEvent::Preview(preview.unwrap_or_else(|| Preview {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            more: false,
+        })));
+        match complete_outputs(outputs) {
+            Ok(completed) => done.extend(completed),
             Err(failure) => {
-                self.copied
-                    .into_iter()
-                    .for_each(|copied| copied.file.abandon());
+                done.into_iter().for_each(|done| done.file.abandon());
                 return Err(failure);
             }
-        };
-        completed.extend(self.copied);
-        // In the file's order of outputs, wherever each was written.
-        completed.sort_by_key(|done| match &done.step {
+        }
+        // In the file's order of outputs, wherever each was written, and a partitioned run's
+        // ranges in their order within an output.
+        done.sort_by_key(|done| match &done.step {
             Step::Output { number, .. } => *number,
             _ => usize::MAX,
         });
-        let mut charts = self.charts;
+        let mut charts = charts.unwrap_or_default();
         charts.sort_by_key(ChartRun::number);
         for chart in charts {
-            match chart.draw(self.folders) {
-                Ok(drawn) => completed.push(drawn),
+            match chart.draw(folders) {
+                Ok(drawn) => done.push(drawn),
                 Err(failure) => {
-                    completed.into_iter().for_each(|done| done.file.abandon());
+                    done.into_iter().for_each(|done| done.file.abandon());
                     return Err(failure);
                 }
             }
         }
-        let files = put_in_place(completed)?;
+        let files = put_in_place(done)?;
         for file in &files {
             events(RunEvent::OutputWritten(file.clone()));
         }
         Ok(RunSummary {
-            rows: self.read.rows,
-            bytes: self.read.bytes,
+            rows: written.rows,
+            bytes: written.bytes,
             files,
         })
     }
@@ -623,20 +750,25 @@ struct OutputRun<'a> {
     busy: Duration,
 }
 
+/// Starts each output DbRover writes, but those numbered in `running`, which are being written
+/// already.
 fn start_outputs<'a>(
     plan: &'a Plan,
     values: &RunValues,
     columns: &[ExportColumn],
     folders: RunFolders<'_>,
+    running: &[usize],
 ) -> Result<Vec<OutputRun<'a>>, RunFailure> {
     let mut started: Vec<OutputRun<'a>> = Vec::new();
     // DuckDB writes the Parquet outputs itself, before the rows come here (RS3d).
-    let written_here = plan
-        .outputs
-        .iter()
-        .zip(&values.files)
-        .enumerate()
-        .filter(|(_, (output, _))| output.format.written_by_duckdb().is_none());
+    let written_here =
+        plan.outputs
+            .iter()
+            .zip(&values.files)
+            .enumerate()
+            .filter(|(index, (output, _))| {
+                output.format.written_by_duckdb().is_none() && !running.contains(&(index + 1))
+            });
     for (index, (output, file)) in written_here {
         let step = Step::Output {
             number: index + 1,
@@ -833,7 +965,12 @@ fn put_in_place(completed: Vec<Completed>) -> Result<Vec<WrittenFile>, RunFailur
             completed.for_each(|rest| rest.file.abandon());
             return Err(RunFailure::new(done.step, describe(&error)));
         }
+        let output = match &done.step {
+            Step::Output { number, .. } => Some(*number),
+            _ => None,
+        };
         written.push(WrittenFile {
+            output,
             path,
             rows: done.rows,
             size,

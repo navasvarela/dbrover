@@ -10,6 +10,7 @@
 //!    chart.
 
 use std::cell::RefCell;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -30,13 +31,14 @@ use crate::chart::ChartRun;
 use crate::declared::Shaped;
 use crate::live::{ProgressClock, waiting};
 use crate::parquet::{ParquetCopy, parquet_files};
-use crate::run::{Count, Feed, Outputs, Streamed, millis, timed};
+use crate::run::{Count, Feed, Sink, millis, timed};
 use crate::statement::{Statements, lookup_literal};
 use crate::typing::{ColumnTyper, DriverTypes};
 use crate::{
     AttachedSource, Batch, Busy, Chart, CombineLimits, Combined, LimitHit, LoadedColumn, Parts,
-    PlannedLookup, PlannedSource, PlannedSplit, QuerySource, RunEvent, RunFailure, RunSummary,
-    RunValues, SourceError, SourceOpener, SourcePhases, SourceReader, SourceStatement, Step,
+    Plan, PlannedLookup, PlannedSource, PlannedSplit, QuerySource, RunEvent, RunFailure,
+    RunFolders, RunValues, SourceError, SourceOpener, SourcePhases, SourceReader, SourceStatement,
+    Step,
 };
 
 /// Rows asked of the combine query at a time, as a source's are.
@@ -57,21 +59,27 @@ const WORKSPACE_FILE: &str = "workspace.duckdb";
 /// The folder in the run's work folder that DuckDB spills to.
 const SPILL_FOLDER: &str = "spill";
 
-/// A run with a combine step, and what its steps read.
-pub(crate) struct Combining<'a, O> {
-    pub(crate) outputs: Outputs<'a>,
+/// A run with a combine step, and what its steps read: the whole run, or one range of a
+/// partitioned run.
+pub(crate) struct Combining<'a, 'v, O> {
+    pub(crate) plan: &'a Plan,
+    pub(crate) values: &'v RunValues,
+    pub(crate) folders: RunFolders<'a>,
     pub(crate) combined: &'a Combined,
-    pub(crate) opener: &'a O,
+    pub(crate) opener: &'v O,
 }
 
-impl<'a, O: SourceOpener> Combining<'a, O> {
-    /// Runs the combine step: see the module.
+impl<'a, O: SourceOpener> Combining<'a, '_, O> {
+    /// Runs the combine step into `sink`: see the module. The run's DuckDB is made for it and
+    /// removed after it, so each range of a partitioned run has a database of its own, which
+    /// holds one range's tables and spill.
     pub(crate) async fn run(
         &self,
+        sink: &mut Sink<'a>,
         events: &mut dyn FnMut(RunEvent),
-    ) -> Result<RunSummary, RunFailure> {
+    ) -> Result<(), RunFailure> {
         let limits = self.limits();
-        let work = self.outputs.folders.work;
+        let work = self.folders.work;
         let store = WorkspaceStore::File(work.join(WORKSPACE_FILE));
         let mut workspace = Workspace::open(
             &store,
@@ -84,8 +92,9 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
         )
         .await
         .map_err(|error| RunFailure::new(Step::Combine, describe_error(&error)))?;
-        let outcome = self.combine(&mut workspace, events).await;
+        let outcome = self.combine(&mut workspace, sink, events).await;
         workspace.close().await;
+        remove_workspace(work);
         outcome
     }
 
@@ -96,8 +105,9 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
     async fn combine(
         &self,
         workspace: &mut Workspace,
+        sink: &mut Sink<'a>,
         events: &mut dyn FnMut(RunEvent),
-    ) -> Result<RunSummary, RunFailure> {
+    ) -> Result<(), RunFailure> {
         for source in &self.combined.sources {
             if let PlannedSource::Attached(attached) = source {
                 attach(workspace, attached).await?;
@@ -116,13 +126,8 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
             let tables = try_join_all(loads).await?;
             loaded.extend(tables);
         }
-        let folders = self.outputs.folders;
-        let parquet = parquet_files(
-            self.outputs.plan,
-            self.outputs.values,
-            folders.folder,
-            folders.staging,
-        );
+        let folders = self.folders;
+        let parquet = parquet_files(self.plan, self.values, folders.folder, folders.staging);
         // DuckDB writes in the staging folder only when it writes the Parquet files there.
         let writable = (!parquet.is_empty()).then_some(folders.staging);
         workspace
@@ -137,7 +142,7 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
         } else {
             let copy = ParquetCopy {
                 query: combine_query,
-                values: self.outputs.values,
+                values: self.values,
                 limits: self.limits(),
             };
             Some(copy.write(workspace, parquet, events).await?)
@@ -151,7 +156,7 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
             Box::pin(CombineReader::start(
                 workspace,
                 &query,
-                self.outputs.values,
+                self.values,
                 DuckDbQuery::Combine,
                 self.limits(),
             )),
@@ -166,44 +171,40 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
         )
         .await;
         let mut reader = reader.map_err(|error| error.at(Step::Combine))?;
-        let streamed = self
-            .outputs
-            .stream(&mut reader, &Feed::Combine, started, events)
+        let streamed = sink
+            .stream(&mut reader, &Feed::Combine, self.values, started, events)
             .await;
         reader.close().await;
-        let mut streamed = streamed?;
-        let read_ms = millis(starting + streamed.read.waited_first + streamed.read.waited_rest);
+        let mut read = streamed?;
+        let read_ms = millis(starting + read.waited_first + read.waited_rest);
         let (profile, query_ms) = match copied {
             None => (read_profile(workspace).await, read_ms),
             Some(copied) => {
                 // The preview may have read only its rows of the file.
-                streamed.read.rows = copied.rows;
-                streamed.add_copied(copied.files);
+                read.rows = copied.rows;
+                sink.add_copied(copied.files);
                 (copied.profile, millis(copied.query))
             }
         };
+        sink.count(&read);
         let peaks = profile.peaks;
         events(RunEvent::CombineDone {
-            rows: streamed.read.rows,
-            bytes: streamed.read.bytes,
-            first_row_ms: streamed.read.first_row.map(millis),
+            rows: read.rows,
+            bytes: read.bytes,
+            first_row_ms: read.first_row.map(millis),
             elapsed_ms: millis(started.elapsed()),
             peak_memory: peaks.memory,
             peak_temp_size: peaks.temp_size,
             query_ms: Some(query_ms),
             plan: profile.plan,
         });
-        if let Err(failure) = self.query_charts(workspace, &mut streamed).await {
-            streamed.abandon();
-            return Err(failure);
-        }
-        streamed.finish(events)
+        self.query_charts(workspace, sink).await
     }
 
     /// Whether anything but the preview reads every row of the result: an output DbRover
     /// writes, or a chart drawn from the result rather than a query of its own.
     fn streams_every_row(&self) -> bool {
-        let plan = self.outputs.plan;
+        let plan = self.plan;
         plan.outputs
             .iter()
             .any(|output| output.format.written_by_duckdb().is_none())
@@ -216,14 +217,14 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
     async fn query_charts(
         &self,
         workspace: &mut Workspace,
-        streamed: &mut Streamed<'a>,
+        sink: &mut Sink<'a>,
     ) -> Result<(), RunFailure> {
-        let plan = self.outputs.plan;
-        let files = &self.outputs.values.charts;
+        let plan = self.plan;
+        let files = &self.values.charts;
         for (index, (chart, file)) in plan.charts.iter().zip(files).enumerate() {
             if let Some(query) = &chart.query {
                 let read = self.chart_rows(workspace, index + 1, chart, file, query);
-                streamed.add_chart(read.await?);
+                sink.add_chart(read.await?);
             }
         }
         Ok(())
@@ -243,15 +244,10 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
             file: file.to_owned(),
         };
         let query_of = DuckDbQuery::Chart;
-        let mut reader = CombineReader::start(
-            workspace,
-            query,
-            self.outputs.values,
-            query_of,
-            self.limits(),
-        )
-        .await
-        .map_err(|error| error.at(step.clone()))?;
+        let mut reader =
+            CombineReader::start(workspace, query, self.values, query_of, self.limits())
+                .await
+                .map_err(|error| error.at(step.clone()))?;
         let mut run = ChartRun::new(number, chart, file, reader.columns());
         let read = loop {
             match reader.next_page().await {
@@ -289,7 +285,7 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
             scanned: None,
             at: At::Whole,
         };
-        let statements = Statements::new(self.outputs.plan, self.outputs.values, source);
+        let statements = Statements::new(self.plan, self.values, source);
         let deadline = opened + source.limits.timeout;
         let sent = match &source.split {
             PlannedSplit::Whole => {
@@ -323,7 +319,7 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
                 Sent::Batches(of)
             }
             PlannedSplit::Partition(partition) => {
-                let ranges = self.outputs.values.ranges.get(&source.id).ok_or_else(|| {
+                let ranges = self.values.ranges.get(&source.id).ok_or_else(|| {
                     RunFailure::new(loading.step(), "the run's values have no ranges for it")
                 })?;
                 let reading = ranges::Ranges {
@@ -339,6 +335,23 @@ impl<'a, O: SourceOpener> Combining<'a, O> {
         };
         loading.finish(sent, events).await
     }
+}
+
+/// Removes the run's DuckDB's file and spill from `work`, once the database is closed, so a
+/// partitioned run's next range starts with an empty one and the run's disk holds one range's.
+/// What can't be removed is left for the work folder's own removal when the run ends.
+fn remove_workspace(work: &Path) {
+    let file = work.join(WORKSPACE_FILE);
+    let mut wal = file.clone().into_os_string();
+    wal.push(".wal");
+    for leftover in [file, PathBuf::from(wal)] {
+        if let Err(error) = std::fs::remove_file(&leftover)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::debug!("could not remove {}: {error}", leftover.display());
+        }
+    }
+    let _ = std::fs::remove_dir_all(work.join(SPILL_FOLDER));
 }
 
 /// A loaded source's table, for the lookups of the rounds after it: its name, and each

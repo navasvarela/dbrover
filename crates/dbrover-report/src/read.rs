@@ -16,8 +16,8 @@ use crate::problem::{Place, ReportProblem, Table, messages, syntax_problems};
 use crate::{
     ByteSize, Chart, ChartPicture, Combine, CombineLimitsSet, CombineQuery, FileName, HintId,
     Lookup, Output, OutputColumns, OutputLimitsSet, OutputWriter, PART_FROM, PART_TO, Param,
-    PlannedPartition, Report, Source, SourceColumn, SourceLimitsSet, SourcePartition, SourceRead,
-    SourceSplit, grouped,
+    Partition, PlannedPartition, Report, Source, SourceColumn, SourceLimitsSet, SourcePartition,
+    SourceRead, SourceSplit, grouped,
 };
 
 /// Keys a file may put in the wrong table, and where each goes, so it says so rather than
@@ -126,8 +126,11 @@ pub fn read_with_places(text: &str) -> Result<Report, Vec<ReportProblem>> {
     if !combine_problems {
         check_shape(&sources, &positions, combine.is_some(), &mut problems);
     }
+    let run_partition = header.as_ref().and_then(|header| header.partition.as_ref());
+    check_run_partition(run_partition, &params, &sources, &positions, &mut problems);
+    let file_params = with_range_params(run_partition, &params);
     let outputs = match outputs {
-        Ok(outputs) => read_outputs(outputs, &params, &mut problems),
+        Ok(outputs) => read_outputs(outputs, &file_params, &mut problems),
         Err(problem) => {
             problems.push(at_file(problem));
             Vec::new()
@@ -149,6 +152,21 @@ pub fn read_with_places(text: &str) -> Result<Report, Vec<ReportProblem>> {
         }
     };
 
+    if run_partition.is_some() {
+        for (index, chart) in charts.iter().enumerate() {
+            if chart.query.is_some() {
+                problems.push(ReportProblem::new(
+                    format!(
+                        "chart {}: query: in a partitioned run, the sources' tables hold one \
+                         range at a time; leave query out to draw the result of every range",
+                        index + 1
+                    ),
+                    Place::key(Table::Chart(index), "query"),
+                ));
+            }
+        }
+    }
+
     match header {
         Some(header) if problems.is_empty() => Ok(Report {
             name: header.name,
@@ -158,6 +176,7 @@ pub fn read_with_places(text: &str) -> Result<Report, Vec<ReportProblem>> {
             max_disk: header.max_disk,
             stall_timeout: header.stall_timeout,
             quiet_hints: header.quiet_hints,
+            partition: header.partition,
             sources,
             combine,
             outputs,
@@ -241,11 +260,12 @@ struct Header {
     max_disk: Option<ByteSize>,
     stall_timeout: Option<Duration>,
     quiet_hints: Vec<HintId>,
+    partition: Option<Partition>,
 }
 
 /// The keys `[report]` has, for the problem of one it hasn't.
 const REPORT_KEYS: &str =
-    "name, description, params, timeout, stall_timeout, max_disk and quiet_hints";
+    "name, description, params, timeout, stall_timeout, max_disk, quiet_hints and partition";
 
 fn read_header(table: toml::Table, problems: &mut Vec<ReportProblem>) -> Option<Header> {
     let mut fields = Fields::new(table);
@@ -261,6 +281,7 @@ fn read_header(table: toml::Table, problems: &mut Vec<ReportProblem>) -> Option<
     let max_disk = fields.byte_size("max_disk");
     let stall_timeout = fields.duration("stall_timeout");
     let quiet_hints = read_quiet_hints(fields.take("quiet_hints"));
+    let partition = fields.take("partition").map(read_partition).transpose();
     for (key, place) in MISPLACED_REPORT_KEYS {
         if fields.take(key).is_some() {
             found.push(Found::at(key, place));
@@ -274,6 +295,15 @@ fn read_header(table: toml::Table, problems: &mut Vec<ReportProblem>) -> Option<
     let timeout = kept(timeout, &mut found);
     let max_disk = kept(max_disk, &mut found);
     let stall_timeout = kept(stall_timeout, &mut found);
+    let partition = partition
+        .map_err(|problems| {
+            found.extend(
+                problems
+                    .into_iter()
+                    .map(|problem| Found::at("partition", problem)),
+            );
+        })
+        .ok();
     let quiet_hints = quiet_hints
         .map_err(|quiet| {
             found.extend(
@@ -292,6 +322,7 @@ fn read_header(table: toml::Table, problems: &mut Vec<ReportProblem>) -> Option<
         max_disk: max_disk?,
         stall_timeout: stall_timeout?,
         quiet_hints: quiet_hints?,
+        partition: partition?,
     })
 }
 
@@ -863,6 +894,80 @@ fn check_lookups(
             )),
         };
         problems.extend(problem.map(|message| ReportProblem::new(message, place())));
+    }
+}
+
+/// The parameters an output's file name may use: in a partitioned run, a range's bounds too, of
+/// the range's type.
+fn with_range_params<'a>(
+    partition: Option<&Partition>,
+    params: &BTreeMap<&'a str, ColumnType>,
+) -> BTreeMap<&'a str, ColumnType> {
+    let mut named = params.clone();
+    let planned =
+        partition.and_then(|partition| PlannedPartition::plan(partition.clone(), params).ok());
+    if let Some(planned) = planned {
+        named.insert(PART_FROM, planned.kind.column_type());
+        named.insert(PART_TO, planned.kind.column_type());
+    }
+    named
+}
+
+/// What a partitioned run needs of the rest of the file (RS4d): bounds of the report's
+/// parameters, of one kind; ranges that go one at a time; no parameter named as the ranges'
+/// own; and sources that aren't partitioned themselves.
+fn check_run_partition(
+    partition: Option<&Partition>,
+    params: &BTreeMap<&str, ColumnType>,
+    sources: &[Source],
+    positions: &[usize],
+    problems: &mut Vec<ReportProblem>,
+) {
+    let Some(partition) = partition else {
+        return;
+    };
+    let mut found = Vec::new();
+    if let Err(problem) = PlannedPartition::plan(partition.clone(), params) {
+        found.push(format!("partition: {problem}"));
+    }
+    if partition.parallel.is_some() {
+        found.push(
+            "partition: a run's ranges go one at a time, which is what bounds its memory; \
+             parallel is for a [[source]]'s partition"
+                .to_owned(),
+        );
+    }
+    if let Some(taken) = [PART_FROM, PART_TO]
+        .into_iter()
+        .find(|name| params.contains_key(name))
+    {
+        found.push(format!(
+            "partition: each range binds :{PART_FROM} and :{PART_TO}, so params can't name \
+             {taken}"
+        ));
+    }
+    let place = Place::key(Table::Report, "partition");
+    problems.extend(
+        found
+            .into_iter()
+            .map(|problem| ReportProblem::new(format!("[report]: {problem}"), place.clone())),
+    );
+    for (index, source) in sources.iter().enumerate() {
+        if let SourceRead::Query {
+            split: SourceSplit::Partition(_),
+            ..
+        } = &source.read
+        {
+            problems.push(ReportProblem::new(
+                format!(
+                    "source {:?}: partition: the run is partitioned already, and its ranges bind \
+                     :{PART_FROM} and :{PART_TO} in this source's query; leave the source's \
+                     partition out",
+                    source.id
+                ),
+                Place::key(Table::Source(positions[index]), "partition"),
+            ));
+        }
     }
 }
 

@@ -14,7 +14,9 @@ use dbrover_export::{
 use dbrover_language::QueryLanguage;
 use dbrover_sql::{Dialect, ParameterValues, StatementKind};
 
-use crate::events::{CombineCaps, Machine, PartitionStart, RunEvent, SourceCaps};
+use crate::events::{
+    CombineCaps, Machine, PartitionStart, RunEvent, RunPartitionStart, SourceCaps,
+};
 use crate::problem::{Place, ReportProblem, Table, messages};
 use crate::run::millis;
 use crate::{
@@ -37,6 +39,8 @@ pub struct Plan {
     pub max_disk: ByteSize,
     /// How long the run may go without progress (RS3e).
     pub stall_timeout: Duration,
+    /// The ranges the whole run goes through one at a time (RS4d).
+    pub partition: Option<PlannedPartition>,
     pub logic: Logic,
     pub outputs: Vec<PlannedOutput>,
     /// The charts it draws, as its file lists them: a chart names nothing to look up.
@@ -336,6 +340,16 @@ pub struct PlannedOutput {
     pub continue_on_new_sheet: bool,
 }
 
+impl PlannedOutput {
+    /// Whether its file is one a range of a partitioned run: its name says the range's bounds.
+    /// Any other output's file is one that every range appends to.
+    pub fn is_per_range(&self) -> bool {
+        self.file
+            .params()
+            .any(|param| param == PART_FROM || param == PART_TO)
+    }
+}
+
 /// The formats a report writes, with their options.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputFormat {
@@ -390,6 +404,8 @@ pub struct RunValues {
     pub charts: Vec<String>,
     /// Each partitioned source's ranges, by its id.
     pub ranges: BTreeMap<String, SourceRanges>,
+    /// A partitioned run's ranges (RS4d), whose values [`Plan::range_values`] makes.
+    pub run_ranges: Option<SourceRanges>,
 }
 
 /// A partitioned source's ranges for a run, and the whole period they cover together.
@@ -454,6 +470,16 @@ impl Plan {
                     .ok()
             })
             .collect();
+        let partition = report.partition.and_then(|partition| {
+            PlannedPartition::plan(partition, &param_types)
+                .map_err(|problem| {
+                    problems.push(ReportProblem::new(
+                        format!("[report]: partition: {problem}"),
+                        Place::key(Table::Report, "partition"),
+                    ));
+                })
+                .ok()
+        });
         let combine = report.combine.map(|combine| {
             if let Err(problem) = check_combine(combine.query.sql()) {
                 problems.push(ReportProblem::new(
@@ -485,11 +511,17 @@ impl Plan {
             }
         }
         let params = if sources.len() == report.sources.len() {
-            ordered_params(
-                &report.params,
-                &queries(&sources, combine.as_ref(), &report.charts),
-                &mut problems,
-            )
+            let sent = queries(
+                &sources,
+                combine.as_ref(),
+                &report.charts,
+                partition.is_some(),
+            );
+            if partition.is_some() {
+                check_reads_ranges(&sent, &mut problems);
+                check_appended_parquet(&outputs, &mut problems);
+            }
+            ordered_params(&report.params, &sent, &mut problems)
         } else {
             report.params.clone()
         };
@@ -513,6 +545,7 @@ impl Plan {
             timeout: report.timeout.unwrap_or(defaults.run_timeout),
             max_disk: report.max_disk.unwrap_or(defaults.max_disk),
             stall_timeout: report.stall_timeout.unwrap_or(defaults.stall_timeout),
+            partition,
             logic,
             outputs,
             charts: report.charts,
@@ -530,6 +563,17 @@ impl Plan {
                 LimitSetIn::Settings
             }
         })
+    }
+
+    /// The step whose rows the outputs write: the combine step, or the one source without
+    /// one.
+    pub fn feed_step(&self) -> Step {
+        match &self.logic {
+            Logic::Direct(source) => Step::Source {
+                id: source.id.clone(),
+            },
+            Logic::Combine(_) => Step::Combine,
+        }
     }
 
     /// The processor time the run may use: its time limit on each of DuckDB's threads and
@@ -552,9 +596,9 @@ impl Plan {
         }
     }
 
-    /// The event that starts a run of this plan: what it runs and under which limits, the Git
-    /// blob id of the file's text (`version`), and the machine it runs on.
-    pub fn started(&self, version: BlobId, machine: Machine) -> RunEvent {
+    /// The event that starts a run of this plan with `values`: what it runs and under which
+    /// limits, the Git blob id of the file's text (`version`), and the machine it runs on.
+    pub fn started(&self, values: &RunValues, version: BlobId, machine: Machine) -> RunEvent {
         let combine_limits = match &self.logic {
             Logic::Direct(_) => None,
             Logic::Combine(combined) => Some(CombineCaps::from(&combined.combine.limits)),
@@ -568,6 +612,12 @@ impl Plan {
             combine_limits,
             timeout_ms: Some(millis(self.timeout)),
             machine: Some(machine),
+            partition: self.partition.as_ref().zip(values.run_ranges.as_ref()).map(
+                |(partition, ranges)| RunPartitionStart {
+                    unit: partition.partition.every.unit().to_owned(),
+                    ranges: ranges.ranges.len() as u64,
+                },
+            ),
         }
     }
 
@@ -626,31 +676,11 @@ impl Plan {
             .iter()
             .map(|(name, (param_type, plain))| (*name, (*param_type, plain.as_str())))
             .collect();
-        let mut files: Vec<String> = Vec::new();
-        for (index, output) in self.outputs.iter().enumerate() {
-            match output.file.render(&by_name) {
-                Ok(file) if files.contains(&file) => problems.push(format!(
-                    "output {}: another output already writes {file:?} with these values",
-                    index + 1
-                )),
-                Ok(file) => files.push(file),
-                Err(problem) => problems.push(format!("output {}: {problem}", index + 1)),
-            }
-        }
-        let mut charts: Vec<String> = Vec::new();
-        for (index, chart) in self.charts.iter().enumerate() {
-            match chart.file.render(&by_name) {
-                Ok(file) if files.contains(&file) || charts.contains(&file) => {
-                    problems.push(format!(
-                        "chart {}: another output or chart already writes {file:?} with these \
-                         values",
-                        index + 1
-                    ));
-                }
-                Ok(file) => charts.push(file),
-                Err(problem) => problems.push(format!("chart {}: {problem}", index + 1)),
-            }
-        }
+        let run_ranges = self.run_ranges(&by_name, &mut problems);
+        let (files, charts) = match &run_ranges {
+            None => self.file_names(&by_name, &mut problems),
+            Some(ranges) => self.range_file_names(&by_name, ranges, &mut problems),
+        };
         let ranges = self.source_ranges(&by_name, &mut problems);
         if !problems.is_empty() {
             return Err(problems);
@@ -664,6 +694,149 @@ impl Plan {
             files,
             charts,
             ranges,
+            run_ranges,
+        })
+    }
+
+    /// Each output's and chart's file name with `values`, with a problem for each name that
+    /// can't be a file's or that another already has.
+    fn file_names(
+        &self,
+        values: &BTreeMap<&str, (ColumnType, &str)>,
+        problems: &mut Vec<String>,
+    ) -> (Vec<String>, Vec<String>) {
+        let mut files: Vec<String> = Vec::new();
+        for (index, output) in self.outputs.iter().enumerate() {
+            match output.file.render(values) {
+                Ok(file) if files.contains(&file) => problems.push(format!(
+                    "output {}: another output already writes {file:?} with these values",
+                    index + 1
+                )),
+                Ok(file) => files.push(file),
+                Err(problem) => problems.push(format!("output {}: {problem}", index + 1)),
+            }
+        }
+        let mut charts: Vec<String> = Vec::new();
+        for (index, chart) in self.charts.iter().enumerate() {
+            match chart.file.render(values) {
+                Ok(file) if files.contains(&file) || charts.contains(&file) => {
+                    problems.push(format!(
+                        "chart {}: another output or chart already writes {file:?} with these \
+                         values",
+                        index + 1
+                    ));
+                }
+                Ok(file) => charts.push(file),
+                Err(problem) => problems.push(format!("chart {}: {problem}", index + 1)),
+            }
+        }
+        (files, charts)
+    }
+
+    /// The file names of a partitioned run: each range's, of which the first range's are
+    /// returned, with a problem for a name that two ranges would write.
+    fn range_file_names(
+        &self,
+        values: &BTreeMap<&str, (ColumnType, &str)>,
+        ranges: &SourceRanges,
+        problems: &mut Vec<String>,
+    ) -> (Vec<String>, Vec<String>) {
+        let mut first = None;
+        // Which range wrote each name of an output whose file is one a range.
+        let mut written: BTreeMap<String, u64> = BTreeMap::new();
+        for range in &ranges.ranges {
+            let with_range = self.with_range(values, range);
+            let mut found = Vec::new();
+            let (files, charts) = self.file_names(&with_range, &mut found);
+            if !found.is_empty() {
+                problems.extend(found);
+                return (files, charts);
+            }
+            for (index, (output, file)) in self.outputs.iter().zip(&files).enumerate() {
+                if !output.is_per_range() {
+                    continue;
+                }
+                if let Some(earlier) = written.insert(file.clone(), range.number) {
+                    problems.push(format!(
+                        "output {}: ranges {earlier} and {} would both write {file:?}; name the \
+                         file by part_from with a format that tells them apart, as \
+                         {{part_from:%Y-%m-%d}}",
+                        index + 1,
+                        range.number
+                    ));
+                    return (files, charts);
+                }
+            }
+            first.get_or_insert((files, charts));
+        }
+        first.unwrap_or_default()
+    }
+
+    /// `values` with `range`'s bounds as `part_from` and `part_to`.
+    fn with_range<'v>(
+        &self,
+        values: &BTreeMap<&'v str, (ColumnType, &'v str)>,
+        range: &'v PartRange,
+    ) -> BTreeMap<&'v str, (ColumnType, &'v str)> {
+        let mut with_range = values.clone();
+        if let Some(partition) = &self.partition {
+            let range_type = partition.kind.column_type();
+            with_range.insert(PART_FROM, (range_type, range.from.as_str()));
+            with_range.insert(PART_TO, (range_type, range.to.as_str()));
+        }
+        with_range
+    }
+
+    /// The run's ranges, for a partitioned run.
+    fn run_ranges(
+        &self,
+        values: &BTreeMap<&str, (ColumnType, &str)>,
+        problems: &mut Vec<String>,
+    ) -> Option<SourceRanges> {
+        let partition = self.partition.as_ref()?;
+        match partition.ranges(values).and_then(|ranges| {
+            partition
+                .whole(values)
+                .map(|whole| SourceRanges { ranges, whole })
+        }) {
+            Ok(ranges) => Some(ranges),
+            Err(problem) => {
+                problems.push(format!("[report]: partition: {problem}"));
+                None
+            }
+        }
+    }
+
+    /// The values of one range of a partitioned run: the run's, with the range's bounds bound
+    /// as `:part_from` and `:part_to`, and the file names they make.
+    ///
+    /// # Errors
+    ///
+    /// Why a file name can't be made, which [`Plan::values`] has already ruled out for every
+    /// range of the run.
+    pub fn range_values(&self, values: &RunValues, range: &PartRange) -> Result<RunValues, String> {
+        let by_name: BTreeMap<&str, (ColumnType, &str)> = self
+            .params
+            .iter()
+            .filter_map(|param| {
+                let value = values.parameters.get(&param.name)?.as_deref()?;
+                Some((param.name.as_str(), (param.param_type, value)))
+            })
+            .collect();
+        let mut problems = Vec::new();
+        let (files, charts) = self.file_names(&self.with_range(&by_name, range), &mut problems);
+        if let Some(problem) = problems.into_iter().next() {
+            return Err(problem);
+        }
+        let mut parameters = values.parameters.clone();
+        parameters.set(PART_FROM, Some(range.from.clone()));
+        parameters.set(PART_TO, Some(range.to.clone()));
+        Ok(RunValues {
+            parameters,
+            files,
+            charts,
+            ranges: values.ranges.clone(),
+            run_ranges: None,
         })
     }
 
@@ -966,7 +1139,15 @@ fn queries<'a>(
     sources: &'a [PlannedSource],
     combine: Option<&'a PlannedCombine>,
     charts: &'a [Chart],
+    partitioned: bool,
 ) -> Vec<Sent<'a>> {
+    let range_bound = || {
+        if partitioned {
+            vec![PART_FROM, PART_TO]
+        } else {
+            Vec::new()
+        }
+    };
     let sources = sources
         .iter()
         .enumerate()
@@ -976,7 +1157,7 @@ fn queries<'a>(
                 place: Place::key(Table::Source(index), "query"),
                 query: source.query.as_str(),
                 language: source.language,
-                bound: source.split.bound(),
+                bound: [source.split.bound(), range_bound()].concat(),
             }),
             PlannedSource::Attached(_) => None,
         });
@@ -985,7 +1166,7 @@ fn queries<'a>(
         place: Place::key(Table::Combine, combine_key(&combine.query)),
         query: combine.query.sql(),
         language: QueryLanguage::Sql(Dialect::DuckDb),
-        bound: Vec::new(),
+        bound: range_bound(),
     });
     let charts = charts.iter().enumerate().filter_map(|(index, chart)| {
         Some(Sent {
@@ -997,6 +1178,44 @@ fn queries<'a>(
         })
     });
     sources.chain(combine).chain(charts).collect()
+}
+
+/// Whether some query of a partitioned run reads its range, without which every range would
+/// write the same rows.
+fn check_reads_ranges(sent: &[Sent<'_>], problems: &mut Vec<ReportProblem>) {
+    let reads_range = sent.iter().any(|sent| {
+        sent.language
+            .parameters(sent.query)
+            .iter()
+            .any(|parameter| parameter.name == PART_FROM || parameter.name == PART_TO)
+    });
+    if !reads_range {
+        problems.push(ReportProblem::new(
+            format!(
+                "[report]: partition: no query uses :{PART_FROM} or :{PART_TO}, so every range \
+                 would write the same rows; read a range in a source's query, as WHERE ts >= \
+                 :{PART_FROM} AND ts < :{PART_TO}"
+            ),
+            Place::key(Table::Report, "partition"),
+        ));
+    }
+}
+
+/// A partitioned run's Parquet outputs each write a file a range for now: one file appended to
+/// by every range comes with RS4e.
+fn check_appended_parquet(outputs: &[PlannedOutput], problems: &mut Vec<ReportProblem>) {
+    for (index, output) in outputs.iter().enumerate() {
+        if output.format.written_by_duckdb().is_some() && !output.is_per_range() {
+            problems.push(ReportProblem::new(
+                format!(
+                    "output {}: a partitioned run writes a Parquet file a range; name the file \
+                     by its range, as events-{{part_from:%Y-%m}}.parquet",
+                    index + 1
+                ),
+                Place::key(Table::Output(index), "file"),
+            ));
+        }
+    }
 }
 
 /// The data source `wanted` names: by name if one has it, else by id.
