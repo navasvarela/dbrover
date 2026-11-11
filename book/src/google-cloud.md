@@ -22,6 +22,12 @@ Google Cloud** ([adding one](cloud-services.md#adding-one)).
 
 Cloud SQL behaves as its engines do; DbRover changes nothing else for it.
 
+## BigQuery and Cloud Storage
+
+[BigQuery](bigquery.md) is first in the **Google Cloud** menu, and signs in the same ways. Files
+in a Cloud Storage bucket are read by a DuckDB data source: see
+[Object storage and MotherDuck](object-storage.md).
+
 ## Not tried against Google Cloud yet
 
 Built and tested without a Google Cloud account. To try by hand: a Cloud SQL for PostgreSQL

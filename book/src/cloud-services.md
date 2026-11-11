@@ -1,15 +1,15 @@
 # Managed databases in the cloud
 
 Amazon RDS, Cloud SQL, Azure SQL, Neon and the other managed services run engines DbRover
-already speaks, so a data source for one is a PostgreSQL, MySQL, SQL Server or ClickHouse data
-source with the service's settings. DbRover fills those in for you and knows where a service's
+already speaks, so a data source for one is a PostgreSQL, MySQL, SQL Server, ClickHouse or Trino
+data source with the service's settings. DbRover fills those in for you and knows where a service's
 catalog differs from its engine's.
 
 ## Adding one
 
 Under **New data source** (the explorer's **+**, or the Welcome tab), each cloud has a menu of
 its services: **Amazon Web Services**, **Google Cloud**, **Microsoft Azure**, and **Other cloud
-services** for Neon, Supabase and ClickHouse Cloud. The engines only one cloud runs come first in
+services** for Neon, Supabase, ClickHouse Cloud and Starburst Galaxy. The engines only one cloud runs come first in
 its menu: [DynamoDB](dynamodb.md) and [Amazon Athena](athena-trino.md) under Amazon Web Services,
 [BigQuery](bigquery.md) under Google Cloud. Choose the service. The dialog opens for the
 service's engine with its port, TLS mode and sign-in set, and the **Host** field's hint shows a
@@ -28,7 +28,10 @@ Nothing about the service is saved: `data_sources.toml` keeps the engine's setti
 any other data source. What DbRover does differently on a service, such as reading Redshift's
 or Fabric's catalog, it decides from what the server says about itself when it connects, so a
 service reached through an [SSH tunnel](data-sources.md#ssh-tunnels) or a host name of your own
-works the same.
+works the same. The one exception is Microsoft Fabric, which tells DbRover the same about
+itself as a Synapse serverless pool: DbRover recognises it by its
+`.datawarehouse.fabric.microsoft.com` host, so a Fabric warehouse behind a host name of your
+own is treated as a serverless pool.
 
 ## The services
 
@@ -46,6 +49,7 @@ works the same.
 | Neon | PostgreSQL | 5432 | `verify-full` | Password | [Neon](neon.md) |
 | Supabase | PostgreSQL | 5432 | `require` | Password | [Supabase](supabase.md) |
 | ClickHouse Cloud | ClickHouse | 8443 | `verify-full` | Password | [ClickHouse Cloud](clickhouse-cloud.md) |
+| Starburst Galaxy | Trino | 443 | `verify-full` | Password | [Athena and Trino](athena-trino.md#trino-starburst-and-presto) |
 
 Signing in with a cloud account is described in
 [Cloud sign-in and costs](cloud.md#signing-in-with-a-cloud-account).

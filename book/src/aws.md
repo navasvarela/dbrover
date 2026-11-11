@@ -28,7 +28,7 @@ as the server, and browses it through Redshift's `svv_all_*` views:
 - the databases, each one's schemas, then their **tables** (external tables from Redshift
   Spectrum marked *external*) and **views**, with their columns;
 - **Show definition** on a table or view of the connected database shows what `SHOW TABLE` or
-  `SHOW VIEW` answers;
+  `SHOW VIEW` answers (an external table has none);
 - typing in the explorer's filter [searches the server](cloud.md#searching-a-large-catalog)
   through `svv_all_tables`.
 
@@ -41,6 +41,12 @@ Not yet on Redshift:
 - **The object helpers** (New table, Modify table and the rest), which write PostgreSQL's DDL,
   aren't offered; write Redshift's DDL in a console.
 - Materialized views, functions and procedures aren't listed in the explorer.
+
+## DynamoDB, Athena and S3
+
+The same **Amazon Web Services** menu has [DynamoDB](dynamodb.md) and
+[Amazon Athena](athena-trino.md), which sign in with the same AWS profiles. Files in an S3
+bucket are read by a DuckDB data source: see [Object storage and MotherDuck](object-storage.md).
 
 ## Not tried against AWS yet
 

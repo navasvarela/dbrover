@@ -191,7 +191,7 @@ data source
 ```
 
 The keyspaces the servers keep for themselves (`system`, `system_schema`, `system_auth`, …) are
-system ones, shown only with **System** ticked. ScyllaDB keeps a materialized view behind each
+system ones, shown only with the explorer's eye button, **Show system schemas and tables**, on. ScyllaDB keeps a materialized view behind each
 secondary index; it is the index's, so it isn't listed among the views. **Open data** on a
 table or a view opens a console with `SELECT * FROM keyspace.table` and runs it, its rows read a
 page at a time as you scroll. **Show definition** is the server's own `DESCRIBE`: a keyspace's

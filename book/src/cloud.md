@@ -105,14 +105,20 @@ than you allowed:
 A console asks before running a held statement, with what it would read and **Scan anyway**,
 which runs it and the statements after it. **Open data** reads a page at a time, which a
 whole-table read only bills page by page, so it isn't asked about; a statement over the byte
-limit is, since it scans the same bytes however its rows are read. **Run to file**, **Export
-every row** and AI assistants can't be asked, so they refuse a held statement and say why.
+limit is, since it scans the same bytes however its rows are read. **Run to file**, exporting
+**All rows**, [reports](reports.md) and AI assistants can't be asked, so they refuse a held
+statement and say why. A report's [profile](reports.md#a-runs-profile) shows the bytes each
+source's engine scanned, and its `scanned-more` hint says when a source scanned far more than it
+returned.
 
 ## Seeing a statement run
 
 While a statement runs on an engine that reports its progress, the console's status line says
 what it has done so far, about once a second: `Running… 12 s · 1234 rows · 2.1 GB read`.
-ClickHouse reports the rows and bytes it has read. **Cancel** (⌘.) stops the statement as ever.
+ClickHouse reports the rows and bytes it has read, and Athena, Trino and BigQuery their query's
+progress. **Cancel** (⌘.) stops the statement as ever. Once it has finished, the line above the
+rows says what the statement scanned where the engine tells, as in `412 rows · 900 ms · 2.5 MB
+read`.
 
 ## Searching a large catalog
 
@@ -125,5 +131,6 @@ already, up to a hundred, each with its schema beside it.
 A match is the object itself: **Open data**, **Show definition**, its other actions and
 expanding it all work as in the tree. More than a hundred matches says so; type more of the
 name. PostgreSQL searches the tables, views, materialized views and sequences of every schema
-of its database; SQLite, the tables and views of every attached database. Typing never connects
+of its database; Redshift, the tables and views of its databases through `svv_all_tables`;
+SQLite, the tables and views of every attached database. Typing never connects
 a data source: connect it first to search it.
