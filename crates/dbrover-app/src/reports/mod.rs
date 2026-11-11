@@ -655,6 +655,7 @@ impl RunRecord {
                 bytes,
                 elapsed_ms,
                 batch,
+                parts: _,
                 busy,
             } => {
                 if let Some(record) = self.step_mut(&step) {
@@ -1391,6 +1392,7 @@ mod tests {
                     table: Vec::new(),
                     warnings: Vec::new(),
                     batches: None,
+                    parts: None,
                     phases: None,
                     scanned_bytes: None,
                 },
@@ -1506,6 +1508,7 @@ mod tests {
                     table: Vec::new(),
                     warnings: Vec::new(),
                     batches: None,
+                    parts: None,
                     phases: Some(phases),
                     scanned_bytes: None,
                 },
@@ -1651,6 +1654,7 @@ mod tests {
                 bytes: 20_000,
                 elapsed_ms: 1_000,
                 batch: None,
+                parts: None,
                 busy: None,
             },
         );
@@ -1682,6 +1686,7 @@ mod tests {
                 }],
                 warnings: vec!["a warning".to_owned()],
                 batches: None,
+                parts: None,
                 phases: None,
                 scanned_bytes: None,
             },

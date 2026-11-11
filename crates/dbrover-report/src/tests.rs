@@ -355,7 +355,8 @@ fn names_every_problem_with_its_place() {
             one_source("", "SELECT 1", output)
                 .replace("id = \"s\"\n", "id = \"s\"\nkeys = \"t\"\n"),
             "source \"s\": \"keys\" is not part of a source, which has id, data_source, query, \
-             lookup, columns, attach, max_rows, max_bytes and timeout",
+             lookup, partition, max_rows_per_part, columns, attach, max_rows, max_bytes and \
+             timeout",
         ),
         (
             one_source("", "SELECT 1", output)

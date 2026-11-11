@@ -19,8 +19,9 @@ use crate::problem::{Place, ReportProblem, Table, messages};
 use crate::run::millis;
 use crate::{
     ByteSize, Chart, CombineLimits, CombineLimitsSet, CombineQuery, FileName, LimitDefaults,
-    LimitSetIn, Lookup, Output, OutputColumns, OutputLimits, OutputLimitsSet, OutputWriter, Param,
-    Report, Source, SourceColumn, SourceLimits, SourceLimitsSet, SourceRead, SourceStart, Step,
+    LimitSetIn, Lookup, Output, OutputColumns, OutputLimits, OutputLimitsSet, OutputWriter,
+    PART_FROM, PART_TO, Param, PartRange, PlannedPartition, Report, Source, SourceColumn,
+    SourceLimits, SourceLimitsSet, SourcePartition, SourceRead, SourceSplit, SourceStart, Step,
 };
 
 /// A report ready to run.
@@ -150,7 +151,7 @@ impl Combined {
             let PlannedSource::Query(source) = source else {
                 continue;
             };
-            let round = source.lookup.as_ref().map_or(0, |lookup| {
+            let round = source.split.lookup().map_or(0, |lookup| {
                 round_of
                     .iter()
                     .find(|(id, _)| id.eq_ignore_ascii_case(&lookup.from))
@@ -172,7 +173,7 @@ impl SourceStart {
             id: source.id.clone(),
             data_source: source.data_source.name.clone(),
             attached: false,
-            waits_for: source.lookup.as_ref().map(|lookup| lookup.from.clone()),
+            waits_for: source.split.lookup().map(|lookup| lookup.from.clone()),
             engine: Some(engine(&source.data_source)),
             limits: Some(SourceCaps::from(&source.limits)),
         }
@@ -236,10 +237,53 @@ pub struct QuerySource {
     pub language: QueryLanguage,
     pub query: String,
     pub limits: SourceLimits,
-    pub lookup: Option<PlannedLookup>,
+    /// Whether its query is sent once, a batch of a lookup's values at a time, or a range at a
+    /// time.
+    pub split: PlannedSplit,
     /// The columns its table has, when the file declares them; otherwise the result's. Always
     /// declared for a language without a SQL dialect.
     pub columns: Option<Vec<SourceColumn>>,
+}
+
+/// How a source's query becomes the statements it sends, as planned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlannedSplit {
+    Whole,
+    Lookup(PlannedLookup),
+    Partition(PlannedSourcePartition),
+}
+
+impl PlannedSplit {
+    pub fn lookup(&self) -> Option<&PlannedLookup> {
+        match self {
+            Self::Lookup(lookup) => Some(lookup),
+            Self::Whole | Self::Partition(_) => None,
+        }
+    }
+
+    pub fn partition(&self) -> Option<&PlannedSourcePartition> {
+        match self {
+            Self::Partition(partition) => Some(partition),
+            Self::Whole | Self::Lookup(_) => None,
+        }
+    }
+
+    /// The parameters the run binds itself, which aren't the report's: a lookup's values, or a
+    /// range's bounds.
+    fn bound(&self) -> Vec<&str> {
+        match self {
+            Self::Whole => Vec::new(),
+            Self::Lookup(lookup) => vec![lookup.parameter.as_str()],
+            Self::Partition(_) => vec![PART_FROM, PART_TO],
+        }
+    }
+}
+
+/// A source read in ranges.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedSourcePartition {
+    pub partition: PlannedPartition,
+    pub max_rows_per_part: Option<u64>,
 }
 
 /// A lookup, with the most values a statement of its source takes.
@@ -330,6 +374,16 @@ pub struct RunValues {
     pub files: Vec<String>,
     /// Each chart's file name, in the charts' order.
     pub charts: Vec<String>,
+    /// Each partitioned source's ranges, by its id.
+    pub ranges: BTreeMap<String, SourceRanges>,
+}
+
+/// A partitioned source's ranges for a run, and the whole period they cover together.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceRanges {
+    pub ranges: Vec<PartRange>,
+    /// From the partition's `from` to its `to`, which the cost guard judges.
+    pub whole: PartRange,
 }
 
 impl Plan {
@@ -363,12 +417,17 @@ impl Plan {
     ) -> Result<Self, Vec<ReportProblem>> {
         let mut problems = Vec::new();
         let file_limits = FileLimits::of(&report);
+        let param_types: BTreeMap<&str, ColumnType> = report
+            .params
+            .iter()
+            .map(|param| (param.name.as_str(), param.param_type))
+            .collect();
         let sources: Vec<PlannedSource> = report
             .sources
             .iter()
             .enumerate()
             .filter_map(|(index, source)| {
-                plan_source(source, data_sources, defaults.source)
+                plan_source(source, data_sources, defaults.source, &param_types)
                     .map_err(|(key, problem)| {
                         problems.push(ReportProblem::new(
                             format!("source {:?}: {problem}", source.id),
@@ -577,6 +636,7 @@ impl Plan {
                 Err(problem) => problems.push(format!("chart {}: {problem}", index + 1)),
             }
         }
+        let ranges = self.source_ranges(&by_name, &mut problems);
         if !problems.is_empty() {
             return Err(problems);
         }
@@ -588,7 +648,52 @@ impl Plan {
             parameters,
             files,
             charts,
+            ranges,
         })
+    }
+
+    /// The sources with a query, as the file lists them.
+    fn query_sources(&self) -> Vec<&QuerySource> {
+        match &self.logic {
+            Logic::Direct(source) => vec![source],
+            Logic::Combine(combined) => combined
+                .sources
+                .iter()
+                .filter_map(|source| match source {
+                    PlannedSource::Query(source) => Some(source),
+                    PlannedSource::Attached(_) => None,
+                })
+                .collect(),
+        }
+    }
+
+    /// Each partitioned source's ranges with `values`, with a problem for each source that has
+    /// none or too many.
+    fn source_ranges(
+        &self,
+        values: &BTreeMap<&str, (ColumnType, &str)>,
+        problems: &mut Vec<String>,
+    ) -> BTreeMap<String, SourceRanges> {
+        let mut ranges = BTreeMap::new();
+        for source in self.query_sources() {
+            let Some(split) = source.split.partition() else {
+                continue;
+            };
+            let partition = &split.partition;
+            match partition.ranges(values).and_then(|ranges| {
+                partition
+                    .whole(values)
+                    .map(|whole| SourceRanges { ranges, whole })
+            }) {
+                Ok(planned) => {
+                    ranges.insert(source.id.clone(), planned);
+                }
+                Err(problem) => {
+                    problems.push(format!("source {:?}: partition: {problem}", source.id));
+                }
+            }
+        }
+        ranges
     }
 }
 
@@ -607,6 +712,7 @@ fn plan_source(
     source: &Source,
     data_sources: &[DataSource],
     defaults: SourceLimits,
+    params: &BTreeMap<&str, ColumnType>,
 ) -> Result<PlannedSource, KeyedProblem> {
     let data_source = find_data_source(&source.data_source, data_sources)
         .map_err(|problem| (Some("data_source"), problem))?;
@@ -614,7 +720,7 @@ fn plan_source(
         SourceRead::Query {
             query,
             limits,
-            lookup,
+            split,
             columns,
         } => plan_query(
             &source.id,
@@ -622,9 +728,10 @@ fn plan_source(
             QueryRead {
                 query,
                 limits: limits.or(defaults),
-                lookup: lookup.as_ref(),
+                split,
                 columns: columns.as_ref(),
             },
+            params,
         )
         .map(PlannedSource::Query),
         SourceRead::Attach => attach(&source.id, data_source)
@@ -637,7 +744,7 @@ fn plan_source(
 struct QueryRead<'a> {
     query: &'a str,
     limits: SourceLimits,
-    lookup: Option<&'a Lookup>,
+    split: &'a SourceSplit,
     columns: Option<&'a Vec<SourceColumn>>,
 }
 
@@ -645,6 +752,7 @@ fn plan_query(
     id: &str,
     data_source: &DataSource,
     read: QueryRead<'_>,
+    params: &BTreeMap<&str, ColumnType>,
 ) -> Result<QuerySource, KeyedProblem> {
     let driver = data_source.config.driver();
     let language = QueryLanguage::from(driver);
@@ -660,19 +768,49 @@ fn plan_query(
             ),
         ));
     }
-    let lookup = read
-        .lookup
-        .map(|lookup| plan_lookup(lookup, language, read.query))
-        .transpose()
-        .map_err(|problem| (Some("lookup"), problem))?;
+    let split = match read.split {
+        SourceSplit::Whole => PlannedSplit::Whole,
+        SourceSplit::Lookup(lookup) => plan_lookup(lookup, language, read.query)
+            .map(PlannedSplit::Lookup)
+            .map_err(|problem| (Some("lookup"), problem))?,
+        SourceSplit::Partition(split) => plan_partition(split, language, read.query, params)
+            .map(PlannedSplit::Partition)
+            .map_err(|problem| (Some("partition"), problem))?,
+    };
     Ok(QuerySource {
         id: id.to_owned(),
         data_source: data_source.clone(),
         language,
         query: read.query.to_owned(),
         limits: read.limits,
-        lookup,
+        split,
         columns: read.columns.cloned(),
+    })
+}
+
+/// `split` for a query in `language`: its bounds checked against the report's parameters, and
+/// the query reading a range's bounds.
+fn plan_partition(
+    split: &SourcePartition,
+    language: QueryLanguage,
+    query: &str,
+    params: &BTreeMap<&str, ColumnType>,
+) -> Result<PlannedSourcePartition, String> {
+    let partition = PlannedPartition::plan(split.partition.clone(), params)
+        .map_err(|problem| format!("partition: {problem}"))?;
+    let reads_range = language
+        .parameters(query)
+        .iter()
+        .any(|parameter| parameter.name == PART_FROM || parameter.name == PART_TO);
+    if !reads_range {
+        return Err(format!(
+            "partition: the query uses neither :{PART_FROM} nor :{PART_TO}, so every range would \
+             read the same rows; read a range, as WHERE ts >= :{PART_FROM} AND ts < :{PART_TO}"
+        ));
+    }
+    Ok(PlannedSourcePartition {
+        partition,
+        max_rows_per_part: split.max_rows_per_part,
     })
 }
 
@@ -798,14 +936,14 @@ fn starts_as_query(query: &str) -> bool {
         .is_some_and(|word| QUERY_WORDS.contains(&word.to_ascii_lowercase().as_str()))
 }
 
-/// A query the run sends: where it is, its text and language, and the parameter its lookup
-/// binds, which isn't one of the report's.
+/// A query the run sends: where it is, its text and language, and the parameters the run binds
+/// itself, which aren't the report's: a lookup's, or a range's.
 struct Sent<'a> {
     label: String,
     place: Place,
     query: &'a str,
     language: QueryLanguage,
-    lookup: Option<&'a str>,
+    bound: Vec<&'a str>,
 }
 
 /// Each query the run sends, sources first.
@@ -823,10 +961,7 @@ fn queries<'a>(
                 place: Place::key(Table::Source(index), "query"),
                 query: source.query.as_str(),
                 language: source.language,
-                lookup: source
-                    .lookup
-                    .as_ref()
-                    .map(|lookup| lookup.parameter.as_str()),
+                bound: source.split.bound(),
             }),
             PlannedSource::Attached(_) => None,
         });
@@ -835,7 +970,7 @@ fn queries<'a>(
         place: Place::key(Table::Combine, combine_key(&combine.query)),
         query: combine.query.sql(),
         language: QueryLanguage::Sql(Dialect::DuckDb),
-        lookup: None,
+        bound: Vec::new(),
     });
     let charts = charts.iter().enumerate().filter_map(|(index, chart)| {
         Some(Sent {
@@ -843,7 +978,7 @@ fn queries<'a>(
             place: Place::key(Table::Chart(index), "query"),
             query: chart.query.as_deref()?,
             language: QueryLanguage::Sql(Dialect::DuckDb),
-            lookup: None,
+            bound: Vec::new(),
         })
     });
     sources.chain(combine).chain(charts).collect()
@@ -910,7 +1045,8 @@ fn ordered_params(
             }
         }
         for name in names {
-            if ordered.iter().any(|param| param.name == name) || sent.lookup == Some(&name) {
+            if ordered.iter().any(|param| param.name == name) || sent.bound.contains(&name.as_str())
+            {
                 continue;
             }
             match params.iter().find(|param| param.name == name) {

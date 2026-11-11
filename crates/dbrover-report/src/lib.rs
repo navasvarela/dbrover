@@ -28,6 +28,7 @@ mod hints;
 mod limits;
 mod live;
 mod parquet;
+mod partition;
 mod plan;
 mod problem;
 mod prql;
@@ -43,8 +44,8 @@ pub use combine::QUEUE_PAGES;
 pub use disk::DiskBudget;
 pub use embedded::{Embedded, PrqlToken, StepLanguage, embedded_code, prql_tokens};
 pub use events::{
-    Batch, Busy, CombineCaps, LimitHit, LimitSetIn, LoadedColumn, Machine, Preview, RunEvent,
-    RunFailure, SourceCaps, SourcePhases, SourceStart, Step, TimedEvent, WrittenFile,
+    Batch, Busy, CombineCaps, LimitHit, LimitSetIn, LoadedColumn, Machine, Parts, Preview,
+    RunEvent, RunFailure, SourceCaps, SourcePhases, SourceStart, Step, TimedEvent, WrittenFile,
 };
 pub use explain::{
     CombineExplanation, Estimate, ExplainedPlan, Explanation, KnownTable, SourceExplained,
@@ -59,20 +60,25 @@ pub use limits::{
     DEFAULT_MEMORY_LIMIT, DEFAULT_RUN_TIMEOUT, DEFAULT_SOURCE_TIMEOUT, DEFAULT_STALL_TIMEOUT,
     LimitDefaults, OutputLimits, OutputLimitsSet, SourceLimits, SourceLimitsSet,
 };
+pub use partition::{
+    CalendarUnit, Every, MAX_RANGES, PART_FROM, PART_TO, PartRange, Partition, PlannedPartition,
+    RangeBound, RangeKind,
+};
 pub use plan::{
     AttachedSource, Combined, Logic, OutputFormat, Plan, PlannedCombine, PlannedLookup,
-    PlannedOutput, PlannedSource, QuerySource, RunValues, TypedValues,
+    PlannedOutput, PlannedSource, PlannedSourcePartition, PlannedSplit, QuerySource, RunValues,
+    SourceRanges, TypedValues,
 };
 pub use problem::{Locator, Place, ReportProblem, Table};
 pub use read::{read_report, read_with_places};
 pub use report::{
     Chart, ChartPicture, Combine, CombineQuery, Lookup, Output, OutputColumns, OutputWriter, Param,
-    Report, Source, SourceColumn, SourceRead,
+    Report, Source, SourceColumn, SourcePartition, SourceRead, SourceSplit,
 };
 pub use request::{ExplainRequest, RunRequest};
 pub use run::{
-    Opening, PREVIEW_ROWS, RunFolders, RunSummary, SourceError, SourceOpener, SourceReader,
-    SourceStatement, grouped, run,
+    CostCheck, Opening, PREVIEW_ROWS, RunFolders, RunSummary, SourceError, SourceOpener,
+    SourceReader, SourceStatement, WholePeriod, grouped, run,
 };
 pub use text::plan_text;
 
@@ -82,6 +88,8 @@ mod chart_tests;
 mod combine_tests;
 #[cfg(test)]
 mod lookup_tests;
+#[cfg(test)]
+mod partition_tests;
 #[cfg(test)]
 mod run_tests;
 #[cfg(test)]

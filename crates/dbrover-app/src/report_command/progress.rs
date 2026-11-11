@@ -44,6 +44,7 @@ impl LiveLine {
                 bytes,
                 elapsed_ms,
                 batch,
+                parts: _,
                 busy,
             } => {
                 let engine = self.engine(step).map(str::to_owned);
@@ -142,6 +143,7 @@ mod tests {
             bytes: rows * 26,
             elapsed_ms: 4_200,
             batch,
+            parts: None,
             busy: None,
         }
     }
@@ -161,6 +163,7 @@ mod tests {
             table: Vec::new(),
             warnings: Vec::new(),
             batches: None,
+            parts: None,
             phases: None,
             scanned_bytes: None,
         };
@@ -195,6 +198,7 @@ mod tests {
                     bytes: 0,
                     elapsed_ms: 1_000,
                     batch: None,
+                    parts: None,
                     busy: Some(Busy {
                         waiting_pct: 97,
                         loading_pct: 0,
@@ -210,6 +214,7 @@ mod tests {
                     bytes: 780_000,
                     elapsed_ms: 2_000,
                     batch: None,
+                    parts: None,
                     busy: Some(Busy {
                         waiting_pct: 30,
                         loading_pct: 60,

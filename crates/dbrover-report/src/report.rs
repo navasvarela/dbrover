@@ -6,7 +6,9 @@ use std::time::Duration;
 use dbrover_chart::ChartSpec;
 use dbrover_export::{ColumnType, CustomFormatId, Preset, SchemaColumn};
 
-use crate::{ByteSize, CombineLimitsSet, FileName, HintId, OutputLimitsSet, SourceLimitsSet};
+use crate::{
+    ByteSize, CombineLimitsSet, FileName, HintId, OutputLimitsSet, Partition, SourceLimitsSet,
+};
 
 /// A report file, checked on its own.
 #[derive(Debug, Clone, PartialEq)]
@@ -60,13 +62,42 @@ pub enum SourceRead {
     Query {
         query: String,
         limits: SourceLimitsSet,
-        /// The earlier source whose values its query reads by.
-        lookup: Option<Lookup>,
+        /// Whether its query is sent once, a batch of a lookup's values at a time, or a range
+        /// at a time.
+        split: SourceSplit,
         /// The columns its table has, when the file declares them; otherwise the result's.
         columns: Option<Vec<SourceColumn>>,
     },
     /// A DuckDB file, attached read-only for the combine step to read in place.
     Attach,
+}
+
+/// How a source's query becomes the statements it sends.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SourceSplit {
+    /// One statement.
+    Whole,
+    /// A statement a batch of an earlier source's values.
+    Lookup(Lookup),
+    /// A statement a range (`docs/reports-at-scale.md`, RS4b).
+    Partition(SourcePartition),
+}
+
+impl SourceSplit {
+    pub fn lookup(&self) -> Option<&Lookup> {
+        match self {
+            Self::Lookup(lookup) => Some(lookup),
+            Self::Whole | Self::Partition(_) => None,
+        }
+    }
+}
+
+/// A source read in ranges, and the most rows each range may return.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourcePartition {
+    pub partition: Partition,
+    /// `max_rows_per_part`: no default, since only the report knows its data's ranges.
+    pub max_rows_per_part: Option<u64>,
 }
 
 /// A parameter bound to the distinct values of an earlier source's column

@@ -18,7 +18,9 @@ use dbrover_core::{
     CancelHandle, Connection, CostGuard, ReadPace, ResultCursor, ResultShape, Row, describe_error,
 };
 use dbrover_export::ExportColumn;
-use dbrover_report::{LimitHit, Opening, SourceError, SourceOpener, SourceReader, SourceStatement};
+use dbrover_report::{
+    CostCheck, LimitHit, Opening, SourceError, SourceOpener, SourceReader, SourceStatement,
+};
 use dbrover_sql::Prepared;
 use dbrover_store::SecretStore;
 
@@ -119,7 +121,9 @@ impl ReportSource {
                     .await
                     .map_err(|error| SourceError::new(describe_error(&error)))?;
             }
-            check_cost(connection.as_mut(), config.cost_guard(), &checked).await?;
+            if let Some(judged) = judged(statement, &checked)? {
+                check_cost(connection.as_mut(), config.cost_guard(), &judged).await?;
+            }
             if prepared.values.is_empty() {
                 connection.execute(&prepared.sql).await
             } else {
@@ -159,6 +163,22 @@ impl ReportSource {
                 start: starting.elapsed(),
             },
         })
+    }
+}
+
+/// What the cost guard judges for `statement`, every value written in: the statement as
+/// `checked`, a partitioned source's whole period in its first range's place (RS4b), or nothing
+/// for a later range, whose period the first range judged.
+fn judged(statement: &SourceStatement<'_>, checked: &str) -> Result<Option<String>, SourceError> {
+    match &statement.cost {
+        CostCheck::Statement => Ok(Some(checked.to_owned())),
+        CostCheck::Judged => Ok(None),
+        CostCheck::WholePeriod(whole) => match statement.source.language.dialect() {
+            None => Ok(Some(whole.query.clone())),
+            Some(dialect) => dbrover_sql::inline(&whole.query, dialect, &whole.parameters)
+                .map(|inlined| Some(inlined.sql))
+                .map_err(|missing| SourceError::new(missing.to_string())),
+        },
     }
 }
 

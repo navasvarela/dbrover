@@ -153,13 +153,7 @@ impl ParquetCopy<'_> {
         let mut clock = ProgressClock::new();
         let (rows, query) = waiting(Box::pin(self.run(workspace, &copy)), |so_far| {
             let busy = clock.lap(so_far);
-            events(progress(
-                &Step::Combine,
-                &Count::default(),
-                started,
-                None,
-                busy,
-            ));
+            events(progress(&Step::Combine, &Count::default(), started, busy));
         })
         .await;
         let rows = rows.map_err(|error| error.at(Step::Combine))?;

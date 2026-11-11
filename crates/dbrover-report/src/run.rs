@@ -59,8 +59,32 @@ pub struct SourceStatement<'a> {
     /// The values for the parameters left in `query`, which a SQL driver binds; empty for a
     /// language without SQL.
     pub parameters: ParameterValues,
-    /// When the source's `timeout` runs out, counted from its first statement.
+    /// When the source's `timeout` runs out, counted from its first statement, or from its
+    /// range's for a partitioned source.
     pub deadline: Instant,
+    /// What the cost guard judges before the statement starts.
+    pub cost: CostCheck,
+}
+
+/// What the cost guard of the statement's data source judges, where it has one.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CostCheck {
+    /// The statement itself.
+    Statement,
+    /// The whole period of a partitioned source, in place of its first range: what every
+    /// range reads together, judged before any of them starts (RS4b).
+    WholePeriod(Box<WholePeriod>),
+    /// Nothing: the first range judged the whole period.
+    Judged,
+}
+
+/// A partitioned source's statement over its whole period, for the cost guard.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WholePeriod {
+    /// As [`SourceStatement::query`].
+    pub query: String,
+    /// As [`SourceStatement::parameters`].
+    pub parameters: ParameterValues,
 }
 
 /// How long opening a source's statement took, for its profile.
@@ -183,6 +207,7 @@ pub async fn run<O: SourceOpener>(
                     bytes: 0,
                     elapsed_ms: millis(opened.elapsed()),
                     batch: None,
+                    parts: None,
                     busy: Some(clock.lap(so_far)),
                 });
             })
@@ -260,6 +285,7 @@ fn source_done(
         table: Vec::new(),
         warnings: Vec::new(),
         batches: None,
+        parts: None,
         phases: Some(SourcePhases {
             connect_ms: millis(opening.connect),
             server_ms: millis(opening.start + read.waited_first),
@@ -320,6 +346,7 @@ impl<'a> Outputs<'a> {
                     bytes: read.bytes,
                     elapsed_ms: millis(opened.elapsed()),
                     batch: None,
+                    parts: None,
                     busy: Some(clock.lap(so_far)),
                 });
             })
@@ -360,6 +387,7 @@ impl<'a> Outputs<'a> {
                     bytes: read.bytes,
                     elapsed_ms: millis(opened.elapsed()),
                     batch: None,
+                    parts: None,
                     busy: Some(clock.lap(Duration::ZERO)),
                 });
             }
