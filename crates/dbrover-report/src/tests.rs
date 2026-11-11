@@ -828,6 +828,7 @@ fn reads_and_plans_the_valuation() {
             charts: Vec::new(),
             ranges: std::collections::BTreeMap::new(),
             run_ranges: None,
+            part: None,
         },
         BlobId::of(b""),
         machine.clone(),

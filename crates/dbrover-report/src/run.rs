@@ -12,6 +12,7 @@
 //!    behind and replaces none. The staging folder goes with the run, and whoever started a run
 //!    that was killed removes it.
 
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -26,6 +27,7 @@ use dbrover_sql::ParameterValues;
 use crate::chart::ChartRun;
 use crate::declared::Shaped;
 use crate::live::{ProgressClock, waiting};
+use crate::parquet::PartsJoin;
 use crate::statement::Statements;
 use crate::{
     LimitHit, Logic, PartDone, Plan, PlannedOutput, Preview, QuerySource, RunEvent, RunFailure,
@@ -197,7 +199,7 @@ pub async fn run<O: SourceOpener>(
         Some(ranges) => run_ranges(plan, values, ranges, opener, &mut sink, events).await,
     };
     match ran {
-        Ok(()) => sink.finish(events),
+        Ok(()) => sink.finish(events).await,
         Err(failure) => {
             sink.abandon();
             Err(failure)
@@ -370,6 +372,9 @@ pub(crate) struct Sink<'a> {
     /// Files complete and waiting to be put in place: those DuckDB wrote whole, and each range's
     /// own.
     done: Vec<Completed>,
+    /// Each range's part of a Parquet output every range appends to, by the output's number,
+    /// joined into its one file at the end (RS4e).
+    parquet_parts: BTreeMap<usize, Vec<Completed>>,
     /// Started by the first feed.
     charts: Option<Vec<ChartRun<'a>>>,
     preview: Option<Preview>,
@@ -392,6 +397,7 @@ impl<'a> Sink<'a> {
             columns: None,
             outputs: Vec::new(),
             done: Vec::new(),
+            parquet_parts: BTreeMap::new(),
             charts: None,
             preview: None,
             written: Count::default(),
@@ -532,9 +538,27 @@ impl<'a> Sink<'a> {
         self.charts.get_or_insert_with(Vec::new).push(chart);
     }
 
-    /// Files written whole elsewhere, to be put in place with the others.
+    /// Files written whole elsewhere, to be put in place with the others; in a partitioned run,
+    /// a range's part of a Parquet file every range appends to waits to be joined.
     pub(crate) fn add_copied(&mut self, copied: Vec<Completed>) {
-        self.done.extend(copied);
+        for file in copied {
+            match self.appended_parquet(&file.step) {
+                Some(number) => self.parquet_parts.entry(number).or_default().push(file),
+                None => self.done.push(file),
+            }
+        }
+    }
+
+    /// The output `step` names, when it is a Parquet file that every range of a partitioned
+    /// run appends to.
+    fn appended_parquet(&self, step: &Step) -> Option<usize> {
+        let Step::Output { number, .. } = step else {
+            return None;
+        };
+        self.plan.partition.as_ref()?;
+        let output = self.plan.outputs.get(number.checked_sub(1)?)?;
+        let appended = output.format.written_by_duckdb().is_some() && !output.is_per_range();
+        appended.then_some(*number)
     }
 
     /// Ends a range of a partitioned run: completes the files of the outputs whose name says
@@ -552,12 +576,44 @@ impl<'a> Sink<'a> {
     /// Removes every output's file, for a run that failed.
     pub(crate) fn abandon(self) {
         self.outputs.into_iter().for_each(OutputRun::abandon);
-        self.done.into_iter().for_each(|done| done.file.abandon());
+        self.done
+            .into_iter()
+            .chain(self.parquet_parts.into_values().flatten())
+            .for_each(|done| done.file.abandon());
+    }
+
+    /// Joins each appended Parquet output's parts into its one file.
+    async fn join_parquet_parts(&mut self) -> Result<(), RunFailure> {
+        let join = PartsJoin {
+            plan: self.plan,
+            folders: self.folders,
+        };
+        let outputs = std::mem::take(&mut self.parquet_parts);
+        let mut outputs = outputs.into_iter();
+        while let Some((number, parts)) = outputs.next() {
+            match join.join(number, parts).await {
+                Ok(joined) => self.done.push(joined),
+                Err(failure) => {
+                    outputs
+                        .flat_map(|(_, parts)| parts)
+                        .for_each(|part| part.file.abandon());
+                    return Err(failure);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Completes every file, draws every chart, and puts them all in place, sending the preview
     /// and each file.
-    pub(crate) fn finish(self, events: &mut dyn FnMut(RunEvent)) -> Result<RunSummary, RunFailure> {
+    pub(crate) async fn finish(
+        mut self,
+        events: &mut dyn FnMut(RunEvent),
+    ) -> Result<RunSummary, RunFailure> {
+        if let Err(failure) = self.join_parquet_parts().await {
+            self.abandon();
+            return Err(failure);
+        }
         let Self {
             outputs,
             mut done,

@@ -8,19 +8,27 @@
 //!
 //! Each file's size is held to its output's `max_size`, and it is put in place with the run's
 //! other files.
+//!
+//! In a partitioned run (RS4e), an output whose file every range appends to gets a part a
+//! range, written as above under a name of the range's own; once the last range is done,
+//! [`join_parts`] copies the parts, in the ranges' order, into the output's one file.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use dbrover_core::{Connection, describe_error};
 use dbrover_driver_duckdb::{
-    ParquetCompression, Workspace, WorkspaceProfile, copy_to_parquet, read_parquet,
+    ParquetCompression, Workspace, WorkspaceLimits, WorkspaceProfile, WorkspaceStore,
+    copy_to_parquet, read_parquet, read_parquet_files,
 };
 use dbrover_export::{CompletedFile, ParquetOptions};
 
 use crate::combine::{CombineReader, DuckDbQuery, progress, read_profile};
 use crate::live::{ProgressClock, waiting};
 use crate::run::{Completed, Count, timed};
-use crate::{CombineLimits, LimitHit, Plan, PlannedOutput, RunEvent, RunFailure, RunValues, Step};
+use crate::{
+    CombineLimits, LimitHit, Plan, PlannedOutput, RunEvent, RunFailure, RunFolders, RunValues, Step,
+};
 
 /// A Parquet output of a run, its file not written yet.
 pub(crate) struct ParquetFile<'a> {
@@ -31,7 +39,8 @@ pub(crate) struct ParquetFile<'a> {
     file: CompletedFile,
 }
 
-/// The run's Parquet outputs, in the file's order, each to be written in `staging`.
+/// The run's Parquet outputs, in the file's order, each to be written in `staging`: for a range
+/// of a partitioned run, an output every range appends to is written as the range's part.
 pub(crate) fn parquet_files<'a>(
     plan: &'a Plan,
     values: &RunValues,
@@ -44,15 +53,132 @@ pub(crate) fn parquet_files<'a>(
         .enumerate()
         .filter_map(|(index, (output, name))| {
             let options = output.format.written_by_duckdb()?;
+            let written_as = match values.part {
+                Some(part) if !output.is_per_range() => part_name(name, part),
+                _ => name.clone(),
+            };
             Some(ParquetFile {
                 number: index + 1,
                 name: name.clone(),
                 output,
                 compression: compression(options),
-                file: CompletedFile::written_by_another(&folder.join(name), staging),
+                file: CompletedFile::written_by_another(&folder.join(written_as), staging),
             })
         })
         .collect()
+}
+
+/// The name a range's part of the Parquet file `name` is written under, in the staging folder
+/// only: never put in place.
+fn part_name(name: &str, part: u64) -> String {
+    format!("{name}.part-{part:05}")
+}
+
+/// What joining the parts of an appended Parquet output needs.
+pub(crate) struct PartsJoin<'a> {
+    pub(crate) plan: &'a Plan,
+    pub(crate) folders: RunFolders<'a>,
+}
+
+impl PartsJoin<'_> {
+    /// Copies `parts`, each range's part of the Parquet output `number` in the ranges' order,
+    /// into the output's one file, in a DuckDB of its own that may write only in the staging
+    /// folder; the parts are removed once read. The rows keep the ranges' order.
+    pub(crate) async fn join(
+        &self,
+        number: usize,
+        parts: Vec<Completed>,
+    ) -> Result<Completed, RunFailure> {
+        let step = parts
+            .first()
+            .map_or(Step::Combine, |part| part.step.clone());
+        let Some((output, name)) = self.output(number, &step) else {
+            parts.into_iter().for_each(|part| part.file.abandon());
+            return Err(RunFailure::new(step, "the run has no such Parquet output"));
+        };
+        let Some(options) = output.format.written_by_duckdb() else {
+            parts.into_iter().for_each(|part| part.file.abandon());
+            return Err(RunFailure::new(step, "the output isn't a Parquet file"));
+        };
+        let file = ParquetFile {
+            number,
+            name: name.clone(),
+            output,
+            compression: compression(options),
+            file: CompletedFile::written_by_another(
+                &self.folders.folder.join(&name),
+                self.folders.staging,
+            ),
+        };
+        let started = Instant::now();
+        let rows = parts.iter().map(|part| part.rows).sum();
+        let paths: Vec<std::path::PathBuf> = parts
+            .iter()
+            .map(|part| part.file.partial().to_owned())
+            .collect();
+        let copied = self.copy(&paths, &file).await;
+        parts.into_iter().for_each(|part| part.file.abandon());
+        copied.map_err(|message| RunFailure::new(file.step(), message))?;
+        file.completed(rows, started.elapsed())
+    }
+
+    /// The output numbered `number`, and the name of its one file.
+    fn output(&self, number: usize, step: &Step) -> Option<(&PlannedOutput, String)> {
+        let output = self.plan.outputs.get(number.checked_sub(1)?)?;
+        let Step::Output { file, .. } = step else {
+            return None;
+        };
+        Some((output, file.clone()))
+    }
+
+    async fn copy(
+        &self,
+        parts: &[std::path::PathBuf],
+        into: &ParquetFile<'_>,
+    ) -> Result<(), String> {
+        let limits = self.limits();
+        let mut workspace = Workspace::open(
+            &WorkspaceStore::Memory,
+            &WorkspaceLimits {
+                memory_limit: limits.memory_limit.0,
+                threads: limits.threads(),
+                temp_directory: self.folders.work.join("join"),
+                max_temp_size: limits.max_temp_size.0,
+            },
+        )
+        .await
+        .map_err(|error| describe_error(&error))?;
+        let copied = async {
+            workspace
+                .lock(Some(self.folders.staging))
+                .await
+                .map_err(|error| describe_error(&error))?;
+            let copy = copy_to_parquet(
+                &read_parquet_files(parts),
+                into.file.partial(),
+                into.compression,
+            );
+            workspace
+                .connection()
+                .execute(&copy)
+                .await
+                .map_err(|error| describe_error(&error))?
+                .finish()
+                .await
+                .map_err(|error| describe_error(&error))
+        }
+        .await;
+        workspace.close().await;
+        copied.map(drop)
+    }
+
+    /// The combine step's limits, which the join runs under.
+    fn limits(&self) -> CombineLimits {
+        match &self.plan.logic {
+            crate::Logic::Combine(combined) => combined.combine.limits,
+            crate::Logic::Direct(_) => CombineLimits::default(),
+        }
+    }
 }
 
 fn compression(options: ParquetOptions) -> ParquetCompression {

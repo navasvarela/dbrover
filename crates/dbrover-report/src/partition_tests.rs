@@ -626,13 +626,6 @@ fn names_every_problem_with_a_partitioned_run() {
         (
             by_range(
                 EVERY_THOUSAND,
-                "[[output]]\nformat = \"parquet\"\nfile = \"events.parquet\"",
-            ),
-            "a partitioned run writes a Parquet file a range",
-        ),
-        (
-            by_range(
-                EVERY_THOUSAND,
                 "[[output]]\nformat = \"csv\"\nfile = \"events-{part_from:%Y}.csv\"",
             ),
             "{part_from:%Y}: only a date or timestamp parameter takes a format",
@@ -856,4 +849,94 @@ async fn writes_a_parquet_file_a_range_and_reads_a_lone_source_a_range_at_a_time
         .filter(|event| matches!(event, RunEvent::SourceDone { .. }))
         .count();
     assert_eq!(sources_done, 3, "the source is read once a range");
+}
+
+/// The rows of a Parquet file in the order it holds them, as DuckDB writes each value as text.
+async fn parquet_rows(file: &Path) -> Vec<Row> {
+    use dbrover_core::{Connection, DuckDbConfig, DuckDbDatabase};
+    let mut connection =
+        dbrover_driver_duckdb::connect(&DuckDbConfig::new(DuckDbDatabase::InMemory))
+            .await
+            .unwrap();
+    let sql = format!("SELECT * FROM read_parquet('{}')", file.display());
+    let mut cursor = connection.execute(&sql).await.unwrap();
+    let mut rows = Vec::new();
+    while !cursor.is_exhausted() {
+        rows.extend(cursor.next_page(1_000).await.unwrap());
+    }
+    cursor.finish().await.unwrap();
+    Box::new(connection).close().await.unwrap();
+    rows
+}
+
+#[tokio::test]
+async fn appends_every_ranges_rows_to_one_parquet_file_in_order() {
+    let folder = tempfile::tempdir().unwrap();
+    let plan = by_range(
+        EVERY_THOUSAND,
+        "[[output]]\nformat = \"parquet\"\nfile = \"events.parquet\"\n\n\
+         [[output]]\nformat = \"csv\"\nfile = \"events.csv\"\n\n\
+         [[output]]\nformat = \"parquet\"\nfile = \"events-{part_from}.parquet\"",
+    )
+    .unwrap();
+    let (outcome, events) = run_values(&plan, &RANGE_KEYS, &Ranged::default(), folder.path()).await;
+    assert_eq!(outcome.unwrap().rows, 2_500);
+    assert_eq!(
+        files(folder.path()),
+        [
+            "events-0.parquet",
+            "events-1000.parquet",
+            "events-2000.parquet",
+            "events.csv",
+            "events.parquet"
+        ],
+        "no range's part is left"
+    );
+    let rows = parquet_rows(&folder.path().join("events.parquet")).await;
+    let ids: Vec<u64> = rows
+        .iter()
+        .filter_map(|row| row.first()?.as_deref()?.parse().ok())
+        .collect();
+    let in_order: Vec<u64> = (0..2_500).collect();
+    assert_eq!(ids, in_order, "every range's rows, in the ranges' order");
+    let csv = std::fs::read_to_string(folder.path().join("events.csv")).unwrap();
+    assert_eq!(csv.lines().count(), 2_501);
+    let written: Vec<(Option<usize>, u64)> = events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::OutputWritten(file) => Some((file.output, file.rows)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        written,
+        [
+            (Some(1), 2_500),
+            (Some(2), 2_500),
+            (Some(3), 1_000),
+            (Some(3), 1_000),
+            (Some(3), 500)
+        ]
+    );
+}
+
+#[tokio::test]
+async fn holds_an_appended_parquet_file_to_its_max_size() {
+    let folder = tempfile::tempdir().unwrap();
+    let plan = by_range(
+        EVERY_THOUSAND,
+        "[[output]]\nformat = \"parquet\"\nfile = \"events.parquet\"\nmax_size = \"4 KB\"",
+    )
+    .unwrap();
+    let (outcome, _) = run_values(&plan, &RANGE_KEYS, &Ranged::default(), folder.path()).await;
+    let failure = outcome.unwrap_err();
+    assert_eq!(
+        failure.limit.map(|limit| limit.key),
+        Some("max_size".to_owned())
+    );
+    assert!(
+        files(folder.path()).is_empty(),
+        "{:?}",
+        files(folder.path())
+    );
 }

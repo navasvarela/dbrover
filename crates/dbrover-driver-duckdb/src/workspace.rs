@@ -681,6 +681,17 @@ pub fn read_parquet(file: &Path) -> String {
     )
 }
 
+/// The query that reads back every row of the Parquet files `files`, one after another in their
+/// order: DuckDB keeps the order it reads rows in while `preserve_insertion_order` is on, its
+/// default.
+pub fn read_parquet_files(files: &[PathBuf]) -> String {
+    let files: Vec<String> = files
+        .iter()
+        .map(|file| string_literal(&file.to_string_lossy()))
+        .collect();
+    format!("SELECT * FROM read_parquet([{}])", files.join(", "))
+}
+
 /// `"name"`, quoted as DuckDB quotes an identifier, so any column name works.
 fn identifier(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
