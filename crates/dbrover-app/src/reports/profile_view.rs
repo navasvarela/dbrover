@@ -455,6 +455,7 @@ mod tests {
                     end_ms: 10,
                 }],
                 waited: None,
+                ranges: Vec::new(),
             })
             .collect();
         if let Some(last) = lanes.last_mut() {
