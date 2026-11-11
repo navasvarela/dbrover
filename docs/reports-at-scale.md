@@ -1,7 +1,7 @@
 # Reports at scale
 
 Status: **RS1 built** (2026-11-09); **RS2 built** (2026-11-10); **RS3 built** (2026-11-10);
-**RS4 started** (2026-11-11); **the rest planned, not scheduled.** Proposed on
+**RS4 built** (2026-11-11); **the rest planned, not scheduled.** Proposed on
 2026-11-04, to come after RP5 (PRQL) unless the order changes. Each milestone's decisions are confirmed when it starts, as in
 [Reports](reporting.md) and [Cloud and big data](cloud-data.md).
 
@@ -841,6 +841,32 @@ path](#recommended-path) says.
 | A range is the unit a resumed run skips (RS5). | RS3's work folder is removed however the run ends. | Ranges are numbered from 1 and computed from the file and the values alone, never from data, so a resumed run computes the same ones, and RS5's manifest can record them by number and bounds. RS4 appends each range's rows straight into its source's table, so a range that fails halfway leaves rows there: harmless while a failed range fails the run, and what RS5 settles (a range's rows kept apart until it ends, or deleted by its bounds) before it skips ranges. |
 | A year of generated events, read by month, with the combine's memory that of one month. | RS3's exit test runs a report through the real worker in `crates/dbrover-app/tests/report_at_scale.rs`, ignored. | RS4g adds a second ignored test there: a year of generated events, partitioned by month, a Parquet file a month; it runs the same report over its largest month alone, and checks the partitioned run's DuckDB peak and the worker's peak memory against that run's, within a quarter, since DuckDB's own peak moves by that much between runs of one size (RS3's as-built notes). |
 
+As built, more that the plan above didn't say:
+
+- **The run's outputs became a sink that outlives a range.** RP1's run wrote its files from one
+  feed and put them in place at its end; RS4d moved the writers, the preview and the charts into
+  one object that a partitioned run's ranges all write to, which completes a range's own files
+  at the range's end and puts every file in place once the last range is done. An unpartitioned
+  run is the same with one range.
+- **Each written file says which output it is of** (`output_written`'s `output`), since a
+  partitioned run's output writes a file a range; the history numbers its files by it.
+- **A partitioned run's steps are summed in the history**, each range kept as a part of its
+  step: the sources' and the combine step's numbers add up, the combine step's peaks are its
+  largest range's, and its plan is the last range's. Hints read the sums, and `range-skew` the
+  parts.
+- **With `parallel` above one, a source's phases add up every range's,** so they can come to
+  more than the source's own time; the Profile draws their shares, and ranges read at once keep
+  the source's one bar, with a strip of its ranges under it.
+- **A range that returns no rows types its columns as text** on an engine that doesn't say its
+  columns' types (SQLite, text protocols), as any source without rows does; a combine query
+  that adds them up fails on that range. The manual says to declare the columns or cast. An
+  earlier range's types aren't carried over: each range's DuckDB is new.
+- **DuckDB 1.5.6 reads a list of Parquet files in the list's order** with
+  `preserve_insertion_order` on, its default, which RS4e's join of a range's parts relies on; a
+  report test checks the joined file's rows against the ranges' order.
+- **A partitioned source's ranges start in order, and the first opens alone,** so the cost
+  guard's whole-period estimate comes before any other range's statement is sent.
+
 ## Benchmark
 
 RS1g's baseline, the numbers RS3c's typed loading and RS6's columnar sources are judged by.
@@ -953,6 +979,30 @@ the benchmark above is the release build's. The combine step went past its `memo
 it was meant to, and spilled; DuckDB's own peak passed the limit while the sources loaded, as
 the as-built notes under [RS3 against today's code](#rs3-against-todays-code) say, which is why
 the bound counts DuckDB at twice it. The run's work folder was gone after it.
+
+### RS4's exit test
+
+`crates/dbrover-app/tests/report_at_scale.rs` gains a second ignored test, run by hand: a year of
+events, one a second (31,536,000 in 2025), generated in an in-memory DuckDB data source's own
+query from each range's bounds, run by month through the real worker into a Parquet file a
+month, the combine step adding them up a customer a day under a `memory_limit` of 4 GiB. The
+same report over January alone, the largest month, is its yardstick. Measured on 2026-11-11, in a
+debug build of DbRover (DuckDB is the prebuilt release library either way):
+
+| What | Measured | Against |
+| --- | ---: | ---: |
+| Events read | 31,536,000, in twelve statements | — |
+| The run, every month | 345 s | — |
+| Parquet files | twelve, `events-2025-01.parquet` to `events-2025-12.parquet`, 150,000 or 155,000 rows each | — |
+| Each month's DuckDB peak | 236 to 254 MiB | January alone: 250 MiB |
+| The worker's peak resident memory | 256 MiB | January alone: 255 MiB |
+| The run's folders at most | 54 MB | `max_disk` 20 GiB |
+
+Each month's DuckDB held a month's rows, as the year's would have twelve; nothing spilled under
+the 4 GiB `memory_limit`. The worker's peak varies more between runs than DuckDB's: an earlier
+run of the same test measured 293 MiB over the year against 232 MiB for January, since memory a
+range's DuckDB frees isn't always handed back to the system before the next range. So the test
+holds DuckDB's peaks within a quarter of January's, and the worker's within a half.
 
 ## Recommended path
 

@@ -224,6 +224,7 @@ use an index.* Each has an id, and a threshold below which it says nothing:
 | `filter-one-source` | The combine step's plan filters a source's rows as it reads them, by a value or a parameter. | Move the filter into the source's query, where its database returns only the rows kept and can use an index. |
 | `aggregate-one-source` | The combine step aggregates one source with nothing joined to it first. | Aggregate in the source's query: it returns its groups instead of its rows, with the same result. |
 | `scanned-more` | A source's engine scanned at least 100 MB, and 100 times what it returned. | Check that the query filters on its table's partition or clustering column. An aggregate scans more than it returns on purpose, so this is a question too. |
+| `range-skew` | A range of a [partitioned](#partitions) source, or of a partitioned run's combine step, took at least 10 seconds and five times its step's median range, with three ranges or more. | Split it with a smaller `every`, or look at what its data holds that the other ranges' doesn't. |
 
 The plan's three hints need a source of at least 10,000 rows, and read the combine step's plan as
 DuckDB ran it: the columns each source's table was read for, the filters applied as it was read,
@@ -259,7 +260,9 @@ what its time went to:
 - an output: *waiting for rows* from the step that feeds it, then *writing*.
 
 A source that waited for the sources of the round before it, beyond the source its lookup reads,
-has that wait hatched. Hover over a stretch for its time.
+has that wait hatched. Hover over a stretch for its time. A [partitioned](#partitions) step has a
+strip under its bar, a mark a range: hover over one for the range's bounds, time and rows. Ranges
+read one after another each get a bar of their own, so a slow month is the long one.
 
 Above the lanes, one sentence names the run's bottleneck: *Source lines held the run longest:
 1.2 s of 2.0 s, 73% of it waiting on SQLite for its first row.* It is the step on the run's
@@ -378,6 +381,7 @@ columns = "same"
 | `stall_timeout` | How long a run may go without progress before it is stopped as stuck: no row, no batch, no work in DuckDB. 10 minutes unless you say. See [Long runs](#long-runs). |
 | `max_disk` | The most disk a run may use for its DuckDB, what DuckDB spills and its files being written, as `"50 GiB"`. 20 GiB unless you say. See [Limits](#limits). |
 | `quiet_hints` | The ids of the hints its runs don't give, as `["source-reads-more"]` (see [Runs](#runs)). |
+| `partition` | Runs the whole report one range at a time, as `{ from = ":since", to = ":until", every = "1 month" }`. See [Partitions](#partitions). |
 
 A parameter's type is `text`, `integer`, `decimal`, `boolean`, `date` or `timestamp`. A date is
 typed as `2026-10-01`, a timestamp as `2026-10-01 12:00` (seconds and a fraction are optional,
@@ -392,10 +396,12 @@ and `T` works in place of the space).
 | `query` | One statement that only reads, in the data source's own SQL. Needed, unless `attach = true`. |
 | `attach` | `true` for a DuckDB file that `[combine]` reads in place, without a query. See [Several sources](#several-sources). |
 | `lookup` | Reads by the values an earlier source found, as `{ from = "flows", column = "battery_id", as = "battery_ids" }`. See [Lookups](#lookups). |
+| `partition` | Reads the query in ranges of time or of a key, a statement each, as `{ from = ":since", to = ":until", every = "1 month" }`. See [Partitions](#partitions). |
+| `max_rows_per_part` | The most rows each range of a partitioned source may return. No limit unless you say. |
 | `columns` | The columns it makes, each with a type. Needed for a document database. See [Declared columns](#declared-columns). |
-| `max_rows` | The most rows it may return, all its lookup's batches together. 1,000,000 unless you say. |
+| `max_rows` | The most rows it may return, all its lookup's batches or ranges together. 1,000,000 unless you say. |
 | `max_bytes` | The most data it may return, as `"500 MB"` or `"4 GiB"`. 1 GiB unless you say. |
-| `timeout` | How long the query may run, all its batches together, as `"30s"` or `"10m"`. 10 minutes unless you say. |
+| `timeout` | How long the query may run, all its batches together, or each range on its own, as `"30s"` or `"10m"`. 10 minutes unless you say. |
 
 The query is in the data source's own language: SQL, PartiQL for DynamoDB, the shell's
 `db.collection.find(…)` for MongoDB, a request for Elasticsearch and OpenSearch, a command for
@@ -740,6 +746,122 @@ attribute would scan the table, which the data source's cost guard refuses (see
 [Cost guards](cloud.md#cost-guards)). PartiQL keeps some words for itself, `value` and `zone`
 among them: quote an attribute with such a name, as `"zone"`.
 
+## Partitions
+
+A report over a year of a large table can read it a month at a time. Each month is a statement
+of its own, which stays under the database's and the source's time limits, can be read beside
+the others, and shows how far the run has got. Ranges are of dates, of timestamps, or of an
+integer key, and come from the file and the run's values alone, never from the data.
+
+### A partitioned source
+
+`partition` on a `[[source]]` reads its query once a range, binding each range's first value as
+`:part_from` and the first value past it as `:part_to`:
+
+```toml
+[report]
+name = "Events by customer"
+params = { since = "date", until = "date" }
+
+[[source]]
+id = "events"
+data_source = "warehouse"
+query = """
+SELECT customer_id, DATE(ts) AS day, COUNT(*) AS events, SUM(amount) AS amount
+FROM analytics.events
+WHERE ts >= :part_from AND ts < :part_to
+GROUP BY 1, 2
+"""
+partition = { from = ":since", to = ":until", every = "1 month", parallel = 2 }
+max_rows_per_part = 2000000
+```
+
+- **`from`** and **`to`** are each a parameter, as `":since"`, or a value of their own: a date
+  (`2026-01-01`), a timestamp (`2026-01-01T06:00:00`) or an integer. Both are of one kind.
+- **`every`** is how wide each range is: `"1 day"`, `"1 week"`, `"1 month"`, `"3 months"` or
+  `"1 year"` for dates, hours and minutes too for timestamps (`"6 hours"`), and a number for an
+  integer key (`every = 10000000`). Each range starts that much after the one before, counted
+  from `from`, so months from the 31st keep their day wherever a month has one; the last range
+  ends at `to`. At most 10,000 ranges.
+- **`parallel`** is how many ranges are read at once, each on its own connection, 1 to 16; one
+  at a time unless you say. Read several at once from a warehouse or a replica that has the room.
+- The query must read `:part_from` or `:part_to`, and `params` can't name them. In SQL, they are
+  bound as a console binds a parameter; in other languages they are written in as values of
+  their type.
+
+Every range's rows go into the source's one table, so `[combine]` reads it as any other source,
+and a partitioned source needs a combine step. The source's `max_rows` and `max_bytes` hold for
+the whole table, its `timeout` for each range's statement, and `max_rows_per_part` for each
+range's rows, so one bad range stops the run early, naming the range. A data source with a cost
+guard judges the whole period before the first range is read, since nobody is there to approve
+the twelfth month (see [Cost guards](cloud.md#cost-guards)). **Explain** explains the query over
+the whole period.
+
+While it runs, the source's line says *month 7 of 12*, or *months 7–8 of 12* while two are read
+at once, and `--progress` says the same. A source has a lookup or a partition, not both.
+
+### A partitioned run
+
+`partition` in `[report]` runs the whole report once a range, one range at a time, and writes
+each range's rows before the next starts:
+
+```toml
+[report]
+name = "Ledger by month"
+params = { since = "date", until = "date" }
+partition = { from = ":since", to = ":until", every = "1 month" }
+
+[[source]]
+id = "lines"
+data_source = "ledger"
+query = "SELECT * FROM lines WHERE booked_on >= :part_from AND booked_on < :part_to"
+
+[combine]
+query = "SELECT account, sum(debit) AS debit, sum(credit) AS credit FROM lines GROUP BY account"
+
+[[output]]
+format = "parquet"
+file = "ledger-{part_from:%Y-%m}.parquet"
+
+[[output]]
+format = "csv"
+file = "ledger.csv"
+```
+
+Each range loads its sources into a DuckDB of its own, runs the combine query, and removes that
+DuckDB before the next range, so the run's memory, spill and disk are one range's, however long
+the period. Every query may use `:part_from` and `:part_to`, the combine query too, and one must.
+A report without `[combine]` reads its one source a range at a time into its outputs.
+
+- An output whose `file` names `part_from` or `part_to` writes **a file a range**, named by its
+  range: `ledger-2026-01.parquet`, `ledger-2026-02.parquet`, and so on. A name two ranges would
+  share, such as `{part_from:%Y}` by month, is a problem before the run starts.
+- Any other output is **one file every range appends to**, in the ranges' order: a CSV with one
+  header, an Excel workbook going on to a new sheet only with `continue_on_new_sheet`, or a
+  Parquet file that DuckDB joins from a part a range once the last range is done.
+- Every file waits in the staging folder until the last range is done, so a run that fails in
+  its seventh month leaves no file at all, as any run that fails.
+- A chart draws every range's rows; a chart with a `query` of its own would read one range's
+  tables, so it is a problem in a partitioned run.
+- Each range applies the sources' and the combine step's limits on its own; the run's `timeout`,
+  `stall_timeout` and `max_disk` hold for the whole run, and an appended file's `max_size` for
+  the whole file. Ranges go one at a time, so `parallel` is for a source's partition only, and a
+  partitioned run's sources aren't partitioned themselves.
+
+The tab says *month 3 of 12* on the step that feeds the outputs, **Past runs** adds up each step
+over the ranges, and `dbrover report run` prints a line a range.
+
+A partitioned run is right only when each output row depends on its range's rows alone. Adding
+up a month's lines is; a running balance carried from one month into the next isn't, and
+neither is a `DISTINCT` or a rank over the whole period: each range sees its own rows only.
+DbRover can't check that, so make each range whole on its own: give it an opening balance from a
+source that reads the balance at `:part_from`, and count distinct values per range.
+
+A range with no rows has no values to type its columns by, so on a database that doesn't say
+its columns' types (SQLite, a text protocol) its table's columns are text. Declare the source's
+columns (see [Declared columns](#declared-columns)), or cast in the combine query what it adds
+up, as `sum(CAST(debit AS DECIMAL(18,2)))`.
+
 ## Declared columns
 
 DynamoDB, MongoDB, Elasticsearch and Redis return documents rather than rows, so a source on one
@@ -786,7 +908,7 @@ consoles and their transactions carry on. The limits, cheapest first:
 
 | What | Limit | Change it with |
 | --- | --- | --- |
-| Each source | its rows, its data, its time, every batch of its lookup together; read-only | `max_rows`, `max_bytes`, `timeout` in `[[source]]` |
+| Each source | its rows, its data, its time, every batch of its lookup together; each range's rows; read-only | `max_rows`, `max_bytes`, `timeout`, `max_rows_per_part` in `[[source]]` |
 | The combine step | DuckDB's memory, threads and spilled data; its time | `memory_limit`, `threads`, `max_temp_size`, `timeout` in `[combine]` |
 | Each output | its data; Excel's rows a sheet | `max_size`, `continue_on_new_sheet` in `[[output]]` |
 | Each chart | its kind's rows (250 bars, 50,000 points) and eight series; its `query`, the combine step's limits | `limit` in `[[chart]]`, or fewer rows from the query |

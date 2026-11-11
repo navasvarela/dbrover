@@ -1,15 +1,21 @@
-//! RS3's exit test (`docs/reports-at-scale.md`, "Milestones" and "RS3's exit test"), run by
-//! hand; a debug build takes about 11 minutes at the default size, `--release` less:
+//! RS3's and RS4's exit tests (`docs/reports-at-scale.md`, "Milestones", "RS3's exit test" and
+//! "RS4's exit test"), run by hand, one at a time by name, or both:
 //!
 //! ```text
 //! cargo test -p dbrover-app --test report_at_scale -- --ignored --nocapture
 //! ```
 //!
-//! The real worker, as the app starts it, loads two sources of generated rows (50 million each
-//! unless `DBROVER_RS3_ROWS` says), joins and sorts them past the combine step's
+//! RS3's: the real worker, as the app starts it, loads two sources of generated rows (50
+//! million each unless `DBROVER_RS3_ROWS` says), joins and sorts them past the combine step's
 //! `memory_limit`, and writes the result as Parquet with DuckDB's `COPY`. The run must stay
 //! inside `max_disk`, which the app's watchdog enforces and this test samples, and the worker's
-//! peak resident memory within the bound RS3c's queues make computable.
+//! peak resident memory within the bound RS3c's queues make computable. A debug build takes
+//! about 11 minutes, `--release` less.
+//!
+//! RS4's: a year of generated events, an event a second unless `DBROVER_RS4_EVERY_SECONDS`
+//! says, run by month into a Parquet file a month; each month's DuckDB, and the worker, must
+//! hold what the same report run over its largest month alone holds. A debug build takes
+//! about 6 minutes.
 //!
 //! Everything is written in a temporary folder (`TMPDIR`), removed when the test ends; at the
 //! default size it needs about 10 GB free while it runs.
@@ -133,11 +139,14 @@ impl Home {
         path
     }
 
-    fn request(&self, report: &Path) -> RunRequest {
+    fn request(&self, report: &Path, values: &[(&str, &str)]) -> RunRequest {
         let out = self.home.path().join("out");
         RunRequest {
             report: report.to_owned(),
-            values: Default::default(),
+            values: values
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+                .collect(),
             staging: out.join(".run"),
             work: self.work_root().join("run"),
             folder: out,
@@ -166,8 +175,8 @@ impl Home {
 
     /// Runs `report`, watched as the app watches a run, and returns its events, and the most
     /// its folders held at once, sampled twice a second.
-    fn run(&self, report: &Path) -> (Vec<RunEvent>, u64) {
-        let request = self.request(report);
+    fn run(&self, report: &Path, values: &[(&str, &str)]) -> (Vec<RunEvent>, u64) {
+        let request = self.request(report, values);
         std::fs::create_dir_all(self.work_root()).unwrap();
         let watch = RunWatch {
             timeout: Duration::from_secs(4 * 3600),
@@ -259,7 +268,7 @@ fn loads_a_hundred_million_rows_past_memory_and_writes_parquet_inside_its_bounds
     // The worker's own memory, the same run of a few rows: the process, its runtime and
     // DuckDB's own, which the bound adds to what the run's data may take.
     let baseline_report = home.report("baseline", &report(1_000));
-    let (baseline_events, _) = home.run(&baseline_report);
+    let (baseline_events, _) = home.run(&baseline_report, &[]);
     assert!(
         matches!(baseline_events.last(), Some(RunEvent::Finished { .. })),
         "{baseline_events:#?}"
@@ -268,7 +277,7 @@ fn loads_a_hundred_million_rows_past_memory_and_writes_parquet_inside_its_bounds
 
     let started = Instant::now();
     let exit = home.report("exit", &report(rows));
-    let (events, peak_disk) = home.run(&exit);
+    let (events, peak_disk) = home.run(&exit, &[]);
     let elapsed = started.elapsed();
     assert!(
         matches!(events.last(), Some(RunEvent::Finished { .. })),
@@ -330,5 +339,165 @@ fn loads_a_hundred_million_rows_past_memory_and_writes_parquet_inside_its_bounds
     assert!(
         peak <= bound,
         "the worker's peak memory is within the bound"
+    );
+}
+
+/// Events a second unless `DBROVER_RS4_EVERY_SECONDS` says: 31,536,000 in 2025.
+const EVERY_SECONDS: u64 = 1;
+
+/// How far a month's DuckDB peak may pass that of the same month run alone: DuckDB's own peak
+/// moves by about this much between runs of one size (`docs/reports-at-scale.md`, RS3's
+/// as-built notes).
+const SAME_MEMORY_PCT: u64 = 125;
+
+/// How far the worker's resident peak over twelve months may pass that of one month alone.
+/// Memory a range's DuckDB frees isn't always handed back to the system, which keeps it for
+/// the next range, so the peak may creep: on 2026-11-11 one run measured 126% (293 MiB against
+/// 232 MiB), the next 100% (256 MiB against 255 MiB).
+/// What the test is about is that it doesn't grow with the months, as a year read at once
+/// would, to about twelve times a month's.
+const WORKER_SAME_MEMORY_PCT: u64 = 150;
+
+/// A year of events by month: each month's events generated in the source's own query from its
+/// range, a few columns of the kinds reports carry, added up a customer a day by the combine
+/// step and written as a Parquet file a month.
+fn events_by_month(every_seconds: u64) -> String {
+    format!(
+        r#"[report]
+name = "RS4 exit"
+params = {{ since = "date", until = "date" }}
+partition = {{ from = ":since", to = ":until", every = "1 month" }}
+timeout = "4h"
+
+[[source]]
+id = "events"
+data_source = "generated"
+query = """
+SELECT range AS id,
+       make_timestamp(range * 1000000) AS ts,
+       CAST(range % 100000 / 100 AS DECIMAL(18,2)) AS amount,
+       'customer ' || (range % 5000) AS customer
+FROM range(
+  CAST(epoch(CAST(:part_from AS TIMESTAMP)) AS BIGINT),
+  CAST(epoch(CAST(:part_to AS TIMESTAMP)) AS BIGINT),
+  {every_seconds})
+"""
+max_rows = 10000000
+max_bytes = "10 GiB"
+timeout = "1h"
+
+[combine]
+query = """
+SELECT customer, date_trunc('day', ts) AS day, count(*) AS events, sum(amount) AS amount
+FROM events
+GROUP BY ALL
+ORDER BY day, customer
+"""
+memory_limit = "4 GiB"
+timeout = "1h"
+
+[[output]]
+format = "parquet"
+file = "events-{{part_from:%Y-%m}}.parquet"
+"#
+    )
+}
+
+/// The most each range's DuckDB held, in the order of the ranges.
+fn duckdb_peaks(events: &[RunEvent]) -> Vec<u64> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::CombineDone { peak_memory, .. } => *peak_memory,
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+#[ignore = "slow: a year of events a month at a time through the worker; run by hand"]
+fn writes_a_year_of_events_a_month_at_a_time_in_a_months_memory() {
+    let every_seconds: u64 = std::env::var("DBROVER_RS4_EVERY_SECONDS")
+        .ok()
+        .and_then(|every| every.parse().ok())
+        .unwrap_or(EVERY_SECONDS);
+    let home = Home::new();
+    let report = home.report("events", &events_by_month(every_seconds));
+
+    // The largest month alone, 31 days, as the yardstick: one range, run as the year's are.
+    let (month_events, _) = home.run(&report, &[("since", "2025-01-01"), ("until", "2025-02-01")]);
+    assert!(
+        matches!(month_events.last(), Some(RunEvent::Finished { .. })),
+        "{month_events:#?}"
+    );
+    let month_duckdb = duckdb_peaks(&month_events)[0];
+    let month_worker = worker_peak(&month_events);
+
+    let started = Instant::now();
+    let (events, peak_disk) =
+        home.run(&report, &[("since", "2025-01-01"), ("until", "2026-01-01")]);
+    let elapsed = started.elapsed();
+    assert!(
+        matches!(events.last(), Some(RunEvent::Finished { .. })),
+        "{events:#?}"
+    );
+    let files: Vec<(String, u64)> = events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::OutputWritten(file) => Some((
+                file.path.file_name()?.to_string_lossy().into_owned(),
+                file.rows,
+            )),
+            _ => None,
+        })
+        .collect();
+    let names: Vec<&str> = files.iter().map(|(name, _)| name.as_str()).collect();
+    let months: Vec<String> = (1..=12)
+        .map(|month| format!("events-2025-{month:02}.parquet"))
+        .collect();
+    assert_eq!(names, months, "a Parquet file a month, in order");
+    let read: u64 = events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::SourceDone { rows, .. } => Some(*rows),
+            _ => None,
+        })
+        .sum();
+    let year_seconds: u64 = 365 * 24 * 3600;
+    assert_eq!(
+        read,
+        year_seconds.div_ceil(every_seconds),
+        "every event, once"
+    );
+
+    let peaks = duckdb_peaks(&events);
+    assert_eq!(peaks.len(), 12, "a DuckDB a month");
+    let worker = worker_peak(&events);
+    let within = |peak: u64, alone: u64, pct: u64| {
+        u128::from(peak) * 100 <= u128::from(alone) * u128::from(pct)
+    };
+    println!(
+        "\n{read} events by month in {:.0} s; disk at most {}; DuckDB's peak a month {}, the \
+         largest month alone {}; the worker's peak {}, the largest month alone {}",
+        elapsed.as_secs_f64(),
+        ByteSize(peak_disk),
+        peaks
+            .iter()
+            .map(|peak| ByteSize(*peak).to_string())
+            .collect::<Vec<_>>()
+            .join(", "),
+        ByteSize(month_duckdb),
+        ByteSize(worker),
+        ByteSize(month_worker),
+    );
+    assert!(
+        peaks
+            .iter()
+            .all(|peak| within(*peak, month_duckdb, SAME_MEMORY_PCT)),
+        "each month's DuckDB holds a month's rows"
+    );
+    assert!(
+        within(worker, month_worker, WORKER_SAME_MEMORY_PCT),
+        "the worker holds about what a month alone holds"
     );
 }

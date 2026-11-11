@@ -443,6 +443,16 @@ pub fn bottleneck(run: &ReportRun) -> Option<Bottleneck> {
 
 /// The steps the run waited on, last first.
 fn critical_path(run: &ReportRun) -> Vec<&StepMetrics> {
+    if is_partitioned_run(run) {
+        // Each range runs every step again, one range after another, so the run waits on every
+        // step in turn; sources of one round still overlap within a range, which this doesn't
+        // tell apart.
+        return run
+            .steps
+            .iter()
+            .filter(|step| span(step).is_some())
+            .collect();
+    }
     let spans: Vec<(&StepMetrics, u64, u64)> = run
         .steps
         .iter()
@@ -479,6 +489,16 @@ fn critical_path(run: &ReportRun) -> Vec<&StepMetrics> {
         start = before_start;
     }
     path
+}
+
+/// Whether the whole run went a range at a time (RS4d): its combine step, or its one source
+/// without one, ran once a range.
+fn is_partitioned_run(run: &ReportRun) -> bool {
+    run.steps.iter().any(|step| match step {
+        StepMetrics::Combine(combine) => !combine.parts.is_empty(),
+        StepMetrics::Source(source) => feeds_outputs(run) && !source.parts.is_empty(),
+        StepMetrics::Attached { .. } | StepMetrics::Output(_) => false,
+    })
 }
 
 /// When a step ran, from the run's start: for a step of a partitioned run, from its first
@@ -671,6 +691,30 @@ mod tests {
             "Range 2 of 3, 2026-02-01 to 2026-03-01: 1.2 s, 100 rows"
         );
         assert_eq!(drawn.lanes[1].ranges.len(), 3);
+
+        let held = bottleneck(&run(
+            2_200,
+            vec![
+                StepMetrics::Source({
+                    let mut events = source("events", 0, 1_600, None);
+                    events.parts = vec![part(1, 0, 200), part(2, 400, 1_200), part(3, 1_800, 200)];
+                    events
+                }),
+                StepMetrics::Combine({
+                    let mut combined = combine(200, 600);
+                    combined.parts =
+                        vec![part(1, 200, 200), part(2, 1_600, 200), part(3, 2_000, 200)];
+                    combined
+                }),
+                StepMetrics::Output(output(2_000, 2_200, 50)),
+            ],
+        ))
+        .unwrap();
+        assert_eq!(
+            held.step,
+            StepKey::Source("events".to_owned()),
+            "every step of a partitioned run is on its path"
+        );
 
         // Read at once, a source's ranges overlap: its bar stays whole, its ranges under it.
         let mut at_once = source("events", 0, 1_000, None);
