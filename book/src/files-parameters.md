@@ -1,8 +1,8 @@
 # Files, parameters and find
 
 A console doesn't have to live in DbRover's own folder: it can show a `.sql` file from a project,
-which you save when you choose. Statements can take `:name` parameters, which DbRover asks for
-before they run. And the editor finds and replaces text.
+which you save when you choose. SQL and CQL statements can take `:name` parameters, which DbRover asks
+for before they run (other languages take parameters in [reports](reports.md) only). And the editor finds and replaces text.
 
 ## Opening a `.sql` file
 
@@ -92,7 +92,8 @@ compares with a number column, `:since` with `2026-01-01` with a date.
 - **SQLite, DuckDB, MySQL and MariaDB, SQL Server:** the values are bound parameters, never
   part of the SQL. On SQL Server the statement runs through `sp_executesql`, so a temporary
   table it creates, or a `USE` or `SET` it runs, ends with it.
-- **PostgreSQL and ClickHouse:** each value is written into the statement as a quoted string,
+- **PostgreSQL, ClickHouse, Cassandra and ScyllaDB, Athena, Trino and BigQuery:** each value is
+  written into the statement as a quoted string,
   `'2026-01-01'`, which the database reads from its context just as it would a bound parameter.
   (DbRover's PostgreSQL consoles use the protocol that shows every value as `psql` does, and
   that protocol has no parameters.)

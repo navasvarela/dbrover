@@ -4,14 +4,20 @@ Rows leave DbRover in the same formats, with the same options, wherever they sta
 
 - **Export…** in the results grid's toolbar writes a result's loaded rows, or every row it
   returns, to a file.
-- **Export data…** on a table or view in the explorer writes every row of it.
+- **Export data…** on a table, view or materialized view in the explorer writes every row of
+  it.
 - **Run to file…** runs a query straight into a file, without loading the grid.
 - **Copy as ›** in a cell's menu, and **Copy with headers**, put the selected cells on the
   clipboard.
 - An AI assistant connected over MCP can ask for rows as CSV, Markdown or JSON Lines.
 
 Formats of your own, written in `exports.toml`, appear beside the built-in ones: see
-[Your own export formats](export-formats.md).
+[Your own export formats](export-formats.md). A chart leaves as a picture instead, from its
+**Export ›** (see [Charts](consoles.md#charts)).
+
+Documents from MongoDB, Elasticsearch and OpenSearch, and DynamoDB are exported as they are
+only as JSON or JSON Lines: **All documents** and **Run to file…** offer those two. The rows
+loaded in the grid can be exported in every format, as the grid's columns show them.
 
 ## The export dialog
 
@@ -155,5 +161,5 @@ each as you defined it in `exports.toml`.
 The MCP server's `query` tool answers with JSON by default. With `format` set to `csv`,
 `markdown` or `jsonl`, it answers with the rows as that text instead, within the project's row
 limit, and says whether rows were left out. The assistant never writes a file through DbRover:
-one that wants a file writes the text itself, with its own permissions. See
-[Connecting an AI assistant](mcp.md).
+one that wants a file writes the text itself, with its own permissions. Its `chart` tool
+answers with a picture of a query's chart. See [Connecting an AI assistant](mcp.md).
