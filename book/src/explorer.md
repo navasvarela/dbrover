@@ -252,6 +252,11 @@ objects they hold (`tables 5`).
 Browsing another PostgreSQL database than the one in the data source's settings opens a
 separate connection to that database.
 
+The trees of the other engines are described in their own chapters:
+[DynamoDB](dynamodb.md), [Athena and Trino](athena-trino.md), [BigQuery](bigquery.md),
+[Redshift](aws.md#amazon-redshift), and a DuckDB data source's
+[bucket](object-storage.md).
+
 ## The context menu
 
 Right-click an object for what you can do with it:
@@ -260,22 +265,29 @@ Right-click an object for what you can do with it:
 
 | Menu item | Shown for | What it does |
 | --- | --- | --- |
-| **Open data** | Tables, views, materialized views; Redis keys; MongoDB collections; Elasticsearch indices, aliases and data streams | Opens a new console that reads the object (`SELECT * FROM` it, in SQL) and runs it. |
-| **Export data…** | Tables, views | Writes every row to a file, in any export format; see [A whole table, from the explorer](exporting.md#a-whole-table-from-the-explorer). |
+| **Open data** | Tables, views, materialized views; Redis keys; MongoDB collections; Elasticsearch indices, aliases and data streams; DynamoDB tables and indexes | Opens a new console that reads the object (`SELECT * FROM` it, in SQL) and runs it. |
+| **Export data…** | Tables, views and materialized views, on SQL and CQL data sources | Writes every row to a file, in any export format; see [A whole table, from the explorer](exporting.md#a-whole-table-from-the-explorer). |
 | **Diagram…** | Schemas, on engines with foreign keys | Picks tables of the schema for an ER diagram; see [ER diagrams](diagrams.md). |
 | **Diagram with related tables** | Tables, on engines with foreign keys | Opens a diagram of the table and every table its keys join. |
 | **Compare schema…** | Schemas, on PostgreSQL | Compares the schema with another, or with a snapshot; see [Comparing schemas](schema-compare.md). |
 | **Save schema snapshot…** | Schemas, on PostgreSQL | Writes the schema to a snapshot file; see [Schema snapshots](schema-compare.md#schema-snapshots). |
-| **Import CSV…** | Tables | Asks for a CSV file and imports it into the table; see [Importing a CSV file](table-data.md#importing-a-csv-file). |
-| **Copy name** | Objects inside a schema | Copies the name to use in SQL: schema-qualified for tables, views, sequences, indexes and functions (`main."Order Items"`), bare for columns, constraints and triggers. Quoted where needed. |
+| **Import CSV…** | Tables, where the object helpers are offered (below) | Asks for a CSV file and imports it into the table; see [Importing a CSV file](table-data.md#importing-a-csv-file). |
+| **Copy name** | Objects inside a schema; roles; Redis keys, MongoDB collections, Elasticsearch indices and templates | Copies the name to use in a query: schema-qualified for tables, views, sequences, indexes and functions (`main."Order Items"`), bare for columns, constraints and triggers. Quoted where needed. |
 | **Show definition** | Objects whose source the database keeps (see below) | Opens the source in a tab. |
 | **Refresh** | Anything with children | Reloads the node's children and collapses everything below it. |
-| **Copy DDL** | Tables, views, materialized views | Copies the statement that creates it; see [Copy DDL](objects.md#copy-ddl). |
+| **Copy DDL** | Tables, views, materialized views, where the object helpers are offered; PostgreSQL roles | Copies the statement that creates it; see [Copy DDL](objects.md#copy-ddl). |
 
 Below those come the object helpers, **New › Table…**, **New index…**, **Rename…**,
 **Truncate…**, **Drop…** and **Drop index…**, which [Creating and changing tables](objects.md)
 describes, and those for views and schemas (**New › View…**, **Edit…**, **Refresh…**,
-**New › Schema…**, **Drop schema…**), which [Views and schemas](views-schemas.md) describes.
+**New › Schema…**, **Drop schema…**), which [Views and schemas](views-schemas.md) describes. The helpers, **Import CSV…** and
+**Copy DDL** are offered only inside the database the data source connects to, and only where
+DbRover writes the engine's DDL: not on Cassandra and ScyllaDB, Athena, Trino, BigQuery or
+Redshift.
+
+Last come your own [custom actions](customising.md#actions) that apply to the object. A click
+on an object also selects it, and a custom action's shortcut then acts on the object
+selected.
 
 A data source's own menu (Connect, New query console, Open saved console, Diagrams, Edit,
 Delete and so on) is described in [Data sources](data-sources.md#editing-connecting-and-deleting).
@@ -350,6 +362,13 @@ folders under your home folder written as `~/…`. With the settings folder sync
 machines, a repository cloned at the same place under each home folder is found on each. A
 folder that isn't on this machine stays listed, dimmed, until you clone it there or remove it.
 
+## Reports
+
+Under the data sources, and above the query folders, **Reports** lists the reports in your
+settings folder. Click one to open its tab. Right-click **Reports** for **New report**, **Open
+the reports folder** and **Reload**, and a report for **Rename…**. See
+[The Reports section](reports.md#the-reports-section).
+
 ## Filtering
 
 Type in the box at the top of the explorer to filter the tree by name, ignoring case. An object
@@ -357,7 +376,7 @@ that matches is shown with everything under it, and the nodes leading to it stay
 they don't match themselves. Data sources and projects are matched by name too: a project
 whose name matches shows all its data sources, and data sources and projects with nothing
 matching are hidden while you type. Under **Query folders**, files whose names match are shown,
-with the folders leading to them open.
+with the folders leading to them open, and under **Reports**, the reports whose titles match.
 
 ![The explorer filtered by "order"](images/explorer-filter.png)
 
@@ -372,8 +391,10 @@ and shows what it found under **Found on the server**; see
 
 A schema's tables, views, materialized views and sequences load 1,000 at a time on PostgreSQL
 and SQLite, in order of name, so a schema of tens of thousands of tables opens as quickly as a
-small one. **Load more…** at the end of the list loads the next 1,000. The other databases, and
-the other levels of the tree, load whole.
+small one. **Load more…** at the end of the list loads the next 1,000. MongoDB collections,
+Elasticsearch indices and Redis keys come a page at a time too, as described above for each, and
+so do [DynamoDB](dynamodb.md)'s tables and [BigQuery](bigquery.md)'s datasets and tables. The
+other databases, and the other levels of the tree, load whole.
 
 ## System objects
 

@@ -7,7 +7,9 @@ schema reads at a glance. It only shows the schema: nothing in a diagram changes
 items pointing at orders and products, and events, which no key joins, on its own](images/er-diagram.png)
 
 Diagrams need foreign keys to draw, so they are offered on PostgreSQL, MySQL, MariaDB, SQLite,
-SQL Server and DuckDB, and not on ClickHouse or the engines without SQL.
+SQL Server and DuckDB, and not on the engines without them: ClickHouse, Cassandra and
+ScyllaDB, Athena, Trino, BigQuery, Redshift, Synapse dedicated pools, Fabric, and the engines
+without SQL.
 
 ## Opening a diagram
 
@@ -20,6 +22,10 @@ SQL Server and DuckDB, and not on ClickHouse or the engines without SQL.
 - **A table and its neighbours:** right-click a table and choose **Diagram with related
   tables**. The diagram shows the table, the tables its foreign keys point at, and the tables
   whose foreign keys point at it.
+
+On a schema too large to list whole (see [Large schemas](explorer.md#large-schemas)), the
+dialog lists the tables loaded so far and says how many ("Only the first 1,000 tables are
+listed."); click **Load more…** in the explorer first to pick from more.
 
 More than 150 tables make a diagram that is hard to read and slow to load from a distant
 server, so the dialog says so and its button becomes **Open anyway**.
@@ -67,6 +73,9 @@ Each diagram is a small TOML file in the settings folder (see
 - It names the data source, the schema the diagram was opened on, and each table with where its
   box sits. Columns and keys are not in it: they are read from the database each time the
   diagram opens, so a diagram never shows a schema older than the database's.
+
+If the file changes on disk while the diagram has changes of yours not yet saved, after a
+`git pull` say, the diagram offers **Reload**, to take the file's version, or **Keep mine**.
 - Moving a data source to another project leaves its diagrams in their folder; they are still
   listed under its **Diagrams**.
 

@@ -20,14 +20,14 @@ database can do:
 
 ![A table's menu, with the object helpers below Refresh](images/explorer-menu.png)
 
-- **ClickHouse** has no index helpers: its data-skipping indexes need a type and a granularity,
-  which a later version will ask for.
+- **ClickHouse** has no index helpers: its data-skipping indexes need a type and a granularity;
+  write `ALTER TABLE … ADD INDEX` in a console.
 - **Copy DDL** is offered where there is a `CREATE TABLE` statement to copy (see
   [Copy DDL](#copy-ddl)).
 - Views, materialized views and schemas have helpers of their own: see
   [Views and schemas](views-schemas.md).
-- On PostgreSQL, SQL Server and DuckDB, the helpers appear only inside the database the data
-  source connects to, which is where their statements run. Browse another database's objects
+- On PostgreSQL, SQL Server and DuckDB, the helpers, **Copy DDL** and **Import CSV…** appear
+  only inside the database the data source connects to, which is where their statements run. Browse another database's objects
   freely, but change them from a data source that connects to it.
 
 ## Review and run
