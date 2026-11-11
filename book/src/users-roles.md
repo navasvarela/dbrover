@@ -7,7 +7,8 @@ SQL, shows it, and runs it only when you click **Execute**, with the same
 [safety levels and confirmations](objects.md#safety-levels-and-colours).
 
 Other engines have no users or roles in the explorer yet: MySQL's `'name'@'host'` accounts and
-SQL Server's logins are planned on their own.
+SQL Server's logins are planned on their own. Nor has Amazon Redshift, which DbRover reaches as
+PostgreSQL: it has no **roles** folder and no role dialogs.
 
 ## The roles folder
 

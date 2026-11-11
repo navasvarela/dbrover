@@ -123,7 +123,7 @@ no server version, no host). Commit one to Git after each release or migration, 
 history is the schema's history; `git diff` shows an added column as one added line.
 
 To save one, right-click a schema in the explorer and choose **Save schema snapshot…**, or use
-**Save a snapshot** beside a live side in a compare tab. The save dialog suggests
+the save button beside a live side in a compare tab ("Save a snapshot of the left side"). The save dialog suggests
 `<schema>.schema.toml`. The status bar says where it was saved, or why it wasn't.
 
 ```toml
