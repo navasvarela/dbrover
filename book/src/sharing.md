@@ -22,7 +22,8 @@ The file is TOML, in the same format as your own `data_sources.toml` (see
 [Where DbRover keeps its files](files.md)), plus a `format_version` and the projects. It is
 readable and diffable, so a team can keep it in a repository.
 
-Paths travel with it: a SQLite or DuckDB file, or a CA file, **next to the exported file** (or
+Paths travel with it: a SQLite or DuckDB file, a CA file, an SSH key file or a Google Cloud
+credentials file **next to the exported file** (or
 in a folder under it) is written relative to it, and one **in your home folder** as `~/…`. Both
 are turned back into full paths on import, so a repository holding the export and its databases works
 wherever it is checked out. Paths with a [placeholder](data-sources.md#placeholders-variable)

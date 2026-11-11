@@ -38,8 +38,8 @@ Don't turn off encryption on a server just for DbRover.
 
 On macOS, the system asks whether DbRover may use the password it saved in your keychain the
 first time DbRover reads it. **Always Allow** stops the questions, but macOS ties that answer to
-the exact program. Because you build DbRover yourself, every rebuild is a new program to macOS,
-and it asks again.
+the exact program. DbRover's builds aren't signed by Apple yet, so each update is a new program
+to macOS, and it asks again; so does each build you make yourself from source.
 
 DbRover reads the password each time it opens a connection: when the explorer connects, when a
 console runs its first statement, and when you test a connection without typing the password.
@@ -49,7 +49,7 @@ To see or delete the saved passwords, open **Keychain Access** and search for `d
 entry's account is the ID of a data source in `data_sources.toml`.
 
 On Linux, DbRover needs a running Secret Service (GNOME Keyring or KWallet) to save passwords.
-Without one, saving a PostgreSQL data source with a password fails with *could not store the
+Without one, saving a data source with a password fails with *could not store the
 password*.
 
 ## A connection takes long, then fails
@@ -88,7 +88,8 @@ source dialog. To start a new database, use **New…** there (see
 
 `data_sources.toml` exists but isn't valid, usually after editing it by hand. DbRover shows the
 error in the explorer and refuses to change the file until it is fixed, so nothing is lost.
-Correct the file (the error says which line), then restart DbRover.
+Correct the file (the error says which line), then switch back to DbRover, which reads it again
+when its window comes to the front.
 
 ## The status bar says the engine stopped
 
@@ -104,9 +105,9 @@ each problem; fix the file and click **Reload**. Everything else in the file sti
 
 ## "actions.toml: N problems" in the status bar
 
-The same for `actions.toml`, `snippets.toml` or `theme.toml`: an entry that couldn't be used was
+The same for `actions.toml`, `snippets.toml`, `theme.toml` or `exports.toml`: an entry that couldn't be used was
 skipped, and the rest of the file applies. Click the message to see each problem (for
-`actions.toml`, on **Settings › Custom actions**), fix the file and click **Reload**. For `theme.toml` it can also be a colour that leaves some text too faint to
+`actions.toml`, on **Settings › Custom actions**; for `exports.toml`, on **Settings › Exports**), fix the file and click **Reload**. For `theme.toml` it can also be a colour that leaves some text too faint to
 read; that colour still applies. See [Actions, snippets and themes](customising.md).
 
 ## A password command fails

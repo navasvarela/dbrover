@@ -12,14 +12,18 @@ The sidebar lists its pages:
   chooses it.
 - **Editor**: how [Format SQL](consoles.md) writes keywords and indents, and which
   [problems](consoles.md) the console points out while you type.
-- **Query history**: how long [the history](history.md) keeps statements.
+- **Query history**: how long [the history](history.md) keeps statements, and how many it keeps
+  for each data source.
 - **Reports**: the limits every [report](reports.md#limits) runs under unless its file sets its
   own, where runs keep their work folders, whether a long run keeps the computer awake, and how
   many runs of each report are kept.
 - **MCP**: what [AI assistants](mcp.md) may do in a project that doesn't say otherwise.
 - **Updates**: whether DbRover checks for a new release when it starts.
-- **Files**: the folder DbRover keeps your settings in, and **Choose…** to keep them elsewhere
-  (see [Choosing the settings folder](files.md#choosing-the-settings-folder)).
+- **Files**: the folder DbRover keeps your settings in and where that choice came from, with
+  **Choose…** to keep them elsewhere and **Use the default folder** to go back (see
+  [Choosing the settings folder](files.md#choosing-the-settings-folder)). It also says whether
+  the folder is in a Git repository, and offers **Add a .gitignore** when it has none (see
+  [Keeping your settings in Git](files.md#keeping-your-settings-in-git)).
 - **Keymap**: every action's keys, from `keymap.toml` (see [Keyboard shortcuts](shortcuts.md)).
 - **Custom actions**: the actions in `actions.toml` (see
   [Actions, snippets and themes](customising.md)).
@@ -32,8 +36,9 @@ how, [AI assistants](mcp.md) may use it. Right-click a project in the explorer a
 
 Type in **Search settings** to find anything on these pages by a word it shows, or one it is
 known by: *dark*, *indent*, *timeout*, *format*. A search lists settings, shortcuts, custom
-actions and projects together, and the sidebar counts what each page has that matches. A
-custom action or a project found by a search has **Open**, which shows its page; click a page
+actions, export formats and projects together, and the sidebar counts what each page has that
+matches. A custom action, an export format or a project found by a search has **Open**, which
+shows its page; click a page
 in the sidebar to leave the search.
 
 ## Where each page saves
@@ -47,7 +52,9 @@ in the sidebar to leave the search.
   changes are kept while you look at other pages, and its name in the sidebar has a dot until
   they are saved or discarded.
 - **Files** changes nothing until you confirm a new folder with **Restart DbRover**; DbRover
-  writes the choice as it quits, in the data folder.
+  writes the choice as it quits, in the data folder. **Add a .gitignore** is the exception: it
+  writes the file at once. While `--config-dir` or `DBROVER_CONFIG_DIR` chooses the folder,
+  **Choose…** and **Use the default folder** are greyed out.
 - **Keymap**, **Custom actions** and **Exports** show what their files hold; you change them by
   editing `keymap.toml`, `actions.toml` and `exports.toml`. At the top of each page are the
   file's name (hover over it for its full path), **Reload**, to read it again after editing it,

@@ -24,8 +24,9 @@ settings folder can also be one you choose; see [Choosing the settings folder](#
 | `actions.toml`, `snippets.toml`, `theme.toml` (settings folder) | Your own actions, snippets and colours, if you wrote any. See [Actions, snippets and themes](customising.md). |
 | `exports.toml` (settings folder) | Your own export formats, if you wrote any. See [Your own export formats](export-formats.md). |
 | `reports/*.toml` (settings folder) | Your reports, one file each, for every project. See [Reports](reports.md). |
-| `.gitignore` (settings folder) | Keeps `history.sqlite` out of Git commits. Written once, when DbRover creates the folder. See [Keeping your settings in Git](#keeping-your-settings-in-git). |
+| `.gitignore` (settings folder) | Keeps `history.sqlite` out of Git commits. Written once, when DbRover creates the folder or you choose one in **Settings › Files**, and never replaced. See [Keeping your settings in Git](#keeping-your-settings-in-git). |
 | `trusted_commands.toml` (data folder) | The command actions, password commands and export programs you chose **Run** for, each as it was then. See [Commands](customising.md#the-first-run), [Password from a command](data-sources.md#password-from-a-command) and [Programs](export-formats.md#programs). |
+| `report-runs/` (data folder) | Each running report's DuckDB file and what it spills, in a folder per run, removed when the run ends; unless **Settings › Reports** picks another **Work folder**. See [Memory and disk](reports.md#memory-and-disk). |
 | `settings_folder.toml` (data folder) | The settings folder you chose in **Settings › Files**, if you chose one. |
 | `app.ron` (data folder) | The window's size and position, the panel layout, the theme you picked, the recent `.sql` files and which file each console tab shows. |
 | `logs/dbrover.YYYY-MM-DD.log` (data folder) | One log file per day. The last seven are kept. |
@@ -101,9 +102,12 @@ read_only = true
 - `mcp_login` is optional, for network engines: `mcp_login = { user = "assistant" }` is the
   user AI assistants sign in as (see [The MCP login](mcp.md#the-mcp-login)). Its password is
   in the keychain.
-- `tls` is optional for PostgreSQL, and `mode` defaults to `prefer`: `disable`, `prefer`,
-  `require` or `verify-full`. `ca_file` is only read with `verify-full`.
-- `read_only` is optional and defaults to `false`. It opens a SQLite file read-only; `safety`
+- `tls` is optional for every server engine: `mode` is `disable`, `prefer`, `require` or
+  `verify-full`, and `ca_file` is only read with `verify-full`. Left out, it is `prefer`, which
+  falls back to an unencrypted connection. The
+  engines that serve TLS on a port of its own (ClickHouse, Redis, MongoDB, Elasticsearch,
+  Cassandra and Trino) don't offer `prefer` in their dialog, which starts at `disable`.
+- `read_only` is optional and defaults to `false`. It opens a SQLite or DuckDB file read-only; `safety`
   is the setting for every engine.
 - `safety` is optional: `normal` (the default, left out), `careful` or `read-only`. See
   [Safety levels](data-sources.md#safety-levels).
