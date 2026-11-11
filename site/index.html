@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DbRover — eleven databases, one native app</title>
-  <meta name="description" content="DbRover is a free, open-source desktop database tool written in Rust for fourteen databases: PostgreSQL, MySQL and MariaDB, SQLite, SQL Server, DuckDB, ClickHouse, Redis and Valkey, MongoDB, Elasticsearch and OpenSearch, Cassandra and ScyllaDB, Amazon DynamoDB, Amazon Athena, Google BigQuery, and Trino, Starburst and Presto. It is native and fast, needs no account, keeps production safe with safety levels, and lets AI assistants in over MCP only as far as you allow.">
+  <title>DbRover — SQL, NoSQL and cloud databases in one native app</title>
+  <meta name="description" content="DbRover is a free, open-source desktop database tool written in Rust for PostgreSQL, MySQL and MariaDB, SQLite, SQL Server, DuckDB, ClickHouse, Redis and Valkey, MongoDB, Elasticsearch and OpenSearch, Cassandra and ScyllaDB, Amazon DynamoDB, Amazon Athena, Google BigQuery, and Trino, Starburst and Presto, and the cloud services that run them. It is native and fast, needs no account, keeps production safe with safety levels, turns queries over several databases into reports, and lets AI assistants in over MCP only as far as you allow.">
   <meta name="color-scheme" content="dark light">
   <meta property="og:title" content="DbRover">
-  <meta property="og:description" content="A free, open-source, native database tool for fourteen databases, from PostgreSQL to Trino, with safety levels and safe access for AI assistants over MCP.">
+  <meta property="og:description" content="A free, open-source, native database tool for SQL, NoSQL and cloud databases, from PostgreSQL to BigQuery, with safety levels, reports, and safe access for AI assistants over MCP.">
   <meta property="og:image" content="https://dbrover.org/assets/brand/social-preview.png">
   <meta property="og:url" content="https://dbrover.org/">
   <meta name="twitter:card" content="summary_large_image">
@@ -32,12 +32,12 @@
   <main id="main">
     <section class="hero" aria-labelledby="hero-title">
       <p class="eyebrow">PostgreSQL · MySQL and MariaDB · SQLite · SQL Server · DuckDB · ClickHouse · Redis and Valkey · MongoDB · Elasticsearch and OpenSearch · Cassandra and ScyllaDB · DynamoDB · Athena · BigQuery · Trino and Presto</p>
-      <h1 id="hero-title">Eleven databases, one native app</h1>
+      <h1 id="hero-title">SQL, NoSQL and cloud databases in one native app</h1>
       <p class="lede">
         DbRover is a native desktop database tool written in Rust: it opens in a moment and stays
-        quick with millions of rows. Safety levels guard production, and AI assistants reach
-        your databases over MCP only as far as you allow. Free, open source, and no account to
-        make.
+        quick with millions of rows. Safety levels guard production, reports gather several
+        databases into one file, and AI assistants reach your databases over MCP only as far as
+        you allow. Free, open source, and no account to make.
       </p>
       <div class="hero-actions">
         <a class="button primary" id="download-button" href="#download"
@@ -231,7 +231,7 @@
             <li>DynamoDB's PartiQL, signed in with your AWS profile, and a guard that asks
               before a statement reads a whole table.</li>
           </ul>
-          <a class="more" href="manual/consoles.html#redis-commands">Redis, MongoDB and Elasticsearch consoles in the manual</a>
+          <a class="more" href="manual/consoles.html#redis-commands">Each database's console in the manual</a>
         </div>
         <figure class="code-card" aria-label="A Redis command, a MongoDB command and an Elasticsearch request">
 <pre><code><span class="c"># Redis, Valkey or Dragonfly</span>
@@ -301,15 +301,17 @@ db.orders.<span class="k">find</span>({status: <span class="s">"open"</span>}).<
         <div class="copy">
           <p class="eyebrow">Connecting anywhere</p>
           <h3>Reach the database where it runs</h3>
-          <p>PostgreSQL, MySQL, MariaDB, SQL Server and Azure SQL, ClickHouse over HTTP, Redis,
-            Valkey and Dragonfly, MongoDB and Atlas, Elasticsearch, Elastic Cloud and OpenSearch,
-            Cassandra and ScyllaDB, and DuckDB and SQLite files.</p>
+          <p>On your laptop, on a server behind SSH, or in the cloud: DbRover connects to the
+            database where it already runs, and signs in the way your team already does.</p>
           <ul>
             <li>SSH tunnels on every server database, through your agent, a key file or a
               password, with host keys checked against <code>known_hosts</code>.</li>
             <li>TLS up to <code>verify-full</code>, with your own CA file and no OpenSSL to
               install.</li>
-            <li><code>${VARIABLE}</code> placeholders in connection settings.</li>
+            <li>A password from the keychain or from a command such as your password manager's,
+              and <code>${VARIABLE}</code> placeholders in connection settings.</li>
+            <li>AWS IAM, Google Cloud and Microsoft Entra ID sign-in, from the sign-in already on
+              your machine, with no cloud secret kept.</li>
             <li>Projects to group data sources, and a file to move them to another machine,
               without their passwords.</li>
           </ul>
@@ -337,6 +339,10 @@ db.orders.<span class="k">find</span>({status: <span class="s">"open"</span>}).<
               to completion, with fields to Tab through.</li>
             <li><code>theme.toml</code> changes the light
               and dark themes' colours.</li>
+            <li><code>exports.toml</code> adds <a href="manual/export-formats.html">export
+              formats of your own</a>, from templates or programs.</li>
+            <li>Keep them in Git: DbRover keeps your comments and order, and picks up a
+              <code>git pull</code> made while it runs.</li>
             <li>On a Mac, the menus are in the menu bar, and text takes the system font and
               accent colour.</li>
           </ul>
@@ -363,7 +369,7 @@ db.orders.<span class="k">find</span>({status: <span class="s">"open"</span>}).<
     </section>
 
     <section class="databases" aria-labelledby="databases-title">
-      <h2 id="databases-title">Eleven databases</h2>
+      <h2 id="databases-title">The databases it speaks</h2>
       <ul class="engine-list">
         <li><span class="engine-logo postgresql" aria-hidden="true"></span>PostgreSQL</li>
         <li><span class="engine-logo mysql" aria-hidden="true"></span>MySQL and MariaDB</li>
@@ -380,7 +386,10 @@ db.orders.<span class="k">find</span>({status: <span class="s">"open"</span>}).<
         <li><span class="engine-logo bigquery" aria-hidden="true"></span>Google BigQuery</li>
         <li><span class="engine-logo trino" aria-hidden="true"></span>Trino, Starburst and Presto</li>
       </ul>
-      <p class="planned">Oracle is planned.</p>
+      <p class="planned">And the services that run them: Amazon RDS, Aurora and Redshift, Cloud SQL,
+        Azure SQL, Synapse and Fabric, Neon, Supabase, ClickHouse Cloud, MongoDB Atlas, Elastic
+        Cloud, Starburst Galaxy and MotherDuck, with Parquet, CSV, Iceberg and Delta files in
+        object storage. Oracle is planned.</p>
     </section>
 
     <section class="download" id="download" aria-labelledby="download-title">
@@ -410,8 +419,6 @@ db.orders.<span class="k">find</span>({status: <span class="s">"open"</span>}).<
           <p>An installer for Windows 10 and 11 on 64-bit Intel and AMD. It installs DbRover for
             you alone, without administrator rights.</p>
           <a class="button primary" href="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/{{files}}-{{version}}-windows-x64-setup.exe">Installer</a>
-          <p>Or with winget:</p>
-          <pre><code>winget install DbRover.DbRover</code></pre>
           <p class="small">Not signed yet, so SmartScreen blocks the first run:
             <a href="manual/install.html#windows">More info, then Run anyway</a>.</p>
         </article>
