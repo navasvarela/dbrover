@@ -2343,7 +2343,7 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   editor shows in a clean tab and raises the banner in an unsaved one.
 
 Reports over sources of terabytes, and tools to see and tune a report's performance: planned in
-[Reports at scale](reports-at-scale.md); RS1 built on 2026-11-09, RS2 and RS3 on 2026-11-10, RS4 started on 2026-11-11, the rest not scheduled. Terabytes stay in their
+[Reports at scale](reports-at-scale.md); RS1 built on 2026-11-09, RS2 and RS3 on 2026-11-10, RS4 on 2026-11-11, the rest not scheduled. Terabytes stay in their
 engines; the desktop combines reduced results. The tooling comes first, so the rest is chosen by
 measurement.
 
@@ -2516,22 +2516,88 @@ measurement.
   Settings › Reports has **A run without progress for**, **Keep the computer awake**, **Disk a
   run may use** and **Work folder**. From a terminal, `dbrover report run generated` does the
   same. Not checked on Windows, where `max_disk` alone bounds a run and nothing keeps it awake.
-- **RS4 — Partitions (M):** started on 2026-11-11, in one stack of seven layers; what today's
-  code changes in the plan is in
+- **RS4 — Partitions (M):** built on 2026-11-11, in one stack of seven layers; what today's
+  code changed in the plan is in
   [RS4 against today's code](reports-at-scale.md#rs4-against-todays-code). A source read in
   ranges of time or key, some at once, and a run combined and written one range at a time:
-  - **RS4a — The plan:** RS4's decisions against the code as of 0.32.0.
-  - **RS4b — A partitioned source:** `partition` on a source, its ranges bound as `:part_from`
-    and `:part_to`, read one after another into its table, `max_rows_per_part`, and the cost
-    guard judging the whole period.
-  - **RS4c — Ranges at once:** `parallel`, each range's numbers in the history, and *month 7 of
-    12* in the tab and on `--progress`.
-  - **RS4d — A partitioned run:** `[report] partition`, a workspace a range, outputs a file per
-    range or appended (CSV and Excel), every file put in place at the end.
-  - **RS4e — Appended Parquet:** a part a range, joined in order by DuckDB at the end.
-  - **RS4f — Range skew:** ranges as segments of their lanes in the Profile, and the
+  - **RS4a — The plan:** built; RS4's decisions against the code as of 0.32.0.
+  - **RS4b — A partitioned source:** built; `partition` on a source, its ranges bound as
+    `:part_from` and `:part_to`, read one after another into its table, its `timeout` per
+    range, `max_rows_per_part`, and the cost guard judging the whole period first.
+  - **RS4c — Ranges at once:** built; `parallel`, each range's numbers in a `part_done` event
+    and the history, and *month 7 of 12* in the tab and on `--progress`.
+  - **RS4d — A partitioned run:** built; `[report] partition`, a DuckDB a range, outputs a file
+    per range or appended (CSV and Excel), every file put in place at the end, the history
+    summing each step over its ranges.
+  - **RS4e — Appended Parquet:** built; a part a range, joined in order by DuckDB at the end.
+  - **RS4f — Range skew:** built; ranges as bars and a strip of marks in the Profile, and the
     `range-skew` hint.
-  - **RS4g — Manual and demo note,** and the exit test.
+  - **RS4g — Manual, demo note and the exit test:** built; the manual's
+    [Partitions](../book/src/reports.md#partitions), and a second ignored test in
+    `report_at_scale.rs`.
+
+  **Exit:** a year of generated events, read by month, writes a Parquet file per month with the
+  combine's memory that of one month: `crates/dbrover-app/tests/report_at_scale.rs`'s
+  `writes_a_year_of_events_a_month_at_a_time_in_a_months_memory`, through the real worker,
+  passes: 31,536,000 events in twelve monthly statements, twelve Parquet files, each month's
+  DuckDB at 236 to 254 MiB against 250 MiB for January alone, and the worker at 256 MiB against
+  255 MiB (the numbers are in [RS4's exit test](reports-at-scale.md#rs4s-exit-test)). Run it
+  with `cargo test -p dbrover-app --test report_at_scale writes_a_year -- --ignored
+  --nocapture`, about six minutes in a debug build; `DBROVER_RS4_EVERY_SECONDS=60` makes it
+  seconds' work.
+
+  **RS4 demo note:** with the in-memory DuckDB data source `generated` of RS3's demo note, save
+  this as `reports/events-by-month.toml`:
+
+  ```toml
+  [report]
+  name = "Events by month"
+  params = { since = "date", until = "date" }
+  partition = { from = ":since", to = ":until", every = "1 month" }
+
+  [[source]]
+  id = "events"
+  data_source = "generated"
+  query = """
+  SELECT range AS id, make_timestamp(range * 1000000) AS ts,
+         'customer ' || (range / 60 % 50) AS customer
+  FROM range(CAST(epoch(CAST(:part_from AS TIMESTAMP)) AS BIGINT),
+             CAST(epoch(CAST(:part_to AS TIMESTAMP)) AS BIGINT), 60)
+  """
+  max_rows = 3000000
+
+  [combine]
+  query = """
+  SELECT customer, date_trunc('day', ts) AS day, count(*) AS events
+  FROM events GROUP BY ALL ORDER BY day, customer
+  """
+
+  [[output]]
+  format = "parquet"
+  file = "events-{part_from:%Y-%m}.parquet"
+
+  [[output]]
+  format = "csv"
+  file = "events.csv"
+  ```
+
+  **Run** it with `since` 2025-01-01 and `until` 2026-01-01. The combine step's line says
+  *month 3 of 12* as it goes; the folder gets `events-2025-01.parquet` to
+  `events-2025-12.parquet` and one `events.csv` with every month's rows under one header, all
+  put in place at the end. **Past runs** shows each step added up over the months, and
+  **Profile** a bar a month on each lane with a strip of marks under it; hover one for its
+  bounds. Change `events.csv` to `events.parquet` for one Parquet file of the year, joined from
+  the months. For a partitioned source instead, move `partition` from `[report]` into the
+  `[[source]]` with `parallel = 3`, and name the Parquet file `events.parquet`: the source's line
+  says *months 1–3 of 12* while three are read, and the run's summary *12 ranges*.
+  `max_rows_per_part = 44000` stops it at January, the first month of 31 days, naming the
+  range. For `range-skew`, make July far heavier than the other months, with
+  `CASE WHEN :part_from = '2025-07-01' THEN 1 ELSE 60 END` as `range`'s step: once July takes
+  ten seconds or more (a debug build, or a larger year), **Past runs** names it, and the
+  Profile's July bar is the long one. From a terminal, `dbrover report
+  run events-by-month -p since=2025-01-01 -p until=2026-01-01 --progress` shows *Month 3 of 12*
+  on its line and prints a line a range. Not checked on Windows, where the worker's memory isn't
+  measured, nor against a real warehouse's cost guard over several ranges.
 - **RS5 — Resume:** large runs keep a work folder and resume after a crash or a kill from the
   last finished range or job page; pause; incremental sources with a lookback.
 - **RS6 — Columnar sources:** Arrow batches from engines that give them (DuckDB, ClickHouse,
