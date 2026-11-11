@@ -34,7 +34,9 @@ Azure's warehouses speak SQL Server's protocol, so they are SQL Server data sour
   `.datawarehouse.fabric.microsoft.com`, and the database the item's name. Fabric signs in only
   with **Microsoft Entra ID**; the dialog won't save it with a password.
 
-DbRover sees from the server which warehouse it is and shows it as the server. Each keeps only
+DbRover sees from the server which warehouse it is and shows it as the server. A Fabric item
+says the same about itself as a serverless pool, so DbRover tells it by its
+`.datawarehouse.fabric.microsoft.com` host: give that host, not a name of your own. Each keeps only
 part of SQL Server's catalog, and the explorer shows only what it has:
 
 | | Synapse dedicated | Synapse serverless | Fabric |
@@ -51,11 +53,16 @@ also suggests Fabric's own column types. A serverless pool's tables are external
 files, which the helpers don't write. Fabric's SQL analytics endpoint refuses any change to its
 tables, with its own message.
 
+## Blob Storage
+
+Files in an Azure Blob Storage container are read by a DuckDB data source, signed in with Entra
+ID too: see [Object storage and MotherDuck](object-storage.md).
+
 ## Not tried against Azure yet
 
 Built and tested without an Azure account. What DbRover shows for each warehouse comes from
 Microsoft's documentation, tried on SQL Server standing in for each. To try by hand: Azure
 Database for PostgreSQL and MySQL with a password and with Entra ID; Azure SQL from outside
 Azure and from an Azure virtual machine (the redirect); a Synapse dedicated and a serverless
-pool; and a Fabric warehouse and SQL analytics endpoint, each browsed, searched and given a
-**New table** where it takes one.
+pool; and a Fabric warehouse and SQL analytics endpoint, each browsed and given a **New table**
+where it takes one.

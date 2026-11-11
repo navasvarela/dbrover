@@ -18,12 +18,14 @@ source › Amazon Web Services › Amazon Athena**.
 | --- | --- | --- |
 | Sign in with | AWS profile | **AWS profile**, or **Local emulator** for LocalStack's Athena. |
 | Profile | AWS's default | A profile of your AWS files. Empty: AWS's default chain. |
+| Endpoint | none | With **Local emulator** only: LocalStack's address, such as `http://localhost:4566`. |
 | Region | the profile's | Such as `eu-west-1`. |
 | Workgroup | `primary` | The workgroup queries run in. It may say where results go, and limit what a query scans. |
 | Catalog | `AwsDataCatalog` | The catalog unqualified names resolve in: the Glue Data Catalog, or a federated one. |
 | Database | `default` | The database unqualified names resolve in. |
 | Output location | the workgroup's | Where results go in S3 (`s3://bucket/prefix/`), for a workgroup that names no place of its own. A workgroup that enforces its settings ignores it. |
 | Stop queries above | no limit | In GB scanned; see [What a query costs](#what-a-query-costs). |
+| MCP profile | none | Another AWS profile for [AI assistants](mcp.md) to sign in as. Empty: the data source isn't served to them. |
 
 **Test connection** reads the workgroup: it says which engine runs your queries and, when the
 workgroup limits what a query scans, that limit ("Athena engine version 3, eu-west-1, the
@@ -97,7 +99,7 @@ Add a **Trino / Presto** data source, or **Starburst Galaxy** under **Other clou
 | --- | --- | --- |
 | Host, Port | `localhost`, `8080` | The coordinator. HTTPS is usually on 443 (Starburst Galaxy) or 8443. |
 | Catalog | none | The catalog a console starts in. Empty: names must say their catalog until `USE` picks one. |
-| User | `trino` | Trino asks for a user on every request. On Starburst Galaxy it is your email and a role: `ada@example.com/accountadmin`. |
+| User | `trino` | Trino asks for a user on every request. On Starburst Galaxy it is your email and a role: `ada@example.com/accountadmin`. A suspended Galaxy cluster starts on the first query, which can take a minute. |
 | Password | none | Sent only over HTTPS: a password with TLS `disable` is refused, as Trino would refuse it. |
 | TLS | `disable` | `require` or `verify-full` for HTTPS. |
 | Schema | none | The schema a console starts in. |
@@ -108,7 +110,7 @@ An SSH tunnel works as for any server.
 ### The explorer and the console
 
 The explorer lists the coordinator's catalogs (Trino's own `system` catalog is hidden unless
-**System** is ticked), then each catalog's schemas, tables and views, and columns, from the
+the explorer's eye button, **Show system schemas and tables**, is on), then each catalog's schemas, tables and views, and columns, from the
 catalog's `information_schema`. **Open data** runs `SELECT * FROM catalog.schema.table LIMIT
 1000`; **Show definition** runs `SHOW CREATE TABLE` or `SHOW CREATE VIEW`.
 

@@ -13,11 +13,13 @@ Google Cloud › BigQuery**.
 | Field | Default | Notes |
 | --- | --- | --- |
 | Sign in with | Google Cloud | **Google Cloud**: Application Default Credentials, as `gcloud auth application-default login` writes them, or the file `GOOGLE_APPLICATION_CREDENTIALS` names ([Cloud sign-in](cloud.md#google-cloud)). **Credentials file**: a service account's key file of this data source's own. **Emulator**: no sign-in, for the BigQuery emulator. |
+| Endpoint | none | With **Emulator** only: the emulator's address, such as `http://localhost:9050`. |
 | Project | required | The project queries run in and are billed to. It is listed first in the explorer. |
 | Dataset | none | The dataset unqualified table names resolve in. |
 | Location | BigQuery's choice | Where queries run (`US`, `EU`, `europe-west2`, …). Empty: BigQuery picks the location of the tables a query reads. |
 | Other projects | none | Projects to show in the explorer besides yours, separated by commas, such as `bigquery-public-data`, whose public datasets Google's own listing never shows. |
 | Ask above | 1 GB | In GB scanned; see [What a query costs](#what-a-query-costs). Empty: no limit. |
+| MCP credentials file | none | Another credentials file for [AI assistants](mcp.md) to sign in with. Empty: the data source isn't served to them. |
 
 Each field takes `${NAME}` placeholders. In `data_sources.toml` the project is written
 `project_id`, as Google names it, since `project` is the data source's own key.

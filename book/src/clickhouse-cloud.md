@@ -7,7 +7,8 @@ one](cloud-services.md#adding-one)), and copy the host and password from the ser
 answers only over HTTPS, with certificates from a public authority.
 
 A service that has gone idle starts again on the first connection, which can take many
-seconds; **Test connection** waits for it.
+seconds. **Test connection**, like every connection, waits up to 15 seconds: if a service
+takes longer to wake, try again once it has.
 
 ClickHouse Cloud behaves as ClickHouse does: the explorer, consoles, the
 [progress line](cloud.md#seeing-a-statement-run) and cancelling all work the same.
