@@ -11,8 +11,8 @@ from the latest release's **Assets**.
 | Debian, Ubuntu and derivatives | `dbrover_<version>_amd64.deb` |
 | Windows 10 or 11, 64-bit Intel or AMD | `dbrover-<version>-windows-x64-setup.exe` |
 
-Or install it with your system's package manager: [Homebrew](#with-homebrew) on macOS, or
-[winget](#with-winget) on Windows.
+On macOS you can also install it with [Homebrew](#with-homebrew). A winget package for Windows
+is on its way; until it is accepted, use the installer above.
 
 ## macOS
 
@@ -74,17 +74,6 @@ warning. On Windows 11 with Smart App Control switched on (in **Windows Security
 control**), Windows may block the unsigned installer with no **Run anyway** at all, and DbRover
 can't get round that until it is signed. To remove DbRover, use **Settings › Apps › Installed apps**.
 Saved passwords go to the Windows Credential Manager.
-
-### With winget
-
-In a terminal:
-
-```powershell
-winget install DbRover.DbRover
-```
-
-winget downloads the same installer and runs it for your user, as above. DbRover then updates
-itself (see [Updates](#updates)); `winget upgrade DbRover.DbRover` works too.
 
 ## Check the download and the version
 
@@ -196,6 +185,10 @@ For contributors, or to run the latest unreleased code. You need:
 - **Rust 1.95 or newer**, installed with [rustup](https://rustup.rs). Check with
   `rustc --version`.
 - **Git**, to fetch the source.
+- **A C and C++ compiler**: Xcode's command line tools on macOS (`xcode-select --install`),
+  `build-essential` on Debian or Ubuntu, or Visual Studio's C++ build tools on Windows. A
+  build from source compiles DuckDB's engine along with DbRover, so the first build takes several
+  minutes longer; later ones reuse it.
 - On **Linux**, the development headers for the windowing system. On Debian or Ubuntu:
 
   ```bash
@@ -220,13 +213,15 @@ cargo install --path crates/dbrover-app
 
 ![DbRover on first launch](images/first-launch.png)
 
-On first launch the explorer is empty ("No data sources yet") and the Welcome tab offers three
-things to do:
+On first launch the explorer is empty ("No data sources yet. Add one with +.") and the Welcome
+tab offers three things to do:
 
-- **New data source** — add a connection to a database. See [Data sources](data-sources.md).
+- **New data source** — a menu of the databases DbRover connects to; choose one to add a
+  connection to it. See [Data sources](data-sources.md).
 - **New query console** — open a console on a data source. It is greyed out until you have
   one.
-- **Open the manual** — opens this manual in your browser.
+- **Open the manual** — opens this manual in your browser, as does **Read the manual** in the
+  **New to DbRover?** box under them.
 
 The log console under the Welcome tab shows `engine started`, and the status bar reads
 `Engine running · 0 connected`. If it says the engine is stopped, see

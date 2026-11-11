@@ -252,8 +252,8 @@ Many databases only accept connections from inside their own network, through a 
 (or *bastion*) you reach with SSH. Tick **Connect through an SSH server** and DbRover opens an
 SSH tunnel for you before connecting: no `ssh -L` to run first, and nothing to install. Every
 server engine has it: PostgreSQL, MySQL and MariaDB, SQL Server, ClickHouse, Redis,
-Elasticsearch and OpenSearch, Cassandra and ScyllaDB, and MongoDB with the **Server** form (a
-connection string may name several servers, or none). Through a tunnel, a Cassandra or ScyllaDB
+Elasticsearch and OpenSearch, Cassandra and ScyllaDB, Trino, and MongoDB with the **Server**
+form (a connection string may name several servers, or none). Through a tunnel, a Cassandra or ScyllaDB
 data source reaches every node of the cluster through the node it names.
 
 ![A PostgreSQL data source behind a bastion, signing in with a key file](images/ssh-data-source-dialog.png)
@@ -369,8 +369,8 @@ Finder or the Dock doesn't see what your shell profile sets; start it from a ter
 
 ## Passwords and the keychain
 
-PostgreSQL, MySQL and SQL Server passwords are stored in your operating system's credential
-store: the Keychain on
+Passwords, API keys and tokens, for every engine that has one, are stored in your operating
+system's credential store: the Keychain on
 macOS, Credential Manager on Windows, the Secret Service (GNOME Keyring, KWallet) on Linux.
 Each entry has the service name `dbrover` and, as its account, the data source's ID, a long
 string that never changes even if you rename the data source.
@@ -403,8 +403,9 @@ minutes or an hour, and a password in 1Password or Vault belongs there, not in a
 For RDS, Cloud SQL and Azure, [Sign in with](cloud.md#signing-in-with-a-cloud-account) a cloud
 account does this without a command; a command covers everything else.
 Tick **Password from a command** and DbRover runs a program on every connection, and its output
-is the password. Every server engine has it: PostgreSQL, MySQL and MariaDB, SQL Server and
-ClickHouse.
+is the password. Every server engine has it: PostgreSQL, MySQL and MariaDB, SQL Server,
+ClickHouse, Redis, MongoDB, Elasticsearch and OpenSearch (for the password or the API key),
+Cassandra and ScyllaDB, and Trino.
 
 **Password command** takes the program, then each argument, **one per line**. There is no shell,
 so nothing is quoted: a line is one argument, spaces and all, and `|`, `>` or `$(…)` mean nothing
@@ -460,9 +461,11 @@ Right-click a data source in the explorer for:
 | **Open saved console** | Reopens a console you closed, by its file name. Shown when there are any. |
 | **Diagrams** | Reopens one of the data source's saved ER diagrams; see [ER diagrams](diagrams.md#diagrams-are-saved). Shown when there are any. |
 | **New › Schema…** | Creates a database, on MySQL, MariaDB and ClickHouse, whose schemas are databases. See [Views and schemas](views-schemas.md#new-schema). |
+| **New › User…**, **New › Role…** | Creates a role that can log in, or one that can't, on PostgreSQL. See [Users and roles](users-roles.md). |
 | **Edit…** | Opens the dialog with the saved settings. |
 | **Move to project ›** | Puts the data source in a project, in **No project**, or in a new project. See [Projects](explorer.md#projects). |
 | **Delete…** | Asks for confirmation, then removes the data source and deletes its saved password. |
+| Your actions | [Custom actions](customising.md#actions) that apply to data sources, at the end of the menu. |
 
 Hover over a data source to see its driver, where it connects to and its connection state. The
 dot after its name shows the state of the explorer's connection: amber while connecting, green

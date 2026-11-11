@@ -2,12 +2,13 @@
 
 # DbRover
 
-**Eleven databases, one native app.**
+**SQL, NoSQL and cloud databases in one native app.**
 
-DbRover is a desktop database tool written in Rust. It connects to eleven databases today:
-PostgreSQL, SQLite, MySQL and MariaDB, SQL Server, DuckDB, ClickHouse, Redis and Valkey (with
-Dragonfly), MongoDB, Elasticsearch and OpenSearch, Cassandra and ScyllaDB, and Amazon
-DynamoDB, and support for Oracle is planned. It is a
+DbRover is a desktop database tool written in Rust. It connects to PostgreSQL, SQLite,
+MySQL and MariaDB, SQL Server, DuckDB, ClickHouse, Redis and Valkey (with Dragonfly), MongoDB,
+Elasticsearch and OpenSearch, Cassandra and ScyllaDB, Amazon DynamoDB, Amazon Athena, Google
+BigQuery, and Trino, Starburst and Presto, and the cloud services that run them; support for
+Oracle is planned. It is a
 learning project first and a personal daily driver second: the goal is a tool small enough to
 understand end to end and easy to bend to my own workflow.
 

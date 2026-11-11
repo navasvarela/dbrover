@@ -31,7 +31,9 @@ On Linux and Windows, read Ctrl wherever this page says ⌘.
 | ⇧⌘C | Copy the selected cells with their column names | no text field has focus |
 
 Console shortcuts are taken before the editor sees them, so ⌘↵ runs a statement instead of
-inserting a new line. **History**, **Commit** and **Rollback** have no shortcut by default.
+inserting a new line. **History**, **Commit** and **Rollback** have no shortcut by default, nor do the grid's
+**Copy as** formats (`grid.copy-as.csv`, `.tsv`, `.markdown`, `.json`, `.jsonl`, `.html`,
+`.sql-insert` and `.sql-update`); give any of them one in `keymap.toml`.
 
 On a Mac the menu bar adds the keys every Mac app has: ⌘Q quits, ⌘H hides DbRover, ⌥⌘H hides
 the other apps, ⌘M minimizes the window and ⌃⌘F enters full screen. They aren't in
@@ -91,5 +93,21 @@ The SQL editor and the other text fields use the usual editing keys:
 
 ## Dialogs
 
-**Esc** closes the data source dialog, the delete confirmation and the "Run anyway?" check
-without doing anything.
+**Esc** closes any dialog without doing anything: the data source dialog, a delete
+confirmation, the "Run anyway?" check, a password prompt, and the others.
+
+## Fixed keys
+
+A few keys can't be changed in `keymap.toml`:
+
+| Key | Where | What it does |
+| --- | --- | --- |
+| ↑, ↓ | The completion list | Moves through the suggestions |
+| ↵, Tab | The completion list | Accepts the suggestion |
+| Esc | The completion list | Closes it |
+| Tab, ⇧Tab | A [snippet](customising.md#snippets)'s fields | Moves to the next or the previous field |
+| Esc | A snippet's fields | Leaves them |
+| ↵ | Editing a grid cell | Keeps the value |
+| Esc | Editing a grid cell | Cancels the edit |
+| ↵, ⇧↵ | The find bar | Finds the next or the previous match |
+| Esc | The find bar | Closes it |
