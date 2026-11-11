@@ -47,7 +47,8 @@ run = false
   - `grid.selection`, the grid's selected cells, acted on once;
   - `grid.row`, the grid's selected rows, acted on once each.
 - **`drivers`** limits it to some databases: `postgres`, `sqlite`, `mysql`, `sqlserver`,
-  `duckdb`, `clickhouse`, `redis`. Leave it out for every one.
+  `duckdb`, `clickhouse`, `redis`, `mongodb`, `elasticsearch`, `cassandra`, `dynamodb`,
+  `athena`, `bigquery`, `trino`. Leave it out for every one.
 - **`run = false`** opens the SQL in a new console for you to edit and run. Otherwise it runs at
   once.
 
@@ -194,8 +195,8 @@ and it asks again. **Cancel**, or Esc, runs nothing.
 
 **Settings › Custom actions** says of each command whether it is trusted or asks before it next
 runs.
-DbRover keeps what you trusted in `trusted_commands.toml`, in its window state folder rather
-than beside `actions.toml` (see [Where DbRover keeps its files](files.md)). So an `actions.toml`
+DbRover keeps what you trusted in `trusted_commands.toml`, in its data folder rather than
+beside `actions.toml` (see [Where DbRover keeps its files](files.md)). So an `actions.toml`
 you copy from someone, or sync from another machine, still asks before each of its commands
 first runs. Delete an entry, or the file, to be asked again.
 
@@ -247,7 +248,7 @@ The syntax is the one other editors use, so snippets can be copied from them: `$
 `$1` for a field, `$0` for where the cursor ends, and `\$`, `\}` and `\\` for the characters
 themselves. A `$` that starts no field, as in PostgreSQL's `$$`, stays as written; write `\$1`
 for a positional parameter. Fields inside fields aren't supported. `trigger` takes letters,
-digits and `_`; `description` and `drivers` are optional.
+digits and `_`; `description` and `drivers` (the same names as for actions) are optional.
 
 ## Themes
 
