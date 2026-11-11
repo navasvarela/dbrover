@@ -2343,7 +2343,7 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   editor shows in a clean tab and raises the banner in an unsaved one.
 
 Reports over sources of terabytes, and tools to see and tune a report's performance: planned in
-[Reports at scale](reports-at-scale.md); RS1 built on 2026-11-09, RS2 and RS3 on 2026-11-10, the rest not scheduled. Terabytes stay in their
+[Reports at scale](reports-at-scale.md); RS1 built on 2026-11-09, RS2 and RS3 on 2026-11-10, RS4 started on 2026-11-11, the rest not scheduled. Terabytes stay in their
 engines; the desktop combines reduced results. The tooling comes first, so the rest is chosen by
 measurement.
 
@@ -2516,8 +2516,22 @@ measurement.
   Settings › Reports has **A run without progress for**, **Keep the computer awake**, **Disk a
   run may use** and **Work folder**. From a terminal, `dbrover report run generated` does the
   same. Not checked on Windows, where `max_disk` alone bounds a run and nothing keeps it awake.
-- **RS4 — Partitions:** a source read in ranges of time or key, some at once, and a run
-  combined and written one range at a time.
+- **RS4 — Partitions (M):** started on 2026-11-11, in one stack of seven layers; what today's
+  code changes in the plan is in
+  [RS4 against today's code](reports-at-scale.md#rs4-against-todays-code). A source read in
+  ranges of time or key, some at once, and a run combined and written one range at a time:
+  - **RS4a — The plan:** RS4's decisions against the code as of 0.32.0.
+  - **RS4b — A partitioned source:** `partition` on a source, its ranges bound as `:part_from`
+    and `:part_to`, read one after another into its table, `max_rows_per_part`, and the cost
+    guard judging the whole period.
+  - **RS4c — Ranges at once:** `parallel`, each range's numbers in the history, and *month 7 of
+    12* in the tab and on `--progress`.
+  - **RS4d — A partitioned run:** `[report] partition`, a workspace a range, outputs a file per
+    range or appended (CSV and Excel), every file put in place at the end.
+  - **RS4e — Appended Parquet:** a part a range, joined in order by DuckDB at the end.
+  - **RS4f — Range skew:** ranges as segments of their lanes in the Profile, and the
+    `range-skew` hint.
+  - **RS4g — Manual and demo note,** and the exit test.
 - **RS5 — Resume:** large runs keep a work folder and resume after a crash or a kill from the
   last finished range or job page; pause; incremental sources with a lookback.
 - **RS6 — Columnar sources:** Arrow batches from engines that give them (DuckDB, ClickHouse,

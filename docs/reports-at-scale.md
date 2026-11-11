@@ -1,7 +1,7 @@
 # Reports at scale
 
 Status: **RS1 built** (2026-11-09); **RS2 built** (2026-11-10); **RS3 built** (2026-11-10);
-**the rest planned, not scheduled.** Proposed on
+**RS4 started** (2026-11-11); **the rest planned, not scheduled.** Proposed on
 2026-11-04, to come after RP5 (PRQL) unless the order changes. Each milestone's decisions are confirmed when it starts, as in
 [Reports](reporting.md) and [Cloud and big data](cloud-data.md).
 
@@ -643,9 +643,50 @@ runs the small cases.
   `memory_limit` and writes Parquet, inside `max_disk`, with peak memory within the computed
   bound.
 - **RS4 — Partitions:** a source's ranges with `parallel`, a run's partitions with outputs
-  appended or one file each, `max_rows_per_part`, range skew in the profile and its hint.
+  appended or one file each, `max_rows_per_part`, range skew in the profile and its hint. What
+  today's code changes in this is in [RS4 against today's code](#rs4-against-todays-code).
+  - RS4a — Plan. Settles the decisions in that section. Docs only.
+  - RS4b — A partitioned source, one range at a time: `partition` on a `[[source]]` read and
+    planned, its ranges computed when the values are checked, each range a statement with
+    `:part_from` and `:part_to` bound, appended to the source's one table, under the source's
+    `timeout` per range and `max_rows_per_part`; the cost guard judges the whole period before
+    the first range. *Exit:* a source read by month over a year of generated rows loads the same
+    table as the same source unpartitioned, in twelve statements; a month past
+    `max_rows_per_part` stops the run naming the month. *Tests:* reading and planning problems,
+    table-driven (types, reserved names, refused combinations); the ranges of time and key,
+    table-driven (month ends, leap days, a last range cut short, too many ranges); runs over a
+    fake opener that records each statement's bound values; the statement the cost guard
+    estimates.
+  - RS4c — Ranges at once: `parallel` statements of one source feeding its one queue; each
+    range's numbers in a `part_done` event and in the source's entry in the history; *month 7 of
+    12* in the tab and on `--progress`'s line. *Exit:* with `parallel = 3`, never more than three
+    of a source's twelve statements are open at once, and the table is the same as with one.
+    *Tests:* a fake opener that counts open statements; events and history of each range; the
+    progress line's words.
+  - RS4d — A partitioned run: `[report] partition`, each range run on its own (sources loaded,
+    the database locked, the combine query run) in a workspace made for it and removed after
+    it; outputs a file per range when the file name says `part_from` or `part_to`, appended to
+    one file otherwise (CSV and Excel); the preview and the charts over every range; every file
+    put in place together when the last range is done. *Exit:* a report over a quarter by month
+    writes the same CSV as the same report unpartitioned over the quarter (the guard
+    [Risks](#risks) asks for), and a Parquet file per month. *Tests:* the run's ranges and file
+    names, table-driven, with names two ranges would share; partitioned against unpartitioned
+    runs on generated data; a failed range leaving no file; the workspace of each range gone.
+  - RS4e — Appended Parquet: each range's rows copied to a part file in the staging folder, and
+    the parts joined in order into the output's file by DuckDB once the last range is done.
+    *Exit:* a report by month appending to one Parquet file writes the rows, in order, of the
+    same report unpartitioned. *Tests:* order and rows of the joined file; `max_size` on it.
+  - RS4f — Range skew in the profile: a partitioned source's ranges, and a partitioned run's,
+    as segments of their lanes in the Profile's timeline, each with its numbers on hover; the
+    `range-skew` hint. *Exit:* a run whose seventh month takes six times the median month shows
+    it as the long segment, and the hint names it. *Tests:* the hint's rule, table-driven at its
+    thresholds; the timeline's segments from a kept run.
+  - RS4g — Manual, demo note and the exit test.
   **Exit:** a year of generated events, read by month, writes a Parquet file per month with the
-  combine's memory that of one month.
+  combine's memory that of one month: `crates/dbrover-app/tests/report_at_scale.rs` gains an
+  ignored test that runs a partitioned report through the real worker and checks twelve files,
+  every row, and that each month's DuckDB peak and the worker's peak memory stay within those
+  of the same report run over its largest month alone.
 - **RS5 — Resume:** work folders kept for large runs, the manifest, **Resume**, **Pause** and
   **Discard**, `--resume`; job ids and page tokens for C0's job engines; `as_of`; then
   incremental sources and their cache.
@@ -774,6 +815,31 @@ As built, five more facts of DuckDB 1.5.6, each pinned by a test:
   under 1 GiB with 30 million rows. So the memory bound counts DuckDB at twice
   `memory_limit`: 2 × `memory_limit` + the queues + the worker's own, which the exit test
   measures as the peak of the same report over 1,000 rows (about 70 MB).
+
+## RS4 against today's code
+
+Settled on 2026-11-11, when RS4 started, by reading the plan against the code as of 0.32.0
+(877f3c7). Where the code changes the plan, the plan above still says what it said; this section
+wins. Hash partitions and state carried across ranges stay out, as [Recommended
+path](#recommended-path) says.
+
+| The plan said | Today's code | RS4 does |
+| --- | --- | --- |
+| `partition = { from = ":since", to = ":until", every = "1 month", parallel = 2 }`, ranges of time or of an integer key, never guessed from the data. | Parameters are typed (`date`, `timestamp`, `integer` and others), checked in `Plan::values`; file names already format dates with `jiff` (`{since:%Y-%m}`). | `from` and `to` are each a parameter (`":since"`) or a literal: a TOML date, a TOML local date-time, or an integer; both of one kind. `every` is a span of `jiff`'s friendly form for dates (`"1 day"`, `"1 week"`, `"1 month"`, `"1 year"`: no hours) and timestamps (hours and minutes too), and a positive integer for keys. A range is half open, `[part_from, part_to)`; each bound is `from` plus *k* × `every` counted from `from`, so months that start on the 31st keep their day where a month has it, and the last range is cut at `to`. A `from` not before `to`, or more than 10,000 ranges, is a problem of the values, named before anything runs. |
+| Each range binds `:part_from` and `:part_to`, as a lookup binds its list; neither can be one of `params`. | A lookup's list is written into the query's text in every language; the report's own parameters are bound by SQL drivers and written in as literals for the others (`statement.rs`). | The range's bounds go as the report's own parameters go: bound by SQL drivers, of the range's type (date, timestamp or integer), and written in as literals in other languages. A partitioned source's query uses at least one of them, else partitioning only repeats it; `[report] params` naming either is a problem. |
+| Each statement stays under the engine's and the source's timeout; `max_rows_per_part` holds per range. | A source's `timeout` runs from its first statement, every batch of a lookup inside it. | A partitioned source's `timeout` bounds each range's statement on its own. `max_rows` and `max_bytes` bound the whole table, `max_rows_per_part` each range; it is a source key with no default in Settings › Reports, since it is the report's own knowledge of its data, and it is a problem on a source that isn't partitioned. |
+| The cost guard judges a source's estimate across all its ranges. | The engine asks the cost guard before each statement (`check_cost` in the engine's `report_source.rs`); DynamoDB, Athena and BigQuery have one. | The first range's statement is judged as the whole period: the guard estimates the query with `:part_from` and `:part_to` bound to `from` and `to`, whose rows are every range's. The others aren't judged again, and don't start before the first is open. BigQuery's minimum of 10 MB a statement isn't counted once a range; the bytes each range scanned are in its numbers (RS4c). |
+| `parallel` statements at once where the engine has the capacity, one at a time by default. | A source's reader and loader share its task and a queue of four pages (RS3c); each statement opens its own connection. | `parallel`, 1 to 16, default 1: that many statements of the source run at once, each on its own connection, all feeding the source's one queue and table. Ranges start in order; the table's rows are in no particular order, as a SQL table's never are. The worker's memory bound counts `parallel` + 5 pages for such a source instead of RS3c's six. |
+| (Not said: a lookup and a partition on one source.) | A lookup sends a statement a batch of values. | A source has a lookup or a partition, not both: both multiply statements, and no report the plan is checked against needs them together. |
+| Two kinds of partition, which a report can combine. | — | Not in one source: a partitioned run's sources aren't partitioned themselves in RS4, since a source read by day inside a run by month needs its range bound to the run's; that waits for a report that needs it. A partitioned source in a report without `[combine]` is a problem pointing at `[report] partition`, which reads one source a range at a time with no combine step. |
+| A partitioned run runs the whole report once per range, the combine step on one range at a time. | Once its sources are in, the run's DuckDB is locked (`lock_configuration`), which can't be undone (RP2, RS3d). | Each range opens a workspace of its own in the run's work folder, loads the sources, locks it, runs the combine query, and closes and removes it before the next range starts: a range's memory, spill and file are its own. Every query of the run may use `:part_from` and `:part_to`, the combine query too, and one must. Ranges go one at a time, which is what bounds the run, so `parallel` is a problem there. A report without `[combine]` reads its one source a range at a time into its outputs. |
+| Outputs appended to one file, or one file per range when `file` names `part_from` or `part_to`; Excel appends within its row limit. | Each output's file name is rendered once per run (`Plan::values`); rows are written as they stream, and every file is put in place once all are complete, so a failed run leaves no file. | A file naming `part_from` or `part_to` is one per range, its name rendered with the range's bounds; two ranges rendering one name is a problem of the values. Any other file is appended to by every range: a CSV or Excel writer stays open across ranges (one header, Excel going on to a new sheet only with `continue_on_new_sheet`), and a Parquet file is joined from a part a range (RS4e). Every file waits under its partial name in the staging folder and goes in place with the others when the last range is done, so a run that fails in its seventh range still leaves no file. RS5 keeps the finished ranges' files instead. |
+| (Not said: charts.) | A chart draws the result, or its own query over the sources' tables (CH3). | In a partitioned run, a chart of the result draws every range's rows, into one file. A chart with its own query is a problem, since it would read one range's tables, and so is a chart file naming the range. |
+| (Not said: limits in a partitioned run.) | — | Each range applies the sources' caps and the combine step's limits on its own, since it loads its tables anew; the run's `timeout`, `stall_timeout` and `max_disk` hold for the whole run, and an appended file's `max_size` for the whole file. The cost guard judges each source's first range as the whole period, as for a partitioned source. |
+| Progress in ranges (*month 7 of 12*). | Progress carries a lookup's batch, shown as *batch 2 of 5* (RP3). | `started` gives each partitioned source's number of ranges, the word for one (`month` when `every` is one calendar unit, else `range`) and `parallel`, and the run's partition the same way; progress says how many ranges are done and running. A `part_done` event carries each range's bounds and numbers. |
+| The skew between ranges, shown in the profile; `range-skew`: a range that took ≥ 5× the median range. | The history keeps one entry a step, which the timeline draws as a lane split into phases (RS1c); hints are rules over a kept run in the app (RS1e). | A source's and the combine step's entries keep their ranges (`parts`: bounds, start, time, rows, bytes, bytes scanned, and the combine's peaks); a partitioned run's per-range events are summed into one entry a step. The lane draws a segment a range. `range-skew` names a range that took at least 5× the median of its step's ranges, when there are three ranges or more and it took 10 seconds or more, so a run of short ranges isn't told about noise. No schema change: `steps` is JSON, and older versions ignore the new fields. |
+| A range is the unit a resumed run skips (RS5). | RS3's work folder is removed however the run ends. | Ranges are numbered from 1 and computed from the file and the values alone, never from data, so a resumed run computes the same ones, and RS5's manifest can record them by number and bounds. RS4 appends each range's rows straight into its source's table, so a range that fails halfway leaves rows there: harmless while a failed range fails the run, and what RS5 settles (a range's rows kept apart until it ends, or deleted by its bounds) before it skips ranges. |
+| A year of generated events, read by month, with the combine's memory that of one month. | RS3's exit test runs a report through the real worker in `crates/dbrover-app/tests/report_at_scale.rs`, ignored. | RS4g adds a second ignored test there: a year of generated events, partitioned by month, a Parquet file a month; it runs the same report over its largest month alone, and checks the partitioned run's DuckDB peak and the worker's peak memory against that run's, within a quarter, since DuckDB's own peak moves by that much between runs of one size (RS3's as-built notes). |
 
 ## Benchmark
 
