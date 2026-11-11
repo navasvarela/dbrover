@@ -167,15 +167,15 @@ fn plan(harness: &Harness<'static, DbRoverApp>) -> Option<Rect> {
     ))
 }
 
-/// A report's run panel, from its **Last run** tab down to the profile's time axis, without
-/// the report's file and parameters above it. The legend under the axis is left out: it is one
-/// line that runs past the panel's edge at any width that keeps the text legible on the page.
+/// A report's run panel, from its **Last run** tab down to the profile's legend and the
+/// worker's memory under it, without the report's file and parameters above it or the data
+/// funnel below.
 fn report_profile(harness: &Harness<'static, DbRoverApp>) -> Option<Rect> {
     let tabs = harness.query_by_label("Last run")?.rect();
-    let axis = harness.query_by_label("0 s")?.rect();
+    let funnel = harness.query_by_label("Data funnel")?.rect();
     Some(Rect::from_min_max(
         Pos2::new(tabs.min.x - CROP_MARGIN, tabs.min.y - TOP_MARGIN),
-        Pos2::new(harness.ctx.content_rect().max.x, axis.max.y + CROP_MARGIN),
+        Pos2::new(harness.ctx.content_rect().max.x, funnel.min.y),
     ))
 }
 

@@ -100,6 +100,16 @@ mod runs {
             settings
         }
 
+        /// A connection holding the shop's database as `shop` says, until it is dropped.
+        fn hold(&self, shop: Shop) -> Option<rusqlite::Connection> {
+            let Shop::Locked = shop else {
+                return None;
+            };
+            let connection = rusqlite::Connection::open(self.home.path().join("shop.db")).unwrap();
+            connection.execute_batch("BEGIN EXCLUSIVE").unwrap();
+            Some(connection)
+        }
+
         fn config(&self) -> PathBuf {
             self.home.path().join("settings")
         }
@@ -307,9 +317,22 @@ mod runs {
         )
     }
 
+    /// Whether a test holds the shop's database locked while the run reads it.
+    #[derive(Clone, Copy)]
+    enum Shop {
+        Free,
+        /// Locked by an exclusive transaction, so the run's source waits on SQLite's busy
+        /// timeout, five seconds, using no processor time: a run that isn't progressing.
+        Locked,
+    }
+
     /// A source that counts for a long time before returning its one row.
     const SLOW_QUERY: &str = "query = \"\"\"\nWITH RECURSIVE n(x) AS \
         (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 5000000000) SELECT max(x) FROM n\n\"\"\"";
+
+    /// A combine step that multiplies for a long time before returning its one row.
+    const SLOW_COMBINE: &str = "\n[combine]\nquery = \"SELECT max(a.range * b.range) AS largest \
+        FROM range(1000000) a, range(1000000) b\"\nthreads = 1\n";
 
     /// Each way a run can end, its exit code and what it says, and that nothing is left in
     /// the output folder but a finished run's files.
@@ -320,6 +343,7 @@ mod runs {
             report: String,
             args: Vec<&'static str>,
             code: i32,
+            shop: Shop,
             says: &'static str,
         }
         let sales = |params: &[&'static str]| {
@@ -333,6 +357,7 @@ mod runs {
                 report: String::new(),
                 args: sales(&["-p", "since=2026-10-01"]),
                 code: 3,
+                shop: Shop::Free,
                 says: "until needs a value",
             },
             Case {
@@ -340,6 +365,7 @@ mod runs {
                 report: String::new(),
                 args: sales(&[&OCTOBER[..], &["-p", "sinse=2026-10-01"]].concat()),
                 code: 3,
+                shop: Shop::Free,
                 says: "the report takes no parameter \"sinse\"; it takes since, until",
             },
             Case {
@@ -347,6 +373,7 @@ mod runs {
                 report: String::new(),
                 args: sales(&["-p", "since=October", "-p", "until=2026-11-01"]),
                 code: 3,
+                shop: Shop::Free,
                 says: "since: \"October\"",
             },
             Case {
@@ -354,6 +381,7 @@ mod runs {
                 report: String::new(),
                 args: vec!["sales"],
                 code: 3,
+                shop: Shop::Free,
                 says: "sales.toml",
             },
             Case {
@@ -362,6 +390,7 @@ mod runs {
                     .replace("data_source = \"shop\"", "data_source = \"nowhere\""),
                 args: vec!["products"],
                 code: 3,
+                shop: Shop::Free,
                 says: "nowhere",
             },
             Case {
@@ -369,6 +398,7 @@ mod runs {
                 report: one_source("", "query = \"SELECT * FROM no_such_table\""),
                 args: vec!["products"],
                 code: 4,
+                shop: Shop::Free,
                 says: "no_such_table",
             },
             Case {
@@ -376,6 +406,7 @@ mod runs {
                 report: one_source("", "query = \"SELECT * FROM products\"\nmax_rows = 2"),
                 args: vec!["products"],
                 code: 5,
+                shop: Shop::Free,
                 says: "It stopped at max_rows = 2 rows, set in the [[source]] \"products\" of the \
                        report's file.",
             },
@@ -384,6 +415,7 @@ mod runs {
                 report: bars(251, ""),
                 args: vec!["products"],
                 code: 5,
+                shop: Shop::Free,
                 says: "Failed in chart 1 (bars.svg): it draws bars, at most 250 rows, and the \
                        result has 251",
             },
@@ -392,6 +424,7 @@ mod runs {
                 report: bars(3, "y = \"unitz\""),
                 args: vec!["products"],
                 code: 1,
+                shop: Shop::Free,
                 says: "`y = \"unitz\"` isn't a column of this result: product, units",
             },
             Case {
@@ -399,7 +432,36 @@ mod runs {
                 report: one_source("timeout = \"2s\"", SLOW_QUERY),
                 args: vec!["products"],
                 code: 6,
+                shop: Shop::Free,
                 says: "time limit of 2s",
+            },
+            Case {
+                what: "the run going its stall_timeout without progress",
+                report: one_source(
+                    "stall_timeout = \"1s\"",
+                    "query = \"SELECT * FROM products\"",
+                ),
+                args: vec!["products"],
+                code: 6,
+                shop: Shop::Locked,
+                says: "its stall_timeout",
+            },
+            Case {
+                what: "the run using more disk than its max_disk",
+                // The run's DuckDB is a file once its sources are in, so the combine step's
+                // run has more than 1 KiB on disk; the time limit keeps a run past it from
+                // counting for hours, should the disk not stop it.
+                report: format!(
+                    "{}{SLOW_COMBINE}",
+                    one_source(
+                        "max_disk = \"1 KiB\"\ntimeout = \"60s\"",
+                        "query = \"SELECT * FROM products\""
+                    )
+                ),
+                args: vec!["products"],
+                code: 6,
+                shop: Shop::Free,
+                says: "its max_disk",
             },
         ];
         for case in cases {
@@ -407,7 +469,9 @@ mod runs {
             if !case.report.is_empty() {
                 settings.write_report("products", &case.report);
             }
+            let lock = settings.hold(case.shop);
             let output = settings.run(&case.args);
+            drop(lock);
             let stderr = String::from_utf8_lossy(&output.stderr);
             assert_eq!(
                 output.status.code(),

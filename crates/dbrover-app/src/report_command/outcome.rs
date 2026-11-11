@@ -19,7 +19,8 @@ pub enum Outcome {
     Source,
     /// A guardrail stopped a step, and said which key raises it.
     Guardrail,
-    /// The run was stopped from outside: its own time limit, or a signal.
+    /// The run was stopped from outside: its own time limit, its `stall_timeout` or its
+    /// `max_disk`, or a signal.
     Stopped,
 }
 
@@ -48,8 +49,9 @@ impl Outcome {
         }
     }
 
-    /// A step's limit is a guardrail; the run's own time limit, which the worker can't report
-    /// itself because it is enforced by killing it, is told apart by the worker as its step.
+    /// A step's limit is a guardrail; the run's own limits (`timeout`, `stall_timeout`,
+    /// `max_disk`), which the worker can't report itself because the app's watchdog enforces
+    /// them by killing it, are told apart by the worker as their step.
     fn of_failure(failure: &RunFailure) -> Self {
         match (&failure.step, failure.limit.is_some()) {
             (Step::Worker, true) => Self::Stopped,

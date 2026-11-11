@@ -1092,10 +1092,10 @@ folder (see [Where DbRover keeps its files](files.md)).
 | 3 | didn't start: the report file isn't found or has a problem, a data source it names doesn't exist, a parameter is missing, unknown or of the wrong type, or the settings folder can't be used |
 | 4 | failed in a source: connecting to its data source, or its query |
 | 5 | stopped at a limit, such as `max_rows` or a chart's rows; the message names the key to raise or set |
-| 6 | was stopped: its own time limit (`timeout` in `[report]`), going without progress past `stall_timeout`, using more disk than `max_disk` or the disk allows, Ctrl-C, or SIGTERM |
+| 6 | was stopped: its own time limit (`timeout` in `[report]`), going without progress past `stall_timeout`, using more disk than `max_disk` or the disk allows, Ctrl-C, SIGTERM or SIGHUP |
 
-Ctrl-C, or the SIGTERM that cron, `timeout` and CI runners send to stop a job, cancels the run as
-**Cancel** does: the worker stops, and the output folder is left as it was.
+Ctrl-C, the SIGTERM that cron, `timeout` and CI runners send to stop a job, or the SIGHUP of a
+closed terminal cancels the run as **Cancel** does: the worker stops, and the output folder is left as it was.
 
 ### Runs in the app
 

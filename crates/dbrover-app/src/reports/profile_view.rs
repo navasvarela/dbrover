@@ -6,7 +6,10 @@
 use dbrover_plan::PlanFormat;
 use dbrover_report::grouped;
 use dbrover_store::{ReportName, ReportRun, RunOutcome, StepMetrics};
-use egui::{Color32, Grid, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
+use egui::{
+    Align, Color32, Grid, Layout, Pos2, Rect, RichText, Sense, Stroke, TextStyle, TextWrapMode, Ui,
+    Vec2, WidgetText, pos2, vec2,
+};
 use jiff::tz::TimeZone;
 
 use super::funnel::{self, Funnel};
@@ -33,6 +36,11 @@ const MIN_TIMELINE_WIDTH: f32 = 240.0;
 /// The height given to the combine step's plan: room for a dozen operators and the selected
 /// one's facts under them, as a console's plan has.
 const PLAN_HEIGHT: f32 = 360.0;
+/// A phase's swatch in the legend.
+const SWATCH_SIZE: Vec2 = vec2(12.0, 10.0);
+/// The space after each of the legend's entries, wider than between a swatch and its name so
+/// the eye pairs them.
+const LEGEND_GAP: f32 = 8.0;
 
 pub fn show(ui: &mut Ui, reports: &mut Reports, name: &ReportName) {
     let palette = Palette::for_visuals(ui.visuals());
@@ -370,28 +378,123 @@ fn legend(ui: &mut Ui, palette: &Palette, timeline: &Timeline) {
     }
     let waited = timeline.lanes.iter().any(|lane| lane.waited.is_some());
     ui.horizontal_wrapped(|ui| {
-        // Each swatch beside its name, so a wrapped line never parts them.
         for phase in shown {
-            ui.horizontal(|ui| {
-                swatch(ui, color(palette, phase), false);
-                ui.weak(phase.name());
-            });
-            ui.add_space(8.0);
+            legend_entry(ui, color(palette, phase), false, phase.name());
+            ui.add_space(LEGEND_GAP);
         }
         if waited {
-            ui.horizontal(|ui| {
-                swatch(ui, palette.text_weak, true);
-                ui.weak("Waiting for the round before");
-            });
+            legend_entry(ui, palette.text_weak, true, "Waiting for the round before");
         }
     });
 }
 
+/// A swatch beside its name, given to the wrapping legend as one item of its own width, so a
+/// line wraps between entries and never parts a swatch from its name.
+///
+/// Not `ui.horizontal`: it asks its parent for the rest of the line, which always fits, so a
+/// wrapping parent never starts a new line for it and the last entries ran past the panel's
+/// edge.
+fn legend_entry(ui: &mut Ui, color: Color32, hatched: bool, name: &str) {
+    let name = WidgetText::from(RichText::new(name).weak()).into_galley(
+        ui,
+        Some(TextWrapMode::Extend),
+        f32::INFINITY,
+        TextStyle::Body,
+    );
+    let size = vec2(
+        SWATCH_SIZE.x + ui.spacing().item_spacing.x + name.size().x,
+        SWATCH_SIZE.y.max(name.size().y),
+    );
+    ui.allocate_ui_with_layout(size, Layout::left_to_right(Align::Center), |ui| {
+        swatch(ui, color, hatched);
+        ui.label(name);
+    });
+}
+
 fn swatch(ui: &mut Ui, color: Color32, hatched: bool) {
-    let (rect, _) = ui.allocate_exact_size(vec2(12.0, 10.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(SWATCH_SIZE, Sense::hover());
     if hatched {
         hatch(ui.painter(), rect, color);
     } else {
         ui.painter().rect_filled(rect, 2.0, color);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    use super::*;
+    use crate::reports::insights::StepKey;
+    use crate::reports::profile::Segment;
+
+    const PHASES: [Phase; 10] = [
+        Phase::Connect,
+        Phase::Server,
+        Phase::Transfer,
+        Phase::Load,
+        Phase::Type,
+        Phase::Query,
+        Phase::Rows,
+        Phase::Write,
+        Phase::Idle,
+        Phase::Unsplit,
+    ];
+
+    /// A lane for each phase, the last of them waiting for the round before.
+    fn every_phase() -> Timeline {
+        let mut lanes: Vec<Lane> = PHASES
+            .iter()
+            .map(|&phase| Lane {
+                step: StepKey::Combine,
+                engine: None,
+                segments: vec![Segment {
+                    phase,
+                    start_ms: 0,
+                    end_ms: 10,
+                }],
+                waited: None,
+            })
+            .collect();
+        if let Some(last) = lanes.last_mut() {
+            last.waited = Some((0, 5));
+        }
+        Timeline {
+            total_ms: 10,
+            lanes,
+        }
+    }
+
+    #[test]
+    fn the_legend_wraps_inside_a_narrow_panel_with_each_swatch_beside_its_name() {
+        let timeline = every_phase();
+        let mut harness = Harness::builder()
+            .with_size(vec2(320.0, 400.0))
+            .build_ui(|ui| legend(ui, &Palette::LIGHT, &timeline));
+        harness.run();
+
+        let panel = harness.ctx.content_rect();
+        let names: Vec<&str> = PHASES
+            .iter()
+            .map(|phase| phase.name())
+            .chain(["Waiting for the round before"])
+            .collect();
+        let mut tops: Vec<f32> = Vec::new();
+        for name in names {
+            let label = harness.get_by_label(name).rect();
+            assert!(
+                label.right() <= panel.right(),
+                "{name} ends past the panel's edge"
+            );
+            assert!(
+                label.left() - panel.left() >= SWATCH_SIZE.x,
+                "{name} has its swatch before it"
+            );
+            if !tops.contains(&label.top()) {
+                tops.push(label.top());
+            }
+        }
+        assert!(tops.len() > 1, "the legend wraps onto more than one line");
     }
 }
