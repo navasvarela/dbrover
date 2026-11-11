@@ -6,9 +6,12 @@ you chose once. It lives in a file of its own, runs in a process of its own, and
 limits you can see, so a report that reads too much never takes DbRover or your machine with
 it.
 
-A report reads one data source, or several, combined in DuckDB SQL or in PRQL, and writes CSV
-and Excel files, and charts of them as SVG or PNG pictures. A source can read by the keys an earlier one found, and can be on a document database
-such as DynamoDB or MongoDB, by declaring the columns it makes.
+A report reads one data source, or several, combined in DuckDB SQL or in PRQL, and writes CSV,
+Excel and Parquet files, and charts of them as SVG or PNG pictures. A source can read by the
+keys an earlier one found, and can be on a document database such as DynamoDB or MongoDB, by
+declaring the columns it makes. A run is profiled as it goes, so you can see where its time
+went and what to try, and it can be larger than your machine's memory: its DuckDB works on
+disk.
 
 ## Your first report
 
@@ -102,15 +105,16 @@ writes; and under both, the report's four past runs.](images/report-page.png)
 
 - **The toolbar** names the report, with a dot after the name while the file has unsaved
   changes, and says how it stands: *Ready*, *2 problems* or *1 warning* (click it to go to the
-  first), *Unsaved*, or what the run is doing. Then **Format**, **Save** and **Run**, and **⋯**
+  first), *Unsaved*, or what the run is doing. Then **Format**, **Save**, **Explain** (see
+  [Explaining a report](#explaining-a-report)) and **Run**, and **⋯**
   for **Rename…**, **Show in folder**, **Open in another app**, **Copy path** and **Hide the
   file**.
 - **The file**, in the editor consoles use (see [Editing a report](#editing-a-report)).
 - **Beside it**, the problems, if there are any, then a field for each parameter, checked as
   you type, and **Output**: the folder its files go in, Downloads until you **Choose…** another,
   and the files the values make. Drag the panel's edge to widen it.
-- **Under both**, the run panel: **Last run**, **Preview**, **Profile**, **Compare** and **Past
-  runs** (see [Runs](#runs)). Drag the line above it to make it taller.
+- **Under both**, the run panel: **Last run**, **Preview**, **Profile**, **Compare**, **Past
+  runs** (see [Runs](#runs)) and **Explain**. Drag the line above it to make it taller.
 
 While a report runs, **Last run** shows a line for each source and, if it has one, for the
 combine step: what each has read so far, and for how long, with a check once it is done. Each
@@ -560,7 +564,8 @@ ORDER BY flows.metered_at, flows.id
 """
 ```
 
-Each run has a DuckDB database of its own, in memory. Every source with a query runs through
+Each run has a DuckDB database of its own, in a file in the run's work folder (see
+[Memory and disk](#memory-and-disk)). Every source with a query runs through
 DbRover's own connection to its data source, read-only and under its limits, as a single source
 does, and its rows are loaded into a table named after its `id`: `flows` above. Sources load at
 the same time. A DuckDB file with `attach = true` isn't copied: it is attached, read-only, as a
@@ -805,8 +810,10 @@ A limit a report's file doesn't set has a default for every report, in **Setting
 | Keep the computer awake | — | on, during runs past two minutes |
 | Disk a run may use | `max_disk` in `[report]` | 20 GiB |
 | Work folder | — | `report-runs` in DbRover's data folder |
+| Runs kept per report | — | 20 |
 
-Each is a menu of a few values around DbRover's own. They are saved in `settings.toml`'s
+Each limit is a menu of a few values around DbRover's own; **Keep the computer awake** is a
+tick box, **During long runs**, and **Work folder** a folder you choose. They are saved in `settings.toml`'s
 `[reports]`, written as a report file writes them, so you can set any value there by hand:
 
 ```toml
@@ -934,11 +941,13 @@ Finished in 0.0 s.
 ```
 
 With `--json`, standard output is the run's events instead, as the report's tab reads them:
-`started`, `progress` about once a second, `source_done`, `combine_done`, `preview`,
+`started`, `progress` about once a second, `source_done`, `source_attached` for a DuckDB file
+attached with `attach = true`, `combine_done`, `preview`,
 `output_written` for each file, a chart's included, and last `finished`, `failed` or `cancelled`.
 `started` has the report file's Git blob id as `version`, the same the first line of the human
 output shortens, so a CI job's output names the version that ran; the run's log says it too.
-Every line has `at_ms`, when it was sent, in milliseconds from the run's start; `progress` has
+Every line has `at_ms`, when it was sent, in milliseconds from the run's start, and, where the
+system says (not on Windows), `cpu_ms`, the processor time the worker had used by then; `progress` has
 `busy`, the shares of the second before spent waiting, loading and writing; `source_done` has
 `phases`; and `worker_usage`, just before the end, the worker's `peak_memory`.
 `jq` picks out what a script needs:
@@ -961,7 +970,7 @@ folder (see [Where DbRover keeps its files](files.md)).
 | 3 | didn't start: the report file isn't found or has a problem, a data source it names doesn't exist, a parameter is missing, unknown or of the wrong type, or the settings folder can't be used |
 | 4 | failed in a source: connecting to its data source, or its query |
 | 5 | stopped at a limit, such as `max_rows` or a chart's rows; the message names the key to raise or set |
-| 6 | was stopped: its own time limit (`timeout` in `[report]`), Ctrl-C, or SIGTERM |
+| 6 | was stopped: its own time limit (`timeout` in `[report]`), going without progress past `stall_timeout`, using more disk than `max_disk` or the disk allows, Ctrl-C, or SIGTERM |
 
 Ctrl-C, or the SIGTERM that cron, `timeout` and CI runners send to stop a job, cancels the run as
 **Cancel** does: the worker stops, and the output folder is left as it was.
@@ -1014,8 +1023,9 @@ Source lines  time                1.3 s → 1.2 s        −8%
 ```
 
 With `--json`, `runs` prints each run's whole profile, an object a line, the same that
-`report run --profile` writes: `id`, `report`, `started_at`, `elapsed_ms`, `outcome`, `params`,
-`version`, `machine` (the worker's `peak_memory`, the run's `timeout_ms`, the `cores` and the
+`report run --profile` writes: `format`, `id`, `report`, `started_at`, `elapsed_ms`, `outcome`,
+for a failed run `failed_at` (the step) and `failure` (its error), `origin` (`app`, `command` or
+`mcp`), `params`, `version`, `machine` (the worker's `peak_memory`, the run's `timeout_ms`, the `cores` and the
 `dbrover` that ran it), `steps` as the history keeps them, `bottleneck` and `hints`, each with its
 `id`, the table it is `at`, its `text` and whether the file's `quiet_hints` silences it.
 `compare --json` prints one object. A CI job can keep each run's profile beside its logs:
@@ -1025,7 +1035,9 @@ dbrover report run sales-by-category -p since=2026-10-01 -p until=2026-11-01 \
   --profile "profile-$(date +%F).json"
 ```
 
-An unknown report or run id exits with 3.
+A run id that isn't kept, given to `compare`, exits with 3, as does a path outside the reports
+folder. `runs` of a report that has none, or that doesn't exist, says *No run is kept.* and
+exits with 0.
 
 ### Explaining from the command line
 
