@@ -35,11 +35,12 @@ use crate::declared::Shaped;
 use crate::kept_rows::{KeptRows, PartReader};
 use crate::live::{ProgressClock, waiting};
 use crate::parquet::PartsJoin;
+use crate::parquet::appended_parquet_parts;
 use crate::statement::Statements;
 use crate::{
-    LimitHit, Logic, Manifest, PartDone, Plan, PlannedOutput, Preview, QuerySource, RangeKept,
-    RunEvent, RunFailure, RunValues, SourcePhases, SourceRanges, Step, WorkKept, WrittenFile,
-    keep_work_folder,
+    LimitHit, Logic, Manifest, PartDone, PartRange, Plan, PlannedOutput, Preview, QuerySource,
+    RangeKept, Resumed, RunEvent, RunFailure, RunValues, SourcePhases, SourceRanges, Step,
+    WorkKept, WrittenFile, keep_work_folder,
 };
 
 /// How many rows the preview keeps: a screenful or two, enough to see a report is right.
@@ -246,6 +247,17 @@ impl Checkpoints {
         }
     }
 
+    /// What the manifest says of `range`, when an earlier run finished it with the same
+    /// bounds: a range this run doesn't read again.
+    fn finished(&self, range: &PartRange) -> Option<&RangeKept> {
+        self.0
+            .as_ref()?
+            .ranges
+            .iter()
+            .find(|kept| kept.number == range.number)
+            .filter(|kept| kept.from == range.from && kept.to == range.to)
+    }
+
     /// Records a finished range. A manifest that can't be written fails nothing: the run goes
     /// on, and a run resuming it reads the ranges recorded before again.
     fn range_done(&mut self, work: &Path, range: RangeKept) {
@@ -279,7 +291,7 @@ struct RunRanges<'a, 'r> {
     checkpoints: &'r mut Checkpoints,
 }
 
-impl<'a> RunRanges<'a, '_> {
+impl<'a, 'r> RunRanges<'a, 'r> {
     /// Runs each range into `sink`, says what each wrote, and records it in the manifest.
     async fn run<O: SourceOpener>(
         &mut self,
@@ -289,7 +301,8 @@ impl<'a> RunRanges<'a, '_> {
     ) -> Result<(), RunFailure> {
         let plan = self.plan;
         let of = self.ranges.ranges.len() as u64;
-        for range in &self.ranges.ranges {
+        let to_read = self.restore_finished(sink, events)?;
+        for range in to_read {
             let range_values = plan
                 .range_values(self.values, range)
                 .map_err(|problem| RunFailure::new(Step::Report, problem))?;
@@ -333,6 +346,44 @@ impl<'a> RunRanges<'a, '_> {
             events(RunEvent::PartDone(done));
         }
         Ok(())
+    }
+
+    /// Takes the ranges an earlier run finished, as the manifest records them, into `sink`,
+    /// and says so; returns the ranges left to read. The ranges an earlier run finished come
+    /// first: a range after one that wasn't finished is read again, so the outputs every range
+    /// appends to keep the ranges' order.
+    fn restore_finished(
+        &self,
+        sink: &mut Sink<'a>,
+        events: &mut dyn FnMut(RunEvent),
+    ) -> Result<&'r [PartRange], RunFailure> {
+        let ranges = &self.ranges.ranges;
+        let finished = ranges
+            .iter()
+            .take_while(|range| self.checkpoints.finished(range).is_some())
+            .count();
+        if finished == 0 {
+            return Ok(ranges);
+        }
+        let mut resumed = Resumed {
+            ranges: Vec::new(),
+            of: ranges.len() as u64,
+            rows: 0,
+            bytes: 0,
+            files: Vec::new(),
+        };
+        for range in &ranges[..finished] {
+            let Some(kept) = self.checkpoints.finished(range) else {
+                continue;
+            };
+            sink.restore_range(kept, self.values)?;
+            resumed.ranges.push(kept.number);
+            resumed.rows += kept.rows;
+            resumed.bytes += kept.bytes;
+            resumed.files.extend(kept.files.iter().cloned());
+        }
+        events(RunEvent::Resumed(resumed));
+        Ok(&ranges[finished..])
     }
 }
 
@@ -736,6 +787,49 @@ impl<'a> Sink<'a> {
         appended.then_some(*number)
     }
 
+    /// Takes range `kept`, which an earlier run finished, as if this run had: its files are in
+    /// place, and what it kept for the run's end is in the work folder.
+    /// `values` are the run's, which name the outputs' files.
+    pub(crate) fn restore_range(
+        &mut self,
+        kept: &RangeKept,
+        values: &RunValues,
+    ) -> Result<(), RunFailure> {
+        let step = self.plan.feed_step();
+        self.written.rows += kept.rows;
+        self.written.bytes += kept.bytes;
+        self.placed.extend(kept.files.iter().cloned());
+        if let Some(rows) = &mut self.kept {
+            rows.restore(kept.number)
+                .map_err(|error| kept_failure(&step, &error))?;
+        }
+        let folders = self.folders;
+        for (number, name, file) in appended_parquet_parts(self.plan, values, kept.number, folders)
+        {
+            if !file.partial().exists() {
+                return Err(RunFailure::new(
+                    step,
+                    format!(
+                        "the kept part of range {} of output {number} is missing from the run's \
+                         work folder; run the report from scratch",
+                        kept.number
+                    ),
+                ));
+            }
+            self.parquet_parts
+                .entry(number)
+                .or_default()
+                .push(Completed {
+                    step: Step::Output { number, file: name },
+                    rows: kept.rows,
+                    warnings: Vec::new(),
+                    busy: Duration::ZERO,
+                    file,
+                });
+        }
+        Ok(())
+    }
+
     /// Starts range `number` of a partitioned run.
     pub(crate) fn begin_range(&mut self, number: u64) {
         self.range = Some(number);
@@ -774,13 +868,12 @@ impl<'a> Sink<'a> {
         Ok(placed)
     }
 
-    /// Removes every output's file not in place yet, for a run that failed.
+    /// Removes every output's file not in place yet, for a run that failed. The finished
+    /// ranges' parts of the Parquet files every range appends to stay in the work folder, which
+    /// goes with them unless it is kept for a run that resumes.
     pub(crate) fn abandon(self) {
         self.outputs.into_iter().for_each(OutputRun::abandon);
-        self.done
-            .into_iter()
-            .chain(self.parquet_parts.into_values().flatten())
-            .for_each(|done| done.file.abandon());
+        self.done.into_iter().for_each(|done| done.file.abandon());
     }
 
     /// Joins each appended Parquet output's parts into its one file.
@@ -789,18 +882,9 @@ impl<'a> Sink<'a> {
             plan: self.plan,
             folders: self.folders,
         };
-        let outputs = std::mem::take(&mut self.parquet_parts);
-        let mut outputs = outputs.into_iter();
-        while let Some((number, parts)) = outputs.next() {
-            match join.join(number, parts).await {
-                Ok(joined) => self.done.push(joined),
-                Err(failure) => {
-                    outputs
-                        .flat_map(|(_, parts)| parts)
-                        .for_each(|part| part.file.abandon());
-                    return Err(failure);
-                }
-            }
+        for (number, parts) in std::mem::take(&mut self.parquet_parts) {
+            let joined = join.join(number, parts).await?;
+            self.done.push(joined);
         }
         Ok(())
     }

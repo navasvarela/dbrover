@@ -10,7 +10,8 @@ use crate::version::parse_config_dir;
 
 pub const USAGE: &str = "\
 Usage: dbrover report run <report> [--param <name>=<value>]… [--output-dir <folder>]
-                          [--json] [--progress] [--profile <file>] [--config-dir <folder>]
+                          [--resume <run> | --from-scratch] [--json] [--progress]
+                          [--profile <file>] [--config-dir <folder>]
        dbrover report list [--json] [--config-dir <folder>]
        dbrover report runs <report> [--json] [--config-dir <folder>]
        dbrover report compare <report> <run> <run> [--json] [--config-dir <folder>]
@@ -45,6 +46,12 @@ in .toml or holding a folder separator is a path.
                                2026-10-01, a timestamp as \"2026-10-01 12:00\". Once each.
   -o, --output-dir <folder>    Where the files go, made if it doesn't exist. The current
                                folder without it.
+      --resume <run>           Carries on from a run that stopped, by its id in dbrover
+                               report runs: the ranges it finished aren't read again, and
+                               its parameters and folder are the run's. Refused, saying
+                               why, if the report's file, a data source or DbRover changed.
+      --from-scratch           Discards the report's stopped runs that could resume, and
+                               runs it from the start.
       --json                   Writes the run's events to standard output as JSON Lines,
                                one object a line, the last saying how the run ended.
       --progress               On a terminal, keeps a line on standard error of what each
@@ -96,6 +103,20 @@ pub struct RunArgs {
     /// Where to write the run's profile once it ends.
     pub profile: Option<PathBuf>,
     pub config_dir: Option<PathBuf>,
+    /// Whether the run carries on from a stopped one.
+    pub start: RunStart,
+}
+
+/// Where a run starts from (`docs/reports-at-scale.md`, RS5d).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RunStart {
+    /// The start, leaving the report's stopped runs as they are.
+    #[default]
+    Start,
+    /// Where the run with this id stopped, its work folder kept.
+    Resume(RunId),
+    /// The start, discarding the report's stopped runs first.
+    FromScratch,
 }
 
 /// `dbrover report explain`'s arguments.
@@ -367,6 +388,7 @@ impl RunArgs {
         let mut progress = false;
         let mut profile = None;
         let mut config_dir = None;
+        let mut start = RunStart::Start;
         while let Some(arg) = args.next() {
             if let Some(folder) = parse_config_dir(&arg, &mut args) {
                 config_dir = Some(folder?);
@@ -377,6 +399,14 @@ impl RunArgs {
                 if values.insert(name.clone(), value).is_some() {
                     return Err(format!("--param {name} is given twice"));
                 }
+                continue;
+            }
+            if let Some(run) = option_value(&arg, &["--resume"], &mut args) {
+                let run = run?;
+                let id = run.parse::<RunId>().map_err(|_| {
+                    format!("--resume {run:?} isn't a run's id; dbrover report runs lists them")
+                })?;
+                start = start.then(RunStart::Resume(id))?;
                 continue;
             }
             if let Some(folder) = option_value(&arg, &["--output-dir", "-o"], &mut args) {
@@ -391,6 +421,7 @@ impl RunArgs {
                 "--help" | "-h" => return Ok(None),
                 "--json" => style = OutputStyle::JsonLines,
                 "--progress" => progress = true,
+                "--from-scratch" => start = start.then(RunStart::FromScratch)?,
                 option if option.starts_with('-') => {
                     return Err(format!("unknown argument {option:?}"));
                 }
@@ -409,7 +440,20 @@ impl RunArgs {
             progress,
             profile,
             config_dir,
+            start,
         }))
+    }
+}
+
+impl RunStart {
+    /// `next`, asked for after this: one of `--resume` and `--from-scratch`, once.
+    fn then(self, next: Self) -> Result<Self, String> {
+        match self {
+            Self::Start => Ok(next),
+            Self::Resume(_) | Self::FromScratch => {
+                Err("a run takes --resume or --from-scratch, once".to_owned())
+            }
+        }
     }
 }
 
@@ -467,6 +511,7 @@ mod tests {
             progress: false,
             profile: None,
             config_dir: None,
+            start: RunStart::Start,
         }
     }
 
@@ -482,6 +527,7 @@ mod tests {
             progress: false,
             profile: None,
             config_dir: None,
+            start: RunStart::Start,
         })
     }
 
@@ -599,6 +645,28 @@ mod tests {
                 &["run", "sales", "--profile"],
                 invalid("--profile needs a value"),
             ),
+            (
+                &["run", "sales", "--resume", "42"],
+                Request::Run(RunArgs {
+                    start: RunStart::Resume(RunId(42)),
+                    ..run_args(named("sales"))
+                }),
+            ),
+            (
+                &["run", "--from-scratch", "sales"],
+                Request::Run(RunArgs {
+                    start: RunStart::FromScratch,
+                    ..run_args(named("sales"))
+                }),
+            ),
+            (
+                &["run", "sales", "--resume", "last"],
+                invalid("--resume \"last\" isn't a run's id; dbrover report runs lists them"),
+            ),
+            (
+                &["run", "sales", "--resume", "4", "--from-scratch"],
+                invalid("a run takes --resume or --from-scratch, once"),
+            ),
         ];
         for (args, expected) in cases {
             assert_eq!(parse(args), expected, "{args:?}");
@@ -659,6 +727,7 @@ mod tests {
                     progress: true,
                     profile: None,
                     config_dir: Some("/srv/dbrover".into()),
+                    start: RunStart::Start,
                 }),
             ),
             (
@@ -671,6 +740,7 @@ mod tests {
                     progress: false,
                     profile: None,
                     config_dir: None,
+                    start: RunStart::Start,
                 }),
             ),
             (
@@ -683,6 +753,7 @@ mod tests {
                     progress: false,
                     profile: None,
                     config_dir: None,
+                    start: RunStart::Start,
                 }),
             ),
             (

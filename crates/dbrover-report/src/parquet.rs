@@ -74,6 +74,33 @@ pub(crate) fn parquet_files<'a>(
         .collect()
 }
 
+/// Range `part`'s part of each Parquet output that every range of a partitioned run appends
+/// to, where [`parquet_files`] has it written: the output's number, its file's name, and the
+/// part. `values` are the run's, which name the outputs' files.
+pub(crate) fn appended_parquet_parts(
+    plan: &Plan,
+    values: &RunValues,
+    part: u64,
+    folders: RunFolders<'_>,
+) -> Vec<(usize, String, CompletedFile)> {
+    let parts = folders.work.join(PARTS_FOLDER);
+    plan.outputs
+        .iter()
+        .zip(&values.files)
+        .enumerate()
+        .filter(|(_, (output, _))| {
+            output.format.written_by_duckdb().is_some() && !output.is_per_range()
+        })
+        .map(|(index, (_, name))| {
+            let file = CompletedFile::written_by_another(
+                &folders.folder.join(part_name(name, part)),
+                &parts,
+            );
+            (index + 1, name.clone(), file)
+        })
+        .collect()
+}
+
 /// The name a range's part of the Parquet file `name` is written under, in the work folder's
 /// parts only: never put in place.
 fn part_name(name: &str, part: u64) -> String {
@@ -89,7 +116,9 @@ pub(crate) struct PartsJoin<'a> {
 impl PartsJoin<'_> {
     /// Copies `parts`, each range's part of the Parquet output `number` in the ranges' order,
     /// into the output's one file, in a DuckDB of its own that may write only in the staging
-    /// folder, and read the parts; the parts are removed once read. The rows keep the ranges' order.
+    /// folder, and read the parts. The rows keep the ranges' order. The parts stay in the work
+    /// folder, which goes with them, so a run that fails after this and resumes joins them
+    /// again.
     pub(crate) async fn join(
         &self,
         number: usize,
@@ -99,11 +128,9 @@ impl PartsJoin<'_> {
             .first()
             .map_or(Step::Combine, |part| part.step.clone());
         let Some((output, name)) = self.output(number, &step) else {
-            parts.into_iter().for_each(|part| part.file.abandon());
             return Err(RunFailure::new(step, "the run has no such Parquet output"));
         };
         let Some(options) = output.format.written_by_duckdb() else {
-            parts.into_iter().for_each(|part| part.file.abandon());
             return Err(RunFailure::new(step, "the output isn't a Parquet file"));
         };
         let file = ParquetFile {
@@ -123,7 +150,6 @@ impl PartsJoin<'_> {
             .map(|part| part.file.partial().to_owned())
             .collect();
         let copied = self.copy(&paths, &file).await;
-        parts.into_iter().for_each(|part| part.file.abandon());
         copied.map_err(|message| RunFailure::new(file.step(), message))?;
         file.completed(rows, started.elapsed())
     }

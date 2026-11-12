@@ -16,6 +16,7 @@ pub(crate) mod list;
 mod outcome;
 mod printer;
 mod progress;
+mod resume;
 mod stopping;
 
 use std::io;
@@ -26,12 +27,12 @@ use std::time::Instant;
 
 use dbrover_engine::{RunWatch, WorkerRun};
 use dbrover_report::{Plan, RunEvent, RunFailure, RunRequest, Step, TimedEvent, TypedValues};
-use dbrover_store::{AppPaths, ReportName, ReportSettings, RunOrigin, SettingsFile};
+use dbrover_store::{AppPaths, ReportName, ReportSettings, RunId, RunOrigin, SettingsFile};
 use tracing_appender::non_blocking::WorkerGuard;
 
 pub use args::Request;
 
-use self::args::{ListArgs, ReportArg, RunArgs, USAGE};
+use self::args::{ListArgs, ReportArg, RunArgs, RunStart, USAGE};
 use self::history::RunHistory;
 use self::outcome::Outcome;
 use self::stopping::Stopping;
@@ -111,25 +112,42 @@ fn run(args: &RunArgs) -> Outcome {
     // ending the command with a worker behind it.
     let stopping = Stopping::listen();
     let report = report_path(&paths, &args.report);
-    let prepared = match prepare(&paths, &report, &args.values, args.output_dir.as_deref()) {
-        Ok(prepared) => prepared,
+    let cant_run = format!("{} can't run:", report.display());
+    let starting = match Starting::of(&paths, &report, args) {
+        Ok(starting) => starting,
         Err(problems) => {
-            printer.not_started(&format!("{} can't run:", report.display()), &problems);
+            printer.not_started(&cant_run, &problems);
             return Outcome::Report;
         }
     };
+    let prepared = match starting.prepare(&paths, &report) {
+        Ok(prepared) => prepared,
+        Err(problems) => {
+            printer.not_started(&cant_run, &problems);
+            return Outcome::Report;
+        }
+    };
+    if starting.resumes.is_none() && args.start == RunStart::Start {
+        say_what_can_resume(&paths, &report, &prepared.work_root);
+    }
     let mut history = RunHistory::start(
         &paths,
         &report,
-        args.values.clone(),
+        starting.values.clone(),
         prepared.runs_kept,
         RunOrigin::Command,
     );
+    if let (Some(history), Some(id)) = (&mut history, starting.resumes) {
+        history.resumes(id);
+    }
     // The run as the history keeps it, for `--profile`, whether or not the history keeps it.
-    let mut profiled = args
-        .profile
-        .as_ref()
-        .map(|_| RunRecord::new(args.values.clone()));
+    let mut profiled = args.profile.as_ref().map(|_| {
+        let mut record = RunRecord::new(starting.values.clone());
+        if let Some(id) = starting.resumes {
+            record.resumes(id);
+        }
+        record
+    });
     let outcome = run_worker(&paths, &prepared, &stopping, &mut |event| {
         printer.event(event);
         if let Some(history) = &mut history {
@@ -150,6 +168,78 @@ fn run(args: &RunArgs) -> Outcome {
         write_profile(file, record, &report);
     }
     outcome
+}
+
+/// Where a run starts from, as `--resume` and `--from-scratch` ask: its values, its folder, and
+/// the work folder of the stopped run it carries on from.
+struct Starting {
+    values: TypedValues,
+    output_dir: Option<PathBuf>,
+    /// The stopped run carried on from, and its work folder.
+    resumes: Option<RunId>,
+    work: Option<PathBuf>,
+}
+
+impl Starting {
+    /// What `args` ask for `report`. A run from scratch discards the report's stopped runs
+    /// here, before it starts.
+    fn of(paths: &AppPaths, report: &Path, args: &RunArgs) -> Result<Self, Vec<String>> {
+        let fresh = Self {
+            values: args.values.clone(),
+            output_dir: args.output_dir.clone(),
+            resumes: None,
+            work: None,
+        };
+        let settings = reports::RunSettings::of(&report_settings(paths)?);
+        let work_root = resume::work_root(paths, &settings);
+        match args.start {
+            RunStart::Start => Ok(fresh),
+            RunStart::FromScratch => {
+                resume::discard_all(report, &work_root);
+                Ok(fresh)
+            }
+            RunStart::Resume(id) => {
+                let resuming =
+                    resume::find(paths, report, id, &work_root).map_err(|problem| vec![problem])?;
+                let run = resuming.manifest.run;
+                // The stopped run's values, unless others are given, which must be the same.
+                let values = if args.values.is_empty() {
+                    run.values
+                } else {
+                    args.values.clone()
+                };
+                Ok(Self {
+                    values,
+                    output_dir: Some(args.output_dir.clone().unwrap_or(run.folder)),
+                    resumes: Some(resuming.id),
+                    work: Some(resuming.work),
+                })
+            }
+        }
+    }
+
+    /// The run prepared, in the stopped run's work folder when it resumes one.
+    fn prepare(&self, paths: &AppPaths, report: &Path) -> Result<Prepared, Vec<String>> {
+        let mut prepared = prepare(paths, report, &self.values, self.output_dir.as_deref())?;
+        if let Some(work) = &self.work {
+            prepared.request.work.clone_from(work);
+            prepared.request.resume = true;
+        }
+        Ok(prepared)
+    }
+}
+
+/// Says, on standard error, which stopped run of `report` a run could carry on from instead.
+fn say_what_can_resume(paths: &AppPaths, report: &Path, work_root: &Path) {
+    let Some((id, kept)) = resume::newest(paths, report, work_root) else {
+        return;
+    };
+    let ranges = kept.manifest.ranges.len();
+    eprintln!(
+        "Run {id} of this report stopped after {}; --resume {id} carries on from them, and \
+         --from-scratch discards it.",
+        dbrover_report::counted(ranges as u64, "finished range")
+    );
 }
 
 /// Writes the run's profile to `file`. One that can't be written is a warning on standard
@@ -229,6 +319,7 @@ pub(crate) fn prepare(
         defaults,
         memory_limit: None,
         explain: None,
+        resume: false,
     };
     let watch = reports::run_watch(&plan, &settings, work_root);
     Ok(Prepared {

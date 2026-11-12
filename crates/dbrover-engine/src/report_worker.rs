@@ -612,6 +612,7 @@ mod tests {
             defaults: LimitDefaults::default(),
             memory_limit: None,
             explain: None,
+            resume: false,
         }
     }
 

@@ -117,6 +117,28 @@ impl KeptRows {
         Ok(())
     }
 
+    /// Takes range `number`'s part, which an earlier run kept and this one resumes from.
+    ///
+    /// # Errors
+    ///
+    /// When the part is missing, or can't be read to count the rows the preview has.
+    pub(crate) fn restore(&mut self, number: u64) -> io::Result<()> {
+        let path = self.folder.join(part_name(number));
+        if !self.every_row {
+            let mut reader = PartReader::open(&path)?;
+            while let Some(page) = reader.next_page()? {
+                self.kept += page.len() as u64;
+            }
+        } else if !path.exists() {
+            return Err(io::Error::other(format!(
+                "range {number}'s rows are missing from the run's work folder; run the report \
+                 from scratch"
+            )));
+        }
+        self.parts.push(path);
+        Ok(())
+    }
+
     /// The finished ranges' parts, in the ranges' order.
     pub(crate) fn parts(&self) -> &[PathBuf] {
         &self.parts

@@ -157,6 +157,10 @@ pub enum RunEvent {
     Preview(Preview),
     /// A file put in place.
     OutputWritten(WrittenFile),
+    /// The run carries on from a kept work folder (RS5d): the ranges an earlier run finished,
+    /// which this one doesn't read again, and their files, put in place by it. Sent before the
+    /// first range this run reads.
+    Resumed(Resumed),
     /// The run's work folder was kept, so the run can resume (RS5c): sent just before the end
     /// of a run that failed or was stopped after its finished units read more than
     /// `resumable_above`, by the worker, or by the app's side for a worker it killed.
@@ -247,6 +251,21 @@ pub struct PartDone {
     /// The bytes its engine scanned, where the engine says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scanned_bytes: Option<u64>,
+}
+
+/// What a run resuming a kept work folder takes from the run before it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Resumed {
+    /// The finished ranges' numbers, in their order.
+    pub ranges: Vec<u64>,
+    /// Of how many.
+    pub of: u64,
+    /// The rows and bytes they gave the outputs.
+    pub rows: u64,
+    pub bytes: u64,
+    /// Their own files, already in place.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<WrittenFile>,
 }
 
 /// A source's caps as a run applies them, whoever set them.

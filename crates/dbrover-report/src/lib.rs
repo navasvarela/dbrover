@@ -47,7 +47,7 @@ pub use disk::DiskBudget;
 pub use embedded::{Embedded, PrqlToken, StepLanguage, embedded_code, prql_tokens};
 pub use events::{
     Batch, Busy, CombineCaps, LimitHit, LimitSetIn, LoadedColumn, Machine, PartDone,
-    PartitionStart, Parts, Preview, RunEvent, RunFailure, RunPartitionStart, SourceCaps,
+    PartitionStart, Parts, Preview, Resumed, RunEvent, RunFailure, RunPartitionStart, SourceCaps,
     SourcePhases, SourceStart, Step, TimedEvent, WrittenFile, counted,
 };
 pub use explain::{

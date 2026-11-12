@@ -88,6 +88,9 @@ pub struct RunProfile {
     /// work folders go in; `None` for a run that kept none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kept: Option<String>,
+    /// The run it carried on from, whose work folder it took (RS5d).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resumed_from: Option<RunId>,
 }
 
 /// The profile as `report_runs.profile` holds it: the run's numbers, and the format they are
@@ -612,6 +615,7 @@ mod tests {
                 cores: Some(10),
                 dbrover: Some("0.31.0".to_owned()),
                 kept: None,
+                resumed_from: None,
             },
         }
     }
