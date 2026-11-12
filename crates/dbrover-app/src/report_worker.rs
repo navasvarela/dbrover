@@ -45,7 +45,7 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
         .and_then(|request| {
             limits::limit_memory(request.memory_limit);
             let paths = settings_paths(config_dir)?;
-            let (plan, version, values) = prepare(&paths, &request)?;
+            let (plan, version, mut values) = prepare(&paths, &request)?;
             limits::limit_processor_time(plan.processor_time());
             if let Some(explain) = &request.explain {
                 tracing::info!(report = %plan.name, %version, "explaining the report");
@@ -70,7 +70,7 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
                 version.to_string(),
                 &request.values,
             );
-            prepare_manifest(identity, &request)?;
+            prepare_manifest(identity, &request, &plan, &mut values)?;
             let started = out.send(&plan.started(&values, version, machine()));
             if started.is_err() {
                 abandon(folders);
@@ -324,28 +324,37 @@ fn run_report(
 /// Writes the run's manifest in its work folder, so the run records each unit it finishes
 /// and can keep the folder to resume (RS5c). A manifest that can't be written only means the
 /// run won't resume. A run that resumes (RS5d) takes the kept one instead, once it is checked
-/// against this run.
+/// against this run, and binds `:as_of` in `values` as the kept run did (RS5g).
 ///
 /// # Errors
 ///
 /// For a run that resumes, what keeps it from resuming the kept run.
-fn prepare_manifest(identity: RunIdentity, request: &RunRequest) -> Result<(), RunFailure> {
+fn prepare_manifest(
+    identity: RunIdentity,
+    request: &RunRequest,
+    plan: &Plan,
+    values: &mut RunValues,
+) -> Result<(), RunFailure> {
     let work = &request.work;
     if request.resume {
-        return Manifest::resume(work, &identity)
-            .map(drop)
-            .map_err(|changes| {
-                RunFailure::new(
-                    Step::Report,
-                    format!(
-                        "the run can't carry on from {}: {}; run it from scratch instead",
-                        work.display(),
-                        changes.join("; ")
-                    ),
-                )
-            });
+        let kept = Manifest::resume(work, &identity).map_err(|changes| {
+            RunFailure::new(
+                Step::Report,
+                format!(
+                    "the run can't carry on from {}: {}; run it from scratch instead",
+                    work.display(),
+                    changes.join("; ")
+                ),
+            )
+        })?;
+        if let Some(as_of) = &kept.as_of {
+            plan.resume_as_of(values, as_of);
+        }
+        return Ok(());
     }
-    if let Err(error) = Manifest::start(identity).write(work) {
+    let mut manifest = Manifest::start(identity);
+    manifest.as_of = plan.as_of(values).map(str::to_owned);
+    if let Err(error) = manifest.write(work) {
         tracing::warn!("the run's manifest isn't written, so it won't resume: {error}");
     }
     Ok(())

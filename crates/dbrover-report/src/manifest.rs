@@ -18,6 +18,11 @@ use crate::{Logic, Plan, PlannedSource, TypedValues, WrittenFile};
 /// The manifest's file, in the run's work folder.
 pub const MANIFEST_FILE: &str = "manifest.json";
 
+/// The parameter every query of a run may use for the time the run started, in UTC, which a
+/// run resuming it binds again (RS5g): for a query that reads a warehouse's table as it was
+/// then, as `FOR SYSTEM_TIME AS OF :as_of` in BigQuery.
+pub const AS_OF: &str = "as_of";
+
 /// The manifest's format, for a later DbRover that changes it: one it doesn't know isn't
 /// resumed.
 const FORMAT: u32 = 1;
@@ -29,6 +34,10 @@ pub struct Manifest {
     pub run: RunIdentity,
     /// When the run started, as RFC 3339.
     pub started_at: String,
+    /// What `:as_of` bound, the time the run started in UTC; `None` for a report with a
+    /// parameter of that name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub as_of: Option<String>,
     /// When the work folder was kept, as RFC 3339; `None` while the run goes on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kept_at: Option<String>,
@@ -243,6 +252,7 @@ impl Manifest {
             format: FORMAT,
             run,
             started_at: Timestamp::now().to_string(),
+            as_of: None,
             kept_at: None,
             ranges: Vec::new(),
             sources: Vec::new(),

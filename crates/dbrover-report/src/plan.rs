@@ -20,7 +20,7 @@ use crate::events::{
 use crate::problem::{Place, ReportProblem, Table, messages};
 use crate::run::millis;
 use crate::{
-    ByteSize, Chart, CombineLimits, CombineLimitsSet, CombineQuery, FileName, LimitDefaults,
+    AS_OF, ByteSize, Chart, CombineLimits, CombineLimitsSet, CombineQuery, FileName, LimitDefaults,
     LimitSetIn, Lookup, Output, OutputColumns, OutputLimits, OutputLimitsSet, OutputWriter,
     PART_FROM, PART_TO, Param, PartRange, PlannedPartition, Report, Source, SourceColumn,
     SourceLimits, SourceLimitsSet, SourcePartition, SourceRead, SourceSplit, SourceStart, Step,
@@ -412,6 +412,15 @@ pub struct RunValues {
     pub part: Option<u64>,
 }
 
+/// The time now in UTC, as `:as_of` binds it: `2026-11-12 09:30:00`, which every engine with
+/// time travel reads as a timestamp.
+fn as_of_now() -> String {
+    jiff::Timestamp::now()
+        .to_zoned(jiff::tz::TimeZone::UTC)
+        .strftime("%Y-%m-%d %H:%M:%S")
+        .to_string()
+}
+
 /// A partitioned source's ranges for a run, and the whole period they cover together.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceRanges {
@@ -515,11 +524,15 @@ impl Plan {
             }
         }
         let params = if sources.len() == report.sources.len() {
+            let as_of = !report.params.iter().any(|param| param.name == AS_OF);
             let sent = queries(
                 &sources,
                 combine.as_ref(),
                 &report.charts,
-                partition.is_some(),
+                Bound {
+                    ranges: partition.is_some(),
+                    as_of,
+                },
             );
             if partition.is_some() {
                 check_reads_ranges(&sent, &mut problems);
@@ -567,6 +580,28 @@ impl Plan {
                 LimitSetIn::Settings
             }
         })
+    }
+
+    /// Whether the run binds `:as_of` to its start (RS5g): unless the report has a parameter
+    /// of that name, whose value it takes.
+    pub fn binds_as_of(&self) -> bool {
+        !self.params.iter().any(|param| param.name == AS_OF)
+    }
+
+    /// The time `values` bind `:as_of` to, when the run binds it: when the run started.
+    pub fn as_of<'v>(&self, values: &'v RunValues) -> Option<&'v str> {
+        if !self.binds_as_of() {
+            return None;
+        }
+        values.parameters.get(AS_OF)?.as_deref()
+    }
+
+    /// Binds `:as_of` in `values` to `at`, the start of the run they resume, so both read the
+    /// same time in the past; nothing when the report has a parameter of that name.
+    pub fn resume_as_of(&self, values: &mut RunValues, at: &str) {
+        if self.binds_as_of() {
+            values.parameters.set(AS_OF, Some(at.to_owned()));
+        }
     }
 
     /// The step whose rows the outputs write: the combine step, or the one source without
@@ -689,10 +724,13 @@ impl Plan {
         if !problems.is_empty() {
             return Err(problems);
         }
-        let parameters = checked
+        let mut parameters: ParameterValues = checked
             .into_iter()
             .map(|(name, (_, plain))| (name, Some(plain)))
             .collect();
+        if self.binds_as_of() {
+            parameters.set(AS_OF, Some(as_of_now()));
+        }
         Ok(RunValues {
             parameters,
             files,
@@ -1140,19 +1178,31 @@ struct Sent<'a> {
     bound: Vec<&'a str>,
 }
 
+/// What every query of a run may use beside the report's parameters.
+#[derive(Clone, Copy)]
+struct Bound {
+    /// A partitioned run's range: `:part_from` and `:part_to`.
+    ranges: bool,
+    /// The run's start, `:as_of` (RS5g).
+    as_of: bool,
+}
+
 /// Each query the run sends, sources first.
 fn queries<'a>(
     sources: &'a [PlannedSource],
     combine: Option<&'a PlannedCombine>,
     charts: &'a [Chart],
-    partitioned: bool,
+    run: Bound,
 ) -> Vec<Sent<'a>> {
     let range_bound = || {
-        if partitioned {
-            vec![PART_FROM, PART_TO]
-        } else {
-            Vec::new()
+        let mut bound = Vec::new();
+        if run.ranges {
+            bound.extend([PART_FROM, PART_TO]);
         }
+        if run.as_of {
+            bound.push(AS_OF);
+        }
+        bound
     };
     let sources = sources
         .iter()
@@ -1180,7 +1230,7 @@ fn queries<'a>(
             place: Place::key(Table::Chart(index), "query"),
             query: chart.query.as_deref()?,
             language: QueryLanguage::Sql(Dialect::DuckDb),
-            bound: Vec::new(),
+            bound: if run.as_of { vec![AS_OF] } else { Vec::new() },
         })
     });
     sources.chain(combine).chain(charts).collect()
