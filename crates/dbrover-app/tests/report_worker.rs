@@ -107,6 +107,7 @@ impl Settings {
             defaults: LimitDefaults::default(),
             memory_limit: None,
             explain: None,
+            resume: false,
         }
     }
 
@@ -264,6 +265,7 @@ fn kind(event: &RunEvent) -> &'static str {
         RunEvent::Cancelled => "cancelled",
         RunEvent::Explained(_) => "explained",
         RunEvent::WorkKept(_) => "kept",
+        RunEvent::Resumed(_) => "resumed",
     }
 }
 
@@ -618,7 +620,7 @@ fn keeps_the_work_folder_of_a_killed_run_past_resumable_above() {
         .unwrap()
         .unwrap();
     assert!(manifest.kept_at().is_some());
-    assert_eq!(manifest.run.report, report);
+    assert_eq!(manifest.run.report, report.canonicalize().unwrap());
     let numbers: Vec<u64> = manifest.ranges.iter().map(|range| range.number).collect();
     assert_eq!(numbers, [1, 2]);
 

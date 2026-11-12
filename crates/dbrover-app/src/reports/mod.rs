@@ -45,7 +45,7 @@ use dbrover_report::{
 use dbrover_sql::FormatOptions;
 use dbrover_store::{
     CombineMetrics, DEFAULT_RUNS_KEPT, KeptColumn, OutputMetrics, PartMetrics, ReportFiles,
-    ReportName, ReportRun, ReportSettings, RunError, RunOrigin, RunOutcome, RunProfile,
+    ReportName, ReportRun, ReportSettings, RunError, RunId, RunOrigin, RunOutcome, RunProfile,
     SourceMetrics, StepMetrics,
 };
 use jiff::Timestamp;
@@ -460,6 +460,11 @@ pub enum RunEnd {
 }
 
 impl RunRecord {
+    /// Marks the run as carrying on from the run `id`, whose work folder it takes (RS5d).
+    pub fn resumes(&mut self, id: RunId) {
+        self.profile.resumed_from = Some(id);
+    }
+
     /// A run starting now with `params`.
     pub fn new(params: TypedValues) -> Self {
         Self {
@@ -891,6 +896,7 @@ impl RunRecord {
             RunEvent::WorkerUsage { .. } | RunEvent::Explained(_) | RunEvent::PartDone(_) => {}
             RunEvent::OutputWritten(file) => self.files.push(file),
             RunEvent::WorkKept(kept) => self.profile.kept = Some(kept.folder),
+            RunEvent::Resumed(resumed) => self.files.extend(resumed.files),
             RunEvent::Finished { elapsed_ms } => self.end = Some(RunEnd::Finished { elapsed_ms }),
             RunEvent::Failed(failure) => {
                 if let Some(record) = self.step_mut(&failure.step) {
@@ -1387,6 +1393,7 @@ impl Reports {
             defaults: settings.defaults,
             memory_limit: None,
             explain: None,
+            resume: false,
         };
         let watch = run_watch(plan, settings, work_root);
         let started = setup.launcher.start(&request, watch, Box::new(wake));
@@ -1449,6 +1456,7 @@ impl Reports {
             defaults: settings.defaults,
             memory_limit: None,
             explain: Some(ExplainRequest { tables }),
+            resume: false,
         };
         let started = setup
             .launcher
@@ -1873,6 +1881,7 @@ mod tests {
                 cores: Some(10),
                 dbrover: Some("0.31.0".to_owned()),
                 kept: None,
+                resumed_from: None,
             }
         );
     }

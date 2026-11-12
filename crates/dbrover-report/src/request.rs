@@ -18,9 +18,10 @@ pub struct RunRequest {
     /// all complete. The run removes it; the app's side removes it again after a worker it had
     /// to kill, which couldn't.
     pub staging: PathBuf,
-    /// The run's work folder (`docs/reports-at-scale.md`, RS3b), which holds its DuckDB's file
-    /// and what DuckDB spills: made by the worker and removed when the run ends, and removed
-    /// again by the app's side after a worker it had to kill.
+    /// The run's work folder (`docs/reports-at-scale.md`, RS3b), which holds its DuckDB's file,
+    /// what DuckDB spills and the run's manifest: made by the worker and removed when the run
+    /// ends, and removed again by the app's side after a worker it had to kill, unless it is
+    /// kept for the run to resume (RS5c).
     pub work: PathBuf,
     /// The limits where the report's file leaves one out, as Settings › Reports has them, so
     /// the worker reads no settings of its own and runs what the tab showed.
@@ -34,6 +35,10 @@ pub struct RunRequest {
     /// [`RunEvent::Explained`](crate::RunEvent::Explained) and writes no file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub explain: Option<ExplainRequest>,
+    /// Carry on from the run kept in `work` (RS5d): the worker checks its manifest against
+    /// this run, and the run skips what it finished.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub resume: bool,
 }
 
 /// What explaining a report needs beside the report: what the app's history knows of it.

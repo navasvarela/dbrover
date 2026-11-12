@@ -60,13 +60,21 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
                 staging: &request.staging,
                 work: &request.work,
             };
-            let identity =
-                RunIdentity::of(&plan, &request.report, version.to_string(), &request.values);
+            // Made before the run's identity names it, so it names it as a run resuming it,
+            // which finds it made, does.
+            make_folder(&request.folder)?;
+            let identity = RunIdentity::of(
+                &plan,
+                &request.report,
+                &request.folder,
+                version.to_string(),
+                &request.values,
+            );
+            prepare_manifest(identity, &request)?;
             let started = out.send(&plan.started(&values, version, machine()));
             if started.is_err() {
                 abandon(folders);
             }
-            start_manifest(identity, &request.work);
             let ran = run_report(&paths, &plan, &values, folders, &mut out);
             planned = Some(plan);
             ran
@@ -315,11 +323,32 @@ fn run_report(
 
 /// Writes the run's manifest in its work folder, so the run records each unit it finishes
 /// and can keep the folder to resume (RS5c). A manifest that can't be written only means the
-/// run won't resume.
-fn start_manifest(identity: RunIdentity, work: &Path) {
+/// run won't resume. A run that resumes (RS5d) takes the kept one instead, once it is checked
+/// against this run.
+///
+/// # Errors
+///
+/// For a run that resumes, what keeps it from resuming the kept run.
+fn prepare_manifest(identity: RunIdentity, request: &RunRequest) -> Result<(), RunFailure> {
+    let work = &request.work;
+    if request.resume {
+        return Manifest::resume(work, &identity)
+            .map(drop)
+            .map_err(|changes| {
+                RunFailure::new(
+                    Step::Report,
+                    format!(
+                        "the run can't carry on from {}: {}; run it from scratch instead",
+                        work.display(),
+                        changes.join("; ")
+                    ),
+                )
+            });
+    }
     if let Err(error) = Manifest::start(identity).write(work) {
         tracing::warn!("the run's manifest isn't written, so it won't resume: {error}");
     }
+    Ok(())
 }
 
 /// Stops a run nobody reads the events of any more: the app or command that started it was

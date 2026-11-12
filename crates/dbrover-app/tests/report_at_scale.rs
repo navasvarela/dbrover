@@ -1,5 +1,5 @@
-//! RS3's and RS4's exit tests (`docs/reports-at-scale.md`, "Milestones", "RS3's exit test" and
-//! "RS4's exit test"), run by hand, one at a time by name, or both:
+//! RS3's, RS4's and RS5's exit tests (`docs/reports-at-scale.md`, "Milestones", "RS3's exit
+//! test", "RS4's exit test" and "RS5's exit test"), run by hand, one at a time by name, or all:
 //!
 //! ```text
 //! cargo test -p dbrover-app --test report_at_scale -- --ignored --nocapture
@@ -16,6 +16,11 @@
 //! says, run by month into a Parquet file a month; each month's DuckDB, and the worker, must
 //! hold what the same report run over its largest month alone holds. A debug build takes
 //! about 6 minutes.
+//!
+//! RS5's: the same year, with one CSV file of every month beside the Parquet files, its worker
+//! killed once the seventh month has started; the run resumes from its kept work folder,
+//! reads months 7 to 12 only, and writes files equal to those of a run that was never stopped.
+//! A debug build takes about 12 minutes; `DBROVER_RS4_EVERY_SECONDS` makes it shorter too.
 //!
 //! Everything is written in a temporary folder (`TMPDIR`), removed when the test ends; at the
 //! default size it needs about 10 GB free while it runs.
@@ -153,6 +158,7 @@ impl Home {
             defaults: LimitDefaults::default(),
             memory_limit: None,
             explain: None,
+            resume: false,
         }
     }
 
@@ -500,5 +506,182 @@ fn writes_a_year_of_events_a_month_at_a_time_in_a_months_memory() {
     assert!(
         within(worker, month_worker, WORKER_SAME_MEMORY_PCT),
         "the worker holds about what a month alone holds"
+    );
+}
+
+/// RS4's year of events, with one CSV file of every month beside the Parquet file a month, and
+/// its work folder kept once a month has read anything.
+fn events_kept(every_seconds: u64) -> String {
+    events_by_month(every_seconds).replace(
+        "timeout = \"4h\"\n",
+        "timeout = \"4h\"\nresumable_above = \"1 KiB\"\n",
+    ) + "\n[[output]]\nformat = \"csv\"\nfile = \"events.csv\"\n"
+}
+
+/// Runs `request` through the real worker, watched as the app watches a run, keeping its work
+/// folder past one KiB; with `kill_in`, kills the worker once that range has started. Returns
+/// the run's events.
+fn run_killing(home: &Home, request: &RunRequest, kill_in: Option<u64>) -> Vec<RunEvent> {
+    std::fs::create_dir_all(home.work_root()).unwrap();
+    let watch = RunWatch {
+        timeout: Duration::from_secs(4 * 3600),
+        stall_timeout: Duration::from_secs(10 * 60),
+        disk: Some(disk_budget(&home.work_root(), ByteSize(MAX_DISK))),
+        keep_awake: None,
+        resumable_above: Some(1 << 10),
+    };
+    let run = WorkerRun::start(home.command(), request, watch, || {}).unwrap();
+    let mut events = Vec::new();
+    let mut done = 0;
+    while let Some(timed) = run.wait_next() {
+        if let RunEvent::PartDone(part) = &timed.event {
+            done = part.number;
+            println!(
+                "{:>8.1} s  month {} done",
+                timed.at_ms as f64 / 1000.0,
+                part.number
+            );
+        }
+        let started_kill_range = matches!(timed.event, RunEvent::Progress { .. })
+            && kill_in.is_some_and(|range| done + 1 == range);
+        if started_kill_range {
+            println!("{:>8.1} s  killing the worker", timed.at_ms as f64 / 1000.0);
+            run.cancel();
+        }
+        if !matches!(timed.event, RunEvent::Progress { .. }) {
+            events.push(timed.event);
+        }
+    }
+    events
+}
+
+/// Each file's name in `folder`, with its bytes: DuckDB writes a Parquet file of the same rows
+/// byte for byte the same, which the test relies on to compare them.
+fn contents(folder: &Path) -> Vec<(String, Vec<u8>)> {
+    let mut names: Vec<String> = std::fs::read_dir(folder)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| !name.starts_with('.'))
+        .collect();
+    names.sort();
+    names
+        .into_iter()
+        .map(|name| {
+            let bytes = std::fs::read(folder.join(&name)).unwrap();
+            (name, bytes)
+        })
+        .collect()
+}
+
+fn ranges_done(events: &[RunEvent]) -> Vec<u64> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::PartDone(part) => Some(part.number),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+#[ignore = "slow: a year of events a month at a time, killed and resumed; run by hand"]
+fn resumes_a_year_of_events_killed_in_its_seventh_month() {
+    let every_seconds: u64 = std::env::var("DBROVER_RS4_EVERY_SECONDS")
+        .ok()
+        .and_then(|every| every.parse().ok())
+        .unwrap_or(EVERY_SECONDS);
+    let home = Home::new();
+    let report = home.report("events", &events_kept(every_seconds));
+    let year = [("since", "2025-01-01"), ("until", "2026-01-01")];
+
+    let mut whole = home.request(&report, &year);
+    whole.folder = home.home.path().join("whole");
+    whole.staging = whole.folder.join(".run");
+    whole.work = home.work_root().join("whole");
+    let started = Instant::now();
+    let events = run_killing(&home, &whole, None);
+    let uninterrupted = started.elapsed();
+    assert!(
+        matches!(events.last(), Some(RunEvent::Finished { .. })),
+        "{events:#?}"
+    );
+
+    let mut request = home.request(&report, &year);
+    let started = Instant::now();
+    let killed = run_killing(&home, &request, Some(7));
+    let until_killed = started.elapsed();
+    assert_eq!(killed.last(), Some(&RunEvent::Cancelled), "{killed:#?}");
+    assert_eq!(ranges_done(&killed), (1..=6).collect::<Vec<_>>());
+    let kept = killed.iter().find_map(|event| match event {
+        RunEvent::WorkKept(kept) => Some(kept.clone()),
+        _ => None,
+    });
+    assert_eq!(kept.map(|kept| kept.ranges), Some(6), "{killed:#?}");
+    let in_place: Vec<String> = std::fs::read_dir(&request.folder)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| !name.starts_with('.'))
+        .collect();
+    assert_eq!(in_place.len(), 6, "the six months' files: {in_place:?}");
+
+    request.resume = true;
+    let started = Instant::now();
+    let resumed = run_killing(&home, &request, None);
+    let resuming = started.elapsed();
+    assert!(
+        matches!(resumed.last(), Some(RunEvent::Finished { .. })),
+        "{resumed:#?}"
+    );
+    let carried = resumed.iter().find_map(|event| match event {
+        RunEvent::Resumed(resumed) => Some(resumed.ranges.clone()),
+        _ => None,
+    });
+    assert_eq!(carried, Some((1..=6).collect::<Vec<_>>()));
+    assert_eq!(
+        ranges_done(&resumed),
+        (7..=12).collect::<Vec<_>>(),
+        "months 7 to 12 only"
+    );
+    let read: u64 = resumed
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::SourceDone { rows, .. } => Some(*rows),
+            _ => None,
+        })
+        .sum();
+    let july_on = (1_751_328_000..1_767_225_600_u64)
+        .step_by(every_seconds as usize)
+        .count();
+    assert_eq!(read, july_on as u64, "the events of July to December, once");
+    assert!(
+        !request.work.exists(),
+        "the finished run removes its work folder"
+    );
+
+    let written = contents(&request.folder);
+    let expected = contents(&whole.folder);
+    let names: Vec<&str> = written.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names.len(), 13, "{names:?}");
+    assert_eq!(
+        names,
+        expected
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>()
+    );
+    for ((name, bytes), (_, expected)) in written.iter().zip(&expected) {
+        assert!(
+            bytes == expected,
+            "{name} differs from the uninterrupted run's"
+        );
+    }
+    println!(
+        "\nuninterrupted {:.0} s; killed in July after {:.0} s; resumed in {:.0} s, reading \
+         {read} events of July to December; 13 files equal to the uninterrupted run's",
+        uninterrupted.as_secs_f64(),
+        until_killed.as_secs_f64(),
+        resuming.as_secs_f64(),
     );
 }

@@ -43,6 +43,11 @@ impl RunHistory {
         })
     }
 
+    /// Marks the run as carrying on from the run `id` (RS5d).
+    pub fn resumes(&mut self, id: dbrover_store::RunId) {
+        self.record.resumes(id);
+    }
+
     pub fn event(&mut self, event: &TimedEvent) {
         self.record.apply(event.clone());
     }

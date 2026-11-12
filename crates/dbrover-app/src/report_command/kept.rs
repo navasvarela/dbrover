@@ -40,7 +40,7 @@ pub fn runs(args: &RunsArgs) -> Outcome {
     let mut out = io::stdout().lock();
     // A closed standard output isn't the listing's failure.
     let _ = match args.style {
-        OutputStyle::Human => print_runs(&mut out, &kept.runs),
+        OutputStyle::Human => print_runs(&mut out, &kept.runs, &kept.resumable),
         OutputStyle::JsonLines => kept
             .runs
             .iter()
@@ -107,6 +107,8 @@ struct Kept {
     name: ReportName,
     runs: Vec<ReportRun>,
     quiet: Vec<HintId>,
+    /// The runs that stopped with their work folder kept, which can still resume (RS5d).
+    resumable: Vec<RunId>,
 }
 
 impl Kept {
@@ -128,8 +130,36 @@ impl Kept {
                 ))
             })?;
         let quiet = quiet_hints(&paths.report_files().path(&name));
-        Ok(Self { name, runs, quiet })
+        let resumable = resumable(&paths, &runs);
+        Ok(Self {
+            name,
+            runs,
+            quiet,
+            resumable,
+        })
     }
+}
+
+/// Those of `runs` whose work folder is still kept, so they can resume.
+fn resumable(paths: &AppPaths, runs: &[ReportRun]) -> Vec<RunId> {
+    let Ok(settings) = super::report_settings(paths) else {
+        return Vec::new();
+    };
+    let settings = crate::reports::RunSettings::of(&settings);
+    let work_root = super::resume::work_root(paths, &settings);
+    let kept: Vec<String> = dbrover_engine::kept_runs(&work_root)
+        .iter()
+        .map(dbrover_engine::KeptRun::name)
+        .collect();
+    runs.iter()
+        .filter(|run| {
+            run.profile
+                .kept
+                .as_ref()
+                .is_some_and(|folder| kept.contains(folder))
+        })
+        .filter_map(|run| run.id)
+        .collect()
 }
 
 /// The name the history keeps `report`'s runs under: only a report in the reports folder has
@@ -191,8 +221,8 @@ fn id_text(run: &ReportRun) -> String {
     run.id.map_or_else(|| "-".to_owned(), |id| id.to_string())
 }
 
-/// A run a line, and under it the step that held it longest.
-fn print_runs(out: &mut impl Write, runs: &[ReportRun]) -> io::Result<()> {
+/// A run a line, and under it the step that held it longest, and whether it can resume.
+fn print_runs(out: &mut impl Write, runs: &[ReportRun], resumable: &[RunId]) -> io::Result<()> {
     if runs.is_empty() {
         return writeln!(out, "No run is kept.");
     }
@@ -218,6 +248,15 @@ fn print_runs(out: &mut impl Write, runs: &[ReportRun]) -> io::Result<()> {
         }
         if let Some(bottleneck) = profile::bottleneck(run) {
             writeln!(out, "    {bottleneck}")?;
+        }
+        if let Some(id) = run.id.filter(|id| resumable.contains(id)) {
+            writeln!(
+                out,
+                "    Its work folder is kept: --resume {id} carries on from where it stopped."
+            )?;
+        }
+        if let Some(from) = run.profile.resumed_from {
+            writeln!(out, "    Carried on from run {from}.")?;
         }
     }
     Ok(())
@@ -415,7 +454,7 @@ mod tests {
     #[test]
     fn lists_each_run_with_the_step_that_held_it() {
         let mut out = Vec::new();
-        print_runs(&mut out, &[run(12, 9_000, 8_000)]).unwrap();
+        print_runs(&mut out, &[run(12, 9_000, 8_000)], &[RunId(12)]).unwrap();
         let text = String::from_utf8(out).unwrap();
         let lines: Vec<&str> = text.lines().collect();
         assert!(
@@ -427,6 +466,10 @@ mod tests {
             lines[1],
             "    Source tx held the run longest: 9.0 s of 9.1 s, 89% of it waiting on PostgreSQL \
              for its first row."
+        );
+        assert_eq!(
+            lines[2],
+            "    Its work folder is kept: --resume 12 carries on from where it stopped."
         );
     }
 

@@ -121,6 +121,8 @@ pub fn sweep(root: &Path, total: u64, now: Timestamp) -> Vec<PathBuf> {
 /// Removes the kept work folders in `root` of runs of `report` but `keep`'s: a run of it that
 /// finished supersedes them.
 pub fn discard_superseded(root: &Path, report: &Path, keep: Option<&Path>) {
+    // Manifests name the report canonically.
+    let report = report.canonicalize().unwrap_or_else(|_| report.to_owned());
     for run in kept_runs(root) {
         let superseded = run.manifest.run.report == report && Some(run.folder.as_path()) != keep;
         if superseded && let Err(error) = discard(&run.folder) {
@@ -139,6 +141,7 @@ mod tests {
         let folder = root.join(name);
         let mut manifest = Manifest::start(RunIdentity {
             report: PathBuf::from(report),
+            folder: PathBuf::from("/out"),
             version: "0123".to_owned(),
             values: TypedValues::new(),
             dbrover: "0.33.0".to_owned(),

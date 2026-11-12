@@ -237,6 +237,16 @@ fn outcome_json(events: &[RunEvent], max_rows: usize) -> Value {
             }
             RunEvent::Failed(failure) => end = failed_json(failure),
             RunEvent::Cancelled => end = json!({"outcome": "cancelled"}),
+            RunEvent::Resumed(resumed) => {
+                for file in &resumed.files {
+                    files.push(json!({
+                        "path": file.path,
+                        "rows": file.rows,
+                        "size": file.size,
+                        "warnings": file.warnings,
+                    }));
+                }
+            }
             RunEvent::WorkKept(folder) => {
                 kept = json!({"folder": folder.folder, "ranges": folder.ranges});
             }

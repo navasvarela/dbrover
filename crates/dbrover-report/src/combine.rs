@@ -80,6 +80,9 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
     ) -> Result<(), RunFailure> {
         let limits = self.limits();
         let work = self.folders.work;
+        // What a range a stopped run was in the middle of left, which a run resuming it
+        // reads again from the start (RS5d).
+        remove_workspace(work);
         let store = WorkspaceStore::File(work.join(WORKSPACE_FILE));
         let mut workspace = Workspace::open(
             &store,

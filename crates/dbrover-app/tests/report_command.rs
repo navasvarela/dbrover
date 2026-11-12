@@ -818,6 +818,123 @@ mod runs {
     }
 
     /// `--profile` writes the run's profile, and `runs` and `compare` read the runs kept.
+    /// The shop's lines a day, a file a day and one of every day, whose third day counts for a
+    /// long time while the shop's `pause` says so, which the run's time limit stops.
+    const BY_DAY: &str = r#"
+[report]
+name = "By day"
+params = { since = "date", until = "date" }
+partition = { from = ":since", to = ":until", every = "1 day" }
+timeout = "5s"
+resumable_above = "1 B"
+
+[[source]]
+id = "days"
+data_source = "shop"
+query = """
+WITH RECURSIVE n(x) AS (
+  SELECT 1 UNION ALL SELECT x + 1 FROM n
+  WHERE x < CASE WHEN CAST(:part_from AS TEXT) LIKE '2026-10-03%'
+                  AND (SELECT paused FROM pause) = 1 THEN 5000000000 ELSE 1 END
+)
+SELECT CAST(:part_from AS TEXT) AS day, max(x) AS counted FROM n
+"""
+
+[[output]]
+format = "csv"
+file = "day-{part_from}.csv"
+
+[[output]]
+format = "csv"
+file = "by-day.csv"
+"#;
+
+    /// RS5's exit, on the command line: a run stopped in its third day keeps its work folder,
+    /// `runs` says it can resume, and `--resume` reads days 3 to 31 only, writing what a run
+    /// that was never stopped writes.
+    #[test]
+    fn resumes_a_stopped_partitioned_run_by_its_id() {
+        let settings = Settings::new();
+        let shop = rusqlite::Connection::open(settings.home.path().join("shop.db")).unwrap();
+        shop.execute_batch("CREATE TABLE pause (paused INTEGER); INSERT INTO pause VALUES (1);")
+            .unwrap();
+        settings.write_report("by-day", BY_DAY);
+
+        let stopped = settings.run(&[&["by-day"][..], &OCTOBER].concat());
+        assert_eq!(stopped.status.code(), Some(6), "{}", describe(&stopped));
+        let stderr = String::from_utf8_lossy(&stopped.stderr);
+        assert!(stderr.contains("Kept the run's work folder"), "{stderr}");
+        assert!(stderr.contains("2 finished ranges"), "{stderr}");
+        assert_eq!(
+            files_in(&settings.out()),
+            ["day-2026-10-01.csv", "day-2026-10-02.csv"]
+        );
+        let id = settings.runs("by-day")[0].id.unwrap().to_string();
+        let listed = settings.subcommand("runs", &["by-day"]).output().unwrap();
+        let text = String::from_utf8_lossy(&listed.stdout);
+        assert!(
+            text.contains(&format!("--resume {id} carries on")),
+            "{text}"
+        );
+
+        let again = settings.run(&[&["by-day"][..], &OCTOBER, &["--json"]].concat());
+        let stderr = String::from_utf8_lossy(&again.stderr);
+        assert!(
+            stderr.contains(&format!("--resume {id} carries on")),
+            "{stderr}"
+        );
+
+        shop.execute_batch("UPDATE pause SET paused = 0").unwrap();
+        // Another report of the same file, so that its run, which finishes, doesn't discard
+        // the stopped run of by-day as superseded.
+        settings.write_report("by-day-whole", BY_DAY);
+        let whole = settings.home.path().join("whole");
+        let whole_arg = whole.display().to_string();
+        let uninterrupted = settings
+            .command(&[&["by-day-whole"][..], &OCTOBER, &["-o", &whole_arg]].concat())
+            .output()
+            .unwrap();
+        assert_eq!(
+            uninterrupted.status.code(),
+            Some(0),
+            "{}",
+            describe(&uninterrupted)
+        );
+
+        let resumed = settings.run(&["by-day", "--resume", &id]);
+        assert_eq!(resumed.status.code(), Some(0), "{}", describe(&resumed));
+        let stderr = String::from_utf8_lossy(&resumed.stderr);
+        assert!(stderr.contains("Resumed: 2 ranges of 31"), "{stderr}");
+        assert!(!stderr.contains("Range 2 of 31"), "{stderr}");
+        assert!(stderr.contains("Range 3 of 31"), "{stderr}");
+        let listed_files = String::from_utf8_lossy(&resumed.stdout);
+        assert_eq!(
+            listed_files.lines().count(),
+            32,
+            "every file, the kept ones too"
+        );
+        assert_eq!(files_in(&settings.out()), files_in(&whole));
+        for file in files_in(&whole) {
+            assert_eq!(
+                std::fs::read(settings.out().join(&file)).unwrap(),
+                std::fs::read(whole.join(&file)).unwrap(),
+                "{file}"
+            );
+        }
+        let runs = settings.runs("by-day");
+        assert_eq!(
+            runs[0].profile.resumed_from.map(|from| from.to_string()),
+            Some(id.clone())
+        );
+        let gone = settings.run(&["by-day", "--resume", &id]);
+        assert_eq!(gone.status.code(), Some(3), "{}", describe(&gone));
+        assert!(
+            String::from_utf8_lossy(&gone.stderr).contains("work folder is gone"),
+            "{}",
+            describe(&gone)
+        );
+    }
+
     #[test]
     fn writes_a_profile_lists_the_runs_kept_and_compares_two() {
         let settings = Settings::new();

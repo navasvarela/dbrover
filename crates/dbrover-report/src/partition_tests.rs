@@ -906,7 +906,7 @@ async fn writes_a_parquet_file_a_range_and_reads_a_lone_source_a_range_at_a_time
 }
 
 /// The rows of a Parquet file in the order it holds them, as DuckDB writes each value as text.
-async fn parquet_rows(file: &Path) -> Vec<Row> {
+pub(crate) async fn parquet_rows(file: &Path) -> Vec<Row> {
     use dbrover_core::{Connection, DuckDbConfig, DuckDbDatabase};
     let mut connection =
         dbrover_driver_duckdb::connect(&DuckDbConfig::new(DuckDbDatabase::InMemory))

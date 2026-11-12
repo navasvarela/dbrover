@@ -42,6 +42,8 @@ pub struct Manifest {
 pub struct RunIdentity {
     /// The report's file.
     pub report: PathBuf,
+    /// The folder its files go in, where a partitioned run's finished ranges' files are.
+    pub folder: PathBuf,
     /// The Git blob id of the file's text that ran (VC1e).
     pub version: String,
     /// The parameters' values, as typed.
@@ -81,10 +83,21 @@ pub struct RangeKept {
 }
 
 impl RunIdentity {
-    /// The identity of a run of `plan`, read from `report` at `version`, with `values`.
-    pub fn of(plan: &Plan, report: &Path, version: String, values: &TypedValues) -> Self {
+    /// The identity of a run of `plan`, read from `report` at `version`, with `values`, its
+    /// files going in `folder`.
+    pub fn of(
+        plan: &Plan,
+        report: &Path,
+        folder: &Path,
+        version: String,
+        values: &TypedValues,
+    ) -> Self {
+        // Canonical, so the app and the command line, which may name them another way, name
+        // the same report and folder alike.
+        let canonical = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_owned());
         Self {
-            report: report.to_owned(),
+            report: canonical(report),
+            folder: canonical(folder),
             version,
             values: values.clone(),
             dbrover: env!("CARGO_PKG_VERSION").to_owned(),
@@ -111,6 +124,88 @@ fn data_sources(plan: &Plan) -> Vec<DataSourceIdentity> {
             })
             .collect(),
     }
+}
+
+impl RunIdentity {
+    /// What differs between this run and `kept`, the run it would resume, a sentence each:
+    /// nothing when it may resume it.
+    pub fn changes_since(&self, kept: &Self) -> Vec<String> {
+        let mut changes = Vec::new();
+        if self.report != kept.report {
+            changes.push(format!(
+                "it ran {}, not {}",
+                kept.report.display(),
+                self.report.display()
+            ));
+        }
+        if self.folder != kept.folder {
+            changes.push(format!(
+                "it wrote its files in {}, not {}",
+                kept.folder.display(),
+                self.folder.display()
+            ));
+        }
+        if self.version != kept.version {
+            changes.push(format!(
+                "the report's file changed since it ran: its version was {}, and is {} now",
+                kept.version, self.version
+            ));
+        }
+        if self.dbrover != kept.dbrover {
+            changes.push(format!(
+                "it ran on DbRover {}, and this is {}",
+                kept.dbrover, self.dbrover
+            ));
+        }
+        changes.extend(value_changes(&kept.values, &self.values));
+        if self.data_sources != kept.data_sources {
+            changes.extend(data_source_changes(&kept.data_sources, &self.data_sources));
+        }
+        changes
+    }
+}
+
+/// How the parameters' values `now` differ from those a run had `then`.
+fn value_changes(then: &TypedValues, now: &TypedValues) -> Vec<String> {
+    let names: std::collections::BTreeSet<&String> = then.keys().chain(now.keys()).collect();
+    names
+        .into_iter()
+        .filter_map(|name| match (then.get(name), now.get(name)) {
+            (Some(was), Some(is)) if was != is => {
+                Some(format!("{name} was {was} when it ran, and is {is} now"))
+            }
+            (Some(was), None) => Some(format!("{name} was {was} when it ran, and isn't given now")),
+            (None, Some(is)) => Some(format!("{name} wasn't given when it ran, and is {is} now")),
+            _ => None,
+        })
+        .collect()
+}
+
+/// How the data sources `now` differ from those a run read `then`.
+fn data_source_changes(then: &[DataSourceIdentity], now: &[DataSourceIdentity]) -> Vec<String> {
+    let mut changes: Vec<String> = now
+        .iter()
+        .filter_map(|source| {
+            let was = then.iter().find(|was| was.source == source.source);
+            match was {
+                None => Some(format!("the source {} is new", source.source)),
+                Some(was) if was.id != source.id || was.target != source.target => Some(format!(
+                    "the source {} read {} when it ran, and reads {} now",
+                    source.source, was.target, source.target
+                )),
+                Some(_) => None,
+            }
+        })
+        .collect();
+    changes.extend(
+        then.iter()
+            .filter(|was| !now.iter().any(|source| source.source == was.source))
+            .map(|was| format!("the source {} is gone", was.source)),
+    );
+    if changes.is_empty() {
+        changes.push("its sources are in another order".to_owned());
+    }
+    changes
 }
 
 impl Manifest {
@@ -183,6 +278,30 @@ impl Manifest {
     pub fn mark_kept(&mut self) {
         self.kept_at = Some(Timestamp::now().to_string());
     }
+
+    /// The manifest of the kept run in `work`, ready for `identity`'s run to carry on from:
+    /// no longer marked kept, since the run going on now writes in its folder.
+    ///
+    /// # Errors
+    ///
+    /// Every reason it can't, a sentence each: the folder holds no kept run, or what differs.
+    pub fn resume(work: &Path, identity: &RunIdentity) -> Result<Self, Vec<String>> {
+        let folder = work.display();
+        let mut manifest = match Self::read(work) {
+            Ok(Some(manifest)) if manifest.kept_at.is_some() => manifest,
+            Ok(_) => return Err(vec![format!("{folder} holds no run to resume")]),
+            Err(error) => return Err(vec![format!("{folder}: {error}")]),
+        };
+        let changes = identity.changes_since(&manifest.run);
+        if !changes.is_empty() {
+            return Err(changes);
+        }
+        manifest.kept_at = None;
+        manifest
+            .write(work)
+            .map_err(|error| vec![format!("{folder}: {error}")])?;
+        Ok(manifest)
+    }
 }
 
 /// Keeps the work folder `work` when its manifest's finished units read more than `above`, or
@@ -234,6 +353,7 @@ mod tests {
     fn manifest() -> Manifest {
         Manifest::start(RunIdentity {
             report: PathBuf::from("/reports/events.toml"),
+            folder: PathBuf::from("/out"),
             version: "a1b2".to_owned(),
             values: TypedValues::from([("since".to_owned(), "2025-01-01".to_owned())]),
             dbrover: "0.33.0".to_owned(),
