@@ -703,3 +703,36 @@ async fn writes_parquet_only_in_the_folder_it_was_locked_to() {
     assert!(query(&mut locked, &copy).await.is_err());
     locked.close().await;
 }
+
+/// RS5e: a workspace a stopped run kept opens with the tables it had, and a table it left half
+/// loaded drops, so a run resuming it loads that one again.
+#[tokio::test]
+async fn reopens_a_kept_workspace_with_its_tables() {
+    let folder = tempfile::tempdir().unwrap();
+    let file = folder.path().join("workspace.duckdb");
+    let workspace = Workspace::open(&WorkspaceStore::File(file.clone()), &roomy(folder.path()))
+        .await
+        .unwrap();
+    for table in ["done", "half"] {
+        let mut loader = workspace.loader(table, &text(&["n"])).await.unwrap();
+        loader
+            .append(vec![cells(&["1"]), cells(&["2"])])
+            .await
+            .unwrap();
+    }
+    workspace.close().await;
+
+    let mut kept = Workspace::open(&WorkspaceStore::Kept(file), &roomy(folder.path()))
+        .await
+        .unwrap();
+    let rows = query(&mut kept, "SELECT count(*) FROM done").await.unwrap();
+    assert_eq!(rows, [cells(&["2"])]);
+    kept.drop_table("half").await.unwrap();
+    kept.drop_table("half").await.unwrap();
+    assert!(query(&mut kept, "SELECT * FROM half").await.is_err());
+    let mut again = kept.loader("half", &text(&["n"])).await.unwrap();
+    again.append(vec![cells(&["3"])]).await.unwrap();
+    let rows = query(&mut kept, "SELECT count(*) FROM half").await.unwrap();
+    assert_eq!(rows, [cells(&["1"])]);
+    kept.close().await;
+}

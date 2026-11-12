@@ -257,7 +257,11 @@ pub struct PartDone {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Resumed {
     /// The finished ranges' numbers, in their order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ranges: Vec<u64>,
+    /// The sources loaded in the kept workspace, which aren't read again (RS5e).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<String>,
     /// Of how many.
     pub of: u64,
     /// The rows and bytes they gave the outputs.

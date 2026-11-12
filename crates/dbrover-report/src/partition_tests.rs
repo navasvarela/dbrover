@@ -12,7 +12,7 @@ use dbrover_core::{ConnectionConfig, DataSource, DataSourceId, Row, SafetyLevel,
 use super::*;
 use crate::run_tests::{MemoryReader, column};
 
-fn data_sources() -> Vec<DataSource> {
+pub(crate) fn data_sources() -> Vec<DataSource> {
     vec![DataSource {
         id: DataSourceId::generate(),
         name: "events".to_owned(),

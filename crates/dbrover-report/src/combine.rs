@@ -28,6 +28,7 @@ use tokio::sync::mpsc;
 mod ranges;
 
 use crate::chart::ChartRun;
+use crate::checkpoints::Checkpoints;
 use crate::declared::Shaped;
 use crate::live::{ProgressClock, waiting};
 use crate::parquet::{ParquetCopy, ParquetFile, parquet_files};
@@ -35,10 +36,10 @@ use crate::run::{Count, Feed, Sink, millis, timed};
 use crate::statement::{Statements, lookup_literal};
 use crate::typing::{ColumnTyper, DriverTypes};
 use crate::{
-    AttachedSource, Batch, Busy, Chart, CombineLimits, Combined, LimitHit, LoadedColumn, Parts,
-    Plan, PlannedLookup, PlannedSource, PlannedSplit, QuerySource, RunEvent, RunFailure,
-    RunFolders, RunValues, SourceError, SourceOpener, SourcePhases, SourceReader, SourceStatement,
-    Step,
+    AttachedSource, Batch, Busy, Chart, CombineLimits, Combined, KeptColumn, LimitHit,
+    LoadedColumn, Parts, Plan, PlannedLookup, PlannedSource, PlannedSplit, QuerySource, Resumed,
+    RunEvent, RunFailure, RunFolders, RunValues, SourceError, SourceKept, SourceOpener,
+    SourcePhases, SourceReader, SourceStatement, Step,
 };
 
 /// Rows asked of the combine query at a time, as a source's are.
@@ -67,12 +68,17 @@ pub(crate) struct Combining<'a, 'v, O> {
     pub(crate) folders: RunFolders<'a>,
     pub(crate) combined: &'a Combined,
     pub(crate) opener: &'v O,
+    /// Where the sources it loads are recorded, and those an earlier run loaded found (RS5e);
+    /// `None` for a range of a partitioned run, whose DuckDB is its own.
+    pub(crate) checkpoints: Option<&'v Checkpoints>,
 }
 
 impl<'a, O: SourceOpener> Combining<'a, '_, O> {
     /// Runs the combine step into `sink`: see the module. The run's DuckDB is made for it and
     /// removed after it, so each range of a partitioned run has a database of its own, which
-    /// holds one range's tables and spill.
+    /// holds one range's tables and spill. An unpartitioned run that fails leaves it, for its
+    /// work folder to keep if the run can resume, and a run resuming one opens it as it was
+    /// left (RS5e).
     pub(crate) async fn run(
         &self,
         sink: &mut Sink<'a>,
@@ -80,10 +86,16 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
     ) -> Result<(), RunFailure> {
         let limits = self.limits();
         let work = self.folders.work;
-        // What a range a stopped run was in the middle of left, which a run resuming it
-        // reads again from the start (RS5d).
-        remove_workspace(work);
-        let store = WorkspaceStore::File(work.join(WORKSPACE_FILE));
+        let file = work.join(WORKSPACE_FILE);
+        let resumes = self.checkpoints.is_some_and(Checkpoints::has_sources) && file.exists();
+        let store = if resumes {
+            WorkspaceStore::Kept(file)
+        } else {
+            // What a range a stopped run was in the middle of left, which a run resuming it
+            // reads again from the start (RS5d), or a run that loaded nothing worth keeping.
+            remove_workspace(work);
+            WorkspaceStore::File(file)
+        };
         let mut workspace = Workspace::open(
             &store,
             &WorkspaceLimits {
@@ -97,7 +109,9 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
         .map_err(|error| RunFailure::new(Step::Combine, describe_error(&error)))?;
         let outcome = self.combine(&mut workspace, sink, events).await;
         workspace.close().await;
-        remove_workspace(work);
+        if outcome.is_ok() || self.checkpoints.is_none() {
+            remove_workspace(work);
+        }
         outcome
     }
 
@@ -120,12 +134,13 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
                 });
             }
         }
-        let mut loaded: Vec<LoadedTable> = Vec::new();
+        let mut loaded: Vec<LoadedTable> = self.resume_sources(events)?;
         for round in self.combined.rounds() {
             let events = RefCell::new(&mut *events);
             let loads = round
                 .into_iter()
-                .map(|source| self.load(source, workspace, &loaded, &events));
+                .filter(|source| !loaded.iter().any(|table| table.id == source.id))
+                .map(|source| self.load_anew(source, workspace, &loaded, &events));
             let tables = try_join_all(loads).await?;
             loaded.extend(tables);
         }
@@ -272,15 +287,76 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
         read.map(|()| run)
     }
 
-    /// Reads `source` into its table under its caps, a batch of its lookup's values at a
-    /// time if it has one, then types its columns.
-    async fn load(
+    /// The tables of the sources an earlier run loaded into the workspace this one resumes,
+    /// each said done with what it read then; nothing for a run that resumes none.
+    fn resume_sources(
+        &self,
+        events: &mut dyn FnMut(RunEvent),
+    ) -> Result<Vec<LoadedTable>, RunFailure> {
+        let Some(checkpoints) = self.checkpoints.filter(|kept| kept.has_sources()) else {
+            return Ok(Vec::new());
+        };
+        let kept: Vec<SourceKept> = self
+            .combined
+            .sources
+            .iter()
+            .filter_map(|source| match source {
+                PlannedSource::Query(source) => checkpoints.source(&source.id),
+                PlannedSource::Attached(_) => None,
+            })
+            .collect();
+        let tables = kept
+            .iter()
+            .map(LoadedTable::from_kept)
+            .collect::<Result<Vec<_>, _>>()?;
+        events(RunEvent::Resumed(Resumed {
+            ranges: Vec::new(),
+            sources: kept.iter().map(|source| source.id.clone()).collect(),
+            of: 0,
+            rows: 0,
+            bytes: 0,
+            files: Vec::new(),
+        }));
+        for source in &kept {
+            events(kept_source_done(source));
+        }
+        Ok(tables)
+    }
+
+    /// Loads `source` as [`Combining::load`] does, after dropping what an earlier run left of
+    /// its table, and records it once loaded.
+    async fn load_anew(
         &self,
         source: &QuerySource,
         workspace: &Workspace,
         loaded: &[LoadedTable],
         events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
     ) -> Result<LoadedTable, RunFailure> {
+        let step = || Step::Source {
+            id: source.id.clone(),
+        };
+        if self.checkpoints.is_some_and(Checkpoints::has_sources) {
+            workspace
+                .drop_table(&source.id)
+                .await
+                .map_err(|error| RunFailure::new(step(), describe_error(&error)))?;
+        }
+        let (table, read) = self.load(source, workspace, loaded, events).await?;
+        if let Some(checkpoints) = self.checkpoints {
+            checkpoints.source_done(table.kept(read));
+        }
+        Ok(table)
+    }
+
+    /// Reads `source` into its table under its caps, a batch of its lookup's values at a
+    /// time if it has one, then types its columns; returns the table and what it read.
+    async fn load(
+        &self,
+        source: &QuerySource,
+        workspace: &Workspace,
+        loaded: &[LoadedTable],
+        events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
+    ) -> Result<(LoadedTable, Count), RunFailure> {
         let opened = Instant::now();
         let mut loading = Loading {
             source,
@@ -362,6 +438,33 @@ fn remove_workspace(work: &Path) {
     let _ = std::fs::remove_dir_all(work.join(SPILL_FOLDER));
 }
 
+/// The event that says a source an earlier run loaded is done: its numbers as that run read
+/// them, and no time of this run's.
+fn kept_source_done(source: &SourceKept) -> RunEvent {
+    RunEvent::SourceDone {
+        id: source.id.clone(),
+        rows: source.rows,
+        bytes: source.read,
+        first_row_ms: None,
+        elapsed_ms: 0,
+        table: source
+            .columns
+            .iter()
+            .map(|column| LoadedColumn {
+                name: column.name.clone(),
+                type_name: column.duckdb_type.clone(),
+                declared: false,
+                bytes: None,
+            })
+            .collect(),
+        warnings: Vec::new(),
+        batches: None,
+        parts: None,
+        phases: None,
+        scanned_bytes: None,
+    }
+}
+
 /// Makes `folder`, which DuckDB is to write a file in.
 fn make_folder(folder: &Path) -> Result<(), RunFailure> {
     std::fs::create_dir_all(folder).map_err(|error| {
@@ -377,6 +480,52 @@ fn make_folder(folder: &Path) -> Result<(), RunFailure> {
 struct LoadedTable {
     id: String,
     columns: Vec<(String, DuckDbType)>,
+}
+
+impl LoadedTable {
+    /// The table of a source an earlier run loaded, as the manifest records it.
+    fn from_kept(kept: &SourceKept) -> Result<Self, RunFailure> {
+        let columns = kept
+            .columns
+            .iter()
+            .map(|column| {
+                let column_type = column.duckdb_type.parse::<DuckDbType>().map_err(|_| {
+                    RunFailure::new(
+                        Step::Source {
+                            id: kept.id.clone(),
+                        },
+                        format!(
+                            "the kept workspace's column {:?} has a type DbRover doesn't read, \
+                             {}; run the report from scratch",
+                            column.name, column.duckdb_type
+                        ),
+                    )
+                })?;
+                Ok((column.name.clone(), column_type))
+            })
+            .collect::<Result<Vec<_>, RunFailure>>()?;
+        Ok(Self {
+            id: kept.id.clone(),
+            columns,
+        })
+    }
+
+    /// What the manifest records of the table, once its source read `read`.
+    fn kept(&self, read: Count) -> SourceKept {
+        SourceKept {
+            id: self.id.clone(),
+            rows: read.rows,
+            read: read.bytes,
+            columns: self
+                .columns
+                .iter()
+                .map(|(name, column_type)| KeptColumn {
+                    name: name.clone(),
+                    duckdb_type: column_type.to_string(),
+                })
+                .collect(),
+        }
+    }
 }
 
 /// The distinct values of `lookup`'s column, in the table of the source it reads, as
@@ -779,7 +928,7 @@ impl Loading<'_> {
         self,
         sent: Sent,
         events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
-    ) -> Result<LoadedTable, RunFailure> {
+    ) -> Result<(LoadedTable, Count), RunFailure> {
         let step = self.step();
         let Some(Table {
             loader,
@@ -834,10 +983,16 @@ impl Loading<'_> {
             phases: Some(phases),
             scanned_bytes: self.scanned,
         });
-        Ok(LoadedTable {
+        let read = Count {
+            rows: self.read.rows,
+            bytes: self.read.bytes,
+            ..Count::default()
+        };
+        let table = LoadedTable {
             id: self.source.id.clone(),
             columns,
-        })
+        };
+        Ok((table, read))
     }
 }
 

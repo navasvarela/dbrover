@@ -130,6 +130,13 @@ impl<O: Write, E: Write> HumanLines<O, E> {
                 self.error_line("Cancelled. Only the finished ranges' own files were written.");
             }
             RunEvent::Cancelled => self.error_line("Cancelled. No file was written."),
+            RunEvent::Resumed(resumed) if resumed.ranges.is_empty() => {
+                let line = format!(
+                    "Resumed: {} loaded before, not read again.",
+                    resumed.sources.join(", ")
+                );
+                self.error_line(&line);
+            }
             RunEvent::Resumed(resumed) => {
                 let line = format!(
                     "Resumed: {} of {} finished before, {} rows; their files are in place.",
