@@ -181,6 +181,7 @@ fn outcome_json(events: &[RunEvent], max_rows: usize) -> Value {
     let mut steps = Vec::new();
     let mut files = Vec::new();
     let mut preview = Value::Null;
+    let mut kept = Value::Null;
     let mut end = json!({"outcome": "failed", "error": "the run's events stopped early"});
     for event in events {
         match event {
@@ -236,6 +237,9 @@ fn outcome_json(events: &[RunEvent], max_rows: usize) -> Value {
             }
             RunEvent::Failed(failure) => end = failed_json(failure),
             RunEvent::Cancelled => end = json!({"outcome": "cancelled"}),
+            RunEvent::WorkKept(folder) => {
+                kept = json!({"folder": folder.folder, "ranges": folder.ranges});
+            }
             // The worker's memory, the steps' phases and each range's numbers are RS8's, with
             // the run profile.
             RunEvent::Started { .. }
@@ -249,6 +253,9 @@ fn outcome_json(events: &[RunEvent], max_rows: usize) -> Value {
         end.insert("steps".to_owned(), Value::Array(steps));
         end.insert("files".to_owned(), Value::Array(files));
         end.insert("preview".to_owned(), preview);
+        if !kept.is_null() {
+            end.insert("kept".to_owned(), kept);
+        }
     }
     end
 }

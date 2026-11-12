@@ -91,6 +91,9 @@ pub(crate) struct Prepared {
     /// What the run is watched for, its disk measured where its work folder goes.
     pub(crate) watch: RunWatch,
     pub(crate) runs_kept: NonZeroU32,
+    /// The folder runs' work folders go in, where a run that finishes discards the report's
+    /// kept ones (RS5c).
+    pub(crate) work_root: PathBuf,
 }
 
 fn run(args: &RunArgs) -> Outcome {
@@ -137,6 +140,9 @@ fn run(args: &RunArgs) -> Outcome {
         }
     });
     tracing::info!("{} ended: {outcome:?}", report.display());
+    if outcome == Outcome::Finished {
+        dbrover_engine::discard_superseded(&prepared.work_root, &report, None);
+    }
     if let Some(history) = history {
         keep(history);
     }
@@ -213,6 +219,7 @@ pub(crate) fn prepare(
     let folder = output_dir.map_or_else(current_folder, absolute);
     let default_work_root = paths.report_runs_dir();
     let work_root = settings.work_root(&default_work_root);
+    dbrover_engine::sweep(work_root, settings.kept_runs_total, jiff::Timestamp::now());
     let request = RunRequest {
         report: report.to_owned(),
         values: values.clone(),
@@ -229,6 +236,7 @@ pub(crate) fn prepare(
         request,
         watch,
         runs_kept: reports::runs_kept(&saved),
+        work_root: work_root.to_owned(),
     })
 }
 

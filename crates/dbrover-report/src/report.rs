@@ -25,6 +25,8 @@ pub struct Report {
     /// How long the run may go without progress before the app stops it as stuck, when the
     /// file says (RS3e).
     pub stall_timeout: Option<Duration>,
+    /// What a stopped run must have read to keep its work folder, when the file says (RS5c).
+    pub resumable_above: Option<ByteSize>,
     /// The hints its runs don't give, for a report that, say, reads more than it writes on
     /// purpose.
     pub quiet_hints: Vec<HintId>,

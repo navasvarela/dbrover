@@ -28,6 +28,7 @@ mod hints;
 mod kept_rows;
 mod limits;
 mod live;
+mod manifest;
 mod parquet;
 mod partition;
 mod plan;
@@ -59,8 +60,12 @@ pub use hints::{HintId, UnknownHint};
 pub use limits::{
     ByteSize, CombineLimits, CombineLimitsSet, DEFAULT_COMBINE_TIMEOUT, DEFAULT_MAX_BYTES,
     DEFAULT_MAX_DISK, DEFAULT_MAX_ROWS, DEFAULT_MAX_SIZE, DEFAULT_MAX_TEMP_SIZE,
-    DEFAULT_MEMORY_LIMIT, DEFAULT_RUN_TIMEOUT, DEFAULT_SOURCE_TIMEOUT, DEFAULT_STALL_TIMEOUT,
-    LimitDefaults, OutputLimits, OutputLimitsSet, SourceLimits, SourceLimitsSet,
+    DEFAULT_MEMORY_LIMIT, DEFAULT_RESUMABLE_ABOVE, DEFAULT_RUN_TIMEOUT, DEFAULT_SOURCE_TIMEOUT,
+    DEFAULT_STALL_TIMEOUT, LimitDefaults, OutputLimits, OutputLimitsSet, SourceLimits,
+    SourceLimitsSet,
+};
+pub use manifest::{
+    DataSourceIdentity, MANIFEST_FILE, Manifest, RangeKept, RunIdentity, WorkKept, keep_work_folder,
 };
 pub use partition::{
     CalendarUnit, Every, MAX_PARALLEL, MAX_RANGES, PART_FROM, PART_TO, PartRange, Partition,
@@ -92,6 +97,8 @@ mod combine_tests;
 mod lookup_tests;
 #[cfg(test)]
 mod partition_tests;
+#[cfg(test)]
+mod resume_tests;
 #[cfg(test)]
 mod run_tests;
 #[cfg(test)]

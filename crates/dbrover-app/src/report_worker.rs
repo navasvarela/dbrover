@@ -17,8 +17,8 @@ use dbrover_core::{BlobId, DataSource, describe_error};
 use dbrover_engine::{PasswordCommands, ProcessRunner, SourceAccess, Tunnels};
 use dbrover_export::CustomFormat;
 use dbrover_report::{
-    ExplainRequest, Explanation, LimitDefaults, Machine, Plan, RunEvent, RunFailure, RunFolders,
-    RunRequest, RunValues, Step, TimedEvent, read_report,
+    ExplainRequest, Explanation, LimitDefaults, Machine, Manifest, Plan, RunEvent, RunFailure,
+    RunFolders, RunIdentity, RunRequest, RunValues, Step, TimedEvent, read_report,
 };
 use dbrover_store::{AppPaths, CustomFile, CustomFileKind, DataSourceFile, os_keychain};
 
@@ -60,10 +60,13 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
                 staging: &request.staging,
                 work: &request.work,
             };
+            let identity =
+                RunIdentity::of(&plan, &request.report, version.to_string(), &request.values);
             let started = out.send(&plan.started(&values, version, machine()));
             if started.is_err() {
                 abandon(folders);
             }
+            start_manifest(identity, &request.work);
             let ran = run_report(&paths, &plan, &values, folders, &mut out);
             planned = Some(plan);
             ran
@@ -308,6 +311,15 @@ fn run_report(
         .await
         .map(drop)
     })
+}
+
+/// Writes the run's manifest in its work folder, so the run records each unit it finishes
+/// and can keep the folder to resume (RS5c). A manifest that can't be written only means the
+/// run won't resume.
+fn start_manifest(identity: RunIdentity, work: &Path) {
+    if let Err(error) = Manifest::start(identity).write(work) {
+        tracing::warn!("the run's manifest isn't written, so it won't resume: {error}");
+    }
 }
 
 /// Stops a run nobody reads the events of any more: the app or command that started it was

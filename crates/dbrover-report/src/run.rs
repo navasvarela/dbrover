@@ -37,8 +37,9 @@ use crate::live::{ProgressClock, waiting};
 use crate::parquet::PartsJoin;
 use crate::statement::Statements;
 use crate::{
-    LimitHit, Logic, PartDone, Plan, PlannedOutput, Preview, QuerySource, RunEvent, RunFailure,
-    RunValues, SourcePhases, SourceRanges, Step, WrittenFile,
+    LimitHit, Logic, Manifest, PartDone, Plan, PlannedOutput, Preview, QuerySource, RangeKept,
+    RunEvent, RunFailure, RunValues, SourcePhases, SourceRanges, Step, WorkKept, WrittenFile,
+    keep_work_folder,
 };
 
 /// How many rows the preview keeps: a screenful or two, enough to see a report is right.
@@ -199,55 +200,140 @@ pub async fn run<O: SourceOpener>(
     events: &mut dyn FnMut(RunEvent),
 ) -> Result<RunSummary, RunFailure> {
     let _staging = OwnFolder::make(folders.staging)?;
-    let _work = OwnFolder::make(folders.work)?;
+    let work = OwnFolder::make(folders.work)?;
+    let mut checkpoints = Checkpoints::read(folders.work);
     let mut sink = Sink::new(plan, folders);
     let ran = match &values.run_ranges {
         None => run_once(plan, values, opener, &mut sink, events).await,
-        Some(ranges) => run_ranges(plan, values, ranges, opener, &mut sink, events).await,
+        Some(ranges) => {
+            let mut ranges = RunRanges {
+                plan,
+                values,
+                ranges,
+                checkpoints: &mut checkpoints,
+            };
+            ranges.run(opener, &mut sink, events).await
+        }
     };
-    match ran {
+    let outcome = match ran {
         Ok(()) => sink.finish(values, events).await,
         Err(failure) => {
             sink.abandon();
             Err(failure)
         }
+    };
+    if outcome.is_err()
+        && let Some(kept) = checkpoints.keep(folders.work, plan.resumable_above.0)
+    {
+        work.keep();
+        events(RunEvent::WorkKept(kept));
+    }
+    outcome
+}
+
+/// The run's manifest, when the worker wrote one in its work folder before the run started
+/// (RS5c): each finished unit is recorded in it as it ends. Tests run without one.
+struct Checkpoints(Option<Manifest>);
+
+impl Checkpoints {
+    fn read(work: &Path) -> Self {
+        match Manifest::read(work) {
+            Ok(manifest) => Self(manifest),
+            Err(error) => {
+                tracing::warn!("the run's manifest can't be read, so it won't resume: {error}");
+                Self(None)
+            }
+        }
+    }
+
+    /// Records a finished range. A manifest that can't be written fails nothing: the run goes
+    /// on, and a run resuming it reads the ranges recorded before again.
+    fn range_done(&mut self, work: &Path, range: RangeKept) {
+        let Some(manifest) = &mut self.0 else {
+            return;
+        };
+        manifest.ranges.push(range);
+        if let Err(error) = manifest.write(work) {
+            tracing::warn!("could not record a finished range in the run's manifest: {error}");
+        }
+    }
+
+    /// Keeps `work` for a run that resumes, when the finished units read more than `above`.
+    fn keep(&self, work: &Path, above: u64) -> Option<WorkKept> {
+        self.0.as_ref()?;
+        match keep_work_folder(work, above, false) {
+            Ok(kept) => kept,
+            Err(error) => {
+                tracing::warn!("could not keep the run's work folder: {error}");
+                None
+            }
+        }
     }
 }
 
-/// Runs each of a partitioned run's `ranges` in turn into `sink`, and says what each wrote.
-async fn run_ranges<'a, O: SourceOpener>(
+/// A partitioned run's ranges, run in turn.
+struct RunRanges<'a, 'r> {
     plan: &'a Plan,
-    values: &RunValues,
-    ranges: &SourceRanges,
-    opener: &O,
-    sink: &mut Sink<'a>,
-    events: &mut dyn FnMut(RunEvent),
-) -> Result<(), RunFailure> {
-    let of = ranges.ranges.len() as u64;
-    for range in &ranges.ranges {
-        let range_values = plan
-            .range_values(values, range)
-            .map_err(|problem| RunFailure::new(Step::Report, problem))?;
-        let started = Instant::now();
-        let before = sink.written();
-        sink.begin_range(range.number);
-        run_once(plan, &range_values, opener, sink, events).await?;
-        sink.end_range(events)?;
-        let after = sink.written();
-        events(RunEvent::PartDone(PartDone {
-            step: plan.feed_step(),
-            number: range.number,
-            of,
-            from: range.from.clone(),
-            to: range.to.clone(),
-            rows: after.rows - before.rows,
-            bytes: after.bytes - before.bytes,
-            first_row_ms: None,
-            elapsed_ms: millis(started.elapsed()),
-            scanned_bytes: None,
-        }));
+    values: &'r RunValues,
+    ranges: &'r SourceRanges,
+    checkpoints: &'r mut Checkpoints,
+}
+
+impl<'a> RunRanges<'a, '_> {
+    /// Runs each range into `sink`, says what each wrote, and records it in the manifest.
+    async fn run<O: SourceOpener>(
+        &mut self,
+        opener: &O,
+        sink: &mut Sink<'a>,
+        events: &mut dyn FnMut(RunEvent),
+    ) -> Result<(), RunFailure> {
+        let plan = self.plan;
+        let of = self.ranges.ranges.len() as u64;
+        for range in &self.ranges.ranges {
+            let range_values = plan
+                .range_values(self.values, range)
+                .map_err(|problem| RunFailure::new(Step::Report, problem))?;
+            let started = Instant::now();
+            let before = sink.written();
+            let mut read = 0;
+            sink.begin_range(range.number);
+            run_once(plan, &range_values, opener, sink, &mut |event| {
+                if let RunEvent::SourceDone { bytes, .. } = &event {
+                    read += bytes;
+                }
+                events(event);
+            })
+            .await?;
+            let files = sink.end_range(events)?;
+            let after = sink.written();
+            let done = PartDone {
+                step: plan.feed_step(),
+                number: range.number,
+                of,
+                from: range.from.clone(),
+                to: range.to.clone(),
+                rows: after.rows - before.rows,
+                bytes: after.bytes - before.bytes,
+                first_row_ms: None,
+                elapsed_ms: millis(started.elapsed()),
+                scanned_bytes: None,
+            };
+            self.checkpoints.range_done(
+                sink.folders().work,
+                RangeKept {
+                    number: range.number,
+                    from: range.from.clone(),
+                    to: range.to.clone(),
+                    read,
+                    rows: done.rows,
+                    bytes: done.bytes,
+                    files,
+                },
+            );
+            events(RunEvent::PartDone(done));
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 /// Runs `plan` once with `values`, its rows going to `sink`: the whole run, or one range of a
@@ -657,8 +743,11 @@ impl<'a> Sink<'a> {
 
     /// Ends a range of a partitioned run: completes the files of the outputs whose name says
     /// the range and puts them in place with the range's files DuckDB wrote, so the next range
-    /// starts its own, and keeps the range's rows for the run's end.
-    pub(crate) fn end_range(&mut self, events: &mut dyn FnMut(RunEvent)) -> Result<(), RunFailure> {
+    /// starts its own, and keeps the range's rows for the run's end. Returns the files.
+    pub(crate) fn end_range(
+        &mut self,
+        events: &mut dyn FnMut(RunEvent),
+    ) -> Result<Vec<WrittenFile>, RunFailure> {
         let (per_range, appended): (Vec<_>, Vec<_>) = std::mem::take(&mut self.outputs)
             .into_iter()
             .partition(|output| output.output.is_per_range());
@@ -676,13 +765,13 @@ impl<'a> Sink<'a> {
         for file in &placed {
             events(RunEvent::OutputWritten(file.clone()));
         }
-        self.placed.extend(placed);
+        self.placed.extend(placed.iter().cloned());
         if let Some(kept) = &mut self.kept {
             kept.end()
                 .map_err(|error| kept_failure(&self.plan.feed_step(), &error))?;
         }
         self.range = None;
-        Ok(())
+        Ok(placed)
     }
 
     /// Removes every output's file not in place yet, for a run that failed.
@@ -837,6 +926,14 @@ impl<'a> OwnFolder<'a> {
             )
         })?;
         Ok(Self(folder))
+    }
+}
+
+impl OwnFolder<'_> {
+    /// Leaves the folder where it is when the run ends: a work folder kept for a run that
+    /// resumes.
+    fn keep(self) {
+        std::mem::forget(self);
     }
 }
 

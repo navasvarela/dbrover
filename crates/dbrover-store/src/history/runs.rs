@@ -84,6 +84,10 @@ pub struct RunProfile {
     /// The DbRover that ran it, as `0.31.0`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dbrover: Option<String>,
+    /// The name of its work folder, kept so the run can resume (RS5c), in the folder runs'
+    /// work folders go in; `None` for a run that kept none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kept: Option<String>,
 }
 
 /// The profile as `report_runs.profile` holds it: the run's numbers, and the format they are
@@ -607,6 +611,7 @@ mod tests {
                 timeout_ms: Some(1_800_000),
                 cores: Some(10),
                 dbrover: Some("0.31.0".to_owned()),
+                kept: None,
             },
         }
     }

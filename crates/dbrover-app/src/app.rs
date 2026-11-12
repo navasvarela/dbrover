@@ -2822,8 +2822,8 @@ impl DbRoverApp {
                 self.send(Command::SaveMcpDefaults(defaults));
             }
             SettingsAction::Save(settings) => {
-                self.settings.set(settings.clone());
-                self.send(Command::SaveSettings(settings));
+                self.settings.set((*settings).clone());
+                self.send(Command::SaveSettings(*settings));
             }
             SettingsAction::Reload => self.send(Command::ReloadSettings),
             SettingsAction::KeepMine => {
