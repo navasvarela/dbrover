@@ -728,7 +728,10 @@ runs the small cases.
     problems; the cache over three runs with late rows; **Run from scratch**.
   - RS5i — Manual, demo note and the exit test's numbers.
   **Exit:** a run whose worker is killed in its seventh range resumes, reads ranges 7 to 12
-  only, and writes files equal to an uninterrupted run's.
+  only, and writes files equal to an uninterrupted run's. Met on 2026-11-12 (see
+  [RS5's exit test](#rs5s-exit-test)). Built: RS5a to RS5g and RS5i; RS5g without kept jobs,
+  and RS5h not at all (see the as-built notes under
+  [RS5 against today's code](#rs5-against-todays-code)).
 - **RS6 — Columnar sources:** ADR 0007, `ResultCursor::next_batch`, Arrow batches appended to
   the workspace, DuckDB sources with a query and ClickHouse's `ArrowStream` first. To land
   before C5 and C6, so their drivers implement it from the start. C3 started before it
@@ -931,6 +934,29 @@ ignored test in `crates/dbrover-app/tests/report_at_scale.rs` kills the worker o
 month starts, resumes the run by the history's id, checks that only months 7 to 12 are read,
 and compares every file with an uninterrupted run's.
 
+As built, where RS5 differs from the table above:
+
+- **A partitioned source isn't resumed range by range.** RS5e keeps a source loaded into the
+  combine step's workspace as a unit; a partitioned source stopped while it read its ranges is
+  read again from its first. The hidden range column the table describes needs the appender to
+  know when each range's last page is in, which waits for a report that needs it.
+- **Jobs aren't kept.** A source on a job engine is read again with its query on resume:
+  reopening a kept job needs the job's id, and BigQuery's location, out of the driver's cursor,
+  and a way to open a reader on them (`dbrover-core`'s `JobService` pages from a token already).
+  Left for a later layer.
+- **Incremental sources and their cache** (RS5h) aren't built.
+- **`:as_of` needs no key.** Every query may use it, bound to the run's start in UTC and kept in
+  the manifest, unless the report has a parameter named `as_of`, which binds its own value: a
+  key whose one value is `run_start` added nothing.
+- **A range's own files are put in place, and said, as it ends;** the history and `--json` see
+  them before the run's preview.
+- **Appended Parquet parts stay in the work folder until the run ends,** rather than being
+  removed once joined, so a run that fails after joining one resumes without them missing.
+- **A range a killed worker was in the middle of leaves its DuckDB behind;** a run resuming it
+  removes it before the range starts again. The exit test found this.
+- **The report's file and output folder are compared canonically,** so the app and the command
+  line, which may name them differently, resume each other's runs.
+
 ## Benchmark
 
 RS1g's baseline, the numbers RS3c's typed loading and RS6's columnar sources are judged by.
@@ -1067,6 +1093,26 @@ the 4 GiB `memory_limit`. The worker's peak varies more between runs than DuckDB
 run of the same test measured 293 MiB over the year against 232 MiB for January, since memory a
 range's DuckDB frees isn't always handed back to the system before the next range. So the test
 holds DuckDB's peaks within a quarter of January's, and the worker's within a half.
+
+### RS5's exit test
+
+`crates/dbrover-app/tests/report_at_scale.rs` gains a third ignored test, run by hand: RS4's
+year of events, an event a second, by month into a Parquet file a month and one CSV file of
+every month, under `resumable_above = "1 KiB"`. It runs once uninterrupted, then again with the
+worker killed once the seventh month has started, then resumes that run from its kept work
+folder. Measured on 2026-11-12, in a debug build:
+
+| What | Measured |
+| --- | ---: |
+| The uninterrupted run | 309 s |
+| The run killed in July | killed after 142 s, six months done, 745 MB read, its work folder kept |
+| The run resuming it | 146 s, reading July to December only: 15,897,600 events, months 7 to 12 |
+| Files | thirteen, each byte for byte the uninterrupted run's: twelve Parquet files and the CSV file of every month |
+
+The first run of the test found a range's DuckDB, left by the killed worker, refusing the
+resumed range ("already exists"); RS5d removes it before the range starts again. The test's
+kill waits for a progress event of July, which a small year (`DBROVER_RS4_EVERY_SECONDS`)
+finishes too fast to give, so it is run at its default size.
 
 ## Recommended path
 

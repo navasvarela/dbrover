@@ -380,6 +380,7 @@ columns = "same"
 | `timeout` | How long a whole run may take, as `"30m"` or `"1h"`. 30 minutes unless you say. |
 | `stall_timeout` | How long a run may go without progress before it is stopped as stuck: no row, no batch, no work in DuckDB. 10 minutes unless you say. See [Long runs](#long-runs). |
 | `max_disk` | The most disk a run may use for its DuckDB, what DuckDB spills and its files being written, as `"50 GiB"`. 20 GiB unless you say. See [Limits](#limits). |
+| `resumable_above` | What a run that stops must have finished reading for its work folder to be kept, so it can resume, as `"500 MiB"`. 1 GiB unless you say. See [Stopping and resuming](#stopping-and-resuming). |
 | `quiet_hints` | The ids of the hints its runs don't give, as `["source-reads-more"]` (see [Runs](#runs)). |
 | `partition` | Runs the whole report one range at a time, as `{ from = ":since", to = ":until", every = "1 month" }`. See [Partitions](#partitions). |
 
@@ -839,8 +840,11 @@ A report without `[combine]` reads its one source a range at a time into its out
 - Any other output is **one file every range appends to**, in the ranges' order: a CSV with one
   header, an Excel workbook going on to a new sheet only with `continue_on_new_sheet`, or a
   Parquet file that DuckDB joins from a part a range once the last range is done.
-- Every file waits in the staging folder until the last range is done, so a run that fails in
-  its seventh month leaves no file at all, as any run that fails.
+- A range's own files go in place as the range ends, so a run that fails in its seventh month
+  leaves the first six months' files. The files every range appends to, the charts and the
+  preview are written once the last range is done, from each range's rows kept in the run's
+  work folder, so a run that fails leaves none of them, and a run that resumes it writes them
+  whole (see [Stopping and resuming](#stopping-and-resuming)).
 - A chart draws every range's rows; a chart with a `query` of its own would read one range's
   tables, so it is a problem in a partitioned run.
 - Each range applies the sources' and the combine step's limits on its own; the run's `timeout`,
@@ -932,6 +936,8 @@ A limit a report's file doesn't set has a default for every report, in **Setting
 | Keep the computer awake | — | on, during runs past two minutes |
 | Disk a run may use | `max_disk` in `[report]` | 20 GiB |
 | Work folder | — | `report-runs` in DbRover's data folder |
+| Keep a stopped run past | `resumable_above` in `[report]` | 1 GiB |
+| Kept runs may hold | — | 50 GiB |
 | Runs kept per report | — | 20 |
 
 Each limit is a menu of a few values around DbRover's own; **Keep the computer awake** is a
@@ -1016,6 +1022,56 @@ The worker can't ask for a password either. A data source whose password you typ
 can't be a report's source until you save the password, or use a password command or a cloud
 sign-in (see [Password from a command](data-sources.md#password-from-a-command)).
 
+### Stopping and resuming
+
+A long run that stops, because a source failed, a limit stopped it, the computer restarted or
+you stopped it, can carry on from where it stopped instead of starting again, when it had
+finished enough to be worth keeping:
+
+- In a [partitioned run](#a-partitioned-run), each range that ended is kept: its own files are
+  in place already, and what the files every range appends to need of it waits in the run's
+  work folder.
+- In a run with `[combine]`, each source loaded into the combine step's DuckDB is kept, with
+  the DuckDB's file. A partitioned source counts as one: one stopped while it read its ranges is
+  read again from its first.
+
+A run that stops keeps its work folder when what it finished read more than `resumable_above`
+in `[report]`, or **Keep a stopped run past** in Settings › Reports, 1 GiB unless you say:
+below that, starting again costs less than keeping the folder. The tab then says *Stopped.
+What it finished is kept*, and offers **Resume** beside **Run**:
+
+- **Resume** carries on with the stopped run's parameters and folder: what it finished isn't
+  read again, and the files it writes are those of a run that never stopped, as long as the
+  sources still hold what they held.
+- **Pause**, while a run goes on, stops it as **Cancel** does but keeps what it finished,
+  however little it read.
+- **Discard** removes what the stopped run kept; **Run** starts from the beginning and leaves it
+  until a run of the report finishes, which removes it.
+
+A run resumes only the report it stopped in, unchanged: a different version of the report's
+file, other parameters, another output folder, a data source pointing elsewhere or another
+version of DbRover refuses, saying what changed. A limit set in Settings › Reports may change,
+so a run stopped at one resumes once you raise it there; a limit in the file is a change to the
+file, and starts again.
+
+Kept work folders hold source rows on your disk, in the data folder's `report-runs` or
+Settings' **Work folder**: each goes after a week, and the oldest go once together they hold
+more than **Kept runs may hold** in Settings › Reports, 50 GiB unless you say.
+
+A source read on Monday and resumed on Tuesday may have changed. Two ways keep a resumed run
+equal to one that never stopped:
+
+- **Closed ranges.** Partition by ranges that no longer change, such as last month's ledger.
+- **A time in the past.** Every query may use `:as_of`, the time the run started, in UTC, which
+  a run resuming it binds again, so a warehouse with time travel reads its tables as they were:
+  `FOR SYSTEM_TIME AS OF :as_of` in BigQuery, `AT(TIMESTAMP => :as_of)` in Snowflake,
+  `TIMESTAMP AS OF :as_of` in Databricks. A report with a parameter named `as_of` binds its own
+  value instead. PostgreSQL has no time travel.
+
+From the command line, `dbrover report runs` says which run can resume, and
+`dbrover report run <report> --resume <run>` carries on from it; `--from-scratch` discards what
+the report's stopped runs kept. See [From the command line](#from-the-command-line).
+
 ## From the command line
 
 `dbrover report run` runs a report without opening DbRover's window, so cron, a scheduled task
@@ -1041,6 +1097,8 @@ on a Mac, `/usr/bin/dbrover` from the `.deb`, the AppImage itself, and
 | `--output-dir <folder>`, `-o` | Where the files go, made if it doesn't exist. Without it, the current folder. |
 | `--json` | The run's events on standard output, a JSON object a line (see below). |
 | `--progress` | On a terminal, a line on standard error that says what each running step has read so far, how fast and what it is waiting on, rewritten each second, as *Source lines: 30,000 rows, 780.0 KB, 2 s, 30,000 rows/s, 780.0 KB/s, waiting on PostgreSQL (92%)*. In a pipe, cron's mail or with `--json`, nothing more is printed. |
+| `--resume <run>` | Carries on from a run that stopped, by its id in `dbrover report runs`, which says *Its work folder is kept* of a run that can: what it finished isn't read again, and its parameters and folder are the stopped run's. Refused, saying what changed, if the report's file, a data source or DbRover changed (see [Stopping and resuming](#stopping-and-resuming)). |
+| `--from-scratch` | Discards what the report's stopped runs kept, and runs it from the start. Without it or `--resume`, the command says on standard error which stopped run could resume, and runs from the start. |
 | `--profile <file>` | Once a run that started ends, however it ends, writes its profile to `<file>` as JSON: each step's start, phases and limits, the machine, the bottleneck and the hints (see [Runs and profiles](#runs-and-profiles)). |
 | `--config-dir <folder>` | The settings folder to use, as for the app (see [Choosing the settings folder](files.md#choosing-the-settings-folder)). Without it, the one DbRover uses. |
 
@@ -1131,6 +1189,10 @@ $ dbrover report runs sales-by-category
 11  2026-11-08 07:00  finished in 2.3 s, from the app, version 3b18e51
     Source lines held the run longest: 1.3 s of 2.3 s, 70% of it waiting on SQLite for its first row.
 ```
+
+A run that stopped with its work folder kept says so under it, *Its work folder is kept:
+--resume 13 carries on from where it stopped*, and a run that resumed another says which, as
+*Carried on from run 13* (see [Stopping and resuming](#stopping-and-resuming)).
 
 `dbrover report compare <report> <run> <run>` sets two of them side by side by their ids, as
 **Compare** does, marking with `!` a change of more than half:

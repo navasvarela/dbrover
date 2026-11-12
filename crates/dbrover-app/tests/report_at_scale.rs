@@ -20,7 +20,8 @@
 //! RS5's: the same year, with one CSV file of every month beside the Parquet files, its worker
 //! killed once the seventh month has started; the run resumes from its kept work folder,
 //! reads months 7 to 12 only, and writes files equal to those of a run that was never stopped.
-//! A debug build takes about 12 minutes; `DBROVER_RS4_EVERY_SECONDS` makes it shorter too.
+//! A debug build takes about 10 minutes. Run it at its default size: the kill waits for a
+//! progress event of July, which a small year (`DBROVER_RS4_EVERY_SECONDS`) is too fast to give.
 //!
 //! Everything is written in a temporary folder (`TMPDIR`), removed when the test ends; at the
 //! default size it needs about 10 GB free while it runs.
