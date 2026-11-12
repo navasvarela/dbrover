@@ -175,6 +175,7 @@ pub fn read_with_places(text: &str) -> Result<Report, Vec<ReportProblem>> {
             timeout: header.timeout,
             max_disk: header.max_disk,
             stall_timeout: header.stall_timeout,
+            resumable_above: header.resumable_above,
             quiet_hints: header.quiet_hints,
             partition: header.partition,
             sources,
@@ -259,13 +260,14 @@ struct Header {
     timeout: Option<Duration>,
     max_disk: Option<ByteSize>,
     stall_timeout: Option<Duration>,
+    resumable_above: Option<ByteSize>,
     quiet_hints: Vec<HintId>,
     partition: Option<Partition>,
 }
 
 /// The keys `[report]` has, for the problem of one it hasn't.
-const REPORT_KEYS: &str =
-    "name, description, params, timeout, stall_timeout, max_disk, quiet_hints and partition";
+const REPORT_KEYS: &str = "name, description, params, timeout, stall_timeout, max_disk, \
+                           resumable_above, quiet_hints and partition";
 
 fn read_header(table: toml::Table, problems: &mut Vec<ReportProblem>) -> Option<Header> {
     let mut fields = Fields::new(table);
@@ -280,6 +282,7 @@ fn read_header(table: toml::Table, problems: &mut Vec<ReportProblem>) -> Option<
     let timeout = fields.duration("timeout");
     let max_disk = fields.byte_size("max_disk");
     let stall_timeout = fields.duration("stall_timeout");
+    let resumable_above = fields.byte_size("resumable_above");
     let quiet_hints = read_quiet_hints(fields.take("quiet_hints"));
     let partition = fields.take("partition").map(read_partition).transpose();
     for (key, place) in MISPLACED_REPORT_KEYS {
@@ -295,6 +298,7 @@ fn read_header(table: toml::Table, problems: &mut Vec<ReportProblem>) -> Option<
     let timeout = kept(timeout, &mut found);
     let max_disk = kept(max_disk, &mut found);
     let stall_timeout = kept(stall_timeout, &mut found);
+    let resumable_above = kept(resumable_above, &mut found);
     let partition = partition
         .map_err(|problems| {
             found.extend(
@@ -321,6 +325,7 @@ fn read_header(table: toml::Table, problems: &mut Vec<ReportProblem>) -> Option<
         timeout: timeout?,
         max_disk: max_disk?,
         stall_timeout: stall_timeout?,
+        resumable_above: resumable_above?,
         quiet_hints: quiet_hints?,
         partition: partition?,
     })

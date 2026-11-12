@@ -54,7 +54,7 @@ fn events_report(partition: &str, more: &str) -> String {
         .replace("{more}", more)
 }
 
-fn plan(text: &str) -> Result<Plan, Vec<String>> {
+pub(crate) fn plan(text: &str) -> Result<Plan, Vec<String>> {
     let report = read_report(text)?;
     Plan::new(report, &data_sources(), &[], &LimitDefaults::default())
 }
@@ -67,7 +67,7 @@ fn by_key(more: &str) -> Plan {
     .unwrap()
 }
 
-fn typed(values: &[(&str, &str)]) -> TypedValues {
+pub(crate) fn typed(values: &[(&str, &str)]) -> TypedValues {
     values
         .iter()
         .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
@@ -83,8 +83,8 @@ const KEYS: [(&str, &str); 4] = [
 
 /// A statement as the opener was sent it.
 #[derive(Debug, Clone)]
-struct Sent {
-    from: Option<String>,
+pub(crate) struct Sent {
+    pub(crate) from: Option<String>,
     to: Option<String>,
     cost: CostCheck,
     deadline: std::time::Instant,
@@ -93,16 +93,16 @@ struct Sent {
 /// Answers each range's statement with one event a key in the range, each of amount 1, in pages
 /// of 400, the range `extra` names getting that many more rows; keeps what it was sent.
 #[derive(Default)]
-struct Ranged {
-    sent: RefCell<Vec<Sent>>,
-    extra: Option<(String, usize)>,
-    open: Rc<Cell<usize>>,
-    most_open: Rc<Cell<usize>>,
+pub(crate) struct Ranged {
+    pub(crate) sent: RefCell<Vec<Sent>>,
+    pub(crate) extra: Option<(String, usize)>,
+    pub(crate) open: Rc<Cell<usize>>,
+    pub(crate) most_open: Rc<Cell<usize>>,
 }
 
 /// A range's rows, given up a page at a time with a yield between, so ranges read at once
 /// interleave; it counts itself open until it is closed.
-struct GaugedReader {
+pub(crate) struct GaugedReader {
     inner: MemoryReader,
     open: Rc<Cell<usize>>,
 }
@@ -516,7 +516,7 @@ fn says_how_a_partitioned_source_reads_as_the_run_starts() {
 
 /// Events by key, the whole run a range at a time (RS4d); `{report}` goes in `[report]` and
 /// `{outputs}` after the combine step.
-const BY_RANGE: &str = r#"
+pub(crate) const BY_RANGE: &str = r#"
 [report]
 name = "Events by range"
 params = { first = "integer", last = "integer" }
@@ -533,7 +533,7 @@ query = "SELECT id, amount * 2 AS doubled FROM events ORDER BY id"
 {outputs}
 "#;
 
-fn by_range(report: &str, outputs: &str) -> Result<Plan, Vec<String>> {
+pub(crate) fn by_range(report: &str, outputs: &str) -> Result<Plan, Vec<String>> {
     plan(
         &BY_RANGE
             .replace("{report}", report)
@@ -541,9 +541,10 @@ fn by_range(report: &str, outputs: &str) -> Result<Plan, Vec<String>> {
     )
 }
 
-const EVERY_THOUSAND: &str = r#"partition = { from = ":first", to = ":last", every = 1000 }"#;
+pub(crate) const EVERY_THOUSAND: &str =
+    r#"partition = { from = ":first", to = ":last", every = 1000 }"#;
 
-const RANGE_KEYS: [(&str, &str); 2] = [("first", "0"), ("last", "2500")];
+pub(crate) const RANGE_KEYS: [(&str, &str); 2] = [("first", "0"), ("last", "2500")];
 
 async fn run_values(
     plan: &Plan,
@@ -572,7 +573,7 @@ async fn run_values(
     (outcome, events)
 }
 
-fn files(folder: &Path) -> Vec<String> {
+pub(crate) fn files(folder: &Path) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(folder)
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())

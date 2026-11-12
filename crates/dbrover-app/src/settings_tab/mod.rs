@@ -53,7 +53,7 @@ const UNSAVED_MARK: &str = "●";
 /// What the user asked of the tab this frame, for the app to do.
 pub enum SettingsAction {
     /// Write these settings to `settings.toml`.
-    Save(Settings),
+    Save(Box<Settings>),
     /// Write these MCP defaults to `projects.toml`.
     SaveMcpDefaults(McpPermissions),
     /// Read `settings.toml` again, after editing it by hand.
@@ -491,7 +491,7 @@ fn settings_page(
         actions.push(SettingsAction::Theme(draft.theme));
     }
     if &draft.settings != view.settings.settings() {
-        actions.push(SettingsAction::Save(draft.settings));
+        actions.push(SettingsAction::Save(Box::new(draft.settings)));
     }
     if let Some(defaults) = draft.mcp_to_save {
         actions.push(SettingsAction::SaveMcpDefaults(defaults));

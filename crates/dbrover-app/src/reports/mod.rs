@@ -96,6 +96,9 @@ pub fn limit_defaults(settings: &ReportSettings) -> LimitDefaults {
         run_timeout: settings.run_timeout.unwrap_or(constants.run_timeout),
         max_disk: settings.max_disk.unwrap_or(constants.max_disk),
         stall_timeout: settings.stall_timeout.unwrap_or(constants.stall_timeout),
+        resumable_above: settings
+            .resumable_above
+            .unwrap_or(constants.resumable_above),
     }
 }
 
@@ -106,6 +109,8 @@ pub struct RunSettings {
     pub defaults: LimitDefaults,
     pub work_folder: Option<PathBuf>,
     pub keep_awake: Option<KeepAwake>,
+    /// What every kept work folder may hold together (RS5c).
+    pub kept_runs_total: u64,
 }
 
 impl RunSettings {
@@ -118,6 +123,9 @@ impl RunSettings {
                 .unwrap_or(true)
                 .then(KeepAwake::system)
                 .flatten(),
+            kept_runs_total: settings
+                .kept_runs_total
+                .map_or(dbrover_engine::DEFAULT_KEPT_RUNS_TOTAL, |total| total.0),
         }
     }
 
@@ -146,6 +154,7 @@ pub fn run_watch(plan: &Plan, settings: &RunSettings, work_root: &Path) -> RunWa
         stall_timeout: plan.stall_timeout,
         disk: Some(dbrover_engine::disk_budget(work_root, plan.max_disk)),
         keep_awake: settings.keep_awake.clone(),
+        resumable_above: Some(plan.resumable_above.0),
     }
 }
 
@@ -157,6 +166,7 @@ pub fn explain_watch(plan: &Plan) -> RunWatch {
         stall_timeout: plan.stall_timeout,
         disk: None,
         keep_awake: None,
+        resumable_above: None,
     }
 }
 
@@ -880,6 +890,7 @@ impl RunRecord {
             RunEvent::Preview(preview) => self.preview = Some(preview),
             RunEvent::WorkerUsage { .. } | RunEvent::Explained(_) | RunEvent::PartDone(_) => {}
             RunEvent::OutputWritten(file) => self.files.push(file),
+            RunEvent::WorkKept(kept) => self.profile.kept = Some(kept.folder),
             RunEvent::Finished { elapsed_ms } => self.end = Some(RunEnd::Finished { elapsed_ms }),
             RunEvent::Failed(failure) => {
                 if let Some(record) = self.step_mut(&failure.step) {
@@ -1065,6 +1076,10 @@ struct Running {
     /// run's own time limit, enforced from the app's side.
     plan: Plan,
     run: Box<dyn RunningReport>,
+    /// Where its work folder is, and its report's file: a run that finishes discards the
+    /// report's kept work folders there (RS5c).
+    work_root: PathBuf,
+    report_file: PathBuf,
 }
 
 impl Reports {
@@ -1362,6 +1377,7 @@ impl Reports {
             .map(|state| state.values.clone())
             .unwrap_or_default();
         let work_root = settings.work_root(&setup.work_root);
+        dbrover_engine::sweep(work_root, settings.kept_runs_total, Timestamp::now());
         let request = RunRequest {
             report: listed.path.clone(),
             values: values.clone(),
@@ -1381,6 +1397,8 @@ impl Reports {
                     report: name.clone(),
                     plan: plan.clone(),
                     run,
+                    work_root: work_root.to_owned(),
+                    report_file: listed.path.clone(),
                 });
             }
             Err(error) => {
@@ -1517,7 +1535,11 @@ impl Reports {
             record.apply(event);
         }
         let run = record.to_report_run(&report, RunOrigin::App)?;
-        self.running = None;
+        if let Some(running) = self.running.take()
+            && run.outcome == RunOutcome::Finished
+        {
+            dbrover_engine::discard_superseded(&running.work_root, &running.report_file, None);
+        }
         Some(Command::RecordReportRun {
             run: Box::new(run),
             kept,
@@ -1850,6 +1872,7 @@ mod tests {
                 timeout_ms: Some(1_800_000),
                 cores: Some(10),
                 dbrover: Some("0.31.0".to_owned()),
+                kept: None,
             }
         );
     }

@@ -30,6 +30,9 @@ pub const DEFAULT_STALL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// The most disk a run's work folder and staging folder may hold together: twice what DuckDB
 /// may spill by default, which leaves room for the run's database file and its files.
 pub const DEFAULT_MAX_DISK: ByteSize = ByteSize(20 << 30);
+/// What a stopped run's finished units must have read for its work folder to be kept, so it
+/// can resume (RS5c): below it, starting the run again costs less than keeping its folder.
+pub const DEFAULT_RESUMABLE_ABOVE: ByteSize = ByteSize(1 << 30);
 
 /// How long the combine step's query may run.
 pub const DEFAULT_COMBINE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -54,6 +57,13 @@ pub struct LimitDefaults {
     /// How long a run may go without progress.
     #[serde(default = "default_stall_timeout")]
     pub stall_timeout: Duration,
+    /// What a stopped run must have read to keep its work folder.
+    #[serde(default = "default_resumable_above")]
+    pub resumable_above: ByteSize,
+}
+
+fn default_resumable_above() -> ByteSize {
+    DEFAULT_RESUMABLE_ABOVE
 }
 
 fn default_max_disk() -> ByteSize {
@@ -73,6 +83,7 @@ impl Default for LimitDefaults {
             run_timeout: DEFAULT_RUN_TIMEOUT,
             max_disk: DEFAULT_MAX_DISK,
             stall_timeout: DEFAULT_STALL_TIMEOUT,
+            resumable_above: DEFAULT_RESUMABLE_ABOVE,
         }
     }
 }

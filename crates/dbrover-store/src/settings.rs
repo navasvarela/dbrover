@@ -143,6 +143,12 @@ pub struct ReportSettings {
     /// How long a run may go without progress before it is stopped as stuck.
     #[serde(skip_serializing_if = "Option::is_none", with = "written_duration")]
     pub stall_timeout: Option<Duration>,
+    /// What a stopped run must have read to keep its work folder, so it can resume.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resumable_above: Option<ByteSize>,
+    /// The most every kept work folder may hold together, past which the oldest go.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kept_runs_total: Option<ByteSize>,
     /// Whether a long run keeps the machine from sleeping; `None` for yes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keep_awake: Option<bool>,
@@ -362,6 +368,14 @@ mod tests {
                     stall_timeout: Some(Duration::from_secs(30 * 60)),
                     keep_awake: Some(false),
                     work_folder: Some(PathBuf::from("/Volumes/Big/runs")),
+                    ..ReportSettings::default()
+                }),
+            ),
+            (
+                "[reports]\nresumable_above = \"200 MiB\"\nkept_runs_total = \"80 GiB\"\n",
+                Some(ReportSettings {
+                    resumable_above: Some(ByteSize(200 << 20)),
+                    kept_runs_total: Some(ByteSize(80 << 30)),
                     ..ReportSettings::default()
                 }),
             ),

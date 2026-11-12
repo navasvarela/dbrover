@@ -116,6 +116,7 @@ impl Settings {
             stall_timeout: timeout,
             disk: None,
             keep_awake: None,
+            resumable_above: None,
         };
         self.start_watched(request, watch)
     }
@@ -262,6 +263,7 @@ fn kind(event: &RunEvent) -> &'static str {
         RunEvent::WorkerUsage { .. } => "usage",
         RunEvent::Cancelled => "cancelled",
         RunEvent::Explained(_) => "explained",
+        RunEvent::WorkKept(_) => "kept",
     }
 }
 
@@ -321,6 +323,7 @@ fn stops_a_run_past_its_disk() {
         timeout: Duration::from_secs(120),
         stall_timeout: Duration::from_secs(120),
         keep_awake: None,
+        resumable_above: None,
         disk: Some(DiskBudget {
             max_disk: ByteSize(1),
             free: None,
@@ -555,6 +558,84 @@ fn stops_a_run_past_its_time_limit() {
         Some("timeout")
     );
     assert_eq!(files_in(&settings.out()), Vec::<String>::new());
+}
+
+/// The ledger by day, one CSV file a day, whose third day counts for a long time first.
+const BY_DAY_SLOW_THIRD: &str = r#"
+[report]
+name = "By day"
+params = { since = "date", until = "date" }
+partition = { from = ":since", to = ":until", every = "1 day" }
+[[source]]
+id = "entries"
+data_source = "ledger"
+query = """
+WITH RECURSIVE n(x) AS (
+  SELECT 1 UNION ALL SELECT x + 1 FROM n
+  WHERE x < CASE WHEN CAST(:part_from AS TEXT) LIKE '2026-10-03%' THEN 5000000000 ELSE 1 END
+)
+SELECT account_id, debit, credit FROM entries
+WHERE booked_on >= :part_from AND booked_on < :part_to
+UNION ALL
+SELECT NULL, NULL, NULL FROM (SELECT max(x) AS m FROM n) WHERE m < 0
+"""
+[[output]]
+format = "csv"
+file = "day-{part_from}.csv"
+"#;
+
+/// RS5c: a worker the app's side kills in a partitioned run's third range, past
+/// `resumable_above`, leaves the first two days' files and keeps its work folder, whose
+/// manifest names them; the staging folder goes.
+#[test]
+fn keeps_the_work_folder_of_a_killed_run_past_resumable_above() {
+    let settings = Settings::new();
+    let report = settings.write_report("by-day", BY_DAY_SLOW_THIRD);
+    let request = settings.request(&report);
+    let run = settings.start_watched(
+        &request,
+        RunWatch {
+            timeout: Duration::from_secs(4),
+            stall_timeout: Duration::from_secs(60),
+            disk: None,
+            keep_awake: None,
+            resumable_above: Some(1),
+        },
+    );
+    let events = all_events(&run);
+    let kept = events.iter().find_map(|event| match event {
+        RunEvent::WorkKept(kept) => Some(kept.clone()),
+        _ => None,
+    });
+    let kept = kept.unwrap_or_else(|| panic!("{events:#?}"));
+    assert_eq!((kept.folder.as_str(), kept.ranges), ("run", 2));
+    assert!(matches!(events.last(), Some(RunEvent::Failed(_))));
+    assert_eq!(
+        files_in(&settings.out()),
+        ["day-2026-10-01.csv", "day-2026-10-02.csv"]
+    );
+    let manifest = dbrover_report::Manifest::read(&request.work)
+        .unwrap()
+        .unwrap();
+    assert!(manifest.kept_at().is_some());
+    assert_eq!(manifest.run.report, report);
+    let numbers: Vec<u64> = manifest.ranges.iter().map(|range| range.number).collect();
+    assert_eq!(numbers, [1, 2]);
+
+    let not_kept = Settings::new();
+    let report = not_kept.write_report("by-day", BY_DAY_SLOW_THIRD);
+    let request = not_kept.request(&report);
+    let run = not_kept.start(&request, Duration::from_secs(4));
+    let events = all_events(&run);
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, RunEvent::WorkKept(_)))
+    );
+    assert!(
+        !request.work.exists(),
+        "a run watched with no threshold keeps nothing"
+    );
 }
 
 /// Under a small `RLIMIT_DATA`, a source that builds a string far larger fails cleanly: the

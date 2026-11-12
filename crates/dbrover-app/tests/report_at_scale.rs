@@ -183,6 +183,7 @@ impl Home {
             stall_timeout: Duration::from_secs(10 * 60),
             disk: Some(disk_budget(&self.work_root(), ByteSize(MAX_DISK))),
             keep_awake: None,
+            resumable_above: None,
         };
         let sampling = Arc::new(AtomicBool::new(true));
         let peak_disk = Arc::new(AtomicU64::new(0));

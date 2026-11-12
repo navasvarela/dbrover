@@ -894,10 +894,12 @@ fn takes_the_limits_a_file_leaves_out_from_the_defaults() {
         run_timeout: Duration::from_secs(90),
         max_disk: ByteSize(1 << 30),
         stall_timeout: Duration::from_secs(120),
+        resumable_above: ByteSize(5 << 20),
     };
     let report = read_report(VALUATION).unwrap();
     let plan = Plan::new(report, &valuation_sources(), &[], &defaults).unwrap();
     assert_eq!(plan.timeout, Duration::from_secs(90));
+    assert_eq!(plan.resumable_above, ByteSize(5 << 20));
     let Logic::Combine(combined) = &plan.logic else {
         panic!("{:?}", plan.logic);
     };

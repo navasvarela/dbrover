@@ -39,6 +39,8 @@ pub struct Plan {
     pub max_disk: ByteSize,
     /// How long the run may go without progress (RS3e).
     pub stall_timeout: Duration,
+    /// What a stopped run's finished units must have read to keep its work folder (RS5c).
+    pub resumable_above: ByteSize,
     /// The ranges the whole run goes through one at a time (RS4d).
     pub partition: Option<PlannedPartition>,
     pub logic: Logic,
@@ -546,6 +548,7 @@ impl Plan {
             timeout: report.timeout.unwrap_or(defaults.run_timeout),
             max_disk: report.max_disk.unwrap_or(defaults.max_disk),
             stall_timeout: report.stall_timeout.unwrap_or(defaults.stall_timeout),
+            resumable_above: report.resumable_above.unwrap_or(defaults.resumable_above),
             partition,
             logic,
             outputs,

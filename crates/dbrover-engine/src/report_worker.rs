@@ -14,7 +14,7 @@
 //! blocking std calls, and a run ties up nothing of the engine's runtime.
 
 use std::io::{self, BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -22,7 +22,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use dbrover_report::{DiskBudget, LimitHit, RunEvent, RunFailure, RunRequest, Step, TimedEvent};
+use dbrover_report::{
+    DiskBudget, LimitHit, RunEvent, RunFailure, RunRequest, Step, TimedEvent, WorkKept,
+    keep_work_folder,
+};
 
 use crate::keep_awake::KeepAwake;
 use crate::report_activity::Activity;
@@ -82,6 +85,10 @@ pub struct RunWatch {
     pub disk: Option<DiskBudget>,
     /// What keeps the machine awake during a long run; `None` lets it sleep.
     pub keep_awake: Option<KeepAwake>,
+    /// What the finished units of a worker this side killed must have read for its work
+    /// folder to be kept, so the run can resume (RS5c); `None` never keeps it, as when
+    /// explaining a report.
+    pub resumable_above: Option<u64>,
 }
 
 /// What the watchdog needs of a run: its limits, the folders it writes, its progress, and how
@@ -425,7 +432,9 @@ impl OutputReader {
         if ended {
             return;
         }
-        self.remove_folders();
+        if let Some(kept) = self.keep_or_remove_folders() {
+            self.send(RunEvent::WorkKept(kept).at(self.started.elapsed()));
+        }
         let event = match Stop::from_u8(self.stop.load(Ordering::SeqCst)) {
             Stop::Cancelled => RunEvent::Cancelled,
             Stop::TimedOut => RunEvent::Failed(timed_out(self.watch.timeout)),
@@ -449,16 +458,28 @@ impl OutputReader {
     }
 
     /// Removes what a killed worker had started writing, before the run's end is sent, so the
-    /// output folder is as it was by the time anyone looks, and the work folder is gone.
-    fn remove_folders(&self) {
-        for folder in &self.folders {
-            match std::fs::remove_dir_all(folder) {
-                Ok(()) => tracing::info!("removed {}", folder.display()),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => tracing::warn!(
-                    "could not remove the report's folder {}: {error}",
-                    folder.display()
-                ),
+    /// output folder is as it was but for the files a partitioned run's finished ranges put in
+    /// place by the time anyone looks. The work folder goes too, unless its manifest says the
+    /// run had finished enough to be worth resuming: then it is kept, and said.
+    fn keep_or_remove_folders(&self) -> Option<WorkKept> {
+        let [staging, work] = &self.folders;
+        remove_folder(staging);
+        let kept = self.watch.resumable_above.and_then(|above| {
+            keep_work_folder(work, above, false)
+                .inspect_err(|error| {
+                    tracing::warn!("could not keep the run's work folder: {error}");
+                })
+                .ok()
+                .flatten()
+        });
+        match kept {
+            Some(kept) => {
+                tracing::info!("kept {} to resume the run", work.display());
+                Some(kept)
+            }
+            None => {
+                remove_folder(work);
+                None
             }
         }
     }
@@ -484,6 +505,17 @@ impl OutputReader {
         // The receiver is gone once the app stops watching the run, which is fine.
         let _ = self.events.send(event);
         (self.wake)();
+    }
+}
+
+fn remove_folder(folder: &Path) {
+    match std::fs::remove_dir_all(folder) {
+        Ok(()) => tracing::info!("removed {}", folder.display()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => tracing::warn!(
+            "could not remove the report's folder {}: {error}",
+            folder.display()
+        ),
     }
 }
 
@@ -598,6 +630,7 @@ mod tests {
             stall_timeout,
             disk: None,
             keep_awake: None,
+            resumable_above: None,
         }
     }
 

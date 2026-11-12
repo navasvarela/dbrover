@@ -126,7 +126,19 @@ impl<O: Write, E: Write> HumanLines<O, E> {
                     }
                 }
             }
+            RunEvent::Cancelled if self.partitioned => {
+                self.error_line("Cancelled. Only the finished ranges' own files were written.");
+            }
             RunEvent::Cancelled => self.error_line("Cancelled. No file was written."),
+            RunEvent::WorkKept(kept) => {
+                let line = format!(
+                    "Kept the run's work folder, {}: a resumed run skips {} that read {}.",
+                    kept.folder,
+                    counted(kept.ranges, "finished range"),
+                    ByteCount(kept.read)
+                );
+                self.error_line(&line);
+            }
             RunEvent::Progress { .. }
             | RunEvent::Preview(_)
             | RunEvent::WorkerUsage { .. }

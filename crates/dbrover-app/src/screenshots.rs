@@ -1745,6 +1745,7 @@ fn report_profile(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture)
             timeout_ms: Some(1_800_000),
             cores: Some(10),
             dbrover: Some(env!("CARGO_PKG_VERSION").to_owned()),
+            kept: None,
         },
     };
     HistoryFile::new(fixture.dir.path().join("history.sqlite"))

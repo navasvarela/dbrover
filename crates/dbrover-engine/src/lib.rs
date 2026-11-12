@@ -18,6 +18,7 @@ mod export_programs;
 mod handle;
 mod history;
 mod keep_awake;
+mod kept_runs;
 mod keymap;
 mod open;
 mod outside_changes;
@@ -57,6 +58,9 @@ pub use export::{Export, ExportAll};
 pub use export_programs::ExportProgramRequest;
 pub use handle::{EngineConfig, EngineError, EngineHandle, IDLE_PING_AFTER};
 pub use keep_awake::{KEEP_AWAKE_AFTER, KeepAwake};
+pub use kept_runs::{
+    DEFAULT_KEPT_RUNS_TOTAL, KEPT_FOR, KeptRun, discard, discard_superseded, kept_runs, sweep,
+};
 pub use open::{OpenError, open_data_source, open_data_source_for_mcp};
 pub use outside_changes::Noticed;
 pub use password_commands::{PASSWORD_COMMAND_TIMEOUT, PasswordCommandError, PasswordCommands};

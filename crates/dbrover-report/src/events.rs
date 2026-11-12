@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use dbrover_core::BlobId;
 use serde::{Deserialize, Serialize};
 
-use crate::{Explanation, Plan};
+use crate::{Explanation, Plan, WorkKept};
 
 /// An event as a line carries it: the event, and how long after the worker started it was
 /// sent.
@@ -157,6 +157,10 @@ pub enum RunEvent {
     Preview(Preview),
     /// A file put in place.
     OutputWritten(WrittenFile),
+    /// The run's work folder was kept, so the run can resume (RS5c): sent just before the end
+    /// of a run that failed or was stopped after its finished units read more than
+    /// `resumable_above`, by the worker, or by the app's side for a worker it killed.
+    WorkKept(WorkKept),
     Finished {
         elapsed_ms: u64,
     },
