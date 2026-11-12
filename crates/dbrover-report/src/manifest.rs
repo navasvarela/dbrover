@@ -35,6 +35,29 @@ pub struct Manifest {
     /// A partitioned run's finished ranges, in their order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ranges: Vec<RangeKept>,
+    /// The sources loaded and typed in the workspace, in the order they finished (RS5e).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<SourceKept>,
+}
+
+/// A source an unpartitioned run loaded into its workspace and typed: its table is in the
+/// workspace's file, which the work folder keeps.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceKept {
+    pub id: String,
+    /// The rows and bytes it read, which its caps and `resumable_above` count.
+    pub rows: u64,
+    pub read: u64,
+    /// Its table's columns as typed, which a lookup of a later round reads.
+    pub columns: Vec<KeptColumn>,
+}
+
+/// A loaded table's column.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeptColumn {
+    pub name: String,
+    /// Its DuckDB type, as `DECIMAL(18,2)`.
+    pub duckdb_type: String,
 }
 
 /// What a run is: what a run resuming it must be too.
@@ -189,9 +212,14 @@ fn data_source_changes(then: &[DataSourceIdentity], now: &[DataSourceIdentity]) 
             let was = then.iter().find(|was| was.source == source.source);
             match was {
                 None => Some(format!("the source {} is new", source.source)),
-                Some(was) if was.id != source.id || was.target != source.target => Some(format!(
+                Some(was) if was.target != source.target => Some(format!(
                     "the source {} read {} when it ran, and reads {} now",
                     source.source, was.target, source.target
+                )),
+                Some(was) if was.id != source.id => Some(format!(
+                    "the source {} read the data source {} when it ran, and reads another now, \
+                     {}",
+                    source.source, was.id, source.id
                 )),
                 Some(_) => None,
             }
@@ -217,6 +245,7 @@ impl Manifest {
             started_at: Timestamp::now().to_string(),
             kept_at: None,
             ranges: Vec::new(),
+            sources: Vec::new(),
         }
     }
 
@@ -261,12 +290,14 @@ impl Manifest {
 
     /// The bytes the finished units read: what `resumable_above` is held against.
     pub fn finished_bytes(&self) -> u64 {
-        self.ranges.iter().map(|range| range.read).sum()
+        let ranges: u64 = self.ranges.iter().map(|range| range.read).sum();
+        let sources: u64 = self.sources.iter().map(|source| source.read).sum();
+        ranges + sources
     }
 
     /// Whether anything finished, so a run resuming it has something to skip.
     pub fn has_finished_units(&self) -> bool {
-        !self.ranges.is_empty()
+        !self.ranges.is_empty() || !self.sources.is_empty()
     }
 
     /// When the folder was kept.
@@ -329,6 +360,9 @@ pub struct WorkKept {
     pub folder: String,
     /// The finished ranges a run resuming it skips.
     pub ranges: u64,
+    /// The sources loaded in its workspace, which a run resuming it doesn't read again.
+    #[serde(default)]
+    pub sources: u64,
     /// The bytes they read.
     pub read: u64,
 }
@@ -341,6 +375,7 @@ impl WorkKept {
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default(),
             ranges: manifest.ranges.len() as u64,
+            sources: manifest.sources.len() as u64,
             read: manifest.finished_bytes(),
         }
     }

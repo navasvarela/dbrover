@@ -31,6 +31,7 @@ use dbrover_export::{
 use dbrover_sql::ParameterValues;
 
 use crate::chart::ChartRun;
+use crate::checkpoints::Checkpoints;
 use crate::declared::Shaped;
 use crate::kept_rows::{KeptRows, PartReader};
 use crate::live::{ProgressClock, waiting};
@@ -38,9 +39,8 @@ use crate::parquet::PartsJoin;
 use crate::parquet::appended_parquet_parts;
 use crate::statement::Statements;
 use crate::{
-    LimitHit, Logic, Manifest, PartDone, PartRange, Plan, PlannedOutput, Preview, QuerySource,
-    RangeKept, Resumed, RunEvent, RunFailure, RunValues, SourcePhases, SourceRanges, Step,
-    WorkKept, WrittenFile, keep_work_folder,
+    LimitHit, Logic, PartDone, PartRange, Plan, PlannedOutput, Preview, QuerySource, RangeKept,
+    Resumed, RunEvent, RunFailure, RunValues, SourcePhases, SourceRanges, Step, WrittenFile,
 };
 
 /// How many rows the preview keeps: a screenful or two, enough to see a report is right.
@@ -202,16 +202,16 @@ pub async fn run<O: SourceOpener>(
 ) -> Result<RunSummary, RunFailure> {
     let _staging = OwnFolder::make(folders.staging)?;
     let work = OwnFolder::make(folders.work)?;
-    let mut checkpoints = Checkpoints::read(folders.work);
+    let checkpoints = Checkpoints::read(folders.work);
     let mut sink = Sink::new(plan, folders);
     let ran = match &values.run_ranges {
-        None => run_once(plan, values, opener, &mut sink, events).await,
+        None => run_once(plan, values, opener, &mut sink, Some(&checkpoints), events).await,
         Some(ranges) => {
             let mut ranges = RunRanges {
                 plan,
                 values,
                 ranges,
-                checkpoints: &mut checkpoints,
+                checkpoints: &checkpoints,
             };
             ranges.run(opener, &mut sink, events).await
         }
@@ -224,7 +224,7 @@ pub async fn run<O: SourceOpener>(
         }
     };
     if outcome.is_err()
-        && let Some(kept) = checkpoints.keep(folders.work, plan.resumable_above.0)
+        && let Some(kept) = checkpoints.keep(plan.resumable_above.0)
     {
         work.keep();
         events(RunEvent::WorkKept(kept));
@@ -232,63 +232,12 @@ pub async fn run<O: SourceOpener>(
     outcome
 }
 
-/// The run's manifest, when the worker wrote one in its work folder before the run started
-/// (RS5c): each finished unit is recorded in it as it ends. Tests run without one.
-struct Checkpoints(Option<Manifest>);
-
-impl Checkpoints {
-    fn read(work: &Path) -> Self {
-        match Manifest::read(work) {
-            Ok(manifest) => Self(manifest),
-            Err(error) => {
-                tracing::warn!("the run's manifest can't be read, so it won't resume: {error}");
-                Self(None)
-            }
-        }
-    }
-
-    /// What the manifest says of `range`, when an earlier run finished it with the same
-    /// bounds: a range this run doesn't read again.
-    fn finished(&self, range: &PartRange) -> Option<&RangeKept> {
-        self.0
-            .as_ref()?
-            .ranges
-            .iter()
-            .find(|kept| kept.number == range.number)
-            .filter(|kept| kept.from == range.from && kept.to == range.to)
-    }
-
-    /// Records a finished range. A manifest that can't be written fails nothing: the run goes
-    /// on, and a run resuming it reads the ranges recorded before again.
-    fn range_done(&mut self, work: &Path, range: RangeKept) {
-        let Some(manifest) = &mut self.0 else {
-            return;
-        };
-        manifest.ranges.push(range);
-        if let Err(error) = manifest.write(work) {
-            tracing::warn!("could not record a finished range in the run's manifest: {error}");
-        }
-    }
-
-    /// Keeps `work` for a run that resumes, when the finished units read more than `above`.
-    fn keep(&self, work: &Path, above: u64) -> Option<WorkKept> {
-        self.0.as_ref()?;
-        match keep_work_folder(work, above, false) {
-            Ok(kept) => kept,
-            Err(error) => {
-                tracing::warn!("could not keep the run's work folder: {error}");
-                None
-            }
-        }
-    }
-}
-
 /// A partitioned run's ranges, run in turn.
 struct RunRanges<'a, 'r> {
     plan: &'a Plan,
     values: &'r RunValues,
     ranges: &'r SourceRanges,
-    checkpoints: &'r mut Checkpoints,
+    checkpoints: &'r Checkpoints,
 }
 
 impl<'a, 'r> RunRanges<'a, 'r> {
@@ -310,7 +259,9 @@ impl<'a, 'r> RunRanges<'a, 'r> {
             let before = sink.written();
             let mut read = 0;
             sink.begin_range(range.number);
-            run_once(plan, &range_values, opener, sink, &mut |event| {
+            // A range's sources load into a DuckDB of the range's own, so the range, not its
+            // sources, is what a run resuming it skips.
+            run_once(plan, &range_values, opener, sink, None, &mut |event| {
                 if let RunEvent::SourceDone { bytes, .. } = &event {
                     read += bytes;
                 }
@@ -331,18 +282,15 @@ impl<'a, 'r> RunRanges<'a, 'r> {
                 elapsed_ms: millis(started.elapsed()),
                 scanned_bytes: None,
             };
-            self.checkpoints.range_done(
-                sink.folders().work,
-                RangeKept {
-                    number: range.number,
-                    from: range.from.clone(),
-                    to: range.to.clone(),
-                    read,
-                    rows: done.rows,
-                    bytes: done.bytes,
-                    files,
-                },
-            );
+            self.checkpoints.range_done(RangeKept {
+                number: range.number,
+                from: range.from.clone(),
+                to: range.to.clone(),
+                read,
+                rows: done.rows,
+                bytes: done.bytes,
+                files,
+            });
             events(RunEvent::PartDone(done));
         }
         Ok(())
@@ -367,6 +315,7 @@ impl<'a, 'r> RunRanges<'a, 'r> {
         }
         let mut resumed = Resumed {
             ranges: Vec::new(),
+            sources: Vec::new(),
             of: ranges.len() as u64,
             rows: 0,
             bytes: 0,
@@ -376,7 +325,7 @@ impl<'a, 'r> RunRanges<'a, 'r> {
             let Some(kept) = self.checkpoints.finished(range) else {
                 continue;
             };
-            sink.restore_range(kept, self.values)?;
+            sink.restore_range(&kept, self.values)?;
             resumed.ranges.push(kept.number);
             resumed.rows += kept.rows;
             resumed.bytes += kept.bytes;
@@ -388,12 +337,14 @@ impl<'a, 'r> RunRanges<'a, 'r> {
 }
 
 /// Runs `plan` once with `values`, its rows going to `sink`: the whole run, or one range of a
-/// partitioned run.
+/// partitioned run. `checkpoints` record the sources the combine step loads, which a run
+/// resuming it doesn't load again; `None` for a range, whose DuckDB is its own.
 async fn run_once<'a, O: SourceOpener>(
     plan: &'a Plan,
     values: &RunValues,
     opener: &O,
     sink: &mut Sink<'a>,
+    checkpoints: Option<&Checkpoints>,
     events: &mut dyn FnMut(RunEvent),
 ) -> Result<(), RunFailure> {
     match &plan.logic {
@@ -441,6 +392,7 @@ async fn run_once<'a, O: SourceOpener>(
                 folders: sink.folders(),
                 combined,
                 opener,
+                checkpoints,
             };
             combining.run(sink, events).await
         }

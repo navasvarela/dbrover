@@ -16,6 +16,7 @@
 //! [`SourceOpener`] and streams their rows ([`SourceReader`]) into the output files.
 
 mod chart;
+mod checkpoints;
 mod combine;
 mod declared;
 mod disk;
@@ -65,7 +66,8 @@ pub use limits::{
     SourceLimitsSet,
 };
 pub use manifest::{
-    DataSourceIdentity, MANIFEST_FILE, Manifest, RangeKept, RunIdentity, WorkKept, keep_work_folder,
+    DataSourceIdentity, KeptColumn, MANIFEST_FILE, Manifest, RangeKept, RunIdentity, SourceKept,
+    WorkKept, keep_work_folder,
 };
 pub use partition::{
     CalendarUnit, Every, MAX_PARALLEL, MAX_RANGES, PART_FROM, PART_TO, PartRange, Partition,

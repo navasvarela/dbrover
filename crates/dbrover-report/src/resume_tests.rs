@@ -4,6 +4,8 @@
 
 use std::path::Path;
 
+use dbrover_core::DataSource;
+
 use crate::partition_tests::{EVERY_THOUSAND, RANGE_KEYS, Ranged, by_range, files, typed};
 use crate::{
     Manifest, Plan, RunEvent, RunFailure, RunFolders, RunIdentity, RunSummary, WorkKept, run,
@@ -101,6 +103,7 @@ async fn records_each_finished_range_and_keeps_the_folder_past_resumable_above()
         Some(WorkKept {
             folder: "run-1".to_owned(),
             ranges: 2,
+            sources: 0,
             read: manifest.finished_bytes(),
         })
     );
@@ -325,4 +328,146 @@ fn refuses_to_resume_a_run_of_another_report_version_values_or_data_source() {
     Manifest::start(kept.clone()).write(running.path()).unwrap();
     let refused = Manifest::resume(running.path(), &kept).unwrap_err();
     assert!(refused[0].contains("holds no run to resume"), "{refused:?}");
+}
+
+/// Two sources read whole into the combine step's workspace, then joined.
+const TWO_SOURCES: &str = r#"
+[report]
+name = "Two sources"
+params = { part_from = "integer", part_to = "integer" }
+resumable_above = "1 KiB"
+
+[[source]]
+id = "orders"
+data_source = "events"
+query = "SELECT id, amount FROM events WHERE id >= :part_from AND id < :part_to"
+
+[[source]]
+id = "refunds"
+data_source = "events"
+query = "SELECT id, amount FROM refunds WHERE id >= :part_from AND id < :part_to"
+
+[combine]
+query = "SELECT o.id, o.amount + r.amount AS total FROM orders o JOIN refunds r USING (id) ORDER BY o.id"
+
+[[output]]
+format = "csv"
+file = "totals.csv"
+"#;
+
+/// [`TWO_SOURCES`] planned under `defaults`, on `data_sources`.
+fn two_sources(defaults: &crate::LimitDefaults, data_sources: &[DataSource]) -> Plan {
+    let report = crate::read_report(TWO_SOURCES).unwrap();
+    Plan::new(report, data_sources, &[], defaults).unwrap()
+}
+
+/// Runs `plan` with keys 0 to 2,000 in `folder`, its work folder `work`.
+async fn run_two(plan: &Plan, opener: &Ranged, folder: &Path, work: &Path, resume: bool) -> Ran {
+    let values = [("part_from", "0"), ("part_to", "2000")];
+    let identity = RunIdentity::of(
+        plan,
+        Path::new("/reports/two.toml"),
+        Path::new("/out"),
+        "0123".to_owned(),
+        &typed(&values),
+    );
+    if resume {
+        Manifest::resume(work, &identity).unwrap();
+    } else {
+        Manifest::start(identity).write(work).unwrap();
+    }
+    let staging = folder.join(".run");
+    let mut events = Vec::new();
+    let outcome = run(
+        plan,
+        &plan.values(&typed(&values)).unwrap(),
+        opener,
+        RunFolders {
+            folder,
+            staging: &staging,
+            work,
+        },
+        &mut |event| events.push(event),
+    )
+    .await;
+    Ran { outcome, events }
+}
+
+/// RS5e: a run that loaded both its sources and failed after, at an output's limit from
+/// Settings, keeps its workspace; raised in Settings, the run resumes without reading either
+/// source again, and writes what an uninterrupted run writes.
+#[tokio::test]
+async fn a_resumed_run_takes_the_sources_its_kept_workspace_loaded() {
+    let data_sources = crate::partition_tests::data_sources();
+    let roomy = crate::LimitDefaults::default();
+    let tight = crate::LimitDefaults {
+        output: crate::OutputLimits {
+            max_size: crate::ByteSize(100),
+        },
+        ..roomy
+    };
+    let whole = tempfile::tempdir().unwrap();
+    let ran = run_two(
+        &two_sources(&roomy, &data_sources),
+        &Ranged::default(),
+        whole.path(),
+        &whole.path().join("work"),
+        false,
+    )
+    .await;
+    ran.outcome.unwrap();
+
+    let folder = tempfile::tempdir().unwrap();
+    let runs = tempfile::tempdir().unwrap();
+    let work = runs.path().join("run-1");
+    let ran = run_two(
+        &two_sources(&tight, &data_sources),
+        &Ranged::default(),
+        folder.path(),
+        &work,
+        false,
+    )
+    .await;
+    let failure = ran.outcome.unwrap_err();
+    assert_eq!(
+        failure.limit.map(|limit| limit.key),
+        Some("max_size".to_owned())
+    );
+    let kept = work_kept(&ran.events).unwrap();
+    assert_eq!((kept.ranges, kept.sources), (0, 2));
+    assert!(
+        work.join("workspace.duckdb").exists(),
+        "the workspace is kept"
+    );
+
+    let opener = Ranged::default();
+    let ran = run_two(
+        &two_sources(&roomy, &data_sources),
+        &opener,
+        folder.path(),
+        &work,
+        true,
+    )
+    .await;
+    ran.outcome.unwrap();
+    assert!(read_ranges(&opener).is_empty(), "no source is read again");
+    let resumed = ran.events.iter().find_map(|event| match event {
+        RunEvent::Resumed(resumed) => Some(resumed.sources.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        resumed,
+        Some(vec!["orders".to_owned(), "refunds".to_owned()])
+    );
+    let sources_done = ran
+        .events
+        .iter()
+        .filter(|event| matches!(event, RunEvent::SourceDone { .. }))
+        .count();
+    assert_eq!(sources_done, 2, "each kept source still says it is done");
+    assert_eq!(
+        std::fs::read(folder.path().join("totals.csv")).unwrap(),
+        std::fs::read(whole.path().join("totals.csv")).unwrap()
+    );
+    assert!(!work.exists());
 }

@@ -75,6 +75,9 @@ pub enum WorkspaceStore {
     /// `memory_limit` are written out to it as any database's pages are, not spilled. Whoever
     /// opened the workspace removes the file after [`Workspace::close`].
     File(PathBuf),
+    /// In the database file at this path that a stopped run kept (RS5e), opened as it was left:
+    /// the tables its finished sources loaded are there, and DuckDB replays what its log holds.
+    Kept(PathBuf),
 }
 
 /// What bounds a workspace.
@@ -241,6 +244,10 @@ impl Workspace {
                     read_only: false,
                 }
             }
+            WorkspaceStore::Kept(path) => DuckDbDatabase::File {
+                path: path.clone(),
+                read_only: false,
+            },
         };
         let connection = crate::connect(&DuckDbConfig::new(database)).await?;
         let settings = [
@@ -355,6 +362,23 @@ impl Workspace {
             types,
             text: Arc::new(Schema::new(fields)),
         })
+    }
+
+    /// Drops the table `table`, if there is one: a source's table that a stopped run left half
+    /// loaded, which a run resuming it loads again (RS5e).
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError`] if DuckDB refuses.
+    pub async fn drop_table(&self, table: &str) -> Result<(), DriverError> {
+        let sql = format!("DROP TABLE IF EXISTS {MAIN_SCHEMA}.{}", identifier(table));
+        self.connection
+            .run_blocking(move |connection| {
+                connection
+                    .execute_batch(&sql)
+                    .map_err(|error| statement_error(error, &sql))
+            })
+            .await
     }
 
     /// The distinct values of `column` in the loaded table `table`, without `NULL`, as text,
