@@ -28,7 +28,8 @@ pub type Row = Vec<Cell>;
 ///
 /// Values stay text either way (ADR 0004); a kind says what the text should parse as, and a
 /// value that doesn't parse is written as text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ValueKind {
     Integer,
     /// An exact number with a fractional part: `DECIMAL`, `NUMERIC`, `MONEY`.

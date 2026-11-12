@@ -7,7 +7,7 @@ use dbrover_sql::Dialect;
 
 /// A column of the rows being exported: its name, and what the formats that write types make
 /// of its values.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ExportColumn {
     pub name: String,
     /// The type as the driver names it, when it reports one.

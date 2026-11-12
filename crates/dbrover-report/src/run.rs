@@ -11,6 +11,12 @@
 //!    folder, and only then put them all in place, so a run that fails anywhere leaves no file
 //!    behind and replaces none. The staging folder goes with the run, and whoever started a run
 //!    that was killed removes it.
+//!
+//! A partitioned run (RS4d) does this once a range, with two differences (RS5b): a range's own
+//! files go in place when the range ends, and the rows of the outputs every range appends to,
+//! of the charts and of the preview are kept in the work folder a range at a time
+//! ([`KeptRows`]), and written once the last range is done. So a run that fails in its seventh
+//! range leaves the first six ranges' files, and what a later run needs to write the rest.
 
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -26,6 +32,7 @@ use dbrover_sql::ParameterValues;
 
 use crate::chart::ChartRun;
 use crate::declared::Shaped;
+use crate::kept_rows::{KeptRows, PartReader};
 use crate::live::{ProgressClock, waiting};
 use crate::parquet::PartsJoin;
 use crate::statement::Statements;
@@ -178,8 +185,8 @@ pub struct RunSummary {
 /// sending each step to `events` but the run's start and end, which the caller sends.
 ///
 /// A partitioned run (RS4d) runs once a range, each range's rows going to the same outputs:
-/// a file per range for an output whose name says the range, one file for the others. Every
-/// file is put in place once the last range is done, so a run that fails leaves none.
+/// a file per range for an output whose name says the range, put in place as the range ends,
+/// and one file for the others, put in place once the last range is done (RS5b).
 ///
 /// # Errors
 ///
@@ -199,7 +206,7 @@ pub async fn run<O: SourceOpener>(
         Some(ranges) => run_ranges(plan, values, ranges, opener, &mut sink, events).await,
     };
     match ran {
-        Ok(()) => sink.finish(events).await,
+        Ok(()) => sink.finish(values, events).await,
         Err(failure) => {
             sink.abandon();
             Err(failure)
@@ -223,8 +230,9 @@ async fn run_ranges<'a, O: SourceOpener>(
             .map_err(|problem| RunFailure::new(Step::Report, problem))?;
         let started = Instant::now();
         let before = sink.written();
+        sink.begin_range(range.number);
         run_once(plan, &range_values, opener, sink, events).await?;
-        sink.end_range()?;
+        sink.end_range(events)?;
         let after = sink.written();
         events(RunEvent::PartDone(PartDone {
             step: plan.feed_step(),
@@ -361,7 +369,7 @@ fn source_done(
 
 /// Where a run's rows go: every output and chart, and the preview, across every range of a
 /// partitioned run. Its files wait under their partial names until [`Sink::finish`] puts them
-/// all in place.
+/// in place, but for a partitioned run's files of a range, which [`Sink::end_range`] does.
 pub(crate) struct Sink<'a> {
     plan: &'a Plan,
     folders: RunFolders<'a>,
@@ -369,8 +377,8 @@ pub(crate) struct Sink<'a> {
     columns: Option<Vec<String>>,
     /// The outputs being written, each started by the first feed after it was last completed.
     outputs: Vec<OutputRun<'a>>,
-    /// Files complete and waiting to be put in place: those DuckDB wrote whole, and each range's
-    /// own.
+    /// Files complete and waiting to be put in place: those DuckDB wrote whole, and in a
+    /// partitioned run, the range's own.
     done: Vec<Completed>,
     /// Each range's part of a Parquet output every range appends to, by the output's number,
     /// joined into its one file at the end (RS4e).
@@ -380,6 +388,39 @@ pub(crate) struct Sink<'a> {
     preview: Option<Preview>,
     /// What every feed gave the outputs.
     written: Count,
+    /// In a partitioned run, each range's rows for what is written at the end.
+    kept: Option<KeptRows>,
+    /// The range being run, in a partitioned run.
+    range: Option<u64>,
+    /// The files already put in place: a partitioned run's finished ranges'.
+    placed: Vec<WrittenFile>,
+}
+
+/// The outputs a feed starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Started {
+    /// Every one, with the charts and the preview: an unpartitioned run's feed.
+    Every,
+    /// Those whose file is a range's own: a range of a partitioned run.
+    PerRange,
+    /// Those every range appends to, with the charts and the preview: a partitioned run's kept
+    /// rows, once the last range is done.
+    Appended,
+}
+
+impl Started {
+    fn includes(self, output: &PlannedOutput) -> bool {
+        match self {
+            Self::Every => true,
+            Self::PerRange => output.is_per_range(),
+            Self::Appended => !output.is_per_range(),
+        }
+    }
+
+    /// Whether the charts and the preview read this feed's rows.
+    fn reads_the_result(self) -> bool {
+        self != Self::PerRange
+    }
 }
 
 /// The rows and bytes a run has given its outputs so far.
@@ -391,6 +432,10 @@ pub(crate) struct Written {
 
 impl<'a> Sink<'a> {
     pub(crate) fn new(plan: &'a Plan, folders: RunFolders<'a>) -> Self {
+        let kept = plan
+            .partition
+            .as_ref()
+            .map(|_| KeptRows::new(folders.work, kept_every_row(plan)));
         Self {
             plan,
             folders,
@@ -401,6 +446,9 @@ impl<'a> Sink<'a> {
             charts: None,
             preview: None,
             written: Count::default(),
+            kept,
+            range: None,
+            placed: Vec::new(),
         }
     }
 
@@ -422,6 +470,15 @@ impl<'a> Sink<'a> {
         self.written.bytes += read.bytes;
     }
 
+    /// What this feed starts: a partitioned run's ranges start only their own files.
+    fn feeding(&self) -> Started {
+        if self.kept.is_some() {
+            Started::PerRange
+        } else {
+            Started::Every
+        }
+    }
+
     /// Writes `reader`'s rows, a page at a time, into every output and the preview, starting
     /// each output that isn't being written yet with the files `values` name. `opened` is when
     /// the feed started, for the time to its first row. Returns what the feed read.
@@ -438,7 +495,9 @@ impl<'a> Sink<'a> {
     ) -> Result<Count, RunFailure> {
         let step = feed.step();
         self.check_columns(reader.columns(), &step)?;
-        self.start(values, reader.columns())?;
+        let feeding = self.feeding();
+        self.start(values, reader.columns(), feeding)?;
+        self.keep_range(reader.columns(), &step)?;
         let mut read = Count::default();
         let mut clock = ProgressClock::new();
         loop {
@@ -467,20 +526,9 @@ impl<'a> Sink<'a> {
             read.first_row.get_or_insert_with(|| opened.elapsed());
             read.add(&page);
             feed.check(&read)?;
-            if let Some(preview) = &mut self.preview {
-                keep_for_preview(preview, &page);
-            }
-            let (written, writing) = timed(async {
-                self.outputs
-                    .iter_mut()
-                    .try_for_each(|output| output.write(&page))
-            })
-            .await;
+            let (taken, writing) = timed(async { self.take(&page, feeding, &step) }).await;
             clock.wrote(writing);
-            written?;
-            for chart in self.charts.iter_mut().flatten() {
-                chart.add(&page)?;
-            }
+            taken?;
             if clock.due() {
                 events(RunEvent::Progress {
                     step: step.clone(),
@@ -493,6 +541,38 @@ impl<'a> Sink<'a> {
                 });
             }
         }
+    }
+
+    /// Gives `page` to every output being written, and to what else `feeding` says reads it:
+    /// the preview and the charts, or a partitioned run's kept rows.
+    fn take(&mut self, page: &[Row], feeding: Started, step: &Step) -> Result<(), RunFailure> {
+        self.outputs
+            .iter_mut()
+            .try_for_each(|output| output.write(page))?;
+        if feeding.reads_the_result() {
+            if let Some(preview) = &mut self.preview {
+                keep_for_preview(preview, page);
+            }
+            for chart in self.charts.iter_mut().flatten() {
+                chart.add(page)?;
+            }
+        } else if let Some(kept) = &mut self.kept {
+            kept.write(page)
+                .map_err(|error| kept_failure(step, &error))?;
+        }
+        Ok(())
+    }
+
+    /// Starts the range's kept rows, the first time a range's feed starts.
+    fn keep_range(&mut self, columns: &[ExportColumn], step: &Step) -> Result<(), RunFailure> {
+        let (Some(kept), Some(number)) = (&mut self.kept, self.range) else {
+            return Ok(());
+        };
+        if kept.is_writing() {
+            return Ok(());
+        }
+        kept.start(number, columns)
+            .map_err(|error| kept_failure(step, &error))
     }
 
     /// Whether `columns` are the first feed's, which an output appended to by every range was
@@ -516,12 +596,21 @@ impl<'a> Sink<'a> {
         }
     }
 
-    /// Starts each output not being written, the charts and the preview, with `columns`.
-    fn start(&mut self, values: &RunValues, columns: &[ExportColumn]) -> Result<(), RunFailure> {
+    /// Starts each output `which` names that isn't being written, and when it says so, the
+    /// charts and the preview, with `columns`.
+    fn start(
+        &mut self,
+        values: &RunValues,
+        columns: &[ExportColumn],
+        which: Started,
+    ) -> Result<(), RunFailure> {
         let running: Vec<usize> = self.outputs.iter().map(|output| output.number).collect();
-        let started = start_outputs(self.plan, values, columns, self.folders, &running)?;
+        let started = start_outputs(self.plan, values, columns, self.folders, &running, which)?;
         self.outputs.extend(started);
         self.outputs.sort_by_key(|output| output.number);
+        if !which.reads_the_result() {
+            return Ok(());
+        }
         if self.charts.is_none() {
             self.charts = Some(start_charts(self.plan, values, columns));
         }
@@ -561,19 +650,42 @@ impl<'a> Sink<'a> {
         appended.then_some(*number)
     }
 
+    /// Starts range `number` of a partitioned run.
+    pub(crate) fn begin_range(&mut self, number: u64) {
+        self.range = Some(number);
+    }
+
     /// Ends a range of a partitioned run: completes the files of the outputs whose name says
-    /// the range, so the next range starts its own.
-    pub(crate) fn end_range(&mut self) -> Result<(), RunFailure> {
+    /// the range and puts them in place with the range's files DuckDB wrote, so the next range
+    /// starts its own, and keeps the range's rows for the run's end.
+    pub(crate) fn end_range(&mut self, events: &mut dyn FnMut(RunEvent)) -> Result<(), RunFailure> {
         let (per_range, appended): (Vec<_>, Vec<_>) = std::mem::take(&mut self.outputs)
             .into_iter()
             .partition(|output| output.output.is_per_range());
         self.outputs = appended;
-        let completed = complete_outputs(per_range)?;
-        self.done.extend(completed);
+        let mut done = std::mem::take(&mut self.done);
+        match complete_outputs(per_range) {
+            Ok(completed) => done.extend(completed),
+            Err(failure) => {
+                done.into_iter().for_each(|done| done.file.abandon());
+                return Err(failure);
+            }
+        }
+        sort_by_output(&mut done);
+        let placed = put_in_place(done)?;
+        for file in &placed {
+            events(RunEvent::OutputWritten(file.clone()));
+        }
+        self.placed.extend(placed);
+        if let Some(kept) = &mut self.kept {
+            kept.end()
+                .map_err(|error| kept_failure(&self.plan.feed_step(), &error))?;
+        }
+        self.range = None;
         Ok(())
     }
 
-    /// Removes every output's file, for a run that failed.
+    /// Removes every output's file not in place yet, for a run that failed.
     pub(crate) fn abandon(self) {
         self.outputs.into_iter().for_each(OutputRun::abandon);
         self.done
@@ -604,13 +716,39 @@ impl<'a> Sink<'a> {
         Ok(())
     }
 
+    /// Writes a partitioned run's kept rows, every range's in order, into the outputs every
+    /// range appends to, the charts and the preview.
+    fn write_kept(&mut self, values: &RunValues) -> Result<(), RunFailure> {
+        let Some(kept) = self.kept.take() else {
+            return Ok(());
+        };
+        let step = self.plan.feed_step();
+        for part in kept.parts() {
+            let mut reader = PartReader::open(part).map_err(|error| kept_failure(&step, &error))?;
+            self.start(values, reader.columns(), Started::Appended)?;
+            while let Some(page) = reader
+                .next_page()
+                .map_err(|error| kept_failure(&step, &error))?
+            {
+                self.take(&page, Started::Appended, &step)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Completes every file, draws every chart, and puts them all in place, sending the preview
-    /// and each file.
+    /// and each file. A partitioned run's appended files are written now, from its kept rows,
+    /// with `values`, the run's.
     pub(crate) async fn finish(
         mut self,
+        values: &RunValues,
         events: &mut dyn FnMut(RunEvent),
     ) -> Result<RunSummary, RunFailure> {
-        if let Err(failure) = self.join_parquet_parts().await {
+        let prepared = match self.join_parquet_parts().await {
+            Ok(()) => self.write_kept(values),
+            Err(failure) => Err(failure),
+        };
+        if let Err(failure) = prepared {
             self.abandon();
             return Err(failure);
         }
@@ -621,6 +759,7 @@ impl<'a> Sink<'a> {
             preview,
             folders,
             written,
+            placed,
             ..
         } = self;
         events(RunEvent::Preview(preview.unwrap_or_else(|| Preview {
@@ -635,12 +774,7 @@ impl<'a> Sink<'a> {
                 return Err(failure);
             }
         }
-        // In the file's order of outputs, wherever each was written, and a partitioned run's
-        // ranges in their order within an output.
-        done.sort_by_key(|done| match &done.step {
-            Step::Output { number, .. } => *number,
-            _ => usize::MAX,
-        });
+        sort_by_output(&mut done);
         let mut charts = charts.unwrap_or_default();
         charts.sort_by_key(ChartRun::number);
         for chart in charts {
@@ -659,9 +793,35 @@ impl<'a> Sink<'a> {
         Ok(RunSummary {
             rows: written.rows,
             bytes: written.bytes,
-            files,
+            files: placed.into_iter().chain(files).collect(),
         })
     }
+}
+
+/// Whether anything but the preview reads a partitioned run's kept rows: an output DbRover
+/// writes that every range appends to, or a chart of the result.
+fn kept_every_row(plan: &Plan) -> bool {
+    plan.outputs
+        .iter()
+        .any(|output| output.format.written_by_duckdb().is_none() && !output.is_per_range())
+        || plan.charts.iter().any(|chart| chart.query.is_none())
+}
+
+/// Puts `done` in the file's order of outputs, wherever each was written, and a partitioned
+/// run's ranges in their order within an output; charts, which come after, last.
+fn sort_by_output(done: &mut [Completed]) {
+    done.sort_by_key(|done| match &done.step {
+        Step::Output { number, .. } => *number,
+        _ => usize::MAX,
+    });
+}
+
+/// The run's failure when a range's rows can't be kept or read back.
+fn kept_failure(step: &Step, error: &std::io::Error) -> RunFailure {
+    RunFailure::new(
+        step.clone(),
+        format!("could not keep the range's rows in the run's work folder: {error}"),
+    )
 }
 
 /// A folder of the run's own, its staging folder or its work folder, made for the run and
@@ -806,14 +966,15 @@ struct OutputRun<'a> {
     busy: Duration,
 }
 
-/// Starts each output DbRover writes, but those numbered in `running`, which are being written
-/// already.
+/// Starts each output DbRover writes that `which` names, but those numbered in `running`, which
+/// are being written already.
 fn start_outputs<'a>(
     plan: &'a Plan,
     values: &RunValues,
     columns: &[ExportColumn],
     folders: RunFolders<'_>,
     running: &[usize],
+    which: Started,
 ) -> Result<Vec<OutputRun<'a>>, RunFailure> {
     let mut started: Vec<OutputRun<'a>> = Vec::new();
     // DuckDB writes the Parquet outputs itself, before the rows come here (RS3d).
@@ -823,7 +984,9 @@ fn start_outputs<'a>(
             .zip(&values.files)
             .enumerate()
             .filter(|(index, (output, _))| {
-                output.format.written_by_duckdb().is_none() && !running.contains(&(index + 1))
+                output.format.written_by_duckdb().is_none()
+                    && which.includes(output)
+                    && !running.contains(&(index + 1))
             });
     for (index, (output, file)) in written_here {
         let step = Step::Output {

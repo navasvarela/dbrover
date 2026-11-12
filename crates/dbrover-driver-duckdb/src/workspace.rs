@@ -409,26 +409,33 @@ impl Workspace {
 
     /// Cuts the database off from everything outside it, files and extensions included, and
     /// freezes its settings, so the query that runs next reads only what was loaded and
-    /// attached, within the limits it was opened with. `writable`, when given, is the one
-    /// folder it may still write files in, and read them back from: the run's staging folder,
-    /// for the Parquet files DuckDB writes itself (RS3d).
+    /// attached, within the limits it was opened with. `writable` are the folders it may still
+    /// write files in, and read them back from: the run's staging folder, for the Parquet files
+    /// DuckDB writes itself (RS3d), and the work folder's parts of a partitioned run (RS5b).
+    /// None leaves it no folder at all.
     ///
     /// # Errors
     ///
     /// [`DriverError`] if DuckDB refuses a setting.
-    pub async fn lock(&self, writable: Option<&Path>) -> Result<(), DriverError> {
+    pub async fn lock(&self, writable: &[&Path]) -> Result<(), DriverError> {
         // DuckDB takes `allowed_directories` only while external access is on.
-        let allowed = writable.map(|folder| {
-            let mut folder = folder.to_string_lossy().into_owned();
-            if !folder.ends_with(std::path::MAIN_SEPARATOR) {
-                folder.push(std::path::MAIN_SEPARATOR);
-            }
-            format!("SET allowed_directories = [{}]; ", string_literal(&folder))
-        });
-        let sql = format!(
-            "{}SET enable_external_access = false; SET lock_configuration = true",
-            allowed.unwrap_or_default()
-        );
+        let allowed = if writable.is_empty() {
+            String::new()
+        } else {
+            let folders: Vec<String> = writable
+                .iter()
+                .map(|folder| {
+                    let mut folder = folder.to_string_lossy().into_owned();
+                    if !folder.ends_with(std::path::MAIN_SEPARATOR) {
+                        folder.push(std::path::MAIN_SEPARATOR);
+                    }
+                    string_literal(&folder)
+                })
+                .collect();
+            format!("SET allowed_directories = [{}]; ", folders.join(", "))
+        };
+        let sql =
+            format!("{allowed}SET enable_external_access = false; SET lock_configuration = true");
         self.connection
             .run_blocking(move |connection| {
                 connection

@@ -25,6 +25,7 @@ mod explain;
 mod file_name;
 mod format;
 mod hints;
+mod kept_rows;
 mod limits;
 mod live;
 mod parquet;
