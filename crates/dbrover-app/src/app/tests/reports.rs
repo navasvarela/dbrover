@@ -115,6 +115,19 @@ impl RunningReport for Scripted {
     fn cancel(&mut self) {
         self.0 = VecDeque::from([RunEvent::Cancelled.at(Duration::ZERO)]);
     }
+
+    fn pause(&mut self) {
+        let kept = dbrover_report::WorkKept {
+            folder: "paused".to_owned(),
+            ranges: 2,
+            sources: 0,
+            read: 1,
+        };
+        self.0 = VecDeque::from([
+            RunEvent::WorkKept(kept).at(Duration::ZERO),
+            RunEvent::Cancelled.at(Duration::ZERO),
+        ]);
+    }
 }
 
 /// The app with the `shop` data source and `reports/trial-balance.toml` (or `report`), its
@@ -828,6 +841,71 @@ fn cancel_stops_the_running_report() {
     step_until_visible(&mut harness, "Cancelled. No file was written.");
     harness.run();
     assert!(!harness.get_by_label("Run").accesskit_node().is_disabled());
+}
+
+/// RS5f: **Pause** stops the run keeping what it finished; once the history lists it,
+/// **Resume** carries on from its kept work folder with its values, and **Discard** removes it.
+#[test]
+fn pause_keeps_a_run_that_resume_carries_on_from() {
+    let dir = tempfile::tempdir().unwrap();
+    let launcher = StandIn::new(vec![RunEvent::Started {
+        report: "Trial balance".to_owned(),
+        sources: Vec::new(),
+        combine: false,
+        combine_sql: None,
+        version: None,
+        combine_limits: None,
+        timeout_ms: None,
+        machine: None,
+        partition: None,
+    }]);
+    let requests = Arc::clone(&launcher.requests);
+    // What the worker would have kept: the folder the stand-in's pause names.
+    let kept = dir.path().join("report-runs").join("paused");
+    let mut manifest = dbrover_report::Manifest::start(dbrover_report::RunIdentity {
+        report: dir.path().join("reports/trial-balance.toml"),
+        folder: dir.path().join("out"),
+        version: "0123".to_owned(),
+        values: [("since", "2026-09-01")]
+            .into_iter()
+            .map(|(name, value)| (name.to_owned(), value.to_owned()))
+            .collect(),
+        dbrover: env!("CARGO_PKG_VERSION").to_owned(),
+        data_sources: Vec::new(),
+    });
+    manifest.ranges.push(dbrover_report::RangeKept {
+        number: 1,
+        from: "2026-09-01".to_owned(),
+        to: "2026-09-02".to_owned(),
+        read: 10,
+        rows: 1,
+        bytes: 10,
+        files: Vec::new(),
+    });
+    manifest.mark_kept();
+    manifest.write(&kept).unwrap();
+    let mut harness = start_with_reports(dir.path(), TRIAL_BALANCE, launcher);
+
+    open_and_fill(&mut harness, "2026-10-01");
+    harness.get_by_label("Run").click();
+    step_until_visible(&mut harness, "Pause");
+    harness.get_by_label("Pause").click();
+    step_until_visible(
+        &mut harness,
+        "Stopped. What it finished is kept: Resume carries on from there.",
+    );
+    step_until_visible(&mut harness, "Resume");
+    harness.get_by_label("Resume").click();
+    harness.run_steps(4);
+    let sent = requests.lock().unwrap().clone();
+    assert_eq!(sent.len(), 2, "the run, then the run resuming it");
+    assert!(sent[1].resume);
+    assert_eq!(sent[1].work, kept);
+    assert_eq!(
+        sent[1].values.get("since").map(String::as_str),
+        Some("2026-09-01"),
+        "the stopped run's values"
+    );
 }
 
 #[test]

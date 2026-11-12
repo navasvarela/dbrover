@@ -59,6 +59,8 @@ enum Stop {
     OutOfDisk = 3,
     /// It went without progress for its stall timeout.
     Stalled = 4,
+    /// **Pause**: cancelled, its work folder kept whatever its finished units read (RS5f).
+    Paused = 5,
 }
 
 impl Stop {
@@ -68,6 +70,7 @@ impl Stop {
             2 => Self::TimedOut,
             3 => Self::OutOfDisk,
             4 => Self::Stalled,
+            5 => Self::Paused,
             _ => Self::No,
         }
     }
@@ -219,6 +222,18 @@ impl WorkerRun {
     /// Stops the worker. The run ends with [`RunEvent::Cancelled`] unless it had ended.
     pub fn cancel(&self) {
         self.stopper().cancel();
+    }
+
+    /// Stops the worker as [`WorkerRun::cancel`] does, keeping the run's work folder for it to
+    /// resume when it finished anything, however little it read (RS5f).
+    pub fn pause(&self) {
+        let _ = self.stop.compare_exchange(
+            Stop::No as u8,
+            Stop::Paused as u8,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
+        kill(&self.child);
     }
 
     /// What stops the run from another thread, such as one waiting for a signal.
@@ -436,7 +451,7 @@ impl OutputReader {
             self.send(RunEvent::WorkKept(kept).at(self.started.elapsed()));
         }
         let event = match Stop::from_u8(self.stop.load(Ordering::SeqCst)) {
-            Stop::Cancelled => RunEvent::Cancelled,
+            Stop::Cancelled | Stop::Paused => RunEvent::Cancelled,
             Stop::TimedOut => RunEvent::Failed(timed_out(self.watch.timeout)),
             Stop::Stalled => RunEvent::Failed(stalled(self.watch.stall_timeout)),
             Stop::OutOfDisk => {
@@ -464,8 +479,9 @@ impl OutputReader {
     fn keep_or_remove_folders(&self) -> Option<WorkKept> {
         let [staging, work] = &self.folders;
         remove_folder(staging);
+        let paused = Stop::from_u8(self.stop.load(Ordering::SeqCst)) == Stop::Paused;
         let kept = self.watch.resumable_above.and_then(|above| {
-            keep_work_folder(work, above, false)
+            keep_work_folder(work, above, paused)
                 .inspect_err(|error| {
                     tracing::warn!("could not keep the run's work folder: {error}");
                 })

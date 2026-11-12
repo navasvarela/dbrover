@@ -55,11 +55,13 @@ pub enum ReportDefault {
     KeepAwake,
     MaxDisk,
     WorkFolder,
+    ResumableAbove,
+    KeptRunsTotal,
     RunsKept,
 }
 
 impl ReportDefault {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 16] = [
         Self::MaxRows,
         Self::MaxBytes,
         Self::SourceTimeout,
@@ -73,6 +75,8 @@ impl ReportDefault {
         Self::KeepAwake,
         Self::MaxDisk,
         Self::WorkFolder,
+        Self::ResumableAbove,
+        Self::KeptRunsTotal,
         Self::RunsKept,
     ];
 
@@ -89,6 +93,8 @@ impl ReportDefault {
             | Self::KeepAwake
             | Self::MaxDisk
             | Self::WorkFolder
+            | Self::ResumableAbove
+            | Self::KeptRunsTotal
             | Self::RunsKept => "Outputs and runs",
         }
     }
@@ -108,6 +114,8 @@ impl ReportDefault {
             Self::KeepAwake => "Keep the computer awake",
             Self::MaxDisk => "Disk a run may use",
             Self::WorkFolder => "Work folder",
+            Self::ResumableAbove => "Keep a stopped run past",
+            Self::KeptRunsTotal => "Kept runs may hold",
             Self::RunsKept => "Runs kept per report",
         }
     }
@@ -134,8 +142,16 @@ impl ReportDefault {
                  [report] overrides it."
             }
             Self::WorkFolder => {
-                "Where each run keeps its DuckDB's file and spills, removed when it ends: a \
-                 roomier disk, say."
+                "Where each run keeps its DuckDB's file and spills, removed when it ends unless \
+                 it stopped and can resume: a roomier disk, say."
+            }
+            Self::ResumableAbove => {
+                "What a failed or stopped run's finished work must have read for its work \
+                 folder to be kept, so it can resume; resumable_above in [report] overrides it."
+            }
+            Self::KeptRunsTotal => {
+                "Every kept work folder together; past it the oldest go, and each goes after a \
+                 week."
             }
             Self::RunsKept => "Older runs are deleted as each new one is kept.",
         }
@@ -157,6 +173,8 @@ impl ReportDefault {
             Self::KeepAwake => "keep_awake",
             Self::MaxDisk => "max_disk",
             Self::WorkFolder => "work_folder",
+            Self::ResumableAbove => "resumable_above",
+            Self::KeptRunsTotal => "kept_runs_total",
             Self::RunsKept => "runs_kept",
         }
     }
@@ -245,6 +263,22 @@ impl ReportDefault {
                 |size| size.to_string(),
             ),
             Self::WorkFolder => work_folder(ui, &mut settings.work_folder),
+            Self::ResumableAbove => choice(
+                ui,
+                id,
+                &mut settings.resumable_above,
+                &constants.resumable_above.to_string(),
+                &[100 * MIB, GIB, 10 * GIB].map(ByteSize),
+                |size| size.to_string(),
+            ),
+            Self::KeptRunsTotal => choice(
+                ui,
+                id,
+                &mut settings.kept_runs_total,
+                &ByteSize(dbrover_engine::DEFAULT_KEPT_RUNS_TOTAL).to_string(),
+                &[10 * GIB, 50 * GIB, 100 * GIB, 500 * GIB].map(ByteSize),
+                |size| size.to_string(),
+            ),
             Self::RunsKept => choice(
                 ui,
                 id,

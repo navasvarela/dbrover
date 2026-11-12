@@ -29,6 +29,8 @@ pub trait RunningReport {
     /// The next event, if one has come; the last one ends the run.
     fn try_next(&mut self) -> Option<TimedEvent>;
     fn cancel(&mut self);
+    /// Stops the run as [`RunningReport::cancel`] does, keeping what it finished to resume.
+    fn pause(&mut self);
 }
 
 /// Runs reports in `dbrover report-worker`, started from the app's own executable with the
@@ -80,5 +82,9 @@ impl RunningReport for Worker {
 
     fn cancel(&mut self) {
         self.0.cancel();
+    }
+
+    fn pause(&mut self) {
+        self.0.pause();
     }
 }
