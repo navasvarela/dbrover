@@ -187,6 +187,12 @@ pub enum ReportAction {
     /// Plans the report without running it (RS2d).
     Explain(ReportName),
     Cancel,
+    /// Stops the run, keeping what it finished so it can resume (RS5f).
+    Pause,
+    /// Carries on from the report's stopped run.
+    Resume(ReportName),
+    /// Removes what the report's stopped run kept, so it no longer resumes.
+    Discard(ReportName),
     ChooseFolder(ReportName),
     /// Opens a file or folder with the system's own app.
     OpenPath(PathBuf),
@@ -226,6 +232,26 @@ pub struct Reports {
     to_open: Option<ReportName>,
     /// Each report's newest runs, as the history last listed them.
     runs: BTreeMap<ReportName, Result<Vec<ReportRun>, String>>,
+    /// Each report's stopped run that can resume (RS5f), found when its runs are listed.
+    resumable: BTreeMap<ReportName, Resumable>,
+    /// Settings › Reports' **Work folder**, where kept work folders are looked for.
+    work_folder: Option<PathBuf>,
+}
+
+/// A report's stopped run whose work folder is kept, so it can resume.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Resumable {
+    /// Its id in the history.
+    pub id: RunId,
+    /// Its work folder.
+    pub work: PathBuf,
+    /// What it finished: a partitioned run's ranges, of how many, or the sources it loaded.
+    pub ranges: u64,
+    pub sources: u64,
+    /// The parameters' values it ran with, and the folder its files went in, which a run
+    /// resuming it takes.
+    pub values: TypedValues,
+    pub folder: PathBuf,
 }
 
 #[derive(Default)]
@@ -463,6 +489,11 @@ impl RunRecord {
     /// Marks the run as carrying on from the run `id`, whose work folder it takes (RS5d).
     pub fn resumes(&mut self, id: RunId) {
         self.profile.resumed_from = Some(id);
+    }
+
+    /// The name of the work folder the run kept to resume from, once it has ended so.
+    pub fn kept(&self) -> Option<&str> {
+        self.profile.kept.as_deref()
     }
 
     /// A run starting now with `params`.
@@ -1183,6 +1214,7 @@ impl Reports {
                     tracing::warn!("could not read the runs of {report}: {error}");
                 }
                 self.runs.insert(report.clone(), result.clone());
+                self.find_resumable(report);
                 Applied::default()
             }
             Event::ReportSaved { name, result } => self.saved(name, result),
@@ -1368,6 +1400,33 @@ impl Reports {
         settings: &RunSettings,
         wake: impl Fn() + Send + Sync + 'static,
     ) {
+        self.launch(name, plan, settings, Box::new(wake), None);
+    }
+
+    /// **Resume**: carries on from `name`'s stopped run, with its values and folder, as
+    /// [`Reports::start`] starts a run (RS5f).
+    pub fn resume(
+        &mut self,
+        name: &ReportName,
+        plan: &Plan,
+        settings: &RunSettings,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) {
+        let Some(resumable) = self.resumable.get(name).cloned() else {
+            return;
+        };
+        self.launch(name, plan, settings, Box::new(wake), Some(resumable));
+    }
+
+    /// Starts a run of `name`, a new one or one carrying on from `resumes`.
+    fn launch(
+        &mut self,
+        name: &ReportName,
+        plan: &Plan,
+        settings: &RunSettings,
+        wake: Box<dyn Fn() + Send + Sync>,
+        resumes: Option<Resumable>,
+    ) {
         if self.running.is_some() {
             return;
         }
@@ -1378,26 +1437,41 @@ impl Reports {
         ) else {
             return;
         };
-        let values = self
-            .state(name)
-            .map(|state| state.values.clone())
-            .unwrap_or_default();
         let work_root = settings.work_root(&setup.work_root);
         dbrover_engine::sweep(work_root, settings.kept_runs_total, Timestamp::now());
+        let (values, folder, work) = match &resumes {
+            Some(resumable) => (
+                resumable.values.clone(),
+                resumable.folder.clone(),
+                resumable.work.clone(),
+            ),
+            None => (
+                self.state(name)
+                    .map(|state| state.values.clone())
+                    .unwrap_or_default(),
+                folder,
+                work_folder(work_root),
+            ),
+        };
         let request = RunRequest {
             report: listed.path.clone(),
             values: values.clone(),
             staging: folder.join(staging_name()),
-            work: work_folder(work_root),
+            work,
             folder,
             defaults: settings.defaults,
             memory_limit: None,
             explain: None,
-            resume: false,
+            resume: resumes.is_some(),
         };
         let watch = run_watch(plan, settings, work_root);
-        let started = setup.launcher.start(&request, watch, Box::new(wake));
+        let started = setup.launcher.start(&request, watch, wake);
+        let report_file = listed.path.clone();
         let mut record = RunRecord::new(values);
+        if let Some(resumable) = resumes {
+            record.resumes(resumable.id);
+            self.resumable.remove(name);
+        }
         match started {
             Ok(run) => {
                 self.running = Some(Running {
@@ -1405,7 +1479,7 @@ impl Reports {
                     plan: plan.clone(),
                     run,
                     work_root: work_root.to_owned(),
-                    report_file: listed.path.clone(),
+                    report_file,
                 });
             }
             Err(error) => {
@@ -1522,6 +1596,68 @@ impl Reports {
     pub fn cancel(&mut self) {
         if let Some(running) = &mut self.running {
             running.run.cancel();
+        }
+    }
+
+    /// **Pause**: stops the run, keeping what it finished so it can resume (RS5f).
+    pub fn pause(&mut self) {
+        if let Some(running) = &mut self.running {
+            running.run.pause();
+        }
+    }
+
+    /// Where kept work folders are: Settings › Reports' **Work folder**, set each frame.
+    pub fn use_work_folder(&mut self, folder: Option<&Path>) {
+        if self.work_folder.as_deref() != folder {
+            self.work_folder = folder.map(Path::to_owned);
+        }
+    }
+
+    fn work_root(&self) -> Option<PathBuf> {
+        let setup = self.setup.as_ref()?;
+        Some(
+            self.work_folder
+                .clone()
+                .unwrap_or_else(|| setup.work_root.clone()),
+        )
+    }
+
+    /// `name`'s stopped run that can resume, if it has one.
+    pub fn resumable(&self, name: &ReportName) -> Option<&Resumable> {
+        self.resumable.get(name)
+    }
+
+    /// Looks for `name`'s newest run whose work folder is still kept, in the runs the history
+    /// listed: a run that finished after it discarded it, so only the newest can be.
+    fn find_resumable(&mut self, name: &ReportName) {
+        self.resumable.remove(name);
+        let (Some(root), Some(Ok(runs))) = (self.work_root(), self.runs.get(name)) else {
+            return;
+        };
+        let found = runs.iter().find_map(|run| {
+            let work = root.join(run.profile.kept.as_deref()?);
+            let manifest = dbrover_report::Manifest::read(&work).ok().flatten()?;
+            manifest.kept_at.as_ref()?;
+            Some(Resumable {
+                id: run.id?,
+                work,
+                ranges: manifest.ranges.len() as u64,
+                sources: manifest.sources.len() as u64,
+                values: manifest.run.values,
+                folder: manifest.run.folder,
+            })
+        });
+        if let Some(found) = found {
+            self.resumable.insert(name.clone(), found);
+        }
+    }
+
+    /// **Discard**: removes `name`'s stopped run's work folder, so it no longer resumes.
+    pub fn discard(&mut self, name: &ReportName) {
+        if let Some(resumable) = self.resumable.remove(name)
+            && let Err(error) = dbrover_engine::discard(&resumable.work)
+        {
+            tracing::warn!("could not discard {}: {error}", resumable.work.display());
         }
     }
 

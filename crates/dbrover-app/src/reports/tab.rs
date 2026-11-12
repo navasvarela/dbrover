@@ -372,6 +372,9 @@ fn toolbar(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             more_menu(ui, reports, name, seen, actions);
             run_button(ui, seen, &ready, keymap, name, actions);
+            if !seen.running_here {
+                resume_buttons(ui, reports.resumable(name), seen, &ready, name, actions);
+            }
             explain_button(ui, reports, name, seen, &ready, actions);
             let can_save = match seen.disk {
                 OnDisk::Unchanged => seen.unsaved,
@@ -544,6 +547,12 @@ fn run_button(
         if ui.button("Cancel").clicked() {
             actions.push(ReportAction::Cancel);
         }
+        let pause = ui.button("Pause").on_hover_text(
+            "Stop the run, keeping what it has finished: Resume carries on from there",
+        );
+        if pause.clicked() {
+            actions.push(ReportAction::Pause);
+        }
         return;
     }
     let label = if seen.unsaved { "Save and run" } else { "Run" };
@@ -554,6 +563,44 @@ fn run_button(
     };
     if response.clicked() {
         actions.push(ReportAction::Run(name.clone()));
+    }
+}
+
+/// **Resume** and **Discard**, for a report whose stopped run kept its work folder (RS5f).
+fn resume_buttons(
+    ui: &mut Ui,
+    resumable: Option<&super::Resumable>,
+    seen: &Seen,
+    ready: &Result<(), String>,
+    name: &ReportName,
+    actions: &mut Vec<ReportAction>,
+) {
+    let Some(resumable) = resumable else {
+        return;
+    };
+    let discard = ui
+        .button("Discard")
+        .on_hover_text("Remove what the stopped run kept; Run starts from the beginning");
+    if discard.clicked() {
+        actions.push(ReportAction::Discard(name.clone()));
+    }
+    let finished = if resumable.ranges > 0 {
+        dbrover_report::counted(resumable.ranges, "finished range")
+    } else {
+        dbrover_report::counted(resumable.sources, "loaded source")
+    };
+    let can = ready.is_ok() && !seen.unsaved;
+    let resume = ui.add_enabled(can, egui::Button::new("Resume"));
+    let resume = if seen.unsaved {
+        resume.on_disabled_hover_text("Save the file to resume: a changed file can't resume")
+    } else {
+        resume.on_hover_text(format!(
+            "Carry on from run {}, which stopped with {finished}",
+            resumable.id
+        ))
+    };
+    if resume.clicked() {
+        actions.push(ReportAction::Resume(name.clone()));
     }
 }
 
@@ -1063,6 +1110,14 @@ fn last_run(ui: &mut Ui, reports: &Reports, name: &ReportName, actions: &mut Vec
             if let Some(limit) = &failure.limit {
                 limit_hint(ui, limit, actions);
             }
+        }
+        Some(RunEnd::Cancelled) if record.kept().is_some() => {
+            widgets::status(
+                ui,
+                icons::PROHIBIT,
+                palette.text_weak,
+                "Stopped. What it finished is kept: Resume carries on from there.",
+            );
         }
         Some(RunEnd::Cancelled) => {
             widgets::status(

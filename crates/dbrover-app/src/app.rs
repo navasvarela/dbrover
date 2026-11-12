@@ -1318,6 +1318,9 @@ impl DbRoverApp {
             }
             ReportAction::Format(name) => self.format_report(&name),
             ReportAction::Cancel => self.reports.cancel(),
+            ReportAction::Pause => self.reports.pause(),
+            ReportAction::Resume(name) => self.resume_report(&name, ctx),
+            ReportAction::Discard(name) => self.reports.discard(&name),
             ReportAction::ChooseFolder(name) => {
                 let current = self.reports.output_folder(&name).unwrap_or_default();
                 if let Some(folder) = (self.pick_report_folder)(&current) {
@@ -1370,6 +1373,17 @@ impl DbRoverApp {
         self.reports
             .start(name, &plan, &settings, move || ctx.request_repaint());
         self.send_if(self.reports.reload());
+    }
+
+    /// Carries on from the report's stopped run, if it plans against the data sources as they
+    /// are (RS5f).
+    fn resume_report(&mut self, name: &dbrover_store::ReportName, ctx: &egui::Context) {
+        let Some((plan, settings)) = self.plan_report(name) else {
+            return;
+        };
+        let ctx = ctx.clone();
+        self.reports
+            .resume(name, &plan, &settings, move || ctx.request_repaint());
     }
 
     /// Explains the report in a worker, if it plans against the data sources as they are.
@@ -3056,9 +3070,10 @@ impl eframe::App for DbRoverApp {
         }
         self.maximize_window_once(ctx);
         self.drain_engine_events();
-        let record = self
-            .reports
-            .poll(reports::runs_kept(&self.settings.settings().reports));
+        let report_settings = &self.settings.settings().reports;
+        self.reports
+            .use_work_folder(report_settings.work_folder.as_deref());
+        let record = self.reports.poll(reports::runs_kept(report_settings));
         self.send_if(record);
         self.reports.poll_explain();
         if let Some(text) = self.copied_by_program.take() {
