@@ -2598,8 +2598,27 @@ measurement.
   run events-by-month -p since=2025-01-01 -p until=2026-01-01 --progress` shows *Month 3 of 12*
   on its line and prints a line a range. Not checked on Windows, where the worker's memory isn't
   measured, nor against a real warehouse's cost guard over several ranges.
-- **RS5 — Resume:** large runs keep a work folder and resume after a crash or a kill from the
-  last finished range or job page; pause; incremental sources with a lookback.
+- **RS5 — Resume (M):** in progress from 2026-11-12, one stack of nine layers; what today's
+  code changes in the plan is in
+  [RS5 against today's code](reports-at-scale.md#rs5-against-todays-code). Large runs keep a
+  work folder and resume after a crash or a kill from the last finished range, source or job;
+  pause; incremental sources with a lookback:
+  - **RS5a — The plan:** RS5's decisions against the code as of RS4's merge.
+  - **RS5b — Finished ranges keep their files:** a range's own files in place at its end;
+    appended outputs, charts and the preview written at the end from each range's kept rows.
+  - **RS5c — The manifest and kept work folders:** units recorded as they end,
+    `resumable_above`, kept folders marked in the history, their expiry and total.
+  - **RS5d — Resuming a partitioned run:** `--resume <run id>` and `--from-scratch`, the
+    manifest checked against the report, finished ranges skipped.
+  - **RS5e — Resuming the combine's sources:** a kept workspace's finished sources and a
+    partitioned source's finished ranges read no more.
+  - **RS5f — In the app:** **Resume**, **Pause** and **Discard**, and their settings.
+  - **RS5g — Jobs and `as_of`:** a job engine's job read again on resume; `:as_of`.
+  - **RS5h — Incremental sources:** `incremental`, and the cache in `report-cache/`.
+  - **RS5i — Manual, demo note and the exit test.**
+
+  **Exit:** a run whose worker is killed in its seventh range resumes, reads ranges 7 to 12
+  only, and writes files equal to an uninterrupted run's.
 - **RS6 — Columnar sources:** Arrow batches from engines that give them (DuckDB, ClickHouse,
   then C4 to C6), appended to DuckDB without text; ADR 0007. Before C5 and C6, whose services
   answer in Arrow. C3 started first (2026-11-05) and delivers rows as text: Athena's and

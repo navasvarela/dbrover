@@ -689,7 +689,44 @@ runs the small cases.
   of the same report run over its largest month alone.
 - **RS5 — Resume:** work folders kept for large runs, the manifest, **Resume**, **Pause** and
   **Discard**, `--resume`; job ids and page tokens for C0's job engines; `as_of`; then
-  incremental sources and their cache.
+  incremental sources and their cache. What today's code changes in this is in
+  [RS5 against today's code](#rs5-against-todays-code).
+  - RS5a — Plan. Settles the decisions in that section. Docs only.
+  - RS5b — Finished ranges keep their files: in a partitioned run, a range's own files go in
+    place when the range ends; appended outputs, the charts of the result and the preview are
+    written at the end from each range's rows, kept in the run's work folder, with RS4e's
+    Parquet parts beside them. *Exit:* a run that fails in its seventh month leaves six monthly
+    files in place and no appended file, and an uninterrupted run writes what RS4's did.
+    *Tests:* a failed range's files; the appended CSV, Excel and Parquet, the charts and the
+    preview against RS4's; the parts gone after the run.
+  - RS5c — The manifest and kept work folders: `manifest.json` written as each unit ends;
+    `resumable_above`; a failed, stopped or killed run keeps its work folder past it; the
+    history marks a kept run; kept folders expire, count against a total, and are discarded.
+    *Exit:* a run killed in its seventh month past `resumable_above` keeps a folder whose
+    manifest names six ranges, and one under it keeps nothing. *Tests:* the manifest's units
+    as a run goes, table-driven over failures; keeping or removing at the threshold, on the
+    worker's side and the app's; expiry and the total.
+  - RS5d — Resuming a partitioned run: `dbrover report run --resume <run id>` and
+    `--from-scratch`; what the manifest names checked against the report, its values and its
+    data sources; finished ranges skipped. *Exit:* the milestone's exit test. *Tests:* each
+    change that refuses a resume, and its message; a resumed run's events and files against an
+    uninterrupted run's.
+  - RS5e — Resuming the combine's sources: a kept workspace's finished sources, and a
+    partitioned source's finished ranges, read no more. *Exit:* a run killed while loading its
+    third source resumes with the first two loaded, and writes what an uninterrupted run does.
+    *Tests:* a partitioned source's half-read range removed; column types across a resume.
+  - RS5f — In the app: **Resume**, **Pause** and **Discard** in the report's tab, and Settings ›
+    Reports' **Keep a stopped run past** and **Kept runs may hold**. *Exit:* a paused run
+    resumes from the tab. *Tests:* the tab's buttons for each state, kittest.
+  - RS5g — Jobs and `as_of`: a job engine's job kept in the manifest and read again on resume;
+    `as_of = "run_start"`. *Exit:* a resumed source on a fake job engine reads its kept job
+    without sending its query again. *Tests:* a kept job, an expired one, and `:as_of`'s value
+    across a resume.
+  - RS5h — Incremental sources: `incremental` on a source, its rows kept in `report-cache/`,
+    `:after` bound from them. *Exit:* a second run reads only rows newer than the newest kept
+    less `lookback`, and its table equals a full read's. *Tests:* reading and planning
+    problems; the cache over three runs with late rows; **Run from scratch**.
+  - RS5i — Manual, demo note and the exit test's numbers.
   **Exit:** a run whose worker is killed in its seventh range resumes, reads ranges 7 to 12
   only, and writes files equal to an uninterrupted run's.
 - **RS6 — Columnar sources:** ADR 0007, `ResultCursor::next_batch`, Arrow batches appended to
@@ -866,6 +903,33 @@ As built, more that the plan above didn't say:
   report test checks the joined file's rows against the ranges' order.
 - **A partitioned source's ranges start in order, and the first opens alone,** so the cost
   guard's whole-period estimate comes before any other range's statement is sent.
+
+## RS5 against today's code
+
+Settled on 2026-11-12, when RS5 started, by reading the plan against the code as of RS4's merge
+(302194d). Where the code changes the plan, the plan above still says what it said; this section
+wins. Each row is a decision for the reviewer to confirm.
+
+| The plan said | Today's code | RS5 does |
+| --- | --- | --- |
+| A unit is all or nothing: a source, a source's range, a lookup's batch, or a run's partition. | A partitioned run's ranges each have a DuckDB of their own (RS4d); a source's table is loaded a page at a time, each page committed (RS3c); a lookup sends a batch at a time into one table. | Three kinds of unit: **a partitioned run's range**, **a source** loaded into the workspace, and **a partitioned source's range**. A lookup's batches aren't units: a lookup source is read again whole, since its values come from another table and its batches are small by design. The combine step is never a unit: a resumed run runs it again over the loaded tables. A run without `[combine]` and without `partition` streams its one source into its files, so it has nothing to keep and isn't resumable. |
+| (Not said: the files of finished ranges.) | Every file waits in staging until the last range, so a run that fails in its seventh range leaves no file; an appended CSV or Excel writer stays open across ranges (RS4d). | **A range's own files go in place when the range ends**, so a failed run leaves the finished months' files, and a resumed run doesn't write them again. The promise that a failed run leaves no file now holds for appended files and unpartitioned runs. |
+| (Not said: appended outputs across a resume.) | An appended CSV or Excel output is one writer across ranges; an Excel file can't be appended to once written. RS4e's Parquet parts wait in the staging folder, which the app removes after a killed worker. | **Each range's rows are kept in the work folder**, as the sink receives them (JSON Lines of text values, so `NULL` and the empty string stay apart), and the appended CSV and Excel outputs, the charts of the result and the preview are written from them, range by range in order, once the last range is done. RS4e's Parquet parts move to the work folder too. This writes and reads the result's rows a second time, which a partitioned run's reduced result makes cheap, and it is what lets a resumed run write the same appended file as one that never stopped. When nothing but the preview reads them, a range keeps only the rows the preview still needs. |
+| A partitioned source's range is a unit. | RS4 appends each range's rows straight into its source's one table, several ranges at once with `parallel`, so a range that fails halfway leaves rows there (RS4's last row). | **A range's rows carry its number** in a hidden column while the source loads; a resumed run deletes the rows of every range the manifest doesn't name as finished, and the column is dropped once the source's last range is in. Deleting by the range's bounds was rejected: the query needn't return the column it partitions on. A table a range, joined at the end, was rejected: it copies every row once more. |
+| (Not said: column types across a resume.) | `ColumnTyper` types a source's columns from every value it saw, once the last row is in (RP2, RS3c). | The typer's state is kept in the manifest as each unit ends, and restored on resume. It may have seen values of a range that didn't finish; types only narrow as values are seen, and a resumed run reads that range again, so the types are those of an uninterrupted run whenever the source holds what it held. |
+| A work folder kept when the run had loaded more than `resumable_above` (default 1 GiB). | RS3's work folder is removed however the run ends: by the worker, and by the app's side after a worker it killed. | `resumable_above` counts the bytes the **finished** units read, since only they are reused. It is a `[report]` key and a Settings › Reports default (**Keep a stopped run past**, 1 GiB). The worker keeps the folder when its run fails; the app's side, which removes a killed worker's folders, reads the manifest and keeps it past the threshold. **Pause** keeps it whatever it read. A kept folder is marked in its manifest, and an event, `work_kept`, tells the history. |
+| The manifest records the report file's hash, the parameters, the limits, DbRover's version and each data source's identity. | Runs record the file's Git blob id (VC1e) and the typed values; a data source has an id, an engine, a host, a port, a database and a user. | Resuming refuses, and says what changed, when the blob id, a parameter's value, DbRover's version, or a data source's id, engine, host, port, database or user differs; secrets are never in the manifest. The limits are recorded but may change: a run stopped at a Settings › Reports limit resumes once the limit is raised there. A limit in the file is an edit to the file, which refuses, since DbRover can't tell which edits keep a resumed run equal to an uninterrupted one. |
+| **Resume** and `--resume`. | A run has no id until the history keeps it (RS3b); `dbrover report runs` prints the history's ids. | **A run's id is the history's**: `--resume <run id>`, the id `dbrover report runs` prints. The run's profile (JSON, so no schema change) gains `kept`, its work folder's name, and a resumed run's `resumed_from`. A resumed run works in the kept folder, and the history keeps it as a run of its own. A plain run never resumes: the command line says, before it starts, which run could, and the tab offers **Resume** beside **Run**. `--from-scratch` discards the report's kept folders, and from RS5h its incremental cache, before running. |
+| Work folders expire after 7 days and count against a total in Settings; **Discard** removes one at once. | Settings › Reports has **Work folder** and **Disk a run may use** (RS3b). | Kept folders expire 7 days after they were kept, and Settings › Reports' **Kept runs may hold**, default 50 GiB, removes the oldest past it. Both are applied when a run starts, from the app or the command line. A run of a report that finishes discards the report's other kept folders, which it supersedes. Folders a crashed app left unkept stay as today. |
+| **Pause** is a cancel that keeps the work folder. | **Cancel** kills the worker (`RunStopper`); the run ends as cancelled. | **Pause** kills the worker as **Cancel** does and keeps the work folder; the history keeps the run as cancelled, and the tab and `report runs` say *paused* of a cancelled run that can resume. The command line's Ctrl-C stays a cancel, which keeps the folder past `resumable_above` as any stopped run does. |
+| A source on a job engine keeps its job's id and last page token, and a resumed run pages on. | Athena and BigQuery submit a job and page its result (`JobService` in `dbrover-core`), but the job's id stays inside the cursor; BigQuery needs a job's location to read it from another connection. | The job's id, and BigQuery's location, are kept in the manifest when a unit's statement starts, and a resumed unit reopens the job and **reads its result from the first page**, not from the last token: the rows of the page being appended when the worker died can't be told from the others without bookkeeping a page at a time, and reading a kept result costs no query. A job the engine no longer has (BigQuery keeps a result a day) runs again, under the cost guard. |
+| `as_of = "run_start"` binds `:as_of` to the run's start. | Parameters are bound by SQL drivers and written in as literals elsewhere (`statement.rs`), as `:part_from` is. | As planned: `:as_of` is the run's start as a UTC timestamp, kept in the manifest and bound again on resume; a source with `as_of` must use it, and `params` can't name it. |
+| Incremental sources keep their rows as Parquet in `report-cache/<report>/<source>/`. | Parquet is written by `COPY` from the workspace (RS3d); `allowed_directories` holds the staging folder. | As planned, for sources of a report with `[combine]`: the cache is read into the source's table before its new rows, the new rows replace kept ones by `key`, and the table is written back to the cache by `COPY` once the run finishes, replacing it in one rename. The cache's folder joins `allowed_directories`. **Clear history** and `--from-scratch` clear it, and it counts against **Kept runs may hold**. |
+
+The milestone's exit test is RS4's year of events, by month, killed in its seventh month: a third
+ignored test in `crates/dbrover-app/tests/report_at_scale.rs` kills the worker once the seventh
+month starts, resumes the run by the history's id, checks that only months 7 to 12 are read,
+and compares every file with an uninterrupted run's.
 
 ## Benchmark
 
