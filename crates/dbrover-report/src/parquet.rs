@@ -10,8 +10,9 @@
 //! other files.
 //!
 //! In a partitioned run (RS4e), an output whose file every range appends to gets a part a
-//! range, written as above under a name of the range's own; once the last range is done,
-//! [`join_parts`] copies the parts, in the ranges' order, into the output's one file.
+//! range, written as above under a name of the range's own in the work folder's parts, where a
+//! run that resumes finds it (RS5b); once the last range is done, [`PartsJoin`] copies the
+//! parts, in the ranges' order, into the output's one file.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -24,6 +25,7 @@ use dbrover_driver_duckdb::{
 use dbrover_export::{CompletedFile, ParquetOptions};
 
 use crate::combine::{CombineReader, DuckDbQuery, progress, read_profile};
+use crate::kept_rows::PARTS_FOLDER;
 use crate::live::{ProgressClock, waiting};
 use crate::run::{Completed, Count, timed};
 use crate::{
@@ -39,37 +41,41 @@ pub(crate) struct ParquetFile<'a> {
     file: CompletedFile,
 }
 
-/// The run's Parquet outputs, in the file's order, each to be written in `staging`: for a range
-/// of a partitioned run, an output every range appends to is written as the range's part.
+/// The run's Parquet outputs, in the file's order, each to be written in the staging folder:
+/// for a range of a partitioned run, an output every range appends to is written as the range's
+/// part, in the work folder's parts.
 pub(crate) fn parquet_files<'a>(
     plan: &'a Plan,
     values: &RunValues,
-    folder: &Path,
-    staging: &Path,
+    folders: RunFolders<'_>,
 ) -> Vec<ParquetFile<'a>> {
+    let parts = folders.work.join(PARTS_FOLDER);
     plan.outputs
         .iter()
         .zip(&values.files)
         .enumerate()
         .filter_map(|(index, (output, name))| {
             let options = output.format.written_by_duckdb()?;
-            let written_as = match values.part {
-                Some(part) if !output.is_per_range() => part_name(name, part),
-                _ => name.clone(),
+            let (written_as, written_in) = match values.part {
+                Some(part) if !output.is_per_range() => (part_name(name, part), parts.as_path()),
+                _ => (name.clone(), folders.staging),
             };
             Some(ParquetFile {
                 number: index + 1,
                 name: name.clone(),
                 output,
                 compression: compression(options),
-                file: CompletedFile::written_by_another(&folder.join(written_as), staging),
+                file: CompletedFile::written_by_another(
+                    &folders.folder.join(written_as),
+                    written_in,
+                ),
             })
         })
         .collect()
 }
 
-/// The name a range's part of the Parquet file `name` is written under, in the staging folder
-/// only: never put in place.
+/// The name a range's part of the Parquet file `name` is written under, in the work folder's
+/// parts only: never put in place.
 fn part_name(name: &str, part: u64) -> String {
     format!("{name}.part-{part:05}")
 }
@@ -83,7 +89,7 @@ pub(crate) struct PartsJoin<'a> {
 impl PartsJoin<'_> {
     /// Copies `parts`, each range's part of the Parquet output `number` in the ranges' order,
     /// into the output's one file, in a DuckDB of its own that may write only in the staging
-    /// folder; the parts are removed once read. The rows keep the ranges' order.
+    /// folder, and read the parts; the parts are removed once read. The rows keep the ranges' order.
     pub(crate) async fn join(
         &self,
         number: usize,
@@ -150,7 +156,7 @@ impl PartsJoin<'_> {
         .map_err(|error| describe_error(&error))?;
         let copied = async {
             workspace
-                .lock(Some(self.folders.staging))
+                .lock(&[self.folders.staging, &self.folders.work.join(PARTS_FOLDER)])
                 .await
                 .map_err(|error| describe_error(&error))?;
             let copy = copy_to_parquet(
@@ -189,6 +195,11 @@ fn compression(options: ParquetOptions) -> ParquetCompression {
 }
 
 impl ParquetFile<'_> {
+    /// The folder its file is written in: the staging folder, or the work folder's parts.
+    pub(crate) fn folder(&self) -> Option<&Path> {
+        self.file.partial().parent()
+    }
+
     fn step(&self) -> Step {
         Step::Output {
             number: self.number,

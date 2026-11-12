@@ -26,6 +26,8 @@ jiff.workspace = true
 # Compiles a [combine]'s PRQL to DuckDB's SQL.
 prqlc.workspace = true
 serde.workspace = true
+# A partitioned run's kept rows (RS5b) and its manifest (RS5c).
+serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 toml.workspace = true
@@ -39,7 +41,6 @@ dbrover-plan.workspace = true
 calamine.workspace = true
 # Decodes a chart's PNG to look at its pixels.
 resvg.workspace = true
-serde_json.workspace = true
 tempfile.workspace = true
 
 [lints]

@@ -30,7 +30,7 @@ mod ranges;
 use crate::chart::ChartRun;
 use crate::declared::Shaped;
 use crate::live::{ProgressClock, waiting};
-use crate::parquet::{ParquetCopy, parquet_files};
+use crate::parquet::{ParquetCopy, ParquetFile, parquet_files};
 use crate::run::{Count, Feed, Sink, millis, timed};
 use crate::statement::{Statements, lookup_literal};
 use crate::typing::{ColumnTyper, DriverTypes};
@@ -127,11 +127,16 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
             loaded.extend(tables);
         }
         let folders = self.folders;
-        let parquet = parquet_files(self.plan, self.values, folders.folder, folders.staging);
-        // DuckDB writes in the staging folder only when it writes the Parquet files there.
-        let writable = (!parquet.is_empty()).then_some(folders.staging);
+        let parquet = parquet_files(self.plan, self.values, folders);
+        // DuckDB writes only in the folders it writes the Parquet files in.
+        let mut writable: Vec<&Path> = parquet.iter().filter_map(ParquetFile::folder).collect();
+        writable.sort();
+        writable.dedup();
+        for folder in &writable {
+            make_folder(folder)?;
+        }
         workspace
-            .lock(writable)
+            .lock(&writable)
             .await
             .map_err(|error| RunFailure::new(Step::Combine, describe_error(&error)))?;
 
@@ -352,6 +357,16 @@ fn remove_workspace(work: &Path) {
         }
     }
     let _ = std::fs::remove_dir_all(work.join(SPILL_FOLDER));
+}
+
+/// Makes `folder`, which DuckDB is to write a file in.
+fn make_folder(folder: &Path) -> Result<(), RunFailure> {
+    std::fs::create_dir_all(folder).map_err(|error| {
+        RunFailure::new(
+            Step::Combine,
+            format!("could not make the folder {}: {error}", folder.display()),
+        )
+    })
 }
 
 /// A loaded source's table, for the lookups of the rounds after it: its name, and each

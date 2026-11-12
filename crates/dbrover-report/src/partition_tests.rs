@@ -726,13 +726,13 @@ async fn a_partitioned_run_writes_what_the_unpartitioned_run_writes() {
     assert_eq!(
         written,
         [
+            (Some(3), 1_000),
+            (Some(3), 1_000),
+            (Some(3), 500),
             (Some(1), 2_500),
-            (Some(2), 2_500),
-            (Some(3), 1_000),
-            (Some(3), 1_000),
-            (Some(3), 500)
+            (Some(2), 2_500)
         ],
-        "in the outputs' order, then the ranges'"
+        "each range's own file as the range ends, then the appended ones in the outputs' order"
     );
     let ranges: Vec<(Step, u64, u64)> = events
         .iter()
@@ -757,7 +757,7 @@ async fn a_partitioned_run_writes_what_the_unpartitioned_run_writes() {
 }
 
 #[tokio::test]
-async fn a_range_that_fails_leaves_no_file_of_any_range() {
+async fn a_range_that_fails_leaves_the_finished_ranges_files_and_no_appended_one() {
     let folder = tempfile::tempdir().unwrap();
     let plan = plan(
         &BY_RANGE
@@ -765,7 +765,8 @@ async fn a_range_that_fails_leaves_no_file_of_any_range() {
             .replace(
                 "{outputs}",
                 "[[output]]\nformat = \"csv\"\nfile = \"events.csv\"\n\n\
-                 [[output]]\nformat = \"csv\"\nfile = \"events-{part_from}.csv\"",
+                 [[output]]\nformat = \"csv\"\nfile = \"events-{part_from}.csv\"\n\n\
+                 [[output]]\nformat = \"parquet\"\nfile = \"events.parquet\"",
             )
             .replace(
                 "AND id < :part_to\"",
@@ -781,17 +782,69 @@ async fn a_range_that_fails_leaves_no_file_of_any_range() {
         ..Ranged::default()
     };
     let failed = tempfile::tempdir().unwrap();
-    let (outcome, _) = run_values(&plan, &RANGE_KEYS, &opener, failed.path()).await;
+    let (outcome, events) = run_values(&plan, &RANGE_KEYS, &opener, failed.path()).await;
     let failure = outcome.unwrap_err();
     assert_eq!(
         failure.limit.map(|limit| limit.key),
         Some("max_rows".to_owned())
     );
-    assert!(
-        files(failed.path()).is_empty(),
-        "nothing of ranges 1 and 2: {:?}",
-        files(failed.path())
+    assert_eq!(
+        files(failed.path()),
+        ["events-0.csv", "events-1000.csv"],
+        "ranges 1 and 2's own files, and nothing of the files every range appends to"
     );
+    for name in ["events-0.csv", "events-1000.csv"] {
+        assert_eq!(
+            std::fs::read(failed.path().join(name)).unwrap(),
+            std::fs::read(folder.path().join(name)).unwrap(),
+            "{name} as the run that finished wrote it"
+        );
+    }
+    let written = events
+        .iter()
+        .filter(|event| matches!(event, RunEvent::OutputWritten(_)))
+        .count();
+    assert_eq!(written, 2, "each file put in place is said as it goes");
+}
+
+#[tokio::test]
+async fn writes_the_preview_and_the_charts_of_a_partitioned_run_from_every_range() {
+    let outputs = "[[output]]\nformat = \"csv\"\nfile = \"events-{part_from}.csv\"\n\n\
+                   [[chart]]\nfile = \"events.svg\"\nkind = \"lines\"\nx = \"id\"\ny = \"doubled\"";
+    let folder = tempfile::tempdir().unwrap();
+    let plan = by_range(EVERY_THOUSAND, outputs).unwrap();
+    let (outcome, events) = run_values(&plan, &RANGE_KEYS, &Ranged::default(), folder.path()).await;
+    let summary = outcome.unwrap();
+    let preview = events
+        .iter()
+        .find_map(|event| match event {
+            RunEvent::Preview(preview) => Some(preview.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let ids: Vec<String> = preview
+        .rows
+        .iter()
+        .filter_map(|row| row.first().cloned().flatten())
+        .collect();
+    let first: Vec<String> = (0..crate::PREVIEW_ROWS).map(|id| id.to_string()).collect();
+    assert_eq!(ids, first, "the first rows of the first range");
+    assert!(preview.more);
+    assert_eq!(
+        files(folder.path()),
+        [
+            "events-0.csv",
+            "events-1000.csv",
+            "events-2000.csv",
+            "events.svg"
+        ]
+    );
+    let drawn = summary
+        .files
+        .iter()
+        .find(|file| file.path.ends_with("events.svg"))
+        .unwrap();
+    assert_eq!(drawn.rows, 2_500, "the chart drew every range's rows");
 }
 
 #[tokio::test]
@@ -911,11 +964,11 @@ async fn appends_every_ranges_rows_to_one_parquet_file_in_order() {
     assert_eq!(
         written,
         [
+            (Some(3), 1_000),
+            (Some(3), 1_000),
+            (Some(3), 500),
             (Some(1), 2_500),
-            (Some(2), 2_500),
-            (Some(3), 1_000),
-            (Some(3), 1_000),
-            (Some(3), 500)
+            (Some(2), 2_500)
         ]
     );
 }
