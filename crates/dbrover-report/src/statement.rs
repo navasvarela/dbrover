@@ -11,7 +11,7 @@ use dbrover_language::Literal;
 use dbrover_sql::ParameterValues;
 
 use crate::{
-    CostCheck, PART_FROM, PART_TO, PartRange, Plan, QuerySource, RangeKind, RunValues,
+    AS_OF, CostCheck, PART_FROM, PART_TO, PartRange, Plan, QuerySource, RangeKind, RunValues,
     SourceStatement, WholePeriod,
 };
 
@@ -110,8 +110,14 @@ impl<'a> Statements<'a> {
         }
     }
 
-    /// The report's parameter `name` as a literal of its type.
+    /// The report's parameter `name` as a literal of its type, or `:as_of`, the run's start.
     fn parameter(&self, name: &str) -> Option<Literal> {
+        if name == AS_OF && self.plan.binds_as_of() {
+            return self
+                .plan
+                .as_of(self.values)
+                .map(|at| Literal::Timestamp(at.to_owned()));
+        }
         let param = self.plan.params.iter().find(|param| param.name == name)?;
         let value = self.values.parameters.get(name)?;
         let Some(text) = value.clone() else {

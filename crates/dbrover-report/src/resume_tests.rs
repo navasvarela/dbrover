@@ -471,3 +471,56 @@ async fn a_resumed_run_takes_the_sources_its_kept_workspace_loaded() {
     );
     assert!(!work.exists());
 }
+
+/// RS5g: every query may read `:as_of`, the run's start in UTC, which a run resuming it binds
+/// again; a report with a parameter of that name binds its own value instead.
+#[test]
+fn binds_as_of_to_the_runs_start_unless_the_report_names_it() {
+    let text = TWO_SOURCES.replace(
+        "WHERE id >= :part_from AND id < :part_to\"\n\n[[source]]",
+        "WHERE id >= :part_from AND id < :part_to AND :as_of IS NOT NULL\"\n\n[[source]]",
+    );
+    let data_sources = crate::partition_tests::data_sources();
+    let plan = |text: &str| {
+        Plan::new(
+            crate::read_report(text).unwrap(),
+            &data_sources,
+            &[],
+            &crate::LimitDefaults::default(),
+        )
+    };
+    let planned = plan(&text).unwrap();
+    assert!(planned.binds_as_of());
+    let mut values = planned
+        .values(&typed(&[("part_from", "0"), ("part_to", "10")]))
+        .unwrap();
+    let now = planned.as_of(&values).unwrap().to_owned();
+    assert_eq!(now.len(), "2026-11-12 09:30:00".len(), "{now}");
+    planned.resume_as_of(&mut values, "2026-11-01 08:00:00");
+    assert_eq!(planned.as_of(&values), Some("2026-11-01 08:00:00"));
+
+    let named = text.replace(
+        "params = { part_from = \"integer\", part_to = \"integer\" }",
+        "params = { part_from = \"integer\", part_to = \"integer\", as_of = \"timestamp\" }",
+    );
+    let planned = plan(&named).unwrap();
+    assert!(!planned.binds_as_of());
+    let mut values = planned
+        .values(&typed(&[
+            ("part_from", "0"),
+            ("part_to", "10"),
+            ("as_of", "2025-01-01 00:00:00"),
+        ]))
+        .unwrap();
+    planned.resume_as_of(&mut values, "2026-11-01 08:00:00");
+    assert_eq!(
+        planned.as_of(&values),
+        None,
+        "the report's own as_of isn't the run's start"
+    );
+    assert_eq!(
+        values.parameters.get("as_of"),
+        Some(&Some("2025-01-01 00:00:00".to_owned())),
+        "the report's own value"
+    );
+}
