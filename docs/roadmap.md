@@ -2343,7 +2343,7 @@ RP1 started on 2026-11-02. Dashboards, schedules and sharing stay out (see
   editor shows in a clean tab and raises the banner in an unsaved one.
 
 Reports over sources of terabytes, and tools to see and tune a report's performance: planned in
-[Reports at scale](reports-at-scale.md); RS1 built on 2026-11-09, RS2 and RS3 on 2026-11-10, RS4 on 2026-11-11, the rest not scheduled. Terabytes stay in their
+[Reports at scale](reports-at-scale.md); RS1 built on 2026-11-09, RS2 and RS3 on 2026-11-10, RS4 on 2026-11-11, RS5 on 2026-11-12, the rest not scheduled. Terabytes stay in their
 engines; the desktop combines reduced results. The tooling comes first, so the rest is chosen by
 measurement.
 
@@ -2598,27 +2598,49 @@ measurement.
   run events-by-month -p since=2025-01-01 -p until=2026-01-01 --progress` shows *Month 3 of 12*
   on its line and prints a line a range. Not checked on Windows, where the worker's memory isn't
   measured, nor against a real warehouse's cost guard over several ranges.
-- **RS5 — Resume (M):** in progress from 2026-11-12, one stack of nine layers; what today's
-  code changes in the plan is in
+- **RS5 — Resume (M):** built on 2026-11-12 but for kept jobs and incremental sources, in one
+  stack of eight layers; what today's code changed in the plan is in
   [RS5 against today's code](reports-at-scale.md#rs5-against-todays-code). Large runs keep a
-  work folder and resume after a crash or a kill from the last finished range, source or job;
-  pause; incremental sources with a lookback:
-  - **RS5a — The plan:** RS5's decisions against the code as of RS4's merge.
-  - **RS5b — Finished ranges keep their files:** a range's own files in place at its end;
-    appended outputs, charts and the preview written at the end from each range's kept rows.
-  - **RS5c — The manifest and kept work folders:** units recorded as they end,
+  work folder and resume after a crash or a kill from the last finished range or source; pause;
+  `:as_of`:
+  - **RS5a — The plan:** built; RS5's decisions against the code as of RS4's merge.
+  - **RS5b — Finished ranges keep their files:** built; a range's own files in place at its
+    end; appended outputs, charts and the preview written at the end from each range's kept rows.
+  - **RS5c — The manifest and kept work folders:** built; units recorded as they end,
     `resumable_above`, kept folders marked in the history, their expiry and total.
-  - **RS5d — Resuming a partitioned run:** `--resume <run id>` and `--from-scratch`, the
+  - **RS5d — Resuming a partitioned run:** built; `--resume <run id>` and `--from-scratch`, the
     manifest checked against the report, finished ranges skipped.
-  - **RS5e — Resuming the combine's sources:** a kept workspace's finished sources and a
-    partitioned source's finished ranges read no more.
-  - **RS5f — In the app:** **Resume**, **Pause** and **Discard**, and their settings.
-  - **RS5g — Jobs and `as_of`:** a job engine's job read again on resume; `:as_of`.
-  - **RS5h — Incremental sources:** `incremental`, and the cache in `report-cache/`.
-  - **RS5i — Manual, demo note and the exit test.**
+  - **RS5e — Resuming the combine's sources:** built; a kept workspace's finished sources read
+    no more. A partitioned source is read again whole.
+  - **RS5f — In the app:** built; **Resume**, **Pause** and **Discard**, and their settings.
+  - **RS5g — `as_of`:** built; `:as_of` in every query, kept across a resume. Reopening a job
+    engine's kept job is left for later.
+  - **RS5h — Incremental sources:** not built; `incremental` and the cache in `report-cache/`
+    wait for a report that needs them.
+  - **RS5i — Manual, demo note and the exit test:** built; the manual's
+    [Stopping and resuming](../book/src/reports.md#stopping-and-resuming), and a third ignored
+    test in `report_at_scale.rs`.
 
   **Exit:** a run whose worker is killed in its seventh range resumes, reads ranges 7 to 12
-  only, and writes files equal to an uninterrupted run's.
+  only, and writes files equal to an uninterrupted run's:
+  `crates/dbrover-app/tests/report_at_scale.rs`'s
+  `resumes_a_year_of_events_killed_in_its_seventh_month` passes: killed in July after 142 s,
+  resumed in 146 s reading July to December's 15,897,600 events, and thirteen files byte for
+  byte those of the uninterrupted run (309 s). Run it with `cargo test -p dbrover-app --test
+  report_at_scale resumes_a_year -- --ignored --nocapture`, about ten minutes in a debug build.
+
+  **RS5 demo note:** with RS4's `events-by-month` report (above), add `resumable_above = "1 MiB"`
+  to its `[report]` and **Run** it over 2025. Once *month 3 of 12* shows, press **Pause**: the
+  tab says *Stopped. What it finished is kept*, the folder has the first months' Parquet files,
+  and **Resume** shows beside **Run**, its hover naming the run and its finished ranges. Press
+  **Resume**: the combine step's line starts at month 3 or 4, **Past runs** shows the new run
+  carried on from the paused one, and the folder ends with every month's file and one
+  `events.csv`. **Discard**, on another paused run, removes what it kept. From a terminal,
+  `dbrover report run events-by-month -p since=2025-01-01 -p until=2026-01-01` stopped with
+  Ctrl-C prints *Kept the run's work folder*, `dbrover report runs events-by-month` says
+  *--resume N carries on from where it stopped*, and `dbrover report run events-by-month
+  --resume N` prints *Resumed: 3 ranges of 12 finished before*. Not checked on Windows or
+  Linux, nor against a warehouse.
 - **RS6 — Columnar sources:** Arrow batches from engines that give them (DuckDB, ClickHouse,
   then C4 to C6), appended to DuckDB without text; ADR 0007. Before C5 and C6, whose services
   answer in Arrow. C3 started first (2026-11-05) and delivers rows as text: Athena's and

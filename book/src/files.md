@@ -26,7 +26,7 @@ settings folder can also be one you choose; see [Choosing the settings folder](#
 | `reports/*.toml` (settings folder) | Your reports, one file each, for every project. See [Reports](reports.md). |
 | `.gitignore` (settings folder) | Keeps `history.sqlite` out of Git commits. Written once, when DbRover creates the folder or you choose one in **Settings › Files**, and never replaced. See [Keeping your settings in Git](#keeping-your-settings-in-git). |
 | `trusted_commands.toml` (data folder) | The command actions, password commands and export programs you chose **Run** for, each as it was then. See [Commands](customising.md#the-first-run), [Password from a command](data-sources.md#password-from-a-command) and [Programs](export-formats.md#programs). |
-| `report-runs/` (data folder) | Each running report's DuckDB file and what it spills, in a folder per run, removed when the run ends; unless **Settings › Reports** picks another **Work folder**. See [Memory and disk](reports.md#memory-and-disk). |
+| `report-runs/` (data folder) | Each running report's DuckDB file and what it spills, in a folder per run, removed when the run ends, or kept for a week when a run that stopped can resume; unless **Settings › Reports** picks another **Work folder**. See [Memory and disk](reports.md#memory-and-disk). |
 | `settings_folder.toml` (data folder) | The settings folder you chose in **Settings › Files**, if you chose one. |
 | `app.ron` (data folder) | The window's size and position, the panel layout, the theme you picked, the recent `.sql` files and which file each console tab shows. |
 | `logs/dbrover.YYYY-MM-DD.log` (data folder) | One log file per day. The last seven are kept. |
