@@ -44,6 +44,11 @@ dbrover-store = { path = "crates/dbrover-store" }
 dbrover-tls = { path = "crates/dbrover-tls" }
 
 anyhow = "1.0.104"
+# Arrow's arrays and schemas, for the batches of a report's columnar sources (ADR 0007). The
+# version the `duckdb` crate builds, so a batch reaches DuckDB's appender as it is: bump them only
+# together with `duckdb`.
+arrow-array = "58.4.0"
+arrow-schema = "58.4.0"
 async-trait = "0.1.92"
 # Amazon DynamoDB (docs/nosql.md, N5) and the AWS sign-in it brings from C0 (docs/cloud-data.md):
 # AWS's own SDK. Every AWS crate is built without its default features, which pick aws-lc-rs and

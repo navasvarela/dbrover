@@ -2419,6 +2419,8 @@ dependencies = [
 name = "dbrover-core"
 version = "0.32.0"
 dependencies = [
+ "arrow-array",
+ "arrow-schema",
  "async-trait",
  "serde",
  "sha1 0.11.0",

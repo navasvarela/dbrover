@@ -141,6 +141,14 @@ impl Connection for Tunnelled {
         self.connection.execute_bound(sql, values).await
     }
 
+    async fn execute_for_batches(
+        &mut self,
+        sql: &str,
+        values: &[Cell],
+    ) -> Result<Box<dyn ResultCursor>, DriverError> {
+        self.connection.execute_for_batches(sql, values).await
+    }
+
     async fn describe_table(
         &mut self,
         table: &RelationName,

@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use crate::{DriverError, JobProgress};
+use crate::{BatchCursor, DriverError, JobProgress};
 
 /// A result column.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,6 +85,13 @@ pub trait ResultCursor: Send {
 
     /// Whether every row has been read.
     fn is_exhausted(&self) -> bool;
+
+    /// The rows as Arrow batches, where the engine answers in Arrow (ADR 0007); `None`, the
+    /// default, where it answers in text. A caller reads a cursor through its batches or
+    /// through [`ResultCursor::next_page`], not both: each reads the same rows.
+    fn batches(&mut self) -> Option<&mut dyn BatchCursor> {
+        None
+    }
 
     /// What the statement did, as its engine reported it once it ended: the bytes an Athena
     /// query scanned, which is what it is billed for (C3). `None`, the default, where the

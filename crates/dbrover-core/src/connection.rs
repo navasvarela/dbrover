@@ -159,6 +159,24 @@ pub trait Connection: Send {
         self.execute(sql).await
     }
 
+    /// Runs `sql` with `values` bound, as [`Connection::execute_bound`] does, for a caller that
+    /// reads its rows through [`ResultCursor::batches`] where the engine has them (ADR 0007).
+    /// An engine whose answer's format is chosen when the statement starts, as ClickHouse's
+    /// is, starts it in its columnar format here; the default runs the statement as
+    /// `execute_bound` does, which suits an engine whose cursor answers both ways, or only in
+    /// text.
+    ///
+    /// # Errors
+    ///
+    /// As [`Connection::execute_bound`].
+    async fn execute_for_batches(
+        &mut self,
+        sql: &str,
+        values: &[Cell],
+    ) -> Result<Box<dyn ResultCursor>, DriverError> {
+        self.execute_bound(sql, values).await
+    }
+
     /// Resolves a table the way a statement on this connection would (search path, case
     /// folding) and describes it, for editing its rows. `None` if no such table exists, or it
     /// isn't a plain table (a view, say).

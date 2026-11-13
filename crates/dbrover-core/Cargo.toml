@@ -13,6 +13,9 @@ publish.workspace = true
 conformance = ["tokio/io-util", "tokio/net"]
 
 [dependencies]
+# A result's rows as Arrow batches, for paths that move many rows (ADR 0007).
+arrow-array.workspace = true
+arrow-schema.workspace = true
 async-trait.workspace = true
 serde.workspace = true
 # Git blob ids of files (VC1, docs/version-control.md), at the version dbrover-ssh builds.
