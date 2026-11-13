@@ -257,10 +257,17 @@ mod tests {
             .build()
     }
 
+    /// An environment with nothing of the machine's in it. An empty one isn't enough: the SDK's
+    /// region chain then asks EC2's instance metadata service, which answers on a CI runner
+    /// GitHub hosts on AWS, so a test expecting no region found the runner's own.
+    fn isolated_env() -> Env {
+        Env::from_slice(&[("AWS_EC2_METADATA_DISABLED", "true")])
+    }
+
     impl AwsSignIn {
-        /// [`AwsSignIn::sdk_config`] reading only `files`, and an empty environment.
+        /// [`AwsSignIn::sdk_config`] reading only `files`, and nothing of the machine's.
         async fn load_only(&self, files: EnvConfigFiles) -> Result<SdkConfig, AwsError> {
-            let loader = self.loader(files)?.env(Env::from_slice(&[]));
+            let loader = self.loader(files)?.env(isolated_env());
             self.load(loader).await
         }
     }
@@ -320,7 +327,7 @@ mod tests {
              aws_session_token = SESSION\n",
         );
         let sign_in = sign_in(AwsCredentials::Profile("reader".into()));
-        let loader = sign_in.loader(files).unwrap().env(Env::from_slice(&[]));
+        let loader = sign_in.loader(files).unwrap().env(isolated_env());
 
         let keys = sign_in.keys_from(loader).await.unwrap();
 

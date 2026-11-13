@@ -626,7 +626,9 @@ async fn says_where_each_sources_time_went() {
     assert!(query_ms.is_some());
 }
 
-#[tokio::test]
+// The clock paused, a lap counts only the readers' sleeps: DuckDB's work before a source starts
+// waiting, such as making its table, takes no time on it however slow the machine.
+#[tokio::test(start_paused = true)]
 async fn says_each_second_what_a_source_waits_on_before_its_first_row() {
     let folder = tempfile::tempdir().unwrap();
     let plan = report("", VALUES, "");

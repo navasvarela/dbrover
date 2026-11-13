@@ -894,7 +894,11 @@ fn pause_keeps_a_run_that_resume_carries_on_from() {
         &mut harness,
         "Stopped. What it finished is kept: Resume carries on from there.",
     );
-    step_until_visible(&mut harness, "Resume");
+    // The button by its whole label: the status above names Resume too, but the button only
+    // shows once the history has listed the kept run, which comes after.
+    step_until(&mut harness, "the Resume button", |harness| {
+        harness.query_by_label("Resume").is_some()
+    });
     harness.get_by_label("Resume").click();
     harness.run_steps(4);
     let sent = requests.lock().unwrap().clone();
