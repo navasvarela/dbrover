@@ -2678,6 +2678,7 @@ dependencies = [
 name = "dbrover-engine"
 version = "0.32.0"
 dependencies = [
+ "arrow-schema",
  "async-trait",
  "aws-sdk-dynamodb",
  "calamine",

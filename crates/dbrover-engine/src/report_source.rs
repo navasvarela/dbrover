@@ -14,12 +14,14 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use arrow_schema::SchemaRef;
 use dbrover_core::{
     CancelHandle, Connection, CostGuard, ReadPace, ResultCursor, ResultShape, Row, describe_error,
 };
 use dbrover_export::ExportColumn;
 use dbrover_report::{
-    CostCheck, LimitHit, Opening, SourceError, SourceOpener, SourceReader, SourceStatement,
+    CostCheck, LimitHit, Opening, SourceError, SourceOpener, SourcePart, SourceReader, SourceRows,
+    SourceStatement,
 };
 use dbrover_sql::Prepared;
 use dbrover_store::SecretStore;
@@ -30,6 +32,12 @@ use crate::{PasswordCommands, Tunnels, open_data_source};
 /// Rows asked for at a time: a few hundred kilobytes of a typical row, few enough round trips
 /// to keep a million-row source fast, and what the caps are counted in steps of.
 const PAGE_ROWS: usize = 1_000;
+
+/// Rows asked for at a time as an Arrow batch (ADR 0007): eight of DuckDB's chunks, and an
+/// eighth of ClickHouse's largest block, which is cut into batches of this many. A batch's
+/// values take less memory than a page of text, so a batch can hold more rows than a page
+/// within the queue's bound (`docs/reports-at-scale.md`, RS6).
+const BATCH_ROWS: usize = 8_192;
 
 /// How long a cancelled statement gets to stop before the source gives up on it. The worker
 /// exits after a failed run, which ends the connection either way.
@@ -63,6 +71,8 @@ pub struct ReportSource {
     timeout: Duration,
     id: String,
     opening: Opening,
+    /// The schema of the batches it reads, when it asked for them and the engine gives them.
+    batch_schema: Option<SchemaRef>,
 }
 
 impl ReportSource {
@@ -124,30 +134,42 @@ impl ReportSource {
             if let Some(judged) = judged(statement, &checked)? {
                 check_cost(connection.as_mut(), config.cost_guard(), &judged).await?;
             }
-            if prepared.values.is_empty() {
-                connection.execute(&prepared.sql).await
-            } else {
-                connection
-                    .execute_bound(&prepared.sql, &prepared.values)
-                    .await
+            match statement.rows {
+                SourceRows::Columnar => {
+                    connection
+                        .execute_for_batches(&prepared.sql, &prepared.values)
+                        .await
+                }
+                SourceRows::Text if prepared.values.is_empty() => {
+                    connection.execute(&prepared.sql).await
+                }
+                SourceRows::Text => {
+                    connection
+                        .execute_bound(&prepared.sql, &prepared.values)
+                        .await
+                }
             }
             .map_err(|error| SourceError::new(describe_error(&error)))
         };
         let deadline = statement.deadline;
-        let cursor = match watch(opened, deadline, &cancel, &source.id, source.limits.timeout).await
-        {
-            Ok(cursor) => cursor,
-            Err(error) => {
-                close(connection, None, mode).await;
-                return Err(error);
-            }
-        };
+        let mut cursor =
+            match watch(opened, deadline, &cancel, &source.id, source.limits.timeout).await {
+                Ok(cursor) => cursor,
+                Err(error) => {
+                    close(connection, None, mode).await;
+                    return Err(error);
+                }
+            };
         let columns = cursor
             .columns()
             .iter()
             .map(|column| ExportColumn::typed_by(column, language.dialect()))
             .collect();
         let shape = cursor.shape();
+        let batch_schema = match statement.rows {
+            SourceRows::Columnar => cursor.batches().map(|batches| batches.schema()),
+            SourceRows::Text => None,
+        };
         Ok(Self {
             connection,
             cursor: Some(cursor),
@@ -162,6 +184,7 @@ impl ReportSource {
                 connect,
                 start: starting.elapsed(),
             },
+            batch_schema,
         })
     }
 }
@@ -224,6 +247,27 @@ impl SourceReader for ReportSource {
         };
         let page = watch(page, self.deadline, &self.cancel, &self.id, self.timeout).await?;
         Ok((!page.is_empty()).then_some(page))
+    }
+
+    fn batch_schema(&self) -> Option<SchemaRef> {
+        self.batch_schema.clone()
+    }
+
+    async fn next_part(&mut self) -> Result<Option<SourcePart>, SourceError> {
+        if self.batch_schema.is_none() {
+            return Ok(self.next_page().await?.map(SourcePart::Rows));
+        }
+        let Some(batches) = self.cursor.as_mut().and_then(|cursor| cursor.batches()) else {
+            return Ok(None);
+        };
+        let batch = async {
+            batches
+                .next_batch(BATCH_ROWS)
+                .await
+                .map_err(|error| SourceError::new(describe_error(&error)))
+        };
+        let batch = watch(batch, self.deadline, &self.cancel, &self.id, self.timeout).await?;
+        Ok(batch.map(SourcePart::Batch))
     }
 
     /// What the engine says the statement scanned, once it has ended: a job's statistics on

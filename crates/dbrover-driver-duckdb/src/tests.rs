@@ -439,3 +439,110 @@ async fn a_motherduck_database_without_a_token_says_where_to_set_it() {
         "{message}"
     );
 }
+
+/// Every type a batch carries as it is, and some it carries as their text.
+const EVERY_KIND: &str = "SELECT 1::INTEGER AS i, 18446744073709551615::UBIGINT AS u, \
+     12.50::DECIMAL(18,2) AS d, 0.5::DOUBLE AS f, true AS b, 'x' AS s, DATE '2024-01-01' AS day, \
+     TIMESTAMP '2024-01-01 00:00:01.5' AS at, NULL::INTEGER AS nothing, [1, 2] AS list, \
+     {'a': 1} AS struct, INTERVAL 1 DAY AS span, '\\xAA'::BLOB AS bytes, \
+     170141183460469231731687303715884105727::HUGEINT AS huge, TIME '12:00:00' AS clock, \
+     '00000000-0000-0000-0000-000000000001'::UUID AS id";
+
+#[tokio::test]
+async fn hands_out_batches_of_bulk_types_and_the_rest_as_their_text() {
+    use duckdb::arrow::array::{Array, AsArray};
+    use duckdb::arrow::datatypes::DataType;
+
+    let mut connection = connect(&in_memory()).await.unwrap();
+    let text_rows = rows(&mut connection, EVERY_KIND).await;
+
+    let mut cursor = connection
+        .execute_for_batches(EVERY_KIND, &[])
+        .await
+        .unwrap();
+    let batches = cursor.batches().expect("DuckDB gives batches");
+    let schema = batches.schema();
+    let batch = batches.next_batch(100).await.unwrap().unwrap();
+    assert!(batches.next_batch(100).await.unwrap().is_none());
+    cursor.finish().await.unwrap();
+
+    let types: Vec<String> = schema
+        .fields()
+        .iter()
+        .map(|field| field.data_type().to_string())
+        .collect();
+    assert_eq!(
+        types,
+        [
+            "Int32",
+            "UInt64",
+            "Decimal128(18, 2)",
+            "Float64",
+            "Boolean",
+            "Utf8",
+            "Date32",
+            "Timestamp(µs)",
+            "Int32",
+            "Utf8",
+            "Utf8",
+            "Utf8",
+            "Utf8",
+            "Decimal128(38, 0)",
+            "Utf8",
+            "Utf8",
+        ]
+    );
+    assert_eq!(batch.schema(), schema);
+    // Every column sent as text holds what a page shows.
+    for (index, field) in schema.fields().iter().enumerate() {
+        if field.data_type() == &DataType::Utf8 {
+            let column = batch.column(index).as_string::<i32>();
+            let value = (!column.is_null(0)).then(|| column.value(0).to_owned());
+            assert_eq!(value, text_rows[0][index], "{}", field.name());
+        }
+    }
+}
+
+#[tokio::test]
+async fn cuts_batches_at_its_chunks_and_at_the_rows_asked_for() {
+    let mut connection = connect(&in_memory()).await.unwrap();
+    let sql = "SELECT range AS n FROM range(5000)";
+    let mut cursor = connection.execute_for_batches(sql, &[]).await.unwrap();
+    let batches = cursor.batches().unwrap();
+    let mut sizes = Vec::new();
+    while let Some(batch) = batches.next_batch(1500).await.unwrap() {
+        sizes.push(batch.num_rows());
+    }
+    cursor.finish().await.unwrap();
+    assert_eq!(sizes.iter().sum::<usize>(), 5000);
+    assert!(
+        sizes.iter().all(|size| (1..=1500).contains(size)),
+        "{sizes:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_cancel_stops_a_result_read_as_batches() {
+    let mut connection = connect(&in_memory()).await.unwrap();
+    let cancel = connection.cancel_handle();
+    let mut cursor = connection
+        .execute_for_batches("SELECT range AS n FROM range(100000000)", &[])
+        .await
+        .unwrap();
+    let batches = cursor.batches().unwrap();
+    assert!(batches.next_batch(10).await.unwrap().is_some());
+    cancel.cancel().await.unwrap();
+    let error = loop {
+        match batches.next_batch(10).await {
+            Ok(Some(_)) => {}
+            Ok(None) => panic!("the result ended without its cancel"),
+            Err(error) => break error,
+        }
+    };
+    assert!(
+        dbrover_core::describe_error(&error).contains("nterrupt"),
+        "{}",
+        dbrover_core::describe_error(&error)
+    );
+    drop(cursor.finish().await);
+}
