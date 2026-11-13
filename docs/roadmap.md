@@ -2648,23 +2648,36 @@ measurement.
   through RS7's handoff ([C3's note](cloud-data.md#rows-and-columnar-batches)). C4 delivers
   rows as text too; BigQuery's Storage Read API, billed apart and over gRPC, can later answer
   `next_batch` for large results ([C4's note](cloud-data.md#rows-and-columnar-batches-in-c4)).
-  Started on 2026-11-13; what today's code changes in the plan is in
+  Built on 2026-11-13, in one stack of six layers; what today's code changes in the plan is in
   [RS6 against today's code](reports-at-scale.md#rs6-against-todays-code). In layers, one PR
   each:
-  - **RS6a — The plan:** RS6's decisions against the code as of RS5's merge, and
+  - **RS6a — The plan:** built; RS6's decisions against the code as of RS5's merge, and
     [ADR 0007](adr/0007-arrow-on-bulk-paths.md).
-  - **RS6b — Batches in `dbrover-core`:** `BatchCursor`, `ResultCursor::batches`,
+  - **RS6b — Batches in `dbrover-core`:** built; `BatchCursor`, `ResultCursor::batches`,
     `Connection::execute_for_batches` and the bulk types.
-  - **RS6c — Loading a batch:** the workspace appends a batch; a source's table typed from its
+  - **RS6c — Loading a batch:** built; the workspace appends a batch; a source's table typed from its
     batches' schema, text columns by their values; `columnar = false`.
-  - **RS6d — DuckDB's batches:** a DuckDB source with a query read as Arrow chunks.
-  - **RS6e — ClickHouse's `ArrowStream`:** `arrow-ipc`, the query described and its non-bulk
+  - **RS6d — DuckDB's batches:** built; a DuckDB source with a query read as Arrow chunks.
+  - **RS6e — ClickHouse's `ArrowStream`:** built; `arrow-ipc`, the query described and its non-bulk
     columns sent as text.
-  - **RS6f — Manual, benchmark and the exit:** ClickHouse in RS1g's benchmark, the *columnar*
+  - **RS6f — Manual, benchmark and the exit:** built; ClickHouse in RS1g's benchmark, the *columnar*
     rows, and the manual.
 
   **Exit:** the RS1 benchmark shows the columnar path ahead of the text path on ClickHouse, and
-  the four accounting examples still match to the last digit.
+  the four accounting examples still match to the last digit. Met: ClickHouse's columnar run
+  of 10,000,000 rows took 4.87 s against 8.32 s on the text path (2.06 against 1.20 million rows
+  a second), DuckDB's 2.23 s against 8.97 s
+  ([RS6's columnar path](reports-at-scale.md#rs6s-columnar-path)), and `report_examples.rs`
+  passes against the Compose file's servers.
+
+  **RS6 demo note:** with ClickHouse from the Compose file as a data source `ch`, a report whose
+  `[[source]]` reads `SELECT number AS id, toDecimal64(number / 100, 2) AS amount,
+  toDateTime('2026-01-01 00:00:00') + number AS at FROM numbers(10000000)` into a `[combine]`
+  that sums it: **Run** it, then add `columnar = false` to the source and run again. The CSV
+  files are the same; the Profile shows the first run's *loading* and *receiving* well under the
+  second's, and the source's columns fold out as `HUGEINT`, `DECIMAL(18,2)` and `TIMESTAMP`
+  where the text path made `id` a `BIGINT`. Not checked on Windows or Linux, nor against
+  ClickHouse Cloud.
 - **RS7 — Lakes and warehouses in the combine:** C2's buckets attached with DuckDB's pruning,
   and large warehouse results handed over through a bucket the user names.
 - **RS8 — Reports over MCP:** read-only tools to list, explain and compare reports and their

@@ -1,12 +1,14 @@
 //! RS1g's benchmark of today's report paths (`docs/reports-at-scale.md`, "Benchmark"): one
 //! source of generated rows per engine, loaded into the combine step's DuckDB and added up,
 //! with its columns typed from their values (the text path) and declared in the file (the
-//! typed path). Each run's profile says where its time went. These are the numbers RS3c's
-//! typed loading and RS6's columnar sources are judged by; RS3f ran it again on RS3's typed
-//! loading, and both runs are in the plan's table.
+//! typed path), and, for the engines that answer in Arrow, read as batches (RS6's columnar
+//! path, the default for them, which the text path turns off with `columnar = false`). Each
+//! run's profile says where its time went. These are the numbers RS3c's typed loading and RS6's
+//! columnar sources are judged by; RS3f and RS6f ran it again, and every run is in the plan's
+//! table.
 //!
 //! Slow, so ignored; run it by hand, with the servers of `docker compose up -d --wait postgres
-//! mysql` for those engines:
+//! mysql clickhouse` for those engines:
 //!
 //! ```text
 //! set -a; . ./test-servers.env; set +a
@@ -15,7 +17,8 @@
 //! ```
 //!
 //! Each engine makes its rows in the source's own query (DuckDB's `range()`, PostgreSQL's
-//! `generate_series`, a cross join of digits in SQLite and MySQL), so nothing is loaded
+//! `generate_series`, ClickHouse's `numbers()`, a cross join of digits in SQLite and MySQL), so
+//! nothing is loaded
 //! first and the run measures the engine answering, the transfer, and the load.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::print_stdout)]
 
@@ -24,7 +27,7 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::{MemorySecrets, mysql_test_servers, postgres_test_server};
+use common::{MemorySecrets, clickhouse_test_server, mysql_test_servers, postgres_test_server};
 use dbrover_core::{
     ConnectionConfig, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase, Password,
     SafetyLevel, SqliteConfig,
@@ -52,6 +55,7 @@ max_rows = 1000000000
 max_bytes = "100 GiB"
 timeout = "1h"
 {columns}
+
 
 [combine]
 query = "SELECT count(*) AS n, sum(amount) AS total, max(ts) AS last, count(DISTINCT label) AS labels FROM generated"
@@ -90,11 +94,52 @@ fn numbers(rows: u64) -> String {
 }
 
 /// An engine, its data source, and the query that makes `rows` rows of the four columns.
+/// How a run's source reads its columns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Columns {
+    /// As text, typed from their values (RP2's path): `columnar = false`.
+    Inferred,
+    /// As text, typed by the file (RP3, RS3c).
+    Declared,
+    /// As Arrow batches (RS6), for an engine that gives them.
+    Columnar,
+}
+
+impl Columns {
+    fn keys(self) -> &'static str {
+        match self {
+            Self::Inferred => "columnar = false",
+            Self::Declared => DECLARED,
+            Self::Columnar => "",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Inferred => "inferred",
+            Self::Declared => "declared",
+            Self::Columnar => "columnar",
+        }
+    }
+}
+
 struct Engine {
     name: &'static str,
     data_source: DataSource,
     password: Option<Password>,
     query: String,
+    /// Whether its driver hands out Arrow batches, so a run on the columnar path differs.
+    columnar: bool,
+}
+
+impl Engine {
+    fn columns(&self) -> Vec<Columns> {
+        let mut columns = vec![Columns::Inferred, Columns::Declared];
+        if self.columnar {
+            columns.push(Columns::Columnar);
+        }
+        columns
+    }
 }
 
 fn data_source(config: ConnectionConfig) -> DataSource {
@@ -122,6 +167,7 @@ fn engines(rows: u64, folder: &std::path::Path) -> Vec<Engine> {
                  TIMESTAMP '2026-01-01' + to_seconds(i) AS ts, 'label ' || (i % 1000) AS label \
                  FROM range({rows}) t(i)"
             ),
+            columnar: true,
         },
         Engine {
             name: "SQLite",
@@ -140,6 +186,7 @@ fn engines(rows: u64, folder: &std::path::Path) -> Vec<Engine> {
                  AS label FROM s WHERE i < {rows}",
                 numbers(rows)
             ),
+            columnar: false,
         },
     ];
     if let Some(server) = postgres_test_server() {
@@ -152,6 +199,7 @@ fn engines(rows: u64, folder: &std::path::Path) -> Vec<Engine> {
                  timestamp '2026-01-01' + i * interval '1 second' AS ts, \
                  'label ' || (i % 1000) AS label FROM generate_series(0, {rows} - 1) AS i"
             ),
+            columnar: false,
         });
     }
     if let Some((config, password)) = mysql_test_servers().into_iter().next() {
@@ -165,6 +213,20 @@ fn engines(rows: u64, folder: &std::path::Path) -> Vec<Engine> {
                  CONCAT('label ', i % 1000) AS label FROM s WHERE i < {rows}",
                 numbers(rows)
             ),
+            columnar: false,
+        });
+    }
+    if let Some((config, password)) = clickhouse_test_server() {
+        engines.push(Engine {
+            name: "ClickHouse",
+            data_source: data_source(ConnectionConfig::ClickHouse(config)),
+            password: Some(password),
+            query: format!(
+                "SELECT toInt64(number) AS id, toDecimal64((number % 100000) / 100, 2) \
+                 AS amount, toDateTime('2026-01-01 00:00:00', 'UTC') + number AS ts, \
+                 concat('label ', toString(number % 1000)) AS label FROM numbers({rows})"
+            ),
+            columnar: true,
         });
     }
     engines
@@ -180,10 +242,10 @@ struct Measured {
     peak_memory: Option<u64>,
 }
 
-async fn run_once(engine: &Engine, declared: bool, folder: &std::path::Path) -> Measured {
+async fn run_once(engine: &Engine, columns: Columns, folder: &std::path::Path) -> Measured {
     let text = REPORT
         .replace("{query}", &engine.query)
-        .replace("{columns}", if declared { DECLARED } else { "" });
+        .replace("{columns}", columns.keys());
     let plan = Plan::new(
         read_report(&text).unwrap(),
         std::slice::from_ref(&engine.data_source),
@@ -272,8 +334,8 @@ async fn benchmark_todays_report_paths() {
     );
     println!("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
     for engine in engines(rows, folder.path()) {
-        for declared in [false, true] {
-            let measured = run_once(&engine, declared, folder.path()).await;
+        for columns in engine.columns() {
+            let measured = run_once(&engine, columns, folder.path()).await;
             assert_eq!(measured.rows, rows, "{}", engine.name);
             let phases = measured.phases;
             let total_ms = u64::try_from(measured.total.as_millis()).unwrap();
@@ -281,7 +343,7 @@ async fn benchmark_todays_report_paths() {
             println!(
                 "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
                 engine.name,
-                if declared { "declared" } else { "inferred" },
+                columns.label(),
                 rows,
                 seconds(total_ms),
                 seconds(measured.source_ms),
