@@ -9,6 +9,12 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+# A result as Arrow batches, from ClickHouse's ArrowStream format (ADR 0007).
+arrow-array.workspace = true
+arrow-buffer.workspace = true
+arrow-cast.workspace = true
+arrow-ipc.workspace = true
+arrow-schema.workspace = true
 async-trait.workspace = true
 clickhouse.workspace = true
 dbrover-core.workspace = true

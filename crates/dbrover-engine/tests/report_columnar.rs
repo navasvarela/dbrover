@@ -184,3 +184,44 @@ async fn a_duckdb_source_writes_on_the_columnar_path_what_it_writes_as_text() {
         Some(&("nothing".to_owned(), "VARCHAR".to_owned()))
     );
 }
+
+#[tokio::test]
+async fn a_clickhouse_source_writes_on_the_columnar_path_what_it_writes_as_text() {
+    let Some((config, password)) = common::clickhouse_test_server() else {
+        return;
+    };
+    let clickhouse = data_source(ConnectionConfig::ClickHouse(config));
+    let query = "SELECT number AS id, toDecimal64(number * 1.25, 2) AS amount, \
+                 number / 3 AS ratio, toBool(number % 2 = 0) AS even, \
+                 toDate32('2026-01-01') + number AS day, \
+                 toDateTime('2026-01-01 00:00:00', 'UTC') + number AS at, \
+                 concat('label ', toString(number)) AS label, toString(number) AS code, \
+                 CAST(NULL AS Nullable(Int64)) AS nothing, toFloat32(0.1) AS small, \
+                 CAST('b' AS Enum8('a' = 1, 'b' = 2)) AS letter \
+                 FROM numbers(5000)";
+    let (columnar, text) = both_paths(&clickhouse, Some(&password), query).await;
+    assert_eq!(columnar.csv, text.csv);
+    assert!(
+        columnar.csv.contains(
+            "\r\n1,1.25,0.3333333333333333,false,2026-01-02,2026-01-01 00:00:01,label 1,1,,0.1,b\r\n"
+        ),
+        "{}",
+        &columnar.csv[..300]
+    );
+    assert_eq!(
+        columnar.types,
+        names_and_types(&[
+            ("id", "HUGEINT"),
+            ("amount", "DECIMAL(18,2)"),
+            ("ratio", "DOUBLE"),
+            ("even", "BOOLEAN"),
+            ("day", "DATE"),
+            ("at", "TIMESTAMP"),
+            ("label", "VARCHAR"),
+            ("code", "VARCHAR"),
+            ("nothing", "BIGINT"),
+            ("small", "DOUBLE"),
+            ("letter", "VARCHAR"),
+        ])
+    );
+}

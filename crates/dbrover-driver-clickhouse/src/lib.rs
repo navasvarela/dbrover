@@ -8,6 +8,7 @@
 //! ClickHouse has no transactions in practice (they are experimental), so a connection is
 //! never inside one.
 
+mod batches;
 mod catalog;
 mod errors;
 mod execution;
@@ -18,9 +19,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use clickhouse::Client;
 use dbrover_core::{
-    BoxError, CancelHandle, CatalogNode, CatalogPath, ClickHouseConfig, Connection, DriverError,
-    Password, ProgressHandle, Quoting, Rejection, RelationName, ResultCursor, Route, ServerInfo,
-    TableConstraints, TableDescription, TableName, TlsMode, TransactionStatus,
+    BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, ClickHouseConfig, Connection,
+    DriverError, Password, ProgressHandle, Quoting, Rejection, RelationName, ResultCursor, Route,
+    ServerInfo, TableConstraints, TableDescription, TableName, TlsMode, TransactionStatus,
 };
 pub use dbrover_tls::TlsSetupError;
 use hyper_rustls::FixedServerNameResolver;
@@ -195,6 +196,20 @@ impl Connection for ClickHouseConnection {
 
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError> {
         execution::execute(&self.session, &self.cancel, sql).await
+    }
+
+    /// Starts `sql` in ClickHouse's `ArrowStream` format, its columns of types a batch doesn't
+    /// hold exactly sent as their text; a statement that isn't a query runs as `execute` runs
+    /// it. ClickHouse takes no bound values: they are written into the statement.
+    async fn execute_for_batches(
+        &mut self,
+        sql: &str,
+        values: &[Cell],
+    ) -> Result<Box<dyn ResultCursor>, DriverError> {
+        if !values.is_empty() {
+            return self.execute_bound(sql, values).await;
+        }
+        batches::execute(&self.session, &self.cancel, sql).await
     }
 
     async fn describe_table(
