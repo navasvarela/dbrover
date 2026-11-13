@@ -50,14 +50,19 @@ explorer, opened and added to there), v0.31.0 (BigQuery, signed in with Google, 
 projects, datasets and tables in the explorer and a dry run before every statement that shows
 the bytes it will scan; and a settings folder that lives well in Git: a change pulled while
 DbRover runs is no longer undone by its next save, TOML files keep their comments and order, the
-history stays out of commits, and each report run names the version of its file) and
+history stays out of commits, and each report run names the version of its file),
 v0.32.0 (reports that show where a run's time goes: a profile with a timeline and the
 bottleneck, live progress, hints with ids a report can silence, and two runs compared, in the
 app and on the command line; reports explained before they run, each source's plan and the
 combine's, with the bytes scanned where the engine reports them, and hints that name the columns
 and filters to move; and reports larger than memory: the combine's DuckDB on disk within a disk
 budget, sources loaded typed, Parquet outputs written by DuckDB, a stall timeout, and the
-machine kept awake during a run).
+machine kept awake during a run) and v0.33.0 (reports read in ranges of time or key, a source's
+ranges several at once or a whole report a range at a time, appended to one Parquet file or one
+file a range, with a range-skew hint and each range drawn in the Profile; and long runs that
+stop and resume: a stopped run keeps its finished ranges and sources, and carries on with
+**Resume** or `--resume`, or starts over with **Discard** or `--from-scratch`, with `:as_of`
+kept across the gap).
 R3's update notice is built, ahead of R2 (see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
