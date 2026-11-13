@@ -23,6 +23,8 @@ use std::future::Future;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use arrow_array::RecordBatch;
+use arrow_schema::SchemaRef;
 use dbrover_core::{ResultShape, Row};
 use dbrover_export::{
     CompletedFile, EXCEL_MAX_ROWS, ExportColumn, ExportWriter, OutputSchema, RowConverter,
@@ -40,7 +42,8 @@ use crate::parquet::appended_parquet_parts;
 use crate::statement::Statements;
 use crate::{
     LimitHit, Logic, PartDone, PartRange, Plan, PlannedOutput, Preview, QuerySource, RangeKept,
-    Resumed, RunEvent, RunFailure, RunValues, SourcePhases, SourceRanges, Step, WrittenFile,
+    Resumed, RunEvent, RunFailure, RunValues, SourcePhases, SourceRanges, SourceRows, Step,
+    WrittenFile,
 };
 
 /// How many rows the preview keeps: a screenful or two, enough to see a report is right.
@@ -75,6 +78,9 @@ pub struct SourceStatement<'a> {
     pub deadline: Instant,
     /// What the cost guard judges before the statement starts.
     pub cost: CostCheck,
+    /// Whether its rows are wanted as Arrow batches, where its engine gives them (ADR 0007):
+    /// for a source loaded into the combine step's DuckDB, unless it says otherwise.
+    pub rows: SourceRows,
 }
 
 /// What the cost guard of the statement's data source judges, where it has one.
@@ -126,6 +132,19 @@ pub trait SourceReader {
     /// The next page of rows, or `None` once every row has been read.
     fn next_page(&mut self) -> impl Future<Output = Result<Option<Vec<Row>>, SourceError>>;
 
+    /// The schema of the Arrow batches it reads, when its statement asked for batches
+    /// ([`SourceRows::Columnar`]) and its engine gives them (ADR 0007); `None`, the default, for
+    /// a reader of pages of text.
+    fn batch_schema(&self) -> Option<SchemaRef> {
+        None
+    }
+
+    /// The next part of its rows to load into the combine step's DuckDB: a batch when it has a
+    /// [`SourceReader::batch_schema`], else a page; `None` once every row has been read.
+    fn next_part(&mut self) -> impl Future<Output = Result<Option<SourcePart>, SourceError>> {
+        async { Ok(self.next_page().await?.map(SourcePart::Rows)) }
+    }
+
     /// The bytes its engine scanned for the statement, as the engine reports them once every
     /// row has been read (`docs/reports-at-scale.md`, RS2f): what a warehouse bills by.
     /// `None`, the default, where the engine doesn't say.
@@ -136,6 +155,15 @@ pub trait SourceReader {
     /// Ends the source's statement and its connection, however far it was read. What fails
     /// here can only be logged: the run has its rows, or has already failed.
     fn close(self) -> impl Future<Output = ()>;
+}
+
+/// Part of a source's rows on its way to the combine step's DuckDB.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SourcePart {
+    /// A page of rows, each value text (ADR 0004).
+    Rows(Vec<Row>),
+    /// An engine's own batch, of the bulk types and text (ADR 0007).
+    Batch(RecordBatch),
 }
 
 /// Why a source stopped returning rows.
@@ -1017,6 +1045,11 @@ impl Count {
     pub(crate) fn add(&mut self, page: &[Row]) {
         self.rows += page.len() as u64;
         self.bytes += page.iter().map(|row| row_bytes(row)).sum::<u64>();
+    }
+
+    pub(crate) fn add_part(&mut self, part: &SourcePart) {
+        self.rows += part.rows();
+        self.bytes += part.bytes();
     }
 
     /// Whether `source`'s caps hold what it has returned, or which one it crossed.

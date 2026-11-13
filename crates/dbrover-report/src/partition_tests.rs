@@ -48,7 +48,7 @@ format = "csv"
 file = "events.csv"
 "#;
 
-fn events_report(partition: &str, more: &str) -> String {
+pub(crate) fn events_report(partition: &str, more: &str) -> String {
     EVENTS
         .replace("{partition}", partition)
         .replace("{more}", more)

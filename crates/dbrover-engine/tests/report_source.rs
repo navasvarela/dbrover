@@ -17,7 +17,7 @@ use dbrover_core::{ConnectionConfig, DataSource, DataSourceId, SafetyLevel};
 use dbrover_engine::{PasswordCommands, ProcessRunner, ReportSource, SourceAccess, Tunnels};
 use dbrover_report::{
     CostCheck, LimitDefaults, Logic, Plan, RunEvent, RunFolders, RunValues, SourceError,
-    SourceOpener, SourceStatement, read_report, run,
+    SourceOpener, SourceRows, SourceStatement, read_report, run,
 };
 use dbrover_store::{Secret, SecretStore, TrustedCommands};
 
@@ -138,6 +138,7 @@ async fn open(
         parameters: values.parameters.clone(),
         deadline: Instant::now() + source.limits.timeout,
         cost: CostCheck::Statement,
+        rows: SourceRows::Text,
     };
     access.get().open(&statement).await
 }

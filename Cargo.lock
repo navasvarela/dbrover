@@ -2801,6 +2801,8 @@ dependencies = [
 name = "dbrover-report"
 version = "0.33.0"
 dependencies = [
+ "arrow-array",
+ "arrow-schema",
  "calamine",
  "dbrover-chart",
  "dbrover-core",

@@ -71,9 +71,21 @@ pub enum SourceRead {
         split: SourceSplit,
         /// The columns its table has, when the file declares them; otherwise the result's.
         columns: Option<Vec<SourceColumn>>,
+        /// How its rows reach the combine step's DuckDB: `columnar = false` keeps them text.
+        rows: SourceRows,
     },
     /// A DuckDB file, attached read-only for the combine step to read in place.
     Attach,
+}
+
+/// How a source's rows reach the combine step's DuckDB (ADR 0007).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SourceRows {
+    /// As Arrow batches where its engine gives them, as text where it doesn't.
+    #[default]
+    Columnar,
+    /// As text, whatever its engine gives.
+    Text,
 }
 
 /// How a source's query becomes the statements it sends.

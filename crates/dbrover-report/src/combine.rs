@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use arrow_schema::Schema;
 use dbrover_core::{CancelHandle, Connection, DriverError, ResultCursor, Row, describe_error};
 use dbrover_driver_duckdb::{
     DuckDbType, LoadColumn, TableLoader, Workspace, WorkspaceLimit, WorkspaceLimits,
@@ -38,7 +39,7 @@ use crate::typing::{ColumnTyper, DriverTypes};
 use crate::{
     AttachedSource, Batch, Busy, Chart, CombineLimits, Combined, KeptColumn, LimitHit,
     LoadedColumn, Parts, Plan, PlannedLookup, PlannedSource, PlannedSplit, QuerySource, Resumed,
-    RunEvent, RunFailure, RunFolders, RunValues, SourceError, SourceKept, SourceOpener,
+    RunEvent, RunFailure, RunFolders, RunValues, SourceError, SourceKept, SourceOpener, SourcePart,
     SourcePhases, SourceReader, SourceStatement, Step,
 };
 
@@ -369,7 +370,7 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
             scanned: None,
             at: At::Whole,
         };
-        let statements = Statements::new(self.plan, self.values, source);
+        let statements = Statements::loaded(self.plan, self.values, source);
         let deadline = opened + source.limits.timeout;
         let sent = match &source.split {
             PlannedSplit::Whole => {
@@ -604,11 +605,20 @@ struct Table {
 }
 
 impl Table {
-    /// Adds the bytes of each column's values in `page`.
-    fn count(&mut self, page: &[Row]) {
-        for row in page {
-            for (bytes, value) in self.column_bytes.iter_mut().zip(row) {
-                *bytes += value.as_ref().map_or(0, |value| value.len() as u64);
+    /// Sees `part`'s text values for its columns' types, counts its bytes, and appends it.
+    async fn append(&mut self, part: SourcePart) -> Result<(), DriverError> {
+        let added = part.column_bytes(self.column_bytes.len());
+        for (bytes, more) in self.column_bytes.iter_mut().zip(added) {
+            *bytes += more;
+        }
+        match part {
+            SourcePart::Rows(page) => {
+                self.typer.see(&page);
+                self.loader.append(page).await
+            }
+            SourcePart::Batch(batch) => {
+                self.typer.see_batch(&batch);
+                self.loader.append_batch(batch).await
             }
         }
     }
@@ -679,17 +689,15 @@ enum Sent {
     Parts(u64),
 }
 
-/// Appends the pages `queued` to `table` as they come, until the reader ends; and when it was
-/// done. Stops at the first page DuckDB refuses, which closes the queue.
+/// Appends the parts `queued` to `table` as they come, until the reader ends; and when it was
+/// done. Stops at the first part DuckDB refuses, which closes the queue.
 async fn append_queued(
     table: &mut Table,
-    mut queued: mpsc::Receiver<Vec<Row>>,
+    mut queued: mpsc::Receiver<SourcePart>,
 ) -> (Result<(), DriverError>, Instant) {
     let mut outcome = Ok(());
-    while let Some(page) = queued.recv().await {
-        table.typer.see(&page);
-        table.count(&page);
-        if let Err(error) = table.loader.append(page).await {
+    while let Some(part) = queued.recv().await {
+        if let Err(error) = table.append(part).await {
             outcome = Err(error);
             break;
         }
@@ -776,7 +784,10 @@ impl Loading<'_> {
         workspace: &Workspace,
         events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
     ) -> Result<(), RunFailure> {
-        let mut table = self.take_table(reader.columns(), workspace).await?;
+        let schema = reader.batch_schema();
+        let mut table = self
+            .take_table(reader.columns(), schema.as_deref(), workspace)
+            .await?;
         let (pages, queued) = mpsc::channel(QUEUE_PAGES);
         let ((read, read_ended), (appended, appended_ended)) = tokio::join!(
             self.read_into(reader, pages, events),
@@ -795,14 +806,14 @@ impl Loading<'_> {
     async fn read_into<R: SourceReader>(
         &mut self,
         reader: &mut R,
-        pages: mpsc::Sender<Vec<Row>>,
+        pages: mpsc::Sender<SourcePart>,
         events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
     ) -> (Result<(), RunFailure>, Instant) {
         let step = self.step();
         let at = self.at;
         let mut rows_seen = false;
         let outcome = loop {
-            let (page, waited) = waiting(reader.next_page(), |so_far| {
+            let (page, waited) = waiting(reader.next_part(), |so_far| {
                 let busy = self.clock.lap(so_far);
                 (events.borrow_mut())(progress_at(&step, &self.read, self.opened, at, busy));
             })
@@ -821,7 +832,7 @@ impl Loading<'_> {
             self.read
                 .first_row
                 .get_or_insert_with(|| self.opened.elapsed());
-            self.read.add(&page);
+            self.read.add_part(&page);
             if let Err(failure) = self.read.check(self.source) {
                 break Err(failure);
             }
@@ -845,10 +856,12 @@ impl Loading<'_> {
     }
 
     /// The table for `columns`: made for the first statement, whose columns a later batch's
-    /// must be. The caller puts it back once its rows are in.
+    /// must be, typed from `schema` when the source reads Arrow batches of it. The caller puts
+    /// it back once its rows are in.
     async fn take_table(
         &mut self,
         columns: &[ExportColumn],
+        schema: Option<&Schema>,
         workspace: &Workspace,
     ) -> Result<Table, RunFailure> {
         let names: Vec<String> = columns.iter().map(|column| column.name.clone()).collect();
@@ -868,7 +881,10 @@ impl Loading<'_> {
             ));
         }
         let drivers = DriverTypes::of(self.source.data_source.config.driver());
-        let typer = ColumnTyper::new(columns, self.source.columns.as_deref(), drivers);
+        let typer = match schema {
+            Some(schema) => ColumnTyper::for_batches(columns, schema, drivers),
+            None => ColumnTyper::new(columns, self.source.columns.as_deref(), drivers),
+        };
         let load_columns: Vec<LoadColumn> = names
             .into_iter()
             .zip(typer.known())
@@ -910,7 +926,7 @@ impl Loading<'_> {
                         excel_format: None,
                     })
                     .collect();
-                let table = self.take_table(&columns, workspace).await?;
+                let table = self.take_table(&columns, None, workspace).await?;
                 self.table = Some(table);
                 Ok(())
             }

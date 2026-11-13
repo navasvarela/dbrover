@@ -2,11 +2,14 @@
 //! documents, turned into the columns the file declares, each value checked against its type
 //! and written in the type's plain form, as an output's declared column is.
 
+use arrow_schema::SchemaRef;
 use dbrover_core::{ResultShape, Row};
 use dbrover_document::{Path, Step, Syntax, Value};
 use dbrover_export::{ColumnType, ExportColumn};
 
-use crate::{QuerySource, SourceColumn, SourceError, SourceOpener, SourceReader, SourceStatement};
+use crate::{
+    QuerySource, SourceColumn, SourceError, SourceOpener, SourcePart, SourceReader, SourceStatement,
+};
 
 /// A source's reader, its pages in the source's declared columns when it declares them, and
 /// as they come when it doesn't.
@@ -70,6 +73,22 @@ impl<R: SourceReader> SourceReader for Shaped<R> {
         match (&mut self.declared, page) {
             (Some(declared), Some(page)) => declared.convert(page).map(Some),
             (_, page) => Ok(page),
+        }
+    }
+
+    /// The inner reader's batches, when it reads them; a source that declares its columns
+    /// reads text, since each value is checked and rewritten as text.
+    fn batch_schema(&self) -> Option<SchemaRef> {
+        match self.declared {
+            Some(_) => None,
+            None => self.inner.batch_schema(),
+        }
+    }
+
+    async fn next_part(&mut self) -> Result<Option<SourcePart>, SourceError> {
+        match self.declared {
+            Some(_) => Ok(self.next_page().await?.map(SourcePart::Rows)),
+            None => self.inner.next_part().await,
         }
     }
 

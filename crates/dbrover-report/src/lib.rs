@@ -31,6 +31,7 @@ mod limits;
 mod live;
 mod manifest;
 mod parquet;
+mod part;
 mod partition;
 mod plan;
 mod problem;
@@ -82,15 +83,17 @@ pub use problem::{Locator, Place, ReportProblem, Table};
 pub use read::{read_report, read_with_places};
 pub use report::{
     Chart, ChartPicture, Combine, CombineQuery, Lookup, Output, OutputColumns, OutputWriter, Param,
-    Report, Source, SourceColumn, SourcePartition, SourceRead, SourceSplit,
+    Report, Source, SourceColumn, SourcePartition, SourceRead, SourceRows, SourceSplit,
 };
 pub use request::{ExplainRequest, RunRequest};
 pub use run::{
     CostCheck, Opening, PREVIEW_ROWS, RunFolders, RunSummary, SourceError, SourceOpener,
-    SourceReader, SourceStatement, WholePeriod, grouped, run,
+    SourcePart, SourceReader, SourceStatement, WholePeriod, grouped, run,
 };
 pub use text::plan_text;
 
+#[cfg(test)]
+mod batch_tests;
 #[cfg(test)]
 mod chart_tests;
 #[cfg(test)]

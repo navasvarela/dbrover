@@ -355,8 +355,8 @@ fn names_every_problem_with_its_place() {
             one_source("", "SELECT 1", output)
                 .replace("id = \"s\"\n", "id = \"s\"\nkeys = \"t\"\n"),
             "source \"s\": \"keys\" is not part of a source, which has id, data_source, query, \
-             lookup, partition, max_rows_per_part, columns, attach, max_rows, max_bytes and \
-             timeout",
+             lookup, partition, max_rows_per_part, columns, columnar, attach, max_rows, \
+             max_bytes and timeout",
         ),
         (
             one_source("", "SELECT 1", output)
@@ -950,6 +950,14 @@ fn names_every_problem_with_several_sources() {
         (
             VALUATION.replace("attach = true", "attach = \"yes\""),
             "source \"prices\": attach must be true or false",
+        ),
+        (
+            VALUATION.replace("attach = true", "attach = true\ncolumnar = false"),
+            "source \"prices\": columnar is for a source's query, and an attached source has none",
+        ),
+        (
+            VALUATION.replace("id = \"tx\"", "id = \"tx\"\ncolumnar = \"no\""),
+            "source \"tx\": columnar must be true or false",
         ),
         (
             VALUATION.replace("attach = true", "attach = false"),

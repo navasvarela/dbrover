@@ -9,6 +9,9 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+# A columnar source's batches on their way to the run's DuckDB (ADR 0007).
+arrow-array.workspace = true
+arrow-schema.workspace = true
 # A [[chart]]'s keys, read and drawn as a console's chart is (docs/charts-as-code.md, CH3).
 dbrover-chart.workspace = true
 dbrover-core.workspace = true

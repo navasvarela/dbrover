@@ -10,11 +10,14 @@
 //! exactly by its driver, is made of that type and loaded into it (RS3c); only the others are
 //! typed by their values.
 
+use arrow_array::RecordBatch;
+use arrow_schema::Schema;
 use dbrover_core::{DriverKind, ValueKind};
 use dbrover_driver_duckdb::DuckDbType;
 use dbrover_export::{ColumnType, ExportColumn};
 
 use crate::SourceColumn;
+use crate::part::{batch_column_type, text_values};
 
 /// The most digits a `BIGINT` holds for any value: 19 fit some of them, but not all.
 const BIGINT_DIGITS: u8 = 18;
@@ -231,6 +234,24 @@ impl ColumnTyper {
         }
     }
 
+    /// For `columns`, read as Arrow batches of `schema`'s types (ADR 0007): a column of a bulk
+    /// type keeps it, and a text column is typed by its values, as [`ColumnTyper::new`] types
+    /// it for `drivers`.
+    pub(crate) fn for_batches(
+        columns: &[ExportColumn],
+        schema: &Schema,
+        drivers: DriverTypes,
+    ) -> Self {
+        let typer = Self::new(columns, None, drivers);
+        let known = typer
+            .known
+            .iter()
+            .zip(schema.fields())
+            .map(|(from_driver, field)| batch_column_type(field.data_type()).or(*from_driver))
+            .collect();
+        Self { known, ..typer }
+    }
+
     /// Each column's type when it is known before its first value, which its table is made
     /// with; `None` for a column its values type.
     pub(crate) fn known(&self) -> &[Option<DuckDbType>] {
@@ -252,6 +273,18 @@ impl ColumnTyper {
             let columns = self.columns.iter_mut().zip(&self.known);
             for (((_, seen), known), value) in columns.zip(row) {
                 if let (None, Some(value)) = (known, value) {
+                    *seen = seen.widen(Seen::of(value));
+                }
+            }
+        }
+    }
+
+    /// Sees each text value of `batch`, in a column its values type.
+    pub(crate) fn see_batch(&mut self, batch: &RecordBatch) {
+        let columns = self.columns.iter_mut().zip(&self.known);
+        for (((_, seen), known), array) in columns.zip(batch.columns()) {
+            if known.is_none() {
+                for value in text_values(array.as_ref()).flatten() {
                     *seen = seen.widen(Seen::of(value));
                 }
             }
