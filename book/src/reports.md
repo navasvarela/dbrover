@@ -400,6 +400,7 @@ and `T` works in place of the space).
 | `partition` | Reads the query in ranges of time or of a key, a statement each, as `{ from = ":since", to = ":until", every = "1 month" }`. See [Partitions](#partitions). |
 | `max_rows_per_part` | The most rows each range of a partitioned source may return. No limit unless you say. |
 | `columns` | The columns it makes, each with a type. Needed for a document database. See [Declared columns](#declared-columns). |
+| `columnar` | `false` loads the source's rows as text, even from DuckDB or ClickHouse, which otherwise hand them to the combine step as they are. See [Columnar sources](#columnar-sources). |
 | `max_rows` | The most rows it may return, all its lookup's batches or ranges together. 1,000,000 unless you say. |
 | `max_bytes` | The most data it may return, as `"500 MB"` or `"4 GiB"`. 1 GiB unless you say. |
 | `timeout` | How long the query may run, all its batches together, or each range on its own, as `"30s"` or `"10m"`. 10 minutes unless you say. |
@@ -659,6 +660,31 @@ run there, naming it. Only the other columns load as text first, and only those 
 choose another type are rewritten once their last row is in, so a large source is written into
 DuckDB once, not twice. While DuckDB loads one page of a source, the next page is already being
 read, a few pages ahead at most.
+
+### Columnar sources
+
+DuckDB and ClickHouse can hand a query's rows over in Apache Arrow, the columnar form DuckDB
+reads without parsing anything, rather than as text. A source on either of them, loaded into
+`[combine]`, is read that way unless it declares its `columns`:
+
+- **Numbers, booleans, dates and timestamps keep the engine's own type:** a ClickHouse
+  `Decimal(18, 2)` is a `DECIMAL(18,2)` in DuckDB, an `Int32` a `BIGINT` (`UInt64` a
+  `HUGEINT`), a `Bool` a `BOOLEAN`. A column with no value but `NULL` keeps its type too, where
+  as text it would be text.
+- **Text, and every type without an exact equivalent, come as the engine's text,** typed by
+  their values as above: ClickHouse's `DateTime`, `Date`, `Enum8`, `UUID` and arrays, DuckDB's
+  lists, structs, intervals and UUIDs. So a ClickHouse `DateTime` is still a `TIMESTAMP`, and a
+  list still the text it shows in a console.
+
+The file a report writes is the same either way. `columnar = false` on the source reads it as
+text, for comparing the two, or if a column's text differs between them: a ClickHouse array of
+strings is written with `'` quotes when it comes as Arrow, and with `"` as text. A source with
+declared `columns` is always read as text, since each value is checked against its type, and
+so is the one source of a report without `[combine]`, which goes straight to the outputs.
+
+ClickHouse is asked for the query's columns first (`DESCRIBE`, which reads no data), so it
+can send the ones without an exact Arrow type as text; a statement it can't describe, such as
+one ending in its own `FORMAT`, is read as text.
 
 ### Exact numbers in DuckDB
 

@@ -737,6 +737,9 @@ runs the small cases.
   before C5 and C6, so their drivers implement it from the start. C3 started before it
   (2026-11-05) with text rows, which `next_batch`'s default keeps. Its layers, RS6a to RS6f, and
   what today's code changes in it, are in [RS6 against today's code](#rs6-against-todays-code).
+  **Exit met** on 2026-11-13 (see [RS6's columnar path](#rs6s-columnar-path)): ClickHouse's
+  columnar rows a second are 1.7 times its text path's, and the four accounting examples match
+  their checked-in files.
   **Exit:** the RS1 benchmark shows the columnar path ahead of the text path on ClickHouse, and
   the four accounting examples still match to the last digit.
 - **RS7 — Lakes and warehouses in the combine:** C2's buckets attached to the workspace, with
@@ -1005,6 +1008,32 @@ Layers, one pull request each, in one stack:
 - **RS6f — Manual, benchmark and the exit:** the manual's columnar note and `columnar`, the
   benchmark with ClickHouse and the *columnar* rows, the as-built notes, and the roadmap.
 
+As built, where RS6 differs from the table above:
+
+- **A DuckDB batch is one chunk,** of at most 2,048 rows, or the part of one asked for: not
+  chunks gathered up to `BATCH_ROWS`, which would copy DuckDB's arrays into larger ones. The
+  engine asks for 8,192 rows at a time; ClickHouse's blocks are cut to that.
+- **ClickHouse's `Float32` is sent as text.** As a `DOUBLE`, a `Float32` shows its binary
+  value's digits (`0.1` becomes `0.10000000149011612`), where ClickHouse's text shows the
+  shortest that reads back, which is what the text path loaded. `Float64` is a batch's.
+- **A ClickHouse `UInt64` loads as `HUGEINT`,** where the text path typed small values as
+  `BIGINT`: an unsigned 64-bit value may need 20 digits. `numbers()` is `UInt64`; cast it with
+  `toInt64` in the query for a `BIGINT`.
+- **A ClickHouse statement with duplicate column names, or one `DESCRIBE` refuses** (not a
+  query, or with a `FORMAT` of its own), is read as text: its columns can't each be replaced by
+  their text.
+- **A ClickHouse cursor started for batches answers `next_page`** with each value as Arrow
+  formats it, not as ClickHouse's JSON writes it; only a caller that asked for batches gets one.
+- **The profile doesn't say which path a source took.** Its columns' types show it (a column of
+  only `NULL`s keeps its engine's type), and `columnar = false` is in the report's file.
+- **The four accounting examples don't read batches:** their DuckDB prices are attached, and
+  every other source declares its columns or is a document database. They still match their
+  checked-in files, which is the check that the text path is unchanged; the columnar path's own
+  check is `crates/dbrover-engine/tests/report_columnar.rs`, which runs a DuckDB and a
+  ClickHouse source on both paths and compares the files.
+- **Lookups** read batches as a whole source does, through the same loader; the tests cover a
+  partitioned source's ranges, not a lookup's batches.
+
 ## Benchmark
 
 RS1g's baseline, the numbers RS3c's typed loading and RS6's columnar sources are judged by.
@@ -1092,6 +1121,47 @@ What it says:
   Rust (RS1g), which the queue overlaps with appending.
 
 RS6's columnar path is judged against these rows a second.
+
+### RS6's columnar path
+
+RS6f ran the benchmark again on 2026-11-13, on the same machine, with ClickHouse 25.8 from the
+Compose file added (its rows from `numbers()`, `id` an `Int64`, `amount` a `Decimal(18, 2)`,
+`ts` a `DateTime`), and a third column kind: *columnar*, a source read as Arrow batches (RS6),
+which is now the default for DuckDB and ClickHouse; *inferred* is the text path, run with
+`columnar = false`. Other sessions were building on the machine: a first run had DuckDB's
+inferred row at 11.26 s, and DuckDB alone again gave 8.04 s, so the rows below, from a second
+full run, carry a few tenths of a second of noise. 10,000,000 rows, in seconds:
+
+| Engine | Columns | Rows | Run (s) | Source (s) | Until first row | Receiving | Loading | Typing | Combine (s) | Rows a second | DuckDB peak | RS3f's run |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| DuckDB | inferred | 10,000,000 | 8.97 | 8.95 | 0.00 | 4.09 | 4.39 | 0.42 | 0.01 | 1,117,193 | 536 MB | 8.31 |
+| DuckDB | declared | 10,000,000 | 8.90 | 8.88 | 0.00 | 8.59 | 0.26 | 0.00 | 0.01 | 1,125,872 | 92 MB | 8.67 |
+| DuckDB | columnar | 10,000,000 | 2.23 | 2.21 | 0.00 | 0.50 | 1.71 | 0.00 | 0.01 | 4,518,752 | 85 MB | — |
+| SQLite | inferred | 10,000,000 | 9.85 | 9.82 | 0.00 | 7.38 | 1.80 | 0.61 | 0.01 | 1,017,915 | 705 MB | 9.12 |
+| SQLite | declared | 10,000,000 | 11.11 | 11.09 | 0.00 | 10.82 | 0.23 | 0.00 | 0.01 | 902,038 | 227 MB | 10.84 |
+| PostgreSQL | inferred | 10,000,000 | 10.60 | 10.58 | 0.41 | 2.09 | 7.43 | 0.62 | 0.01 | 945,447 | 725 MB | 10.42 |
+| PostgreSQL | declared | 10,000,000 | 7.74 | 7.73 | 0.35 | 6.64 | 0.70 | 0.00 | 0.01 | 1,294,330 | 88 MB | 7.70 |
+| MySQL | inferred | 10,000,000 | 9.77 | 9.74 | 0.09 | 3.20 | 5.84 | 0.57 | 0.01 | 1,026,167 | 726 MB | 9.64 |
+| MySQL | declared | 10,000,000 | 8.52 | 8.50 | 0.09 | 7.61 | 0.78 | 0.00 | 0.01 | 1,176,055 | 257 MB | 8.55 |
+| ClickHouse | inferred | 10,000,000 | 8.32 | 8.30 | 0.02 | 1.89 | 5.94 | 0.43 | 0.01 | 1,204,238 | 540 MB | — |
+| ClickHouse | declared | 10,000,000 | 7.24 | 7.22 | 0.02 | 6.53 | 0.64 | 0.00 | 0.01 | 1,384,274 | 89 MB | — |
+| ClickHouse | columnar | 10,000,000 | 4.87 | 4.85 | 0.04 | 0.17 | 4.36 | 0.28 | 0.01 | 2,060,581 | 308 MB | — |
+
+What it says:
+
+- **The exit is met:** on ClickHouse the columnar path reads 2,060,581 rows a second against
+  the text path's 1,204,238, 1.7 times as many, and runs in 4.87 s against 8.32 s (and 7.24 s
+  with declared columns). The first full run gave 4.11 s against 8.93 s.
+- **DuckDB gains most,** four times the rows a second: its chunks reach the run's DuckDB as
+  they left the source's, with nothing formatted or parsed, and *receiving* falls from 4.1 s
+  to 0.5 s.
+- **ClickHouse's `DateTime` still travels as text** (its Arrow output has no timestamp for it),
+  so `ts` is loaded as text and rewritten at the end (*typing* 0.28 s), and DuckDB's peak is
+  that column's: 308 MB against 85 to 92 MB for an all-typed table. *Loading* is DuckDB
+  storing those strings. A `DateTime64` or `Date32` in the query, or a cast in `[combine]`,
+  would be the next step, if a report needs it.
+- **The text path is unchanged:** every engine's inferred and declared rows are within noise of
+  RS3f's.
 
 ### RS3's exit test
 
