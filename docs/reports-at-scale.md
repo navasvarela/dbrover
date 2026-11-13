@@ -735,7 +735,8 @@ runs the small cases.
 - **RS6 — Columnar sources:** ADR 0007, `ResultCursor::next_batch`, Arrow batches appended to
   the workspace, DuckDB sources with a query and ClickHouse's `ArrowStream` first. To land
   before C5 and C6, so their drivers implement it from the start. C3 started before it
-  (2026-11-05) with text rows, which `next_batch`'s default keeps.
+  (2026-11-05) with text rows, which `next_batch`'s default keeps. Its layers, RS6a to RS6f, and
+  what today's code changes in it, are in [RS6 against today's code](#rs6-against-todays-code).
   **Exit:** the RS1 benchmark shows the columnar path ahead of the text path on ClickHouse, and
   the four accounting examples still match to the last digit.
 - **RS7 — Lakes and warehouses in the combine:** C2's buckets attached to the workspace, with
@@ -956,6 +957,53 @@ As built, where RS5 differs from the table above:
   removes it before the range starts again. The exit test found this.
 - **The report's file and output folder are compared canonically,** so the app and the command
   line, which may name them differently, resume each other's runs.
+
+## RS6 against today's code
+
+Settled on 2026-11-13, when RS6 started, by reading the plan against the code as of RS5's merge
+(9e11e1c) and trying ClickHouse 25.8, the version in the repository's Docker Compose file.
+Where the code changes the plan, the plan above still says what it said; this section wins.
+Each row is a decision for the reviewer to confirm.
+
+| The plan said | Today's code, and the engines | RS6 does |
+| --- | --- | --- |
+| An optional `ResultCursor::next_batch` returning an Arrow `RecordBatch`, `None` by default. | `ResultCursor` has `next_page`, `progress` and `finish`; C3's and C4's notes left "the cursor itself" as the seam. A `None` that means both "no batches here" and "no more rows" can't be told apart. | `next_batch` lives on a small `BatchCursor` trait (`schema`, `next_batch(max_rows)`), which a cursor hands out through `ResultCursor::batches()`; `None`, the default, means its engine gives text. A caller reads a cursor through one or the other. ADR 0007 records the rule and the alternatives. |
+| (Not said: when a cursor's format is chosen.) | ClickHouse answers each statement in the format the request names; Databricks's request names `ARROW_STREAM` too, and Snowflake's a result format. DuckDB's cursor fetches Arrow chunks whichever way it is read. | `Connection::execute_for_batches(sql, values)` starts a statement for a caller that will read batches; the default runs it as `execute_bound` does. DuckDB needs no override: its cursor answers both ways. A cursor started for batches still answers `next_page`, from its batches. |
+| `arrow` 58 already in the build; `arrow-ipc` the one new crate. | `arrow` 58.4 comes through `duckdb`; `dbrover-core` depends on no Arrow crate. `arrow-ipc` 58.4 has no default features: its `lz4` and `zstd` codecs are optional. | `dbrover-core` depends on `arrow-array` and `arrow-schema` at the `duckdb` crate's version, so a batch reaches DuckDB's appender unconverted; the two are bumped together. `dbrover-driver-clickhouse` adds `arrow-ipc` without codecs, and asks ClickHouse for an uncompressed stream (`output_format_arrow_compression_method = 'none'`; ClickHouse's default is LZ4). |
+| Arrow's `Decimal128` keeps decimals exact; the loader hands the batch to `append_record_batch`. | A table is made with the types known before its first row (RS3c's `LoadColumn`), the other columns as text, typed by their values once the last row is in (`ColumnTyper`). `DuckDbType` has nine types, which the history and a resumed run read back by name. | **Bulk types** (`dbrover_core::bulk_kind`): booleans, signed and unsigned integers, floats, `Decimal128` of up to 38 digits, `Date32`, timestamps with and without a zone, and text. Each maps onto a `DuckDbType` the table is made with before the first row: integers to `BIGINT` (`UBIGINT`'s to `HUGEINT`), floats to `DOUBLE`, a timestamp with a zone to `TIMESTAMP WITH TIME ZONE`. A **text column of a batch is typed by its values**, exactly as a page's is, with the column's type name from the driver: so a source's types are the text path's wherever the engine sends text. `DuckDbType` gains nothing. |
+| (Not said: an engine's types that have no bulk equivalent.) | ClickHouse 25.8's Arrow output sends `DateTime` as `UInt32` seconds, `Date` as `UInt16` days, `Enum8` as `Int8`, `Int128` as `FixedString(16)` and `IPv4` as `UInt32`, and refuses a `UUID` column, failing the statement. DuckDB's Arrow export has lists, structs, maps, intervals, blobs and enums, which its driver already formats as text (`values.rs`). | **A driver sends a column outside the bulk types as text**, the same text its `next_page` gives. DuckDB's cursor formats such a column with the formatter its pages use. ClickHouse's asks for the query's columns first (`DESCRIBE TABLE (query)`, which plans and reads nothing), then sends `SELECT * REPLACE (toString(c) AS c, …) FROM (query)` for every column whose type isn't bulk, and the query alone when all are. So `DateTime`, `DateTime64` and `Date` reach the loader as text and are typed by their values as before; `Date32` comes as a date. |
+| (Not said: which sources read batches.) | A source loaded into the workspace may declare its columns (`Shaped` checks and rewrites each value as text, RP3), return documents (ADR 0006), send a lookup's batches or a partition's ranges; a report without `[combine]` streams its source into the outputs as text. | **A source reads batches when it is loaded into the combine step's DuckDB, declares no columns, returns rows, and its engine gives batches.** Lookups' statements and a partitioned source's ranges read them too, all into the one table. Declared columns stay on the text path (RS3c made it fast), and so do documents and a report without `[combine]`, whose rows go to the outputs as text. `columnar = false` on a `[[source]]` keeps it on the text path whatever its engine: for the benchmark's comparison, and for a source whose non-bulk text differs between the paths. |
+| A source's caps count rows and bytes; the profile keeps the bytes each column received (RS2c). | A page's bytes are its values' text, `NULL` counting nothing. | A batch's bytes are its values' size in their types: a text value's bytes, a fixed-width value's width, `NULL` nothing. So `max_bytes` and `unused-columns` weigh a columnar source by what it moved, which is less than its text for numbers. |
+| The memory outside DuckDB is computable from the queue (RS3c). | Six pages of a source's largest page; pages are 1,000 rows. | A batch is at most `BATCH_ROWS` (8,192) rows: DuckDB's chunks are 2,048, gathered up to that; ClickHouse's blocks (up to 65,409 rows) are cut into slices, which share the block's memory until the last slice is appended. The bound counts, for a columnar source, six batches of its largest **block**. |
+| `next_batch` for C4 to C6. | C3 (Athena, Trino) and C4 (BigQuery) are built on text; C5 and C6 aren't started. | Nothing changes for C3 and C4. C5 and C6 implement `batches()` from the start: the trait is shaped by their needs (a format chosen when the statement starts; batches of the service's own size). BigQuery's Storage Read API stays where C4 left it. |
+| Exports, too, may carry Arrow (ADR 0007's wording). | Exports (W7, W8) write text through `dbrover-export`'s writers. | Not in RS6: reports only. An export to Parquet from a columnar engine is the next candidate, once a user needs it. |
+| **Exit:** the RS1 benchmark shows the columnar path ahead of the text path on ClickHouse, and the four accounting examples still match. | RS1g's benchmark has SQLite, DuckDB, PostgreSQL and MySQL, no ClickHouse; the examples run on SQLite, MongoDB, PostgreSQL, DynamoDB and DuckDB (`report_examples.rs`). | The benchmark gains ClickHouse (rows from `numbers()`), and a third column kind beside *inferred* and *declared*: *columnar*, the default now for DuckDB and ClickHouse, with *inferred* run as `columnar = false`. The exit compares ClickHouse's columnar rows a second with its inferred ones on the same build, and every engine's against RS3f's table. The examples' DuckDB prices source reads batches now, and the four still match their checked-in files. |
+
+Layers, one pull request each, in one stack:
+
+- **RS6a — The plan:** this section, [ADR 0007](adr/0007-arrow-on-bulk-paths.md) and the
+  roadmap's layers. Docs only.
+- **RS6b — Batches in `dbrover-core`:** `BatchCursor`, `ResultCursor::batches`,
+  `Connection::execute_for_batches`, `bulk_kind`. *Tests:* the bulk types, table-driven; a
+  text cursor hands out no batches.
+- **RS6c — Loading a batch:** the workspace's `TableLoader::append_batch`; in
+  `dbrover-report`, a reader's next part for loading (a page or a batch), the table made from a
+  batch's schema, text columns typed by their values, bytes counted, `columnar = false`.
+  *Exit:* a source of batches on a stand-in opener loads into the same table, with the same
+  types, as its text. *Tests:* each bulk type's table type; a text column typed by its values;
+  caps and column bytes over batches; a lookup's and a partition's batches into one table.
+- **RS6d — DuckDB's batches:** the DuckDB cursor's `batches()`, chunks gathered up to
+  `BATCH_ROWS`, non-bulk columns as their text; the engine's report source started for batches.
+  *Exit:* a report over a DuckDB source writes what it wrote on the text path, and its profile
+  says it read batches. *Tests:* every DuckDB type through a batch, against `next_page`'s text;
+  a cancel during a batch.
+- **RS6e — ClickHouse's `ArrowStream`:** `arrow-ipc`; `execute_for_batches` describing the query
+  and casting non-bulk columns to text; the stream decoded as it arrives, blocks cut into
+  batches; `next_page` from batches. *Exit:* a report over a ClickHouse source writes what the
+  text path writes. *Tests:* against the Compose file's ClickHouse, every type of the probe
+  above; a statement killed mid-stream; an empty result; a query that `DESCRIBE` refuses.
+- **RS6f — Manual, benchmark and the exit:** the manual's columnar note and `columnar`, the
+  benchmark with ClickHouse and the *columnar* rows, the as-built notes, and the roadmap.
 
 ## Benchmark
 

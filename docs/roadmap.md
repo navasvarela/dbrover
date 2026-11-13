@@ -2648,6 +2648,23 @@ measurement.
   through RS7's handoff ([C3's note](cloud-data.md#rows-and-columnar-batches)). C4 delivers
   rows as text too; BigQuery's Storage Read API, billed apart and over gRPC, can later answer
   `next_batch` for large results ([C4's note](cloud-data.md#rows-and-columnar-batches-in-c4)).
+  Started on 2026-11-13; what today's code changes in the plan is in
+  [RS6 against today's code](reports-at-scale.md#rs6-against-todays-code). In layers, one PR
+  each:
+  - **RS6a — The plan:** RS6's decisions against the code as of RS5's merge, and
+    [ADR 0007](adr/0007-arrow-on-bulk-paths.md).
+  - **RS6b — Batches in `dbrover-core`:** `BatchCursor`, `ResultCursor::batches`,
+    `Connection::execute_for_batches` and the bulk types.
+  - **RS6c — Loading a batch:** the workspace appends a batch; a source's table typed from its
+    batches' schema, text columns by their values; `columnar = false`.
+  - **RS6d — DuckDB's batches:** a DuckDB source with a query read as Arrow chunks.
+  - **RS6e — ClickHouse's `ArrowStream`:** `arrow-ipc`, the query described and its non-bulk
+    columns sent as text.
+  - **RS6f — Manual, benchmark and the exit:** ClickHouse in RS1g's benchmark, the *columnar*
+    rows, and the manual.
+
+  **Exit:** the RS1 benchmark shows the columnar path ahead of the text path on ClickHouse, and
+  the four accounting examples still match to the last digit.
 - **RS7 — Lakes and warehouses in the combine:** C2's buckets attached with DuckDB's pruning,
   and large warehouse results handed over through a bucket the user names.
 - **RS8 — Reports over MCP:** read-only tools to list, explain and compare reports and their
