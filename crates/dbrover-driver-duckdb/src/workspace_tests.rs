@@ -736,3 +736,119 @@ async fn reopens_a_kept_workspace_with_its_tables() {
     assert_eq!(rows, [cells(&["1"])]);
     kept.close().await;
 }
+
+#[tokio::test]
+async fn appends_an_engines_batch_as_it_is() {
+    use std::sync::Arc;
+
+    use duckdb::arrow::array::{
+        ArrayRef, BooleanArray, Date32Array, Decimal128Array, Float64Array, Int32Array,
+        StringArray, TimestampMicrosecondArray, UInt64Array,
+    };
+    use duckdb::arrow::record_batch::RecordBatch;
+
+    let folder = tempfile::tempdir().unwrap();
+    let mut workspace = Workspace::open(&on_file(folder.path()), &roomy(folder.path()))
+        .await
+        .unwrap();
+    let columns = [
+        ("id", Some(DuckDbType::BigInt)),
+        ("big", Some(DuckDbType::HugeInt)),
+        (
+            "amount",
+            Some(DuckDbType::Decimal {
+                precision: 38,
+                scale: 10,
+            }),
+        ),
+        ("rate", Some(DuckDbType::Double)),
+        ("paid", Some(DuckDbType::Boolean)),
+        ("day", Some(DuckDbType::Date)),
+        ("at", Some(DuckDbType::Timestamp)),
+        ("label", None),
+    ]
+    .map(|(name, known)| LoadColumn {
+        name: name.to_owned(),
+        known,
+    });
+    let mut loader = workspace.loader("t", &columns).await.unwrap();
+    let arrays: Vec<ArrayRef> = vec![
+        Arc::new(Int32Array::from(vec![Some(1), None])),
+        Arc::new(UInt64Array::from(vec![u64::MAX, 0])),
+        Arc::new(
+            Decimal128Array::from(vec![
+                Some(12_345_678_901_234_567_890_123_456_789_012_345_678),
+                Some(-1),
+            ])
+            .with_precision_and_scale(38, 10)
+            .unwrap(),
+        ),
+        Arc::new(Float64Array::from(vec![0.5, -1.25])),
+        Arc::new(BooleanArray::from(vec![Some(true), None])),
+        Arc::new(Date32Array::from(vec![20_000, 0])),
+        Arc::new(TimestampMicrosecondArray::from(vec![1_500_000, 0])),
+        Arc::new(StringArray::from(vec![Some("007"), None])),
+    ];
+    let names: Vec<&str> = columns.iter().map(|column| column.name.as_str()).collect();
+    let batch = RecordBatch::try_from_iter(names.into_iter().zip(arrays)).unwrap();
+    loader.append_batch(batch).await.unwrap();
+    let types: Vec<DuckDbType> = columns
+        .iter()
+        .map(|column| column.known.unwrap_or(DuckDbType::Varchar))
+        .collect();
+    loader.finish(&types).await.unwrap();
+
+    let rows = query(
+        &mut workspace,
+        "SELECT CAST(COLUMNS(*) AS VARCHAR) FROM t ORDER BY big DESC",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            vec![
+                Some("1".to_owned()),
+                Some("18446744073709551615".to_owned()),
+                Some("1234567890123456789012345678.9012345678".to_owned()),
+                Some("0.5".to_owned()),
+                Some("true".to_owned()),
+                Some("2024-10-04".to_owned()),
+                Some("1970-01-01 00:00:01.5".to_owned()),
+                Some("007".to_owned()),
+            ],
+            vec![
+                None,
+                Some("0".to_owned()),
+                Some("-0.0000000001".to_owned()),
+                Some("-1.25".to_owned()),
+                None,
+                Some("1970-01-01".to_owned()),
+                Some("1970-01-01 00:00:00".to_owned()),
+                None,
+            ],
+        ]
+    );
+}
+
+#[tokio::test]
+async fn refuses_a_batch_of_other_columns() {
+    use std::sync::Arc;
+
+    use duckdb::arrow::array::{ArrayRef, Int64Array};
+    use duckdb::arrow::record_batch::RecordBatch;
+
+    let folder = tempfile::tempdir().unwrap();
+    let workspace = Workspace::open(&on_file(folder.path()), &roomy(folder.path()))
+        .await
+        .unwrap();
+    let mut loader = workspace.loader("t", &text(&["a", "b"])).await.unwrap();
+    let array: ArrayRef = Arc::new(Int64Array::from(vec![1]));
+    let batch = RecordBatch::try_from_iter([("a", array)]).unwrap();
+    let error = loader.append_batch(batch).await.unwrap_err();
+    assert!(
+        describe_error(&error).contains("a batch of 1 columns for a table of 2"),
+        "{}",
+        describe_error(&error)
+    );
+}

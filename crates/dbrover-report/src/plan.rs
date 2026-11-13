@@ -23,7 +23,8 @@ use crate::{
     AS_OF, ByteSize, Chart, CombineLimits, CombineLimitsSet, CombineQuery, FileName, LimitDefaults,
     LimitSetIn, Lookup, Output, OutputColumns, OutputLimits, OutputLimitsSet, OutputWriter,
     PART_FROM, PART_TO, Param, PartRange, PlannedPartition, Report, Source, SourceColumn,
-    SourceLimits, SourceLimitsSet, SourcePartition, SourceRead, SourceSplit, SourceStart, Step,
+    SourceLimits, SourceLimitsSet, SourcePartition, SourceRead, SourceRows, SourceSplit,
+    SourceStart, Step,
 };
 
 /// A report ready to run.
@@ -253,6 +254,20 @@ pub struct QuerySource {
     /// The columns its table has, when the file declares them; otherwise the result's. Always
     /// declared for a language without a SQL dialect.
     pub columns: Option<Vec<SourceColumn>>,
+    /// How its rows reach the combine step's DuckDB.
+    pub rows: SourceRows,
+}
+
+impl QuerySource {
+    /// How its rows reach the combine step's DuckDB: as batches where its engine gives them,
+    /// unless the file says `columnar = false` or declares its columns, which are checked and
+    /// rewritten a value at a time as text (RP3).
+    pub fn rows_for_loading(&self) -> SourceRows {
+        match (&self.columns, self.rows) {
+            (None, SourceRows::Columnar) => SourceRows::Columnar,
+            (Some(_), _) | (None, SourceRows::Text) => SourceRows::Text,
+        }
+    }
 }
 
 /// How a source's query becomes the statements it sends, as planned.
@@ -954,6 +969,7 @@ fn plan_source(
             limits,
             split,
             columns,
+            rows,
         } => plan_query(
             &source.id,
             data_source,
@@ -962,6 +978,7 @@ fn plan_source(
                 limits: limits.or(defaults),
                 split,
                 columns: columns.as_ref(),
+                rows: *rows,
             },
             params,
         )
@@ -978,6 +995,7 @@ struct QueryRead<'a> {
     limits: SourceLimits,
     split: &'a SourceSplit,
     columns: Option<&'a Vec<SourceColumn>>,
+    rows: SourceRows,
 }
 
 fn plan_query(
@@ -1017,6 +1035,7 @@ fn plan_query(
         limits: read.limits,
         split,
         columns: read.columns.cloned(),
+        rows: read.rows,
     })
 }
 

@@ -17,7 +17,7 @@ use crate::{
     ByteSize, Chart, ChartPicture, Combine, CombineLimitsSet, CombineQuery, FileName, HintId,
     Lookup, Output, OutputColumns, OutputLimitsSet, OutputWriter, PART_FROM, PART_TO, Param,
     Partition, PlannedPartition, Report, Source, SourceColumn, SourceLimitsSet, SourcePartition,
-    SourceRead, SourceSplit, grouped,
+    SourceRead, SourceRows, SourceSplit, grouped,
 };
 
 /// Keys a file may put in the wrong table, and where each goes, so it says so rather than
@@ -509,13 +509,16 @@ fn read_source(
     let timeout = fields.duration("timeout");
     let split = read_split(&mut fields);
     let columns = fields.take("columns").map(read_source_columns).transpose();
+    let columnar = fields.boolean("columnar");
     found.extend(fields.unknown(
         "a source",
-        "id, data_source, query, lookup, partition, max_rows_per_part, columns, attach, \
-         max_rows, max_bytes and timeout",
+        "id, data_source, query, lookup, partition, max_rows_per_part, columns, columnar, \
+         attach, max_rows, max_bytes and timeout",
     ));
-    let read = match (attach, query, max_rows, max_bytes, timeout, split, columns) {
-        (Ok(Some(true)), query, max_rows, max_bytes, timeout, split, columns) => {
+    let read = match (
+        attach, query, max_rows, max_bytes, timeout, split, columns, columnar,
+    ) {
+        (Ok(Some(true)), query, max_rows, max_bytes, timeout, split, columns, columnar) => {
             if !matches!(query, Ok(None)) {
                 found.push(Found::at(
                     "query",
@@ -545,7 +548,8 @@ fn read_source(
                 Ok(SourceSplit::Partition(_)) | Err(_) => Some("partition"),
             };
             let columns_key = (!matches!(columns, Ok(None))).then_some("columns");
-            for key in [split_key, columns_key].into_iter().flatten() {
+            let columnar_key = (!matches!(columnar, Ok(None))).then_some("columnar");
+            for key in [split_key, columns_key, columnar_key].into_iter().flatten() {
                 found.push(Found::at(
                     key,
                     format!(
@@ -556,28 +560,40 @@ fn read_source(
             }
             Ok(SourceRead::Attach)
         }
-        (Ok(_), Ok(query), Ok(max_rows), Ok(max_bytes), Ok(timeout), Ok(split), Ok(columns)) => {
-            query
-                .filter(|query| !query.trim().is_empty())
-                .map(|query| SourceRead::Query {
-                    query,
-                    limits: SourceLimitsSet {
-                        max_rows,
-                        max_bytes,
-                        timeout,
-                    },
-                    split,
-                    columns,
-                })
-                .ok_or_else(|| {
-                    vec![Found::at(
-                        "query",
-                        "needs a query, or attach = true to read a DuckDB file in place",
-                    )]
-                })
-        }
-        (attach, query, max_rows, max_bytes, timeout, split, columns) => {
+        (
+            Ok(_),
+            Ok(query),
+            Ok(max_rows),
+            Ok(max_bytes),
+            Ok(timeout),
+            Ok(split),
+            Ok(columns),
+            Ok(columnar),
+        ) => query
+            .filter(|query| !query.trim().is_empty())
+            .map(|query| SourceRead::Query {
+                query,
+                limits: SourceLimitsSet {
+                    max_rows,
+                    max_bytes,
+                    timeout,
+                },
+                split,
+                columns,
+                rows: match columnar {
+                    Some(false) => SourceRows::Text,
+                    Some(true) | None => SourceRows::Columnar,
+                },
+            })
+            .ok_or_else(|| {
+                vec![Found::at(
+                    "query",
+                    "needs a query, or attach = true to read a DuckDB file in place",
+                )]
+            }),
+        (attach, query, max_rows, max_bytes, timeout, split, columns, columnar) => {
             let mut errors = Vec::new();
+            errors.extend(columnar.err());
             errors.extend(attach.err());
             errors.extend(query.err());
             errors.extend(max_rows.err());

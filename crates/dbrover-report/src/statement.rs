@@ -12,7 +12,7 @@ use dbrover_sql::ParameterValues;
 
 use crate::{
     AS_OF, CostCheck, PART_FROM, PART_TO, PartRange, Plan, QuerySource, RangeKind, RunValues,
-    SourceStatement, WholePeriod,
+    SourceRows, SourceStatement, WholePeriod,
 };
 
 /// What a source's statements are made from.
@@ -20,14 +20,26 @@ pub(crate) struct Statements<'a> {
     plan: &'a Plan,
     values: &'a RunValues,
     source: &'a QuerySource,
+    rows: SourceRows,
 }
 
 impl<'a> Statements<'a> {
+    /// The statements of `source`, whose rows are read as text.
     pub(crate) fn new(plan: &'a Plan, values: &'a RunValues, source: &'a QuerySource) -> Self {
         Self {
             plan,
             values,
             source,
+            rows: SourceRows::Text,
+        }
+    }
+
+    /// The statements of `source` loaded into the combine step's DuckDB, whose rows come as
+    /// batches where it can (ADR 0007).
+    pub(crate) fn loaded(plan: &'a Plan, values: &'a RunValues, source: &'a QuerySource) -> Self {
+        Self {
+            rows: source.rows_for_loading(),
+            ..Self::new(plan, values, source)
         }
     }
 
@@ -107,6 +119,7 @@ impl<'a> Statements<'a> {
             parameters,
             deadline,
             cost: CostCheck::Statement,
+            rows: self.rows,
         }
     }
 

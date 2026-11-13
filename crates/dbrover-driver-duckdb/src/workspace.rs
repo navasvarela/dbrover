@@ -595,6 +595,41 @@ impl TableLoader {
         .map_err(connection_error)?
     }
 
+    /// Appends `batch`, an engine's own Arrow batch of the table's columns in their order, as
+    /// it is (ADR 0007): DuckDB casts a column whose type isn't its table column's, as text
+    /// into a column still loading as text.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError`] if the batch hasn't as many columns as the table, a value doesn't cast
+    /// to its column's type, or DuckDB runs out of memory.
+    pub async fn append_batch(&mut self, batch: RecordBatch) -> Result<(), DriverError> {
+        if batch.num_columns() != self.columns.len() {
+            return Err(connection_error(format!(
+                "a batch of {} columns for a table of {}",
+                batch.num_columns(),
+                self.columns.len()
+            )));
+        }
+        if batch.num_rows() == 0 {
+            return Ok(());
+        }
+        let connection = Arc::clone(&self.connection);
+        let table = self.table.clone();
+        tokio::task::spawn_blocking(move || {
+            let connection = connection.lock().map_err(|_| poisoned())?;
+            let mut appender = connection
+                .appender_to_db(&table, MAIN_SCHEMA)
+                .map_err(connection_error)?;
+            appender
+                .append_record_batch(batch)
+                .map_err(connection_error)?;
+            appender.flush().map_err(connection_error)
+        })
+        .await
+        .map_err(connection_error)?
+    }
+
     /// Gives each column its type in `types`, in the columns' order: a column loaded as text
     /// whose values chose another type is rewritten, alone; the rest of the table stays as it
     /// was loaded.

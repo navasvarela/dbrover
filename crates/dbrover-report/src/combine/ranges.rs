@@ -24,9 +24,10 @@ use crate::run::{Count, millis, timed};
 use crate::statement::Statements;
 use crate::{
     CostCheck, LimitHit, LimitSetIn, PartDone, PartRange, Parts, PlannedSourcePartition,
-    QUEUE_PAGES, RunEvent, RunFailure, SourceOpener, SourceRanges, SourceReader, grouped,
+    QUEUE_PAGES, RunEvent, RunFailure, SourceOpener, SourcePart, SourceRanges, SourceReader,
+    grouped,
 };
-use dbrover_core::{DriverError, Row};
+use dbrover_core::DriverError;
 use dbrover_driver_duckdb::Workspace;
 use tokio::sync::mpsc;
 
@@ -72,7 +73,11 @@ impl Ranges<'_, '_> {
         .await;
         loading.clock.waited(opened.1);
         let first = opened.0.map_err(|error| error.at(step.clone()))?;
-        let mut table = match loading.take_table(first.columns(), workspace).await {
+        let schema = first.batch_schema();
+        let mut table = match loading
+            .take_table(first.columns(), schema.as_deref(), workspace)
+            .await
+        {
             Ok(table) => table,
             Err(failure) => {
                 first.close().await;
@@ -134,7 +139,7 @@ impl Ranges<'_, '_> {
         shared: &RefCell<Shared<'_, '_>>,
         opener: &O,
         first: (Shaped<O::Reader>, Instant),
-        pages: mpsc::Sender<Vec<Row>>,
+        pages: mpsc::Sender<SourcePart>,
         events: Events<'_, '_, '_>,
         names: &[String],
     ) -> (Result<(), RunFailure>, Instant) {
@@ -183,7 +188,7 @@ impl Ranges<'_, '_> {
         mut reader: Shaped<R>,
         range: &PartRange,
         started: Instant,
-        pages: &mpsc::Sender<Vec<Row>>,
+        pages: &mpsc::Sender<SourcePart>,
         events: Events<'_, '_, '_>,
         names: &[String],
     ) -> Result<(), RunFailure> {
@@ -252,11 +257,11 @@ impl Ranges<'_, '_> {
         reader: &mut Shaped<R>,
         range: &PartRange,
         started: Instant,
-        pages: &mpsc::Sender<Vec<Row>>,
+        pages: &mpsc::Sender<SourcePart>,
     ) -> Result<Count, RunFailure> {
         let mut read = Count::default();
         loop {
-            let (page, waited) = timed(reader.next_page()).await;
+            let (page, waited) = timed(reader.next_part()).await;
             read.waited(waited, read.first_row.is_none());
             let step = || shared.borrow().loading.step();
             let page = match page {
@@ -268,7 +273,7 @@ impl Ranges<'_, '_> {
                 continue;
             }
             read.first_row.get_or_insert_with(|| started.elapsed());
-            read.add(&page);
+            read.add_part(&page);
             {
                 let mut shared = shared.borrow_mut();
                 let loading = &mut shared.loading;
@@ -276,7 +281,7 @@ impl Ranges<'_, '_> {
                     .read
                     .first_row
                     .get_or_insert_with(|| loading.opened.elapsed());
-                loading.read.add(&page);
+                loading.read.add_part(&page);
                 loading.read.check(loading.source)?;
             }
             self.check_range(range, read.rows, step)?;
@@ -343,13 +348,13 @@ fn tick(shared: &RefCell<Shared<'_, '_>>, step: &crate::Step, of: u64, events: E
     (events.borrow_mut())(event);
 }
 
-/// Appends the pages `queued` to `table` as they come, until every reader has ended; and when
+/// Appends the parts `queued` to `table` as they come, until every reader has ended; and when
 /// it was done. Its time waiting for a page counts as the source waiting on its engine, and
 /// its time appending as loading, in the source's progress. Stops at the first page DuckDB
 /// refuses, which closes the queue.
 async fn append_timed(
     table: &mut Table,
-    mut queued: mpsc::Receiver<Vec<Row>>,
+    mut queued: mpsc::Receiver<SourcePart>,
     shared: &RefCell<Shared<'_, '_>>,
 ) -> (Result<(), DriverError>, Instant) {
     let mut outcome = Ok(());
@@ -359,9 +364,7 @@ async fn append_timed(
             break;
         };
         shared.borrow_mut().loading.clock.waited(idle);
-        table.typer.see(&page);
-        table.count(&page);
-        let (appended, busy) = timed(table.loader.append(page)).await;
+        let (appended, busy) = timed(table.append(page)).await;
         shared.borrow_mut().loading.clock.loaded(busy);
         if let Err(error) = appended {
             outcome = Err(error);
