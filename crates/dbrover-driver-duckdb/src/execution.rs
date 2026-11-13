@@ -5,17 +5,22 @@
 //!
 //! Results are read as DuckDB streams them, one Arrow chunk (2,048 rows) at a time, through
 //! `Statement::step`. Not through the iterator `stream_arrow` returns, which panics when a
-//! fetch fails partway through a result, as a cast error in a later chunk does.
+//! fetch fails partway through a result, as a cast error in a later chunk does. A page is a
+//! chunk's rows as text; a batch is a chunk as DuckDB handed it over, but for the columns of
+//! types a batch doesn't carry, which are text (ADR 0007).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use dbrover_core::{CancelHandle, Cell, ColumnInfo, DriverError, Rejection, ResultCursor, Row};
+use dbrover_core::{
+    BatchCursor, CancelHandle, Cell, ColumnInfo, DriverError, Rejection, ResultCursor, Row,
+};
 use dbrover_sql::{Dialect, first_word};
 use duckdb::InterruptHandle;
 use duckdb::arrow::array::{Array, AsArray, StructArray};
-use duckdb::arrow::datatypes::{DataType, Int64Type, Schema};
+use duckdb::arrow::datatypes::{DataType, Int64Type, Schema, SchemaRef};
+use duckdb::arrow::record_batch::RecordBatch;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
@@ -70,11 +75,27 @@ impl Status {
 /// counted its rows).
 struct Started {
     columns: Vec<ColumnInfo>,
+    /// The schema of its rows read as batches.
+    batch_schema: SchemaRef,
     rows_changed: Option<u64>,
 }
 
+/// What the cursor asks the statement thread for: up to so many rows as text, or as a batch.
+#[derive(Debug, Clone, Copy)]
+enum Demand {
+    Rows(usize),
+    Batch(usize),
+}
+
+/// What the statement thread fetched for a demand.
+enum Fetched {
+    Rows(Vec<Row>),
+    /// `None` once the result has no more rows.
+    Batch(Option<RecordBatch>),
+}
+
 struct Page {
-    rows: Vec<Row>,
+    fetched: Fetched,
     exhausted: bool,
 }
 
@@ -112,6 +133,7 @@ pub(crate) async fn execute(
     let exhausted = started.columns.is_empty();
     Ok(Box::new(DuckDbCursor {
         columns: started.columns,
+        batch_schema: started.batch_schema,
         rows_changed: started.rows_changed,
         exhausted,
         demand: Some(demand),
@@ -123,7 +145,7 @@ pub(crate) async fn execute(
 /// How the statement thread talks to its cursor.
 struct Channels {
     started: oneshot::Sender<Result<Started, DriverError>>,
-    demand: mpsc::Receiver<usize>,
+    demand: mpsc::Receiver<Demand>,
     pages: mpsc::Sender<Result<Page, DriverError>>,
 }
 
@@ -165,6 +187,7 @@ fn run_statement(
         let ran = count(&statement)
             .map(|count| Started {
                 columns: Vec::new(),
+                batch_schema: Arc::new(Schema::empty()),
                 rows_changed: count.filter(|_| status == Status::Count),
             })
             .map_err(|error| statement_error(error, sql));
@@ -172,8 +195,10 @@ fn run_statement(
         return;
     }
     let columns = values::column_info(&schema);
+    let batch_schema = values::batch_schema(&schema);
     let reported = started.send(Ok(Started {
         columns,
+        batch_schema: Arc::clone(&batch_schema),
         rows_changed: None,
     }));
     if reported.is_ok() {
@@ -181,6 +206,7 @@ fn run_statement(
             statement: &statement,
             sql,
             cancelled,
+            batch_schema,
         };
         fetch.pages(&mut demand, &pages);
     }
@@ -204,23 +230,27 @@ fn first_count(chunk: &StructArray) -> Option<u64> {
     u64::try_from(column.as_primitive::<Int64Type>().value(0)).ok()
 }
 
-/// Reads a running statement's rows a page at a time.
+/// Reads a running statement's rows a page or a batch at a time.
 struct Fetch<'a> {
     statement: &'a duckdb::Statement<'a>,
     sql: &'a str,
     cancelled: &'a AtomicBool,
+    batch_schema: SchemaRef,
 }
 
 impl Fetch<'_> {
     fn pages(
         &self,
-        demand: &mut mpsc::Receiver<usize>,
+        demand: &mut mpsc::Receiver<Demand>,
         pages: &mpsc::Sender<Result<Page, DriverError>>,
     ) {
         // The chunk being read, and the next of its rows to read.
         let mut chunk: Option<(StructArray, usize)> = None;
-        while let Some(max_rows) = demand.blocking_recv() {
-            let page = self.page(&mut chunk, max_rows);
+        while let Some(wanted) = demand.blocking_recv() {
+            let page = match wanted {
+                Demand::Rows(max_rows) => self.page(&mut chunk, max_rows),
+                Demand::Batch(max_rows) => self.batch(&mut chunk, max_rows),
+            };
             let ended = !matches!(
                 page,
                 Ok(Page {
@@ -234,6 +264,27 @@ impl Fetch<'_> {
         }
     }
 
+    /// The chunk to read next: what is left of `chunk`, or DuckDB's next; `None` once the
+    /// result is exhausted.
+    fn next_chunk(
+        &self,
+        chunk: &mut Option<(StructArray, usize)>,
+    ) -> Result<Option<(StructArray, usize)>, DriverError> {
+        // DuckDB's interrupt stops a fetch in progress; this catches a cancel that arrived
+        // between fetches, or while rows were being sent.
+        if self.cancelled.load(Ordering::SeqCst) {
+            return Err(interrupted());
+        }
+        match chunk.take() {
+            Some((current, next_row)) if next_row < current.len() => Ok(Some((current, next_row))),
+            _ => match self.statement.step() {
+                Ok(Some(next)) => Ok(Some((next, 0))),
+                Ok(None) => Ok(None),
+                Err(error) => Err(statement_error(error, self.sql)),
+            },
+        }
+    }
+
     fn page(
         &self,
         chunk: &mut Option<(StructArray, usize)>,
@@ -241,30 +292,47 @@ impl Fetch<'_> {
     ) -> Result<Page, DriverError> {
         let mut rows = Vec::new();
         while rows.len() < max_rows {
-            // DuckDB's interrupt stops a fetch in progress; this catches a cancel that arrived
-            // between fetches, or while rows were being sent.
-            if self.cancelled.load(Ordering::SeqCst) {
-                return Err(interrupted());
-            }
-            let (current, next_row) = match chunk.take() {
-                Some((current, next_row)) if next_row < current.len() => (current, next_row),
-                _ => match self.statement.step() {
-                    Ok(Some(next)) => (next, 0),
-                    Ok(None) => {
-                        return Ok(Page {
-                            rows,
-                            exhausted: true,
-                        });
-                    }
-                    Err(error) => return Err(statement_error(error, self.sql)),
-                },
+            let Some((current, next_row)) = self.next_chunk(chunk)? else {
+                return Ok(Page {
+                    fetched: Fetched::Rows(rows),
+                    exhausted: true,
+                });
             };
             let wanted = (max_rows - rows.len()).min(current.len() - next_row);
             rows.extend(values::rows(&current, next_row..next_row + wanted));
             *chunk = Some((current, next_row + wanted));
         }
         Ok(Page {
-            rows,
+            fetched: Fetched::Rows(rows),
+            exhausted: false,
+        })
+    }
+
+    /// Up to `max_rows` rows of one chunk, as a batch: never more than a chunk, so DuckDB's
+    /// arrays are handed on without being copied into larger ones.
+    fn batch(
+        &self,
+        chunk: &mut Option<(StructArray, usize)>,
+        max_rows: usize,
+    ) -> Result<Page, DriverError> {
+        let (current, next_row) = loop {
+            match self.next_chunk(chunk)? {
+                None => {
+                    return Ok(Page {
+                        fetched: Fetched::Batch(None),
+                        exhausted: true,
+                    });
+                }
+                Some((current, _)) if current.is_empty() => {}
+                Some(found) => break found,
+            }
+        };
+        let wanted = max_rows.max(1).min(current.len() - next_row);
+        let batch = values::batch(&current, &self.batch_schema, next_row..next_row + wanted)
+            .map_err(connection_error)?;
+        *chunk = Some((current, next_row + wanted));
+        Ok(Page {
+            fetched: Fetched::Batch(Some(batch)),
             exhausted: false,
         })
     }
@@ -297,12 +365,40 @@ fn names_remote_address(sql: &str) -> bool {
 
 struct DuckDbCursor {
     columns: Vec<ColumnInfo>,
+    batch_schema: SchemaRef,
     rows_changed: Option<u64>,
     exhausted: bool,
     /// Dropping it tells the statement thread to stop and release the connection.
-    demand: Option<mpsc::Sender<usize>>,
+    demand: Option<mpsc::Sender<Demand>>,
     pages: mpsc::Receiver<Result<Page, DriverError>>,
     thread: JoinHandle<()>,
+}
+
+impl DuckDbCursor {
+    /// What the statement thread fetches for `wanted`; `None` once the result is exhausted.
+    async fn fetch(&mut self, wanted: Demand) -> Result<Option<Fetched>, DriverError> {
+        let Some(demand) = self.demand.as_ref().filter(|_| !self.exhausted) else {
+            return Ok(None);
+        };
+        if demand.send(wanted).await.is_err() {
+            self.exhausted = true;
+            return Ok(None);
+        }
+        match self.pages.recv().await {
+            Some(Ok(page)) => {
+                self.exhausted = page.exhausted;
+                Ok(Some(page.fetched))
+            }
+            Some(Err(error)) => {
+                self.exhausted = true;
+                Err(error)
+            }
+            None => {
+                self.exhausted = true;
+                Ok(None)
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -312,31 +408,19 @@ impl ResultCursor for DuckDbCursor {
     }
 
     async fn next_page(&mut self, max_rows: usize) -> Result<Vec<Row>, DriverError> {
-        let Some(demand) = self.demand.as_ref().filter(|_| !self.exhausted) else {
-            return Ok(Vec::new());
-        };
-        if demand.send(max_rows).await.is_err() {
-            self.exhausted = true;
-            return Ok(Vec::new());
-        }
-        match self.pages.recv().await {
-            Some(Ok(page)) => {
-                self.exhausted = page.exhausted;
-                Ok(page.rows)
-            }
-            Some(Err(error)) => {
-                self.exhausted = true;
-                Err(error)
-            }
-            None => {
-                self.exhausted = true;
-                Ok(Vec::new())
-            }
+        match self.fetch(Demand::Rows(max_rows)).await? {
+            Some(Fetched::Rows(rows)) => Ok(rows),
+            Some(Fetched::Batch(_)) | None => Ok(Vec::new()),
         }
     }
 
     fn is_exhausted(&self) -> bool {
         self.exhausted
+    }
+
+    /// DuckDB hands every result over as Arrow, so every cursor has batches.
+    fn batches(&mut self) -> Option<&mut dyn BatchCursor> {
+        Some(self)
     }
 
     /// Stops the statement thread and waits for it, so the connection is free again.
@@ -345,6 +429,20 @@ impl ResultCursor for DuckDbCursor {
         self.pages.close();
         (&mut self.thread).await.map_err(connection_error)?;
         Ok(self.rows_changed)
+    }
+}
+
+#[async_trait]
+impl BatchCursor for DuckDbCursor {
+    fn schema(&self) -> SchemaRef {
+        Arc::clone(&self.batch_schema)
+    }
+
+    async fn next_batch(&mut self, max_rows: usize) -> Result<Option<RecordBatch>, DriverError> {
+        match self.fetch(Demand::Batch(max_rows)).await? {
+            Some(Fetched::Batch(batch)) => Ok(batch),
+            Some(Fetched::Rows(_)) | None => Ok(None),
+        }
     }
 }
 

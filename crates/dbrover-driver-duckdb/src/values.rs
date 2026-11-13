@@ -10,11 +10,14 @@
 //! `VARCHAR` shows it whole.
 
 use std::ops::Range;
+use std::sync::Arc;
 
-use dbrover_core::{Cell, ColumnInfo, Row};
-use duckdb::arrow::array::{Array, ArrayRef, AsArray, StructArray};
+use dbrover_core::{Cell, ColumnInfo, Row, bulk_kind};
+use duckdb::arrow::array::{Array, ArrayRef, AsArray, StringArray, StructArray};
 use duckdb::arrow::compute::cast;
-use duckdb::arrow::datatypes::{DataType, Schema};
+use duckdb::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use duckdb::arrow::error::ArrowError;
+use duckdb::arrow::record_batch::RecordBatch;
 use duckdb::arrow::util::display::{ArrayFormatter, FormatOptions};
 
 /// Binary values longer than this are shown as their size, not their bytes: a result grid is
@@ -89,6 +92,51 @@ pub(crate) fn rows(chunk: &StructArray, range: Range<usize>) -> Vec<Row> {
     range
         .map(|row| columns.iter().map(|column| column.cell(row)).collect())
         .collect()
+}
+
+/// The schema of the batches a result of `schema` is read in (ADR 0007): each column of a
+/// bulk type as it is, every other as text.
+pub(crate) fn batch_schema(schema: &Schema) -> SchemaRef {
+    let fields: Vec<Field> = schema
+        .fields()
+        .iter()
+        .map(|field| match bulk_kind(field.data_type()) {
+            Some(_) => field.as_ref().clone(),
+            None => Field::new(field.name(), DataType::Utf8, true),
+        })
+        .collect();
+    Arc::new(Schema::new(fields))
+}
+
+/// Rows `range` of `chunk` as a batch of `schema`, from [`batch_schema`]: a column of a bulk
+/// type as DuckDB handed it over, every other as the text [`rows`] gives it.
+pub(crate) fn batch(
+    chunk: &StructArray,
+    schema: &SchemaRef,
+    range: Range<usize>,
+) -> Result<RecordBatch, ArrowError> {
+    let rows = chunk.slice(range.start, range.len());
+    let columns: Vec<ArrayRef> = rows
+        .columns()
+        .iter()
+        .zip(schema.fields())
+        .map(|(array, field)| {
+            if array.data_type() == field.data_type() {
+                Arc::clone(array)
+            } else {
+                text_column(array)
+            }
+        })
+        .collect();
+    RecordBatch::try_new(Arc::clone(schema), columns)
+}
+
+/// Each value of `array` as the text [`rows`] gives it.
+fn text_column(array: &ArrayRef) -> ArrayRef {
+    let array = formattable(array);
+    let column = Column::new(array.as_ref());
+    let values: StringArray = (0..array.len()).map(|row| column.cell(row)).collect();
+    Arc::new(values)
 }
 
 /// `array`, with a `TIMESTAMP WITH TIME ZONE` labelled `+00:00` rather than `UTC`, the same
