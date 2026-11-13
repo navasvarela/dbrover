@@ -1,7 +1,8 @@
 # 0004. Query results as text
 
 - Status: Accepted; extended by [0006](0006-documents-as-extended-json-text.md) for results
-  that are documents
+  that are documents, and amended by [0007](0007-arrow-on-bulk-paths.md) for paths that move
+  many rows
 - Date: 2026-10-22
 
 ## Context
