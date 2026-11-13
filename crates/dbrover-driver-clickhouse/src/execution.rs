@@ -46,7 +46,7 @@ pub(crate) enum Failure {
 }
 
 impl Failure {
-    fn from_client(error: clickhouse::error::Error) -> Self {
+    pub(crate) fn from_client(error: clickhouse::error::Error) -> Self {
         match error {
             clickhouse::error::Error::BadResponse(message) => Self::Server(message),
             other => Self::Connection(Box::new(other)),
@@ -65,7 +65,7 @@ impl Failure {
         }
     }
 
-    fn statement_error(self, sql: &str) -> DriverError {
+    pub(crate) fn statement_error(self, sql: &str) -> DriverError {
         if self.is_lost() {
             return DriverError::Lost(Box::new(self));
         }
@@ -174,13 +174,13 @@ impl ClickHouseCancel {
         }
     }
 
-    fn start(&self) -> String {
+    pub(crate) fn start(&self) -> String {
         let query_id = Uuid::new_v4().to_string();
         *self.running.lock().unwrap_or_else(PoisonError::into_inner) = Some(query_id.clone());
         query_id
     }
 
-    fn end(&self, query_id: &str) {
+    pub(crate) fn end(&self, query_id: &str) {
         let mut running = self.running.lock().unwrap_or_else(PoisonError::into_inner);
         if running.as_deref() == Some(query_id) {
             *running = None;
@@ -188,7 +188,7 @@ impl ClickHouseCancel {
     }
 
     /// Waits until the query has stopped (`SYNC`), so its session is free again.
-    async fn kill(&self, query_id: &str) -> Result<(), Failure> {
+    pub(crate) async fn kill(&self, query_id: &str) -> Result<(), Failure> {
         let query = self
             .client
             .query_raw("KILL QUERY WHERE query_id = {query_id:String} SYNC")
@@ -293,7 +293,7 @@ pub(crate) async fn execute(
 /// buffer, as a source's reduced result does, but only the start of a larger one. It is
 /// complete once it has read every row it expected to (`total_rows_to_read`); otherwise it is
 /// left out, rather than shown as less than the statement read.
-fn scanned(summary: &clickhouse::QuerySummary) -> Option<JobProgress> {
+pub(crate) fn scanned(summary: &clickhouse::QuerySummary) -> Option<JobProgress> {
     let read_rows = summary.read_rows()?;
     let expected = summary.total_rows_to_read().unwrap_or(0);
     if read_rows < expected {

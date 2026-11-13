@@ -48,6 +48,11 @@ anyhow = "1.0.104"
 # version the `duckdb` crate builds, so a batch reaches DuckDB's appender as it is: bump them only
 # together with `duckdb`.
 arrow-array = "58.4.0"
+arrow-buffer = "58.4.0"
+# Formats a ClickHouse batch's values as text, for a cursor started for batches read as pages.
+arrow-cast = { version = "58.4.0", default-features = false }
+# Decodes ClickHouse's `ArrowStream` (RS6e). No codecs: DbRover asks for an uncompressed stream.
+arrow-ipc = { version = "58.4.0", default-features = false }
 arrow-schema = "58.4.0"
 async-trait = "0.1.92"
 # Amazon DynamoDB (docs/nosql.md, N5) and the AWS sign-in it brings from C0 (docs/cloud-data.md):

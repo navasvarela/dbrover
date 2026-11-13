@@ -566,3 +566,160 @@ async fn says_what_a_statement_read_once_the_summary_has_all_of_it() {
     let large = read_to_end(&mut connection, "SELECT number FROM numbers(3000000)").await;
     assert_eq!(large, None);
 }
+
+/// Every kind of column: those a batch holds exactly, and those it sends as text, which
+/// ClickHouse's Arrow output would send as numbers (`DateTime`, `Date`, `Enum8`) or refuse
+/// (`UUID`).
+const EVERY_KIND: &str = "SELECT toInt64(number) AS id, toUInt64(18446744073709551615) AS big, \
+     toDecimal64(number + 0.5, 2) AS amount, toFloat64(0.25) AS rate, toFloat32(0.1) AS small, \
+     toBool(number % 2 = 0) AS even, toString(number) AS label, toLowCardinality('lc') AS kind, \
+     toDate32('2026-01-02') AS day32, toDate('2026-01-02') AS day, \
+     toDateTime('2026-01-02 03:04:05', 'UTC') AS at, \
+     toDateTime64('2026-01-02 03:04:05.123', 3, 'UTC') AS at_ms, \
+     CAST('b' AS Enum8('a' = 1, 'b' = 2)) AS letter, \
+     toUUID('00000000-0000-0000-0000-000000000001') AS uuid, [1, 2] AS pair, \
+     CAST(NULL AS Nullable(Int64)) AS nothing, toInt128(5) AS huge \
+     FROM numbers(3)";
+
+#[tokio::test]
+async fn hands_out_batches_of_bulk_types_and_the_rest_as_clickhouses_text() {
+    use arrow_array::Array;
+    use arrow_array::cast::AsArray;
+
+    let Some(server) = test_server() else {
+        return;
+    };
+    let mut connection = server.connect().await;
+    let mut cursor = connection.execute(EVERY_KIND).await.unwrap();
+    let text = cursor.next_page(10).await.unwrap();
+    cursor.finish().await.unwrap();
+
+    let mut cursor = connection
+        .execute_for_batches(EVERY_KIND, &[])
+        .await
+        .unwrap();
+    let names: Vec<String> = cursor.columns().iter().map(|c| c.name.clone()).collect();
+    let batches = cursor.batches().expect("ClickHouse gives batches");
+    let schema = batches.schema();
+    let batch = batches.next_batch(2).await.unwrap().unwrap();
+    assert_eq!(batch.num_rows(), 2);
+    let rest = batches.next_batch(2).await.unwrap().unwrap();
+    assert_eq!(rest.num_rows(), 1);
+    assert!(batches.next_batch(2).await.unwrap().is_none());
+    assert!(cursor.is_exhausted());
+    cursor.finish().await.unwrap();
+
+    let types: Vec<(String, String)> = schema
+        .fields()
+        .iter()
+        .map(|field| (field.name().clone(), field.data_type().to_string()))
+        .collect();
+    let expected = [
+        ("id", "Int64"),
+        ("big", "UInt64"),
+        ("amount", "Decimal128(18, 2)"),
+        ("rate", "Float64"),
+        ("small", "Utf8"),
+        ("even", "Boolean"),
+        ("label", "Utf8"),
+        ("kind", "Utf8"),
+        ("day32", "Date32"),
+        ("day", "Utf8"),
+        ("at", "Utf8"),
+        ("at_ms", "Utf8"),
+        ("letter", "Utf8"),
+        ("uuid", "Utf8"),
+        ("pair", "Utf8"),
+        ("nothing", "Int64"),
+        ("huge", "Utf8"),
+    ]
+    .map(|(name, type_name)| (name.to_owned(), type_name.to_owned()));
+    assert_eq!(types, expected);
+    assert_eq!(names, expected.map(|(name, _)| name));
+    for (index, field) in schema.fields().iter().enumerate() {
+        if field.data_type() == &arrow_schema::DataType::Utf8 && field.name() != "pair" {
+            let column = batch.column(index).as_string::<i32>();
+            let value = (!column.is_null(0)).then(|| column.value(0).to_owned());
+            assert_eq!(value, text[0][index], "{}", field.name());
+        }
+    }
+}
+
+#[tokio::test]
+async fn reads_pages_from_batches_and_runs_a_statement_it_cannot_describe_as_text() {
+    let Some(server) = test_server() else {
+        return;
+    };
+    let mut connection = server.connect().await;
+    let mut cursor = connection
+        .execute_for_batches("SELECT number AS n FROM numbers(5) ORDER BY n;", &[])
+        .await
+        .unwrap();
+    assert!(cursor.batches().is_some());
+    let rows = cursor.next_page(3).await.unwrap();
+    assert_eq!(
+        rows,
+        [["0"], ["1"], ["2"]].map(|row| row.map(|v| Some(v.to_owned())).to_vec())
+    );
+    assert_eq!(cursor.next_page(10).await.unwrap().len(), 2);
+    cursor.finish().await.unwrap();
+
+    let mut cursor = connection
+        .execute_for_batches("SHOW DATABASES", &[])
+        .await
+        .unwrap();
+    assert!(cursor.batches().is_none());
+    assert!(!cursor.next_page(100).await.unwrap().is_empty());
+    cursor.finish().await.unwrap();
+}
+
+#[tokio::test]
+async fn an_empty_result_has_its_schema_and_no_batch() {
+    let Some(server) = test_server() else {
+        return;
+    };
+    let mut connection = server.connect().await;
+    let mut cursor = connection
+        .execute_for_batches(
+            "SELECT number AS n, toString(number) AS s FROM numbers(0)",
+            &[],
+        )
+        .await
+        .unwrap();
+    let batches = cursor.batches().unwrap();
+    assert_eq!(batches.schema().fields().len(), 2);
+    assert!(batches.next_batch(10).await.unwrap().is_none());
+    cursor.finish().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_result_left_unread_is_killed_and_frees_the_session() {
+    let Some(server) = test_server() else {
+        return;
+    };
+    let mut connection = server.connect().await;
+    let mut cursor = connection
+        .execute_for_batches("SELECT number FROM numbers(100000000000)", &[])
+        .await
+        .unwrap();
+    let batches = cursor.batches().unwrap();
+    assert!(batches.next_batch(100).await.unwrap().is_some());
+    assert!(cursor.finish().await.is_err(), "reported as cancelled");
+    connection.ping().await.expect("the session is free again");
+}
+
+#[tokio::test]
+async fn a_failing_query_says_why_when_started_for_batches() {
+    let Some(server) = test_server() else {
+        return;
+    };
+    let mut connection = server.connect().await;
+    let error = match connection
+        .execute_for_batches("SELECT no_such_column FROM numbers(1)", &[])
+        .await
+    {
+        Ok(_) => panic!("the query has no such column"),
+        Err(error) => dbrover_core::describe_error(&error),
+    };
+    assert!(error.contains("no_such_column"), "{error}");
+}
