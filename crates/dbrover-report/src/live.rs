@@ -4,7 +4,12 @@
 //! writing the outputs. A step waiting minutes for its first row still says so each second.
 
 use std::future::Future;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+// Tokio's clock rather than the system's: it is the system's at run time, and a test can pause
+// it, so that a lap's shares count only the time its sleeps stand for, not how long a slow CI
+// runner takes over DuckDB's work between them.
+use tokio::time::Instant;
 
 use crate::Busy;
 use crate::run::PROGRESS_EVERY;

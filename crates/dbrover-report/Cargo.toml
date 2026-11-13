@@ -42,6 +42,8 @@ calamine.workspace = true
 # Decodes a chart's PNG to look at its pixels.
 resvg.workspace = true
 tempfile.workspace = true
+# Pauses tokio's clock, which times a step's progress laps, in tests that check their shares.
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true
