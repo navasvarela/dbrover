@@ -2680,27 +2680,45 @@ measurement.
   ClickHouse Cloud.
 - **RS7 — Lakes and warehouses in the combine:** a lake read in place by the combine step,
   with DuckDB's pruning, and large warehouse results handed over through a bucket the user
-  names. Started on 2026-11-15, after C2 and C4; what today's code changes in the plan is in
+  names. Built on 2026-11-15, after C2 and C4, in one stack of six layers: the lake path,
+  which is RS7's exit. The handoff through a bucket (RS7f, RS7g) waits for a stack of its own,
+  with C5, since each engine needs its own stand-in to be tried without an account. What
+  today's code changes in the plan is in
   [RS7 against today's code](reports-at-scale.md#rs7-against-todays-code). In layers, one PR
   each:
-  - **RS7a — The plan:** RS7's decisions against today's code, and
+  - **RS7a — The plan:** built; RS7's decisions against today's code, and
     [ADR 0008](adr/0008-a-locked-workspace-reads-a-named-bucket.md), which says what a locked
     workspace may reach.
-  - **RS7b — A bucket in the workspace:** the extensions a lake needs loaded and the bucket's
-    secret made before the lock, and the lock allowing the lake's prefixes and nothing else.
-  - **RS7c — A lake source in a report:** `lake` on a `[[source]]`, a view over its path, and
-    Parquet, CSV, Iceberg and Delta read in place.
-  - **RS7d — The cost guard over a lake:** the bytes a lake holds, from the bucket's listing
-    and the files' footers, against the data source's `ask_above_bytes`.
-  - **RS7e — Bytes read in the profile:** what each lake's scan asked the bucket for, and the
-    `lake-scan` hint.
-  - **RS7f — Handoff, and Athena's result files:** `handoff` on a source, and Athena's results
-    read from S3 instead of paged.
-  - **RS7g — Trino's spooled results and BigQuery's `EXPORT DATA`.**
-  - **RS7h — Manual, demo note and the exit test.**
+  - **RS7b — A bucket in the workspace:** built; the extensions a lake needs loaded and the
+    bucket's secret made before the lock, and the lock allowing the lake's prefixes and
+    nothing else.
+  - **RS7c — A lake source in a report:** built; `lake` on a `[[source]]`, a view over its
+    path, and Parquet, CSV, JSON, Iceberg and Delta read in place.
+  - **RS7d — The cost guard over a lake:** built; the bytes a lake holds, from its files'
+    Parquet footers, against the DuckDB data source's new `ask_above_bytes`.
+  - **RS7e — Bytes read in the profile:** built; what each lake's scan asked the bucket for,
+    from DuckDB's own HTTP log.
+  - **RS7f — Handoff, and Athena's result files:** not built; `handoff` on a source, and
+    Athena's results read from S3 instead of paged.
+  - **RS7g — Trino's spooled results and BigQuery's `EXPORT DATA`:** not built.
+  - **RS7h — Manual, demo note and the exit test:** built.
 
   **Exit:** on MinIO in CI, a report joins a PostgreSQL source with a partitioned Parquet lake,
-  and the profile shows the lake's bytes read far below its size.
+  and the profile shows the lake's bytes read far below its size. Met on 2026-11-15: a report
+  joined `rs7_items` in PostgreSQL with a Parquet lake of 240,000 rows laid out by month, and
+  read 20,796 of the lake's 212,473 bytes in three requests
+  ([RS7's exit test](reports-at-scale.md#rs7s-exit-test)).
+
+  **RS7 demo note:** with MinIO from the Compose file as a DuckDB data source `lake` (the
+  bucket `dbrover`, its access key's secret saved), a report whose `[[source]]` reads
+  `lake = "sales/year=*/*.parquet"` with `hive_partitioning = true`, joined in `[combine]`
+  with a loaded source: **Run** it, then open **Profile**. The lake's step says *a parquet
+  lake read in place*, with its address and the bytes and requests its scan made; add
+  `WHERE year = 2025` to the combine query and run again, and the bytes fall to one year's.
+  Set **Refuse a lake above** to a gigabyte less than the lake and the run stops before it
+  reads a row, naming what the lake holds. Not checked on Windows or Linux, nor against S3,
+  Google Cloud Storage or Azure Blob Storage themselves; the handoff through a bucket (RS7f,
+  RS7g) isn't built.
 - **RS8 — Reports over MCP:** read-only tools to list, explain and compare reports and their
   runs, and the decision on MCP clients running them.
 - **RS9 — Composing reports:** a report used as another's source, by name, with its

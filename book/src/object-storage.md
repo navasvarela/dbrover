@@ -90,6 +90,10 @@ DbRover checks a statement as you type by asking DuckDB to prepare it, except a 
 names a remote address (`s3://`, `https://`, …): preparing it would read the file from the
 bucket at every pause. Its errors show when it runs.
 
+A report reads a bucket too, with `lake` on a `[[source]]`: its combine step joins the bucket's
+files with the report's other sources and reads only the parts the query needs. See
+[Lakes in the combine](reports.md#lakes-in-the-combine).
+
 ## Extensions, and working offline
 
 DuckDB reads buckets and table formats with extensions it downloads from
@@ -132,7 +136,7 @@ as on any DuckDB database. A MotherDuck data source can read a bucket too, signe
 but an access key, since its one password is the token.
 
 A **read-only** MotherDuck data source has statements checked, but isn't opened read-only, so
-the MCP server doesn't serve it; a report can't attach one.
+the MCP server doesn't serve it; a report can't attach one, though it can read a lake in its bucket.
 
 ## What wasn't tried
 

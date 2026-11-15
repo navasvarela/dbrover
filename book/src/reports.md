@@ -396,6 +396,9 @@ and `T` works in place of the space).
 | `data_source` | The data source it reads, by its name in the explorer. When two share a name, use the data source's id instead (in `data_sources.toml`). Needed. |
 | `query` | One statement that only reads, in the data source's own SQL. Needed, unless `attach = true`. |
 | `attach` | `true` for a DuckDB file that `[combine]` reads in place, without a query. See [Several sources](#several-sources). |
+| `lake` | A path in the data source's bucket that `[combine]` reads in place, without a query, as `"sales/year=*/*.parquet"`. See [Lakes in the combine](#lakes-in-the-combine). |
+| `format` | How a lake's files are read: `"parquet"`, `"csv"`, `"json"`, `"iceberg"` or `"delta"`. Needed only where the path's own name doesn't say, which is every Iceberg and Delta table. |
+| `hive_partitioning` | `true` when the folder names in a lake's path are columns, as `year=2026/` is. |
 | `lookup` | Reads by the values an earlier source found, as `{ from = "flows", column = "battery_id", as = "battery_ids" }`. See [Lookups](#lookups). |
 | `partition` | Reads the query in ranges of time or of a key, a statement each, as `{ from = ":since", to = ":until", every = "1 month" }`. See [Partitions](#partitions). |
 | `max_rows_per_part` | The most rows each range of a partitioned source may return. No limit unless you say. |
@@ -583,8 +586,9 @@ DuckDB's SQL: joins of every kind, `ASOF JOIN` for "the latest price at or befor
 window functions, `GROUP BY GROUPING SETS` for subtotals, `PIVOT`.
 
 The combine query reads nothing else: no file on your disk, no extension from the internet, no
-setting of DuckDB's. A report with one source and no `[combine]` runs without DuckDB, as the
-one under [A report file](#a-report-file) does.
+setting of DuckDB's, except the prefix of each lake the file names with `lake` (see
+[Lakes in the combine](#lakes-in-the-combine)). A report with one source and no `[combine]`
+runs without DuckDB, as the one under [A report file](#a-report-file) does.
 
 A DuckDB file can be read by one program while another has it open for writing only if neither
 writes. Tick **Read-only** on a DuckDB data source that a report attaches, or disconnect it
@@ -685,6 +689,97 @@ so is the one source of a report without `[combine]`, which goes straight to the
 ClickHouse is asked for the query's columns first (`DESCRIBE`, which reads no data), so it
 can send the ones without an exact Arrow type as text; a statement it can't describe, such as
 one ending in its own `FORMAT`, is read as text.
+
+### Lakes in the combine
+
+A `[[source]]` can read a lake in a bucket where it lies, instead of copying it into the run.
+Its `data_source` is a DuckDB data source with a bucket (see
+[Object storage](object-storage.md)), and `lake` is a path in that bucket:
+
+```toml
+[[source]]
+id = "events"
+data_source = "lake"
+lake = "events/month=*/*.parquet"
+hive_partitioning = true
+
+[[source]]
+id = "items"
+data_source = "shop-postgres"
+query = "SELECT item, name FROM items"
+
+[combine]
+query = """
+SELECT items.name, count(*) AS events, sum(events.amount) AS total
+FROM events JOIN items USING (item)
+WHERE events.month = 7
+GROUP BY ALL ORDER BY items.name
+"""
+```
+
+`[combine]` reads `events` as it reads any source's table, and **DuckDB reads only the parts
+of the lake the query needs**: the files whose folder names the `WHERE` keeps
+(`hive_partitioning = true` makes `month` a column), the columns the query names, and the
+row groups whose own statistics can hold a matching row, each fetched as a range of its file.
+A query over one month of twelve reads about a twelfth of the lake. Nothing is loaded into the
+run's database, so the lake costs the run no disk and no memory of its own, and a lake of
+terabytes is a report a laptop can run.
+
+What the path may be:
+
+| `lake` | Read as |
+| --- | --- |
+| `sales/2026-*.csv`, `events/*.json` | the files the path matches, by their name's own ending |
+| `events/month=*/*.parquet` | the Parquet files the path matches; `**` matches folders too |
+| `warehouse/products` with `format = "delta"` | the Delta table in that folder |
+| `warehouse/shop/orders` with `format = "iceberg"` | the Iceberg table in that folder, at its newest snapshot |
+
+A path is a key in the data source's own bucket, with or without the bucket's address
+(`s3://sales/…`, `gs://…`, `az://…`); a path in another bucket is a problem in the file. An
+Iceberg table is read from the newest metadata file in its `metadata/` folder, which DbRover
+finds by listing it, as the explorer does; a table whose data files lie outside its own folder
+can't be read, because the run allows the table's folder and nothing else.
+
+A lake sends no query, so it takes none of the keys that bound or shape one: no `max_rows`,
+`max_bytes` or `timeout`, no `lookup`, `partition`, `columns` or `columnar`. What bounds it is
+`[combine]`'s own `memory_limit`, `max_temp_size` and `timeout`, and the data source's
+**Refuse a lake above**, which the next section explains.
+
+**What a run may reach.** Once the sources are in, a run's DuckDB is cut off from everything
+but what the report named: it may read the prefix of each lake the file names — the path up to
+its first wildcard — and nothing else. Not another prefix of the same bucket, not a file on
+your disk, not an address, and no extension it hasn't already loaded. A path that is wrong, or
+a table whose files lie elsewhere, fails with DuckDB's own *file system operations are
+disabled by configuration*, naming the path.
+
+**What it cost.** The run's Profile says what each lake's scan asked its bucket for: the
+requests DuckDB made and the bytes their answers carried, which is what the bucket bills for
+reading. `dbrover report run` prints the same line.
+
+**Credentials.** The bucket is read with the data source's own sign-in (an AWS profile, a
+Google or Entra ID token, an access key's secret from the keychain), which DbRover gives
+DuckDB as a temporary secret, kept in memory and never written to disk. A combine step that
+runs for longer than a temporary credential lasts gets a fresh one before the query starts; a
+query already running can't be given one, so a very long combine over credentials that expire
+in minutes may fail part-way. The run needs the extensions DuckDB reads buckets with
+(`httpfs`, and `iceberg` or `delta` for a table format), which DuckDB downloads once per
+version; a machine that can't reach `extensions.duckdb.org` can't read a lake, and the run
+says so before it starts.
+
+### Refusing a lake that is too large
+
+A DuckDB data source with a bucket has **Refuse a lake above**, in gigabytes: a run whose lake
+holds more is stopped before it reads a row, naming what the lake holds and the limit. Nobody
+can be asked during a run, as for a source's query.
+
+The size comes from the Parquet footers of the lake's own files, which is a small request per
+file and no rows read: the compressed size of every column of every file the path matches. The
+read itself is this or less, since the filters, the partitions and the row groups make it
+smaller. A CSV or JSON lake has no footer to read, so it isn't judged; the limit holds only
+lakes of Parquet, Iceberg and Delta.
+
+The limit is the data source's, so it holds every report that reads that bucket. Set it where
+a bucket's egress is billed and a mistyped path would be expensive.
 
 ### Exact numbers in DuckDB
 
