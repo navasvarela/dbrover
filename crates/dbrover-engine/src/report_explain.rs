@@ -10,7 +10,8 @@
 //!    would refuse it.
 
 use dbrover_core::{
-    Connection, CostEstimate, CostGuard, DriverKind, ReadPace, Row, describe_error,
+    Connection, CostEstimate, CostGuard, DataSource, DriverKind, Password, ReadPace, Row,
+    describe_error,
 };
 use dbrover_plan::PlanFormat;
 use dbrover_report::{Estimate, ExplainedPlan, SourceExplained, SourceExplainer, SourceStatement};
@@ -97,6 +98,22 @@ fn explaining(
 }
 
 impl SourceExplainer for SourceAccess<'_> {
+    async fn password(&self, data_source: &DataSource) -> Option<Password> {
+        match crate::report_source::bucket_password(data_source, self.secrets).await {
+            Ok(password) => password,
+            // Explaining a report shows what it would do; a keychain that won't answer is
+            // left to the lake's own read to report.
+            Err(error) => {
+                tracing::warn!(
+                    "could not read the password of {:?} for its bucket: {}",
+                    data_source.name,
+                    describe_error(&error)
+                );
+                None
+            }
+        }
+    }
+
     async fn explain(&self, statement: &SourceStatement<'_>) -> SourceExplained {
         let source = statement.source;
         let failed = |statement: String, message: String| SourceExplained {

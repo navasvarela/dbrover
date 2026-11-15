@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use arrow_array::RecordBatch;
 use arrow_schema::SchemaRef;
-use dbrover_core::{ResultShape, Row};
+use dbrover_core::{DataSource, Password, ResultShape, Row};
 use dbrover_export::{
     CompletedFile, EXCEL_MAX_ROWS, ExportColumn, ExportWriter, OutputSchema, RowConverter,
 };
@@ -61,6 +61,20 @@ pub trait SourceOpener {
         &self,
         statement: &SourceStatement<'_>,
     ) -> impl Future<Output = Result<Self::Reader, SourceError>>;
+
+    /// The data source's own password, which is the secret of its bucket's access key where
+    /// its bucket signs in with one (C2): what a lake read in place needs, and nothing else
+    /// in a run asks for, since every source's own connection resolves its password itself.
+    ///
+    /// The default has none, which is what a public bucket, a local stand-in and a sign-in
+    /// of the machine's own (an AWS profile, a Google or Entra ID token) take.
+    fn password(
+        &self,
+        data_source: &DataSource,
+    ) -> impl Future<Output = Result<Option<Password>, SourceError>> {
+        let _ = data_source;
+        async { Ok(None) }
+    }
 }
 
 /// One statement a source sends: its whole query, or one batch of its lookup.

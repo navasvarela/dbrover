@@ -16,7 +16,8 @@ use std::time::{Duration, Instant};
 
 use arrow_schema::SchemaRef;
 use dbrover_core::{
-    CancelHandle, Connection, CostGuard, ReadPace, ResultCursor, ResultShape, Row, describe_error,
+    CancelHandle, Connection, CostGuard, DataSource, Password, ReadPace, ResultCursor, ResultShape,
+    Row, describe_error,
 };
 use dbrover_export::ExportColumn;
 use dbrover_report::{
@@ -24,10 +25,12 @@ use dbrover_report::{
     SourceStatement,
 };
 use dbrover_sql::Prepared;
-use dbrover_store::SecretStore;
+use dbrover_store::{Secret, SecretStore};
 
+use crate::open::OpenError;
+use crate::passwords::Prompting;
 use crate::read_only::{self, Guard, ReadOnlyMode, Storage};
-use crate::{PasswordCommands, Tunnels, open_data_source};
+use crate::{PasswordCommands, PasswordUpdate, Tunnels, open_data_source};
 
 /// Rows asked for at a time: a few hundred kilobytes of a typical row, few enough round trips
 /// to keep a million-row source fast, and what the caps are counted in steps of.
@@ -57,6 +60,30 @@ impl SourceOpener for SourceAccess<'_> {
     async fn open(&self, statement: &SourceStatement<'_>) -> Result<ReportSource, SourceError> {
         ReportSource::open(statement, *self).await
     }
+
+    async fn password(&self, data_source: &DataSource) -> Result<Option<Password>, SourceError> {
+        bucket_password(data_source, self.secrets)
+            .await
+            .map_err(|error| SourceError::new(describe_error(&error)))
+    }
+}
+
+/// The data source's saved password, which C2 keeps a bucket's access key's secret as.
+///
+/// A report's run can't be asked for one, so an empty keychain gives `None` and the lake's
+/// read fails with the store's own refusal, which says more than a guess here would.
+pub(crate) async fn bucket_password(
+    data_source: &DataSource,
+    secrets: &Arc<dyn SecretStore>,
+) -> Result<Option<Password>, OpenError> {
+    crate::passwords::resolve(
+        data_source.id,
+        Secret::Database,
+        secrets,
+        &PasswordUpdate::Keep,
+        Prompting::Never,
+    )
+    .await
 }
 
 /// A report's source, open and running its statement.

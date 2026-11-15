@@ -8,9 +8,13 @@
 //! The one exception is the bucket's secret, which the lock lets DbRover replace while the
 //! combine runs, before the credentials it was made from expire.
 
+use std::sync::Arc;
 use std::time::SystemTime;
 
-use dbrover_core::{LakeFormat, LakePath, ObjectStorage, Password, StorageProvider};
+use dbrover_cloud::storage::Lister;
+use dbrover_core::{
+    DriverError, LakeFormat, LakePath, ObjectStorage, Password, StorageProvider, TableFormat,
+};
 
 use crate::bucket::{Bucket, BucketError, SecretStatement};
 use crate::workspace::{MAIN_SCHEMA, identifier, string_literal};
@@ -172,6 +176,40 @@ impl BucketSignIn {
     /// Records that DuckDB took the secret [`BucketSignIn::due_secret`] gave.
     pub(crate) fn made(&mut self) {
         self.bucket.made();
+    }
+
+    /// The address an Iceberg table at `path` is read from: its newest metadata file, found by
+    /// listing the table's metadata folder, as the explorer finds it (C2).
+    ///
+    /// DuckDB reads an Iceberg table from a metadata file, and refuses to guess the newest one
+    /// unless `unsafe_enable_version_guessing` is set, which would read uncommitted data.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError::Connection`] when signing in to the bucket fails, when the bucket can't
+    /// be listed, or when the table's metadata folder holds no metadata file.
+    pub async fn iceberg_metadata(&mut self, path: &LakePath) -> Result<String, DriverError> {
+        let prefix = format!("{}/", path.key());
+        let lister = self
+            .lister(SystemTime::now())
+            .await
+            .map_err(crate::connection_error)?;
+        let name = crate::table_source_name(&lister, &prefix, TableFormat::Iceberg)
+            .await?
+            .ok_or_else(|| {
+                crate::connection_error(format!(
+                    "{} holds no Iceberg metadata file: {}metadata/ has none, so there is no \
+                     table to read. An Iceberg lake names the table's folder.",
+                    path.url(),
+                    path.url()
+                ))
+            })?;
+        Ok(format!("{}/{name}", path.url()))
+    }
+
+    /// The client that lists the bucket, signed in as DuckDB's secret is.
+    async fn lister(&mut self, now: SystemTime) -> Result<Arc<Lister>, BucketError> {
+        self.bucket.lister(now).await
     }
 
     /// Makes the sign-in expire at `at`, as temporary credentials do.

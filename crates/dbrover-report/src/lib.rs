@@ -48,7 +48,7 @@ pub use combine::QUEUE_PAGES;
 pub use disk::DiskBudget;
 pub use embedded::{Embedded, PrqlToken, StepLanguage, embedded_code, prql_tokens};
 pub use events::{
-    Batch, Busy, CombineCaps, LimitHit, LimitSetIn, LoadedColumn, Machine, PartDone,
+    Batch, Busy, CombineCaps, LakeStart, LimitHit, LimitSetIn, LoadedColumn, Machine, PartDone,
     PartitionStart, Parts, Preview, Resumed, RunEvent, RunFailure, RunPartitionStart, SourceCaps,
     SourcePhases, SourceStart, Step, TimedEvent, WrittenFile, counted,
 };
@@ -75,15 +75,16 @@ pub use partition::{
     PlannedPartition, RangeBound, RangeKind,
 };
 pub use plan::{
-    AttachedSource, Combined, Logic, OutputFormat, Plan, PlannedCombine, PlannedLookup,
+    AttachedSource, Combined, LakeSource, Logic, OutputFormat, Plan, PlannedCombine, PlannedLookup,
     PlannedOutput, PlannedSource, PlannedSourcePartition, PlannedSplit, QuerySource, RunValues,
     SourceRanges, TypedValues,
 };
 pub use problem::{Locator, Place, ReportProblem, Table};
 pub use read::{read_report, read_with_places};
 pub use report::{
-    Chart, ChartPicture, Combine, CombineQuery, Lookup, Output, OutputColumns, OutputWriter, Param,
-    Report, Source, SourceColumn, SourcePartition, SourceRead, SourceRows, SourceSplit,
+    Chart, ChartPicture, Combine, CombineQuery, LakeRead, Lookup, Output, OutputColumns,
+    OutputWriter, Param, Report, Source, SourceColumn, SourcePartition, SourceRead, SourceRows,
+    SourceSplit,
 };
 pub use request::{ExplainRequest, RunRequest};
 pub use run::{
@@ -98,6 +99,8 @@ mod batch_tests;
 mod chart_tests;
 #[cfg(test)]
 mod combine_tests;
+#[cfg(test)]
+mod lake_tests;
 #[cfg(test)]
 mod lookup_tests;
 #[cfg(test)]

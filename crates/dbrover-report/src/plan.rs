@@ -6,7 +6,9 @@ use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use dbrover_core::{BlobId, ConnectionConfig, DataSource, DuckDbDatabase};
+use dbrover_core::{
+    BlobId, ConnectionConfig, DataSource, DuckDbDatabase, LakeFormat, LakePath, ObjectStorage,
+};
 use dbrover_export::{
     CellTarget, ColumnType, CsvOptions, CustomFormat, CustomFormatKind, ExportFormat, ExportSpec,
     ParquetOptions, SchemaColumn, XlsxOptions,
@@ -15,16 +17,16 @@ use dbrover_language::QueryLanguage;
 use dbrover_sql::{Dialect, ParameterValues, StatementKind};
 
 use crate::events::{
-    CombineCaps, Machine, PartitionStart, RunEvent, RunPartitionStart, SourceCaps,
+    CombineCaps, LakeStart, Machine, PartitionStart, RunEvent, RunPartitionStart, SourceCaps,
 };
 use crate::problem::{Place, ReportProblem, Table, messages};
 use crate::run::millis;
 use crate::{
-    AS_OF, ByteSize, Chart, CombineLimits, CombineLimitsSet, CombineQuery, FileName, LimitDefaults,
-    LimitSetIn, Lookup, Output, OutputColumns, OutputLimits, OutputLimitsSet, OutputWriter,
-    PART_FROM, PART_TO, Param, PartRange, PlannedPartition, Report, Source, SourceColumn,
-    SourceLimits, SourceLimitsSet, SourcePartition, SourceRead, SourceRows, SourceSplit,
-    SourceStart, Step,
+    AS_OF, ByteSize, Chart, CombineLimits, CombineLimitsSet, CombineQuery, FileName, LakeRead,
+    LimitDefaults, LimitSetIn, Lookup, Output, OutputColumns, OutputLimits, OutputLimitsSet,
+    OutputWriter, PART_FROM, PART_TO, Param, PartRange, PlannedPartition, Report, Source,
+    SourceColumn, SourceLimits, SourceLimitsSet, SourcePartition, SourceRead, SourceRows,
+    SourceSplit, SourceStart, Step,
 };
 
 /// A report ready to run.
@@ -79,7 +81,7 @@ impl FileLimits {
                 .iter()
                 .filter_map(|source| match &source.read {
                     SourceRead::Query { limits, .. } => Some((source.id.clone(), *limits)),
-                    SourceRead::Attach => None,
+                    SourceRead::Attach | SourceRead::Lake(_) => None,
                 })
                 .collect(),
             combine: report
@@ -180,6 +182,7 @@ impl SourceStart {
             id: source.id.clone(),
             data_source: source.data_source.name.clone(),
             attached: false,
+            lake: None,
             waits_for: source.split.lookup().map(|lookup| lookup.from.clone()),
             engine: Some(engine(&source.data_source)),
             limits: Some(SourceCaps::from(&source.limits)),
@@ -221,6 +224,8 @@ impl From<&CombineLimits> for CombineCaps {
 pub enum PlannedSource {
     Query(QuerySource),
     Attached(AttachedSource),
+    /// A lake in a bucket, read in place by the combine step (RS7).
+    Lake(LakeSource),
 }
 
 impl PlannedSource {
@@ -228,6 +233,7 @@ impl PlannedSource {
         match self {
             Self::Query(source) => &source.id,
             Self::Attached(source) => &source.id,
+            Self::Lake(source) => &source.id,
         }
     }
 
@@ -235,6 +241,7 @@ impl PlannedSource {
         match self {
             Self::Query(source) => &source.data_source,
             Self::Attached(source) => &source.data_source,
+            Self::Lake(source) => &source.data_source,
         }
     }
 }
@@ -337,6 +344,28 @@ pub struct AttachedSource {
     pub id: String,
     pub data_source: DataSource,
     pub path: PathBuf,
+}
+
+/// A lake the combine step reads in place: where it is, how it is read, and the bucket its
+/// data source signs in to (RS7, and
+/// `docs/adr/0008-a-locked-workspace-reads-a-named-bucket.md`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LakeSource {
+    /// The view's name in the run's DuckDB, which the combine query reads as a table.
+    pub id: String,
+    pub data_source: DataSource,
+    /// The data source's bucket, which the run signs in to for its workspace.
+    pub storage: ObjectStorage,
+    pub path: LakePath,
+    pub format: LakeFormat,
+    pub hive_partitioning: bool,
+}
+
+impl LakeSource {
+    /// The prefix a locked workspace may read under for it, ending in `/`.
+    pub fn prefix(&self) -> String {
+        self.path.prefix(self.format)
+    }
 }
 
 /// The combine step's query, and the limits of the DuckDB it runs in.
@@ -688,8 +717,22 @@ impl Plan {
                         id: attached.id.clone(),
                         data_source: attached.data_source.name.clone(),
                         attached: true,
+                        lake: None,
                         waits_for: None,
                         engine: Some(engine(&attached.data_source)),
+                        limits: None,
+                        partition: None,
+                    },
+                    PlannedSource::Lake(lake) => SourceStart {
+                        id: lake.id.clone(),
+                        data_source: lake.data_source.name.clone(),
+                        attached: true,
+                        lake: Some(LakeStart {
+                            url: lake.path.url().to_owned(),
+                            format: lake.format.name().to_owned(),
+                        }),
+                        waits_for: None,
+                        engine: Some(engine(&lake.data_source)),
                         limits: None,
                         partition: None,
                     },
@@ -908,7 +951,7 @@ impl Plan {
                 .iter()
                 .filter_map(|source| match source {
                     PlannedSource::Query(source) => Some(source),
-                    PlannedSource::Attached(_) => None,
+                    PlannedSource::Attached(_) | PlannedSource::Lake(_) => None,
                 })
                 .collect(),
         }
@@ -986,7 +1029,78 @@ fn plan_source(
         SourceRead::Attach => attach(&source.id, data_source)
             .map(PlannedSource::Attached)
             .map_err(|problem| (Some("attach"), problem)),
+        SourceRead::Lake(lake) => plan_lake(&source.id, data_source, lake)
+            .map(PlannedSource::Lake)
+            .map_err(|(key, problem)| (Some(key), problem)),
     }
+}
+
+/// The lake a source reads, in the bucket of its data source.
+///
+/// The data source's own database is never opened for a lake: only its bucket and its
+/// sign-in are, so a MotherDuck data source with a bucket reads its lake like any other.
+fn plan_lake(
+    id: &str,
+    data_source: &DataSource,
+    lake: &LakeRead,
+) -> Result<LakeSource, (&'static str, String)> {
+    let storage = match &data_source.config {
+        ConnectionConfig::DuckDb(config) => config.storage.clone().ok_or_else(|| {
+            (
+                "lake",
+                format!(
+                    "{:?} is a DuckDB data source without a bucket, and a lake is read from \
+                     one; add object storage to the data source's settings, or give the source \
+                     a query",
+                    data_source.name
+                ),
+            )
+        })?,
+        other => {
+            return Err((
+                "lake",
+                format!(
+                    "lake reads files in a bucket, and {:?} is a {} data source; give the \
+                     source a query instead, or read the bucket through a DuckDB data source",
+                    data_source.name,
+                    other.driver().display_name()
+                ),
+            ));
+        }
+    };
+    let path =
+        LakePath::new(&storage, &lake.path).map_err(|problem| ("lake", problem.to_string()))?;
+    let format = lake
+        .format
+        .or_else(|| LakeFormat::of_path(path.url()))
+        .ok_or_else(|| {
+            (
+                "lake",
+                format!(
+                    "{:?} doesn't end in a name DuckDB chooses a reader by, so the source \
+                     needs one: format = \"parquet\", \"csv\", \"json\", \"iceberg\" or \"delta\"",
+                    lake.path
+                ),
+            )
+        })?;
+    if format.is_table() && path.is_glob() {
+        return Err((
+            "lake",
+            format!(
+                "{:?} holds a wildcard, and a {format} table is read from its own folder; name \
+                 the table's folder",
+                lake.path
+            ),
+        ));
+    }
+    Ok(LakeSource {
+        id: id.to_owned(),
+        data_source: data_source.clone(),
+        storage,
+        path,
+        format,
+        hive_partitioning: lake.hive_partitioning,
+    })
 }
 
 /// What the file says of a source with a query.
@@ -1234,7 +1348,7 @@ fn queries<'a>(
                 language: source.language,
                 bound: [source.split.bound(), range_bound()].concat(),
             }),
-            PlannedSource::Attached(_) => None,
+            PlannedSource::Attached(_) | PlannedSource::Lake(_) => None,
         });
     let combine = combine.map(|combine| Sent {
         label: "[combine]".to_owned(),

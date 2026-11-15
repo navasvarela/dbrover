@@ -490,6 +490,15 @@ impl LakePath {
         self.url[..folder].to_owned()
     }
 
+    /// The path without its bucket: the key, or the prefix of keys, as the provider's own
+    /// listing takes it.
+    pub fn key(&self) -> &str {
+        self.url
+            .split_once("://")
+            .and_then(|(_, rest)| rest.split_once('/'))
+            .map_or("", |(_, key)| key)
+    }
+
     /// Whether the path matches more than one object, so the bucket is listed to read it.
     pub fn is_glob(&self) -> bool {
         self.url.contains(WILDCARDS)
@@ -643,6 +652,22 @@ mod tests {
         ];
         for (path, expected) in cases {
             assert_eq!(LakeFormat::of_path(path), expected, "{path:?}");
+        }
+    }
+
+    #[test]
+    fn a_lakes_key_is_its_path_without_the_bucket() {
+        let cases = [
+            ("sales/year=*/*.parquet", "sales/year=*/*.parquet"),
+            ("/one.parquet", "one.parquet"),
+            ("s3://lake/warehouse/products/", "warehouse/products"),
+        ];
+        for (path, expected) in cases {
+            assert_eq!(
+                LakePath::new(&bucket(), path).unwrap().key(),
+                expected,
+                "{path:?}"
+            );
         }
     }
 

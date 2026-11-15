@@ -15,10 +15,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use arrow_schema::Schema;
-use dbrover_core::{CancelHandle, Connection, DriverError, ResultCursor, Row, describe_error};
+use dbrover_core::{
+    CancelHandle, Connection, DriverError, LakeFormat, ResultCursor, Row, describe_error,
+};
 use dbrover_driver_duckdb::{
-    Allowed, DuckDbType, LoadColumn, TableLoader, Workspace, WorkspaceLimit, WorkspaceLimits,
-    WorkspaceProfile, WorkspaceStore,
+    Allowed, BucketSignIn, DuckDbType, LakeView, LoadColumn, TableLoader, Workspace,
+    WorkspaceLimit, WorkspaceLimits, WorkspaceProfile, WorkspaceStore,
 };
 use dbrover_export::ExportColumn;
 use dbrover_language::Literal;
@@ -37,7 +39,7 @@ use crate::run::{Count, Feed, Sink, millis, timed};
 use crate::statement::{Statements, lookup_literal};
 use crate::typing::{ColumnTyper, DriverTypes};
 use crate::{
-    AttachedSource, Batch, Busy, Chart, CombineLimits, Combined, KeptColumn, LimitHit,
+    AttachedSource, Batch, Busy, Chart, CombineLimits, Combined, KeptColumn, LakeSource, LimitHit,
     LoadedColumn, Parts, Plan, PlannedLookup, PlannedSource, PlannedSplit, QuerySource, Resumed,
     RunEvent, RunFailure, RunFolders, RunValues, SourceError, SourceKept, SourceOpener, SourcePart,
     SourcePhases, SourceReader, SourceStatement, Step,
@@ -126,13 +128,26 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
         sink: &mut Sink<'a>,
         events: &mut dyn FnMut(RunEvent),
     ) -> Result<(), RunFailure> {
+        let mut lakes = Vec::new();
         for source in &self.combined.sources {
-            if let PlannedSource::Attached(attached) = source {
-                attach(workspace, attached).await?;
-                events(RunEvent::SourceAttached {
-                    id: attached.id.clone(),
-                    path: attached.path.clone(),
-                });
+            match source {
+                PlannedSource::Attached(attached) => {
+                    attach(workspace, attached).await?;
+                    events(RunEvent::SourceAttached {
+                        id: attached.id.clone(),
+                        path: attached.path.clone(),
+                    });
+                }
+                PlannedSource::Lake(lake) => {
+                    let read = self.read_lake(workspace, lake).await?;
+                    events(RunEvent::LakeRead {
+                        id: lake.id.clone(),
+                        url: read.view.reads_from().to_owned(),
+                        format: lake.format.name().to_owned(),
+                    });
+                    lakes.push(read);
+                }
+                PlannedSource::Query(_) => {}
             }
         }
         let mut loaded: Vec<LoadedTable> = self.resume_sources(events)?;
@@ -154,10 +169,33 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
         for folder in &writable {
             make_folder(folder)?;
         }
+        let prefixes: Vec<&str> = lakes.iter().map(|lake| lake.view.prefix()).collect();
         workspace
-            .lock(&Allowed::folders(&writable))
+            .lock(&Allowed {
+                folders: &writable,
+                lakes: &prefixes,
+            })
             .await
             .map_err(|error| RunFailure::new(Step::Combine, describe_error(&error)))?;
+        // Loading the other sources can take longer than a temporary credential lasts, and a
+        // locked workspace still takes a secret, so each lake's are renewed now, as late as
+        // they can be: a secret is a session's, so no other connection can replace them once
+        // the combine query has the workspace's.
+        for lake in &mut lakes {
+            workspace
+                .sign_in_to_bucket(&mut lake.sign_in)
+                .await
+                .map_err(|error| {
+                    RunFailure::new(
+                        Step::Combine,
+                        format!(
+                            "could not sign in to the bucket of the lake {:?} again: {}",
+                            lake.id,
+                            describe_error(&error)
+                        ),
+                    )
+                })?;
+        }
 
         let started = Instant::now();
         let combine_query = self.combined.combine.query.sql();
@@ -303,7 +341,8 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
             .iter()
             .filter_map(|source| match source {
                 PlannedSource::Query(source) => checkpoints.source(&source.id),
-                PlannedSource::Attached(_) => None,
+                // Neither loads rows, so neither is a checkpoint a resumed run skips.
+                PlannedSource::Attached(_) | PlannedSource::Lake(_) => None,
             })
             .collect();
         let tables = kept
@@ -570,6 +609,89 @@ async fn lookup_values(
         .into_iter()
         .map(|value| lookup_literal(*column_type, value))
         .collect())
+}
+
+/// A lake read in place, kept for as long as the combine runs: its view in the workspace, and
+/// the bucket's sign-in, whose secret is renewed before the combine query starts.
+struct ReadLake {
+    id: String,
+    view: LakeView,
+    sign_in: BucketSignIn,
+}
+
+impl<O: SourceOpener> Combining<'_, '_, O> {
+    /// Signs in to a lake's bucket, loads what DuckDB needs to read it, and makes the view the
+    /// combine query reads it through (RS7). The prefix the lock must allow for it is
+    /// [`LakeView::prefix`].
+    async fn read_lake(
+        &self,
+        workspace: &Workspace,
+        lake: &LakeSource,
+    ) -> Result<ReadLake, RunFailure> {
+        let failed = |problem: String| {
+            RunFailure::new(
+                Step::Source {
+                    id: lake.id.clone(),
+                },
+                format!("could not read the lake {:?}: {problem}", lake.id),
+            )
+        };
+        // Only a bucket signing in with an access key has a password to find; every other
+        // sign-in is the machine's own (C2).
+        let password = if lake.storage.uses_password() {
+            self.opener
+                .password(&lake.data_source)
+                .await
+                .map_err(|error| failed(error.message))?
+        } else {
+            None
+        };
+        // DuckDB holds no secret for a provider until that provider's own extension is
+        // loaded, so the extensions come first of all.
+        workspace
+            .load_lake_extensions(&lake.storage, lake.format)
+            .await
+            .map_err(|error| failed(describe_error(&error)))?;
+        let mut sign_in = BucketSignIn::new(lake.storage.clone(), password);
+        workspace
+            .sign_in_to_bucket(&mut sign_in)
+            .await
+            .map_err(|error| {
+                failed(format!(
+                    "could not sign in to {}: {}",
+                    lake.storage,
+                    describe_error(&error)
+                ))
+            })?;
+        // An Iceberg table is read from a metadata file, which DuckDB won't guess at: the
+        // newest one is found by listing the table's metadata folder, as the explorer does.
+        let read_from = match lake.format {
+            LakeFormat::Iceberg => sign_in
+                .iceberg_metadata(&lake.path)
+                .await
+                .map_err(|error| failed(describe_error(&error)))?,
+            LakeFormat::Parquet | LakeFormat::Csv | LakeFormat::Json | LakeFormat::Delta => {
+                lake.path.url().to_owned()
+            }
+        };
+        let view = LakeView::new(
+            &lake.id,
+            &lake.storage,
+            &lake.path,
+            lake.format,
+            &read_from,
+            lake.hive_partitioning,
+        );
+        workspace
+            .read_lake(&view)
+            .await
+            .map_err(|error| failed(describe_error(&error)))?;
+        Ok(ReadLake {
+            id: lake.id.clone(),
+            view,
+            sign_in,
+        })
+    }
 }
 
 async fn attach(workspace: &Workspace, source: &AttachedSource) -> Result<(), RunFailure> {

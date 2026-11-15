@@ -637,10 +637,14 @@ impl RunRecord {
                 self.parts.push((part.step.clone(), kept_part(part, at_ms)));
                 return;
             }
-            RunEvent::SourceAttached { id, .. } => StepMetrics::Attached {
-                id: id.clone(),
-                data_source: self.data_source_of(id),
-            },
+            // A lake is read in place, like an attached file: the step loads no rows, and
+            // what its scan read from the bucket is the profile's (RS7e).
+            RunEvent::SourceAttached { id, .. } | RunEvent::LakeRead { id, .. } => {
+                StepMetrics::Attached {
+                    id: id.clone(),
+                    data_source: self.data_source_of(id),
+                }
+            }
             RunEvent::CombineDone {
                 rows,
                 bytes,
@@ -891,7 +895,7 @@ impl RunRecord {
                     record.warnings = warnings;
                 }
             }
-            RunEvent::SourceAttached { id, .. } => {
+            RunEvent::SourceAttached { id, .. } | RunEvent::LakeRead { id, .. } => {
                 if let Some(record) = self.step_mut(&Step::Source { id }) {
                     record.state = StepState::Attached;
                 }
@@ -1799,6 +1803,7 @@ mod tests {
                         id: "balances".to_owned(),
                         data_source: "ledger".to_owned(),
                         attached: false,
+                        lake: None,
                         waits_for: None,
                         engine: None,
                         limits: None,
@@ -1916,6 +1921,7 @@ mod tests {
                         id: "tx".to_owned(),
                         data_source: "ledger".to_owned(),
                         attached: false,
+                        lake: None,
                         waits_for: None,
                         engine: Some("PostgreSQL".to_owned()),
                         limits: Some(caps),
@@ -2061,6 +2067,7 @@ mod tests {
                     id: "events".to_owned(),
                     data_source: "warehouse".to_owned(),
                     attached: false,
+                    lake: None,
                     waits_for: None,
                     engine: None,
                     limits: None,
@@ -2150,6 +2157,7 @@ mod tests {
                     id: "events".to_owned(),
                     data_source: "warehouse".to_owned(),
                     attached: false,
+                    lake: None,
                     waits_for: None,
                     engine: None,
                     limits: None,
@@ -2265,6 +2273,7 @@ mod tests {
             id: id.to_owned(),
             data_source: "ledger".to_owned(),
             attached,
+            lake: None,
             waits_for: None,
             engine: None,
             limits: None,
