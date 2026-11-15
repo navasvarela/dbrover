@@ -7,7 +7,7 @@
 use std::collections::VecDeque;
 use std::sync::{Mutex, PoisonError};
 
-use dbrover_core::{ByteCount, DriverError, Rejection, RejectionKind, ScanEstimate};
+use dbrover_core::{ByteCount, DriverError, Precision, Rejection, RejectionKind, ScanEstimate};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -132,7 +132,11 @@ impl DryRunStatistics {
         let accuracy = query.and_then(|query| query.total_bytes_processed_accuracy.as_deref());
         ScanEstimate {
             bytes: ByteCount(bytes),
-            at_least: matches!(accuracy, Some("LOWER_BOUND" | "UNKNOWN")),
+            precision: if matches!(accuracy, Some("LOWER_BOUND" | "UNKNOWN")) {
+                Precision::AtLeast
+            } else {
+                Precision::Exactly
+            },
         }
     }
 }
@@ -234,7 +238,7 @@ mod tests {
         );
         assert_eq!(
             statistics(r#"{"query": {"totalBytesProcessed": "0", "totalBytesProcessedAccuracy": "LOWER_BOUND"}}"#).estimate(),
-            ScanEstimate { bytes: ByteCount(0), at_least: true }
+            ScanEstimate { bytes: ByteCount(0), precision: Precision::AtLeast }
         );
         assert_eq!(
             statistics(r#"{"totalBytesProcessed": "65"}"#).estimate(),

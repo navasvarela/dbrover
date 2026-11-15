@@ -18,8 +18,8 @@ use crate::data_source_form::{
     ATHENA_LIMIT_LABEL, AthenaFields, BIGQUERY_LIMIT_LABEL, BigQueryFields, BigQuerySignIn,
     BucketFields, BucketSignIn, CassandraFields, CloudFields, DataSourceForm, DatabaseField,
     DriverFields, DuckDbFields, DuckDbLocation, DynamoDbFields, ElasticsearchFields, FormError,
-    McpLoginFields, McpPasswordChange, MongoFields, MongoTarget, ServerFields, SshFields,
-    SshLoginChoice, TlsChoice, TrinoFields,
+    LAKE_LIMIT_LABEL, McpLoginFields, McpPasswordChange, MongoFields, MongoTarget, ServerFields,
+    SshFields, SshLoginChoice, TlsChoice, TrinoFields,
 };
 use crate::dialog::{self, DialogSize};
 use crate::file_picker::{self, FileEngine};
@@ -1295,6 +1295,9 @@ fn bucket_rows(ui: &mut Ui, bucket: &mut BucketFields, secret: &mut String, pass
         }
     }
     bucket_sign_in_rows(ui, bucket, secret, password_hint);
+    // What a report's lake in this bucket may hold before a run refuses it (RS7): the bytes
+    // its files hold, which a bucket bills for reading.
+    text_row(ui, LAKE_LIMIT_LABEL, &mut bucket.limit_gb, "no limit");
 }
 
 fn bucket_sign_in_rows(

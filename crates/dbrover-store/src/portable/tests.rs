@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
 use dbrover_core::{
-    BigQueryConfig, ClickHouseConfig, ConnectionConfig, DataSourceId, DuckDbConfig, DuckDbDatabase,
-    GcsBucket, GoogleCloudSignIn, MysqlConfig, ObjectStorage, PasswordCommand, Port,
-    PostgresConfig, ProjectId, S3Bucket, S3SignIn, ServerConfig, SourceColor, SqlServerConfig,
-    SqliteConfig, SshConfig, SshLogin, TlsMode, Variables,
+    BigQueryConfig, ByteCount, ClickHouseConfig, ConnectionConfig, CostGuard, DataSourceId,
+    DuckDbConfig, DuckDbDatabase, GcsBucket, GoogleCloudSignIn, MysqlConfig, ObjectStorage,
+    PasswordCommand, Port, PostgresConfig, ProjectId, S3Bucket, S3SignIn, ServerConfig,
+    SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode, Variables,
 };
 
 use super::*;
@@ -171,6 +171,7 @@ fn every_kind(home: &Path, beside: &Path, project: ProjectId) -> Vec<DataSource>
                         credentials_file: home.join("keys/lake.json"),
                     },
                 })),
+                cost_guard: CostGuard::OFF,
             }),
         ),
         data_source(
@@ -205,6 +206,11 @@ fn every_kind(home: &Path, beside: &Path, project: ProjectId) -> Vec<DataSource>
                         key_id: "dbrover".to_owned(),
                     },
                 })),
+                // A lake's limit travels with the data source, as every guard does (RS7).
+                cost_guard: CostGuard {
+                    ask_above_bytes: Some(ByteCount(50_000_000_000)),
+                    ..CostGuard::OFF
+                },
             }),
         ),
     ]

@@ -234,6 +234,60 @@ async fn an_iceberg_table_and_a_delta_table_are_read_in_place() {
     lake.workspace.close().await;
 }
 
+/// RS7d: what a lake holds, from its files' Parquet footers, before the run reads a row.
+#[tokio::test]
+async fn sizes_a_lake_from_the_footers_of_its_files() {
+    let Some(mut lake) = signed_in().await else {
+        return;
+    };
+    let sales = LakePath::new(&lake.storage, "sales/year=*/*.parquet").unwrap();
+    let one = LakePath::new(&lake.storage, "sales/year=2025/part-0.parquet").unwrap();
+    let products = LakePath::new(&lake.storage, "warehouse/products").unwrap();
+    let text = LakePath::new(&lake.storage, "customers.csv").unwrap();
+    // The extensions the sizing reads through are loaded by a view over the same bucket.
+    let view = view(
+        &lake.storage,
+        "sales",
+        "sales/year=*/*.parquet",
+        LakeFormat::Parquet,
+        false,
+    );
+    lake.workspace.read_lake(&view).await.unwrap();
+
+    let whole = lake
+        .workspace
+        .lake_bytes(&sales, LakeFormat::Parquet)
+        .await
+        .unwrap()
+        .expect("Parquet files have footers");
+    let part = lake
+        .workspace
+        .lake_bytes(&one, LakeFormat::Parquet)
+        .await
+        .unwrap()
+        .expect("one file has a footer");
+    let delta = lake
+        .workspace
+        .lake_bytes(&products, LakeFormat::Delta)
+        .await
+        .unwrap()
+        .expect("a Delta table's files are Parquet");
+    let csv = lake
+        .workspace
+        .lake_bytes(&text, LakeFormat::Csv)
+        .await
+        .unwrap();
+
+    // The fixtures are tiny, so the numbers are checked by their shape, not their value: the
+    // columns of two files hold more than one file's, and both are under the files' own size.
+    assert!(whole.0 > part.0, "{whole} is not more than {part}");
+    assert!(part.0 > 0, "{part}");
+    assert!(whole.0 < 2_000, "{whole} is more than the two files hold");
+    assert!(delta.0 > 0, "{delta}");
+    assert_eq!(csv, None, "a text lake has no footers to read");
+    lake.workspace.close().await;
+}
+
 /// A combine over a lake can run for longer than a temporary credential lasts, and the lock
 /// leaves the secret the one thing DbRover may still change (ADR 0008).
 #[tokio::test]

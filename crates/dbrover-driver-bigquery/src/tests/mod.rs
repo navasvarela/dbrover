@@ -6,7 +6,7 @@ mod replay;
 
 use dbrover_core::{
     BigQueryConfig, ByteCount, CatalogPath, Connection, CostEstimate, CostGuard, DriverError,
-    GoogleCloudSignIn, JobProgress, NodeKind, RejectionKind, ScanEstimate, conformance,
+    GoogleCloudSignIn, JobProgress, NodeKind, Precision, RejectionKind, ScanEstimate, conformance,
     describe_error,
 };
 
@@ -287,7 +287,7 @@ async fn the_dry_run_estimates_and_the_limit_is_kept_unless_let_through() {
             .unwrap(),
         Some(CostEstimate::Bytes(ScanEstimate {
             bytes: ByteCount(0),
-            at_least: true,
+            precision: Precision::AtLeast,
         }))
     );
     replay.finish();

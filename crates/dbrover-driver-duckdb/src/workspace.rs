@@ -24,7 +24,8 @@ use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use dbrover_core::{
-    Cell, Connection, DriverError, DuckDbConfig, DuckDbDatabase, LakeFormat, ObjectStorage, Row,
+    ByteCount, Cell, Connection, DriverError, DuckDbConfig, DuckDbDatabase, LakeFormat, LakePath,
+    ObjectStorage, Row,
 };
 use duckdb::arrow::array::{ArrayRef, StringArray};
 use duckdb::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
@@ -527,6 +528,45 @@ impl Workspace {
                     .map_err(|error| statement_error(error, &sql))
             })
             .await
+    }
+
+    /// The bytes a lake's files hold, read from their Parquet footers, which is the most a
+    /// query over it can read: DuckDB's filters, row-group statistics and Hive partitions make
+    /// the read smaller, never larger (RS7).
+    ///
+    /// `None` for a lake DuckDB has no footers to read, which is a CSV or JSON one. Call it
+    /// before [`Workspace::lock`], with the bucket signed in to; it reads each file's footer
+    /// and no rows.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError`] when the files can't be read, as for credentials the store refuses.
+    pub async fn lake_bytes(
+        &mut self,
+        path: &LakePath,
+        format: LakeFormat,
+    ) -> Result<Option<ByteCount>, DriverError> {
+        let Some(glob) = LakeView::footer_glob(path, format) else {
+            return Ok(None);
+        };
+        // A lake of no files at all is no bytes, not an error: the combine's own read says so.
+        let sql = format!(
+            "SELECT coalesce(sum(total_compressed_size), 0)::VARCHAR FROM parquet_metadata({})",
+            string_literal(&glob)
+        );
+        let mut cursor = self.connection.execute(&sql).await?;
+        let mut rows = Vec::new();
+        while !cursor.is_exhausted() {
+            rows.extend(cursor.next_page(1).await?);
+        }
+        cursor.finish().await?;
+        let bytes = rows
+            .first()
+            .and_then(|row| row.first())
+            .and_then(Option::as_deref)
+            .and_then(|value| value.parse::<u64>().ok())
+            .ok_or_else(|| connection_error(format!("could not read the footers of {glob}")))?;
+        Ok(Some(ByteCount(bytes)))
     }
 
     /// Hands DuckDB the bucket's credentials, from the data source's C2 sign-in, if it holds

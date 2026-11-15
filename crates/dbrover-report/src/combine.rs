@@ -16,7 +16,8 @@ use std::time::{Duration, Instant};
 
 use arrow_schema::Schema;
 use dbrover_core::{
-    CancelHandle, Connection, DriverError, LakeFormat, ResultCursor, Row, describe_error,
+    CancelHandle, Connection, CostEstimate, CostGuard, DriverError, LakeFormat, ReadPace,
+    ResultCursor, Row, ScanEstimate, describe_error,
 };
 use dbrover_driver_duckdb::{
     Allowed, BucketSignIn, DuckDbType, LakeView, LoadColumn, TableLoader, Workspace,
@@ -625,7 +626,7 @@ impl<O: SourceOpener> Combining<'_, '_, O> {
     /// [`LakeView::prefix`].
     async fn read_lake(
         &self,
-        workspace: &Workspace,
+        workspace: &mut Workspace,
         lake: &LakeSource,
     ) -> Result<ReadLake, RunFailure> {
         let failed = |problem: String| {
@@ -682,6 +683,7 @@ impl<O: SourceOpener> Combining<'_, '_, O> {
             &read_from,
             lake.hive_partitioning,
         );
+        check_lake_cost(workspace, lake).await?;
         workspace
             .read_lake(&view)
             .await
@@ -692,6 +694,65 @@ impl<O: SourceOpener> Combining<'_, '_, O> {
             sign_in,
         })
     }
+}
+
+/// Refuses a lake whose files hold more than the data source's cost guard allows: nobody can
+/// be asked during a run, as for a source's statement (RS7d).
+///
+/// The bytes come from the files' Parquet footers, so they bound the read from above: DuckDB
+/// reads less where its filters and columns let it skip part of the lake. A lake DuckDB has no
+/// footers to read (a CSV or JSON one) isn't judged, and a log line says so.
+async fn check_lake_cost(workspace: &mut Workspace, lake: &LakeSource) -> Result<(), RunFailure> {
+    let Some(guard) = lake
+        .data_source
+        .config
+        .cost_guard()
+        .filter(CostGuard::is_on)
+    else {
+        return Ok(());
+    };
+    let bytes = workspace
+        .lake_bytes(&lake.path, lake.format)
+        .await
+        .map_err(|error| {
+            RunFailure::new(
+                Step::Source {
+                    id: lake.id.clone(),
+                },
+                format!(
+                    "could not read the lake {:?} to judge what it holds: {}",
+                    lake.id,
+                    describe_error(&error)
+                ),
+            )
+        })?;
+    let Some(bytes) = bytes else {
+        tracing::info!(
+            "the {} lake {:?} has no footers to read, so its size isn't judged",
+            lake.format,
+            lake.id
+        );
+        return Ok(());
+    };
+    let estimate = CostEstimate::Bytes(ScanEstimate::at_most(bytes));
+    if guard.holds(&estimate, ReadPace::Whole) {
+        return Err(RunFailure::new(
+            Step::Source {
+                id: lake.id.clone(),
+            },
+            format!(
+                "the lake {:?} holds {bytes}, and {:?} refuses a lake above {}: filter it in \
+                 the [combine] query by a partition the lake is laid out by, name a narrower \
+                 path, or raise the data source's limit",
+                lake.id,
+                lake.data_source.name,
+                guard
+                    .ask_above_bytes
+                    .map_or_else(|| "its limit".to_owned(), |limit| limit.to_string())
+            ),
+        ));
+    }
+    Ok(())
 }
 
 async fn attach(workspace: &Workspace, source: &AttachedSource) -> Result<(), RunFailure> {

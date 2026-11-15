@@ -3995,6 +3995,7 @@ mod tests {
                         key_id: "dbrover".to_owned(),
                     },
                 })),
+                cost_guard: dbrover_core::CostGuard::OFF,
             })
         );
     }

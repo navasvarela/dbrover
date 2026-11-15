@@ -12,11 +12,11 @@ use std::path::{Path, PathBuf};
 
 use dbrover_core::{
     AthenaConfig, BigQueryConfig, CassandraConfig, ClickHouseConfig, CloudSignIn, ConnectionConfig,
-    DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase, DynamoDbConfig, ElasticsearchAuth,
-    ElasticsearchConfig, GcsBucket, GoogleCloudSignIn, McpLogin, MongoConfig, MysqlConfig,
-    ObjectStorage, PasswordCommand, Port, PostgresConfig, ProjectId, RedisConfig, SafetyLevel,
-    ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode,
-    TrinoConfig, TrinoProtocol,
+    CostGuard, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase, DynamoDbConfig,
+    ElasticsearchAuth, ElasticsearchConfig, GcsBucket, GoogleCloudSignIn, McpLogin, MongoConfig,
+    MysqlConfig, ObjectStorage, PasswordCommand, Port, PostgresConfig, ProjectId, RedisConfig,
+    SafetyLevel, ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin,
+    TlsMode, TrinoConfig, TrinoProtocol,
 };
 use serde::{Deserialize, Serialize};
 
@@ -249,26 +249,29 @@ impl PortableConfig {
                 path: path(file),
                 read_only: *read_only,
             }),
-            ConnectionConfig::DuckDb(DuckDbConfig { database, storage }) => {
-                Self::DuckDb(PortableDuckDb {
-                    database: match database {
-                        DuckDbDatabase::File {
-                            path: file,
-                            read_only,
-                        } => PortableDuckDbDatabase::File {
-                            path: path(file),
-                            read_only: *read_only,
-                        },
-                        DuckDbDatabase::InMemory => PortableDuckDbDatabase::InMemory,
-                        DuckDbDatabase::MotherDuck { name } => {
-                            PortableDuckDbDatabase::MotherDuck { name: name.clone() }
-                        }
+            ConnectionConfig::DuckDb(DuckDbConfig {
+                database,
+                storage,
+                cost_guard,
+            }) => Self::DuckDb(PortableDuckDb {
+                database: match database {
+                    DuckDbDatabase::File {
+                        path: file,
+                        read_only,
+                    } => PortableDuckDbDatabase::File {
+                        path: path(file),
+                        read_only: *read_only,
                     },
-                    storage: storage
-                        .as_ref()
-                        .map(|storage| portable_storage(storage, path)),
-                })
-            }
+                    DuckDbDatabase::InMemory => PortableDuckDbDatabase::InMemory,
+                    DuckDbDatabase::MotherDuck { name } => {
+                        PortableDuckDbDatabase::MotherDuck { name: name.clone() }
+                    }
+                },
+                storage: storage
+                    .as_ref()
+                    .map(|storage| portable_storage(storage, path)),
+                cost_guard: *cost_guard,
+            }),
         }
     }
 
@@ -339,24 +342,27 @@ impl PortableConfig {
                 path: path(&file),
                 read_only,
             }),
-            Self::DuckDb(PortableDuckDb { database, storage }) => {
-                ConnectionConfig::DuckDb(DuckDbConfig {
-                    database: match database {
-                        PortableDuckDbDatabase::File {
-                            path: file,
-                            read_only,
-                        } => DuckDbDatabase::File {
-                            path: path(&file),
-                            read_only,
-                        },
-                        PortableDuckDbDatabase::InMemory => DuckDbDatabase::InMemory,
-                        PortableDuckDbDatabase::MotherDuck { name } => {
-                            DuckDbDatabase::MotherDuck { name }
-                        }
+            Self::DuckDb(PortableDuckDb {
+                database,
+                storage,
+                cost_guard,
+            }) => ConnectionConfig::DuckDb(DuckDbConfig {
+                database: match database {
+                    PortableDuckDbDatabase::File {
+                        path: file,
+                        read_only,
+                    } => DuckDbDatabase::File {
+                        path: path(&file),
+                        read_only,
                     },
-                    storage: storage.map(|storage| portable_storage(&storage, path)),
-                })
-            }
+                    PortableDuckDbDatabase::InMemory => DuckDbDatabase::InMemory,
+                    PortableDuckDbDatabase::MotherDuck { name } => {
+                        DuckDbDatabase::MotherDuck { name }
+                    }
+                },
+                storage: storage.map(|storage| portable_storage(&storage, path)),
+                cost_guard,
+            }),
         }
     }
 }
@@ -630,6 +636,9 @@ struct PortableDuckDb {
     /// keychain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     storage: Option<ObjectStorage>,
+    /// What a lake in that bucket may hold (RS7), as every engine's cost guard travels.
+    #[serde(flatten)]
+    cost_guard: CostGuard,
 }
 
 /// `storage` with its credentials file, if it names one, moved as every other path is.

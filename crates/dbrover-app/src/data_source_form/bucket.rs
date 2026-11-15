@@ -4,11 +4,14 @@
 use std::path::PathBuf;
 
 use dbrover_core::{
-    AzureContainer, AzureSignIn, AzureTool, GcsBucket, GoogleCloudSignIn, ObjectStorage, S3Bucket,
-    S3SignIn, StorageProvider,
+    AzureContainer, AzureSignIn, AzureTool, CostGuard, GcsBucket, GoogleCloudSignIn, ObjectStorage,
+    S3Bucket, S3SignIn, StorageProvider,
 };
 
 use super::FormError;
+
+/// The limit's field in the dialog, which its errors name.
+pub const LAKE_LIMIT_LABEL: &str = "Refuse a lake above";
 
 /// How a bucket signs in, as the dialog offers it for its provider.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,6 +74,10 @@ pub struct BucketFields {
     pub credentials_file: String,
     pub tool: AzureTool,
     pub tenant: String,
+    /// The most a report's lake in this bucket may hold, in gigabytes as cloud bills count
+    /// them (10⁹ bytes); empty for no limit. Saved as the cost guard's `ask_above_bytes`
+    /// (RS7).
+    pub limit_gb: String,
 }
 
 impl Default for BucketFields {
@@ -88,18 +95,27 @@ impl Default for BucketFields {
             credentials_file: String::new(),
             tool: AzureTool::default(),
             tenant: String::new(),
+            limit_gb: String::new(),
         }
     }
 }
 
 impl BucketFields {
-    pub fn from_storage(storage: Option<&ObjectStorage>) -> Self {
+    pub fn from_storage(storage: Option<&ObjectStorage>, guard: CostGuard) -> Self {
+        let limit_gb = guard
+            .ask_above_bytes
+            .map(super::byte_limit::gigabytes)
+            .unwrap_or_default();
         let Some(storage) = storage else {
-            return Self::default();
+            return Self {
+                limit_gb,
+                ..Self::default()
+            };
         };
         let mut fields = Self {
             enabled: true,
             provider: storage.provider(),
+            limit_gb,
             ..Self::default()
         };
         match storage {
@@ -170,6 +186,26 @@ impl BucketFields {
     ///
     /// [`FormError`] for a missing bucket, account, key or file, or a sign-in the provider
     /// doesn't take.
+    /// The cost guard the typed limit makes: `ask_above_bytes` alone, since nothing else of a
+    /// guard means anything for DuckDB (RS7).
+    ///
+    /// # Errors
+    ///
+    /// [`FormError::InvalidByteLimit`] for a limit that isn't a number of gigabytes.
+    pub fn to_cost_guard(&self) -> Result<CostGuard, FormError> {
+        let ask_above_bytes = match self.limit_gb.trim() {
+            "" => None,
+            typed => Some(
+                super::byte_limit::parse_gigabytes(typed)
+                    .ok_or(FormError::InvalidByteLimit(LAKE_LIMIT_LABEL))?,
+            ),
+        };
+        Ok(CostGuard {
+            ask_above_bytes,
+            ..CostGuard::OFF
+        })
+    }
+
     pub fn to_storage(&self) -> Result<Option<ObjectStorage>, FormError> {
         if !self.enabled {
             return Ok(None);
@@ -304,10 +340,37 @@ mod tests {
             }),
         ];
         for storage in storages {
-            let fields = BucketFields::from_storage(Some(&storage));
+            let fields = BucketFields::from_storage(Some(&storage), CostGuard::OFF);
             assert_eq!(fields.to_storage(), Ok(Some(storage)));
         }
-        assert_eq!(BucketFields::from_storage(None).to_storage(), Ok(None));
+        assert_eq!(
+            BucketFields::from_storage(None, CostGuard::OFF).to_storage(),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn a_lakes_limit_is_read_and_written_in_gigabytes() {
+        let guard = CostGuard {
+            ask_above_bytes: Some(dbrover_core::ByteCount(50_000_000_000)),
+            ..CostGuard::OFF
+        };
+
+        let fields = BucketFields::from_storage(None, guard);
+
+        assert_eq!(fields.limit_gb, "50");
+        assert_eq!(fields.to_cost_guard(), Ok(guard));
+        let none = BucketFields::from_storage(None, CostGuard::OFF);
+        assert_eq!(none.limit_gb, "");
+        assert_eq!(none.to_cost_guard(), Ok(CostGuard::OFF));
+        let wrong = BucketFields {
+            limit_gb: "a lot".to_owned(),
+            ..BucketFields::default()
+        };
+        assert_eq!(
+            wrong.to_cost_guard(),
+            Err(FormError::InvalidByteLimit(LAKE_LIMIT_LABEL))
+        );
     }
 
     #[test]
