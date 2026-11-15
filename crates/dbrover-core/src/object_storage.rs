@@ -344,6 +344,158 @@ pub fn object_source(path: &CatalogPath) -> Option<String> {
     })
 }
 
+/// How a lake is read: the reader DuckDB needs for it (`docs/reports-at-scale.md`, RS7).
+///
+/// A report's `[[source]]` says it with `format` where the path's own name doesn't, which is
+/// every table format: an Iceberg or a Delta table is a folder, and a folder's name says
+/// nothing about what is in it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LakeFormat {
+    Parquet,
+    Csv,
+    Json,
+    Iceberg,
+    Delta,
+}
+
+impl LakeFormat {
+    /// The format the end of `path` says, as DuckDB chooses a reader by a file's extension;
+    /// `None` for a path a report's file must give the format of.
+    pub fn of_path(path: &str) -> Option<Self> {
+        let lower = path.to_ascii_lowercase();
+        let path = lower
+            .strip_suffix(".gz")
+            .or_else(|| lower.strip_suffix(".zst"))
+            .unwrap_or(&lower);
+        if path.ends_with(".parquet") {
+            Some(Self::Parquet)
+        } else if path.ends_with(".csv") || path.ends_with(".tsv") {
+            Some(Self::Csv)
+        } else if path.ends_with(".json") || path.ends_with(".jsonl") || path.ends_with(".ndjson") {
+            Some(Self::Json)
+        } else {
+            None
+        }
+    }
+
+    /// Whether the path is one table's folder, rather than the files of one table: a table
+    /// format's path is its folder, and everything the table is made of is under it.
+    pub fn is_table(self) -> bool {
+        matches!(self, Self::Iceberg | Self::Delta)
+    }
+
+    /// As a report's file writes it, which is also what a problem names it by.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Parquet => "parquet",
+            Self::Csv => "csv",
+            Self::Json => "json",
+            Self::Iceberg => "iceberg",
+            Self::Delta => "delta",
+        }
+    }
+}
+
+impl fmt::Display for LakeFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+/// A path in a bucket that a report reads in place: what a `[[source]]` writes as `lake`,
+/// resolved against its data source's bucket (`docs/reports-at-scale.md`, RS7).
+///
+/// It holds the address DuckDB reads the lake from, and gives the prefix a locked workspace is
+/// allowed to read under (`docs/adr/0008-a-locked-workspace-reads-a-named-bucket.md`).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LakePath {
+    url: String,
+}
+
+/// Why a path can't be read as a lake in the data source's bucket.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum LakePathError {
+    #[error("lake is empty; write a path in the bucket, such as \"sales/*.parquet\"")]
+    Empty,
+    #[error(
+        "lake is {path:?}, which is not in the data source's bucket {bucket}; write a path in \
+         the bucket, such as \"sales/*.parquet\""
+    )]
+    OtherBucket { path: String, bucket: String },
+    #[error("lake is {0:?}, and a lake's path can't hold \"..\"")]
+    Parent(String),
+}
+
+/// What a lake's path is matched against: DuckDB's own glob characters.
+const WILDCARDS: [char; 4] = ['*', '?', '[', '{'];
+
+impl LakePath {
+    /// `path` as a report's file writes it, against the bucket it is read from: a key in the
+    /// bucket (`sales/year=*/*.parquet`), or the bucket's own address
+    /// (`s3://sales/year=*/*.parquet`), which must be this bucket's.
+    ///
+    /// # Errors
+    ///
+    /// [`LakePathError`] for an empty path, one holding `..`, or an address in another bucket.
+    pub fn new(storage: &ObjectStorage, path: &str) -> Result<Self, LakePathError> {
+        let path = path.trim();
+        if path.is_empty() {
+            return Err(LakePathError::Empty);
+        }
+        if path.split('/').any(|segment| segment == "..") {
+            return Err(LakePathError::Parent(path.to_owned()));
+        }
+        let bucket = storage.url();
+        let key = match path.split_once("://") {
+            None => path.trim_start_matches('/'),
+            // The bucket's own address, whose key starts after it: `s3://lakeside/x` is
+            // another bucket, not a key of `s3://lake`.
+            Some(_) => path
+                .strip_prefix(&bucket)
+                .filter(|rest| rest.is_empty() || rest.starts_with('/'))
+                .map(|rest| rest.trim_start_matches('/'))
+                .ok_or_else(|| LakePathError::OtherBucket {
+                    path: path.to_owned(),
+                    bucket: bucket.clone(),
+                })?,
+        };
+        if key.is_empty() {
+            return Err(LakePathError::Empty);
+        }
+        Ok(Self {
+            url: format!("{bucket}/{}", key.trim_end_matches('/')),
+        })
+    }
+
+    /// The address DuckDB reads the lake from: `s3://sales/year=*/*.parquet`.
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+
+    /// The prefix a locked workspace may read under, ending in `/`: the lake's own folder for
+    /// a table format, and otherwise the path up to the last `/` before its first wildcard,
+    /// which is the folder a glob or a single file is in.
+    ///
+    /// So `sales/year=*/*.parquet` allows `s3://sales/sales/`, and never the bucket itself
+    /// unless the lake's files are in the bucket's root.
+    pub fn prefix(&self, format: LakeFormat) -> String {
+        if format.is_table() {
+            return format!("{}/", self.url);
+        }
+        let wildcard = self.url.find(WILDCARDS).unwrap_or(self.url.len());
+        let folder = self.url[..wildcard]
+            .rfind('/')
+            .map_or(wildcard, |at| at + 1);
+        self.url[..folder].to_owned()
+    }
+
+    /// Whether the path matches more than one object, so the bucket is listed to read it.
+    pub fn is_glob(&self) -> bool {
+        self.url.contains(WILDCARDS)
+    }
+}
+
 /// The bucket's address and where it is served from, for logs and tooltips. Never a secret,
 /// and never the key's id either, which names an account.
 impl fmt::Display for ObjectStorage {
@@ -366,6 +518,142 @@ impl fmt::Display for ObjectStorage {
 mod tests {
     use super::*;
     use crate::placeholder::tests::Fixed;
+
+    fn bucket() -> ObjectStorage {
+        ObjectStorage::S3(S3Bucket {
+            bucket: "lake".to_owned(),
+            ..S3Bucket::default()
+        })
+    }
+
+    #[test]
+    fn a_lakes_path_is_resolved_against_its_own_bucket() {
+        let cases = [
+            (
+                "sales/year=*/*.parquet",
+                Ok("s3://lake/sales/year=*/*.parquet"),
+            ),
+            ("/sales/one.parquet", Ok("s3://lake/sales/one.parquet")),
+            (
+                "  warehouse/products/  ",
+                Ok("s3://lake/warehouse/products"),
+            ),
+            ("s3://lake/sales/*.parquet", Ok("s3://lake/sales/*.parquet")),
+            ("s3://lake/sales", Ok("s3://lake/sales")),
+            (
+                "",
+                Err("lake is empty; write a path in the bucket, such as \"sales/*.parquet\""),
+            ),
+            (
+                "/",
+                Err("lake is empty; write a path in the bucket, such as \"sales/*.parquet\""),
+            ),
+            (
+                "s3://other/sales",
+                Err(
+                    "lake is \"s3://other/sales\", which is not in the data source's bucket \
+                     s3://lake; write a path in the bucket, such as \"sales/*.parquet\"",
+                ),
+            ),
+            (
+                "gs://lake/sales",
+                Err(
+                    "lake is \"gs://lake/sales\", which is not in the data source's bucket \
+                     s3://lake; write a path in the bucket, such as \"sales/*.parquet\"",
+                ),
+            ),
+            (
+                "s3://lake",
+                Err("lake is empty; write a path in the bucket, such as \"sales/*.parquet\""),
+            ),
+            (
+                "s3://lakeside/sales",
+                Err(
+                    "lake is \"s3://lakeside/sales\", which is not in the data source's bucket \
+                     s3://lake; write a path in the bucket, such as \"sales/*.parquet\"",
+                ),
+            ),
+            (
+                "sales/../../etc/passwd",
+                Err("lake is \"sales/../../etc/passwd\", and a lake's path can't hold \"..\""),
+            ),
+        ];
+        for (path, expected) in cases {
+            let resolved = LakePath::new(&bucket(), path);
+            match (resolved, expected) {
+                (Ok(lake), Ok(url)) => assert_eq!(lake.url(), url, "{path:?}"),
+                (Err(error), Err(message)) => assert_eq!(error.to_string(), message, "{path:?}"),
+                (resolved, expected) => panic!("{path:?}: {resolved:?}, expected {expected:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_locked_workspace_is_allowed_the_lakes_folder_and_no_more() {
+        let cases = [
+            (
+                "sales/year=*/*.parquet",
+                LakeFormat::Parquet,
+                "s3://lake/sales/",
+            ),
+            (
+                "sales/**/*.parquet",
+                LakeFormat::Parquet,
+                "s3://lake/sales/",
+            ),
+            ("sales/2026-*.csv", LakeFormat::Csv, "s3://lake/sales/"),
+            (
+                "sales/year=2025/part-0.parquet",
+                LakeFormat::Parquet,
+                "s3://lake/sales/year=2025/",
+            ),
+            ("*.parquet", LakeFormat::Parquet, "s3://lake/"),
+            // A table format's path is the table's folder, so everything it is made of is
+            // under the prefix: its metadata and its data files alike.
+            (
+                "warehouse/products",
+                LakeFormat::Delta,
+                "s3://lake/warehouse/products/",
+            ),
+            (
+                "warehouse/shop/orders",
+                LakeFormat::Iceberg,
+                "s3://lake/warehouse/shop/orders/",
+            ),
+        ];
+        for (path, format, expected) in cases {
+            let lake = LakePath::new(&bucket(), path).unwrap();
+
+            assert_eq!(lake.prefix(format), expected, "{path:?}");
+        }
+    }
+
+    #[test]
+    fn a_lakes_format_comes_from_its_name_where_duckdb_would_choose_a_reader_by_it() {
+        let cases = [
+            ("sales/*.parquet", Some(LakeFormat::Parquet)),
+            ("sales/ONE.PARQUET", Some(LakeFormat::Parquet)),
+            ("customers.csv", Some(LakeFormat::Csv)),
+            ("customers.tsv", Some(LakeFormat::Csv)),
+            ("events.json", Some(LakeFormat::Json)),
+            ("events.jsonl.gz", Some(LakeFormat::Json)),
+            ("events.ndjson.zst", Some(LakeFormat::Json)),
+            ("warehouse/products", None),
+            ("sales/year=*/*", None),
+        ];
+        for (path, expected) in cases {
+            assert_eq!(LakeFormat::of_path(path), expected, "{path:?}");
+        }
+    }
+
+    #[test]
+    fn a_lake_of_one_object_needs_no_listing() {
+        let glob = LakePath::new(&bucket(), "sales/*.parquet").unwrap();
+        let one = LakePath::new(&bucket(), "sales/one.parquet").unwrap();
+
+        assert!(glob.is_glob());
+        assert!(!one.is_glob());
+    }
 
     fn s3(sign_in: S3SignIn) -> ObjectStorage {
         ObjectStorage::S3(S3Bucket {

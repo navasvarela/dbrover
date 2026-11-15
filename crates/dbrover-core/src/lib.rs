@@ -65,8 +65,9 @@ pub use managed_service::{
 };
 pub use mongo_uri::MongoUri;
 pub use object_storage::{
-    AzureContainer, AzureSignIn, GcsBucket, GoogleCloudSignIn, ICEBERG_METADATA_SUFFIX,
-    ObjectStorage, S3Bucket, S3SignIn, StorageProvider, object_source, object_url, reads_as_table,
+    AzureContainer, AzureSignIn, GcsBucket, GoogleCloudSignIn, ICEBERG_METADATA_SUFFIX, LakeFormat,
+    LakePath, LakePathError, ObjectStorage, S3Bucket, S3SignIn, StorageProvider, object_source,
+    object_url, reads_as_table,
 };
 pub use password::Password;
 pub use password_command::PasswordCommand;

@@ -18,12 +18,12 @@ const TEST_URL_VAR: &str = "DBROVER_TEST_S3_URL";
 
 /// MinIO's bucket from `http://<key>:<secret>@<host>:<port>/<bucket>`, with its access key,
 /// and the key's secret.
-struct TestBucket {
-    bucket: S3Bucket,
-    secret: Password,
+pub(crate) struct TestBucket {
+    pub(crate) bucket: S3Bucket,
+    pub(crate) secret: Password,
 }
 
-fn test_bucket() -> Option<TestBucket> {
+pub(crate) fn test_bucket() -> Option<TestBucket> {
     let Ok(url) = std::env::var(TEST_URL_VAR) else {
         eprintln!("skipping: {TEST_URL_VAR} is not set");
         return None;

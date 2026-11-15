@@ -17,7 +17,9 @@ use std::path::Path;
 use std::time::Instant;
 
 use dbrover_core::describe_error;
-use dbrover_driver_duckdb::{DuckDbType, LoadColumn, Workspace, WorkspaceLimits, WorkspaceStore};
+use dbrover_driver_duckdb::{
+    Allowed, DuckDbType, LoadColumn, Workspace, WorkspaceLimits, WorkspaceStore,
+};
 use dbrover_language::Literal;
 use dbrover_sql::Dialect;
 use serde::{Deserialize, Serialize};
@@ -289,7 +291,7 @@ async fn plan_combine(
         .await
         .map_err(|error| describe_error(&error))?;
     workspace
-        .lock(&[])
+        .lock(&Allowed::default())
         .await
         .map_err(|error| describe_error(&error))?;
     let prepared = dbrover_sql::bind(

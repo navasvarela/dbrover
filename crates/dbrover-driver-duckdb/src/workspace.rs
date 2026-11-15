@@ -21,18 +21,22 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
-use dbrover_core::{Cell, Connection, DriverError, DuckDbConfig, DuckDbDatabase, Row};
+use dbrover_core::{
+    Cell, Connection, DriverError, DuckDbConfig, DuckDbDatabase, LakeFormat, ObjectStorage, Row,
+};
 use duckdb::arrow::array::{ArrayRef, StringArray};
 use duckdb::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use duckdb::arrow::record_batch::RecordBatch;
 
 use crate::errors::statement_error;
+use crate::lake::{BucketSignIn, DuckDbExtension, LakeView};
 use crate::parquet::ParquetCompression;
 use crate::{DuckDbConnection, connection_error, poisoned};
 
 /// The schema a source's table is made in, which the combine query reads unqualified.
-const MAIN_SCHEMA: &str = "main";
+pub(crate) const MAIN_SCHEMA: &str = "main";
 
 /// The profiler's metrics a workspace keeps, by DuckDB's names, which [`Workspace::profile`]
 /// reads. Both are the database's peaks since it opened, not the last statement's alone.
@@ -213,6 +217,47 @@ impl fmt::Display for DuckDbType {
             Self::TimestampTz => f.write_str("TIMESTAMP WITH TIME ZONE"),
             Self::Varchar => f.write_str("VARCHAR"),
         }
+    }
+}
+
+/// What a locked workspace may still reach ([`Workspace::lock`]): nothing, by default.
+///
+/// The two are one list to DuckDB (`allowed_directories`), and both are only bounds once
+/// external access is off: with it on, the list holds nothing back
+/// (`docs/adr/0008-a-locked-workspace-reads-a-named-bucket.md`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Allowed<'a> {
+    /// Folders it may write files in, and read them back from: the run's staging folder, for
+    /// the Parquet files DuckDB writes itself (RS3d), and the work folder's parts of a
+    /// partitioned run (RS5b).
+    pub folders: &'a [&'a Path],
+    /// Prefixes in a bucket it may read under, each ending in `/`: one per lake the report
+    /// named, as [`LakeView::prefix`] gives it (RS7).
+    pub lakes: &'a [&'a str],
+}
+
+impl<'a> Allowed<'a> {
+    /// What it may write files in, and nothing else.
+    pub fn folders(folders: &'a [&'a Path]) -> Self {
+        Self {
+            folders,
+            lakes: &[],
+        }
+    }
+
+    /// Every allowance as a DuckDB literal, folders with the trailing separator DuckDB wants
+    /// on a directory.
+    fn directories(&self) -> Vec<String> {
+        let folders = self.folders.iter().map(|folder| {
+            let mut folder = folder.to_string_lossy().into_owned();
+            if !folder.ends_with(std::path::MAIN_SEPARATOR) {
+                folder.push(std::path::MAIN_SEPARATOR);
+            }
+            string_literal(&folder)
+        });
+        folders
+            .chain(self.lakes.iter().map(|prefix| string_literal(prefix)))
+            .collect()
     }
 }
 
@@ -431,32 +476,105 @@ impl Workspace {
             .await
     }
 
+    /// Loads the extensions a lake in `storage`, read as `format`, needs: the provider's file
+    /// system, and the table format's reader where it is one
+    /// (`docs/reports-at-scale.md`, RS7).
+    ///
+    /// Call it first of all, before [`Workspace::sign_in_to_bucket`], which DuckDB refuses
+    /// until the provider's extension holds its secret's type, and before
+    /// [`Workspace::lock`], which loads none.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError::Connection`] when an extension can't be downloaded or loaded, which is
+    /// what an offline machine gets.
+    pub async fn load_lake_extensions(
+        &self,
+        storage: &ObjectStorage,
+        format: LakeFormat,
+    ) -> Result<(), DriverError> {
+        for extension in DuckDbExtension::of(storage, format) {
+            let name = extension.name();
+            let sql = format!("INSTALL {name}; LOAD {name}");
+            self.connection
+                .run_blocking(move |connection| {
+                    connection
+                        .execute_batch(&sql)
+                        .map_err(|error| crate::errors::extension_error(error, name))
+                })
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Makes the view the combine query reads a lake through, which reads it in place rather
+    /// than loading it (`docs/reports-at-scale.md`, RS7).
+    ///
+    /// Call it after [`Workspace::load_lake_extensions`] and
+    /// [`Workspace::sign_in_to_bucket`], since making the view reads the files' schema, and
+    /// before [`Workspace::lock`], whose [`Allowed`] must hold the lake's
+    /// [`LakeView::prefix`]: a locked database reads no prefix it wasn't given.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError`] when DuckDB refuses the view, as for a path whose files it can't read.
+    pub async fn read_lake(&self, lake: &LakeView) -> Result<(), DriverError> {
+        let sql = lake.statement();
+        self.connection
+            .run_blocking(move |connection| {
+                connection
+                    .execute_batch(&sql)
+                    .map_err(|error| statement_error(error, &sql))
+            })
+            .await
+    }
+
+    /// Hands DuckDB the bucket's credentials, from the data source's C2 sign-in, if it holds
+    /// none that is still fresh.
+    ///
+    /// Call it before [`Workspace::lock`] for the first secret, and again while the combine
+    /// runs to replace credentials that are about to expire: a locked database still takes a
+    /// secret, which is the one setting the lock leaves open. The statement holds the
+    /// credentials, so it is DbRover's own and reaches neither the history nor the log.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError::Connection`] when signing in to the bucket fails, or DuckDB refuses the
+    /// secret, as it does before the bucket's extension is loaded.
+    pub async fn sign_in_to_bucket(&self, sign_in: &mut BucketSignIn) -> Result<(), DriverError> {
+        let Some(statement) = sign_in
+            .due_secret(SystemTime::now())
+            .await
+            .map_err(connection_error)?
+        else {
+            return Ok(());
+        };
+        self.connection
+            .run_blocking(move |connection| {
+                connection
+                    .execute_batch(statement.expose())
+                    .map_err(crate::errors::secret_error)
+            })
+            .await?;
+        sign_in.made();
+        Ok(())
+    }
+
     /// Cuts the database off from everything outside it, files and extensions included, and
-    /// freezes its settings, so the query that runs next reads only what was loaded and
-    /// attached, within the limits it was opened with. `writable` are the folders it may still
-    /// write files in, and read them back from: the run's staging folder, for the Parquet files
-    /// DuckDB writes itself (RS3d), and the work folder's parts of a partitioned run (RS5b).
-    /// None leaves it no folder at all.
+    /// freezes its settings, so the query that runs next reads only what was loaded,
+    /// attached and `allowed`, within the limits it was opened with.
     ///
     /// # Errors
     ///
     /// [`DriverError`] if DuckDB refuses a setting.
-    pub async fn lock(&self, writable: &[&Path]) -> Result<(), DriverError> {
-        // DuckDB takes `allowed_directories` only while external access is on.
-        let allowed = if writable.is_empty() {
+    pub async fn lock(&self, allowed: &Allowed<'_>) -> Result<(), DriverError> {
+        // DuckDB takes `allowed_directories` only while external access is on, and it bounds
+        // a bucket's prefixes only once external access is off (ADR 0008).
+        let allowed = allowed.directories();
+        let allowed = if allowed.is_empty() {
             String::new()
         } else {
-            let folders: Vec<String> = writable
-                .iter()
-                .map(|folder| {
-                    let mut folder = folder.to_string_lossy().into_owned();
-                    if !folder.ends_with(std::path::MAIN_SEPARATOR) {
-                        folder.push(std::path::MAIN_SEPARATOR);
-                    }
-                    string_literal(&folder)
-                })
-                .collect();
-            format!("SET allowed_directories = [{}]; ", folders.join(", "))
+            format!("SET allowed_directories = [{}]; ", allowed.join(", "))
         };
         let sql =
             format!("{allowed}SET enable_external_access = false; SET lock_configuration = true");
@@ -759,12 +877,12 @@ pub fn read_parquet_files(files: &[PathBuf]) -> String {
 }
 
 /// `"name"`, quoted as DuckDB quotes an identifier, so any column name works.
-fn identifier(name: &str) -> String {
+pub(crate) fn identifier(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
 /// `'text'`, quoted as a SQL string.
-fn string_literal(text: &str) -> String {
+pub(crate) fn string_literal(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
 }
 

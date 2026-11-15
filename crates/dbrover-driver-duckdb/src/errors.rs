@@ -96,6 +96,26 @@ fn explain_missing_extension(summary: &str) -> Option<String> {
     ))
 }
 
+/// DuckDB refusing to install or load an extension a lake needs (RS7), which DbRover asks for
+/// by name rather than leaving to autoloading: an offline machine fails here, before the
+/// workspace is locked, and the message says what to do about it.
+pub(crate) fn extension_error(error: duckdb::Error, extension: &str) -> DriverError {
+    let message = error.to_string();
+    let summary = summary(&message);
+    DriverError::Connection(Box::new(MissingExtension(
+        explain_missing_extension(summary).unwrap_or_else(|| {
+            format!(
+                "DuckDB couldn't load its {extension} extension, which reading this lake \
+                 needs. DuckDB downloads each extension from extensions.duckdb.org the first \
+                 time it is needed, once per DuckDB version, and keeps it in \
+                 ~/.duckdb/extensions. Try again once this computer is online, or install the \
+                 extension from a file: INSTALL '/path/to/{extension}.duckdb_extension'.\n\n\
+                 {summary}"
+            )
+        }),
+    )))
+}
+
 /// A statement stopped by a cancel between two fetches, where DuckDB's own interrupt had
 /// nothing to stop.
 pub(crate) fn interrupted() -> DriverError {

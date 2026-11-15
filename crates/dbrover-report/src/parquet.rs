@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use dbrover_core::{Connection, describe_error};
 use dbrover_driver_duckdb::{
-    ParquetCompression, Workspace, WorkspaceLimits, WorkspaceProfile, WorkspaceStore,
+    Allowed, ParquetCompression, Workspace, WorkspaceLimits, WorkspaceProfile, WorkspaceStore,
     copy_to_parquet, read_parquet, read_parquet_files,
 };
 use dbrover_export::{CompletedFile, ParquetOptions};
@@ -182,7 +182,10 @@ impl PartsJoin<'_> {
         .map_err(|error| describe_error(&error))?;
         let copied = async {
             workspace
-                .lock(&[self.folders.staging, &self.folders.work.join(PARTS_FOLDER)])
+                .lock(&Allowed::folders(&[
+                    self.folders.staging,
+                    &self.folders.work.join(PARTS_FOLDER),
+                ]))
                 .await
                 .map_err(|error| describe_error(&error))?;
             let copy = copy_to_parquet(
