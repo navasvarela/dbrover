@@ -580,12 +580,16 @@ Runs table.
 ## How it's built
 
 - `dbrover-report`: the run profile, partitions and ranges, the manifest and resuming, the
-  hints' rules, typed loading's plan, `pushdown` and `handoff` read and planned, and the graph
-  of reports used as sources.
-- `dbrover-driver-duckdb`: the workspace on a file, `allowed_directories`, Parquet by `COPY`,
-  appending Arrow batches, the profiler's operator tree, free disk space.
+  hints' rules, typed loading's plan, `lake`, `pushdown` and `handoff` read and planned, and
+  the graph of reports used as sources.
+- `dbrover-driver-duckdb`: the workspace on a file, `allowed_directories` and the lake
+  prefixes it allows, the extensions and secret a lake needs, Parquet by `COPY`, appending
+  Arrow batches, the profiler's operator tree, the HTTP log's bytes, free disk space.
 - `dbrover-plan`: DuckDB's and ClickHouse's plan formats, then each warehouse's.
-- `dbrover-core`: `ResultCursor::next_batch`, and bytes scanned in a job's progress.
+- `dbrover-core`: `ResultCursor::next_batch`, a lake's byte estimate, and bytes scanned in a
+  job's progress.
+- `dbrover-cloud`: C2's listers, which gain the sizes a lake's estimate needs and the delete a
+  handoff's files need.
 - `dbrover-engine`: phases and waits measured in the source reader, the bounded queues,
   explaining a report's sources.
 - `dbrover-store`: the profile in `report_runs`' `steps` (JSON, so no schema change), work
@@ -742,9 +746,53 @@ runs the small cases.
   their checked-in files.
   **Exit:** the RS1 benchmark shows the columnar path ahead of the text path on ClickHouse, and
   the four accounting examples still match to the last digit.
-- **RS7 — Lakes and warehouses in the combine:** C2's buckets attached to the workspace, with
-  their secrets, `allowed_directories` for their prefixes, and the cost guard's estimate from
-  listings and footers; then, engine by engine after C3 to C5, `handoff` through a bucket.
+- **RS7 — Lakes and warehouses in the combine:** C2's buckets read by the combine step, with
+  their secrets, `allowed_directories` for their prefixes ([ADR 0008](adr/0008-a-locked-workspace-reads-a-named-bucket.md)),
+  and the cost guard's estimate from listings and footers; then, engine by engine after C3 to
+  C5, `handoff` through a bucket. What today's code changes in this is in
+  [RS7 against today's code](#rs7-against-todays-code).
+  - **RS7a — Plan.** Settles the decisions in that section, and ADR 0008. Docs only.
+  - **RS7b — A bucket in the workspace:** `Workspace::read_lake`, which loads the extensions a
+    lake's paths need and makes the bucket's temporary secret from C2's sign-in, and
+    `Workspace::lock` taking bucket prefixes beside the folders it writes in. *Exit:* a locked
+    workspace reads a Parquet file under the prefix it was given, and refuses every other
+    prefix, local file and address. *Tests:* the prefix of a path, table-driven (a glob, a
+    folder, a file, an Iceberg metadata file); against MinIO, the behaviours ADR 0008 pins
+    (a read inside and outside the prefix, `LOAD` after the lock, a secret replaced after it).
+  - **RS7c — A lake source in a report:** `lake` on a `[[source]]`, read and planned against
+    its data source's bucket; `format` where DuckDB's own rules don't say; a view over
+    `read_parquet`, `read_csv`, `iceberg_scan` or `delta_scan` made before the lock; the
+    source's lane in the profile saying it was read in place, with no rows loaded. *Exit:* a
+    report joins a loaded PostgreSQL source with a Parquet lake on MinIO and writes the join.
+    *Tests:* reading and planning problems, table-driven (a `lake` on a data source without a
+    bucket, with a query beside it, a path outside the bucket, `partition` or `columns` on it,
+    a table format whose extension is missing); the view's statement per format; a run over
+    MinIO's fixtures.
+  - **RS7d — The cost guard over a lake:** the lake's bytes from the bucket's listing and the
+    files' Parquet footers, judged before the run against the DuckDB data source's
+    `ask_above_bytes`; `ScanEstimate` able to say *at most*. *Exit:* a report whose lake holds
+    more than the limit fails before it runs, naming the bytes and the limit; under it, it
+    runs. *Tests:* the estimate from a listing and footers, table-driven; the refusal's words;
+    a lake whose footers can't be read.
+  - **RS7e — Bytes read in the profile:** DuckDB's HTTP log, scoped to it and read after the
+    combine, giving each lake's requests and bytes; both in the profile, in the funnel's row
+    for the source and in **Explain report**; the `lake-scan` hint when a run read most of the
+    lake's bytes. *Exit:* the exit test's numbers: a run that reads one partition of twelve
+    records bytes far below the lake's size. *Tests:* the bytes read from a kept run's log,
+    against the files the query should have read; the hint's rule at its thresholds.
+  - **RS7f — Handoff, and Athena's result files:** `handoff` on a `[[source]]`, the prefix it
+    names in a bucket data source, the files read back by DuckDB through RS7b's path, and
+    deleted when the run ends; Athena first, whose result file its job already writes to S3,
+    and `UNLOAD` for Parquet where the source asks for it. *Exit:* a source on the replayed
+    Athena server, whose result file is in MinIO, loads the same table as the same source read
+    as text rows. *Tests:* the statement sent per `handoff` setting; the files read and deleted;
+    a run killed before the delete, whose files the next run removes.
+  - **RS7g — Trino's spooled results and BigQuery's `EXPORT DATA`:** the two engines' own
+    handoff, with their credentials for the prefix. *Exit:* each engine's source loads the same
+    table through its handoff as through its text rows. *Tests:* against each engine's stand-in,
+    the statement and the files; what each refuses.
+  - **RS7h — Manual, demo note and the exit test.**
+
   **Exit:** on MinIO in CI, a report joins a PostgreSQL source with a partitioned Parquet lake,
   and the profile shows the lake's bytes read far below its size.
 - **RS8 — Reports over MCP:** the read-only tools above, and the decision on running reports.
@@ -1034,6 +1082,38 @@ As built, where RS6 differs from the table above:
 - **Lookups** read batches as a whole source does, through the same loader; the tests cover a
   partitioned source's ranges, not a lookup's batches.
 
+## RS7 against today's code
+
+Settled on 2026-11-15, when RS7 started, by reading the plan against the code as of RS6's
+merge (fc0bd31) and trying DuckDB 1.5.6, the library the build links, against the MinIO in
+the repository's Docker Compose file. Where the code changes the plan, the plan above still
+says what it said; this section wins. Each row is a decision for the reviewer to confirm.
+
+| The plan said | Today's code, and DuckDB | RS7 does |
+| --- | --- | --- |
+| C2's buckets **attached** to the workspace (`attach = true`, as RP2 attaches DuckDB files). | `attach = true` means one thing: a DuckDB file attached read-only as a catalog. `Workspace::attach` refuses a path that isn't a file, and planning refuses an in-memory or MotherDuck data source with *nothing to attach*. A bucket is not a database: it is `DuckDbConfig::storage` beside the database, and a data source that is only a lake has an in-memory database with nothing in it. | **A lake is a `[[source]]` with `lake`,** a path in its data source's bucket, and the run makes a **view** over it (`read_parquet`, `read_csv`, `iceberg_scan`, `delta_scan`) in the workspace's `main` schema, named by the source's id. The combine query reads it as it reads any source's table, and its filters push down into the lake's scan, which is the point. `attach = true` keeps meaning a DuckDB file. |
+| The lock-down allows the bucket's prefix (`allowed_directories`) instead of nothing, and `httpfs` is loaded before autoloading is turned off. | Checked against DuckDB 1.5.6 and MinIO on 2026-11-15. `allowed_directories` does bound `s3://` paths once `enable_external_access = false`: a read under an allowed prefix works, globs, Hive partitions and range requests included, and a read of another prefix, a local file or an `https://` address fails with *Permission Error: … file system operations are disabled by configuration*. With external access **on** it bounds nothing. `INSTALL` and `LOAD` fail after the lock; `allowed_directories` can't be changed after it; the workspace already opens with `autoload_known_extensions` and `autoinstall_known_extensions` off. | As planned, and [ADR 0008](adr/0008-a-locked-workspace-reads-a-named-bucket.md) records the rule: the extensions each lake's format needs are installed and loaded before the lock, the bucket's secret is made before it, and `Workspace::lock` takes the lake prefixes beside the folders it may write in. A prefix is the path up to its first wildcard, so `sales/year=*/*.parquet` allows `sales/` and not the bucket. |
+| (Not said: credentials that expire during a combine.) | C2 makes the secret again when the credentials have less than five minutes left, before a statement. A combine query over a lake can run for longer than a temporary credential lasts. | `CREATE OR REPLACE TEMPORARY SECRET` **works after the lock** (tried), and a read with the replaced secret works. So the run makes the bucket's secret again while the combine runs, on C0's margin, from the same sign-in C2 uses; the statement is DbRover's own and reaches neither the history nor the log. A sign-in that fails then fails the run, naming the bucket. |
+| An Iceberg or Delta table in the combine. | C2 found `iceberg_scan` needs a metadata file, or `metadata/version-hint.text`, which pyiceberg's SQL catalog, Glue and REST catalogs don't write; given a folder it refuses unless `unsafe_enable_version_guessing` is set. The driver already finds a table's newest metadata file by listing (`table_source_name`). Delta reads from its folder. | A `lake` on an Iceberg table is the table's folder, and the run finds its newest metadata file with C2's lister **before the lock**, as the explorer does, and writes that file into the view. `unsafe_enable_version_guessing` stays off: guessing reads uncommitted data. A folder whose metadata folder holds no metadata file is a problem naming the source, not a run that reads half a table. Delta's folder is read as it is. |
+| The cost guard's byte estimate comes from C2's listing and the files' footers. | The guard is the data source's (`ConnectionConfig::cost_guard`), and DuckDB has none: only DynamoDB, Athena and BigQuery do. The estimate comes from the engine, per statement, through `Connection::estimate_cost`. `ScanEstimate` says bytes and whether the statement may scan **more**. | **A DuckDB data source gains `cost_guard`**, whose `ask_above_bytes` is the only part that means anything for it: the bytes its lake holds. The estimate is the run's own, computed from the path the source declares — the sizes of the objects the bucket's listing matches, and `parquet_file_metadata` and `parquet_metadata` on the files for their rows and their columns' compressed sizes — not from parsing the combine query for paths. `ScanEstimate` learns to say **at most**, since pruning makes a lake's read smaller than its files, never larger: `Precision::{Exactly, AtLeast, AtMost}` in place of `at_least`. A run whose lake is over the limit fails before it starts, as a source over a limit does, naming the bytes, the limit and the data source. |
+| A source's caps hold per source (`max_rows`, `max_bytes`, `timeout`). | They count the rows and bytes a source **received**, and the time its statements took. A lake source receives nothing: the combine query reads it. | The three are **refused on a `lake`**, with a problem that says what bounds it instead: the lake's bytes through the cost guard, and the combine's `timeout`, `memory_limit` and `max_temp_size`. `partition`, `lookup`, `columns`, `columnar` and `incremental` are refused on it too, as they are on an attached file. |
+| **Exit:** on MinIO in CI, a report joins a PostgreSQL source with a partitioned Parquet lake, and the profile shows the lake's bytes read far below its size. | The profile records the rows and bytes each source received and each column's bytes; a lake's bytes are read by DuckDB, which the worker never sees. MinIO is in the Linux check, and its fixtures are two Parquet files of 15 rows and about 730 bytes each: too small for *far below*, and a large lake doesn't belong in the repository. | The bytes come from **DuckDB's own HTTP log**: `logging_mode = 'ENABLE_SELECTED'` with `enabled_log_types = 'HTTP'` keeps only the bucket's requests, and `duckdb_logs_parsed('HTTP')` gives each request with its range and its answer's `Content-Length`, which the run sums per lake after the combine and truncates (`CALL truncate_duckdb_logs()`). The exit test **writes its own lake**: a partitioned Parquet lake generated into MinIO with DuckDB under a prefix of the test's own, then a report joining the PostgreSQL source with it, then the prefix removed. It runs where both servers are set, which is the Linux check. |
+| `handoff = "s3://my-bucket/dbrover-tmp/"`, a prefix the user names, and the run deletes what it wrote (a signed delete per object, a small addition to C2's listers). | C2's listers only list. A report's `[[source]]` names one data source, and a handoff needs two: the engine that writes, and the bucket whose credentials read and delete. Athena already writes every result to S3, and `GetQueryExecution` names the location ([C3's note](cloud-data.md#rows-and-columnar-batches)). | `handoff` on a `[[source]]` is a table: `handoff = { data_source = "lake", prefix = "dbrover-tmp/" }`, naming a DuckDB data source with a bucket and a prefix under it. The bucket is read and cleaned with its own sign-in, through RS7b's path; the warehouse writes with its own. Athena's layer reads the job's own result file where `handoff` names no prefix of its own, and sends `UNLOAD … TO … WITH (format = 'parquet')` where it does. The listers gain a delete, and a run that ends any way deletes what it wrote; a run killed before that leaves files, which the next run of the report and **Discard** remove, and the manual suggests a lifecycle rule. |
+| Engine by engine after C3 to C5. | C3 (Athena, Trino) and C4 (BigQuery) are built; C5 (Snowflake) and C6 (Databricks) aren't started. Athena's tests replay exchanges from files against a server on `127.0.0.1`; Trino's container is nightly, and its protocol is tested against a small server on every pull request; BigQuery has an emulator, which has no `EXPORT DATA`. | RS7 carries handoff for **Athena, Trino and BigQuery**: RS7f Athena, RS7g the other two. Snowflake's `COPY INTO @stage` lands with C5 and Databricks's external links with C6, as each driver's own layer. Each is tested as its engine is: the statement sent and the files read back against the stand-in with MinIO beside it, and the live check by hand, as C3 and C4 left theirs. |
+| Reading a lake is the one path where a desktop queries a terabyte directly. | Nothing in the run bounds what DuckDB holds while it reads a lake except the workspace's `memory_limit` and `max_temp_size`, which already hold for the combine. A lake loads no rows, so it adds nothing to the queues RS3c bounded. | Unchanged, and the manual says so: a lake costs the run no queue and no disk of its own, and the combine's `memory_limit` bounds the scan's buffers. What a lake does add is a network in the middle of the combine, which the run's `timeout` and `stall_timeout` bound. |
+
+What RS7 leaves out:
+
+- **Writing to a lake.** The workspace has no write path to a bucket, and a report's outputs
+  stay files on the machine ([ADR 0008](adr/0008-a-locked-workspace-reads-a-named-bucket.md)).
+- **MotherDuck in the combine** (C2g), which the plan already left for later: the workspace
+  would talk to a service during the locked combine with a database it doesn't control.
+- **Azure in CI.** Azurite is 427 MB, so the lake tests run against MinIO, and
+  Google Cloud Storage's stand-in reads but doesn't take writes; a lake on Azure Blob
+  Storage or Google Cloud Storage is tried by hand, as C2 tried reading them.
+- **A catalog in the combine.** An Iceberg REST or Glue catalog would name tables rather than
+  paths; RS7 reads a table by its path, as C2's explorer opens one.
+
 ## Benchmark
 
 RS1g's baseline, the numbers RS3c's typed loading and RS6's columnar sources are judged by.
@@ -1273,6 +1353,10 @@ Proposed defaults; each is confirmed when its milestone starts.
 | The run's time | **A wall-clock `timeout` and a `stall_timeout`.** | A long run isn't mistaken for a stuck one. |
 | Disk | **A `max_disk` for the work folder,** checked against the free space DuckDB reports. | No new dependency; a run fails before it fills a disk. |
 | Results handed over through a bucket | **Opt-in per source,** to a prefix the user names, deleted when the run ends. | Fast large results from warehouses, with the only write a report makes being one the user asked for, outside every data source. |
+| A lake in the combine | **A `[[source]]` with `lake`,** a path in a C2 bucket, read through a view over it; not an attached database. | The combine query reads a lake as it reads any source, and its filters and columns push down into the lake's scan. The report's file is the only place that names a bucket. |
+| The lock-down with a lake | **External access still off, with the lake's prefixes allowed** ([ADR 0008](adr/0008-a-locked-workspace-reads-a-named-bucket.md)). | A path in a report's file reaches the bucket it names and nothing else: no other prefix, no local file, no address, no extension loaded after the lock. |
+| What a lake costs before it runs | **The run's own estimate,** from the bucket's listing and the files' Parquet footers, judged against the DuckDB data source's `ask_above_bytes`. | A lake too large to read is refused before the run instead of billed; the estimate is an upper bound, since pruning only reads less. |
+| What a handoff names | **A bucket data source and a prefix under it,** beside the source's own engine. | The warehouse writes with its own credentials and DuckDB reads with the bucket's, each sign-in staying where C0 and C2 put it. |
 | The profile | **One JSON document per run,** versioned, in `report_runs`' `steps`. | No schema migration; the app, the command line and MCP read the same thing. |
 | A flame graph | **W10's plan view for DuckDB's operator tree,** a timeline for the steps. | One plan view to maintain; the timeline covers what a flame graph of steps would. |
 | New engines | **None.** DataFusion, Polars, Flight and ADBC are out. | The binary and CI's build time stay where they are; one combine dialect. |
@@ -1310,6 +1394,16 @@ Proposed defaults; each is confirmed when its milestone starts.
 - **A shared report edited for one use.** Changing a report changes every report built on it.
   **Used by** in its tab and the file hashes in each run's profile show who is affected and
   since when.
+- **Extension downloads.** `httpfs`, and `iceberg` or `delta`, are downloaded from
+  `extensions.duckdb.org` the first time a DuckDB version needs them (C2). A run on a machine
+  that can reach the bucket but not that address can't read a lake; it fails before the lock,
+  naming the extension and the address, which is DuckDB's own error. CI downloads about
+  125 MB on each run, as C2 accepted, with caching by DuckDB version if it turns out flaky.
+- **The HTTP log's memory.** The bytes in the profile come from a log row per request kept in
+  DuckDB's memory, which a lake of millions of range requests makes large. It is scoped to
+  HTTP alone and truncated after each lake's numbers are read; if that isn't enough for a
+  very large lake, the log is turned off for the run and the profile says the bytes weren't
+  measured, which is better than a run that fails for its own instrumentation.
 - **CI time.** Large-data tests are slow tests run by hand; CI runs small cases only, and RS7's
   lake test reuses C2's MinIO.
 
@@ -1324,8 +1418,11 @@ Proposed defaults; each is confirmed when its milestone starts.
 ## Open questions
 
 - Should an MCP client run reports (RS8)? The read-only tools come first either way.
-- Is the BigQuery Storage Read API worth gRPC in the build, or does the bucket handoff cover
-  BigQuery's large results? C4 left it out (it reads text pages); decided with RS6 and RS7.
+- ~~Is the BigQuery Storage Read API worth gRPC in the build, or does the bucket handoff cover
+  BigQuery's large results?~~ Settled with RS7 (2026-11-15): **the handoff covers them.**
+  `EXPORT DATA` writes Parquet to a bucket DuckDB already reads, so BigQuery's large results
+  need no gRPC, no protocol buffers and no second billed path (RS7g). The Storage Read API is
+  reopened only if a user needs a large BigQuery result without a bucket to write it to.
 - Should the run profile be exportable to a standard trace format (Chrome's trace events, which
   `chrome://tracing` and Perfetto open), for people who already read traces? Cheap to add to
   `--profile` once the profile exists.
