@@ -34,9 +34,9 @@ pub use bucket::BucketError;
 pub use lake::{BucketSignIn, DuckDbExtension, LakeView};
 pub use parquet::{ParquetCompression, ParquetWriter};
 pub use workspace::{
-    Allowed, DuckDbType, LoadColumn, TableLoader, UnknownDuckDbType, Workspace, WorkspaceLimit,
-    WorkspaceLimits, WorkspacePeaks, WorkspaceProfile, WorkspaceStore, copy_to_parquet,
-    read_parquet, read_parquet_files,
+    Allowed, BucketTraffic, DuckDbType, LoadColumn, TableLoader, UnknownDuckDbType, Workspace,
+    WorkspaceLimit, WorkspaceLimits, WorkspacePeaks, WorkspaceProfile, WorkspaceStore,
+    copy_to_parquet, read_parquet, read_parquet_files,
 };
 
 const PRODUCT: &str = "DuckDB";

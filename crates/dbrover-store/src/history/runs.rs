@@ -177,13 +177,34 @@ impl RunOutcome {
 #[serde(tag = "step", rename_all = "snake_case")]
 pub enum StepMetrics {
     Source(SourceMetrics),
-    /// A DuckDB file attached for the combine step, which reads nothing of its own.
+    /// A source the combine step read in place, which copied nothing: a DuckDB file attached,
+    /// or a lake in a bucket (RS7).
     Attached {
         id: String,
         data_source: String,
+        /// The lake it read, for a source with `lake`; `None` for an attached file, and from
+        /// a worker older than RS7c.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lake: Option<LakeMetrics>,
     },
     Combine(CombineMetrics),
     Output(OutputMetrics),
+}
+
+/// A lake read in place, and what its scan asked its bucket for (RS7).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LakeMetrics {
+    /// What the view read it through: `read_parquet('s3://lake/sales/year=*/*.parquet')`.
+    pub url: String,
+    /// `parquet`, `csv`, `json`, `iceberg` or `delta`.
+    pub format: String,
+    /// The requests DuckDB made for its files; `None` where the log couldn't be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requests: Option<u64>,
+    /// The bytes their answers carried, which is what the bucket billed for reading; `None`
+    /// where the log couldn't be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
 }
 
 /// A source, copied into the run.
@@ -579,6 +600,18 @@ mod tests {
                 StepMetrics::Attached {
                     id: "prices".to_owned(),
                     data_source: "prices-duckdb".to_owned(),
+                    lake: None,
+                },
+                // A lake read in place, with what its scan asked the bucket for (RS7e).
+                StepMetrics::Attached {
+                    id: "sales".to_owned(),
+                    data_source: "lake".to_owned(),
+                    lake: Some(LakeMetrics {
+                        url: "read_parquet('s3://lake/sales/year=*/*.parquet')".to_owned(),
+                        format: "parquet".to_owned(),
+                        requests: Some(14),
+                        bytes: Some(2_400_000),
+                    }),
                 },
                 StepMetrics::Combine(CombineMetrics {
                     rows: 40,
@@ -876,7 +909,9 @@ mod tests {
                 Rp4Step::Output { number } => format!("output {number}"),
             })
             .collect();
-        assert_eq!(named, ["tx", "prices", "combine 40", "output 1"]);
+        // A lake read in place is an `attached` step to a reader that knows nothing of lakes,
+        // which is what keeps RP4's profiles and RS7's in one shape (RS7e).
+        assert_eq!(named, ["tx", "prices", "sales", "combine 40", "output 1"]);
     }
 
     #[test]

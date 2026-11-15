@@ -209,6 +209,15 @@ fn outcome_json(events: &[RunEvent], max_rows: usize) -> Value {
                 "lake": url,
                 "format": format,
             })),
+            RunEvent::LakeScanned {
+                id,
+                requests,
+                bytes,
+            } => steps.push(json!({
+                "step": format!("source {id}"),
+                "bucket_requests": requests,
+                "bucket_bytes": bytes,
+            })),
             RunEvent::CombineDone {
                 rows,
                 bytes,

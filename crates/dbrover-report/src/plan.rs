@@ -366,6 +366,16 @@ impl LakeSource {
     pub fn prefix(&self) -> String {
         self.path.prefix(self.format)
     }
+
+    /// That prefix without the bucket's address: the keys the lake's files are under, which
+    /// the bucket's own requests name (RS7e).
+    pub fn key_prefix(&self) -> String {
+        let prefix = self.prefix();
+        prefix
+            .split_once("://")
+            .and_then(|(_, rest)| rest.split_once('/'))
+            .map_or(prefix.clone(), |(_, key)| key.to_owned())
+    }
 }
 
 /// The combine step's query, and the limits of the DuckDB it runs in.

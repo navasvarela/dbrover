@@ -257,6 +257,7 @@ fn kind(event: &RunEvent) -> &'static str {
         RunEvent::PartDone(_) => "range done",
         RunEvent::SourceAttached { .. } => "attached",
         RunEvent::LakeRead { .. } => "lake read",
+        RunEvent::LakeScanned { .. } => "lake scanned",
         RunEvent::CombineDone { .. } => "combine done",
         RunEvent::Preview(_) => "preview",
         RunEvent::OutputWritten(_) => "written",
