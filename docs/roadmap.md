@@ -2678,8 +2678,29 @@ measurement.
   second's, and the source's columns fold out as `HUGEINT`, `DECIMAL(18,2)` and `TIMESTAMP`
   where the text path made `id` a `BIGINT`. Not checked on Windows or Linux, nor against
   ClickHouse Cloud.
-- **RS7 — Lakes and warehouses in the combine:** C2's buckets attached with DuckDB's pruning,
-  and large warehouse results handed over through a bucket the user names.
+- **RS7 — Lakes and warehouses in the combine:** a lake read in place by the combine step,
+  with DuckDB's pruning, and large warehouse results handed over through a bucket the user
+  names. Started on 2026-11-15, after C2 and C4; what today's code changes in the plan is in
+  [RS7 against today's code](reports-at-scale.md#rs7-against-todays-code). In layers, one PR
+  each:
+  - **RS7a — The plan:** RS7's decisions against today's code, and
+    [ADR 0008](adr/0008-a-locked-workspace-reads-a-named-bucket.md), which says what a locked
+    workspace may reach.
+  - **RS7b — A bucket in the workspace:** the extensions a lake needs loaded and the bucket's
+    secret made before the lock, and the lock allowing the lake's prefixes and nothing else.
+  - **RS7c — A lake source in a report:** `lake` on a `[[source]]`, a view over its path, and
+    Parquet, CSV, Iceberg and Delta read in place.
+  - **RS7d — The cost guard over a lake:** the bytes a lake holds, from the bucket's listing
+    and the files' footers, against the data source's `ask_above_bytes`.
+  - **RS7e — Bytes read in the profile:** what each lake's scan asked the bucket for, and the
+    `lake-scan` hint.
+  - **RS7f — Handoff, and Athena's result files:** `handoff` on a source, and Athena's results
+    read from S3 instead of paged.
+  - **RS7g — Trino's spooled results and BigQuery's `EXPORT DATA`.**
+  - **RS7h — Manual, demo note and the exit test.**
+
+  **Exit:** on MinIO in CI, a report joins a PostgreSQL source with a partitioned Parquet lake,
+  and the profile shows the lake's bytes read far below its size.
 - **RS8 — Reports over MCP:** read-only tools to list, explain and compare reports and their
   runs, and the decision on MCP clients running them.
 - **RS9 — Composing reports:** a report used as another's source, by name, with its

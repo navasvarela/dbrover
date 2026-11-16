@@ -12,6 +12,7 @@ superseded ADR stays in place with its status updated and a link to the one repl
 | [0005](0005-customisation-files-commands-then-wasm.md) | Customisation through files and commands now, WebAssembly plugins later | Accepted |
 | [0006](0006-documents-as-extended-json-text.md) | Documents as Extended JSON text | Accepted |
 | [0007](0007-arrow-on-bulk-paths.md) | Arrow batches on bulk paths | Accepted |
+| [0008](0008-a-locked-workspace-reads-a-named-bucket.md) | A locked workspace reads a named bucket prefix | Accepted |
 
 ## Template
 
