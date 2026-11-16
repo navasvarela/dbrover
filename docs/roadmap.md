@@ -2865,9 +2865,14 @@ explorer, and schema snapshots Git can keep. It links no Git library and never r
 
 ## Charts as code track
 
-Done: CH1, CH2 and CH3 built on 2026-11-06, CH4 on 2026-11-07, in #515 to #519, #522 to
-#524, #526 to #531, and #533 and #534; what was left for later is in
-[Charts as code](charts-as-code.md#left-for-later). Proposed on 2026-11-04 in [Charts as code](charts-as-code.md), after
+CH1, CH2 and CH3 built on 2026-11-06, CH4 on 2026-11-07, in #515 to #519, #522 to
+#524, #526 to #531, and #533 and #534. **CH5, a fuller chart, is planned and not built:** the
+kinds and keys those four left for later, and statistics, planned on 2026-11-16 in
+[A fuller chart](charts-as-code.md#a-fuller-chart) after the manual's thin charts coverage
+turned out to reflect a narrow feature set as much as a gap in the writing. It comes after RS7f
+and RS7g and before RS8. What is still left for later is in
+[Charts as code](charts-as-code.md#left-for-later). Proposed on 2026-11-04 in
+[Charts as code](charts-as-code.md), after
 asking for a simple syntax for charts of queries and reports. W12's chart, written down as a few
 TOML keys (`kind`, `x`, `y`, `series`, `title`, `sort`, `limit`, …): in a comment block above a
 statement, which opens its result on that chart and which the tab writes back, and as a report's
@@ -3015,6 +3020,48 @@ is added. It came after CI fixes, the reports track and W13.
   are in [CH4 confirmed](charts-as-code.md#ch4-confirmed). Covered by the MCP crate's unit tests
   of the spec, the drawing and both replies, and `crates/dbrover-mcp/tests/chart.rs`, the exit
   over stdio on the shop.
+- **CH5 — A fuller chart (L):** planned, not built; planned on 2026-11-16 in
+  [A fuller chart](charts-as-code.md#a-fuller-chart). The kinds and keys CH1 to CH4 left for
+  later (horizontal bars as `kind = "hbars"`, stacked area as `kind = "area"`, a log scale
+  through `y_scale`, per-series `colours` and a reference line), and statistics in two
+  halves: **Summarise** writes the SQL for distributions and percentiles, so those see every row
+  and travel as SQL, while the chart layer gains only what is honest over the points already
+  drawn, a trend, a moving average and a mean or median line (`overlay`), each named in the line
+  under the chart. A report refuses an overlay beside `limit`, since nobody reads an unattended
+  file's caption; a console allows it. Facets stay out, with their cost written down, and the
+  Reports [scope line](reporting.md#scope) does not move: one result, one picture. It comes
+  after RS7f and RS7g, which were already in flight, and before RS8. In layers, one PR each:
+  - **CH5a — Plan:** the design section, this entry, and the decisions confirmed against the
+    code. Docs only.
+  - **CH5b — Horizontal bars (S):** the value and category extents named with no mark changed,
+    then `kind = "hbars"`: the left gutter capped at a third of the width with names shortened
+    by measure, the value ticks at the wider spacing, a vertical zero line, stacking, and
+    hovering by the slot along Y. `Ticks` is unchanged.
+  - **CH5c — Stacked area (S–M):** `kind = "area"`, always stacked, as one `Mark::Band` a
+    series: one `<polygon>` in the SVG, split into four-sided pieces by the app's painter, since
+    egui fills only convex shapes; and `MAX_AREA_POINTS`.
+  - **CH5d — A log scale (S):** decade ticks with 1-2-5 inside while the axis spans few of
+    them; zero and negative values as counted gaps; `y_zero`, bars, hbars and area refused.
+  - **CH5e — Colour control (S):** `colours` by position, hex only, overriding the screen's and
+    the file's palettes at the same index so a file still matches the screen; a contrast hint in
+    the tab rather than a colour the app changes.
+  - **CH5f — Summarise writes SQL (M):** a menu on a column of numbers writing a distribution
+    or percentiles as a new statement **below** the original, with its own `[chart]` block, the
+    original untouched and one undo step; its range read in SQL, never from the rows fetched;
+    per-dialect templates, and the item disabled where an engine has no percentile function.
+    A console affordance only.
+  - **CH5g — The overlays (M):** `overlay` and its phrases, one per series, dashed through a
+    stroke on the line marks; the note naming each overlay and its basis; refusals on an area
+    and on stacked bars, and `overlay` with `limit` refused in a report.
+  - **CH5h — Manual and demo note (S):** the new kinds, keys and **Summarise** written into the
+    manual's charts page, extending it rather than repeating it.
+
+  **Exit:** on the SQLite shop, a top-twenty of customers draws as horizontal bars with
+  readable names; category shares by month draw as a stacked area that matches its SVG; a
+  scatter of prices on a log scale reads at every size; `colours = ["#e34948"]` holds on both
+  themes and in the file; **Summarise › Distribution** writes bucketing SQL below the statement,
+  which charts as bars; `overlay = ["trend", "mean"]` draws both with the note naming their
+  basis, and the same spec with `limit` in a report exits 3.
 
 ## Design and documentation track
 
