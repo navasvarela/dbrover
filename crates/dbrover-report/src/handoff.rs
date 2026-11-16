@@ -32,6 +32,10 @@ pub(crate) struct HandoffFolders {
 
 impl HandoffFolders {
     /// The folders of a run of `report` starting now.
+    ///
+    /// The run's folder is named to the clock's own granularity, which is a nanosecond on
+    /// macOS and Linux and a 100-nanosecond FILETIME tick on Windows; two runs that start
+    /// inside one tick are told apart by the process, which is why the name carries it.
     pub(crate) fn starting(report: &str) -> Self {
         Self::started(report, SystemTime::now(), std::process::id())
     }
@@ -233,13 +237,24 @@ mod tests {
 
     use super::*;
 
+    /// A run of `report` started `nanos` after the epoch.
+    ///
+    /// `nanos` has to be a multiple of 100: Windows counts a `SystemTime` in FILETIME's
+    /// 100-nanosecond ticks, so a time with a finer tail comes back truncated there and the
+    /// folder's name loses its last digits — which is what made this test the stack's one
+    /// Windows failure. The assertion keeps a later fixture from finding that out again.
     fn folders(report: &str, nanos: u64, process: u32) -> HandoffFolders {
+        assert_eq!(
+            nanos % 100,
+            0,
+            "a fixture's time must be one every platform's clock holds"
+        );
         HandoffFolders::started(report, UNIX_EPOCH + Duration::from_nanos(nanos), process)
     }
 
     #[test]
     fn a_statements_folder_names_the_report_the_run_the_source_and_the_range() {
-        let run = folders("Monthly balances", 1_700_000_000_000_000_001, 4242);
+        let run = folders("Monthly balances", 1_700_000_000_000_000_100, 4242);
 
         assert_eq!(
             run.report_prefix("dbrover-tmp/"),
@@ -247,15 +262,15 @@ mod tests {
         );
         assert_eq!(
             run.run_prefix("dbrover-tmp/"),
-            "dbrover-tmp/monthly-balances/run-1700000000000000001-4242/"
+            "dbrover-tmp/monthly-balances/run-1700000000000000100-4242/"
         );
         assert_eq!(
             run.statement_prefix("dbrover-tmp/", "ledger", None),
-            "dbrover-tmp/monthly-balances/run-1700000000000000001-4242/ledger/"
+            "dbrover-tmp/monthly-balances/run-1700000000000000100-4242/ledger/"
         );
         assert_eq!(
             run.statement_prefix("dbrover-tmp/", "ledger", Some(3)),
-            "dbrover-tmp/monthly-balances/run-1700000000000000001-4242/ledger/part-3/"
+            "dbrover-tmp/monthly-balances/run-1700000000000000100-4242/ledger/part-3/"
         );
     }
 
@@ -269,7 +284,7 @@ mod tests {
         ];
         for (name, expected) in cases {
             assert_eq!(
-                folders(name, 1, 1).report_prefix(""),
+                folders(name, 100, 1).report_prefix(""),
                 format!("{expected}/")
             );
         }
@@ -301,8 +316,8 @@ mod tests {
 
     #[test]
     fn two_runs_of_one_report_in_the_same_nanosecond_own_two_folders() {
-        let first = folders("shop", 5, 11);
-        let second = folders("shop", 5, 12);
+        let first = folders("shop", 500, 11);
+        let second = folders("shop", 500, 12);
 
         assert_ne!(first.run_prefix("tmp/"), second.run_prefix("tmp/"));
         // Neither is the other's leftover: they started at the same time.
