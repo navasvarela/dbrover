@@ -2681,8 +2681,8 @@ measurement.
 - **RS7 — Lakes and warehouses in the combine:** a lake read in place by the combine step,
   with DuckDB's pruning, and large warehouse results handed over through a bucket the user
   names. Built on 2026-11-15, after C2 and C4, in one stack of six layers: the lake path,
-  which is RS7's exit. The handoff through a bucket (RS7f, RS7g) has a stack of its own, begun
-  on 2026-11-16: it doesn't wait for C5, because nothing in its shape is Snowflake's, and
+  which is RS7's exit. The handoff through a bucket (RS7f, RS7g) was built on 2026-11-16, in a
+  stack of its own: it didn't wait for C5, because nothing in its shape is Snowflake's, and
   Athena and BigQuery each have a stand-in to be tried against without an account. Trino has
   no handoff to give — no `UNLOAD`, and a spooled protocol that is a transport rather than
   files in a prefix a report names — so C5's `COPY INTO @stage` and C6's external links each
@@ -2701,13 +2701,13 @@ measurement.
     Parquet footers, against the DuckDB data source's new `ask_above_bytes`.
   - **RS7e — Bytes read in the profile:** built; what each lake's scan asked the bucket for,
     from DuckDB's own HTTP log.
-  - **RS7f — Handoff, and Athena's result files:** being built; `handoff` on a source, the
-    delete C2's listers gain, the run folder that says when it started, and Athena's results
-    read from S3 instead of paged.
-  - **RS7g — BigQuery's `EXPORT DATA`:** being built; its shards found by listing the folder
-    the report named. Trino has no handoff to give.
+  - **RS7f — Handoff, and Athena's result files:** built; `handoff` on a source, the delete
+    C2's listers gain, the run folder that says when it started, and Athena's results read
+    from S3 instead of paged.
+  - **RS7g — BigQuery's `EXPORT DATA`:** built; its shards found by listing the folder the
+    report named. Trino has no handoff to give.
   - **RS7h — Manual, demo note and the exit test:** built, for the lake path.
-  - **RS7i — The handoff's manual, demo note and status:** being built.
+  - **RS7i — The handoff's manual, demo note and status:** built.
 
   **Exit:** on MinIO in CI, a report joins a PostgreSQL source with a partitioned Parquet lake,
   and the profile shows the lake's bytes read far below its size. Met on 2026-11-15: a report
@@ -2723,8 +2723,20 @@ measurement.
   `WHERE year = 2025` to the combine query and run again, and the bytes fall to one year's.
   Set **Refuse a lake above** to a gigabyte less than the lake and the run stops before it
   reads a row, naming what the lake holds. Not checked on Windows or Linux, nor against S3,
-  Google Cloud Storage or Azure Blob Storage themselves; the handoff through a bucket (RS7f,
-  RS7g) isn't built.
+  Google Cloud Storage or Azure Blob Storage themselves.
+
+  **RS7's handoff demo note:** with an Athena data source whose workgroup writes its results
+  into the same bucket as a DuckDB data source `lake`, a report whose `[[source]]` reads
+  `query = "SELECT …"` with `handoff = { data_source = "lake" }`: **Run** it, then open
+  **Profile**, where the source's step says it was handed one file; the rows are the same as
+  without the key, and the result file is gone from the bucket when the run ends. Add
+  `prefix = "dbrover-tmp/"` and run again: the statement Athena receives is an `UNLOAD` into
+  `dbrover-tmp/<report>/run-…/<source>/`, the Profile says how many Parquet shards it read and
+  what they held, and the folder is empty afterwards. Kill the run (**Stop**, or the worker)
+  between the write and the delete and the files stay; run the report again and they go.
+  Checked on macOS against Athena's replayed exchanges with MinIO beside them; not against a
+  live Athena or BigQuery account, nor against S3 or Cloud Storage themselves, and not on
+  Windows or Linux.
 - **RS8 — Reports over MCP:** read-only tools to list, explain and compare reports and their
   runs, and the decision on MCP clients running them.
 - **RS9 — Composing reports:** a report used as another's source, by name, with its

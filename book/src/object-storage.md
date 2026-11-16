@@ -94,6 +94,13 @@ A report reads a bucket too, with `lake` on a `[[source]]`: its combine step joi
 files with the report's other sources and reads only the parts the query needs. See
 [Lakes in the combine](reports.md#lakes-in-the-combine).
 
+A bucket can also take a report's **handed-over results**, with `handoff` on a `[[source]]`:
+Athena or BigQuery writes a large result there as files, and the run reads them with this data
+source's sign-in and deletes them when it ends. That is the only write a report makes, and only
+under the prefix it names; a lifecycle rule on that prefix is the backstop for a run that never
+comes back. See
+[Handing a large result over through a bucket](reports.md#handing-a-large-result-over-through-a-bucket).
+
 ## Extensions, and working offline
 
 DuckDB reads buckets and table formats with extensions it downloads from

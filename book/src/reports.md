@@ -404,6 +404,7 @@ and `T` works in place of the space).
 | `max_rows_per_part` | The most rows each range of a partitioned source may return. No limit unless you say. |
 | `columns` | The columns it makes, each with a type. Needed for a document database. See [Declared columns](#declared-columns). |
 | `columnar` | `false` loads the source's rows as text, even from DuckDB or ClickHouse, which otherwise hand them to the combine step as they are. See [Columnar sources](#columnar-sources). |
+| `handoff` | Has the engine write the result to a bucket as files, which the run reads instead of paging its rows, as `{ data_source = "lake", prefix = "dbrover-tmp/" }`. Athena and BigQuery. See [Handing a large result over through a bucket](#handing-a-large-result-over-through-a-bucket). |
 | `max_rows` | The most rows it may return, all its lookup's batches or ranges together. 1,000,000 unless you say. |
 | `max_bytes` | The most data it may return, as `"500 MB"` or `"4 GiB"`. 1 GiB unless you say. |
 | `timeout` | How long the query may run, all its batches together, or each range on its own, as `"30s"` or `"10m"`. 10 minutes unless you say. |
@@ -781,6 +782,68 @@ lakes of Parquet, Iceberg and Delta.
 
 The limit is the data source's, so it holds every report that reads that bucket. Set it where
 a bucket's egress is billed and a mistyped path would be expensive.
+
+### Handing a large result over through a bucket
+
+A warehouse that answers a thousand rows at a time is slow to read a result of many gigabytes
+from. Athena and BigQuery can write the result to a bucket instead, as files, and the run then
+reads them with DuckDB in parallel. A `[[source]]` asks for that with `handoff`:
+
+```toml
+[[source]]
+id = "orders"
+data_source = "warehouse-athena"
+query = "SELECT item, day, amount FROM orders WHERE day >= :from"
+handoff = { data_source = "lake", prefix = "dbrover-tmp/" }
+```
+
+`data_source` is a DuckDB data source with a bucket (see [Object storage](object-storage.md)),
+and `prefix` is a folder in it the run may write under. Two sign-ins meet here, and each stays
+where it is: **the warehouse writes the files with its own credentials**, and **DbRover reads
+them, and deletes them, with the bucket data source's**. So the warehouse needs write access
+to that prefix, and the bucket's data source needs read and delete on it.
+
+Writing to a bucket is the one write a report makes, which is why it is opt-in and why the
+report names the folder. A report without `handoff` never writes anywhere but its own output
+files.
+
+| Engine | What it sends | What the run reads |
+| --- | --- | --- |
+| Athena, with a `prefix` | `UNLOAD (<your query>) TO '<prefix>/…' WITH (format = 'parquet')` | the Parquet files it wrote |
+| Athena, without a `prefix` | your query as it is | the result file Athena writes for every query, as the CSV it is |
+| BigQuery | `EXPORT DATA OPTIONS (uri = '<prefix>/…/part-*.parquet', format = 'PARQUET') AS <your query>` | the Parquet shards it wrote |
+
+Athena writes every result to S3 anyway, so `handoff = { data_source = "lake" }` without a
+prefix reads that file where it already is — which asks the warehouse for nothing new, and
+needs the bucket data source to be the one the workgroup's output location is in. BigQuery has
+no result file of its own to read, so its handoff needs a `prefix`.
+
+**What a handoff takes, and what it doesn't.** The files carry their own columns and types, so
+a handoff takes none of the keys that count or shape rows on the way in: no `max_rows`,
+`max_bytes`, `columns` or `columnar`, and no `lookup` or `partition`, which send a statement a
+batch or a range at a time. What still holds is the source's `timeout`, which bounds the
+statement, and the data source's cost guard, which bounds what the statement scans — the part
+the warehouse bills for. Cast in the source's own query where you want a particular type: that
+is where the warehouse decides what it writes.
+
+**What it costs.** The run's Profile says how many files the source was handed and what they
+hold, beside the rows it loaded and the bytes its engine scanned. `dbrover report run` prints
+the same line.
+
+**What the run leaves.** Each statement's files are deleted as soon as they are loaded, and the
+run removes its own folder when it ends, however it ends. A run that is killed — the machine
+sleeps and never wakes, the process is stopped — leaves its files where they are; the next run
+of the same report removes them, because each run's folder is named for the moment it started
+and a run removes the older ones of its report. A folder under the prefix that isn't a run's is
+never touched, so the prefix can be one you use for other things.
+
+Even so, **put a lifecycle rule on the prefix**: a few days' expiry at the provider (S3's
+lifecycle rules, Cloud Storage's object lifecycle management) is the backstop for the run that
+never comes back, and it costs nothing when every run cleans up after itself.
+
+A handoff's files are read before the combine query runs, with every other source, so the
+combine step's own lock-down is unchanged: it reads what was loaded and the lakes the file
+names, and the handoff's bucket is not among them.
 
 ### Exact numbers in DuckDB
 
