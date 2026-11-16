@@ -123,7 +123,7 @@ a columnar format that reads into Arrow without text:
 | Snowflake | Arrow result chunks from the SQL API | C5. |
 | Databricks SQL | `ARROW_STREAM` results, inline or as external links | C6. |
 | BigQuery | Arrow from the Storage Read API (gRPC), billed apart from the query | Not in C4, which reads `getQueryResults`' JSON as text ([C4's note](cloud-data.md#rows-and-columnar-batches-in-c4)); later, for large results, if gRPC is accepted (below). |
-| Trino and Athena | None in their APIs (text rows); Trino's spooled results and Athena's result files in S3 (CSV, or Parquet through `UNLOAD`) are files | C3 delivers text rows; the files are RS7's handoff, through C2's object storage. |
+| Trino and Athena | None in their APIs (text rows). Athena's result files in S3 (CSV, or Parquet through `UNLOAD`) are files; Trino's spooled segments are its own JSON row pages at opaque addresses, not files in a bucket the report names | C3 delivers text rows; Athena's files are RS7's handoff, through C2's object storage. Trino's spooling is a transport of the same rows, left to its driver ([the handoff against today's code](#the-handoff-against-todays-code)). |
 | PostgreSQL, MySQL, SQL Server | None. PostgreSQL's `COPY (query) TO STDOUT` streams text faster than the simple protocol, inside the read-only transaction. | A later layer of this plan, if RS1 measures it worthwhile. |
 
 The proposal: an optional capability on `ResultCursor`, `next_batch`, that returns an Arrow
@@ -780,18 +780,29 @@ runs the small cases.
     wants it. *Exit:* the exit test's numbers: a run that reads one partition of twelve
     records bytes far below the lake's size. *Tests:* the bytes read from a kept run's log,
     against the files the query should have read; the hint's rule at its thresholds.
-  - **RS7f — Handoff, and Athena's result files** (not built): `handoff` on a `[[source]]`, the prefix it
-    names in a bucket data source, the files read back by DuckDB through RS7b's path, and
-    deleted when the run ends; Athena first, whose result file its job already writes to S3,
-    and `UNLOAD` for Parquet where the source asks for it. *Exit:* a source on the replayed
-    Athena server, whose result file is in MinIO, loads the same table as the same source read
-    as text rows. *Tests:* the statement sent per `handoff` setting; the files read and deleted;
-    a run killed before the delete, whose files the next run removes.
-  - **RS7g — Trino's spooled results and BigQuery's `EXPORT DATA`** (not built): the two engines' own
-    handoff, with their credentials for the prefix. *Exit:* each engine's source loads the same
-    table through its handoff as through its text rows. *Tests:* against each engine's stand-in,
-    the statement and the files; what each refuses.
-  - **RS7h — Manual, demo note and the exit test:** built.
+  - **RS7f — Handoff, and Athena's result files** (being built): `handoff` on a `[[source]]`, the
+    bucket data source and prefix it names, read and planned; the delete C2's listers gain; the
+    run folder whose name says when it started, which is what tells a leftover from a run in
+    flight; the files loaded into the source's own table by
+    DuckDB before the lock, through RS7b's extensions and secret, and deleted as each statement's
+    load ends; Athena first, whose job already writes its result file to S3, and
+    `UNLOAD … WITH (format = 'parquet')` where the source names a prefix of its own. *Exit:* a
+    source on the replayed Athena server, whose result file is in MinIO, loads the same table as
+    the same source read as text rows. *Tests:* the statement sent per `handoff` setting,
+    table-driven; the keys read and deleted; a run killed before the delete, whose files the next
+    run of the report removes; the keys it leaves alone (another report's, and a run beside it);
+    the problems a handoff is refused with.
+  - **RS7g — BigQuery's `EXPORT DATA`** (being built): BigQuery's handoff, with its own credentials
+    for the prefix, as `EXPORT DATA OPTIONS (uri = '…/part-*.parquet', format = 'PARQUET')`, whose
+    shards the run finds by listing. Trino has none to give, which
+    [the handoff against today's code](#the-handoff-against-todays-code) settles. *Exit:* a
+    BigQuery source loads the same table through its handoff as through its text rows. *Tests:*
+    against its replayed exchanges with a bucket beside them, the statement and the files; what it
+    refuses (a handoff with no prefix, and a bucket its export can't write to).
+  - **RS7h — Manual, demo note and the exit test:** built, for the lake path.
+  - **RS7i — The handoff's manual, demo note and status** (being built): `handoff` in the manual,
+    with its two sign-ins, what it refuses, the leftovers it can leave and the lifecycle rule that
+    is the backstop; a demo note; and RS7's remaining gaps stated in the roadmap.
 
   **Exit met** on 2026-11-15 (see [RS7's exit test](#rs7s-exit-test)): on MinIO and
   PostgreSQL in CI, a report joins `rs7_items` with a Parquet lake of 240,000 rows laid out by
@@ -1132,9 +1143,32 @@ As built, where RS7 differs from the table above:
   the step it already knew, and the history needed no new shape.
 - **`[[source]]` keys refused on a lake are checked where an attached file's are,** which both
   now share: one list of keys that bound or shape a query, with the words for each.
-- **RS7f and RS7g are not built.** The lake path is RS7's exit, and the handoff's engines were
-  left for a stack of their own: C5 isn't started, so Snowflake can't join them, and each of
-  Athena, Trino and BigQuery needs its own stand-in exchange to be tested without an account.
+- **RS7f and RS7g were left for a stack of their own,** which started on 2026-11-16: the lake
+  path is RS7's exit, and the handoff's engines each need their own stand-in exchange to be
+  tested without an account. That stack's decisions, and why it doesn't wait for C5, are in
+  [the handoff against today's code](#the-handoff-against-todays-code).
+
+### The handoff against today's code
+
+Settled on 2026-11-16, when the handoff's stack started, by reading the plan against the code
+as of RS7's merge (846d184) and against what each engine's protocol actually gives. The table
+above settled what a handoff *names*; these rows settle what it *does*. As there, where the
+code or an engine changes the plan, the plan above still says what it said; this section wins.
+Each row is a decision for the reviewer to confirm.
+
+| The plan said | Today's code, and the engines | The handoff does |
+| --- | --- | --- |
+| The handoff waits for a stack with C5, since each engine needs its own stand-in to be tried without an account ([the roadmap](roadmap.md), RS7). | C5 isn't started and has no date. Each of the three engines RS7 carries has a stand-in today: Athena's replayed exchanges against a server on `127.0.0.1`, on every pull request; Trino's small server on every pull request and its container nightly; BigQuery's replayed exchanges on every pull request, and the emulator nightly, which has no `EXPORT DATA`. Nothing in the handoff's own shape — the two sign-ins, the prefix, the read back, the delete — is Snowflake's. | **The stack stands without C5,** and is built now. Waiting for C5 would leave RS7 half-built for an unknown time and hand C5 a seam it hadn't designed; building it now means C5's `COPY INTO @stage` and C6's external links each implement a seam that already works for two engines, as their own layer. BigQuery's handoff is tested as its driver is, by its replayed exchanges, because the emulator has no `EXPORT DATA`. |
+| Trino's spooled results are one of the handoff's two engines (RS7g), through C2's object storage ([C3's note](cloud-data.md#rows-and-columnar-batches)). | Open-source Trino has no `UNLOAD`: writing a query's rows to a bucket means `CREATE TABLE AS` in a catalog, which [What stays out](#what-stays-out) rules out. Its spooled protocol (Trino 484, the container's version) is not a handoff either: the client asks for it with `X-Trino-Query-Data-Encoding`, and the server answers with *segments* of the same JSON rows, encoded `json`, `json+lz4` or `json+zstd`, at opaque addresses in the server's own spooling location, each to be acknowledged (`ackUri`) so the server can release it. The report names no prefix, DbRover holds no credentials for that location and must not delete from it, and the bytes are Trino's row pages rather than files a table is read from. | **Trino has no handoff,** and RS7g is BigQuery's `EXPORT DATA` alone. What Trino's spooling would give is a faster *transport* of the same rows — decompress and parse in the client instead of paging JSON — which belongs to the Trino driver beside RS6's batches, not to a bucket the report names; it is left for a user who needs it. Starburst Galaxy's `system.unload` table function writes CSV to a location, and could be a handoff for Starburst alone, likewise left until someone asks. |
+| The files are read back through RS7b's path, which [ADR 0008](adr/0008-a-locked-workspace-reads-a-named-bucket.md) governs. | A source is loaded into the run's DuckDB **before** `Workspace::lock`, in the rounds `Combining::combine` loads: only a lake, which is read in place by the combine query, is read after it. | **A handoff's files are read before the lock,** so they need no prefix in `allowed_directories` and ADR 0008's promise doesn't widen by a byte: the combine query still reads only what was loaded and the lakes the file names. What RS7b's path does give the handoff is the order DuckDB insists on — load the provider's extension, make the bucket's temporary secret, then read — and its errors. The files can be deleted as soon as the load ends, rather than having to outlive the combine. |
+| (Not said: what the files become.) | A loaded source's table is made by `Workspace::loader` from the result's columns and filled a page or an Arrow batch at a time, under the caps that count what the source *received*. A handoff receives no rows: DuckDB reads the files. | **The source's table is made from the files themselves,** by `CREATE TABLE main.<id> AS SELECT * FROM read_parquet([…])`, or `read_csv` for Athena's own result file. Its columns and types are the files' own, as the columnar path's are the engine's (ADR 0007), and its rows are the rows DuckDB inserted, which the profile keeps beside the files' count and bytes. Nothing else about the source changes: its id names its table, its query is its own, and the combine reads it as it reads any loaded source. |
+| A source's caps hold per source (`max_rows`, `max_bytes`, `timeout`). | They count rows and bytes received, which a handoff doesn't receive, and they stop a read part-way, which a file already written can't be. | `max_rows`, `max_bytes`, `columnar`, `columns`, `partition` and `lookup` are **refused on a `handoff`**, each with a problem that says what bounds or shapes it instead: the engine's own cost guard for what the statement will scan, which is what the warehouse bills; the source's `timeout`, which still holds and bounds the statement; and the source's query for the columns and casts a declared column would have given. A handoff a range at a time is a later layer if a run wants one. |
+| The run deletes what it wrote when it ends (a signed delete per object, a small addition to C2's listers). | `Lister` lists a level at a time and nothing more; `StoredFile` is a key and a size. | `Lister::delete` per provider, signed as its listing is: S3's SigV4, GCS's token, Azure's own. Nothing else is added to the listing. The run deletes its own keys as the load ends, and its folder again when the run ends however it ends. |
+| A run killed before the delete leaves files, which the next run of the report and **Discard** remove ([Risks](#risks)). | Two runs of one report can be in flight at once, and a cleanup that removed every key under the report's prefix would delete the other run's files while it was reading them. | A handoff's keys are `<prefix><report>/run-<nanoseconds>-<process>/<source>/…`, so a run owns one folder and **the folder's own name says when the run started**: no listing metadata is needed to tell a leftover from a run in flight. Before it writes, a run removes the folders under its report's prefix whose name parses and whose start is **before its own**, so a run beside it is never touched, and a folder it can't read the name of — a user's own — is left alone. The manual says to put a lifecycle rule on the prefix as the backstop, for the machine that never comes back. |
+| Athena's result file, or `UNLOAD` where the source asks for Parquet. | `GetQueryExecution` names the location in the same answer the driver already reads for the bytes scanned. Athena's `UNLOAD` refuses a destination that isn't empty, and writes a manifest beside the data. | Where `handoff` names **no `prefix`**, the job's own result file: one CSV, whose location must be under the handoff's bucket, or the source is refused before it runs, naming both. Where `handoff` names a `prefix`, `UNLOAD (<query>) TO '<s3 address>' WITH (format = 'parquet')` into the statement's own folder, which is empty because the run owns it; the data files are found by listing that folder, and the manifest, which isn't a `.parquet` file, is ignored and deleted with the rest. |
+| BigQuery through `EXPORT DATA`, not the Storage Read API ([Other technologies](#other-technologies)). | `EXPORT DATA`'s `uri` must hold exactly one wildcard, so the export is always sharded and its file names are BigQuery's; the statement returns no rows, and `overwrite = true` overwrites the shards it writes without deleting anything else under the wildcard. | `EXPORT DATA OPTIONS (uri = '<gs address>/part-*.parquet', format = 'PARQUET', overwrite = true) AS <query>`, submitted as the driver submits any statement, through C0's jobs. The files are found by **listing** the statement's folder rather than from the answer, which is what the wildcard leaves; `overwrite` matters only for a folder a killed run left, which the run has already cleaned. A `prefix` is required, since there is no location of BigQuery's own to fall back to. |
+| (Not said: which buckets an engine can write to.) | Athena writes to S3 and nowhere else; BigQuery's `EXPORT DATA` writes to Cloud Storage, and to S3 or Blob Storage only through BigQuery Omni, which C4 doesn't carry. A DuckDB data source's bucket is any of the three providers (C2). | **A handoff whose bucket its engine can't write to is refused when the report is planned,** naming the engine, the provider and the data source, rather than failing in the engine's own words half a statement later. The test buckets follow: Athena's handoff is tested against MinIO, BigQuery's against the fake Cloud Storage server, which gains a writable bucket beside its read-only fixtures — one line in the Compose file. |
+| (Not said: which sign-in does what.) | A `[[source]]` names one data source, and C0 keeps each engine's sign-in with its own data source. | Two sign-ins, each where C0 and C2 put it: the **engine's**, which writes the files, under the credentials its own data source holds, and the **bucket data source's**, which reads them and deletes them. DbRover never hands one engine the other's credentials, and a bucket the engine can't write to fails as the engine's own error, which the run explains. |
 
 ### RS7's exit test
 
@@ -1413,6 +1447,9 @@ Proposed defaults; each is confirmed when its milestone starts.
 | The lock-down with a lake | **External access still off, with the lake's prefixes allowed** ([ADR 0008](adr/0008-a-locked-workspace-reads-a-named-bucket.md)). | A path in a report's file reaches the bucket it names and nothing else: no other prefix, no local file, no address, no extension loaded after the lock. |
 | What a lake costs before it runs | **The run's own estimate,** from the bucket's listing and the files' Parquet footers, judged against the DuckDB data source's `ask_above_bytes`. | A lake too large to read is refused before the run instead of billed; the estimate is an upper bound, since pruning only reads less. |
 | What a handoff names | **A bucket data source and a prefix under it,** beside the source's own engine. | The warehouse writes with its own credentials and DuckDB reads with the bucket's, each sign-in staying where C0 and C2 put it. |
+| Trino's handoff | **None.** Open-source Trino has no `UNLOAD`, and its spooled protocol is a transport of the same rows, not files in a prefix the report names. | `handoff` means one thing on every engine that has it; Trino's spooling is left to its driver, where a faster transport belongs. |
+| What a handoff refuses | **The keys that count or shape rows it never receives:** `max_rows`, `max_bytes`, `columnar`, `columns`, `partition` and `lookup`. | The engine's cost guard bounds what the statement scans, which is the bill; `timeout` bounds the statement; a cast in the source's own query shapes the files, which is where a warehouse decides them. |
+| Handoff leftovers | **A folder per run under the report's prefix,** removed as the run ends, and the older folders of that report removed by the next run that starts. | A run killed before its delete costs the next run of the same report, and nothing else; a run beside it is never touched, because only folders last modified before this run started are removed. |
 | The profile | **One JSON document per run,** versioned, in `report_runs`' `steps`. | No schema migration; the app, the command line and MCP read the same thing. |
 | A flame graph | **W10's plan view for DuckDB's operator tree,** a timeline for the steps. | One plan view to maintain; the timeline covers what a flame graph of steps would. |
 | New engines | **None.** DataFusion, Polars, Flight and ADBC are out. | The binary and CI's build time stay where they are; one combine dialect. |

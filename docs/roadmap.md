@@ -2681,9 +2681,12 @@ measurement.
 - **RS7 — Lakes and warehouses in the combine:** a lake read in place by the combine step,
   with DuckDB's pruning, and large warehouse results handed over through a bucket the user
   names. Built on 2026-11-15, after C2 and C4, in one stack of six layers: the lake path,
-  which is RS7's exit. The handoff through a bucket (RS7f, RS7g) waits for a stack of its own,
-  with C5, since each engine needs its own stand-in to be tried without an account. What
-  today's code changes in the plan is in
+  which is RS7's exit. The handoff through a bucket (RS7f, RS7g) has a stack of its own, begun
+  on 2026-11-16: it doesn't wait for C5, because nothing in its shape is Snowflake's, and
+  Athena and BigQuery each have a stand-in to be tried against without an account. Trino has
+  no handoff to give — no `UNLOAD`, and a spooled protocol that is a transport rather than
+  files in a prefix a report names — so C5's `COPY INTO @stage` and C6's external links each
+  land with their own driver. What today's code changes in the plan is in
   [RS7 against today's code](reports-at-scale.md#rs7-against-todays-code). In layers, one PR
   each:
   - **RS7a — The plan:** built; RS7's decisions against today's code, and
@@ -2698,10 +2701,13 @@ measurement.
     Parquet footers, against the DuckDB data source's new `ask_above_bytes`.
   - **RS7e — Bytes read in the profile:** built; what each lake's scan asked the bucket for,
     from DuckDB's own HTTP log.
-  - **RS7f — Handoff, and Athena's result files:** not built; `handoff` on a source, and
-    Athena's results read from S3 instead of paged.
-  - **RS7g — Trino's spooled results and BigQuery's `EXPORT DATA`:** not built.
-  - **RS7h — Manual, demo note and the exit test:** built.
+  - **RS7f — Handoff, and Athena's result files:** being built; `handoff` on a source, the
+    delete C2's listers gain, the run folder that says when it started, and Athena's results
+    read from S3 instead of paged.
+  - **RS7g — BigQuery's `EXPORT DATA`:** being built; its shards found by listing the folder
+    the report named. Trino has no handoff to give.
+  - **RS7h — Manual, demo note and the exit test:** built, for the lake path.
+  - **RS7i — The handoff's manual, demo note and status:** being built.
 
   **Exit:** on MinIO in CI, a report joins a PostgreSQL source with a partitioned Parquet lake,
   and the profile shows the lake's bytes read far below its size. Met on 2026-11-15: a report
