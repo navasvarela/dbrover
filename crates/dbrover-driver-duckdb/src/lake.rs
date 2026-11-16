@@ -135,6 +135,27 @@ impl LakeView {
     }
 }
 
+/// The glob that matches the Parquet files of a table format's folder, whose layout is the
+/// table's own: Iceberg keeps them under `data/`, Delta beside its `_delta_log/`.
+const TABLE_PARQUET_FILES: &str = "/**/*.parquet";
+
+impl LakeView {
+    /// What `parquet_metadata` is read over to size the lake: the path itself for Parquet
+    /// files, and every Parquet file under the folder for a table format, which is more than
+    /// the table's current snapshot holds, so the size is an upper bound.
+    pub(crate) fn footer_glob(path: &LakePath, format: LakeFormat) -> Option<String> {
+        match format {
+            LakeFormat::Parquet => Some(path.url().to_owned()),
+            LakeFormat::Iceberg | LakeFormat::Delta => {
+                Some(format!("{}{TABLE_PARQUET_FILES}", path.url()))
+            }
+            // A text lake has no footer to read, and a listing gives a file's size only level
+            // by level; the manual says the guard can't hold one.
+            LakeFormat::Csv | LakeFormat::Json => None,
+        }
+    }
+}
+
 /// A bucket's credentials for a workspace, made from the data source's C2 sign-in and made
 /// again before they expire.
 ///

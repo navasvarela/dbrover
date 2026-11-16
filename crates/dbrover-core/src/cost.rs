@@ -21,26 +21,53 @@ pub enum CostEstimate {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScanEstimate {
     pub bytes: ByteCount,
-    /// Whether the statement may scan more: BigQuery's dry run can say only how much at least
-    /// a query over an external table will scan.
-    pub at_least: bool,
+    /// How close to `bytes` the statement's own read will be.
+    pub precision: Precision,
+}
+
+/// What an estimate of a statement's bytes says about the read itself.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Precision {
+    /// What the statement scans, as the engine bills it (BigQuery's dry run of a table).
+    #[default]
+    Exactly,
+    /// At least that many: BigQuery's dry run over an external table can say no more.
+    AtLeast,
+    /// At most that many: a lake's files hold them, and DuckDB's pruning reads the parts that
+    /// matter, so the read is this or less (RS7).
+    AtMost,
 }
 
 impl ScanEstimate {
-    /// An estimate the engine gives as exact, or as the most the statement can scan.
+    /// An estimate the engine gives as exact.
     pub fn exactly(bytes: ByteCount) -> Self {
         Self {
             bytes,
-            at_least: false,
+            precision: Precision::Exactly,
         }
+    }
+
+    /// An estimate that bounds the read from above, which is all a lake's files say.
+    pub fn at_most(bytes: ByteCount) -> Self {
+        Self {
+            bytes,
+            precision: Precision::AtMost,
+        }
+    }
+
+    /// Whether the statement may scan more than [`ScanEstimate::bytes`].
+    pub fn may_scan_more(&self) -> bool {
+        self.precision == Precision::AtLeast
     }
 }
 
 impl fmt::Display for ScanEstimate {
-    /// `2.5 GB`, or `at least 2.5 GB`.
+    /// `2.5 GB`, `at least 2.5 GB` or `at most 2.5 GB`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.at_least {
-            f.write_str("at least ")?;
+        match self.precision {
+            Precision::Exactly => {}
+            Precision::AtLeast => f.write_str("at least ")?,
+            Precision::AtMost => f.write_str("at most ")?,
         }
         self.bytes.fmt(f)
     }
@@ -51,6 +78,12 @@ impl CostEstimate {
     pub fn describe(&self) -> String {
         match self {
             Self::WholeTable(scan) => scan.describe(),
+            Self::Bytes(scan) if scan.precision == Precision::AtMost => {
+                format!(
+                    "This reads {scan}, and less where its filters and columns let the \
+                         engine skip part of it."
+                )
+            }
             Self::Bytes(scan) => format!("This scans {scan}, billed whatever it returns."),
         }
     }
@@ -59,6 +92,7 @@ impl CostEstimate {
     pub fn heading(&self) -> String {
         match self {
             Self::WholeTable(scan) => format!("Read all of {}?", scan.table),
+            Self::Bytes(scan) if scan.precision == Precision::AtMost => format!("Read {scan}?"),
             Self::Bytes(scan) => format!("Scan {scan}?"),
         }
     }
@@ -266,8 +300,26 @@ mod tests {
         );
         let at_least = CostEstimate::Bytes(ScanEstimate {
             bytes: ByteCount(2_500_000_000),
-            at_least: true,
+            precision: Precision::AtLeast,
         });
         assert_eq!(at_least.heading(), "Scan at least 2.5 GB?");
+        assert!(at_least.describe().contains("scans at least 2.5 GB"));
+        // A lake's files bound the read from above, so what it says of itself differs: the
+        // bytes are what a query may read, not what it is billed for (RS7).
+        let at_most = CostEstimate::Bytes(ScanEstimate::at_most(ByteCount(2_500_000_000)));
+        assert_eq!(at_most.heading(), "Read at most 2.5 GB?");
+        assert!(
+            at_most
+                .describe()
+                .starts_with("This reads at most 2.5 GB, and less where"),
+            "{}",
+            at_most.describe()
+        );
+        let scan_of = |estimate: &CostEstimate| match estimate {
+            CostEstimate::Bytes(scan) => scan.may_scan_more(),
+            CostEstimate::WholeTable(_) => unreachable!("both are byte estimates"),
+        };
+        assert!(scan_of(&at_least));
+        assert!(!scan_of(&at_most));
     }
 }

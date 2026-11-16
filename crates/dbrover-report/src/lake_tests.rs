@@ -8,8 +8,8 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
 
 use dbrover_core::{
-    ConnectionConfig, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase, ObjectStorage,
-    Password, S3Bucket, S3SignIn, SafetyLevel, SqliteConfig,
+    ByteCount, ConnectionConfig, CostGuard, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase,
+    ObjectStorage, Password, S3Bucket, S3SignIn, SafetyLevel, SqliteConfig,
 };
 
 use super::*;
@@ -263,6 +263,69 @@ async fn reads_an_iceberg_lake_from_its_newest_metadata_file() {
             && url.ends_with(".metadata.json')"),
         "{url}"
     );
+}
+
+/// RS7d: the data source's cost guard judges the lake before the run reads a row.
+#[tokio::test]
+async fn the_cost_guard_refuses_a_lake_that_holds_more_than_its_limit() {
+    let folder = tempfile::tempdir().unwrap();
+    let Some((lake_source, secret)) = lake_data_source() else {
+        return;
+    };
+    let with_limit = |bytes: u64| {
+        let ConnectionConfig::DuckDb(config) = &lake_source.config else {
+            unreachable!("the lake's data source is DuckDB")
+        };
+        DataSource {
+            config: ConnectionConfig::DuckDb(DuckDbConfig {
+                cost_guard: CostGuard {
+                    ask_above_bytes: Some(ByteCount(bytes)),
+                    ..CostGuard::OFF
+                },
+                ..config.clone()
+            }),
+            ..lake_source.clone()
+        }
+    };
+    let run = async |named: DataSource, folder: &Path| {
+        let plan = plan_of(
+            "sales/year=*/*.parquet",
+            "hive_partitioning = true",
+            &[ledger(), named],
+        )
+        .unwrap();
+        let opener = LakeOpener {
+            sources: MemoryOpener::of(vec![("regions", regions())]),
+            secret: secret.clone(),
+        };
+        let staging = folder.join(".run");
+        let work = staging.with_extension("work");
+        crate::run(
+            &plan,
+            &plan.values(&BTreeMap::new()).unwrap(),
+            &opener,
+            RunFolders {
+                folder,
+                staging: &staging,
+                work: &work,
+            },
+            &mut |_| {},
+        )
+        .await
+    };
+
+    // The fixtures hold a few hundred bytes, so one byte is over the limit and a megabyte is
+    // not: the numbers the guard compares are the files' own, which another test pins.
+    let refused = run(with_limit(1), folder.path()).await.unwrap_err();
+    let allowed = run(with_limit(1_000_000), folder.path()).await;
+
+    assert!(
+        refused.message.contains("the lake \"sales\" holds")
+            && refused.message.contains("refuses a lake above 1 bytes"),
+        "{}",
+        refused.message
+    );
+    allowed.expect("a lake under the limit runs");
 }
 
 #[tokio::test]

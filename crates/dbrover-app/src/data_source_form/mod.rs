@@ -25,7 +25,7 @@ use dbrover_engine::read_only::Storage;
 
 pub use athena::{AthenaFields, LIMIT_LABEL as ATHENA_LIMIT_LABEL};
 pub use bigquery::{BigQueryFields, BigQuerySignIn, LIMIT_LABEL as BIGQUERY_LIMIT_LABEL};
-pub use bucket::{BucketFields, BucketSignIn};
+pub use bucket::{BucketFields, BucketSignIn, LAKE_LIMIT_LABEL};
 pub use cassandra::CassandraFields;
 pub use dynamodb::DynamoDbFields;
 pub use elasticsearch::ElasticsearchFields;
@@ -351,7 +351,7 @@ impl DriverFields {
                     read_only,
                     motherduck_name,
                     secret: String::new(),
-                    bucket: BucketFields::from_storage(config.storage.as_ref()),
+                    bucket: BucketFields::from_storage(config.storage.as_ref(), config.cost_guard),
                 })
             }
             ConnectionConfig::ClickHouse(config) => Self::ClickHouse(ClickHouseFields {
@@ -593,6 +593,7 @@ impl DuckDbFields {
         Ok(DuckDbConfig {
             database,
             storage: self.bucket.to_storage()?,
+            cost_guard: self.bucket.to_cost_guard()?,
         })
     }
 }
@@ -621,7 +622,8 @@ fn required(value: &str, missing: FormError) -> Result<String, FormError> {
 #[cfg(test)]
 mod tests {
     use dbrover_core::{
-        ObjectStorage, S3Bucket, S3SignIn, ServerConfig, SshConfig, SshLogin, TlsMode,
+        ByteCount, CostGuard, ObjectStorage, S3Bucket, S3SignIn, ServerConfig, SshConfig, SshLogin,
+        TlsMode,
     };
 
     use super::*;
@@ -701,6 +703,11 @@ mod tests {
                         key_id: "dbrover".to_owned(),
                     },
                 })),
+                // A lake's limit is part of the form too, so it must come back as it went in.
+                cost_guard: CostGuard {
+                    ask_above_bytes: Some(ByteCount(20_000_000_000)),
+                    ..CostGuard::OFF
+                },
             }),
         ];
         for config in configs {

@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 use common::MemorySecrets;
 use dbrover_core::{
-    ConnectionConfig, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase, ObjectStorage,
-    Password, S3Bucket, S3SignIn, SafetyLevel, describe_error,
+    ConnectionConfig, CostGuard, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase,
+    ObjectStorage, Password, S3Bucket, S3SignIn, SafetyLevel, describe_error,
 };
 use dbrover_engine::{OpenError, PasswordCommands, ProcessRunner, Tunnels, open_data_source};
 use dbrover_store::{Secret, SecretStore, TrustedCommands};
@@ -47,6 +47,7 @@ fn minio() -> Option<(DataSource, Password)> {
                     key_id: key_id.to_owned(),
                 },
             })),
+            cost_guard: CostGuard::OFF,
         }),
     };
     Some((data_source, Password::new(secret)))

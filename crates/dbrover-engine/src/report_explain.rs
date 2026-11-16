@@ -272,7 +272,7 @@ async fn estimate(
     };
     let guard = guard.unwrap_or(CostGuard::OFF);
     let (bytes, at_least) = match &estimated {
-        CostEstimate::Bytes(scan) => (Some(scan.bytes.0), scan.at_least),
+        CostEstimate::Bytes(scan) => (Some(scan.bytes.0), scan.may_scan_more()),
         CostEstimate::WholeTable(_) => (None, false),
     };
     Some(Estimate {

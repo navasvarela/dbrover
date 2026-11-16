@@ -254,11 +254,13 @@ impl ConnectionConfig {
             Self::DynamoDb(config) => Some(config.cost_guard),
             Self::Athena(config) => Some(config.cost_guard),
             Self::BigQuery(config) => Some(config.cost_guard),
+            // Only a lake in its bucket is judged by it (RS7); its own statements read what
+            // they name, on this machine or in a database file.
+            Self::DuckDb(config) => Some(config.cost_guard),
             Self::Postgres(_)
             | Self::Sqlite(_)
             | Self::Mysql(_)
             | Self::SqlServer(_)
-            | Self::DuckDb(_)
             | Self::ClickHouse(_)
             | Self::Redis(_)
             | Self::Mongo(_)
@@ -481,6 +483,7 @@ impl ConnectionConfig {
                     .as_ref()
                     .map(|storage| storage.resolve(variables))
                     .transpose()?,
+                cost_guard: config.cost_guard,
             }),
         })
     }
@@ -1371,6 +1374,12 @@ pub struct DuckDbConfig {
     /// browses (C2). Absent from files written before it existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub storage: Option<ObjectStorage>,
+    /// What a report's lake in that bucket may hold before a run refuses it
+    /// (`ask_above_bytes`, RS7). Written only where it differs from the default, and only
+    /// `ask_above_bytes` means anything for DuckDB: nothing here reads a whole table by
+    /// surprise, and a bucket bills by the bytes read.
+    #[serde(flatten)]
+    pub cost_guard: CostGuard,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1412,6 +1421,7 @@ impl DuckDbConfig {
         Self {
             database,
             storage: None,
+            cost_guard: CostGuard::OFF,
         }
     }
 
