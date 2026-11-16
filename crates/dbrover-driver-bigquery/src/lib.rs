@@ -10,6 +10,7 @@ mod api;
 mod catalog;
 mod dry_run;
 mod errors;
+mod handoff;
 mod jobs;
 mod preview;
 mod results;
@@ -20,10 +21,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use dbrover_core::{
-    BigQueryConfig, ByteCount, CancelHandle, CatalogNode, CatalogPath, ChildrenPage, ChildrenQuery,
-    Connection, CostEstimate, DriverError, Jobs, ProgressHandle, Rejection, RelationName,
-    ResultCursor, ScanEstimate, ServerInfo, TableConstraints, TableDescription, TableName,
-    TransactionStatus,
+    BigQueryConfig, ByteCount, CancelHandle, CatalogNode, CatalogPath, Cell, ChildrenPage,
+    ChildrenQuery, Connection, CostEstimate, DriverError, HandedOver, Handoff, Jobs, LakeFormat,
+    ProgressHandle, Rejection, RelationName, ResultCursor, ScanEstimate, ServerInfo,
+    TableConstraints, TableDescription, TableName, TransactionStatus,
 };
 
 use crate::api::{Api, segment};
@@ -182,6 +183,40 @@ impl Connection for BigQueryConnection {
             )));
         }
         self.jobs.execute(sql).await
+    }
+
+    /// The result written to Cloud Storage as Parquet, for a report to read with DuckDB
+    /// instead of paging `getQueryResults` (RS7g): `EXPORT DATA`, whose `uri` holds the one
+    /// wildcard BigQuery takes, so the run finds the shards by listing the folder it named.
+    ///
+    /// BigQuery's statements take no bound values here (its parameters are written in as
+    /// literals, since `Dialect::parameter_binding` is `None` for it), so the statement goes
+    /// as it is, inside `EXPORT DATA`.
+    async fn execute_as_files(
+        &mut self,
+        sql: &str,
+        values: &[Cell],
+        handoff: &Handoff,
+    ) -> Result<Option<HandedOver>, DriverError> {
+        if !values.is_empty() {
+            return Err(DriverError::Statement {
+                source: "BigQuery's statements take no bound values".into(),
+                position: None,
+                sqlstate: None,
+            });
+        }
+        let Some(statement) = handoff::statement(sql, handoff) else {
+            return Err(DriverError::Statement {
+                source: "BigQuery writes no result file of its own, so its handoff needs a \
+                         folder to export into: give it a prefix"
+                    .into(),
+                position: None,
+                sqlstate: None,
+            });
+        };
+        self.jobs
+            .execute_as_files(&statement, handoff, LakeFormat::Parquet)
+            .await
     }
 
     /// `None`: BigQuery's tables have no enforced key that tells their rows apart, so their

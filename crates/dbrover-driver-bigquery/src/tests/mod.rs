@@ -6,8 +6,8 @@ mod replay;
 
 use dbrover_core::{
     BigQueryConfig, ByteCount, CatalogPath, Connection, CostEstimate, CostGuard, DriverError,
-    GoogleCloudSignIn, JobProgress, NodeKind, Precision, RejectionKind, ScanEstimate, conformance,
-    describe_error,
+    GcsBucket, GoogleCloudSignIn, Handoff, HandoffFiles, HandoffFolder, JobProgress, LakeFormat,
+    NodeKind, ObjectStorage, Precision, RejectionKind, ScanEstimate, conformance, describe_error,
 };
 
 use self::replay::Replay;
@@ -156,6 +156,58 @@ async fn an_update_says_how_many_rows_it_changed() {
         .unwrap_or_else(|error| panic!("{}", describe_error(&error)));
     assert!(cursor.columns().is_empty());
     assert_eq!(cursor.finish().await.unwrap(), Some(3));
+    replay.finish();
+}
+
+/// RS7g: a source's result handed over through a bucket goes as `EXPORT DATA`, whose shards
+/// the run finds by listing the folder it named. The exchanges check the statement as sent.
+#[tokio::test]
+async fn a_handoff_exports_the_result_to_the_folder_the_run_owns() {
+    let replay = Replay::start(include_str!("exchanges/export-data.json")).await;
+    let mut connection = connected(&config(&replay)).await;
+    let storage = ObjectStorage::Gcs(GcsBucket {
+        bucket: "dbrover".to_owned(),
+        ..GcsBucket::default()
+    });
+    let handoff = Handoff::IntoFolder(HandoffFolder::new(
+        &storage,
+        "dbrover-tmp/orders/".to_owned(),
+    ));
+
+    let handed = connection
+        .execute_as_files("SELECT item, amount FROM orders", &[], &handoff)
+        .await
+        .unwrap_or_else(|error| panic!("{}", describe_error(&error)))
+        .expect("BigQuery hands a result over");
+
+    assert_eq!(handed.files, HandoffFiles::InFolder);
+    assert_eq!(handed.format, LakeFormat::Parquet);
+    // What the export scanned, which is what BigQuery bills for it.
+    assert_eq!(handed.scanned, Some(4_194_304));
+    replay.finish();
+}
+
+/// BigQuery writes no result file of its own, so a handoff with no folder is refused rather
+/// than sent as a query whose rows nothing would read.
+#[tokio::test]
+async fn a_handoff_without_a_folder_is_refused() {
+    let replay = Replay::start(include_str!("exchanges/connect.json")).await;
+    let config = BigQueryConfig {
+        location: "europe-west2".to_owned(),
+        ..config(&replay)
+    };
+    let mut connection = connected(&config).await;
+
+    let error = connection
+        .execute_as_files("SELECT 1", &[], &Handoff::OwnResult)
+        .await
+        .expect_err("a handoff without a folder is refused");
+
+    assert!(
+        describe_error(&error).contains("needs a folder to export into"),
+        "{}",
+        describe_error(&error)
+    );
     replay.finish();
 }
 
