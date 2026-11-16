@@ -293,6 +293,7 @@ file = "r.csv"
                     columns: Vec::new(),
                     scanned_bytes: None,
                     parts: Vec::new(),
+                    handed_over: None,
                 }),
                 StepMetrics::Combine(CombineMetrics {
                     rows: 10,

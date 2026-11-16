@@ -46,8 +46,8 @@ pub use diagrams::{
 pub use file_version::{FileVersion, Snapshot};
 pub use gitignore::{GITIGNORE, GitStatus, GitignoreAdded, add_gitignore};
 pub use history::{
-    CombineCaps, CombineMetrics, DEFAULT_RUNS_KEPT, History, HistoryEntry, HistoryError,
-    HistoryExportError, HistoryFile, HistoryOutcome, HistoryQuery, HistorySource,
+    CombineCaps, CombineMetrics, DEFAULT_RUNS_KEPT, HandoffMetrics, History, HistoryEntry,
+    HistoryError, HistoryExportError, HistoryFile, HistoryOutcome, HistoryQuery, HistorySource,
     HistorySourceKind, KeptColumn, LakeMetrics, NamedCell, OutputMetrics, PartMetrics,
     ReplacedCell, ReportRun, RowChange, RowChangeKind, RunError, RunId, RunOrigin, RunOutcome,
     RunProfile, SourceCaps, SourceMetrics, SourcePhases, StepMetrics, redact_secrets,

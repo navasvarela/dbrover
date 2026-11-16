@@ -619,6 +619,7 @@ impl RunRecord {
                 phases,
                 table,
                 scanned_bytes,
+                handed_over,
                 ..
             } => {
                 let record = self.source_record(id);
@@ -644,6 +645,10 @@ impl RunRecord {
                     columns: table.iter().map(kept_column).collect(),
                     scanned_bytes: *scanned_bytes,
                     parts: self.take_parts(&Step::Source { id: id.clone() }),
+                    handed_over: handed_over.map(|handed| dbrover_store::HandoffMetrics {
+                        files: handed.files,
+                        bytes: handed.bytes,
+                    }),
                 })
             }
             RunEvent::PartDone(part) if self.run_partition.is_some() => {
@@ -1921,6 +1926,7 @@ mod tests {
                         columns: Vec::new(),
                         scanned_bytes: None,
                         parts: Vec::new(),
+                        handed_over: None,
                     }),
                     StepMetrics::Output(OutputMetrics {
                         number: 1,
