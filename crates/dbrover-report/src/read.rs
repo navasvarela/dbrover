@@ -9,15 +9,16 @@ use std::time::Duration;
 use dbrover_export::{ColumnType, CustomFormatId, ExportFormat, IfInvalid, Preset, SchemaColumn};
 
 use dbrover_chart::ChartSpec;
+use dbrover_core::LakeFormat;
 use dbrover_driver_duckdb::DuckDbType;
 
 use crate::partition::read_partition;
 use crate::problem::{Place, ReportProblem, Table, messages, syntax_problems};
 use crate::{
     ByteSize, Chart, ChartPicture, Combine, CombineLimitsSet, CombineQuery, FileName, HintId,
-    Lookup, Output, OutputColumns, OutputLimitsSet, OutputWriter, PART_FROM, PART_TO, Param,
-    Partition, PlannedPartition, Report, Source, SourceColumn, SourceLimitsSet, SourcePartition,
-    SourceRead, SourceRows, SourceSplit, grouped,
+    LakeRead, Lookup, Output, OutputColumns, OutputLimitsSet, OutputWriter, PART_FROM, PART_TO,
+    Param, Partition, PlannedPartition, Report, Source, SourceColumn, SourceLimitsSet,
+    SourcePartition, SourceRead, SourceRows, SourceSplit, grouped,
 };
 
 /// Keys a file may put in the wrong table, and where each goes, so it says so rather than
@@ -474,6 +475,94 @@ fn check_shape(
     problems.extend(problem);
 }
 
+/// A source the combine step reads where it is, rather than loading its rows.
+enum InPlace {
+    /// `attach = true`: a DuckDB file.
+    Attached,
+    /// `lake`: the files at a path in the data source's bucket.
+    Lake(String),
+}
+
+impl InPlace {
+    /// What a problem about it calls it.
+    fn what(&self) -> &'static str {
+        match self {
+            Self::Attached => "an attached source",
+            Self::Lake(_) => "a lake",
+        }
+    }
+
+    /// What does bound what reads it, for a problem about a limit that doesn't.
+    fn bounded_by(&self) -> &'static str {
+        match self {
+            Self::Attached => "[combine] sets the limits of what reads it",
+            Self::Lake(_) => {
+                "[combine] sets the limits of what reads it, and the data source's cost guard \
+                 what the lake itself may hold"
+            }
+        }
+    }
+}
+
+/// A `[[source]]` whose `lake` names a path in its data source's bucket, with `format` where
+/// the path's own name doesn't say it (RS7).
+fn read_lake(
+    path: String,
+    format: Result<Option<String>, Found>,
+    hive_partitioning: Result<Option<bool>, Found>,
+    found: &mut Vec<Found>,
+) -> Result<SourceRead, Vec<Found>> {
+    let format = match format {
+        Ok(None) => LakeFormat::of_path(&path).ok_or_else(|| {
+            Found::at(
+                "lake",
+                format!(
+                    "{path:?} doesn't end in a name DuckDB chooses a reader by, so the source \
+                     needs one: format = \"parquet\", \"csv\", \"json\", \"iceberg\" or \"delta\""
+                ),
+            )
+        }),
+        Ok(Some(name)) => LAKE_FORMATS
+            .iter()
+            .find(|format| format.name() == name.trim().to_ascii_lowercase())
+            .copied()
+            .ok_or_else(|| {
+                Found::at(
+                    "format",
+                    format!(
+                        "{name:?} isn't a format a lake is read as: parquet, csv, json, \
+                         iceberg or delta"
+                    ),
+                )
+            }),
+        Err(problem) => Err(problem),
+    };
+    let (format, hive_partitioning) = match (format, hive_partitioning) {
+        (Ok(format), Ok(hive)) => (format, hive.unwrap_or(false)),
+        (format, hive) => {
+            found.extend(format.err());
+            found.extend(hive.err());
+            return Err(Vec::new());
+        }
+    };
+    Ok(SourceRead::Lake(LakeRead {
+        path,
+        // The format is kept as the file said it, so a plan shows what it read, and a path
+        // whose name says it keeps saying it.
+        format: Some(format),
+        hive_partitioning,
+    }))
+}
+
+/// Every format a lake is read as, for reading `format` and for naming them in a problem.
+const LAKE_FORMATS: [LakeFormat; 5] = [
+    LakeFormat::Parquet,
+    LakeFormat::Csv,
+    LakeFormat::Json,
+    LakeFormat::Iceberg,
+    LakeFormat::Delta,
+];
+
 fn read_source(
     table: toml::Table,
     position: usize,
@@ -503,6 +592,9 @@ fn read_source(
         })
     });
     let attach = fields.boolean("attach");
+    let lake = fields.string("lake");
+    let format = fields.string("format");
+    let hive_partitioning = fields.boolean("hive_partitioning");
     let query = fields.string("query");
     let max_rows = fields.count("max_rows");
     let max_bytes = fields.byte_size("max_bytes");
@@ -513,17 +605,33 @@ fn read_source(
     found.extend(fields.unknown(
         "a source",
         "id, data_source, query, lookup, partition, max_rows_per_part, columns, columnar, \
-         attach, max_rows, max_bytes and timeout",
+         attach, lake, format, hive_partitioning, max_rows, max_bytes and timeout",
     ));
+    // A source read in place sends no query: an attached DuckDB file, or a lake in a bucket.
+    // `Err` is a problem with `attach` or `lake` itself, which the last arm below reports.
+    let in_place = match (&attach, &lake) {
+        (Ok(Some(true)), Ok(Some(_))) => {
+            found.push(Found::at(
+                "lake",
+                "attach = true reads a DuckDB file in place and lake reads a bucket's files; a \
+                 source does one or the other",
+            ));
+            Err(())
+        }
+        (Ok(Some(true)), _) => Ok(Some(InPlace::Attached)),
+        (_, Ok(Some(path))) => Ok(Some(InPlace::Lake(path.clone()))),
+        (Err(_), _) | (_, Err(_)) => Err(()),
+        _ => Ok(None),
+    };
     let read = match (
-        attach, query, max_rows, max_bytes, timeout, split, columns, columnar,
+        in_place, query, max_rows, max_bytes, timeout, split, columns, columnar,
     ) {
-        (Ok(Some(true)), query, max_rows, max_bytes, timeout, split, columns, columnar) => {
+        (Ok(Some(in_place)), query, max_rows, max_bytes, timeout, split, columns, columnar) => {
+            let what = in_place.what();
             if !matches!(query, Ok(None)) {
                 found.push(Found::at(
                     "query",
-                    "an attached source has no query: the [combine] query reads its tables in \
-                     place",
+                    format!("{what} has no query: the [combine] query reads it in place"),
                 ));
             }
             let limits = [
@@ -536,8 +644,9 @@ fn read_source(
                     found.push(Found::at(
                         key,
                         format!(
-                            "{key} bounds what a source's query copies, and an attached source \
-                             copies nothing; [combine] sets the limits of what reads it"
+                            "{key} bounds what a source's query copies, and {what} copies \
+                             nothing; {}",
+                            in_place.bounded_by()
                         ),
                     ));
                 }
@@ -553,15 +662,33 @@ fn read_source(
                 found.push(Found::at(
                     key,
                     format!(
-                        "{key} is for a source's query, and an attached source has none; \
-                         [combine] reads its tables as they are"
+                        "{key} is for a source's query, and {what} has none; [combine] reads \
+                         it as it is"
                     ),
                 ));
             }
-            Ok(SourceRead::Attach)
+            match in_place {
+                InPlace::Attached => {
+                    let lake_keys = [
+                        (!matches!(format, Ok(None))).then_some("format"),
+                        (!matches!(hive_partitioning, Ok(None))).then_some("hive_partitioning"),
+                    ];
+                    for key in lake_keys.into_iter().flatten() {
+                        found.push(Found::at(
+                            key,
+                            format!(
+                                "{key} says how a lake's files are read, and this source \
+                                 attaches a DuckDB file"
+                            ),
+                        ));
+                    }
+                    Ok(SourceRead::Attach)
+                }
+                InPlace::Lake(path) => read_lake(path, format, hive_partitioning, &mut found),
+            }
         }
         (
-            Ok(_),
+            Ok(None),
             Ok(query),
             Ok(max_rows),
             Ok(max_bytes),
@@ -588,13 +715,15 @@ fn read_source(
             .ok_or_else(|| {
                 vec![Found::at(
                     "query",
-                    "needs a query, or attach = true to read a DuckDB file in place",
+                    "needs a query, lake = \"sales/*.parquet\" to read a bucket's files in \
+                     place, or attach = true to read a DuckDB file in place",
                 )]
             }),
-        (attach, query, max_rows, max_bytes, timeout, split, columns, columnar) => {
+        (_, query, max_rows, max_bytes, timeout, split, columns, columnar) => {
             let mut errors = Vec::new();
             errors.extend(columnar.err());
             errors.extend(attach.err());
+            errors.extend(lake.err());
             errors.extend(query.err());
             errors.extend(max_rows.err());
             errors.extend(max_bytes.err());

@@ -16,9 +16,10 @@
 use std::path::Path;
 use std::time::Instant;
 
-use dbrover_core::describe_error;
+use dbrover_core::{DataSource, LakeFormat, Password, describe_error};
 use dbrover_driver_duckdb::{
-    Allowed, DuckDbType, LoadColumn, Workspace, WorkspaceLimits, WorkspaceStore,
+    Allowed, BucketSignIn, DuckDbType, LakeView, LoadColumn, Workspace, WorkspaceLimits,
+    WorkspaceStore,
 };
 use dbrover_language::Literal;
 use dbrover_sql::Dialect;
@@ -28,8 +29,8 @@ use crate::events::LoadedColumn;
 use crate::statement::Statements;
 use crate::typing::declared_column_type;
 use crate::{
-    Combined, CostCheck, Logic, Plan, PlannedSource, PlannedSplit, QuerySource, RunValues,
-    SourceStatement,
+    Combined, CostCheck, LakeSource, Logic, Plan, PlannedSource, PlannedSplit, QuerySource,
+    RunValues, SourceStatement,
 };
 
 /// What explaining a report found.
@@ -125,6 +126,14 @@ pub struct KnownTable {
 pub trait SourceExplainer {
     /// Explains the statement on its data source, without running it.
     fn explain(&self, statement: &SourceStatement<'_>) -> impl Future<Output = SourceExplained>;
+
+    /// The data source's own password, which is the secret of its bucket's access key where
+    /// its bucket signs in with one (C2): what explaining a lake needs, as running one does
+    /// ([`crate::SourceOpener::password`]). The default has none.
+    fn password(&self, data_source: &DataSource) -> impl Future<Output = Option<Password>> {
+        let _ = data_source;
+        async { None }
+    }
 }
 
 /// Explains `plan` with `values`: see the module. `known` holds the tables the last run
@@ -148,7 +157,7 @@ pub async fn explain(
                     sources.push(explain_source(plan, values, explainer, source).await);
                 }
             }
-            let combine = explain_combine(combined, values, known, spill).await;
+            let combine = explain_combine(combined, values, explainer, known, spill).await;
             Explanation {
                 sources,
                 combine: Some(combine),
@@ -203,10 +212,57 @@ async fn explain_source(
     }
 }
 
+/// Makes a lake's view in the workspace, as a run makes it, so the combine's plan shows how
+/// the lake is scanned (RS7).
+async fn explain_lake(
+    workspace: &Workspace,
+    lake: &LakeSource,
+    explainer: &impl SourceExplainer,
+) -> Result<LakeView, String> {
+    let failed = |problem: String| format!("the lake {:?}: {problem}", lake.id);
+    let password = if lake.storage.uses_password() {
+        explainer.password(&lake.data_source).await
+    } else {
+        None
+    };
+    workspace
+        .load_lake_extensions(&lake.storage, lake.format)
+        .await
+        .map_err(|error| failed(describe_error(&error)))?;
+    let mut sign_in = BucketSignIn::new(lake.storage.clone(), password);
+    workspace
+        .sign_in_to_bucket(&mut sign_in)
+        .await
+        .map_err(|error| failed(describe_error(&error)))?;
+    let read_from = match lake.format {
+        LakeFormat::Iceberg => sign_in
+            .iceberg_metadata(&lake.path)
+            .await
+            .map_err(|error| failed(describe_error(&error)))?,
+        LakeFormat::Parquet | LakeFormat::Csv | LakeFormat::Json | LakeFormat::Delta => {
+            lake.path.url().to_owned()
+        }
+    };
+    let view = LakeView::new(
+        &lake.id,
+        &lake.storage,
+        &lake.path,
+        lake.format,
+        &read_from,
+        lake.hive_partitioning,
+    );
+    workspace
+        .read_lake(&view)
+        .await
+        .map_err(|error| failed(describe_error(&error)))?;
+    Ok(view)
+}
+
 /// The combine query planned over empty tables of every source's columns.
 async fn explain_combine(
     combined: &Combined,
     values: &RunValues,
+    explainer: &impl SourceExplainer,
     known: &[KnownTable],
     spill: &Path,
 ) -> CombineExplanation {
@@ -249,7 +305,7 @@ async fn explain_combine(
             };
         }
     };
-    let planned = plan_combine(&mut workspace, combined, values, &tables).await;
+    let planned = plan_combine(&mut workspace, combined, values, explainer, &tables).await;
     workspace.close().await;
     match planned {
         Ok(text) => CombineExplanation::Planned { text },
@@ -263,14 +319,26 @@ async fn plan_combine(
     workspace: &mut Workspace,
     combined: &Combined,
     values: &RunValues,
+    explainer: &impl SourceExplainer,
     tables: &[(&str, Vec<(String, DuckDbType)>)],
 ) -> Result<String, String> {
+    let mut lakes = Vec::new();
     for source in &combined.sources {
-        if let PlannedSource::Attached(attached) = source {
-            workspace
-                .attach(&attached.id, &attached.path)
-                .await
-                .map_err(|error| describe_error(&error))?;
+        match source {
+            PlannedSource::Attached(attached) => {
+                workspace
+                    .attach(&attached.id, &attached.path)
+                    .await
+                    .map_err(|error| describe_error(&error))?;
+            }
+            // A lake is read as a run reads it, so the plan shows the lake's own scan, with
+            // its columns and the filters pushed into it; it reads the files' schemas and
+            // nothing else.
+            PlannedSource::Lake(lake) => {
+                let view = explain_lake(workspace, lake, explainer).await?;
+                lakes.push(view);
+            }
+            PlannedSource::Query(_) => {}
         }
     }
     for (id, columns) in tables {
@@ -290,8 +358,12 @@ async fn plan_combine(
         .plan_without_statistics()
         .await
         .map_err(|error| describe_error(&error))?;
+    let prefixes: Vec<&str> = lakes.iter().map(LakeView::prefix).collect();
     workspace
-        .lock(&Allowed::default())
+        .lock(&Allowed {
+            folders: &[],
+            lakes: &prefixes,
+        })
         .await
         .map_err(|error| describe_error(&error))?;
     let prepared = dbrover_sql::bind(

@@ -4,6 +4,7 @@ use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use dbrover_chart::ChartSpec;
+use dbrover_core::LakeFormat;
 use dbrover_export::{ColumnType, CustomFormatId, Preset, SchemaColumn};
 
 use crate::{
@@ -76,6 +77,23 @@ pub enum SourceRead {
     },
     /// A DuckDB file, attached read-only for the combine step to read in place.
     Attach,
+    /// A lake in the data source's bucket, read in place by the combine step
+    /// (`docs/reports-at-scale.md`, RS7).
+    Lake(LakeRead),
+}
+
+/// A lake a `[[source]]` names, as the file writes it: nothing is resolved against the
+/// bucket until the source is planned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LakeRead {
+    /// `lake`: a path in the data source's bucket, which may hold a glob.
+    pub path: String,
+    /// `format`; `None` where the path's own name says it, as it does for Parquet, CSV and
+    /// JSON files.
+    pub format: Option<LakeFormat>,
+    /// `hive_partitioning`: whether the folder names in the path are columns of the lake, as
+    /// `year=2026/` is.
+    pub hive_partitioning: bool,
 }
 
 /// How a source's rows reach the combine step's DuckDB (ADR 0007).

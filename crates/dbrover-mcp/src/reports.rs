@@ -204,6 +204,11 @@ fn outcome_json(events: &[RunEvent], max_rows: usize) -> Value {
             RunEvent::SourceAttached { id, .. } => {
                 steps.push(json!({"step": format!("source {id}"), "attached": true}));
             }
+            RunEvent::LakeRead { id, url, format } => steps.push(json!({
+                "step": format!("source {id}"),
+                "lake": url,
+                "format": format,
+            })),
             RunEvent::CombineDone {
                 rows,
                 bytes,

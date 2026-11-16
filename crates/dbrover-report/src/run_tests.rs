@@ -369,6 +369,7 @@ fn events_are_json_lines_the_app_reads_back() {
                 id: "balances".to_owned(),
                 data_source: "ledger".to_owned(),
                 attached: false,
+                lake: None,
                 waits_for: Some("tx".to_owned()),
                 engine: Some("PostgreSQL".to_owned()),
                 limits: Some(SourceCaps {

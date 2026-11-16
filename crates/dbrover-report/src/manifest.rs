@@ -153,6 +153,9 @@ fn data_sources(plan: &Plan) -> Vec<DataSourceIdentity> {
             .map(|source| match source {
                 PlannedSource::Query(query) => identity(&query.id, &query.data_source),
                 PlannedSource::Attached(attached) => identity(&attached.id, &attached.data_source),
+                // A lake's path is in the report's file, whose hash the manifest keeps; the
+                // bucket it is in is in the data source's own `target`.
+                PlannedSource::Lake(lake) => identity(&lake.id, &lake.data_source),
             })
             .collect(),
     }

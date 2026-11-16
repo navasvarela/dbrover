@@ -118,6 +118,14 @@ pub enum RunEvent {
         id: String,
         path: PathBuf,
     },
+    /// A lake in a bucket was made a view for the combine step to read in place (RS7).
+    LakeRead {
+        id: String,
+        /// The address its files are at, as the view reads them.
+        url: String,
+        /// `parquet`, `delta`, as the report's file writes it.
+        format: String,
+    },
     /// The combine step returned its last row, written to every output.
     CombineDone {
         rows: u64,
@@ -199,6 +207,10 @@ pub struct SourceStart {
     /// Its data source's name.
     pub data_source: String,
     pub attached: bool,
+    /// The lake it reads in place, for a source with `lake` (RS7); `None` for every other
+    /// source, and from a worker older than RS7c.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lake: Option<LakeStart>,
     /// The source whose values its lookup reads, which it waits for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waits_for: Option<String>,
@@ -213,6 +225,15 @@ pub struct SourceStart {
     /// How it reads its ranges, for a partitioned source (RS4c).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partition: Option<PartitionStart>,
+}
+
+/// The lake a source reads in place, as a run starts (RS7).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LakeStart {
+    /// The address its files are at, with the bucket: `s3://lake/sales/year=*/*.parquet`.
+    pub url: String,
+    /// `parquet`, `csv`, `json`, `iceberg` or `delta`.
+    pub format: String,
 }
 
 /// How a partitioned run goes through its ranges, one at a time.

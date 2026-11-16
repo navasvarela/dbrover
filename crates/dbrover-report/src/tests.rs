@@ -355,8 +355,8 @@ fn names_every_problem_with_its_place() {
             one_source("", "SELECT 1", output)
                 .replace("id = \"s\"\n", "id = \"s\"\nkeys = \"t\"\n"),
             "source \"s\": \"keys\" is not part of a source, which has id, data_source, query, \
-             lookup, partition, max_rows_per_part, columns, columnar, attach, max_rows, \
-             max_bytes and timeout",
+             lookup, partition, max_rows_per_part, columns, columnar, attach, lake, format, \
+             hive_partitioning, max_rows, max_bytes and timeout",
         ),
         (
             one_source("", "SELECT 1", output)
@@ -795,6 +795,7 @@ fn reads_and_plans_the_valuation() {
                 id: "tx".to_owned(),
                 data_source: "ledger-postgres".to_owned(),
                 attached: false,
+                lake: None,
                 waits_for: None,
                 engine: Some("PostgreSQL".to_owned()),
                 limits: Some(SourceCaps::from(&SourceLimits::default())),
@@ -804,6 +805,7 @@ fn reads_and_plans_the_valuation() {
                 id: "prices".to_owned(),
                 data_source: "prices-duckdb".to_owned(),
                 attached: true,
+                lake: None,
                 waits_for: None,
                 engine: Some("DuckDB".to_owned()),
                 limits: None,
@@ -961,7 +963,8 @@ fn names_every_problem_with_several_sources() {
         ),
         (
             VALUATION.replace("attach = true", "attach = false"),
-            "source \"prices\": needs a query, or attach = true to read a DuckDB file in place",
+            "source \"prices\": needs a query, lake = \"sales/*.parquet\" to read a bucket's \
+             files in place, or attach = true to read a DuckDB file in place",
         ),
         (
             VALUATION.replace(

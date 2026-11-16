@@ -90,6 +90,9 @@ impl<O: Write, E: Write> HumanLines<O, E> {
             RunEvent::SourceAttached { id, .. } => {
                 self.error_line(&format!("Source {id}: attached, read in place"));
             }
+            RunEvent::LakeRead { id, url, format } => {
+                self.error_line(&format!("Source {id}: {format} lake read in place, {url}"));
+            }
             RunEvent::CombineDone {
                 rows,
                 bytes,
