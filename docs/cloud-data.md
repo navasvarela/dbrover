@@ -641,7 +641,7 @@ chose on 2026-11-05 to start C3 now. C3 doesn't need it:
   columnar answer to give, so a `next_batch` on their cursors would only convert text.
 - Athena's fast path for a large result is a file, not a batch: it writes every result to S3
   as CSV, or Parquet with `UNLOAD`. Reading those is RS7's handoff through a bucket, with C2's
-  DuckDB, not RS6's.
+  DuckDB, not RS6's — built on 2026-11-16 (RS7f), with `handoff` on a report's `[[source]]`.
 - Trino's isn't. Its spooled protocol writes *segments* of the same JSON rows to the server's
   own spooling location, at opaque addresses the client reads and then acknowledges, in
   `json`, `json+lz4` or `json+zstd` — not files a table is read from, and not a prefix a report
@@ -902,8 +902,8 @@ Storage Read API on the job's destination table, for reports and exports of larg
 entry keeps "before C5 and C6", and names BigQuery's Storage Read API as a later user.
 
 A large result in a report takes neither path. `EXPORT DATA` writes the rows to Cloud Storage as
-Parquet, which DuckDB reads in parallel with C2's sign-in, so BigQuery's handoff (RS7g) needs no
-gRPC, no protocol buffers and nothing billed apart from the query. Its `uri` holds one wildcard,
+Parquet, which DuckDB reads in parallel with C2's sign-in, so BigQuery's handoff (RS7g, built on
+2026-11-16) needs no gRPC, no protocol buffers and nothing billed apart from the query. Its `uri` holds one wildcard,
 so the export is sharded and the run finds the shards by listing the folder it named. The Storage
 Read API is reopened only for a user who needs a large result with no bucket to write it to.
 

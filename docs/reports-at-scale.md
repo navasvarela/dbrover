@@ -780,7 +780,7 @@ runs the small cases.
     wants it. *Exit:* the exit test's numbers: a run that reads one partition of twelve
     records bytes far below the lake's size. *Tests:* the bytes read from a kept run's log,
     against the files the query should have read; the hint's rule at its thresholds.
-  - **RS7f — Handoff, and Athena's result files** (being built): `handoff` on a `[[source]]`, the
+  - **RS7f — Handoff, and Athena's result files:** built; `handoff` on a `[[source]]`, the
     bucket data source and prefix it names, read and planned; the delete C2's listers gain; the
     run folder whose name says when it started, which is what tells a leftover from a run in
     flight; the files loaded into the source's own table by
@@ -792,7 +792,7 @@ runs the small cases.
     table-driven; the keys read and deleted; a run killed before the delete, whose files the next
     run of the report removes; the keys it leaves alone (another report's, and a run beside it);
     the problems a handoff is refused with.
-  - **RS7g — BigQuery's `EXPORT DATA`** (being built): BigQuery's handoff, with its own credentials
+  - **RS7g — BigQuery's `EXPORT DATA`:** built; BigQuery's handoff, with its own credentials
     for the prefix, as `EXPORT DATA OPTIONS (uri = '…/part-*.parquet', format = 'PARQUET')`, whose
     shards the run finds by listing. Trino has none to give, which
     [the handoff against today's code](#the-handoff-against-todays-code) settles. *Exit:* a
@@ -800,7 +800,7 @@ runs the small cases.
     against its replayed exchanges with a bucket beside them, the statement and the files; what it
     refuses (a handoff with no prefix, and a bucket its export can't write to).
   - **RS7h — Manual, demo note and the exit test:** built, for the lake path.
-  - **RS7i — The handoff's manual, demo note and status** (being built): `handoff` in the manual,
+  - **RS7i — The handoff's manual, demo note and status:** built; `handoff` in the manual,
     with its two sign-ins, what it refuses, the leftovers it can leave and the lifecycle rule that
     is the backstop; a demo note; and RS7's remaining gaps stated in the roadmap.
 
@@ -1143,10 +1143,11 @@ As built, where RS7 differs from the table above:
   the step it already knew, and the history needed no new shape.
 - **`[[source]]` keys refused on a lake are checked where an attached file's are,** which both
   now share: one list of keys that bound or shape a query, with the words for each.
-- **RS7f and RS7g were left for a stack of their own,** which started on 2026-11-16: the lake
-  path is RS7's exit, and the handoff's engines each need their own stand-in exchange to be
-  tested without an account. That stack's decisions, and why it doesn't wait for C5, are in
-  [the handoff against today's code](#the-handoff-against-todays-code).
+- **RS7f and RS7g landed in a stack of their own,** built on 2026-11-16: the lake path is
+  RS7's exit, and the handoff's engines each needed their own stand-in exchange to be tested
+  without an account. That stack's decisions, and why it didn't wait for C5, are in
+  [the handoff against today's code](#the-handoff-against-todays-code); what RS7 still doesn't
+  carry is in [RS7's remaining gaps](#rs7s-remaining-gaps).
 
 ### The handoff against today's code
 
@@ -1169,6 +1170,34 @@ Each row is a decision for the reviewer to confirm.
 | BigQuery through `EXPORT DATA`, not the Storage Read API ([Other technologies](#other-technologies)). | `EXPORT DATA`'s `uri` must hold exactly one wildcard, so the export is always sharded and its file names are BigQuery's; the statement returns no rows, and `overwrite = true` overwrites the shards it writes without deleting anything else under the wildcard. | `EXPORT DATA OPTIONS (uri = '<gs address>/part-*.parquet', format = 'PARQUET', overwrite = true) AS <query>`, submitted as the driver submits any statement, through C0's jobs. The files are found by **listing** the statement's folder rather than from the answer, which is what the wildcard leaves; `overwrite` matters only for a folder a killed run left, which the run has already cleaned. A `prefix` is required, since there is no location of BigQuery's own to fall back to. |
 | (Not said: which buckets an engine can write to.) | Athena writes to S3 and nowhere else; BigQuery's `EXPORT DATA` writes to Cloud Storage, and to S3 or Blob Storage only through BigQuery Omni, which C4 doesn't carry. A DuckDB data source's bucket is any of the three providers (C2). | **A handoff whose bucket its engine can't write to is refused when the report is planned,** naming the engine, the provider and the data source, rather than failing in the engine's own words half a statement later. The test buckets follow: Athena's handoff is tested against MinIO, BigQuery's against the fake Cloud Storage server, which gains a writable bucket beside its read-only fixtures — one line in the Compose file. |
 | (Not said: which sign-in does what.) | A `[[source]]` names one data source, and C0 keeps each engine's sign-in with its own data source. | Two sign-ins, each where C0 and C2 put it: the **engine's**, which writes the files, under the credentials its own data source holds, and the **bucket data source's**, which reads them and deletes them. DbRover never hands one engine the other's credentials, and a bucket the engine can't write to fails as the engine's own error, which the run explains. |
+
+As built, where the handoff differs from the rows above:
+
+- **The files are deleted as each load ends, not only when the run ends.** The rows are in the
+  run's own database by then, so the files have done their job; the run's own folder is removed
+  again when the run ends, which takes what a failed statement or a stopped combine step left.
+  A delete that fails is a warning in the log, not a failed run: the rows are in, and the next
+  run of the report, or the prefix's lifecycle rule, takes the files.
+- **Athena's `UNLOAD` manifest stays.** `UNLOAD` writes its data files where the statement says
+  and a manifest in the *workgroup's* own output location, which the report doesn't name, so
+  the run doesn't remove it — as it doesn't remove the result file of any other query Athena
+  runs there. The workgroup's own lifecycle rule covers it.
+- **A handoff's bytes in the profile are the files' sizes, from the bucket's listing,** not what
+  DuckDB read: the HTTP log RS7e reads is the whole run's, and a handoff's load is one statement
+  among the loads. For a file the engine named, nothing is listed at all, so the profile says
+  the count alone.
+- **A loaded table's columns are kept by type name, not by `DuckDbType`.** A handoff's files can
+  hold a type nothing in a report's loading makes (`INTEGER`, `FLOAT`, a `STRUCT`), so
+  `LoadedTable` keeps each column's DuckDB type as the name DuckDB gives it, and a lookup over
+  such a column is refused where it needs a literal of it, naming the type and the cast that
+  would fix it.
+- **BigQuery's end-to-end run is a live check, by hand.** Its replayed exchanges check the
+  statement and the job, and the read-back and delete are the same code Athena's exit test
+  proves against MinIO; the emulator has no `EXPORT DATA`, and the fake Cloud Storage server
+  takes no writes from DuckDB, so no writable bucket was added to the Compose file after all.
+- **A handoff a range or a batch at a time is not built.** `partition` and `lookup` are refused
+  on a handoff, as `columns`, `columnar`, `max_rows` and `max_bytes` are, so a handed-over
+  source is one statement's files; a run that wants a range at a time pages its rows instead.
 
 ### RS7's exit test
 
@@ -1203,6 +1232,46 @@ What RS7 leaves out:
   Storage or Google Cloud Storage is tried by hand, as C2 tried reading them.
 - **A catalog in the combine.** An Iceberg REST or Glue catalog would name tables rather than
   paths; RS7 reads a table by its path, as C2's explorer opens one.
+
+### The handoff's exit test
+
+`crates/dbrover-engine/tests/report_handoff.rs`, run on every pull request's Linux check, where
+MinIO is set. Athena is its own driver's replay server, which answers the SDK with exchanges
+from a file; the bucket is MinIO. The replay writes nothing by itself, so the test plays
+Athena's own side effect: the result file of a plain query is written before the run, and an
+`UNLOAD`'s Parquet by a hook while the query "runs", before it reports `SUCCEEDED`.
+
+Met on 2026-11-16: the same source, on the same report, read both ways.
+
+| | |
+| --- | --- |
+| Through its text rows (`GetQueryResults`) | `item,total` / `bolt,14.50` / `nut,2.25` |
+| Through its handoff (one CSV result file) | the same, to the digit |
+| Through `UNLOAD` into the run's own folder (two Parquet shards) | the same |
+| Keys left in the bucket afterwards | none of the run's own |
+
+The test also checks the `UNLOAD` as sent, that it went to a folder of that run's under the
+report's prefix, and that a folder an earlier run left is removed by the next run of the
+report while a folder that isn't a run's is left alone.
+
+### RS7's remaining gaps
+
+What the whole of RS7 doesn't carry, after both halves:
+
+- **Snowflake and Databricks have no handoff.** `COPY INTO @stage` lands with C5 and external
+  links with C6, each as its own driver's layer on the seam this stack built.
+- **Trino has none at all,** and won't: see
+  [the handoff against today's code](#the-handoff-against-todays-code). What it could gain is a
+  faster transport of the rows it already answers with, which belongs to its driver.
+- **A handoff a range or a batch at a time,** and a handoff whose columns the report declares:
+  `partition`, `lookup`, `columns` and `columnar` are refused on one.
+- **The bytes a handoff's load read from the bucket** aren't measured, only the bytes its files
+  hold; a lake's are, from DuckDB's HTTP log (RS7e).
+- **A live warehouse.** Athena's and BigQuery's handoffs are tested against their replayed
+  exchanges; neither has been run against an account, nor against S3, Cloud Storage or Azure
+  Blob Storage themselves.
+- **The `lake-scan` hint** (RS7e), which waits for a run that wants it, and the other gaps the
+  lake path left above.
 
 ## Benchmark
 
