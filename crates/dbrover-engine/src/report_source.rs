@@ -352,7 +352,13 @@ impl SourceReader for ReportSource {
 
     /// What the engine says the statement scanned, once it has ended: a job's statistics on
     /// BigQuery and Athena, Trino's last answer, ClickHouse's summary header.
+    ///
+    /// A handed-over statement has no cursor to ask, so its job's own statistics come with the
+    /// files it wrote (RS7f): what a warehouse bills is the same either way.
     fn scanned(&self) -> Option<u64> {
+        if let Some(handed) = &self.handed_over {
+            return handed.scanned;
+        }
         let progress = self.cursor.as_ref()?.progress()?;
         progress.bytes_read.map(|bytes| bytes.0)
     }

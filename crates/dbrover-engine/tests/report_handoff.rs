@@ -235,6 +235,14 @@ fn handed_over(events: &[RunEvent]) -> Option<(u64, u64)> {
     })
 }
 
+/// The bytes the source's engine says it scanned, which is what it bills for the statement.
+fn scanned(events: &[RunEvent]) -> Option<u64> {
+    events.iter().find_map(|event| match event {
+        RunEvent::SourceDone { scanned_bytes, .. } => *scanned_bytes,
+        _ => None,
+    })
+}
+
 /// The replay for an `UNLOAD`, with Athena's own side effect played by `writer`: the Parquet
 /// shards go into the folder the statement names, before the query reports `SUCCEEDED`, and
 /// every statement sent is kept for the test to check.
@@ -347,6 +355,8 @@ async fn athenas_result_file_loads_the_same_table_as_its_text_rows_and_is_then_d
     );
     let (files, _) = handed_over(&events).expect("the source says it handed its result over");
     assert_eq!(files, 1, "Athena writes one result file");
+    // A handed-over statement still says what it scanned, which is what Athena bills.
+    assert_eq!(scanned(&events), Some(4_096));
     // The run deletes what it read: the result file and the metadata file beside it.
     let left = keys_under(writing.as_mut(), &bucket, &format!("{RESULTS}/own-result/")).await;
     assert!(
