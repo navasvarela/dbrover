@@ -35,6 +35,7 @@
 # Querying
 
 - [Query consoles](consoles.md)
+- [Charts](charts.md)
 - [Files, parameters and find](files-parameters.md)
 - [Reading query plans](explain-plans.md)
 - [The query history](history.md)

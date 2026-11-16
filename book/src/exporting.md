@@ -13,7 +13,7 @@ Rows leave DbRover in the same formats, with the same options, wherever they sta
 
 Formats of your own, written in `exports.toml`, appear beside the built-in ones: see
 [Your own export formats](export-formats.md). A chart leaves as a picture instead, from its
-**Export ›** (see [Charts](consoles.md#charts)).
+**Export ›** (see [Charts](charts.md)).
 
 Documents from MongoDB, Elasticsearch and OpenSearch, and DynamoDB are exported as they are
 only as JSON or JSON Lines: **All documents** and **Run to file…** offer those two. The rows

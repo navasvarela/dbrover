@@ -483,9 +483,10 @@ A value that doesn't fit stops the run with the output, the column, the row and 
 ## Charts
 
 A `[[chart]]` draws a chart of the report's rows each time it runs, and writes it as an SVG or
-PNG file beside the outputs' files. Its keys are the ones a chart takes above a statement in a
-console (see [A chart in the query](consoles.md#a-chart-in-the-query)), so a chart worked out
-there and copied with **Copy for a report** pastes in unchanged, with a few more for its file:
+PNG file beside the outputs' files. Its keys are the ones a chart takes anywhere it is written
+down (see [The keys](charts.md#the-keys) in Charts, which is also where the kinds and what they
+draw are), so a chart worked out in a console and copied with **Copy for a report** pastes in
+unchanged, with a few more for its file:
 
 ```toml
 [[chart]]
@@ -507,7 +508,7 @@ y = "net"
 | `width`, `height` | Its size in points, from 200 to 4,000. 800 by 450 unless you say. |
 | `scale` | For a PNG: 1, 2 or 3 pixels a point, as **Export ›** offers. 2 unless you say. |
 | `query` | Instead of the report's rows: a DuckDB query over the sources' tables, with the report's `:name` parameters. Needs a `[combine]`. |
-| `kind`, `x`, `y`, `series`, `stack`, `title`, `x_title`, `y_title`, `y_zero`, `sort`, `limit` | The chart, as in a console. A key left out takes the value **Chart** would start with. |
+| `kind`, `x`, `y`, `series`, `stack`, `title`, `x_title`, `y_title`, `y_zero`, `sort`, `limit` | The chart itself, as [The keys](charts.md#the-keys) describes them. A key left out takes the value **Chart** would start with. |
 
 ![The sales-by-category example's chart for October 2026: four bars, bikes far above clothing, parts and accessories, titled Net sales by category, with "Charting 4 rows" under them.](images/report-chart.svg)
 
