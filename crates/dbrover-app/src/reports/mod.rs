@@ -44,9 +44,9 @@ use dbrover_report::{
 };
 use dbrover_sql::FormatOptions;
 use dbrover_store::{
-    CombineMetrics, DEFAULT_RUNS_KEPT, KeptColumn, OutputMetrics, PartMetrics, ReportFiles,
-    ReportName, ReportRun, ReportSettings, RunError, RunId, RunOrigin, RunOutcome, RunProfile,
-    SourceMetrics, StepMetrics,
+    CombineMetrics, DEFAULT_RUNS_KEPT, KeptColumn, LakeMetrics, OutputMetrics, PartMetrics,
+    ReportFiles, ReportName, ReportRun, ReportSettings, RunError, RunId, RunOrigin, RunOutcome,
+    RunProfile, SourceMetrics, StepMetrics,
 };
 use jiff::Timestamp;
 
@@ -552,6 +552,23 @@ impl RunRecord {
             .find(|record| matches!(&record.step, Step::Source { id: step } if step == id))
     }
 
+    /// Keeps what the lake of the source `id` read from its bucket, once its scan is over
+    /// (RS7e). The lake itself was measured when the run made its view.
+    fn scanned_lake(&mut self, id: &str, requests: u64, bytes: u64) {
+        let found = self.measured.iter_mut().find_map(|step| match step {
+            StepMetrics::Attached {
+                id: kept,
+                lake: Some(lake),
+                ..
+            } if kept == id => Some(lake),
+            _ => None,
+        });
+        if let Some(lake) = found {
+            lake.requests = Some(requests);
+            lake.bytes = Some(bytes);
+        }
+    }
+
     /// The data source of the source `id`, as the run's start named it.
     fn data_source_of(&self, id: &str) -> String {
         self.source_record(id)
@@ -639,11 +656,28 @@ impl RunRecord {
             }
             // A lake is read in place, like an attached file: the step loads no rows, and
             // what its scan read from the bucket is the profile's (RS7e).
-            RunEvent::SourceAttached { id, .. } | RunEvent::LakeRead { id, .. } => {
-                StepMetrics::Attached {
-                    id: id.clone(),
-                    data_source: self.data_source_of(id),
-                }
+            RunEvent::SourceAttached { id, .. } => StepMetrics::Attached {
+                id: id.clone(),
+                data_source: self.data_source_of(id),
+                lake: None,
+            },
+            RunEvent::LakeRead { id, url, format } => StepMetrics::Attached {
+                id: id.clone(),
+                data_source: self.data_source_of(id),
+                lake: Some(LakeMetrics {
+                    url: url.clone(),
+                    format: format.clone(),
+                    requests: None,
+                    bytes: None,
+                }),
+            },
+            RunEvent::LakeScanned {
+                id,
+                requests,
+                bytes,
+            } => {
+                self.scanned_lake(id, *requests, *bytes);
+                return;
             }
             RunEvent::CombineDone {
                 rows,
@@ -733,11 +767,18 @@ impl RunRecord {
                     }
                 }
             }
-            StepMetrics::Attached { id, data_source } => {
+            StepMetrics::Attached {
+                id,
+                data_source,
+                lake,
+            } => {
                 let attached = |step: &StepMetrics| matches!(step, StepMetrics::Attached { id: kept, .. } if *kept == id);
                 if !self.measured.iter().any(attached) {
-                    self.measured
-                        .push(StepMetrics::Attached { id, data_source });
+                    self.measured.push(StepMetrics::Attached {
+                        id,
+                        data_source,
+                        lake,
+                    });
                 }
             }
             output @ StepMetrics::Output(_) => self.measured.push(output),
@@ -900,6 +941,8 @@ impl RunRecord {
                     record.state = StepState::Attached;
                 }
             }
+            // The lake's step is already attached; what its scan read goes to the profile.
+            RunEvent::LakeScanned { .. } => {}
             RunEvent::CombineDone {
                 rows,
                 bytes,

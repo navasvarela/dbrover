@@ -318,8 +318,31 @@ fn details(step: &StepMetrics) -> String {
             }
             lines.join("\n")
         }
-        StepMetrics::Attached { data_source, .. } => {
-            format!("{data_source}, attached and read in place by the combine step")
+        StepMetrics::Attached {
+            data_source,
+            lake: None,
+            ..
+        } => format!("{data_source}, attached and read in place by the combine step"),
+        // A lake says what its scan asked the bucket for, which is what it cost to read
+        // (RS7e); its size is in the report's own explanation, not in the run.
+        StepMetrics::Attached {
+            data_source,
+            lake: Some(lake),
+            ..
+        } => {
+            let mut lines = vec![format!(
+                "{data_source}, a {} lake read in place by the combine step",
+                lake.format
+            )];
+            lines.push(lake.url.clone());
+            if let (Some(requests), Some(bytes)) = (lake.requests, lake.bytes) {
+                lines.push(format!(
+                    "{} read from the bucket in {}",
+                    ByteCount(bytes),
+                    dbrover_report::counted(requests, "request")
+                ));
+            }
+            lines.join("\n")
         }
         StepMetrics::Combine(combine) => {
             let unknown = || "unknown".to_owned();

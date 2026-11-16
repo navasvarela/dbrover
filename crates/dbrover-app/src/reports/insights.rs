@@ -226,6 +226,7 @@ mod tests {
         let attached = StepMetrics::Attached {
             id: "prices".to_owned(),
             data_source: "prices".to_owned(),
+            lake: None,
         };
         let cases = [
             (&combined, &combined.steps[0], Some(300)),

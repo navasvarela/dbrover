@@ -265,6 +265,79 @@ async fn reads_an_iceberg_lake_from_its_newest_metadata_file() {
     );
 }
 
+/// RS7e: the exit's measurement, on the fixtures' own scale. The lake is laid out by year, so
+/// a run that asks for one year reads one year's file and not the other's.
+#[tokio::test]
+async fn the_profile_says_what_the_lakes_scan_read_from_the_bucket() {
+    let folder = tempfile::tempdir().unwrap();
+    let Some((lake_source, secret)) = lake_data_source() else {
+        return;
+    };
+    let scan_of = async |filter: &str, folder: &Path| {
+        let text = SALES
+            .replace("{lake}", "sales/year=*/*.parquet")
+            .replace("{lake_keys}", "hive_partitioning = true")
+            .replace("GROUP BY ALL ORDER BY regions.region", filter);
+        let plan = Plan::new(
+            read_report(&text).unwrap(),
+            &[ledger(), lake_source.clone()],
+            &[],
+            &LimitDefaults::default(),
+        )
+        .unwrap();
+        let opener = LakeOpener {
+            sources: MemoryOpener::of(vec![("regions", regions())]),
+            secret: secret.clone(),
+        };
+        let staging = folder.join(".run");
+        let work = staging.with_extension("work");
+        let mut events = Vec::new();
+        crate::run(
+            &plan,
+            &plan.values(&BTreeMap::new()).unwrap(),
+            &opener,
+            RunFolders {
+                folder,
+                staging: &staging,
+                work: &work,
+            },
+            &mut |event| events.push(event),
+        )
+        .await
+        .unwrap();
+        events
+            .iter()
+            .find_map(|event| match event {
+                RunEvent::LakeScanned {
+                    id,
+                    requests,
+                    bytes,
+                } if id == "sales" => Some((*requests, *bytes)),
+                _ => None,
+            })
+            .expect("the lake's scan was measured")
+    };
+
+    let (whole_requests, whole_bytes) =
+        scan_of("GROUP BY ALL ORDER BY regions.region", folder.path()).await;
+    let one_year = tempfile::tempdir().unwrap();
+    let (year_requests, year_bytes) =
+        scan_of("WHERE sales.year = 2025 GROUP BY ALL", one_year.path()).await;
+
+    assert!(whole_requests > 0, "the bucket was asked for the lake");
+    assert!(whole_bytes > 0, "its answers carried bytes");
+    // Hive partitioning is what makes the second run read less: it skips the other year's
+    // file without opening it, which is the pruning RS7 is for.
+    assert!(
+        year_bytes < whole_bytes,
+        "one year read {year_bytes} of {whole_bytes}"
+    );
+    assert!(
+        year_requests <= whole_requests,
+        "{year_requests} requests against {whole_requests}"
+    );
+}
+
 /// RS7d: the data source's cost guard judges the lake before the run reads a row.
 #[tokio::test]
 async fn the_cost_guard_refuses_a_lake_that_holds_more_than_its_limit() {

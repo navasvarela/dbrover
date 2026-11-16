@@ -126,6 +126,13 @@ pub enum RunEvent {
         /// `parquet`, `delta`, as the report's file writes it.
         format: String,
     },
+    /// What a lake's scan read from its bucket, once the combine step and the charts have run
+    /// (RS7e): the requests DuckDB made for its files and the bytes their answers carried.
+    LakeScanned {
+        id: String,
+        requests: u64,
+        bytes: u64,
+    },
     /// The combine step returned its last row, written to every output.
     CombineDone {
         rows: u64,

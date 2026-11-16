@@ -93,6 +93,17 @@ impl<O: Write, E: Write> HumanLines<O, E> {
             RunEvent::LakeRead { id, url, format } => {
                 self.error_line(&format!("Source {id}: {format} lake read in place, {url}"));
             }
+            RunEvent::LakeScanned {
+                id,
+                requests,
+                bytes,
+            } => {
+                self.error_line(&format!(
+                    "Source {id}: read {} from its bucket in {}",
+                    ByteCount(*bytes),
+                    dbrover_report::counted(*requests, "request")
+                ));
+            }
             RunEvent::CombineDone {
                 rows,
                 bytes,

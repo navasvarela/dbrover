@@ -63,6 +63,9 @@ const STATISTICS_OPTIMIZERS: &str = "statistics_propagation,empty_result_pullup"
 /// The query's own metrics, beside its operators': its time and the rows it returned.
 const QUERY_METRICS: [&str; 2] = ["LATENCY", "ROWS_RETURNED"];
 
+/// DuckDB's name for its log of HTTP requests, which is the only kind a workspace keeps.
+const HTTP_LOG_TYPE: &str = "HTTP";
+
 /// What goes before a query to have DuckDB plan it and write the plan as JSON, which
 /// `dbrover-plan` reads.
 const EXPLAIN_JSON: &str = "EXPLAIN (FORMAT JSON) ";
@@ -171,6 +174,14 @@ impl std::str::FromStr for DuckDbType {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0:?} isn't a type a report loads a column as")]
 pub struct UnknownDuckDbType(pub String);
+
+/// What a bucket answered a workspace's requests with (RS7e).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BucketTraffic {
+    pub requests: u64,
+    /// The bytes the answers carried, as their `Content-Length` says.
+    pub bytes: u64,
+}
 
 /// What the profiler measured of the last statement on [`Workspace::connection`].
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -528,6 +539,72 @@ impl Workspace {
                     .map_err(|error| statement_error(error, &sql))
             })
             .await
+    }
+
+    /// Starts DuckDB's own log of the requests it makes to a bucket, and nothing else, so a
+    /// run can say what its lakes' scans read (RS7e).
+    ///
+    /// Call it before [`Workspace::lock`], which freezes the settings. The log is kept in
+    /// DuckDB's memory, one row a request, and goes with the workspace.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError`] if DuckDB refuses a setting.
+    pub async fn log_bucket_requests(&self) -> Result<(), DriverError> {
+        let sql = format!(
+            "SET logging_mode = 'ENABLE_SELECTED'; SET enabled_log_types = '{HTTP_LOG_TYPE}'; \
+             SET logging_level = 'trace'; SET enable_logging = true"
+        );
+        self.connection
+            .run_blocking(move |connection| {
+                connection
+                    .execute_batch(&sql)
+                    .map_err(|error| statement_error(error, &sql))
+            })
+            .await
+    }
+
+    /// What the bucket's requests for the keys under `key_prefix` have moved since
+    /// [`Workspace::log_bucket_requests`]: how many requests, and the bytes their answers
+    /// carried, as each answer's `Content-Length` says.
+    ///
+    /// The key's prefix is matched inside the request's address, because that address is the
+    /// provider's own (`https://bucket.s3.region.amazonaws.com/sales/…`, or an endpoint's
+    /// `http://host/bucket/sales/…`) rather than the `s3://` one the lake is written as. Two
+    /// lakes whose paths nest (`sales/` and `sales/2026/`) each count the inner one's
+    /// requests.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError`] if the log can't be read, which is what a DuckDB without the logging
+    /// tables would give.
+    pub async fn bucket_requests(
+        &mut self,
+        key_prefix: &str,
+    ) -> Result<BucketTraffic, DriverError> {
+        let sql = format!(
+            "SELECT count(*)::VARCHAR, \
+             coalesce(sum(TRY_CAST(response.headers['Content-Length'] AS BIGINT)), 0)::VARCHAR \
+             FROM duckdb_logs_parsed('{HTTP_LOG_TYPE}') WHERE request.url LIKE {}",
+            string_literal(&format!("%{}%", like_pattern(key_prefix)))
+        );
+        let mut cursor = self.connection.execute(&sql).await?;
+        let mut rows = Vec::new();
+        while !cursor.is_exhausted() {
+            rows.extend(cursor.next_page(1).await?);
+        }
+        cursor.finish().await?;
+        let number = |index: usize| {
+            rows.first()
+                .and_then(|row: &Row| row.get(index))
+                .and_then(Option::as_deref)
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or_default()
+        };
+        Ok(BucketTraffic {
+            requests: number(0),
+            bytes: number(1),
+        })
     }
 
     /// The bytes a lake's files hold, read from their Parquet footers, which is the most a
@@ -919,6 +996,14 @@ pub fn read_parquet_files(files: &[PathBuf]) -> String {
 /// `"name"`, quoted as DuckDB quotes an identifier, so any column name works.
 pub(crate) fn identifier(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+/// `text` with `LIKE`'s own wildcards escaped, so a key's prefix matches itself; `\\` is the
+/// escape character `LIKE` takes by default.
+fn like_pattern(text: &str) -> String {
+    text.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 /// `'text'`, quoted as a SQL string.

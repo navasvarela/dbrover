@@ -170,6 +170,14 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
         for folder in &writable {
             make_folder(folder)?;
         }
+        if !lakes.is_empty() {
+            // What each lake's scan asks the bucket for, which the profile keeps (RS7e); the
+            // settings freeze at the lock, so it starts here.
+            workspace
+                .log_bucket_requests()
+                .await
+                .map_err(|error| RunFailure::new(Step::Combine, describe_error(&error)))?;
+        }
         let prefixes: Vec<&str> = lakes.iter().map(|lake| lake.view.prefix()).collect();
         workspace
             .lock(&Allowed {
@@ -261,7 +269,36 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
             query_ms: Some(query_ms),
             plan: profile.plan,
         });
-        self.query_charts(workspace, sink).await
+        self.query_charts(workspace, sink).await?;
+        self.lakes_scanned(workspace, &lakes, events).await;
+        Ok(())
+    }
+
+    /// What each lake's scan read from its bucket, once the combine query and the charts have
+    /// run: the requests DuckDB made and the bytes their answers carried (RS7e).
+    ///
+    /// A log that can't be read leaves the numbers out of the profile rather than failing a
+    /// run that has its rows.
+    async fn lakes_scanned(
+        &self,
+        workspace: &mut Workspace,
+        lakes: &[ReadLake],
+        events: &mut dyn FnMut(RunEvent),
+    ) {
+        for lake in lakes {
+            match workspace.bucket_requests(&lake.key_prefix).await {
+                Ok(traffic) => events(RunEvent::LakeScanned {
+                    id: lake.id.clone(),
+                    requests: traffic.requests,
+                    bytes: traffic.bytes,
+                }),
+                Err(error) => tracing::warn!(
+                    "could not read what the lake {:?} asked its bucket for: {}",
+                    lake.id,
+                    describe_error(&error)
+                ),
+            }
+        }
     }
 
     /// Whether anything but the preview reads every row of the result: an output DbRover
@@ -617,6 +654,8 @@ async fn lookup_values(
 struct ReadLake {
     id: String,
     view: LakeView,
+    /// The lake's prefix without its bucket, which its bucket's requests are matched by.
+    key_prefix: String,
     sign_in: BucketSignIn,
 }
 
@@ -690,6 +729,7 @@ impl<O: SourceOpener> Combining<'_, '_, O> {
             .map_err(|error| failed(describe_error(&error)))?;
         Ok(ReadLake {
             id: lake.id.clone(),
+            key_prefix: lake.key_prefix(),
             view,
             sign_in,
         })
