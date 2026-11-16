@@ -1725,7 +1725,7 @@ three to five, **L** a track of its own).
   - **W12e — Export:** SVG and PNG through ER1e's export.
 
   **W12 demo note:** built in #319, #324, #325, #329 and the export layer, with a section on charts
-  in [Query consoles](../book/src/consoles.md#charts). Run
+  in [The Chart tab](../book/src/charts.md#the-chart-tab). Run
   `SELECT to_char(day, 'YYYY-MM') AS month, sum(total) AS total FROM orders GROUP BY 1 ORDER
   BY 1` on PostgreSQL and click **Chart** beside **Grid**: the months open as bars from zero,
   `X: month` and `Y: total` above them, "Charting 3 rows" under them, and hovering a bar
@@ -2893,7 +2893,7 @@ is added. It came after CI fixes, the reports track and W13.
   misspelt column shows the result's columns.
 
   **CH1 demo note:** built in #515 to #518 and the manual's layer, with a section, [A chart in
-  the query](../book/src/consoles.md#a-chart-in-the-query), in Query consoles. Make the shop
+  the query](../book/src/charts.md#a-chart-in-the-query), in Charts. Make the shop
   from `examples/reports/shop.sql` in a SQLite data source, and run, in its console, net sales
   by month with a block above it: `-- [chart]`, `-- # Bars read best for three months.`,
   `-- kind = "bars"`, `-- x = "month"`, `-- y = "net"`. The result opens on **Chart** as three
@@ -2921,8 +2921,8 @@ is added. It came after CI fixes, the reports track and W13.
   - **CH2c — The toolbar's Series and Stacked, and the manual.**
 
   **CH2 demo note:** built in #522, #523 and the toolbar's layer, with **Series** and **Stacked**
-  in [Query consoles](../book/src/consoles.md#charts) and the keys in [A chart in the
-  query](../book/src/consoles.md#a-chart-in-the-query). On the SQLite shop of
+  in [The Chart tab](../book/src/charts.md#the-chart-tab) and the keys in
+  [The keys](../book/src/charts.md#the-keys). On the SQLite shop of
   `examples/reports/shop.sql`, run `SELECT strftime('%Y-%m', l.ordered_on) AS month,
   p.category, SUM(l.amount) AS net FROM order_lines l JOIN products p ON p.id = l.product_id
   GROUP BY month, p.category ORDER BY month, p.category` and click **Chart**: the months are bars;

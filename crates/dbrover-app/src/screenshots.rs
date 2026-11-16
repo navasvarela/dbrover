@@ -41,6 +41,10 @@ mod site;
 
 /// A typical laptop window; wide enough for the explorer, a console and its results.
 const WINDOW_SIZE: Vec2 = Vec2::new(1180.0, 740.0);
+/// The window the Charts chapter's gallery is rendered in. Those pictures are cropped to the
+/// chart alone, so the window is wider and taller than a console shot needs: the chart is then
+/// tall enough to read values off, and its toolbar fits on one row.
+const GALLERY_WINDOW: Vec2 = Vec2::new(1360.0, 900.0);
 /// Rendered at 2x so the images stay sharp on high-density screens.
 const PIXELS_PER_POINT: f32 = 2.0;
 /// Enough frames for egui's fade-in animations and the dock's layout to settle.
@@ -134,6 +138,121 @@ GROUP BY month
 ORDER BY month;
 ";
 
+// The Charts chapter's gallery. Each statement carries the `[chart]` block that draws it, so a
+// reader copies the same chart the picture shows, and the scene needs no click in the toolbar.
+
+const CHART_BARS: &str = r#"-- [chart]
+-- kind = "bars"
+-- x = "month"
+-- y = "revenue"
+-- title = "Revenue by month"
+SELECT strftime('%Y-%m', o.placed_at) AS month, ROUND(SUM(t.total), 2) AS revenue
+FROM orders o
+JOIN order_totals t ON t.id = o.id
+WHERE o.status <> 'cancelled'
+GROUP BY month
+ORDER BY month;
+"#;
+
+const CHART_LINES: &str = r#"-- [chart]
+-- x = "week"
+-- y = "revenue"
+-- title = "Revenue by week"
+SELECT date(o.placed_at, 'weekday 1', '-7 days') AS week, ROUND(SUM(t.total), 2) AS revenue
+FROM orders o
+JOIN order_totals t ON t.id = o.id
+WHERE o.status <> 'cancelled'
+GROUP BY week
+ORDER BY week;
+"#;
+
+const CHART_SCATTER: &str = r#"-- [chart]
+-- x = "day_of_year"
+-- y = "total"
+-- title = "What each order came to"
+SELECT CAST(strftime('%j', o.placed_at) AS INTEGER) AS day_of_year,
+       ROUND(t.total, 2) AS total
+FROM orders o
+JOIN order_totals t ON t.id = o.id
+WHERE o.status <> 'cancelled'
+ORDER BY day_of_year;
+"#;
+
+const CHART_SERIES: &str = r#"-- [chart]
+-- x = "month"
+-- y = "revenue"
+-- series = "country"
+-- title = "Revenue by month, a series per country"
+SELECT strftime('%Y-%m', o.placed_at) AS month, c.country,
+       ROUND(SUM(t.total), 2) AS revenue
+FROM orders o
+JOIN customers c ON c.id = o.customer_id
+JOIN order_totals t ON t.id = o.id
+WHERE o.status <> 'cancelled'
+GROUP BY month, c.country
+ORDER BY month, c.country;
+"#;
+
+const CHART_STACKED: &str = r#"-- [chart]
+-- kind = "bars"
+-- stack = true
+-- x = "month"
+-- y = "revenue"
+-- series = "country"
+-- title = "Revenue by month, stacked by country"
+SELECT strftime('%Y-%m', o.placed_at) AS month, c.country,
+       ROUND(SUM(t.total), 2) AS revenue
+FROM orders o
+JOIN customers c ON c.id = o.customer_id
+JOIN order_totals t ON t.id = o.id
+WHERE o.status <> 'cancelled'
+GROUP BY month, c.country
+ORDER BY month, c.country;
+"#;
+
+const CHART_COLUMNS: &str = r#"-- [chart]
+-- x = "month"
+-- y = ["orders", "items"]
+-- title = "Orders and items by month"
+SELECT strftime('%Y-%m', o.placed_at) AS month,
+       COUNT(DISTINCT o.id) AS orders,
+       SUM(i.quantity) AS items
+FROM orders o
+JOIN order_items i ON i.order_id = o.id
+WHERE o.status <> 'cancelled'
+GROUP BY month
+ORDER BY month;
+"#;
+
+const CHART_MOVING_AVERAGE: &str = r#"-- [chart]
+-- x = "day"
+-- y = ["revenue", "moving_average"]
+-- title = "Revenue by day, and its moving average"
+WITH daily AS (
+    SELECT date(o.placed_at) AS day, ROUND(SUM(t.total), 2) AS revenue
+    FROM orders o
+    JOIN order_totals t ON t.id = o.id
+    WHERE o.status <> 'cancelled'
+    GROUP BY day
+)
+SELECT day, revenue,
+       ROUND(AVG(revenue) OVER (ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW), 2)
+           AS moving_average
+FROM daily
+ORDER BY day;
+"#;
+
+const CHART_BUCKETS: &str = r#"-- [chart]
+-- kind = "bars"
+-- x = "band"
+-- y = "orders"
+-- title = "Orders by value, in bands of 100"
+SELECT CAST(total / 100 AS INTEGER) * 100 AS band, COUNT(*) AS orders
+FROM order_totals
+GROUP BY band
+ORDER BY band;
+"#;
+
 struct Scene {
     name: &'static str,
     data_sources: FixtureSources,
@@ -147,6 +266,18 @@ struct Scene {
     /// The test server variables the scene needs; without them it is skipped and its image
     /// left as it is.
     needs: &'static [&'static str],
+}
+
+impl Scene {
+    /// The window to render this scene in: [`GALLERY_WINDOW`] for the ones cropped to a chart,
+    /// and a laptop's for the rest.
+    fn window(&self) -> Vec2 {
+        if std::ptr::fn_addr_eq(self.region, chart_panel as Region) {
+            GALLERY_WINDOW
+        } else {
+            WINDOW_SIZE
+        }
+    }
 }
 
 const POSTGRES_URL: &str = "DBROVER_TEST_POSTGRES_URL";
@@ -544,6 +675,70 @@ const SCENES: &[Scene] = &[
         needs: &[],
     },
     Scene {
+        name: "chart-bars",
+        data_sources: FixtureSources::Shop,
+        play: chart_bars,
+        keeps_pointer: false,
+        region: chart_panel,
+        needs: &[],
+    },
+    Scene {
+        name: "chart-lines",
+        data_sources: FixtureSources::Shop,
+        play: chart_lines,
+        keeps_pointer: false,
+        region: chart_panel,
+        needs: &[],
+    },
+    Scene {
+        name: "chart-scatter",
+        data_sources: FixtureSources::Shop,
+        play: chart_scatter,
+        keeps_pointer: false,
+        region: chart_panel,
+        needs: &[],
+    },
+    Scene {
+        name: "chart-series",
+        data_sources: FixtureSources::Shop,
+        play: chart_series,
+        keeps_pointer: false,
+        region: chart_panel,
+        needs: &[],
+    },
+    Scene {
+        name: "chart-stacked",
+        data_sources: FixtureSources::Shop,
+        play: chart_stacked,
+        keeps_pointer: false,
+        region: chart_panel,
+        needs: &[],
+    },
+    Scene {
+        name: "chart-columns",
+        data_sources: FixtureSources::Shop,
+        play: chart_columns,
+        keeps_pointer: false,
+        region: chart_panel,
+        needs: &[],
+    },
+    Scene {
+        name: "chart-moving-average",
+        data_sources: FixtureSources::Shop,
+        play: chart_moving_average,
+        keeps_pointer: false,
+        region: chart_panel,
+        needs: &[],
+    },
+    Scene {
+        name: "chart-buckets",
+        data_sources: FixtureSources::Shop,
+        play: chart_buckets,
+        keeps_pointer: false,
+        region: chart_panel,
+        needs: &[],
+    },
+    Scene {
         name: "console-error",
         data_sources: FixtureSources::Shop,
         play: console_error,
@@ -694,7 +889,7 @@ fn regenerate_screenshots() {
                 _ => format!("{}-{}.png", scene.name, theme_name(theme)),
             };
             let path = out_dir.join(file_name);
-            render_scene(scene, theme, WINDOW_SIZE, scene.region)
+            render_scene(scene, theme, scene.window(), scene.region)
                 .save(&path)
                 .unwrap();
             println!("wrote {}", path.display());
@@ -1974,6 +2169,20 @@ fn report_runs_region(harness: &Harness<'static, DbRoverApp>) -> Option<egui::Re
     ))
 }
 
+/// A chart in the results panel, from the row of tabs above it down to the line that says what
+/// was charted. The gallery's pictures are of charts, so the console and the explorer around
+/// them are left out, and with them the log console's clock, which every run moves.
+fn chart_panel(harness: &Harness<'static, DbRoverApp>) -> Option<egui::Rect> {
+    const MARGIN: f32 = 10.0;
+    let tabs = harness.query_by_label("Grid")?.rect();
+    let note = harness.query_by_label_contains("Charting")?.rect();
+    let window = harness.ctx.content_rect();
+    Some(egui::Rect::from_min_max(
+        egui::pos2(tabs.min.x - MARGIN, tabs.min.y - MARGIN),
+        egui::pos2(window.max.x, note.max.y + MARGIN),
+    ))
+}
+
 fn open_settings_page(harness: &mut Harness<'static, DbRoverApp>, category: &str) {
     harness.get_by_label("View").click();
     harness.run_ok();
@@ -2345,6 +2554,64 @@ fn chart(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
     run_all(harness, "6 rows");
     harness.get_by_label("Chart").click();
     step_until_visible(harness, "Charting 6 rows");
+}
+
+/// Runs a statement whose `[chart]` block opens its result on the chart, waits for the chart
+/// to be drawn, and gives it the console's height.
+fn run_charted(harness: &mut Harness<'static, DbRoverApp>, sql: &str) {
+    open_console(harness, "shop", sql);
+    harness.get_by_label("Run all").click();
+    step_until_visible(harness, "Charting");
+    grow_results(harness);
+}
+
+/// Gives the results panel all the height the split allows, so a gallery chart is a chart
+/// rather than a strip. The splitter keeps its height in egui's temp data under the id
+/// `console::view::split` builds, and `VerticalSplit::heights` clamps it to the console.
+fn grow_results(harness: &mut Harness<'static, DbRoverApp>) {
+    let console = harness
+        .state()
+        .open_consoles()
+        .next()
+        .expect("a console to grow the results of")
+        .id();
+    let id = egui::Id::new(("console_results_height", console.0));
+    harness
+        .ctx
+        .data_mut(|data| data.insert_temp(id, f32::MAX / 2.0));
+    harness.run_steps(SETTLE_STEPS);
+}
+
+fn chart_bars(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    run_charted(harness, CHART_BARS);
+}
+
+fn chart_lines(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    run_charted(harness, CHART_LINES);
+}
+
+fn chart_scatter(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    run_charted(harness, CHART_SCATTER);
+}
+
+fn chart_series(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    run_charted(harness, CHART_SERIES);
+}
+
+fn chart_stacked(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    run_charted(harness, CHART_STACKED);
+}
+
+fn chart_columns(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    run_charted(harness, CHART_COLUMNS);
+}
+
+fn chart_moving_average(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    run_charted(harness, CHART_MOVING_AVERAGE);
+}
+
+fn chart_buckets(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    run_charted(harness, CHART_BUCKETS);
 }
 
 fn console_error(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {

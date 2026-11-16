@@ -446,6 +446,12 @@ A scene that needs a test server names its variables (`needs`) and is skipped wi
 leaving its image as it was: `host-key-prompt` connects through the `ssh` service, and
 `console-reconnect` ends its own PostgreSQL session. Every scene's log console shows the time,
 so regenerating changes every image a little; commit only the images whose scene changed.
+`DBROVER_SCREENSHOTS_ONLY` renders only the scenes it names, comma separated, which is how one
+picture is worked on without waiting for the rest.
+
+Most scenes show the whole window; a `region` crops to the part the picture is about, and
+`Scene::window` gives the scenes cropped to a chart (the Charts chapter's gallery) a window of
+their own, large enough that the chart reads and its toolbar fits on one row.
 
 ### Website pictures and clips
 

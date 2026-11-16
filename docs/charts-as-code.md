@@ -9,7 +9,8 @@ CH2's, CH3's and CH4's after their layers. What was left for later is
 [at the end](#left-for-later).
 
 W12 gave every result a **Chart** tab: bars, lines or a scatter of the rows the grid holds,
-picked in the toolbar and exported as SVG or PNG ([Charts](../book/src/consoles.md#charts)).
+picked in the toolbar and exported as SVG or PNG
+([The Chart tab](../book/src/charts.md#the-chart-tab)).
 A chart picked there lasts as long as the console's next run with the same columns. It can't be
 written down, kept with the query, reviewed in a pull request, or drawn by a report that runs
 every month from cron.
