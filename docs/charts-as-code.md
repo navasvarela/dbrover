@@ -1,12 +1,15 @@
 # Charts as code
 
-Status: **done.** Proposed on 2026-11-04; CH1, CH2 and CH3 built on 2026-11-06, and CH4 on
-2026-11-07, which closes the track: CH1 in #515 to #519, CH2 in #522 to #524, CH3 in #526 to
-#531, CH4 in #533 and #534. The [roadmap](roadmap.md#charts-as-code-track) tracks it as CH1 to
-CH4. CI fixes, the reports track and W13 schema compare came first. Each milestone's decisions
-were confirmed when it started, as in [Reports](reporting.md): CH1's [below](#ch1-confirmed),
-CH2's, CH3's and CH4's after their layers. What was left for later is
-[at the end](#left-for-later).
+Status: **CH1 to CH4 built; CH5 planned, not built.** Proposed on 2026-11-04; CH1, CH2 and CH3
+built on 2026-11-06, and CH4 on 2026-11-07: CH1 in #515 to #519, CH2 in #522 to #524, CH3 in
+#526 to #531, CH4 in #533 and #534. CH5, [a fuller chart](#a-fuller-chart), was planned on
+2026-11-16 after the manual's thin charts coverage turned out to reflect a narrow feature set
+as much as a gap in the writing; it takes up what the first four milestones
+[left for later](#left-for-later) and adds statistics, and it comes after RS7f and RS7g and
+before RS8. The [roadmap](roadmap.md#charts-as-code-track) tracks it as CH1 to CH5. CI fixes,
+the reports track and W13 schema compare came first. Each milestone's decisions are confirmed
+when it starts, as in [Reports](reporting.md): CH1's [below](#ch1-confirmed), CH2's, CH3's and
+CH4's after their layers.
 
 W12 gave every result a **Chart** tab: bars, lines or a scatter of the rows the grid holds,
 picked in the toolbar and exported as SVG or PNG ([Charts](../book/src/consoles.md#charts)).
@@ -49,7 +52,7 @@ an `x` of dates with no `kind` draws lines, as the tab would.
 
 | Key | Takes | Default | Built in |
 | --- | --- | --- | --- |
-| `kind` | `"bars"`, `"lines"` or `"scatter"` | lines over times, a scatter over numbers, bars over text | CH1 |
+| `kind` | `"bars"`, `"hbars"`, `"lines"`, `"scatter"` or `"area"` | lines over times, a scatter over numbers, bars over text | CH1, CH5 |
 | `x` | a column's name | the first column of dates or text | CH1 |
 | `y` | a column's name, or a list of them | every other column of numbers, up to eight | CH1 |
 | `series` | a column's name: one `y`, split into a series per value of this column | none | CH2 |
@@ -59,6 +62,9 @@ an `x` of dates with no `kind` draws lines, as the tab would.
 | `y_zero` | `true` to start the Y axis at zero for lines and scatters (bars always do) | `false` | CH1 |
 | `sort` | a column's name, then `asc` or `desc`: `"net desc"` | the result's order | CH1 |
 | `limit` | the number of rows to chart, after `sort` | every row, up to the kind's limit | CH1 |
+| `y_scale` | `"linear"` or `"log"`; a log scale draws lines and scatters only | `"linear"` | CH5 |
+| `colours` | a list of hex colours, given to the series from the first (`colors` reads the same key) | the theme's eight | CH5 |
+| `overlay` | a list of `"trend"`, `"average N"`, `"mean"`, `"median"` and `"line V"`, each drawn per series and named under the chart | none | CH5 |
 
 A report's `[[chart]]` adds the keys that make a file:
 
@@ -74,9 +80,11 @@ components and most plotting libraries give these roles, and `kind`, `title` and
 they would in a sentence. Nothing is a DbRover idiom except `y_zero`, whose name says what it
 does.
 
-**What the spec doesn't hold:** colours, fonts, the theme, legends' placement, ticks. The
-chart's look is W12's, the same on screen and in a file, and a spec that can't set it can't get
-it wrong. Each could become a key later, if someone needs it.
+**What the spec doesn't hold:** fonts, the theme, legends' placement, ticks. The chart's look is
+W12's, the same on screen and in a file, and a spec that can't set it can't get it wrong. Each
+could become a key later, if someone needs it. Colours were on that list until CH5, which lets a
+spec name a series' colour and keeps the rule that matters: the colour a spec names is the same
+on screen and in the file ([Colour control](#colour-control-ch5e)).
 
 ### Sort and limit belong in SQL, mostly
 
@@ -181,8 +189,19 @@ known. Each problem is a sentence that names the chart and the line, as a report
 - **TOML that doesn't read:** the parser's message, at its line in the console or the file.
 - **A key that doesn't exist:** "chart, line 3: no key `ys`; did you mean `y`?" A misspelt key
   is refused rather than ignored, as reports refuse theirs.
-- **A value of the wrong kind:** "chart, line 2: `kind` is bars, lines or scatter, not `area`."
-  "`stack` stacks bars; this chart draws lines."
+- **A value of the wrong kind:** "chart, line 2: `kind` is bars, hbars (horizontal bars), lines,
+  scatter or area, not `pie`." "`stack` stacks bars; this chart draws lines."
+- **A key the kind can't honour** (CH5): "`y_scale = "log"` draws lines or a scatter; this chart
+  draws bars." "`stack = false`: an area always stacks; leave `stack` out." "`mean` reads a
+  series against the axis, and a stacked chart piles them; `line` still works."
+- **Two keys that disagree** (CH5): "`y_zero` starts the axis at zero, which a log scale can't
+  reach; set one or the other." In a report, "an overlay is computed over the rows charted, and
+  `limit` charts only some of them; drop `limit`, or group the rows in the query."
+- **A colour that isn't one** (CH5): "`colours`: write a hex colour such as `#2a78d6`, not
+  `red`."
+- **An overlay that isn't one** (CH5): "`overlay`: `"trend"`, `"average 7"`, `"mean"`,
+  `"median"` or `"line 100"`, not `"regression"`." "`average 30` needs 30 points; the chart has
+  12."
 - **A column that isn't there:** "chart: `y = "revnue"` isn't a column of this result: month,
   category, net." A name that differs only in case suggests it: "did you mean `Revenue`?"
   Names are exact, since databases differ on case.
@@ -315,11 +334,329 @@ layout and on screen.
 | --- | --- | --- | --- |
 | **`series`** (not a kind, but needed first) | High. `GROUP BY month, category` is the usual shape of a result, and today it needs a pivot in SQL before it charts | Small: reading the rows splits one Y by the series column's values, in first-seen order | **Yes, CH2.** |
 | **Stacked bars** (`stack = true`) | High once `series` exists: parts of a total by month | Small: bars offset by the series below them, positives up and negatives down from zero; the Y range from the stacks; hover shows the total | **Yes, CH2.** |
-| **Horizontal bars** | Moderate: long category names, a top-20 of customers | Moderate: the layout's axes swapped, labels measured on the left | **Later,** if asked. |
-| **Area** (stacked) | Moderate: shares over time, close to what stacked bars show | Moderate: a filled shape per series, drawn in egui as a strip of four-sided pieces, since egui fills only convex shapes; a polygon in SVG | **Later,** after stacked bars, if asked. |
-| **Histogram** | High for a distribution (latencies, order sizes) | Small to draw, but binning the rows the grid holds bins a first page, not the table | **No kind.** Binning belongs in the query (`width_bucket`, `floor(x / 10) * 10`), and the result charts as bars; the manual shows it. |
+| **Horizontal bars** | Moderate: long category names, a top-20 of customers | Moderate: the layout's axes swapped, labels measured on the left | **Yes, CH5b.** Asked for; a kind of its own, `kind = "hbars"` ([why](#horizontal-bars-ch5b)). |
+| **Area** (stacked) | Moderate: shares over time, close to what stacked bars show | Moderate: a filled shape per series, drawn in egui as a strip of four-sided pieces, since egui fills only convex shapes; a polygon in SVG | **Yes, CH5c,** always stacked, with the splitting in the painter rather than the layout ([why](#stacked-area-ch5c)). |
+| **Histogram** | High for a distribution (latencies, order sizes) | Small to draw, but binning the rows the grid holds bins a first page, not the table | **No kind,** confirmed in CH5. Binning belongs in the query (`width_bucket`, `floor(x / 10) * 10`), and the result charts as bars; CH5f's **Summarise** writes that query, so the bins see every row ([why](#statistics-sql-first-ch5f-and-ch5g)). |
 | **Heatmap** | Moderate: day of week by hour | High: two category axes, a colour scale and its legend, labels on both axes | **No,** for now. |
 | **Pie** | Low: hard to compare slices | Arcs, labels around them | **No.** Bars say it better. |
+
+## A fuller chart
+
+CH1 to CH4 gave a chart a text form and three kinds. What the track left for later was asked
+for: a top-twenty of customers whose names don't fit under upright bars, shares over time,
+prices whose range is three decades, one series that has to be red because it always is, and a
+trend through a line. CH5 takes those up, with one rule holding it together: **whatever a key
+can say, the layout must be able to draw.** A key that reads cleanly and then can't be placed
+is worse than no key, because its problem arrives after the query ran. So `y_scale = "log"` is
+refused on bars rather than drawn from an arbitrary baseline, and an area's `stack = false` is
+refused rather than quietly ignored.
+
+CH5 stays inside W12's model: one result, one picture. Small multiples are
+[weighed below](#small-multiples-the-next-candidate) and left out; dashboards stay out, and
+[Reports' scope](reporting.md#scope) does not move: every picture CH5 draws is still one
+result's, in a console or as a file a report writes beside its others, so the wording CH3 put
+there is still right word for word.
+
+### Horizontal bars (CH5b)
+
+`kind = "hbars"` draws the bars lying down: the categories up the left side, the values along
+the bottom. It is **a kind of its own, not a key on bars.** `ChartKind` already decides the row
+limit, the kind a result starts with from X's role, how hovering finds a point, and whether
+stacking applies; a `horizontal = true` beside `kind = "bars"` would turn each of those into a
+test of two fields, which is the same discriminator read in four places. It would also have to
+live beside `stack`, since stacked horizontal bars are the natural pairing, leaving two
+interacting booleans on one kind. A fourth kind costs one arm in each `match` the compiler
+already checks, and one more button in a toolbar that is a row of them.
+
+`"hbars"` is short where the other kinds are short, and the sentence that refuses a bad value
+spells it out: "`kind` is bars, hbars (horizontal bars), lines, scatter or area, not `pie`".
+`"horizontal_bars"` would need no gloss, but no other kind is two words.
+
+What it means for the layout:
+
+- **The extents are named before they are used.** Today `layout` reads `plot.min.x` from the
+  widest Y tick label and places categories across the width. CH5b first renames those two
+  directions as the value extent and the category extent, with no change to any mark, and only
+  then adds the kind that swaps them. The first commit's golden SVGs are unchanged byte for
+  byte, which is what makes the second commit reviewable.
+- **The tick logic needs no change at all.** `Ticks::nice` takes a range and a target count and
+  knows nothing of direction. What changes is which extent it is given, and which label width
+  it drives: upright, the value labels set the left gutter; lying down, the category names do.
+- **The value ticks get the wider spacing.** Along the bottom, number labels sit side by side,
+  so an hbars chart takes `X_TICK_SPACING`'s target (one tick per 90 points) where the upright
+  chart took `Y_TICK_SPACING`'s (one per 48). A horizontal chart therefore gets fewer value
+  ticks than the same chart standing up, which is right: the labels need the room.
+- **The gutter is capped, and names are shortened by measure.** Long names are the reason for
+  the kind, so the left gutter grows to fit them, to at most a third of the width; past that,
+  names are shortened with an ellipsis to the width that is left, measured rather than counted.
+  Upright bars keep `MAX_LABEL_CHARS`, whose 20 characters are about what a slot holds; lying
+  down, the gutter is the constraint and a measure is the honest test.
+- **Zero stays where it belongs.** Bars grow rightwards from the zero line and leftwards for
+  negatives, and the zero line is drawn vertical when values fall either side of it.
+- **Hovering** finds the slot along Y rather than along X: one more arm in `Drawing::hit`, which
+  already branches on the kind for a scatter.
+- **Stacking is free.** `stack` applies, and the pieces lie left to right from zero. Stacking is
+  worked out in the values, not in the placement, so only where a piece goes changes.
+
+Its row limit is `MAX_BARS`, the same 250: it is bars.
+
+### Stacked area (CH5c)
+
+`kind = "area"` fills the band between each series and the one below it. **An area always
+stacks.** Unstacked areas hide whichever series is behind the front one, and fixing that needs
+translucent fills, which means an alpha channel neither `Paint` nor `Rgb` carries and dark
+files the track keeps out. So `stack = true` on an area is accepted, since it says what is
+true, and `stack = false` is a problem: "an area always stacks; leave `stack` out". **Save to
+query** never writes `stack` for an area, as CH2 never writes `stack = false`.
+
+**One mark per series, tessellated by whoever paints it.** The layout emits one new
+`Mark::Band`, a closed ring of points: the series' top edge, then the edge below it reversed.
+The SVG writes it as one `<polygon>`. egui fills only convex shapes, so the app's painter
+splits the ring into four-sided pieces at each X, in the painter, where the limitation lives
+rather than in the layout.
+
+The layout must not do the splitting. `dbrover-chart`'s whole shape is that the layout is the
+one description of a picture and everyone else only paints marks; a strip of 250 quads in the
+mark list would make the SVG write 250 polygons where one would do, bake an egui constraint
+into a crate that knows nothing about egui, and leave the golden files unreadable.
+
+**The two paths draw the same region, and this is provable rather than hopeful.** Between two
+consecutive X positions a band's upper and lower edges are each a straight segment, so the
+quad spanning them covers exactly the region the polygon covers there: no curve is being
+approximated, and the union of the quads is the polygon. The two fills can therefore differ
+only in how a rasteriser lands on the shared edges. A test bounds that: the chart's SVG is
+rasterised with resvg and compared pixel by pixel against the tab's painted frame, allowing
+differences only on pixels adjacent to an edge, as CH4b's report-chart PNG is already checked
+by its pixels rather than its size.
+
+**Its own row limit, `MAX_AREA_POINTS`, is 5,000.** A band's cost grows with the points *and*
+the series, unlike a line's: 50,000 points across eight series is a 400,000-coordinate picture,
+several megabytes of SVG, and a report would write it unattended. At 5,000 the widest band is
+about 10,000 coordinates, roughly 120 KB a series, a file that still opens in a browser. A
+stacked area over more than a few thousand X positions is a solid block anyway. Past the limit
+a report fails and names it, as it does for bars' 250.
+
+### A log scale (CH5d)
+
+`y_scale` takes `"linear"` (the default) or `"log"`. A string rather than a `y_log = true`
+because the axis's scale is one choice among several: a later `"symlog"`, or an `x_scale`, is
+then a value and not another boolean. That is the shape that absorbs the growth the Risks
+section fears, and it reads as `sort = "net desc"` already reads, one key carrying a small
+phrase.
+
+- **Zero and negative values are gaps.** A log axis cannot place them, and the crate's rule is
+  that what can't be drawn is a gap, never a clamped epsilon and never a dropped row that
+  nobody hears about. They are counted and named in the line under the chart with their own
+  reason: "3 gaps in net: zero or negative on a log scale". When no value is left to place, the
+  chart draws as a chart with no points and the note says why.
+- **The ticks are decades,** 1, 10, 100, with 2 and 5 inside each decade while the axis spans
+  few enough of them to label without collision; past about six decades only the decades are
+  labelled. This is `nice_step`'s own 1-2-5 family read once per decade rather than a new rule.
+  The axis rounds out to the decade below the lowest value and above the highest, and
+  `MAX_TICKS` still caps the count.
+- **`y_zero` and a log scale together are a problem,** known from the keys alone: "`y_zero`
+  starts the axis at zero, which a log scale can't reach; set one or the other."
+- **Bars, hbars and area refuse it.** A bar's length is read as a ratio, and a bar from a log
+  axis's arbitrary baseline misstates exactly that; a stacked band's sum is not the sum of its
+  positions. So `y_scale = "log"` draws lines and scatters, and on the other kinds it is a
+  problem saying so. This is the rule at the top of this section doing its work.
+- **Determinism.** Positions use `f64::log10`, whose last bit differs between platforms' maths
+  libraries. The SVG rounds every coordinate to a hundredth of a point, which swallows a
+  difference of that size unless a coordinate falls exactly on a rounding boundary. The guard
+  is the cross-platform golden test the example's SVG already runs on all three platforms; if
+  it ever does bite, the fix is to round the mantissa before scaling, as `decimal_exponent`
+  already avoids `log10` for the tick steps.
+
+A log X is left for later: X is already placed three ways (categories, numbers, times), and a
+fourth doubles that layer's work for a scatter of two numbers.
+
+### Colour control (CH5e)
+
+`colours` takes a list of hex colours, given to the series from the first: `colours =
+["#e34948"]` makes the first series red and leaves the rest as they were. `colors` reads the
+same key: it is another spelling, not a misspelling, and refusing it would be a papercut for
+no gain; **Save to query** always writes `colours`, and the "did you mean" suggester leaves
+both alone.
+
+**Per series, not a named palette.** A palette name is a word the app then owns forever, each
+one a compatibility promise, and a user whose brand needs three particular hues cannot get
+them from any name we ship. A list gives exactly those hues with no vocabulary to maintain,
+and a list shorter than the series recolours only what it names, which is the common case —
+one series picked out, in one short key.
+
+Hex only, `#rrggbb` or `#rgb`, case ignored. Named CSS colours would be 148 names to carry and
+to keep matching between egui and the SVG. A bad value says: "`colours`: write a hex colour
+such as `#2a78d6`, not `red`."
+
+**How a file still matches the screen.** Today the layout emits `Paint::Series(index)` and each
+painter resolves it from its own array (`SERIES_LIGHT` or `SERIES_DARK` on screen,
+`FILE_COLOURS.series` in a file), which is why a file is the light theme on white whatever the
+app's theme. A spec's colours override **both** arrays at the same index, through one resolver
+that `FileColours::of` and the app's palette lookup each consult before their own array. So a
+series the spec names is that exact hue on screen and in the file, and a series it doesn't name
+keeps each surface's own stepped hue. The layout still emits only `Paint::Series(index)`, so
+nothing about "whoever shows a chart only paints the marks" changes.
+
+**The dark theme gets a hint, not a correction.** A user's hex is used as given, on both
+surfaces. Adjusting it for contrast would make the screen and the file disagree again, and
+would surprise someone who pasted a brand colour. But how a hue lands on the other theme is
+the one thing the TOML doesn't show, so when a named colour's contrast against the current
+theme's background falls below 3:1 — WCAG's ratio for graphical objects, which the palette's
+own "stepped for its theme's background" is already reaching for, the chart tab shows a hint
+beside the chart: "`#1d1f26` is hard to see on the dark theme". A hint, not a problem: the
+chart draws and a report runs. It is console-only, since a report has nobody to read a hint and
+its file is always light on white, where the question doesn't arise.
+
+### Statistics, SQL first (CH5f and CH5g)
+
+Statistics split in two, and the split is the point.
+
+**What sees every row belongs in SQL.** Distributions and percentiles are exactly the
+statistics that are wrong when computed over a page: a histogram of the first 250 rows is a
+histogram of 250 rows, whatever the table holds. So DbRover writes the SQL instead of binning
+the rows it has, which puts the work where every row is, and leaves the user with a statement
+they own, can read, can change, and can paste into a report's `query` or a repository. This is
+the same judgement the track already made when it refused a histogram kind; CH5 keeps the
+refusal and adds the affordance that makes it easy.
+
+**What is honest over the points already drawn belongs in the chart.** A trend through the
+points on screen, a moving average of them, a line at their mean or median: each is a statement
+about those points, and the points are visible. Those three the chart layer gains, plus a line
+at a value the user names.
+
+#### Summarise writes SQL (CH5f)
+
+A menu on a column of numbers, in the grid's header and beside the chart's toolbar, offering
+for that column:
+
+- **Distribution** into 10, 20 or 50 buckets: a statement giving each bucket's lower bound and
+  its count, which charts as bars with no further work.
+- **Percentiles**: the median, p90, p95 and p99 with the smallest and largest value, as a row
+  each so they chart, or as one row.
+- **Copy the SQL**, for anyone who would rather their file wasn't touched.
+
+**It never reads the page to decide anything.** The bucketing statement computes its own range
+in SQL, over a subquery of the minimum and maximum, so the buckets come from every row; the
+number of buckets is picked from the menu, not derived from what happened to be fetched. That
+property is the reason the affordance exists, so it is the first thing its tests check.
+
+**Where the statement goes.** It is written as a **new statement below the original, with its
+own `[chart]` block above it, and the original is left untouched.** The query that produced the
+result on screen is the user's work and the thing they will run again; replacing it destroys it,
+and "it can be undone" is a thin promise about a file that may be committed. Written below, the
+console reads as the derivation it is, the query and then the summary of it, which is how
+someone would have written it by hand, and the statement that ran stays the statement that ran,
+so the result on screen still matches the text above it and CH1's search for a statement by its
+text keeps working. Opening a new console tab was the alternative; it separates the summary
+from the query it came from, which is the one thing worth keeping together, and it leaves undo
+with nothing to undo.
+
+**Where below.** Immediately after the line the statement ends on, as lines of its own. When
+another statement shares that line (`SELECT 1; SELECT 2`), the insertion still goes after the
+whole line, so the neighbour is never split and no text the user didn't act on moves; the
+summary then lands after both, and the toast says where it went. One rule, and no refusal,
+unlike **Save to query**, which has to refuse a shared line because it writes *above* the
+statement.
+
+**Undo** is the editor's, in one step, as **Save to query**'s is: the statement and its block
+are one replacement in the console's text, so ⌘Z takes back both or neither.
+
+**It writes the console's own dialect.** Bucketing uses arithmetic every engine has
+(`floor((x - low) / width) * width`), so **Distribution** is offered everywhere. Percentiles
+differ engine by engine, so they come from a per-dialect template through `dbrover-sql`'s
+`Dialect`, which the `chart` tool already uses; where an engine has no percentile function the
+menu's item is disabled with the reason in its tooltip, rather than writing a statement that
+fails when it runs.
+
+**Summarise is a console affordance only,** not in reports and not over MCP. It is an editing
+gesture: it writes SQL into text somebody is looking at, and a report file has neither a result
+on screen nor an editor gesture to hang it on. Someone who wants a distribution in a report
+writes that bucketing SQL into the chart's own `query`, which is the statement Summarise would
+have written; the manual shows it so it can be copied there. An assistant over MCP writes the
+SQL itself, which is the whole point of statistics in SQL, and `chart`'s description already
+tells it to group in the statement.
+
+#### The overlays (CH5g)
+
+One key, `overlay`, taking a list of short phrases:
+
+```toml
+overlay = ["trend", "mean", "average 7", "line 100"]
+```
+
+- `"trend"` — a least-squares straight line through the series' points.
+- `"average N"` — a moving average over N points, N from 2 to the points charted.
+- `"mean"`, `"median"` — a line across the plot at that statistic of the series' values.
+- `"line V"` — a line across the plot at the value V, the plain reference line.
+
+**One key, not four booleans.** Every overlay anyone asks for next (a band, a target, a second
+fit) is then a phrase in a list the reader already understands, not another key in a spec
+whose growth is this plan's own named risk. It follows `sort = "net desc"`: one key, one
+small phrase, parsed and explained in one place.
+
+**One overlay per series,** in that series' colour, drawn thinner and dashed so it reads as
+derived rather than measured: the mean of two different measures is not a number worth
+drawing. Dashes mean the line marks gain a stroke, a width and a dash length:
+`stroke-dasharray` in the SVG, egui's dashed line on screen, one mark driving both.
+
+**Where an overlay would mislead, it is refused.**
+
+- **On an area, and on stacked bars,** `trend`, `average`, `mean` and `median` are a problem:
+  the series are drawn piled on each other, so a line at one series' own values sits where
+  nothing was drawn. `"line V"` is still allowed on stacked bars, because an absolute reference
+  is read against the axis and a stack's total is too.
+- **`average N`** with N below 2, or above the points charted, is a problem: "`average 30` needs
+  30 points; the chart has 12."
+- **Over categories, a fit is by position.** `trend` and `average` are computed against the X as
+  drawn: the slot's index for categories, the value for numbers and times. Uniform slots make
+  the index the distance, so the fit matches what the eye sees, and the usual case, a trend over
+  months that `strftime` made text, works rather than being refused on a technicality. What the
+  reader must know is which it was, so the note says it: "by position" for categories, "by
+  month" for numbers and times.
+
+**Gaps stay gaps.** An overlay skips a gap rather than interpolating it, and says it did: a
+trend over 248 of 250 points reads "Trend over 248 of the 250 rows charted: 2 gaps". A moving
+average whose window holds a gap gives a gap, not a shorter window, since a window that quietly
+changes width changes what the line means halfway along.
+
+#### How the overlays stay honest
+
+A chart already draws the first 250 bars or 50,000 points and says so, and a report fails past
+a limit rather than draw part of the data. A trend over a first page is a trend over a page, so:
+
+- **The line under the chart names every overlay and what it was computed over,** always. Where
+  the rows charted are all the rows: "Charting 250 rows · Trend and mean over those 250 rows, by
+  month". Where they are not, the clause that already says so reads straight into it: "Charting
+  the first 250 of 1,204 rows; group them in the query to chart them all · Trend and mean over
+  those 250 rows, by month". There is no wording in which an overlay appears and its basis
+  doesn't.
+- **In a report, `overlay` together with `limit` is refused,** a key problem, exit 3, when the
+  file is read, before anything runs: "chart 1: an overlay is computed over the rows charted,
+  and `limit` charts only some of them; drop `limit`, or group the rows in the query." Without
+  `limit`, a report already fails past a kind's row limit, so this closes the only remaining way
+  an unattended file could carry a statistic over a deliberate subset with nobody there to read
+  the caption. That is the misleading chart the Risks section is about, and it is cheap to make
+  impossible.
+- **In a console the same spec is allowed,** because the note is under the chart and the person
+  set the limit a moment ago. The asymmetry is the one the row limit already has (the tab draws
+  the first rows and says so, a report fails), and it is why `limit` with `overlay` is read in
+  all three places but refused in one.
+- **Over MCP it draws and says so,** as CH4 settled for every limit: an assistant reads the
+  reply, so the picture's last line and the reply's summary both say what the overlay was
+  computed over, including when the project's row limit cut the rows.
+
+### Small multiples: the next candidate
+
+Facets (one panel per value of a column, the same chart in each, sharing axes) are the kind
+most likely to be asked for next, and they are not in CH5. The cost, so the decision is here
+when someone asks: the layout places one plot today, with a gutter measured once and a legend
+placed once, so facets mean a grid of plots, a shared Y range computed across them, a tick
+spacing decided per panel from a much smaller height, and labels that have to survive at a
+quarter of the size; then the same again for hovering, which must find the panel before the
+point. That is the layout's largest single change since W12, larger than everything in CH5 put
+together, for a picture a `series` chart already tells most of. It would not move
+[Reports' scope](reporting.md#scope): one result, one picture, panelled. It waits for someone to
+ask.
 
 ## Command line and MCP
 
@@ -332,7 +669,13 @@ Charts are written as outputs are, with nothing new to type:
 - **`--json`** reports each chart as an `output_written` event, the type the app and CI already
   read, with its rows and size.
 - **Exit codes** as [RP6's](reporting.md#exit-codes): 3 for a chart's key problems, 1 for a
-  column it can't find or a file it can't write, 5 for its row or series limit.
+  column it can't find or a file it can't write, 5 for its row or series limit. CH5's keys add
+  no code: everything knowable from the keys alone is 3, which is where a log scale on bars,
+  `y_zero` beside a log scale, a bad hex, an unknown overlay and `overlay` with `limit` all
+  land, before a process starts; an overlay refused by the chart's shape, such as a mean on a
+  stacked chart, is 3 too, since the kind is in the keys; a column or role the result turns out
+  not to have is 1, in the chart's step; and an area past `MAX_AREA_POINTS` is 5, with the bars'
+  250 and the eight series.
 
 A `dbrover chart` command that draws a `.sql` file's block is left out: a report of one source
 and one chart does the same, with parameters, guardrails and history.
@@ -360,6 +703,12 @@ returns a picture of a query's result:
   "svg"` returns the SVG as text. Beside it, what was charted: rows, gaps, rows left out.
 - **Annotations:** read-only and closed-world, as `query`.
 - **Running a report** over MCP stays RS8's question; this tool charts one query.
+- **CH5's keys** are all read here, by the same reader, with the same problems as a block's: the
+  new kinds, `y_scale`, `colours` and `overlay`. `overlay` with `limit` is drawn and explained
+  rather than refused, unlike in a report, for CH4's reason: an assistant reads the reply, so
+  the picture's last line and the reply's summary both say what each overlay was computed over,
+  including when the project's row limit cut the rows. **Summarise** has no tool: an assistant
+  writes the SQL itself, which is the point of keeping distributions and percentiles in SQL.
 
 ## Milestones
 
@@ -564,23 +913,115 @@ Started and built on 2026-11-07, after CH3. The plan stands; building it settled
 - **The reply** is the picture, then the summary as JSON text, which is also the structured
   content: kind, x, y, series, rows read, points, rows left out and the line under the chart.
 
+### CH5 — A fuller chart (L)
+
+The kinds and keys CH1 to CH4 left for later, and statistics: SQL for what must see every row,
+overlays for what is honest over the points drawn. Settled in
+[A fuller chart](#a-fuller-chart). One GitHub stack, each layer one pull request, useful and
+tested on its own, with synthetic data only (the SQLite shop of `examples/reports/shop.sql`).
+
+1. **CH5a — Plan (XS):** CH5's decisions confirmed against the code, the keys in the tables
+   above, and the roadmap's entry. Docs only.
+2. **CH5b — Horizontal bars (S):** `kind = "hbars"`. First the value and category extents named
+   with no mark changed, then the kind: the gutter capped at a third of the width with names
+   shortened by measure, the value ticks at the wider spacing, a vertical zero line, stacking,
+   and hovering by the slot along Y. *Exit:* a top-twenty of customers by net charts as
+   horizontal bars whose names are readable, on screen and in the exported SVG. *Tests:* the
+   extents' commit leaves every golden SVG unchanged byte for byte; the layout table-driven (the
+   gutter's cap, a name shortened to the gutter, the value ticks' target, negatives either side
+   of zero, stacked pieces left to right); `Drawing::hit` by slot along Y; a golden SVG; a
+   kittest test of the fourth kind in the toolbar and of **Save to query** writing it.
+3. **CH5c — Stacked area (S–M):** `kind = "area"`, always stacked; `Mark::Band` as one ring per
+   series, written as one `<polygon>`, split into quads by the app's painter; `MAX_AREA_POINTS`
+   and its failure in a report. *Exit:* category shares by month draw as a stacked area on
+   screen and in the SVG, the two pictures the same. *Tests:* the ring's points per series,
+   table-driven, with negatives and with gaps; `stack = false` refused and `stack = true`
+   accepted; the point limit, and a report past it exiting 5; a golden SVG; the SVG rasterised
+   with resvg against the tab's painted frame, differences allowed only beside an edge.
+4. **CH5d — A log scale (S):** `y_scale`; decade ticks with 1-2-5 inside while few decades;
+   zero and negatives as counted gaps; `y_zero` and the bar kinds refused. *Exit:* a scatter of
+   prices spanning three decades reads at every size, and a zero in the column is a gap the note
+   names. *Tests:* the log ticks table-driven (one decade, few, many, past `MAX_TICKS`); the gap
+   count and its reason in the note; every contradiction as a key problem, table-driven; the
+   golden SVG built on all three platforms.
+5. **CH5e — Colour control (S):** `colours` and its `colors` spelling; the override consulted by
+   both palettes; the tab's contrast hint. *Exit:* `colours = ["#e34948"]` makes the first
+   series that red on screen, in the dark theme and in the SVG, and the other series keep their
+   own. *Tests:* the resolver at an index for both arrays and for a list shorter than the
+   series; the hex reader's table of bad values; the alias read and `colours` written back; the
+   hint's threshold either side of 3:1; a golden SVG.
+6. **CH5f — Summarise writes SQL (M):** the column menu, its statements per dialect, the
+   insertion below the statement with a `[chart]` block, one undo step, **Copy the SQL**, and
+   the disabled percentiles item where an engine has none. *Exit:* **Summarise › Distribution**
+   on a price column writes a bucketing statement below the original, which runs and opens as
+   bars, with the original untouched and ⌘Z taking the whole insertion back. *Tests:* the SQL
+   per dialect as snapshots, with the range read in SQL and never from the rows fetched; the
+   insertion point table-driven (own line, sharing a line, last in the file, no trailing
+   newline); undo in one step; the disabled item's reason; a kittest test of the menu.
+7. **CH5g — The overlays (M):** `overlay` and its phrases; one per series, dashed, through a
+   stroke on the line marks; the note's sentences; every refusal, and `limit` with `overlay`
+   refused in a report but not in a console. *Exit:* `overlay = ["trend", "mean"]` on monthly
+   totals draws both dashed in the series' colour, and the note says what each was computed
+   over; the same spec with `limit` in a report exits 3 before the run starts. *Tests:* the
+   reader's table of problems; each overlay's values over known points, with gaps skipped and a
+   gap in a window giving a gap; the note's wording with and without a limit, and "by position"
+   over categories; the report's exit 3 and the MCP reply's wording; a golden SVG per overlay.
+8. **CH5h — Manual and demo note (S):** the new kinds, keys and **Summarise** written into the
+   manual's charts page, and this milestone's demo note. It **extends that page rather than
+   adding one:** the manual gains a charts page of its own alongside this plan, so CH5h adds the
+   new kinds to the kinds it already lists, the new keys to its key table, and a section on
+   **Summarise** beside the note about binning in SQL — and nothing that page already says is
+   written again here. *Exit:* the page documents every key in
+   [What a chart spec holds](#what-a-chart-spec-holds), with no key documented twice.
+
+**Exit:** on the SQLite shop, a top-twenty of customers draws as horizontal bars with readable
+names; category shares by month draw as a stacked area that matches its SVG; a scatter of
+prices on a log scale reads at every size; `colours = ["#e34948"]` holds on both themes and in
+the file; **Summarise › Distribution** writes bucketing SQL below the statement, which charts
+as bars; `overlay = ["trend", "mean"]` draws both with the note naming their basis, and the
+same spec with `limit` in a report exits 3.
+
 ### Order
 
 CH1 and CH2 are the app's and can come any time after W13. CH3 needs CH1b's spec, and is best
 after RS9 is designed into place, though it doesn't depend on it. CH4 needs CH3b and nothing
 from reports.
 
+CH5 comes after RS7f and RS7g, the warehouse handoff planned in
+[Reports at scale](reports-at-scale.md#rs7-against-todays-code), and before RS8: it touches
+none of the report crate's scale work, so it
+waits only because the handoff was already in flight. Within it, the kinds come first (CH5b,
+CH5c) because each is demonstrable on its own and neither needs anything else. The log scale
+(CH5d) and colour control (CH5e) come before the overlays, which need both: an overlay has to
+know what a log axis does to a trend line, and it needs a stroke and a colour that aren't a
+series' own. Summarise (CH5f) comes before the overlays (CH5g) so that the honest path for a
+distribution exists before the convenient one tempts anyone to fake one, and because it is the
+layer with the most to get wrong, since it writes into the user's own text, so it is best built
+while attention is on it. The manual (CH5h) is last, as every track's is.
+
 ## Left for later
 
-What the track built leaves out, each to be weighed when someone asks for it:
+What the track leaves out, each to be weighed when someone asks for it. CH5 takes up the kinds
+and keys that were waiting here (horizontal bars, stacked area, colours and a log scale), so
+they are no longer on this list; what is left of that bullet is below.
 
 - **Re-resolving a toolbar choice:** when more rows change a column's role, the tab makes the
   block's or the starting choice again (fixed in CH3b), but a choice changed in the toolbar is
   kept as it was, even if its Y no longer holds numbers.
 - **Copy for a report** gives no confirmation on screen that the chart was copied.
 - **A size for the `chart` tool's picture:** 800 by 450 points, always.
-- **More kinds and keys:** horizontal bars and stacked areas, and colours, log scales or
-  annotations, as [Which chart kinds to add](#which-chart-kinds-to-add) and the risks say.
+- **Small multiples (facets):** the next candidate, with its cost weighed in
+  [Small multiples](#small-multiples-the-next-candidate), and the largest change the layout has
+  seen since W12.
+- **Text annotations:** an arrow and a label at a point, which CH5's `overlay` does not cover —
+  it draws lines computed from the data or at a value, not prose placed by hand.
+- **A log X,** and a scale per axis beyond `y_scale`: X is already placed three ways, and a
+  fourth doubles that work for a scatter of two numbers ([A log scale](#a-log-scale-ch5d)).
+- **A named palette,** as against CH5's per-series `colours`: a name the app would own forever,
+  which still wouldn't hold anyone's three particular hues
+  ([Colour control](#colour-control-ch5e)).
+- **Heatmaps and pies,** as [Which chart kinds to add](#which-chart-kinds-to-add) says; CH5
+  doesn't revisit either.
 - **Copy as Vega-Lite,** and an Excel chart in an Excel output, as
   [Options weighed](#options-weighed) says.
 - **A `dbrover chart` command,** until a report of one chart proves too heavy.
@@ -605,7 +1046,15 @@ Proposed defaults; each was confirmed when its milestone started.
 | `sort` and `limit` | **In the spec, for reports;** SQL recommended in consoles | One result serves a CSV and a top-10 chart; the same keys read in both places. |
 | What a report's chart draws | **The result, or its own DuckDB `query`** over the sources | The subtotal rows a report writes for Excel needn't be in its chart. |
 | Rows past a kind's limit in a report | **Fail, unless `limit`** | An unattended file never shows part of the data without saying so; the tab keeps showing the first rows. |
-| Chart kinds | **`series` and stacked bars;** horizontal bars and area later; no histogram, heatmap or pie | The usual `GROUP BY` shape charts without a pivot; binning stays in SQL, where it sees every row. |
+| Chart kinds | **`series` and stacked bars** (CH2), **horizontal bars and stacked area** (CH5); no histogram, heatmap or pie | The usual `GROUP BY` shape charts without a pivot; binning stays in SQL, where it sees every row. |
+| Horizontal bars | **A kind of its own,** `kind = "hbars"`, not a key on bars | One arm per `match` the compiler checks, instead of a second boolean beside `stack` read in four places. |
+| Stacked area | **Always stacked,** one `Mark::Band` a series, split into quads by the painter | Unstacked areas would need translucency and dark files; the layout stays the one description of a picture, and the SVG writes one polygon where egui needs many. |
+| A log scale | **`y_scale = "log"`,** lines and scatters only; zero and negatives are gaps | A bar from a log baseline misstates the ratio it looks like; what can't be placed is a gap, as a null is, never a clamped epsilon. |
+| Colours | **Per series by position,** hex only, overriding both palettes at that index | A brand's hues without a palette name to maintain; the colour a spec names is the same on screen and in the file. The dark theme gets a hint, not a correction. |
+| Statistics | **SQL for distributions and percentiles** (Summarise), **overlays for what is honest over the points drawn** | A histogram of a first page is a lie; a trend through visible points is not. The SQL is the user's to keep, read and paste into a report. |
+| Where Summarise writes | **A new statement below the original,** the original untouched, one undo step | The query that made the result on screen survives; the console reads as the derivation it is. Console only: a report has no result on screen and no editor gesture. |
+| Overlays and `limit` | **Refused in a report, allowed in a console** | An unattended file never carries a statistic over a deliberate subset with nobody to read the caption; the tab's note is right there. |
+| Facets | **Not in CH5,** with the cost written down | One result, one picture, still; the layout's largest change since W12 waits for someone to ask. |
 | Measuring text without a window | **The bundled fonts' advances, through `ttf-parser`** | Deterministic files and golden tests; labels a fraction of a point from the tab's. |
 | The Scope line | **Moved one step:** a report may write a chart's picture beside its files | Still no dashboards, refresh, HTML or semantic layer. |
 | `dbrover report run` | **Charts as outputs:** paths, `output_written`, RP6's exit codes | Nothing new for cron or CI to learn. |
@@ -625,9 +1074,39 @@ Proposed defaults; each was confirmed when its milestone started.
 - **Two measures of text.** The tab's egui and the files' font tables may place a label a point
   apart. Files never come from the tab's measure, so each path is consistent with itself, and a
   test bounds the gap.
-- **A spec that outgrows ten keys.** Requests for colours, log scales and annotations will come.
-  Each new key is weighed as the kinds are, and the [Options weighed](#options-weighed) table is
-  where a larger format would be argued again.
+- **A spec that keeps growing.** CH1 weighed ten keys and worried about colours, log scales and
+  annotations; CH5 adds three of those and takes the count to fourteen, which is the risk
+  arriving rather than being avoided. Two things hold it: every new key is weighed in the table
+  it joins, with its values, its default and what a bad value says; and a key that carries a
+  small phrase (`sort = "net desc"`, `overlay = ["average 7"]`) absorbs the next request without
+  a key, which is why `overlay` is one key and not four booleans. The
+  [Options weighed](#options-weighed) table is still where a larger format would be argued
+  again, and the honest trigger for that argument is a spec whose keys no longer fit one screen
+  of a comment block.
+- **A statistic that misleads.** An overlay is computed over the points drawn, not the table, so
+  a trend over a first page is a trend over a page. Three guards, in order of strength: a report
+  refuses `overlay` with `limit` outright and already fails past a kind's row limit, so an
+  unattended file can't carry one; the line under every chart names each overlay and what it was
+  computed over, in every wording, including "by position" when the fit was against category
+  slots; and an overlay is refused where the picture would hide its basis: on an area and on
+  stacked bars, where the series are piled, and with a window longer than the points. Gaps stay
+  gaps and are counted, rather than being interpolated into a smoother line.
+- **Summarise writing into the user's own text.** It edits a file that may be committed. It only
+  ever inserts, never replaces: a new statement below the original, which is left untouched, in
+  one replacement so one undo takes it back, and after the whole line when a neighbour shares
+  it, so no text the user didn't act on moves. **Copy the SQL** is there for anyone who wants
+  none of it.
+- **Two fills for one area.** egui's tessellated quads and the SVG's polygon are two paths to
+  one picture. They cover the same region exactly, since a band's edges are straight between
+  consecutive X positions, so only a rasteriser's treatment of the shared edges can differ; the
+  test rasterises the SVG and compares it with the painted frame, allowing differences only
+  beside an edge.
+- **A log position from `log10`.** The last bit of `f64::log10` differs between platforms' maths
+  libraries, and a report's SVG is compared byte for byte. Rounding each coordinate to a
+  hundredth of a point swallows a difference of that size unless one falls exactly on a rounding
+  boundary; the guard is the golden test built on all three platforms, and the fix, if it ever
+  bites, is to round the mantissa before scaling, as `decimal_exponent` already avoids `log10`
+  for the tick steps.
 - **Moving code W12 and ER1 share.** CH3b moves SVG helpers and fonts out of the app; ER1's
   diagram export uses them too. The move is behaviour-preserving, with ER1's and W12's export
   tests run unchanged.
@@ -639,6 +1118,11 @@ Proposed defaults; each was confirmed when its milestone started.
 - Interactive or HTML charts in files, and JavaScript in DbRover.
 - A semantic layer: measures, dimensions or metrics defined once for many charts.
 - Vega-Lite, Plotly or another charting runtime in the build.
-- Colours, fonts and themes per chart; dark files.
+- Fonts and themes per chart; dark files. A series' colour comes in with CH5; the theme a chart
+  is drawn in does not, so a file stays light on white.
+- A page of small multiples drawn from one result, until someone asks
+  ([Small multiples](#small-multiples-the-next-candidate)).
+- Statistics computed over rows the chart never read: a distribution or a percentile belongs in
+  SQL, which CH5f writes.
 - Charts in PDF; [Reports](reporting.md#scope) keeps pixel-perfect PDF layouts out.
 - A `dbrover chart` command, until a report of one chart proves too heavy for the need.
