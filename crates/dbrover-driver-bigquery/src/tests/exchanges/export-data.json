@@ -1,0 +1,31 @@
+{
+  "doc": "A report's source handed over through a bucket (RS7g): the query goes as EXPORT DATA, whose uri holds the one wildcard BigQuery takes, and the job is polled to DONE. The statement returns no rows, so nothing is read back here: the run lists the folder it named.",
+  "exchanges": [
+    {
+      "method": "GET", "path": "/projects/analytics/datasets", "query": {"maxResults": "1"},
+      "response": {"datasets": []}
+    },
+    {
+      "method": "POST", "path": "/projects/analytics/jobs",
+      "request": {
+        "jobReference": {"projectId": "analytics", "location": "absent"},
+        "configuration": {"query": {
+          "query": "EXPORT DATA OPTIONS (uri = 'gs://dbrover/dbrover-tmp/orders/part-*.parquet', format = 'PARQUET', overwrite = true) AS SELECT item, amount FROM orders",
+          "useLegacySql": false,
+          "maximumBytesBilled": "absent"}}
+      },
+      "response": {"kind": "bigquery#job", "id": "analytics:europe-west2.{job}",
+        "jobReference": {"projectId": "analytics", "jobId": "{job}", "location": "europe-west2"},
+        "configuration": {"jobType": "QUERY"},
+        "status": {"state": "PENDING"}, "statistics": {"creationTime": "1767323045000"}}
+    },
+    {
+      "method": "GET", "path": "/projects/analytics/jobs/{job}", "query": {"location": "europe-west2"},
+      "response": {"jobReference": {"projectId": "analytics", "jobId": "{job}", "location": "europe-west2"},
+        "status": {"state": "DONE"},
+        "statistics": {"totalBytesProcessed": "4194304",
+          "query": {"totalBytesProcessed": "4194304", "totalBytesBilled": "10485760",
+            "statementType": "EXPORT_DATA", "cacheHit": false}}}
+    }
+  ]
+}

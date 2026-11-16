@@ -7,8 +7,8 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
 use dbrover_core::{
-    ByteCount, DriverError, JobFailure, JobId, JobPage, JobProgress, JobService, JobState,
-    PageToken,
+    ByteCount, DriverError, Handoff, HandoffFiles, JobFailure, JobId, JobPage, JobProgress,
+    JobService, JobState, PageToken,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -349,5 +349,17 @@ impl JobService for BigQueryJobs {
             .await
             .map(drop)
             .map_err(errors::connection)
+    }
+
+    /// Where a finished `EXPORT DATA` wrote its shards: the folder the statement named, which
+    /// the run lists (RS7g). BigQuery names the shards itself, so the job's answer says
+    /// nothing about them.
+    async fn result_files(
+        &self,
+        job: &JobId,
+        handoff: &Handoff,
+    ) -> Result<Option<HandoffFiles>, DriverError> {
+        let _ = job;
+        Ok(crate::handoff::files(handoff))
     }
 }
