@@ -57,12 +57,16 @@ app and on the command line; reports explained before they run, each source's pl
 combine's, with the bytes scanned where the engine reports them, and hints that name the columns
 and filters to move; and reports larger than memory: the combine's DuckDB on disk within a disk
 budget, sources loaded typed, Parquet outputs written by DuckDB, a stall timeout, and the
-machine kept awake during a run) and v0.33.0 (reports read in ranges of time or key, a source's
+machine kept awake during a run), v0.33.0 (reports read in ranges of time or key, a source's
 ranges several at once or a whole report a range at a time, appended to one Parquet file or one
 file a range, with a range-skew hint and each range drawn in the Profile; and long runs that
 stop and resume: a stopped run keeps its finished ranges and sources, and carries on with
 **Resume** or `--resume`, or starts over with **Discard** or `--from-scratch`, with `:as_of`
-kept across the gap).
+kept across the gap) and v0.34.0 (sources read in bulk: a DuckDB or ClickHouse source hands the
+run its rows as typed Arrow batches instead of a row at a time; and reports read a data lake in
+place: a `lake` on a source points at Parquet, CSV, JSON, Iceberg or Delta files in a bucket, the
+locked workspace reads only that bucket's prefix, a Parquet lake's size is judged from its footers
+before the run starts, and the bytes each scan read show in the Profile).
 R3's update notice is built, ahead of R2 (see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
