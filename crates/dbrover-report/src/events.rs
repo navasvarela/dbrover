@@ -110,6 +110,10 @@ pub enum RunEvent {
         /// than RS2f.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scanned_bytes: Option<u64>,
+        /// The files its engine handed over through a bucket, for a source with a `handoff`
+        /// (RS7f); `None` for a source whose rows were paged, and from a worker older than it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        handed_over: Option<HandedOverFiles>,
     },
     /// A range of a partitioned source returned its last row (RS4c).
     PartDone(PartDone),
@@ -352,6 +356,16 @@ impl Busy {
         let (pct, doing) = shares.into_iter().max_by_key(|(pct, _)| *pct)?;
         (pct >= BUSY_NAMED_PCT).then(|| format!("{doing} ({pct}%)"))
     }
+}
+
+/// The files an engine wrote for a source's handoff, which DuckDB read instead of paging its
+/// rows (RS7f).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandedOverFiles {
+    pub files: u64,
+    /// What the files held, from the bucket's own listing; `0` for a file the engine named,
+    /// which nothing lists.
+    pub bytes: u64,
 }
 
 /// Where a source's time went, in milliseconds. The phases add up to about the source's time;

@@ -9,8 +9,8 @@ use aws_sdk_athena::Client;
 use aws_sdk_athena::types::{QueryExecution, QueryExecutionContext, QueryExecutionState};
 use aws_sdk_athena::types::{QueryExecutionStatus, ResultConfiguration};
 use dbrover_core::{
-    ByteCount, DriverError, JobFailure, JobId, JobPage, JobProgress, JobService, JobState,
-    PageToken,
+    ByteCount, DriverError, Handoff, HandoffFiles, JobFailure, JobId, JobPage, JobProgress,
+    JobService, JobState, PageToken,
 };
 
 use crate::errors::{self, Refused};
@@ -171,6 +171,31 @@ impl JobService for AthenaJobs {
             .await
             .map(drop)
             .map_err(|error| errors::connection(Refused::from(error)))
+    }
+
+    /// Where the finished query wrote its result (RS7f): the folder an `UNLOAD` was given, or
+    /// the result file Athena writes for every query, which `GetQueryExecution` names in the
+    /// same answer the poll reads the bytes scanned from.
+    async fn result_files(
+        &self,
+        job: &JobId,
+        handoff: &Handoff,
+    ) -> Result<Option<HandoffFiles>, DriverError> {
+        if matches!(handoff, Handoff::IntoFolder(_)) {
+            return Ok(crate::handoff::files(handoff, None));
+        }
+        let output = self
+            .client
+            .get_query_execution()
+            .query_execution_id(job.as_str())
+            .send()
+            .await
+            .map_err(|error| errors::connection(Refused::from(error)))?;
+        let location = output
+            .query_execution()
+            .and_then(QueryExecution::result_configuration)
+            .and_then(ResultConfiguration::output_location);
+        Ok(crate::handoff::files(handoff, location))
     }
 }
 

@@ -444,6 +444,7 @@ mod tests {
                 columns: Vec::new(),
                 scanned_bytes: None,
                 parts: Vec::new(),
+                handed_over: None,
             })],
             origin: RunOrigin::Command,
             version: Some(BlobId::of(b"[report]\n")),

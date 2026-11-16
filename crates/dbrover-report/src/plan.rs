@@ -7,7 +7,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use dbrover_core::{
-    BlobId, ConnectionConfig, DataSource, DuckDbDatabase, LakeFormat, LakePath, ObjectStorage,
+    BlobId, ConnectionConfig, DataSource, DuckDbDatabase, HandoffSupport, LakeFormat, LakePath,
+    ObjectStorage,
 };
 use dbrover_export::{
     CellTarget, ColumnType, CsvOptions, CustomFormat, CustomFormatKind, ExportFormat, ExportSpec,
@@ -22,10 +23,10 @@ use crate::events::{
 use crate::problem::{Place, ReportProblem, Table, messages};
 use crate::run::millis;
 use crate::{
-    AS_OF, ByteSize, Chart, CombineLimits, CombineLimitsSet, CombineQuery, FileName, LakeRead,
-    LimitDefaults, LimitSetIn, Lookup, Output, OutputColumns, OutputLimits, OutputLimitsSet,
-    OutputWriter, PART_FROM, PART_TO, Param, PartRange, PlannedPartition, Report, Source,
-    SourceColumn, SourceLimits, SourceLimitsSet, SourcePartition, SourceRead, SourceRows,
+    AS_OF, ByteSize, Chart, CombineLimits, CombineLimitsSet, CombineQuery, FileName, HandoffRead,
+    LakeRead, LimitDefaults, LimitSetIn, Lookup, Output, OutputColumns, OutputLimits,
+    OutputLimitsSet, OutputWriter, PART_FROM, PART_TO, Param, PartRange, PlannedPartition, Report,
+    Source, SourceColumn, SourceLimits, SourceLimitsSet, SourcePartition, SourceRead, SourceRows,
     SourceSplit, SourceStart, Step,
 };
 
@@ -263,6 +264,23 @@ pub struct QuerySource {
     pub columns: Option<Vec<SourceColumn>>,
     /// How its rows reach the combine step's DuckDB.
     pub rows: SourceRows,
+    /// Where its engine writes the result as files for the run to read instead of paging its
+    /// rows (`docs/reports-at-scale.md`, RS7f). Boxed: a data source's settings are large
+    /// beside the rest of a source, as `Logic::Direct`'s are.
+    pub handoff: Option<Box<PlannedHandoff>>,
+}
+
+/// A handoff as planned: the bucket its files go in, whose data source reads and deletes them,
+/// and the prefix under it the run owns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedHandoff {
+    /// The bucket's data source, whose sign-in reads the files and deletes them. The engine
+    /// writes them with the source's own.
+    pub data_source: DataSource,
+    pub storage: ObjectStorage,
+    /// The folder in the bucket the run writes under, ending in `/`; `None` where the engine's
+    /// own result file is read where it already writes it.
+    pub prefix: Option<String>,
 }
 
 impl QuerySource {
@@ -1023,6 +1041,7 @@ fn plan_source(
             split,
             columns,
             rows,
+            handoff,
         } => plan_query(
             &source.id,
             data_source,
@@ -1032,7 +1051,9 @@ fn plan_source(
                 split,
                 columns: columns.as_ref(),
                 rows: *rows,
+                handoff: handoff.as_deref(),
             },
+            data_sources,
             params,
         )
         .map(PlannedSource::Query),
@@ -1120,12 +1141,14 @@ struct QueryRead<'a> {
     split: &'a SourceSplit,
     columns: Option<&'a Vec<SourceColumn>>,
     rows: SourceRows,
+    handoff: Option<&'a HandoffRead>,
 }
 
 fn plan_query(
     id: &str,
     data_source: &DataSource,
     read: QueryRead<'_>,
+    data_sources: &[DataSource],
     params: &BTreeMap<&str, ColumnType>,
 ) -> Result<QuerySource, KeyedProblem> {
     let driver = data_source.config.driver();
@@ -1151,6 +1174,11 @@ fn plan_query(
             .map(PlannedSplit::Partition)
             .map_err(|problem| (Some("partition"), problem))?,
     };
+    let handoff = read
+        .handoff
+        .map(|handoff| plan_handoff(data_source, handoff, data_sources).map(Box::new))
+        .transpose()
+        .map_err(|problem| (Some("handoff"), problem))?;
     Ok(QuerySource {
         id: id.to_owned(),
         data_source: data_source.clone(),
@@ -1160,6 +1188,70 @@ fn plan_query(
         split,
         columns: read.columns.cloned(),
         rows: read.rows,
+        handoff,
+    })
+}
+
+/// The bucket a source's handoff writes in: a DuckDB data source with object storage (C2),
+/// whose provider the source's own engine can write to (RS7f).
+///
+/// Every refusal here is one a run would otherwise hit halfway through a statement, in the
+/// engine's own words: an engine with no handoff at all, a bucket of the wrong provider, a
+/// missing prefix where the engine has no result file of its own.
+fn plan_handoff(
+    engine: &DataSource,
+    handoff: &HandoffRead,
+    data_sources: &[DataSource],
+) -> Result<PlannedHandoff, String> {
+    let driver = engine.config.driver();
+    let support = HandoffSupport::of(driver).ok_or_else(|| {
+        format!(
+            "{:?} is a {} data source, which has no handoff: it answers with rows, so the \
+             source reads them. Drop handoff, or reduce the result in its own query",
+            engine.name,
+            driver.display_name()
+        )
+    })?;
+    let data_source = find_data_source(&handoff.data_source, data_sources)?;
+    let storage = match &data_source.config {
+        ConnectionConfig::DuckDb(config) => config.storage.clone().ok_or_else(|| {
+            format!(
+                "{:?} is a DuckDB data source without a bucket, and a handoff's files go in \
+                 one; add object storage to the data source's settings",
+                data_source.name
+            )
+        })?,
+        other => {
+            return Err(format!(
+                "a handoff's files go in a bucket, and {:?} is a {} data source; name a DuckDB \
+                 data source with object storage",
+                data_source.name,
+                other.driver().display_name()
+            ));
+        }
+    };
+    if storage.provider() != support.provider {
+        return Err(format!(
+            "{} writes a handoff's files to {}, and {:?} is {}; name a data source whose \
+             bucket is in {}",
+            driver.display_name(),
+            support.provider,
+            data_source.name,
+            storage.provider(),
+            support.provider
+        ));
+    }
+    if support.needs_prefix && handoff.prefix.is_none() {
+        return Err(format!(
+            "{} writes a handoff's files where the report says, so the handoff needs a folder \
+             of its own: prefix = \"dbrover-tmp/\"",
+            driver.display_name()
+        ));
+    }
+    Ok(PlannedHandoff {
+        data_source: data_source.clone(),
+        storage,
+        prefix: handoff.prefix.clone(),
     })
 }
 

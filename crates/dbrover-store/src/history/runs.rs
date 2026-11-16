@@ -248,6 +248,19 @@ pub struct SourceMetrics {
     /// otherwise, and for a run kept before RS4c.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parts: Vec<PartMetrics>,
+    /// The files its engine handed over through a bucket, for a source with a `handoff`
+    /// (RS7f); `None` for a source whose rows were paged, and for a run kept before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handed_over: Option<HandoffMetrics>,
+}
+
+/// A result an engine wrote to a bucket, which DuckDB read instead of paging its rows (RS7f).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandoffMetrics {
+    pub files: u64,
+    /// What the files held, from the bucket's own listing; `0` for a file the engine named,
+    /// which nothing lists.
+    pub bytes: u64,
 }
 
 /// One range of a partition, as a run read it.
@@ -596,6 +609,7 @@ mod tests {
                     columns: Vec::new(),
                     scanned_bytes: None,
                     parts: Vec::new(),
+                    handed_over: None,
                 }),
                 StepMetrics::Attached {
                     id: "prices".to_owned(),

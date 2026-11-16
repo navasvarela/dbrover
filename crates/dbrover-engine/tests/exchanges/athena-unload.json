@@ -1,0 +1,29 @@
+{
+  "doc": "A report's Athena source with a handoff prefix of its own (RS7f): the query goes as an UNLOAD to the folder the run owns, whose address the request must hold, and the run reads the Parquet the test's stand-in wrote there. The statement itself is checked by the test, which only learns the folder's name as the run makes it.",
+  "exchanges": [
+    {
+      "operation": "GetWorkGroup",
+      "request": {"WorkGroup": "primary"},
+      "response": {"WorkGroup": {"Name": "primary", "State": "ENABLED", "Configuration": {
+        "ResultConfiguration": {"OutputLocation": "s3://{{bucket}}/report-handoff/"},
+        "EngineVersion": {"EffectiveEngineVersion": "Athena engine version 3"}}}}
+    },
+    {
+      "operation": "StartQueryExecution",
+      "request": {
+        "QueryExecutionContext": {"Catalog": "AwsDataCatalog", "Database": "sales"},
+        "WorkGroup": "primary"
+      },
+      "response": {"QueryExecutionId": "q-unload"}
+    },
+    {
+      "operation": "GetQueryExecution",
+      "request": {"QueryExecutionId": "q-unload"},
+      "repeat": true,
+      "response": {"QueryExecution": {"QueryExecutionId": "q-unload", "StatementType": "DML",
+        "Status": {"State": "SUCCEEDED", "SubmissionDateTime": 1.7e9, "CompletionDateTime": 1.7e9},
+        "ResultConfiguration": {"OutputLocation": "s3://{{bucket}}/report-handoff/q-unload-manifest.csv"},
+        "Statistics": {"DataScannedInBytes": 8192, "EngineExecutionTimeInMillis": 300}}}
+    }
+  ]
+}

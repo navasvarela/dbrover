@@ -104,10 +104,31 @@ impl Https {
         address: &str,
         headers: &[(String, String)],
     ) -> Result<Answer, HttpError> {
+        self.signed(Method::GET, address, headers).await
+    }
+
+    /// Deletes `address` with `headers`, which sign the request as
+    /// [`Https::get_signed`]'s sign a listing's: the delete a run makes of the handoff files
+    /// it wrote (`docs/reports-at-scale.md`, RS7f).
+    pub(crate) async fn delete_signed(
+        &self,
+        address: &str,
+        headers: &[(String, String)],
+    ) -> Result<Answer, HttpError> {
+        self.signed(Method::DELETE, address, headers).await
+    }
+
+    async fn signed(
+        &self,
+        method: Method,
+        address: &str,
+        headers: &[(String, String)],
+    ) -> Result<Answer, HttpError> {
         let uri: Uri = address
             .parse()
             .map_err(|_| HttpError::BadAddress(address.to_owned()))?;
         let mut request = Request::new(Full::new(Bytes::new()));
+        *request.method_mut() = method;
         *request.uri_mut() = uri;
         for (name, value) in headers {
             let name = HeaderName::from_bytes(name.as_bytes())
@@ -136,6 +157,25 @@ impl Https {
             ));
         }
         self.get_signed(address, &headers).await
+    }
+
+    /// Deletes `address` with `headers`, and `token` as a bearer token when there is one,
+    /// which goes only over HTTPS or to this machine, as [`Https::get_with_token`]'s does.
+    pub(crate) async fn delete_token(
+        &self,
+        address: &str,
+        token: Option<&Password>,
+        headers: &[(String, String)],
+    ) -> Result<Answer, HttpError> {
+        let mut headers = headers.to_vec();
+        if let Some(token) = token {
+            sendable(address)?;
+            headers.push((
+                AUTHORIZATION.to_string(),
+                format!("Bearer {}", token.expose()),
+            ));
+        }
+        self.delete_signed(address, &headers).await
     }
 
     /// Sends `body` as JSON (a `GET` when there is none, a `POST` when there is) to `address`,

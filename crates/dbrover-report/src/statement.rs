@@ -5,11 +5,13 @@
 
 use std::time::Instant;
 
+use dbrover_core::{Handoff, HandoffFolder};
 use dbrover_driver_duckdb::DuckDbType;
 use dbrover_export::ColumnType;
 use dbrover_language::Literal;
 use dbrover_sql::ParameterValues;
 
+use crate::handoff::HandoffFolders;
 use crate::{
     AS_OF, CostCheck, PART_FROM, PART_TO, PartRange, Plan, QuerySource, RangeKind, RunValues,
     SourceRows, SourceStatement, WholePeriod,
@@ -21,6 +23,10 @@ pub(crate) struct Statements<'a> {
     values: &'a RunValues,
     source: &'a QuerySource,
     rows: SourceRows,
+    /// This run's handoff folders, for a source with a `handoff` (RS7f); `None` for a source
+    /// whose rows are paged, and for a statement read outside a combine step, which has no
+    /// DuckDB to read files with.
+    folders: Option<&'a HandoffFolders>,
 }
 
 impl<'a> Statements<'a> {
@@ -31,16 +37,39 @@ impl<'a> Statements<'a> {
             values,
             source,
             rows: SourceRows::Text,
+            folders: None,
         }
     }
 
     /// The statements of `source` loaded into the combine step's DuckDB, whose rows come as
-    /// batches where it can (ADR 0007).
-    pub(crate) fn loaded(plan: &'a Plan, values: &'a RunValues, source: &'a QuerySource) -> Self {
+    /// batches where it can (ADR 0007), or as files in `folders` where the source hands the
+    /// result over through a bucket (RS7f).
+    pub(crate) fn loaded(
+        plan: &'a Plan,
+        values: &'a RunValues,
+        source: &'a QuerySource,
+        folders: Option<&'a HandoffFolders>,
+    ) -> Self {
         Self {
             rows: source.rows_for_loading(),
+            folders,
             ..Self::new(plan, values, source)
         }
+    }
+
+    /// Where this statement's engine writes its result, for a source with a `handoff`: the
+    /// folder this run owns for it, or the engine's own result file where the handoff names no
+    /// prefix (RS7f).
+    fn handoff(&self) -> Option<Handoff> {
+        let handoff = self.source.handoff.as_ref()?;
+        let folders = self.folders?;
+        Some(match &handoff.prefix {
+            Some(prefix) => Handoff::IntoFolder(HandoffFolder::new(
+                &handoff.storage,
+                folders.statement_prefix(prefix, &self.source.id, self.values.part),
+            )),
+            None => Handoff::OwnResult,
+        })
     }
 
     /// The source's one statement, when it has no lookup. Its timeout runs from `started`.
@@ -120,6 +149,7 @@ impl<'a> Statements<'a> {
             deadline,
             cost: CostCheck::Statement,
             rows: self.rows,
+            handoff: self.handoff(),
         }
     }
 

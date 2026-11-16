@@ -135,6 +135,15 @@ pub struct WorkspacePeaks {
     pub temp_size: Option<u64>,
 }
 
+/// What a handoff's files became: the table's rows, and each column with the type name DuckDB
+/// gave it, which is the files' own rather than one the run's loading chose (RS7f).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HandoffLoaded {
+    pub rows: u64,
+    /// Each column's name and DuckDB type name, in the table's order.
+    pub columns: Vec<(String, String)>,
+}
+
 /// A type as [`DuckDbType`]'s `Display` writes it, read back: the type a run loaded a column
 /// as, which the history keeps by name.
 impl std::str::FromStr for DuckDbType {
@@ -419,6 +428,59 @@ impl Workspace {
             types,
             text: Arc::new(Schema::new(fields)),
         })
+    }
+
+    /// Makes the table `table` from the files an engine wrote for a handoff, and answers the
+    /// rows it holds (`docs/reports-at-scale.md`, RS7f).
+    ///
+    /// The table's columns and types are the files' own, as a columnar source's are its
+    /// engine's (ADR 0007): nothing is cast on the way in, because what a warehouse wrote to
+    /// Parquet already says what each column is. A handoff is loaded where every other source
+    /// is, before [`Workspace::lock`], so its bucket needs no prefix in `allowed_directories`.
+    ///
+    /// Call it after [`Workspace::load_lake_extensions`] and
+    /// [`Workspace::sign_in_to_bucket`] for the handoff's bucket, which DuckDB needs to read
+    /// the files at all.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError`] when the files can't be read — a bucket the secret doesn't reach, a
+    /// shard the engine wrote half of — or when they hold no columns.
+    pub async fn load_handoff(
+        &self,
+        table: &str,
+        files: &[String],
+        format: LakeFormat,
+    ) -> Result<HandoffLoaded, DriverError> {
+        let from = crate::handoff::files_clause(files, format)
+            .map_err(|problem| connection_error(format!("the handoff can't be read: {problem}")))?;
+        let name = format!("{MAIN_SCHEMA}.{}", identifier(table));
+        let sql = format!("CREATE OR REPLACE TABLE {name} AS SELECT * FROM {from}");
+        let count = format!("SELECT count(*) FROM {name}");
+        let describe = format!("DESCRIBE {name}");
+        self.connection
+            .run_blocking(move |connection| {
+                connection
+                    .execute_batch(&sql)
+                    .map_err(|error| statement_error(error, &sql))?;
+                let rows = connection
+                    .query_row(&count, [], |row| row.get::<_, i64>(0))
+                    .map_err(|error| statement_error(error, &count))?;
+                let mut statement = connection
+                    .prepare(&describe)
+                    .map_err(|error| statement_error(error, &describe))?;
+                let columns = statement
+                    .query_map([], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                    })
+                    .and_then(Iterator::collect::<Result<Vec<_>, _>>)
+                    .map_err(|error| statement_error(error, &describe))?;
+                Ok(HandoffLoaded {
+                    rows: rows.try_into().unwrap_or_default(),
+                    columns,
+                })
+            })
+            .await
     }
 
     /// Drops the table `table`, if there is one: a source's table that a stopped run left half

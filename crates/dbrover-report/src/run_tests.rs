@@ -430,6 +430,7 @@ fn events_are_json_lines_the_app_reads_back() {
                 type_ms: 30,
             }),
             scanned_bytes: None,
+            handed_over: None,
         },
         RunEvent::SourceAttached {
             id: "prices".to_owned(),

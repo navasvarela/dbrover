@@ -15,9 +15,9 @@ use dbrover_driver_duckdb::DuckDbType;
 use crate::partition::read_partition;
 use crate::problem::{Place, ReportProblem, Table, messages, syntax_problems};
 use crate::{
-    ByteSize, Chart, ChartPicture, Combine, CombineLimitsSet, CombineQuery, FileName, HintId,
-    LakeRead, Lookup, Output, OutputColumns, OutputLimitsSet, OutputWriter, PART_FROM, PART_TO,
-    Param, Partition, PlannedPartition, Report, Source, SourceColumn, SourceLimitsSet,
+    ByteSize, Chart, ChartPicture, Combine, CombineLimitsSet, CombineQuery, FileName, HandoffRead,
+    HintId, LakeRead, Lookup, Output, OutputColumns, OutputLimitsSet, OutputWriter, PART_FROM,
+    PART_TO, Param, Partition, PlannedPartition, Report, Source, SourceColumn, SourceLimitsSet,
     SourcePartition, SourceRead, SourceRows, SourceSplit, grouped,
 };
 
@@ -451,6 +451,19 @@ fn check_shape(
             "the file has no [[source]] table, with the query whose rows the report writes",
             Place::table(Table::File),
         )),
+        // A handoff's files are read with the run's DuckDB, which only a combine step opens.
+        [one] if !combined && handed_over(one) => Some(ReportProblem::new(
+            format!(
+                "source {:?}: a handoff's files are read by a [combine] query, which this \
+                 report has none of; add one, or drop the handoff and let the report page its \
+                 rows",
+                one.id
+            ),
+            Place::key(
+                Table::Source(positions.first().copied().unwrap_or(0)),
+                "handoff",
+            ),
+        )),
         [one] if !combined && one.read == SourceRead::Attach => Some(ReportProblem::new(
             format!(
                 "source {:?}: an attached source is read in place by a [combine] query; add \
@@ -473,6 +486,17 @@ fn check_shape(
         _ => None,
     };
     problems.extend(problem);
+}
+
+/// Whether the source hands its result over through a bucket.
+fn handed_over(source: &Source) -> bool {
+    matches!(
+        &source.read,
+        SourceRead::Query {
+            handoff: Some(_),
+            ..
+        }
+    )
 }
 
 /// A source the combine step reads where it is, rather than loading its rows.
@@ -602,10 +626,14 @@ fn read_source(
     let split = read_split(&mut fields);
     let columns = fields.take("columns").map(read_source_columns).transpose();
     let columnar = fields.boolean("columnar");
+    let handoff = fields
+        .take("handoff")
+        .map(|value| read_handoff(value).map(Box::new))
+        .transpose();
     found.extend(fields.unknown(
         "a source",
         "id, data_source, query, lookup, partition, max_rows_per_part, columns, columnar, \
-         attach, lake, format, hive_partitioning, max_rows, max_bytes and timeout",
+         handoff, attach, lake, format, hive_partitioning, max_rows, max_bytes and timeout",
     ));
     // A source read in place sends no query: an attached DuckDB file, or a lake in a bucket.
     // `Err` is a problem with `attach` or `lake` itself, which the last arm below reports.
@@ -624,9 +652,19 @@ fn read_source(
         _ => Ok(None),
     };
     let read = match (
-        in_place, query, max_rows, max_bytes, timeout, split, columns, columnar,
+        in_place, query, max_rows, max_bytes, timeout, split, columns, columnar, handoff,
     ) {
-        (Ok(Some(in_place)), query, max_rows, max_bytes, timeout, split, columns, columnar) => {
+        (
+            Ok(Some(in_place)),
+            query,
+            max_rows,
+            max_bytes,
+            timeout,
+            split,
+            columns,
+            columnar,
+            handoff,
+        ) => {
             let what = in_place.what();
             if !matches!(query, Ok(None)) {
                 found.push(Found::at(
@@ -658,7 +696,11 @@ fn read_source(
             };
             let columns_key = (!matches!(columns, Ok(None))).then_some("columns");
             let columnar_key = (!matches!(columnar, Ok(None))).then_some("columnar");
-            for key in [split_key, columns_key, columnar_key].into_iter().flatten() {
+            let handoff_key = (!matches!(handoff, Ok(None))).then_some("handoff");
+            for key in [split_key, columns_key, columnar_key, handoff_key]
+                .into_iter()
+                .flatten()
+            {
                 found.push(Found::at(
                     key,
                     format!(
@@ -696,30 +738,43 @@ fn read_source(
             Ok(split),
             Ok(columns),
             Ok(columnar),
-        ) => query
-            .filter(|query| !query.trim().is_empty())
-            .map(|query| SourceRead::Query {
-                query,
-                limits: SourceLimitsSet {
-                    max_rows,
-                    max_bytes,
-                    timeout,
-                },
-                split,
-                columns,
-                rows: match columnar {
-                    Some(false) => SourceRows::Text,
-                    Some(true) | None => SourceRows::Columnar,
-                },
-            })
-            .ok_or_else(|| {
-                vec![Found::at(
-                    "query",
-                    "needs a query, lake = \"sales/*.parquet\" to read a bucket's files in \
-                     place, or attach = true to read a DuckDB file in place",
-                )]
-            }),
-        (_, query, max_rows, max_bytes, timeout, split, columns, columnar) => {
+            Ok(handoff),
+        ) => {
+            if handoff.is_some() {
+                found.extend(handed_over_refusals(
+                    max_rows.is_some(),
+                    max_bytes.is_some(),
+                    &split,
+                    columns.is_some(),
+                    columnar.is_some(),
+                ));
+            }
+            query
+                .filter(|query| !query.trim().is_empty())
+                .map(|query| SourceRead::Query {
+                    query,
+                    limits: SourceLimitsSet {
+                        max_rows,
+                        max_bytes,
+                        timeout,
+                    },
+                    split,
+                    columns,
+                    rows: match columnar {
+                        Some(false) => SourceRows::Text,
+                        Some(true) | None => SourceRows::Columnar,
+                    },
+                    handoff,
+                })
+                .ok_or_else(|| {
+                    vec![Found::at(
+                        "query",
+                        "needs a query, lake = \"sales/*.parquet\" to read a bucket's files in \
+                         place, or attach = true to read a DuckDB file in place",
+                    )]
+                })
+        }
+        (_, query, max_rows, max_bytes, timeout, split, columns, columnar, handoff) => {
             let mut errors = Vec::new();
             errors.extend(columnar.err());
             errors.extend(attach.err());
@@ -735,6 +790,13 @@ fn read_source(
                     .into_iter()
                     .flatten()
                     .map(|problem| Found::at("columns", problem)),
+            );
+            errors.extend(
+                handoff
+                    .err()
+                    .into_iter()
+                    .flatten()
+                    .map(|problem| Found::at("handoff", problem)),
             );
             Err(errors)
         }
@@ -755,6 +817,121 @@ fn read_source(
     let source = source.filter(|_| found.is_empty());
     problems.extend(placed(Table::Source(position), Some(&label), found));
     source
+}
+
+/// A `[[source]]` whose `handoff` names the bucket its engine writes the result in, and the
+/// prefix under it (RS7f). The data source is looked up when the source is planned, which is
+/// where a bucket the engine can't write to is refused.
+fn read_handoff(value: toml::Value) -> Result<HandoffRead, Vec<String>> {
+    let toml::Value::Table(table) = value else {
+        return Err(vec![
+            "handoff is a table, as handoff = { data_source = \"lake\", prefix = \
+             \"dbrover-tmp/\" }"
+                .to_owned(),
+        ]);
+    };
+    let mut fields = Fields::new(table);
+    let data_source = fields
+        .string("data_source")
+        .map_err(|found| found.message)
+        .and_then(|name| {
+            name.filter(|name| !name.trim().is_empty()).ok_or_else(|| {
+                "handoff needs the data source whose bucket it writes in, by name: \
+                 data_source = \"lake\""
+                    .to_owned()
+            })
+        });
+    let prefix = fields
+        .string("prefix")
+        .map_err(|found| found.message)
+        .map(|prefix| prefix.filter(|prefix| !prefix.trim().is_empty()))
+        .and_then(|prefix| match prefix {
+            // A prefix that starts at the bucket's root, or walks out of itself, would put a
+            // run's files somewhere the report didn't say.
+            Some(prefix)
+                if prefix.starts_with('/') || prefix.split('/').any(|part| part == "..") =>
+            {
+                Err(format!(
+                    "handoff: {prefix:?} isn't a folder in the bucket; a prefix is a path under \
+                     it, as prefix = \"dbrover-tmp/\""
+                ))
+            }
+            // Every key the run writes is under the prefix, so it is a folder whatever the
+            // file wrote.
+            Some(prefix) => Ok(Some(format!("{}/", prefix.trim().trim_end_matches('/')))),
+            None => Ok(None),
+        });
+    let mut problems: Vec<String> = fields
+        .unknown("a handoff", "data_source and prefix")
+        .into_iter()
+        .map(|problem| format!("handoff: {}", problem.message))
+        .collect();
+    match (data_source, prefix) {
+        (Ok(data_source), Ok(prefix)) if problems.is_empty() => Ok(HandoffRead {
+            data_source,
+            prefix,
+        }),
+        (data_source, prefix) => {
+            problems.extend(data_source.err());
+            problems.extend(prefix.err());
+            Err(problems)
+        }
+    }
+}
+
+/// The keys a source with a `handoff` can't have, each with what bounds or shapes it instead:
+/// it receives files, not rows, so nothing that counts rows on the way in or casts them
+/// applies (`docs/reports-at-scale.md`, "The handoff against today's code").
+fn handed_over_refusals(
+    max_rows: bool,
+    max_bytes: bool,
+    split: &SourceSplit,
+    columns: bool,
+    columnar: bool,
+) -> Vec<Found> {
+    let counts = |key: &str| {
+        format!(
+            "{key} bounds the rows a source receives, and a handoff receives files: the data \
+             source's cost guard bounds what its statement scans, which is what the engine \
+             bills, and timeout still bounds the statement"
+        )
+    };
+    let split_key = match split {
+        SourceSplit::Lookup(_) => "lookup",
+        SourceSplit::Whole | SourceSplit::Partition(_) => "partition",
+    };
+    let keys = [
+        (max_rows, "max_rows", counts("max_rows")),
+        (max_bytes, "max_bytes", counts("max_bytes")),
+        (
+            !matches!(split, SourceSplit::Whole),
+            split_key,
+            format!(
+                "{split_key} sends a statement a batch or a range at a time, and a handoff is \
+                 one statement's files; hand the whole source over, or page its rows without a \
+                 handoff"
+            ),
+        ),
+        (
+            columns,
+            "columns",
+            "columns says what a source's rows hold, and a handoff's columns are the files' \
+             own; cast them in the source's own query, which is where its engine decides what \
+             it writes"
+                .to_owned(),
+        ),
+        (
+            columnar,
+            "columnar",
+            "columnar asks an engine for Arrow batches, and a handoff is files instead; drop \
+             columnar, or drop the handoff"
+                .to_owned(),
+        ),
+    ];
+    keys.into_iter()
+        .filter(|(set, _, _)| *set)
+        .map(|(_, key, message)| Found::at(key, message))
+        .collect()
 }
 
 /// How a source's query is split: `lookup`, or `partition` and its `max_rows_per_part`, or

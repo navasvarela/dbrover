@@ -75,6 +75,24 @@ impl Lister {
             Self::Azure(lister) => lister.list(prefix, after, max).await,
         }
     }
+
+    /// Deletes the object at `key`, which is the whole key a [`Level`]'s
+    /// [`StoredFile::key`] gives: the one write DbRover makes to a bucket, and only of the
+    /// handoff files a run's own statement wrote (`docs/reports-at-scale.md`, RS7f).
+    ///
+    /// A key that is already gone is not an error: two runs of one report can be cleaning up
+    /// what a third left.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError`] when the request fails or the provider refuses it.
+    pub async fn delete(&self, key: &str) -> Result<(), StorageError> {
+        match self {
+            Self::S3(lister) => lister.delete(key).await,
+            Self::Gcs(lister) => lister.delete(key).await,
+            Self::Azure(lister) => lister.delete(key).await,
+        }
+    }
 }
 
 /// Percent-encodes everything but RFC 3986's unreserved characters, as S3's signature,

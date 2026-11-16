@@ -554,6 +554,7 @@ mod tests {
             columns: Vec::new(),
             scanned_bytes: None,
             parts: Vec::new(),
+            handed_over: None,
         }
     }
 

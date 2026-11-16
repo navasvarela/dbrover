@@ -313,6 +313,19 @@ fn details(step: &StepMetrics) -> String {
                     .map(|ms| format!("First row after {}", seconds(ms))),
             );
             lines.extend(source.batches.map(|batches| format!("{batches} batches")));
+            // A handed-over source read files from a bucket instead of paging rows (RS7f).
+            lines.extend(source.handed_over.map(|handed| {
+                let bytes = if handed.bytes > 0 {
+                    format!(", {}", ByteCount(handed.bytes))
+                } else {
+                    // A file the engine named is never listed, so nothing says what it held.
+                    String::new()
+                };
+                format!(
+                    "Handed over through a bucket as {}{bytes}",
+                    dbrover_report::counted(handed.files, "file")
+                )
+            }));
             if !source.parts.is_empty() {
                 lines.push(dbrover_report::counted(source.parts.len() as u64, "range"));
             }

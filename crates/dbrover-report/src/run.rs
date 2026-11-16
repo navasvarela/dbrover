@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use arrow_array::RecordBatch;
 use arrow_schema::SchemaRef;
-use dbrover_core::{DataSource, Password, ResultShape, Row};
+use dbrover_core::{DataSource, HandedOver, Handoff, Password, ResultShape, Row};
 use dbrover_export::{
     CompletedFile, EXCEL_MAX_ROWS, ExportColumn, ExportWriter, OutputSchema, RowConverter,
 };
@@ -35,6 +35,7 @@ use dbrover_sql::ParameterValues;
 use crate::chart::ChartRun;
 use crate::checkpoints::Checkpoints;
 use crate::declared::Shaped;
+use crate::handoff::HandoffFolders;
 use crate::kept_rows::{KeptRows, PartReader};
 use crate::live::{ProgressClock, waiting};
 use crate::parquet::PartsJoin;
@@ -95,6 +96,10 @@ pub struct SourceStatement<'a> {
     /// Whether its rows are wanted as Arrow batches, where its engine gives them (ADR 0007):
     /// for a source loaded into the combine step's DuckDB, unless it says otherwise.
     pub rows: SourceRows,
+    /// Where its engine is to write the result as files instead of answering with rows, for a
+    /// source with a `handoff` (`docs/reports-at-scale.md`, RS7f); `None` for a statement
+    /// whose rows are paged.
+    pub handoff: Option<Handoff>,
 }
 
 /// What the cost guard of the statement's data source judges, where it has one.
@@ -157,6 +162,13 @@ pub trait SourceReader {
     /// [`SourceReader::batch_schema`], else a page; `None` once every row has been read.
     fn next_part(&mut self) -> impl Future<Output = Result<Option<SourcePart>, SourceError>> {
         async { Ok(self.next_page().await?.map(SourcePart::Rows)) }
+    }
+
+    /// The files its engine wrote for the statement's handoff, when it was asked for one
+    /// ([`SourceStatement::handoff`]) and its engine has one; `None`, the default, for a
+    /// reader of rows. A reader that answers with files returns no pages.
+    fn handed_over(&self) -> Option<&HandedOver> {
+        None
     }
 
     /// The bytes its engine scanned for the statement, as the engine reports them once every
@@ -246,18 +258,37 @@ pub async fn run<O: SourceOpener>(
     let work = OwnFolder::make(folders.work)?;
     let checkpoints = Checkpoints::read(folders.work);
     let mut sink = Sink::new(plan, folders);
+    // This run's folders in the handoff buckets, and what earlier runs of this report left in
+    // them (RS7f). Both are nothing for a report with no handoff.
+    let handoffs = HandoffFolders::starting(&plan.name);
+    crate::handoff::remove_left_behind(plan, opener, &handoffs).await;
     let ran = match &values.run_ranges {
-        None => run_once(plan, values, opener, &mut sink, Some(&checkpoints), events).await,
+        None => {
+            run_once(
+                plan,
+                values,
+                opener,
+                &mut sink,
+                Some(&checkpoints),
+                &handoffs,
+                events,
+            )
+            .await
+        }
         Some(ranges) => {
             let mut ranges = RunRanges {
                 plan,
                 values,
                 ranges,
                 checkpoints: &checkpoints,
+                handoffs: &handoffs,
             };
             ranges.run(opener, &mut sink, events).await
         }
     };
+    // Whatever the run did, its handed-over files go: each statement's load deleted its own,
+    // and this takes what a failed statement or a stopped combine step left.
+    crate::handoff::remove_this_runs(plan, opener, &handoffs).await;
     let outcome = match ran {
         Ok(()) => sink.finish(values, events).await,
         Err(failure) => {
@@ -280,6 +311,8 @@ struct RunRanges<'a, 'r> {
     values: &'r RunValues,
     ranges: &'r SourceRanges,
     checkpoints: &'r Checkpoints,
+    /// The folders this run's handed-over files go in, shared by every range (RS7f).
+    handoffs: &'r HandoffFolders,
 }
 
 impl<'a, 'r> RunRanges<'a, 'r> {
@@ -303,12 +336,20 @@ impl<'a, 'r> RunRanges<'a, 'r> {
             sink.begin_range(range.number);
             // A range's sources load into a DuckDB of the range's own, so the range, not its
             // sources, is what a run resuming it skips.
-            run_once(plan, &range_values, opener, sink, None, &mut |event| {
-                if let RunEvent::SourceDone { bytes, .. } = &event {
-                    read += bytes;
-                }
-                events(event);
-            })
+            run_once(
+                plan,
+                &range_values,
+                opener,
+                sink,
+                None,
+                self.handoffs,
+                &mut |event| {
+                    if let RunEvent::SourceDone { bytes, .. } = &event {
+                        read += bytes;
+                    }
+                    events(event);
+                },
+            )
             .await?;
             let files = sink.end_range(events)?;
             let after = sink.written();
@@ -387,6 +428,7 @@ async fn run_once<'a, O: SourceOpener>(
     opener: &O,
     sink: &mut Sink<'a>,
     checkpoints: Option<&Checkpoints>,
+    handoffs: &HandoffFolders,
     events: &mut dyn FnMut(RunEvent),
 ) -> Result<(), RunFailure> {
     match &plan.logic {
@@ -435,6 +477,7 @@ async fn run_once<'a, O: SourceOpener>(
                 combined,
                 opener,
                 checkpoints,
+                handoffs,
             };
             combining.run(sink, events).await
         }
@@ -495,6 +538,9 @@ fn source_done(
             type_ms: 0,
         }),
         scanned_bytes: scanned,
+        // A report with no combine step pages its rows: a handoff needs a DuckDB to read its
+        // files with, so it is refused when the report is read.
+        handed_over: None,
     }
 }
 

@@ -93,6 +93,43 @@ impl S3Lister {
         xml::s3_level(&answer.body)
     }
 
+    /// Deletes the object at `key`, signed as a listing is: what a run does with the handoff
+    /// files it wrote (`docs/reports-at-scale.md`, RS7f). S3 answers 204 for a key that was
+    /// there and for one that wasn't, so deleting twice is not an error.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError`] when the request fails or S3 refuses it, with S3's code and message.
+    pub async fn delete(&self, key: &str) -> Result<(), StorageError> {
+        let region = Some(self.location.region.as_str())
+            .filter(|region| !region.is_empty())
+            .unwrap_or(DEFAULT_REGION);
+        let answer = self.delete_request(region, key).await?;
+        let moved_to = (answer.status == 301)
+            .then(|| answer.header(BUCKET_REGION_HEADER))
+            .flatten()
+            .filter(|moved_to| *moved_to != region)
+            .map(str::to_owned);
+        let answer = match moved_to {
+            Some(region) => self.delete_request(&region, key).await?,
+            None => answer,
+        };
+        // 204 is the delete's own answer; 200 is what some S3-compatible stores send.
+        if answer.status != 204 && answer.status != 200 {
+            return Err(xml::s3_refusal(answer.status, &answer.body));
+        }
+        Ok(())
+    }
+
+    async fn delete_request(&self, region: &str, key: &str) -> Result<Answer, StorageError> {
+        let url = self.location.object_url(region, key);
+        let headers = match &self.location.keys {
+            Some(keys) => signed_headers("DELETE", &url, region, keys, SystemTime::now())?,
+            None => Vec::new(),
+        };
+        Ok(self.https.delete_signed(&url, &headers).await?)
+    }
+
     async fn request(
         &self,
         region: &str,
@@ -102,7 +139,7 @@ impl S3Lister {
     ) -> Result<Answer, StorageError> {
         let url = self.location.list_url(region, prefix, after, max);
         let headers = match &self.location.keys {
-            Some(keys) => signed_headers(&url, region, keys, SystemTime::now())?,
+            Some(keys) => signed_headers("GET", &url, region, keys, SystemTime::now())?,
             None => Vec::new(),
         };
         Ok(self.https.get_signed(&url, &headers).await?)
@@ -110,10 +147,10 @@ impl S3Lister {
 }
 
 impl S3Location {
-    /// The `ListObjectsV2` request's address: virtual-hosted on AWS, unless the bucket's name
-    /// has a dot (which AWS's wildcard certificate doesn't cover), and by path elsewhere.
-    fn list_url(&self, region: &str, prefix: &str, after: Option<&str>, max: usize) -> String {
-        let base = match &self.endpoint {
+    /// Where the bucket's requests go: virtual-hosted on AWS, unless the bucket's name has a
+    /// dot (which AWS's wildcard certificate doesn't cover), and by path elsewhere.
+    fn base_url(&self, region: &str) -> String {
+        match &self.endpoint {
             Some(endpoint) => format!(
                 "{}/{}",
                 endpoint.trim_end_matches('/'),
@@ -123,7 +160,11 @@ impl S3Location {
                 format!("https://s3.{region}.amazonaws.com/{}", encode(&self.bucket))
             }
             None => format!("https://{}.s3.{region}.amazonaws.com", self.bucket),
-        };
+        }
+    }
+
+    fn list_url(&self, region: &str, prefix: &str, after: Option<&str>, max: usize) -> String {
+        let base = self.base_url(region);
         let mut query = vec![
             ("list-type", "2".to_owned()),
             ("delimiter", "/".to_owned()),
@@ -142,10 +183,19 @@ impl S3Location {
             .join("&");
         format!("{base}/?{query}")
     }
+
+    /// One object's address, for a delete: the listing's base and the key, each segment
+    /// encoded as S3 signs it.
+    fn object_url(&self, region: &str, key: &str) -> String {
+        let base = self.base_url(region);
+        let path = key.split('/').map(encode).collect::<Vec<_>>().join("/");
+        format!("{base}/{path}")
+    }
 }
 
-/// The headers that sign a `GET` of `url` with `keys` in `region` at `now`.
+/// The headers that sign a `method` request for `url` with `keys` in `region` at `now`.
 fn signed_headers(
+    method: &str,
     url: &str,
     region: &str,
     keys: &S3Keys,
@@ -177,7 +227,7 @@ fn signed_headers(
         .settings(settings)
         .build()
         .map_err(|error| signing_failed(&error))?;
-    let request = SignableRequest::new("GET", url, std::iter::empty(), SignableBody::Bytes(&[]))
+    let request = SignableRequest::new(method, url, std::iter::empty(), SignableBody::Bytes(&[]))
         .map_err(|error| signing_failed(&error))?;
     let (instructions, _signature) = sign(request, &params.into())
         .map_err(|error| signing_failed(&error))?
@@ -233,6 +283,50 @@ mod tests {
         }
     }
 
+    #[test]
+    fn object_urls_encode_each_segment_of_the_key_and_keep_its_slashes() {
+        let cases = [
+            (
+                bucket("sales", None),
+                "dbrover-tmp/shop/run-1/orders/part-0.parquet",
+                "https://sales.s3.eu-west-1.amazonaws.com/dbrover-tmp/shop/run-1/orders/\
+                 part-0.parquet",
+            ),
+            (
+                bucket("dbrover", Some("http://localhost:59000/")),
+                "dbrover-tmp/a b/O'Brien.csv",
+                "http://localhost:59000/dbrover/dbrover-tmp/a%20b/O%27Brien.csv",
+            ),
+        ];
+        for (bucket, key, expected) in cases {
+            assert_eq!(bucket.object_url("eu-west-1", key), expected);
+        }
+    }
+
+    /// A delete is signed for the method it is, or S3 answers 403: the signature covers the
+    /// verb.
+    #[test]
+    fn a_delete_is_signed_as_a_delete() {
+        let keys = S3Keys {
+            key_id: "AKIAIOSFODNN7EXAMPLE".to_owned(),
+            secret: Password::new("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
+            session_token: None,
+        };
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_369_353_600);
+        let url = bucket("examplebucket", None).object_url("us-east-1", "tmp/part-0.parquet");
+
+        let signed = |method| {
+            signed_headers(method, &url, "us-east-1", &keys, now)
+                .unwrap()
+                .into_iter()
+                .find(|(name, _)| name == "authorization")
+                .map(|(_, value)| value)
+                .unwrap()
+        };
+
+        assert_ne!(signed("DELETE"), signed("GET"));
+    }
+
     /// The signature was checked against a separate implementation of SigV4's header signing
     /// in Python's standard library, for the same request, keys and time: AWS's example keys,
     /// at the time of AWS's own examples.
@@ -247,7 +341,7 @@ mod tests {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_369_353_600);
         let url = bucket("examplebucket", None).list_url("us-east-1", "", None, 1000);
 
-        let headers = signed_headers(&url, "us-east-1", &keys, now).unwrap();
+        let headers = signed_headers("GET", &url, "us-east-1", &keys, now).unwrap();
 
         let header = |name: &str| {
             headers

@@ -15,6 +15,7 @@ mod cost;
 mod data_source;
 mod error;
 mod execution;
+mod handoff;
 mod job;
 mod managed_service;
 mod mongo_uri;
@@ -58,6 +59,7 @@ pub use error::{BoxError, DriverError, describe_error, position_at};
 pub use execution::{
     CancelHandle, Cell, ColumnInfo, ResultCursor, ResultShape, Row, TransactionStatus, ValueKind,
 };
+pub use handoff::{HandedOver, Handoff, HandoffFiles, HandoffFolder, HandoffSupport};
 pub use job::{
     JobFailure, JobId, JobPage, JobProgress, JobService, JobState, Jobs, ProgressHandle,
 };

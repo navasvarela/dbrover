@@ -74,6 +74,10 @@ pub enum SourceRead {
         columns: Option<Vec<SourceColumn>>,
         /// How its rows reach the combine step's DuckDB: `columnar = false` keeps them text.
         rows: SourceRows,
+        /// `handoff`: where its engine writes the result as files instead of answering with
+        /// rows, for the run to read with DuckDB (`docs/reports-at-scale.md`, RS7f). Boxed to
+        /// keep a query source's size near a lake's, which holds a path and a format.
+        handoff: Option<Box<HandoffRead>>,
     },
     /// A DuckDB file, attached read-only for the combine step to read in place.
     Attach,
@@ -94,6 +98,18 @@ pub struct LakeRead {
     /// `hive_partitioning`: whether the folder names in the path are columns of the lake, as
     /// `year=2026/` is.
     pub hive_partitioning: bool,
+}
+
+/// A handoff a `[[source]]` names, as the file writes it: nothing is looked up until the
+/// source is planned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandoffRead {
+    /// `data_source`: a DuckDB data source with a bucket (C2), whose sign-in reads the files
+    /// and deletes them. The engine writes them with its own.
+    pub data_source: String,
+    /// `prefix`: the folder in that bucket the run writes under, ending in `/`. `None` where
+    /// the engine's own result file is read instead, which only Athena has.
+    pub prefix: Option<String>,
 }
 
 /// How a source's rows reach the combine step's DuckDB (ADR 0007).

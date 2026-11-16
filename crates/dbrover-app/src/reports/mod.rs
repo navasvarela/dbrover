@@ -619,6 +619,7 @@ impl RunRecord {
                 phases,
                 table,
                 scanned_bytes,
+                handed_over,
                 ..
             } => {
                 let record = self.source_record(id);
@@ -644,6 +645,10 @@ impl RunRecord {
                     columns: table.iter().map(kept_column).collect(),
                     scanned_bytes: *scanned_bytes,
                     parts: self.take_parts(&Step::Source { id: id.clone() }),
+                    handed_over: handed_over.map(|handed| dbrover_store::HandoffMetrics {
+                        files: handed.files,
+                        bytes: handed.bytes,
+                    }),
                 })
             }
             RunEvent::PartDone(part) if self.run_partition.is_some() => {
@@ -1875,6 +1880,7 @@ mod tests {
                     parts: None,
                     phases: None,
                     scanned_bytes: None,
+                    handed_over: None,
                 },
             );
             untimed(
@@ -1920,6 +1926,7 @@ mod tests {
                         columns: Vec::new(),
                         scanned_bytes: None,
                         parts: Vec::new(),
+                        handed_over: None,
                     }),
                     StepMetrics::Output(OutputMetrics {
                         number: 1,
@@ -1996,6 +2003,7 @@ mod tests {
                     parts: None,
                     phases: Some(phases),
                     scanned_bytes: None,
+                    handed_over: None,
                 },
             ),
             (
@@ -2162,6 +2170,7 @@ mod tests {
                 parts: Some(2),
                 phases: None,
                 scanned_bytes: None,
+                handed_over: None,
             }
             .at(Duration::from_millis(1_000)),
         );
@@ -2242,6 +2251,7 @@ mod tests {
                     parts: None,
                     phases: None,
                     scanned_bytes: Some(10),
+                    handed_over: None,
                 },
                 RunEvent::CombineDone {
                     rows: 10 * number,
@@ -2395,6 +2405,7 @@ mod tests {
                 parts: None,
                 phases: None,
                 scanned_bytes: None,
+                handed_over: None,
             },
         );
         assert_eq!(record.rows, 0, "a loaded source's rows aren't the outputs'");

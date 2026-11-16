@@ -8,11 +8,19 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# The replay server of the tests, on the loopback address, so other crates' tests can run a
+# report against a stand-in Athena without an account (RS7f). Its listener and its exchanges
+# need tokio's `net` and `io-util`, and serde_json.
+stand-in = ["dep:serde_json", "tokio/net", "tokio/io-util"]
+
 [dependencies]
 async-trait.workspace = true
 aws-sdk-athena.workspace = true
 dbrover-cloud.workspace = true
 dbrover-core.workspace = true
+# The replay server's exchanges, with the `stand-in` feature and in the tests.
+serde_json = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio.workspace = true
 

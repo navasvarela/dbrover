@@ -72,6 +72,7 @@ impl<O: Write, E: Write> HumanLines<O, E> {
                 warnings,
                 batches,
                 parts,
+                handed_over,
                 ..
             } => {
                 let batches = match (batches, parts) {
@@ -80,8 +81,12 @@ impl<O: Write, E: Write> HumanLines<O, E> {
                     (None, Some(parts)) => format!(", {}", counted(*parts, "range")),
                     (None, None) => String::new(),
                 };
+                // A handed-over source was read from files in a bucket, not paged (RS7f).
+                let handed = handed_over.map_or_else(String::new, |handed| {
+                    format!(", handed over as {}", counted(handed.files, "file"))
+                });
                 let line = format!(
-                    "Source {id}: {}{batches}",
+                    "Source {id}: {}{batches}{handed}",
                     amounts(*rows, *bytes, *elapsed_ms)
                 );
                 self.error_line(&line);
@@ -330,6 +335,7 @@ mod tests {
                 parts: None,
                 phases: None,
                 scanned_bytes: None,
+                handed_over: None,
             },
             RunEvent::Progress {
                 step: Step::Combine,
@@ -445,6 +451,7 @@ mod tests {
                 parts: None,
                 phases: None,
                 scanned_bytes: None,
+                handed_over: None,
             },
             RunEvent::SourceAttached {
                 id: "prices".to_owned(),
