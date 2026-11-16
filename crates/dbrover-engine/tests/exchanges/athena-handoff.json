@@ -1,0 +1,38 @@
+{
+  "doc": "A report's Athena source handed over through a bucket (RS7f): the query runs, and its result file in S3 is what the report reads, instead of GetQueryResults. {{bucket}} is the test's own bucket and {{result}} the result file's address, which the test wrote. Written from Athena's API reference, as the driver's own exchanges are.",
+  "exchanges": [
+    {
+      "operation": "GetWorkGroup",
+      "request": {"WorkGroup": "primary"},
+      "response": {"WorkGroup": {"Name": "primary", "State": "ENABLED", "Configuration": {
+        "ResultConfiguration": {"OutputLocation": "s3://{{bucket}}/report-handoff/"},
+        "EngineVersion": {"EffectiveEngineVersion": "Athena engine version 3"}}}}
+    },
+    {
+      "operation": "StartQueryExecution",
+      "request": {
+        "QueryString": "SELECT item, amount FROM orders",
+        "QueryExecutionContext": {"Catalog": "AwsDataCatalog", "Database": "sales"},
+        "WorkGroup": "primary"
+      },
+      "response": {"QueryExecutionId": "q-handoff"}
+    },
+    {
+      "operation": "GetQueryExecution",
+      "request": {"QueryExecutionId": "q-handoff"},
+      "response": {"QueryExecution": {"QueryExecutionId": "q-handoff", "StatementType": "DML",
+        "Status": {"State": "SUCCEEDED", "SubmissionDateTime": 1.7e9, "CompletionDateTime": 1.7e9},
+        "ResultConfiguration": {"OutputLocation": "{{result}}"},
+        "Statistics": {"DataScannedInBytes": 4096, "EngineExecutionTimeInMillis": 120}}}
+    },
+    {
+      "operation": "GetQueryExecution",
+      "request": {"QueryExecutionId": "q-handoff"},
+      "repeat": true,
+      "response": {"QueryExecution": {"QueryExecutionId": "q-handoff", "StatementType": "DML",
+        "Status": {"State": "SUCCEEDED", "SubmissionDateTime": 1.7e9, "CompletionDateTime": 1.7e9},
+        "ResultConfiguration": {"OutputLocation": "{{result}}"},
+        "Statistics": {"DataScannedInBytes": 4096, "EngineExecutionTimeInMillis": 120}}}
+    }
+  ]
+}

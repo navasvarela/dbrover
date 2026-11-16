@@ -7,6 +7,7 @@ mod bucket;
 mod catalog;
 mod errors;
 mod execution;
+mod handoff;
 mod lake;
 mod parquet;
 mod profile;
@@ -34,8 +35,8 @@ pub use bucket::BucketError;
 pub use lake::{BucketSignIn, DuckDbExtension, LakeView};
 pub use parquet::{ParquetCompression, ParquetWriter};
 pub use workspace::{
-    Allowed, BucketTraffic, DuckDbType, LoadColumn, TableLoader, UnknownDuckDbType, Workspace,
-    WorkspaceLimit, WorkspaceLimits, WorkspacePeaks, WorkspaceProfile, WorkspaceStore,
+    Allowed, BucketTraffic, DuckDbType, HandoffLoaded, LoadColumn, TableLoader, UnknownDuckDbType,
+    Workspace, WorkspaceLimit, WorkspaceLimits, WorkspacePeaks, WorkspaceProfile, WorkspaceStore,
     copy_to_parquet, read_parquet, read_parquet_files,
 };
 

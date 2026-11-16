@@ -8,7 +8,13 @@
 
 mod catalog;
 mod errors;
+mod handoff;
 mod jobs;
+/// A stand-in Athena on the loopback address, which answers the SDK with exchanges from a
+/// file: how Athena is tested without an account (`docs/cloud-data.md`, C3), here and in the
+/// report tests of `dbrover-engine`.
+#[cfg(any(test, feature = "stand-in"))]
+pub mod replay;
 mod results;
 #[cfg(test)]
 mod tests;
@@ -20,9 +26,9 @@ use async_trait::async_trait;
 use aws_sdk_athena::Client;
 use dbrover_cloud::aws::AwsSignIn;
 use dbrover_core::{
-    AthenaConfig, CancelHandle, CatalogNode, CatalogPath, ChildrenPage, ChildrenQuery, Connection,
-    DriverError, Jobs, ProgressHandle, Rejection, RelationName, ResultCursor, ServerInfo,
-    TableConstraints, TableDescription, TableName, TransactionStatus,
+    AthenaConfig, CancelHandle, CatalogNode, CatalogPath, Cell, ChildrenPage, ChildrenQuery,
+    Connection, DriverError, HandedOver, Handoff, Jobs, ProgressHandle, Rejection, RelationName,
+    ResultCursor, ServerInfo, TableConstraints, TableDescription, TableName, TransactionStatus,
 };
 
 use crate::catalog::Lister;
@@ -154,6 +160,30 @@ impl Connection for AthenaConnection {
 
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError> {
         self.jobs.execute(sql).await
+    }
+
+    /// Athena's result in S3, read as files rather than paged (RS7f): the job's own result
+    /// file where the handoff names no prefix, and `UNLOAD`'s Parquet where it names one.
+    ///
+    /// Athena takes no bound values (`Dialect::parameter_binding` is `None` for it), so the
+    /// statement goes as it is, inside `UNLOAD` where the handoff asks for one.
+    async fn execute_as_files(
+        &mut self,
+        sql: &str,
+        values: &[Cell],
+        handoff: &Handoff,
+    ) -> Result<Option<HandedOver>, DriverError> {
+        if !values.is_empty() {
+            return Err(DriverError::Statement {
+                source: "Athena's statements take no bound values".into(),
+                position: None,
+                sqlstate: None,
+            });
+        }
+        let (statement, format) = handoff::statement(sql, handoff);
+        self.jobs
+            .execute_as_files(&statement, handoff, format)
+            .await
     }
 
     /// `None`: Athena's tables have no key that tells their rows apart, so their rows are never

@@ -1875,6 +1875,7 @@ mod tests {
                     parts: None,
                     phases: None,
                     scanned_bytes: None,
+                    handed_over: None,
                 },
             );
             untimed(
@@ -1996,6 +1997,7 @@ mod tests {
                     parts: None,
                     phases: Some(phases),
                     scanned_bytes: None,
+                    handed_over: None,
                 },
             ),
             (
@@ -2162,6 +2164,7 @@ mod tests {
                 parts: Some(2),
                 phases: None,
                 scanned_bytes: None,
+                handed_over: None,
             }
             .at(Duration::from_millis(1_000)),
         );
@@ -2242,6 +2245,7 @@ mod tests {
                     parts: None,
                     phases: None,
                     scanned_bytes: Some(10),
+                    handed_over: None,
                 },
                 RunEvent::CombineDone {
                     rows: 10 * number,
@@ -2395,6 +2399,7 @@ mod tests {
                 parts: None,
                 phases: None,
                 scanned_bytes: None,
+                handed_over: None,
             },
         );
         assert_eq!(record.rows, 0, "a loaded source's rows aren't the outputs'");

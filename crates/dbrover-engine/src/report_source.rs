@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 
 use arrow_schema::SchemaRef;
 use dbrover_core::{
-    CancelHandle, Connection, CostGuard, DataSource, Password, ReadPace, ResultCursor, ResultShape,
-    Row, describe_error,
+    CancelHandle, Connection, CostGuard, DataSource, HandedOver, Password, ReadPace, ResultCursor,
+    ResultShape, Row, describe_error,
 };
 use dbrover_export::ExportColumn;
 use dbrover_report::{
@@ -100,6 +100,9 @@ pub struct ReportSource {
     opening: Opening,
     /// The schema of the batches it reads, when it asked for them and the engine gives them.
     batch_schema: Option<SchemaRef>,
+    /// The files the engine wrote, when the statement asked for a handoff (RS7f): it then
+    /// returns no rows, and the run reads the files with DuckDB.
+    handed_over: Option<HandedOver>,
 }
 
 impl ReportSource {
@@ -161,6 +164,15 @@ impl ReportSource {
             if let Some(judged) = judged(statement, &checked)? {
                 check_cost(connection.as_mut(), config.cost_guard(), &judged).await?;
             }
+            // A handoff asks the engine to write the result where the report said, instead
+            // of answering with rows; nothing is paged, so there is no cursor (RS7f).
+            if let Some(handoff) = &statement.handoff {
+                let handed = connection
+                    .execute_as_files(&prepared.sql, &prepared.values, handoff)
+                    .await
+                    .map_err(|error| SourceError::new(describe_error(&error)))?;
+                return Ok(Started::Files(handed));
+            }
             match statement.rows {
                 SourceRows::Columnar => {
                     connection
@@ -176,44 +188,81 @@ impl ReportSource {
                         .await
                 }
             }
+            .map(Started::Rows)
             .map_err(|error| SourceError::new(describe_error(&error)))
         };
         let deadline = statement.deadline;
-        let mut cursor =
+        let started =
             match watch(opened, deadline, &cancel, &source.id, source.limits.timeout).await {
-                Ok(cursor) => cursor,
+                Ok(started) => started,
                 Err(error) => {
                     close(connection, None, mode).await;
                     return Err(error);
                 }
             };
-        let columns = cursor
-            .columns()
-            .iter()
-            .map(|column| ExportColumn::typed_by(column, language.dialect()))
-            .collect();
-        let shape = cursor.shape();
-        let batch_schema = match statement.rows {
-            SourceRows::Columnar => cursor.batches().map(|batches| batches.schema()),
-            SourceRows::Text => None,
+        let opening = Opening {
+            connect,
+            start: starting.elapsed(),
+        };
+        let handed_over = match started {
+            Started::Rows(mut cursor) => {
+                let columns = cursor
+                    .columns()
+                    .iter()
+                    .map(|column| ExportColumn::typed_by(column, language.dialect()))
+                    .collect();
+                let shape = cursor.shape();
+                let batch_schema = match statement.rows {
+                    SourceRows::Columnar => cursor.batches().map(|batches| batches.schema()),
+                    SourceRows::Text => None,
+                };
+                return Ok(Self {
+                    connection,
+                    cursor: Some(cursor),
+                    columns,
+                    shape,
+                    mode,
+                    cancel,
+                    deadline,
+                    timeout: source.limits.timeout,
+                    id: source.id.clone(),
+                    opening,
+                    batch_schema,
+                    handed_over: None,
+                });
+            }
+            Started::Files(None) => {
+                close(connection, None, mode).await;
+                return Err(SourceError::new(format!(
+                    "{:?} was asked to write the result as files, which its driver doesn't do",
+                    data_source.name
+                )));
+            }
+            Started::Files(Some(handed)) => handed,
         };
         Ok(Self {
             connection,
-            cursor: Some(cursor),
-            columns,
-            shape,
+            cursor: None,
+            // The files carry their own columns, which DuckDB reads from them.
+            columns: Vec::new(),
+            shape: ResultShape::Rows,
             mode,
             cancel,
             deadline,
             timeout: source.limits.timeout,
             id: source.id.clone(),
-            opening: Opening {
-                connect,
-                start: starting.elapsed(),
-            },
-            batch_schema,
+            opening,
+            batch_schema: None,
+            handed_over: Some(handed_over),
         })
     }
+}
+
+/// What a source's statement started: a cursor over its rows, or the files its engine wrote
+/// for a handoff, which only a driver with one answers with (RS7f).
+enum Started {
+    Rows(Box<dyn ResultCursor>),
+    Files(Option<HandedOver>),
 }
 
 /// What the cost guard judges for `statement`, every value written in: the statement as
@@ -278,6 +327,10 @@ impl SourceReader for ReportSource {
 
     fn batch_schema(&self) -> Option<SchemaRef> {
         self.batch_schema.clone()
+    }
+
+    fn handed_over(&self) -> Option<&HandedOver> {
+        self.handed_over.as_ref()
     }
 
     async fn next_part(&mut self) -> Result<Option<SourcePart>, SourceError> {

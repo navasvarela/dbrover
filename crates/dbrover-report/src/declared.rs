@@ -76,6 +76,13 @@ impl<R: SourceReader> SourceReader for Shaped<R> {
         }
     }
 
+    /// The inner reader's files, when its engine handed the result over (RS7f). A source with
+    /// a handoff declares no columns, which is refused when the report is read, so nothing is
+    /// converted here.
+    fn handed_over(&self) -> Option<&dbrover_core::HandedOver> {
+        self.inner.handed_over()
+    }
+
     /// The inner reader's batches, when it reads them; a source that declares its columns
     /// reads text, since each value is checked and rewritten as text.
     fn batch_schema(&self) -> Option<SchemaRef> {

@@ -6,9 +6,9 @@ use async_trait::async_trait;
 
 use crate::{
     CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, Cell, ChildrenPage,
-    ChildrenQuery, CostEstimate, DriverError, ManagedService, ProgressHandle, RelationName,
-    ResultCursor, RoleDescription, SchemaDescription, TableConstraints, TableDescription,
-    TableName, TransactionStatus,
+    ChildrenQuery, CostEstimate, DriverError, HandedOver, Handoff, ManagedService, ProgressHandle,
+    RelationName, ResultCursor, RoleDescription, SchemaDescription, TableConstraints,
+    TableDescription, TableName, TransactionStatus,
 };
 
 /// What a server reported about itself when the connection was opened.
@@ -175,6 +175,29 @@ pub trait Connection: Send {
         values: &[Cell],
     ) -> Result<Box<dyn ResultCursor>, DriverError> {
         self.execute_bound(sql, values).await
+    }
+
+    /// Runs `sql` with `values` bound, asking the engine to write its result as files rather
+    /// than to answer with rows, for a report whose `[[source]]` has a `handoff`
+    /// (`docs/reports-at-scale.md`, RS7f). The caller then reads the files with DuckDB and
+    /// deletes them.
+    ///
+    /// `None`, the default, for an engine with no handoff: [`HandoffSupport::of`] says which
+    /// engines have one, and planning refuses a `handoff` on the others, so a `None` here is a
+    /// driver that didn't implement what its support says it has.
+    ///
+    /// # Errors
+    ///
+    /// As [`Connection::execute_bound`]; the statement that writes the files is the engine's
+    /// own, so its refusals are the engine's.
+    async fn execute_as_files(
+        &mut self,
+        sql: &str,
+        values: &[Cell],
+        handoff: &Handoff,
+    ) -> Result<Option<HandedOver>, DriverError> {
+        let _ = (sql, values, handoff);
+        Ok(None)
     }
 
     /// Resolves a table the way a statement on this connection would (search path, case

@@ -2533,6 +2533,7 @@ dependencies = [
  "dbrover-plan",
  "dbrover-sql",
  "duckdb",
+ "futures-util",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",

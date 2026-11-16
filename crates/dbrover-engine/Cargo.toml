@@ -59,6 +59,8 @@ aws-sdk-dynamodb.workspace = true
 calamine.workspace = true
 # Its stand-in token endpoint signs the cloud sign-in tests in without an account.
 dbrover-cloud = { workspace = true, features = ["stand-in"] }
+# Its replay server answers a report's Athena source without an account (RS7f).
+dbrover-driver-athena = { workspace = true, features = ["stand-in"] }
 dbrover-language = { workspace = true, features = ["test-language"] }
 rusqlite.workspace = true
 tempfile.workspace = true

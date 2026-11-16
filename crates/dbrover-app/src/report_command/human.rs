@@ -330,6 +330,7 @@ mod tests {
                 parts: None,
                 phases: None,
                 scanned_bytes: None,
+                handed_over: None,
             },
             RunEvent::Progress {
                 step: Step::Combine,
@@ -445,6 +446,7 @@ mod tests {
                 parts: None,
                 phases: None,
                 scanned_bytes: None,
+                handed_over: None,
             },
             RunEvent::SourceAttached {
                 id: "prices".to_owned(),

@@ -139,6 +139,7 @@ async fn open(
         deadline: Instant::now() + source.limits.timeout,
         cost: CostCheck::Statement,
         rows: SourceRows::Text,
+        handoff: None,
     };
     access.get().open(&statement).await
 }

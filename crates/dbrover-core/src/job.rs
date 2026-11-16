@@ -10,7 +10,10 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
-use crate::{ByteCount, CancelHandle, ColumnInfo, DriverError, PageToken, ResultCursor, Row};
+use crate::{
+    ByteCount, CancelHandle, ColumnInfo, DriverError, HandedOver, Handoff, HandoffFiles,
+    LakeFormat, PageToken, ResultCursor, Row,
+};
 
 /// The first pause between two polls of a running job: short, since most statements a
 /// console runs finish within a second.
@@ -124,6 +127,20 @@ pub trait JobService: Send + Sync {
 
     /// Asks the service to stop the job. Best effort: the next poll says whether it did.
     async fn cancel(&self, job: &JobId) -> Result<(), DriverError>;
+
+    /// Where the finished `job` wrote its result as files, for the `handoff` the statement was
+    /// started for (`docs/reports-at-scale.md`, RS7f).
+    ///
+    /// `None`, the default, for a service that writes none: a statement is only ever started
+    /// this way for an engine whose [`crate::HandoffSupport`] says it has a handoff.
+    async fn result_files(
+        &self,
+        job: &JobId,
+        handoff: &Handoff,
+    ) -> Result<Option<HandoffFiles>, DriverError> {
+        let _ = (job, handoff);
+        Ok(None)
+    }
 }
 
 /// Asks a running statement what it has done so far, from another task while it runs: what
@@ -194,6 +211,38 @@ impl Jobs {
             job,
             progress,
             rows_changed: rows_changed.or(first.rows_changed),
+        }))
+    }
+
+    /// Submits `statement`, waits for it to end, and answers with the files it wrote for
+    /// `handoff` and the bytes it scanned (RS7f). Nothing is paged: the run reads the files.
+    ///
+    /// `statement` is the engine's own handoff statement, which the driver wrote: an `UNLOAD`
+    /// or an `EXPORT DATA`, or the query itself where the engine writes its result anyway.
+    ///
+    /// # Errors
+    ///
+    /// As [`Jobs::execute`]; `None` when the service wrote no files it can name, which is a
+    /// driver whose [`crate::HandoffSupport`] promises a handoff it hasn't got.
+    pub async fn execute_as_files(
+        self: &Arc<Self>,
+        statement: &str,
+        handoff: &Handoff,
+        format: LakeFormat,
+    ) -> Result<Option<HandedOver>, DriverError> {
+        let job = self.service.submit(statement).await?;
+        self.set_running(Some(Running {
+            job: job.clone(),
+            progress: JobProgress::default(),
+        }));
+        let ended = self.wait(&job).await;
+        self.set_running(None);
+        let (progress, _) = ended?;
+        let files = self.service.result_files(&job, handoff).await?;
+        Ok(files.map(|files| HandedOver {
+            files,
+            format,
+            scanned: progress.bytes_read.map(|bytes| bytes.0),
         }))
     }
 

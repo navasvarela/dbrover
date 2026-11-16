@@ -1,15 +1,13 @@
 //! The driver against Athena's exchanges, replayed by a server on this machine (`replay`), and
 //! against real Athena only when the user asks for it by hand (`live_athena`).
 
-mod replay;
-
 use dbrover_core::{
     AthenaConfig, AwsSignInKind, ByteCount, CatalogPath, ChildrenQuery, Connection, DriverError,
     JobProgress, NodeKind, PageToken, conformance, describe_error,
 };
 
-use self::replay::Replay;
 use super::*;
+use crate::replay::Replay;
 
 /// A data source on the replay server, signed in with made-up keys, which reads no AWS file of
 /// the machine's.

@@ -8,7 +8,13 @@
 //! request it matches until one matches the exchange after it, for polls whose number depends
 //! on timing. Athena's API is JSON over HTTP 1.1 (`awsJson1_1`), so the server reads only that.
 
+// It stands in for Athena in tests, so it panics on a file it can't read or a port it can't
+// take, as a test assertion does (`dbrover_core::conformance` does the same).
+#![allow(clippy::expect_used)]
+
 use std::collections::VecDeque;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde_json::Value;
@@ -107,8 +113,15 @@ impl State {
     }
 }
 
+/// What a replay does before it answers a request, where its caller gives one: what real
+/// Athena would have done as a side effect, which is writing the files an `UNLOAD` was asked
+/// for (RS7f). It is awaited before the answer goes out, as Athena's own job finishes before
+/// it reports `SUCCEEDED`.
+pub type Hook =
+    Arc<dyn Fn(String, Value) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+
 /// A running replay: where it listens, and what is left of its file.
-pub(crate) struct Replay {
+pub struct Replay {
     /// `http://127.0.0.1:<port>`, the data source's endpoint.
     pub endpoint: String,
     state: Arc<Mutex<State>>,
@@ -117,6 +130,11 @@ pub(crate) struct Replay {
 impl Replay {
     /// Starts answering with the exchanges of `file`, a file's JSON text.
     pub async fn start(file: &str) -> Self {
+        Self::start_with(file, None).await
+    }
+
+    /// [`Replay::start`], with `hook` run on each request before its answer goes out.
+    pub async fn start_with(file: &str, hook: Option<Hook>) -> Self {
         let file: Value = serde_json::from_str(file).expect("an exchanges file is JSON");
         let remaining = file["exchanges"]
             .as_array()
@@ -133,7 +151,7 @@ impl Replay {
         let serving = Arc::clone(&state);
         tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
-                tokio::spawn(serve(stream, Arc::clone(&serving)));
+                tokio::spawn(serve(stream, Arc::clone(&serving), hook.clone()));
             }
         });
         Self { endpoint, state }
@@ -154,8 +172,11 @@ impl Replay {
 }
 
 /// Answers the requests of one connection, which the SDK keeps open between them.
-async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) {
+async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>, hook: Option<Hook>) {
     while let Some((operation, body)) = read_request(&mut stream).await {
+        if let Some(hook) = &hook {
+            hook(operation.clone(), body.clone()).await;
+        }
         let (status, response) = state
             .lock()
             .expect("the replay's state")

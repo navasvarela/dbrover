@@ -25,6 +25,7 @@ mod events;
 mod explain;
 mod file_name;
 mod format;
+mod handoff;
 mod hints;
 mod kept_rows;
 mod limits;
@@ -48,9 +49,10 @@ pub use combine::QUEUE_PAGES;
 pub use disk::DiskBudget;
 pub use embedded::{Embedded, PrqlToken, StepLanguage, embedded_code, prql_tokens};
 pub use events::{
-    Batch, Busy, CombineCaps, LakeStart, LimitHit, LimitSetIn, LoadedColumn, Machine, PartDone,
-    PartitionStart, Parts, Preview, Resumed, RunEvent, RunFailure, RunPartitionStart, SourceCaps,
-    SourcePhases, SourceStart, Step, TimedEvent, WrittenFile, counted,
+    Batch, Busy, CombineCaps, HandedOverFiles, LakeStart, LimitHit, LimitSetIn, LoadedColumn,
+    Machine, PartDone, PartitionStart, Parts, Preview, Resumed, RunEvent, RunFailure,
+    RunPartitionStart, SourceCaps, SourcePhases, SourceStart, Step, TimedEvent, WrittenFile,
+    counted,
 };
 pub use explain::{
     CombineExplanation, Estimate, ExplainedPlan, Explanation, KnownTable, SourceExplained,
@@ -75,16 +77,16 @@ pub use partition::{
     PlannedPartition, RangeBound, RangeKind,
 };
 pub use plan::{
-    AttachedSource, Combined, LakeSource, Logic, OutputFormat, Plan, PlannedCombine, PlannedLookup,
-    PlannedOutput, PlannedSource, PlannedSourcePartition, PlannedSplit, QuerySource, RunValues,
-    SourceRanges, TypedValues,
+    AttachedSource, Combined, LakeSource, Logic, OutputFormat, Plan, PlannedCombine,
+    PlannedHandoff, PlannedLookup, PlannedOutput, PlannedSource, PlannedSourcePartition,
+    PlannedSplit, QuerySource, RunValues, SourceRanges, TypedValues,
 };
 pub use problem::{Locator, Place, ReportProblem, Table};
 pub use read::{read_report, read_with_places};
 pub use report::{
-    Chart, ChartPicture, Combine, CombineQuery, LakeRead, Lookup, Output, OutputColumns,
-    OutputWriter, Param, Report, Source, SourceColumn, SourcePartition, SourceRead, SourceRows,
-    SourceSplit,
+    Chart, ChartPicture, Combine, CombineQuery, HandoffRead, LakeRead, Lookup, Output,
+    OutputColumns, OutputWriter, Param, Report, Source, SourceColumn, SourcePartition, SourceRead,
+    SourceRows, SourceSplit,
 };
 pub use request::{ExplainRequest, RunRequest};
 pub use run::{
@@ -99,6 +101,8 @@ mod batch_tests;
 mod chart_tests;
 #[cfg(test)]
 mod combine_tests;
+#[cfg(test)]
+mod handoff_tests;
 #[cfg(test)]
 mod lake_tests;
 #[cfg(test)]

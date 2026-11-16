@@ -233,6 +233,13 @@ impl BucketSignIn {
         self.bucket.lister(now).await
     }
 
+    /// The client that lists and deletes a handoff's files, signed in now (RS7f).
+    pub(crate) async fn handoff_lister(&mut self) -> Result<Arc<Lister>, DriverError> {
+        self.lister(SystemTime::now())
+            .await
+            .map_err(crate::connection_error)
+    }
+
     /// Makes the sign-in expire at `at`, as temporary credentials do.
     #[cfg(test)]
     pub(crate) fn expire_at(&mut self, at: SystemTime) {

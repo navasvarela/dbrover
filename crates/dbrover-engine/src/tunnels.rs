@@ -8,9 +8,9 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 use async_trait::async_trait;
 use dbrover_core::{
     CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, Cell, ChildrenPage,
-    ChildrenQuery, Connection, CostEstimate, DataSourceId, DriverError, ProgressHandle, Rejection,
-    RelationName, ResultCursor, RoleDescription, SchemaDescription, ServerInfo, SshConfig,
-    TableConstraints, TableDescription, TableName, TransactionStatus,
+    ChildrenQuery, Connection, CostEstimate, DataSourceId, DriverError, HandedOver, Handoff,
+    ProgressHandle, Rejection, RelationName, ResultCursor, RoleDescription, SchemaDescription,
+    ServerInfo, SshConfig, TableConstraints, TableDescription, TableName, TransactionStatus,
 };
 use dbrover_ssh::{SshError, Tunnel, TunnelRequest};
 
@@ -147,6 +147,15 @@ impl Connection for Tunnelled {
         values: &[Cell],
     ) -> Result<Box<dyn ResultCursor>, DriverError> {
         self.connection.execute_for_batches(sql, values).await
+    }
+
+    async fn execute_as_files(
+        &mut self,
+        sql: &str,
+        values: &[Cell],
+        handoff: &Handoff,
+    ) -> Result<Option<HandedOver>, DriverError> {
+        self.connection.execute_as_files(sql, values, handoff).await
     }
 
     async fn describe_table(

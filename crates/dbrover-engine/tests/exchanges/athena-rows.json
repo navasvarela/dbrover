@@ -1,0 +1,49 @@
+{
+  "doc": "The same source read the way C3 reads one, a page of text rows at a time, so a test can compare what a handoff loads with what paging loads (RS7f's exit).",
+  "exchanges": [
+    {
+      "operation": "GetWorkGroup",
+      "request": {"WorkGroup": "primary"},
+      "response": {"WorkGroup": {"Name": "primary", "State": "ENABLED", "Configuration": {
+        "ResultConfiguration": {"OutputLocation": "s3://{{bucket}}/report-handoff/"},
+        "EngineVersion": {"EffectiveEngineVersion": "Athena engine version 3"}}}}
+    },
+    {
+      "operation": "StartQueryExecution",
+      "request": {
+        "QueryString": "SELECT item, amount FROM orders",
+        "QueryExecutionContext": {"Catalog": "AwsDataCatalog", "Database": "sales"},
+        "WorkGroup": "primary"
+      },
+      "response": {"QueryExecutionId": "q-rows"}
+    },
+    {
+      "operation": "GetQueryExecution",
+      "request": {"QueryExecutionId": "q-rows"},
+      "repeat": true,
+      "response": {"QueryExecution": {"QueryExecutionId": "q-rows", "StatementType": "DML",
+        "Status": {"State": "SUCCEEDED", "SubmissionDateTime": 1.7e9, "CompletionDateTime": 1.7e9},
+        "ResultConfiguration": {"OutputLocation": "s3://{{bucket}}/report-handoff/q-rows.csv"},
+        "Statistics": {"DataScannedInBytes": 4096, "EngineExecutionTimeInMillis": 120}}}
+    },
+    {
+      "operation": "GetQueryResults",
+      "request": {"QueryExecutionId": "q-rows"},
+      "response": {
+        "UpdateCount": 0,
+        "ResultSet": {
+          "ResultSetMetadata": {"ColumnInfo": [
+            {"CatalogName": "hive", "SchemaName": "", "TableName": "", "Name": "item", "Label": "item", "Type": "varchar", "Precision": 2147483647, "Scale": 0, "Nullable": "UNKNOWN", "CaseSensitive": true},
+            {"CatalogName": "hive", "SchemaName": "", "TableName": "", "Name": "amount", "Label": "amount", "Type": "decimal", "Precision": 10, "Scale": 2, "Nullable": "UNKNOWN", "CaseSensitive": false}
+          ]},
+          "Rows": [
+            {"Data": [{"VarCharValue": "item"}, {"VarCharValue": "amount"}]},
+            {"Data": [{"VarCharValue": "bolt"}, {"VarCharValue": "10.50"}]},
+            {"Data": [{"VarCharValue": "nut"}, {"VarCharValue": "2.25"}]},
+            {"Data": [{"VarCharValue": "bolt"}, {"VarCharValue": "4.00"}]}
+          ]
+        }
+      }
+    }
+  ]
+}

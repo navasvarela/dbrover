@@ -59,15 +59,48 @@ impl GcsLister {
         }
         level(&answer.body)
     }
+
+    /// Deletes the object at `key`: what a run does with the handoff files it wrote
+    /// (`docs/reports-at-scale.md`, RS7f). A key that isn't there answers 404, which is not an
+    /// error for a delete.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError`] when the request fails or Google refuses it, with its reason.
+    pub async fn delete(&self, key: &str) -> Result<(), StorageError> {
+        let url = self.location.object_url(key);
+        let token = self.location.token.as_ref();
+        let answer = self.https.delete_token(&url, token, &[]).await?;
+        // 204 is the delete's own answer, 200 an answer with the object's metadata, and 404
+        // a key another run of the same report had already removed.
+        if !matches!(answer.status, 200 | 204 | 404) {
+            return Err(refusal(answer.status, &answer.body));
+        }
+        Ok(())
+    }
 }
 
 impl GcsLocation {
-    fn list_url(&self, prefix: &str, after: Option<&str>, max: usize) -> String {
-        let base = self
-            .endpoint
+    fn base_url(&self) -> &str {
+        self.endpoint
             .as_deref()
             .unwrap_or(GOOGLE_ENDPOINT)
-            .trim_end_matches('/');
+            .trim_end_matches('/')
+    }
+
+    /// One object's address, for a delete. The whole key is one path segment of the JSON API's
+    /// address, so every `/` in it is encoded.
+    fn object_url(&self, key: &str) -> String {
+        format!(
+            "{}/storage/v1/b/{}/o/{}",
+            self.base_url(),
+            encode(&self.bucket),
+            encode(key)
+        )
+    }
+
+    fn list_url(&self, prefix: &str, after: Option<&str>, max: usize) -> String {
+        let base = self.base_url();
         let mut url = format!(
             "{base}/storage/v1/b/{}/o?delimiter=%2F&maxResults={max}&prefix={}",
             encode(&self.bucket),
@@ -156,6 +189,33 @@ fn refusal(status: u16, body: &[u8]) -> StorageError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The JSON API takes the whole key as one path segment, so every `/` in it is encoded; a
+    /// key sent with its slashes raw names a different address, which answers 404.
+    #[test]
+    fn object_urls_encode_the_whole_key_as_one_segment() {
+        let cases = [
+            (
+                None,
+                "dbrover-tmp/shop/run-1/orders/part-000000000000.parquet",
+                "https://storage.googleapis.com/storage/v1/b/sales/o/dbrover-tmp%2Fshop%2F\
+                 run-1%2Forders%2Fpart-000000000000.parquet",
+            ),
+            (
+                Some("http://localhost:59100/"),
+                "tmp/a b.parquet",
+                "http://localhost:59100/storage/v1/b/sales/o/tmp%2Fa%20b.parquet",
+            ),
+        ];
+        for (endpoint, key, expected) in cases {
+            let location = GcsLocation {
+                bucket: "sales".to_owned(),
+                endpoint: endpoint.map(str::to_owned),
+                token: None,
+            };
+            assert_eq!(location.object_url(key), expected);
+        }
+    }
 
     #[test]
     fn list_urls_name_the_bucket_prefix_and_page() {

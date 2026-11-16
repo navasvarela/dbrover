@@ -62,14 +62,46 @@ impl AzureLister {
         }
         xml::azure_level(&answer.body)
     }
+
+    /// Deletes the blob at `key`: what a run does with the handoff files it wrote
+    /// (`docs/reports-at-scale.md`, RS7f). A blob that isn't there answers 404, which is not
+    /// an error for a delete.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError`] when the request fails or Azure refuses it, with its code.
+    pub async fn delete(&self, key: &str) -> Result<(), StorageError> {
+        let url = self.location.blob_url(key);
+        let headers = [("x-ms-version".to_owned(), API_VERSION.to_owned())];
+        let answer = self
+            .https
+            .delete_token(&url, self.location.token.as_ref(), &headers)
+            .await?;
+        // 202 is the delete's own answer, and 404 a blob another run had already removed.
+        if !matches!(answer.status, 200 | 202 | 404) {
+            return Err(xml::s3_refusal(answer.status, &answer.body));
+        }
+        Ok(())
+    }
 }
 
 impl AzureLocation {
-    fn list_url(&self, prefix: &str, after: Option<&str>, max: usize) -> String {
-        let base = match &self.endpoint {
+    fn base_url(&self) -> String {
+        match &self.endpoint {
             Some(endpoint) => endpoint.trim_end_matches('/').to_owned(),
             None => format!("https://{}.blob.core.windows.net", self.account),
-        };
+        }
+    }
+
+    /// One blob's address, for a delete: each segment of the key encoded, as the listing's
+    /// prefix is.
+    fn blob_url(&self, key: &str) -> String {
+        let path = key.split('/').map(encode).collect::<Vec<_>>().join("/");
+        format!("{}/{}/{path}", self.base_url(), encode(&self.container))
+    }
+
+    fn list_url(&self, prefix: &str, after: Option<&str>, max: usize) -> String {
+        let base = self.base_url();
         let mut url = format!(
             "{base}/{}?restype=container&comp=list&delimiter=%2F&maxresults={max}&prefix={}",
             encode(&self.container),
@@ -114,6 +146,22 @@ mod tests {
             };
             assert_eq!(location.list_url(prefix, after, 1000), expected);
         }
+    }
+
+    #[test]
+    fn blob_urls_name_the_container_and_keep_the_keys_slashes() {
+        let location = AzureLocation {
+            account: "acme".to_owned(),
+            container: "raw".to_owned(),
+            endpoint: None,
+            token: None,
+        };
+
+        assert_eq!(
+            location.blob_url("dbrover-tmp/shop/run-1/orders/part-0.parquet"),
+            "https://acme.blob.core.windows.net/raw/dbrover-tmp/shop/run-1/orders/\
+             part-0.parquet"
+        );
     }
 
     /// The token goes only over HTTPS, or to this machine, where Azurite listens.

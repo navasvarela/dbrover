@@ -16,11 +16,12 @@ use std::time::{Duration, Instant};
 
 use arrow_schema::Schema;
 use dbrover_core::{
-    CancelHandle, Connection, CostEstimate, CostGuard, DriverError, LakeFormat, ReadPace,
-    ResultCursor, Row, ScanEstimate, describe_error,
+    CancelHandle, Connection, CostEstimate, CostGuard, DriverError, HandedOver, Handoff,
+    HandoffFiles, HandoffFolder, LakeFormat, ObjectStorage, ReadPace, ResultCursor, Row,
+    ScanEstimate, describe_error,
 };
 use dbrover_driver_duckdb::{
-    Allowed, BucketSignIn, DuckDbType, LakeView, LoadColumn, TableLoader, Workspace,
+    Allowed, BucketSignIn, DuckDbType, HandoffLoaded, LakeView, LoadColumn, TableLoader, Workspace,
     WorkspaceLimit, WorkspaceLimits, WorkspaceProfile, WorkspaceStore,
 };
 use dbrover_export::ExportColumn;
@@ -34,16 +35,17 @@ mod ranges;
 use crate::chart::ChartRun;
 use crate::checkpoints::Checkpoints;
 use crate::declared::Shaped;
+use crate::handoff::HandoffFolders;
 use crate::live::{ProgressClock, waiting};
 use crate::parquet::{ParquetCopy, ParquetFile, parquet_files};
 use crate::run::{Count, Feed, Sink, millis, timed};
 use crate::statement::{Statements, lookup_literal};
 use crate::typing::{ColumnTyper, DriverTypes};
 use crate::{
-    AttachedSource, Batch, Busy, Chart, CombineLimits, Combined, KeptColumn, LakeSource, LimitHit,
-    LoadedColumn, Parts, Plan, PlannedLookup, PlannedSource, PlannedSplit, QuerySource, Resumed,
-    RunEvent, RunFailure, RunFolders, RunValues, SourceError, SourceKept, SourceOpener, SourcePart,
-    SourcePhases, SourceReader, SourceStatement, Step,
+    AttachedSource, Batch, Busy, Chart, CombineLimits, Combined, HandedOverFiles, KeptColumn,
+    LakeSource, LimitHit, LoadedColumn, Parts, Plan, PlannedLookup, PlannedSource, PlannedSplit,
+    QuerySource, Resumed, RunEvent, RunFailure, RunFolders, RunValues, SourceError, SourceKept,
+    SourceOpener, SourcePart, SourcePhases, SourceReader, SourceStatement, Step,
 };
 
 /// Rows asked of the combine query at a time, as a source's are.
@@ -75,6 +77,10 @@ pub(crate) struct Combining<'a, 'v, O> {
     /// Where the sources it loads are recorded, and those an earlier run loaded found (RS5e);
     /// `None` for a range of a partitioned run, whose DuckDB is its own.
     pub(crate) checkpoints: Option<&'v Checkpoints>,
+    /// The folders this run's handed-over files go in, one per statement, which the run
+    /// removes as it ends (RS7f). The same for every range of a partitioned run, so one
+    /// cleanup covers them all.
+    pub(crate) handoffs: &'v HandoffFolders,
 }
 
 impl<'a, O: SourceOpener> Combining<'a, '_, O> {
@@ -383,10 +389,7 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
                 PlannedSource::Attached(_) | PlannedSource::Lake(_) => None,
             })
             .collect();
-        let tables = kept
-            .iter()
-            .map(LoadedTable::from_kept)
-            .collect::<Result<Vec<_>, _>>()?;
+        let tables: Vec<LoadedTable> = kept.iter().map(LoadedTable::from_kept).collect();
         events(RunEvent::Resumed(Resumed {
             ranges: Vec::new(),
             sources: kept.iter().map(|source| source.id.clone()).collect(),
@@ -446,8 +449,9 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
             clock: ProgressClock::new(),
             scanned: None,
             at: At::Whole,
+            handed_over: None,
         };
-        let statements = Statements::loaded(self.plan, self.values, source);
+        let statements = Statements::loaded(self.plan, self.values, source, Some(self.handoffs));
         let deadline = opened + source.limits.timeout;
         let sent = match &source.split {
             PlannedSplit::Whole => {
@@ -540,6 +544,7 @@ fn kept_source_done(source: &SourceKept) -> RunEvent {
         parts: None,
         phases: None,
         scanned_bytes: None,
+        handed_over: None,
     }
 }
 
@@ -557,35 +562,19 @@ fn make_folder(folder: &Path) -> Result<(), RunFailure> {
 /// column's name and type.
 struct LoadedTable {
     id: String,
-    columns: Vec<(String, DuckDbType)>,
+    /// Each column with the type DuckDB holds it as, by name: the type the run's loading
+    /// chose, or, for a source handed over through a bucket, the files' own, which can be a
+    /// type nothing in a report's loading makes (RS7f).
+    columns: Vec<KeptColumn>,
 }
 
 impl LoadedTable {
     /// The table of a source an earlier run loaded, as the manifest records it.
-    fn from_kept(kept: &SourceKept) -> Result<Self, RunFailure> {
-        let columns = kept
-            .columns
-            .iter()
-            .map(|column| {
-                let column_type = column.duckdb_type.parse::<DuckDbType>().map_err(|_| {
-                    RunFailure::new(
-                        Step::Source {
-                            id: kept.id.clone(),
-                        },
-                        format!(
-                            "the kept workspace's column {:?} has a type DbRover doesn't read, \
-                             {}; run the report from scratch",
-                            column.name, column.duckdb_type
-                        ),
-                    )
-                })?;
-                Ok((column.name.clone(), column_type))
-            })
-            .collect::<Result<Vec<_>, RunFailure>>()?;
-        Ok(Self {
+    fn from_kept(kept: &SourceKept) -> Self {
+        Self {
             id: kept.id.clone(),
-            columns,
-        })
+            columns: kept.columns.clone(),
+        }
     }
 
     /// What the manifest records of the table, once its source read `read`.
@@ -594,14 +583,7 @@ impl LoadedTable {
             id: self.id.clone(),
             rows: read.rows,
             read: read.bytes,
-            columns: self
-                .columns
-                .iter()
-                .map(|(name, column_type)| KeptColumn {
-                    name: name.clone(),
-                    duckdb_type: column_type.to_string(),
-                })
-                .collect(),
+            columns: self.columns.clone(),
         }
     }
 }
@@ -622,15 +604,15 @@ async fn lookup_values(
                 lookup.from
             ))
         })?;
-    let (name, column_type) = table
+    let column = table
         .columns
         .iter()
-        .find(|(name, _)| name.eq_ignore_ascii_case(&lookup.column))
+        .find(|column| column.name.eq_ignore_ascii_case(&lookup.column))
         .ok_or_else(|| {
             let names: Vec<&str> = table
                 .columns
                 .iter()
-                .map(|(name, _)| name.as_str())
+                .map(|column| column.name.as_str())
                 .collect();
             SourceError::new(format!(
                 "lookup: {:?} has no column {:?}; it has {}",
@@ -639,13 +621,26 @@ async fn lookup_values(
                 names.join(", ")
             ))
         })?;
+    // A column of a type no loading makes is one a handoff's files brought (RS7f), or a kept
+    // workspace from a later DbRover: its values can't be written into a statement as
+    // literals, which is what a lookup does with them.
+    let column_type = column
+        .duckdb_type
+        .parse::<DuckDbType>()
+        .map_err(|problem| {
+            SourceError::new(format!(
+                "lookup: {:?}'s column {:?} is a {}, which a lookup's values can't be made \
+                 from: {problem}. Read the values with a cast in the source's own query",
+                lookup.from, column.name, column.duckdb_type
+            ))
+        })?;
     let values = workspace
-        .distinct_values(&table.id, name)
+        .distinct_values(&table.id, &column.name)
         .await
         .map_err(|error| SourceError::new(describe_error(&error)))?;
     Ok(values
         .into_iter()
-        .map(|value| lookup_literal(*column_type, value))
+        .map(|value| lookup_literal(column_type, value))
         .collect())
 }
 
@@ -876,6 +871,18 @@ struct Loading<'a> {
     scanned: Option<u64>,
     /// Which of its statements it is sending.
     at: At,
+    /// What its handed-over files became, for a source with a `handoff` (RS7f): DuckDB made
+    /// the table itself, so there is no loader and nothing to type.
+    handed_over: Option<HandedOverLoad>,
+}
+
+/// A source loaded from the files its engine wrote (RS7f): the table DuckDB made from them,
+/// and what reading them cost.
+struct HandedOverLoad {
+    loaded: HandoffLoaded,
+    /// The files read, and the bytes they held, which the bucket's listing gave.
+    files: u64,
+    bytes: u64,
 }
 
 /// Which of a source's statements is being read, for its progress.
@@ -910,6 +917,76 @@ enum Sent {
     Batches(u64),
     /// One a range of its partition.
     Parts(u64),
+}
+
+/// The files a handoff's load reads: their whole addresses, and the bytes they hold.
+struct HandedFiles {
+    addresses: Vec<String>,
+    bytes: u64,
+}
+
+/// What an engine wrote for a handoff: the addresses it named, or everything in the folder it
+/// was given, which the run owns, so everything in it is the engine's own output.
+///
+/// A key of no bytes is left out: it is the folder marker some tools write, which no reader
+/// takes.
+async fn handed_files(
+    sign_in: &mut BucketSignIn,
+    handed: &HandedOver,
+    folder: Option<&HandoffFolder>,
+    storage: &ObjectStorage,
+) -> Result<HandedFiles, String> {
+    match (&handed.files, folder) {
+        (HandoffFiles::Named { read, .. }, _) => {
+            // The engine named where it writes its own results, which the report didn't: a
+            // location outside the handoff's bucket is one the run can neither read nor
+            // delete, so it says so rather than failing in DuckDB's words.
+            let bucket = format!("{}/", storage.url());
+            if let Some(outside) = read.iter().find(|file| !file.starts_with(&bucket)) {
+                return Err(format!(
+                    "it wrote {outside}, which isn't in {}: name the data source of the bucket \
+                     it writes its results in, or give the handoff a prefix of its own",
+                    storage.url()
+                ));
+            }
+            Ok(HandedFiles {
+                addresses: read.clone(),
+                // Nothing lists a file the engine named: its size would be a request each, and
+                // what a handoff's bytes say is what the files held, not what they cost.
+                bytes: 0,
+            })
+        }
+        (HandoffFiles::InFolder, Some(folder)) => {
+            let found = sign_in
+                .files_under(folder.key())
+                .await
+                .map_err(|error| describe_error(&error))?;
+            let bytes = found.iter().map(|file| file.size).sum();
+            let addresses = found
+                .iter()
+                .filter(|file| file.size > 0)
+                .map(|file| format!("{}/{}", storage.url(), file.key))
+                .collect();
+            Ok(HandedFiles { addresses, bytes })
+        }
+        (HandoffFiles::InFolder, None) => {
+            Err("it wrote into a folder it was never given".to_owned())
+        }
+    }
+}
+
+/// Deletes the objects at `addresses`, each a whole address in `storage`.
+async fn remove_keys(
+    sign_in: &mut BucketSignIn,
+    addresses: &[String],
+    storage: &ObjectStorage,
+) -> Result<(), DriverError> {
+    let bucket = format!("{}/", storage.url());
+    for address in addresses {
+        let key = address.strip_prefix(&bucket).unwrap_or(address);
+        sign_in.remove_key(key).await?;
+    }
+    Ok(())
 }
 
 /// Appends the parts `queued` to `table` as they come, until the reader ends; and when it was
@@ -990,12 +1067,125 @@ impl Loading<'_> {
         let opening = reader.opening();
         self.spent.connect += opening.connect;
         self.spent.start += opening.start;
-        let filled = self.fill_from(&mut reader, workspace, events).await;
+        let filled = match reader.handed_over().cloned() {
+            // The engine wrote files instead of answering with rows, so DuckDB reads them
+            // into the source's table and the run deletes them (RS7f).
+            Some(handed) => {
+                self.load_handed_over(opener, statement, &handed, workspace, events)
+                    .await
+            }
+            None => self.fill_from(&mut reader, workspace, events).await,
+        };
         if let Some(scanned) = reader.scanned() {
             self.scanned = Some(self.scanned.unwrap_or(0).saturating_add(scanned));
         }
         reader.close().await;
         filled
+    }
+
+    /// Reads the files `handed` names into the source's table, and deletes them (RS7f).
+    ///
+    /// The bucket is the handoff's own data source's, signed in to here as a lake's is: the
+    /// extensions DuckDB needs for the provider, then its temporary secret, then the read.
+    /// It all happens before [`Workspace::lock`], where every source is loaded, so the
+    /// bucket needs no prefix in `allowed_directories`.
+    async fn load_handed_over<O: SourceOpener>(
+        &mut self,
+        opener: &O,
+        statement: &SourceStatement<'_>,
+        handed: &HandedOver,
+        workspace: &Workspace,
+        events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
+    ) -> Result<(), RunFailure> {
+        let step = self.step();
+        let failed = |problem: String| RunFailure::new(step.clone(), problem);
+        let (Some(planned), Some(handoff)) = (&self.source.handoff, &statement.handoff) else {
+            return Err(failed(
+                "the engine wrote its result as files for a source that asked for none".to_owned(),
+            ));
+        };
+        let password = if planned.storage.uses_password() {
+            opener
+                .password(&planned.data_source)
+                .await
+                .map_err(|error| failed(error.message))?
+        } else {
+            None
+        };
+        let mut sign_in = BucketSignIn::new(planned.storage.clone(), password);
+        let folder = match handoff {
+            Handoff::IntoFolder(folder) => Some(folder),
+            Handoff::OwnResult => None,
+        };
+        let found = handed_files(&mut sign_in, handed, folder, &planned.storage)
+            .await
+            .map_err(|problem| {
+                failed(format!(
+                    "the files {} wrote couldn't be found: {problem}",
+                    planned.data_source.name
+                ))
+            })?;
+        // The bucket's own extension has to hold the secret's type before the secret is made,
+        // and both before anything reads a file (ADR 0008, as built).
+        workspace
+            .load_lake_extensions(&planned.storage, handed.format)
+            .await
+            .map_err(|error| failed(describe_error(&error)))?;
+        workspace
+            .sign_in_to_bucket(&mut sign_in)
+            .await
+            .map_err(|error| {
+                failed(format!(
+                    "could not sign in to {}: {}",
+                    planned.storage,
+                    describe_error(&error)
+                ))
+            })?;
+        let at = self.at;
+        let read = &self.read;
+        let opened = self.opened;
+        let clock = &mut self.clock;
+        let (loaded, taken) = waiting(
+            Box::pin(workspace.load_handoff(&self.source.id, &found.addresses, handed.format)),
+            |so_far| {
+                let busy = clock.lap_loading(so_far);
+                (events.borrow_mut())(progress_at(&step, read, opened, at, busy));
+            },
+        )
+        .await;
+        self.spent.load += taken;
+        self.clock.loaded(taken);
+        let loaded = loaded.map_err(|error| self.duckdb_failure(&error))?;
+        self.read.rows = loaded.rows;
+        self.read.bytes = found.bytes;
+        self.read
+            .first_row
+            .get_or_insert_with(|| self.opened.elapsed());
+        self.handed_over = Some(HandedOverLoad {
+            loaded,
+            files: found.addresses.len() as u64,
+            bytes: found.bytes,
+        });
+        // The rows are in the run's own database now, so the files have done their job. A
+        // delete that fails leaves them for the next run of this report, and for the
+        // lifecycle rule the manual asks for, rather than failing a run that has its rows.
+        let removed = match (&handed.files, folder) {
+            (HandoffFiles::Named { remove, .. }, _) => {
+                remove_keys(&mut sign_in, remove, &planned.storage).await
+            }
+            (HandoffFiles::InFolder, Some(folder)) => {
+                sign_in.remove_under(folder.key()).await.map(|_| ())
+            }
+            (HandoffFiles::InFolder, None) => Ok(()),
+        };
+        if let Err(error) = removed {
+            tracing::warn!(
+                "could not delete the handed-over files of the source {:?}: {}",
+                self.source.id,
+                describe_error(&error)
+            );
+        }
+        Ok(())
     }
 
     /// Reads `reader`'s pages into the table: the reader and the loader take turns at the
@@ -1076,6 +1266,68 @@ impl Loading<'_> {
             }
         };
         (outcome, Instant::now())
+    }
+
+    /// What a source handed over through a bucket ends with (RS7f): DuckDB made its table
+    /// from the files, so there is no loader to finish and no column to type, and the columns
+    /// are the ones the files brought.
+    fn finish_handed_over(
+        self,
+        handed: HandedOverLoad,
+        events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
+    ) -> (LoadedTable, Count) {
+        let columns: Vec<KeptColumn> = handed
+            .loaded
+            .columns
+            .into_iter()
+            .map(|(name, duckdb_type)| KeptColumn { name, duckdb_type })
+            .collect();
+        let spent = &self.spent;
+        (events.borrow_mut())(RunEvent::SourceDone {
+            id: self.source.id.clone(),
+            rows: self.read.rows,
+            bytes: self.read.bytes,
+            first_row_ms: self.read.first_row.map(millis),
+            elapsed_ms: millis(self.opened.elapsed()),
+            table: columns
+                .iter()
+                .map(|column| LoadedColumn {
+                    name: column.name.clone(),
+                    type_name: column.duckdb_type.clone(),
+                    declared: false,
+                    // The files' own columns: nothing in the run wrote them, so nothing
+                    // measured what each holds.
+                    bytes: None,
+                })
+                .collect(),
+            warnings: Vec::new(),
+            batches: None,
+            parts: None,
+            phases: Some(SourcePhases {
+                connect_ms: millis(spent.connect),
+                server_ms: millis(spent.start),
+                // The engine wrote the files; reading them is DuckDB's load, not a transfer
+                // the run paged.
+                transfer_ms: 0,
+                load_ms: millis(spent.load),
+                type_ms: 0,
+            }),
+            scanned_bytes: self.scanned,
+            handed_over: Some(HandedOverFiles {
+                files: handed.files,
+                bytes: handed.bytes,
+            }),
+        });
+        let read = Count {
+            rows: self.read.rows,
+            bytes: self.read.bytes,
+            ..Count::default()
+        };
+        let table = LoadedTable {
+            id: self.source.id.clone(),
+            columns,
+        };
+        (table, read)
     }
 
     /// The table for `columns`: made for the first statement, whose columns a later batch's
@@ -1164,10 +1416,13 @@ impl Loading<'_> {
     /// Types the table's columns, makes it, and says so; `batches` is how many statements
     /// a lookup sent.
     async fn finish(
-        self,
+        mut self,
         sent: Sent,
         events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
     ) -> Result<(LoadedTable, Count), RunFailure> {
+        if let Some(handed) = self.handed_over.take() {
+            return Ok(self.finish_handed_over(handed, events));
+        }
         let step = self.step();
         let Some(Table {
             loader,
@@ -1179,10 +1434,13 @@ impl Loading<'_> {
         };
         let (types, warnings) = typer.types();
         let declared = typer.is_declared();
-        let columns: Vec<(String, DuckDbType)> = typer
+        let columns: Vec<KeptColumn> = typer
             .names()
-            .map(str::to_owned)
-            .zip(types.iter().copied())
+            .zip(types.iter())
+            .map(|(name, column_type)| KeptColumn {
+                name: name.to_owned(),
+                duckdb_type: column_type.to_string(),
+            })
             .collect();
         let (typed, typing) = timed(loader.finish(&types)).await;
         typed.map_err(|error| duckdb_failure(&error, self.limits).at(step))?;
@@ -1203,9 +1461,9 @@ impl Loading<'_> {
             table: columns
                 .iter()
                 .zip(&column_bytes)
-                .map(|((name, column_type), bytes)| LoadedColumn {
-                    name: name.clone(),
-                    type_name: column_type.to_string(),
+                .map(|(column, bytes)| LoadedColumn {
+                    name: column.name.clone(),
+                    type_name: column.duckdb_type.clone(),
                     declared,
                     bytes: Some(*bytes),
                 })
@@ -1221,6 +1479,7 @@ impl Loading<'_> {
             },
             phases: Some(phases),
             scanned_bytes: self.scanned,
+            handed_over: None,
         });
         let read = Count {
             rows: self.read.rows,
