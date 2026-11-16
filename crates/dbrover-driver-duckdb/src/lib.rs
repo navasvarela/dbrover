@@ -7,6 +7,7 @@ mod bucket;
 mod catalog;
 mod errors;
 mod execution;
+mod lake;
 mod parquet;
 mod profile;
 mod table;
@@ -30,9 +31,10 @@ use dbrover_core::{
 use duckdb::AccessMode;
 
 pub use bucket::BucketError;
+pub use lake::{BucketSignIn, DuckDbExtension, LakeView};
 pub use parquet::{ParquetCompression, ParquetWriter};
 pub use workspace::{
-    DuckDbType, LoadColumn, TableLoader, UnknownDuckDbType, Workspace, WorkspaceLimit,
+    Allowed, DuckDbType, LoadColumn, TableLoader, UnknownDuckDbType, Workspace, WorkspaceLimit,
     WorkspaceLimits, WorkspacePeaks, WorkspaceProfile, WorkspaceStore, copy_to_parquet,
     read_parquet, read_parquet_files,
 };
@@ -636,8 +638,10 @@ impl Connection for DuckDbConnection {
 }
 
 #[cfg(test)]
-mod bucket_tests;
+pub(crate) mod bucket_tests;
+#[cfg(test)]
+mod lake_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
-mod workspace_tests;
+pub(crate) mod workspace_tests;

@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 use arrow_schema::Schema;
 use dbrover_core::{CancelHandle, Connection, DriverError, ResultCursor, Row, describe_error};
 use dbrover_driver_duckdb::{
-    DuckDbType, LoadColumn, TableLoader, Workspace, WorkspaceLimit, WorkspaceLimits,
+    Allowed, DuckDbType, LoadColumn, TableLoader, Workspace, WorkspaceLimit, WorkspaceLimits,
     WorkspaceProfile, WorkspaceStore,
 };
 use dbrover_export::ExportColumn;
@@ -155,7 +155,7 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
             make_folder(folder)?;
         }
         workspace
-            .lock(&writable)
+            .lock(&Allowed::folders(&writable))
             .await
             .map_err(|error| RunFailure::new(Step::Combine, describe_error(&error)))?;
 

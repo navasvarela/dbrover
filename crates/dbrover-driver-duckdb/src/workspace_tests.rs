@@ -2,7 +2,9 @@ use std::path::Path;
 
 use dbrover_core::{Connection, DriverError, describe_error};
 
-use crate::{DuckDbType, LoadColumn, Workspace, WorkspaceLimit, WorkspaceLimits, WorkspaceStore};
+use crate::{
+    Allowed, DuckDbType, LoadColumn, Workspace, WorkspaceLimit, WorkspaceLimits, WorkspaceStore,
+};
 
 const MIB: u64 = 1 << 20;
 
@@ -16,15 +18,15 @@ fn limits(folder: &Path, memory_limit: u64, max_temp_size: u64) -> WorkspaceLimi
 }
 
 /// A run's database, on a file in `folder`.
-fn on_file(folder: &Path) -> WorkspaceStore {
+pub(crate) fn on_file(folder: &Path) -> WorkspaceStore {
     WorkspaceStore::File(folder.join("workspace.duckdb"))
 }
 
-fn roomy(folder: &Path) -> WorkspaceLimits {
+pub(crate) fn roomy(folder: &Path) -> WorkspaceLimits {
     limits(folder, 256 * MIB, 256 * MIB)
 }
 
-async fn query(
+pub(crate) async fn query(
     workspace: &mut Workspace,
     sql: &str,
 ) -> Result<Vec<Vec<Option<String>>>, DriverError> {
@@ -105,7 +107,7 @@ async fn loads_text_into_typed_columns_with_every_digit() {
         ])
         .await
         .unwrap();
-    workspace.lock(&[]).await.unwrap();
+    workspace.lock(&Allowed::default()).await.unwrap();
 
     let types = query(
         &mut workspace,
@@ -249,7 +251,7 @@ async fn attaches_a_file_read_only() {
         .await
         .unwrap();
     workspace.attach("prices", &path).await.unwrap();
-    workspace.lock(&[]).await.unwrap();
+    workspace.lock(&Allowed::default()).await.unwrap();
 
     let rows = query(
         &mut workspace,
@@ -282,7 +284,7 @@ async fn once_locked_reads_no_file_and_keeps_its_limits() {
     let mut workspace = Workspace::open(&on_file(folder.path()), &roomy(folder.path()))
         .await
         .unwrap();
-    workspace.lock(&[]).await.unwrap();
+    workspace.lock(&Allowed::default()).await.unwrap();
 
     let attempts = [
         format!("SELECT * FROM read_csv('{}')", outside.display()),
@@ -354,7 +356,7 @@ async fn reports_its_peaks_once_locked_down() {
     let mut workspace = Workspace::open(&on_file(folder.path()), &roomy(folder.path()))
         .await
         .unwrap();
-    workspace.lock(&[]).await.unwrap();
+    workspace.lock(&Allowed::default()).await.unwrap();
     let rows = query(&mut workspace, "SELECT sum(range) FROM range(100000)")
         .await
         .unwrap();
@@ -397,7 +399,7 @@ async fn orders_and_regions(folder: &Path) -> Workspace {
         .finish(&[DuckDbType::Varchar, DuckDbType::Varchar])
         .await
         .unwrap();
-    workspace.lock(&[]).await.unwrap();
+    workspace.lock(&Allowed::default()).await.unwrap();
     workspace
 }
 
@@ -565,7 +567,7 @@ async fn keeps_tables_larger_than_its_memory_on_its_file() {
         .finish(&[DuckDbType::BigInt, DuckDbType::Varchar])
         .await
         .unwrap();
-    workspace.lock(&[]).await.unwrap();
+    workspace.lock(&Allowed::default()).await.unwrap();
     let rows = query(
         &mut workspace,
         "SELECT count(*), sum(length(padding)) FROM wide",
@@ -642,7 +644,10 @@ async fn writes_parquet_only_in_the_folder_it_was_locked_to() {
     let mut workspace = Workspace::open(&on_file(folder.path()), &roomy(folder.path()))
         .await
         .unwrap();
-    workspace.lock(&[&staging, &parts]).await.unwrap();
+    workspace
+        .lock(&Allowed::folders(&[&staging, &parts]))
+        .await
+        .unwrap();
     let file = staging.join("out.parquet.partial");
     let copy = crate::copy_to_parquet(
         "SELECT range AS n, CAST(range / 4 AS DECIMAL(18,2)) AS quarter FROM range(5)\n-- the end;",
@@ -694,7 +699,7 @@ async fn writes_parquet_only_in_the_folder_it_was_locked_to() {
     let mut locked = Workspace::open(&on_file(folder.path()), &roomy(folder.path()))
         .await
         .unwrap();
-    locked.lock(&[]).await.unwrap();
+    locked.lock(&Allowed::default()).await.unwrap();
     let copy = crate::copy_to_parquet(
         "SELECT 1",
         &folder.path().join("x.parquet"),
