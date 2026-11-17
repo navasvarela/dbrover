@@ -1,5 +1,5 @@
 //! The report tools that read a report's run history (`docs/reports-at-scale.md`, "RS8
-//! against today's code"): `report_runs` and `report_profile`.
+//! against today's code"): `report_runs`, `report_profile` and `compare_report_runs`.
 //!
 //! The server reads the history itself, through [`dbrover_store::History`], rather than
 //! asking the app for it: a kept run is a row of `history.sqlite`, which the server already
@@ -53,6 +53,17 @@ pub(crate) struct ReportProfileArgs {
     /// The run's id, as report_runs gives it; the newest kept run when left out.
     #[serde(default)]
     run: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(crate) struct CompareReportRunsArgs {
+    /// The report's name, as list_reports gives it.
+    report: String,
+    /// The earlier run's id, as report_runs gives it.
+    before: i64,
+    /// The later run's id, as report_runs gives it.
+    after: i64,
 }
 
 impl DbRoverMcp {
@@ -151,6 +162,22 @@ impl DbRoverMcp {
             fields.insert("funnel".to_owned(), data_funnel(run));
         }
         Ok(profile)
+    }
+
+    pub(crate) fn compare_report_runs_json(
+        &self,
+        args: CompareReportRunsArgs,
+    ) -> Result<Value, ToolError> {
+        let tool = "compare_report_runs";
+        self.inner.audit.call(tool, None, None);
+        let (report, runs) = self.kept_runs(tool, &args.report)?;
+        let before = self.one_run(&report, &runs, Some(args.before))?;
+        let after = self.one_run(&report, &runs, Some(args.after))?;
+        Ok(json::comparison(
+            before,
+            after,
+            &compare::compare(before, after),
+        ))
     }
 }
 

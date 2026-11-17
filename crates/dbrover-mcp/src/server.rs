@@ -29,7 +29,7 @@ use crate::chart::{self as charts, ChartArgs};
 use crate::connections::Connections;
 use crate::execute::ExecuteArgs;
 use crate::project::ServedProject;
-use crate::report_history::{ReportProfileArgs, ReportRunsArgs};
+use crate::report_history::{CompareReportRunsArgs, ReportProfileArgs, ReportRunsArgs};
 use crate::reports::{ReportRunner, RunReportArgs};
 use crate::scope::Scope;
 use crate::transaction::{self, Access, CallSettings, Rows, RunError, Watchdog};
@@ -427,6 +427,20 @@ impl DbRoverMcp {
     #[tool(annotations(read_only_hint = true, open_world_hint = false))]
     async fn report_profile(&self, Parameters(args): Parameters<ReportProfileArgs>) -> ToolResult {
         reply(self.report_profile_json(args))
+    }
+
+    /// Two of a report's kept runs side by side, as Compare in its tab and
+    /// `dbrover report compare` show them: per step, the change in time, rows, bytes and
+    /// peaks, with changes past half again marked; the parameters and limits that differ; and
+    /// whether the report's file changed between them, which is usually the answer when every
+    /// step moved at once. `before` and `after` are run ids, as report_runs gives them.
+    /// Reads the history and runs nothing.
+    #[tool(annotations(read_only_hint = true, open_world_hint = false))]
+    async fn compare_report_runs(
+        &self,
+        Parameters(args): Parameters<CompareReportRunsArgs>,
+    ) -> ToolResult {
+        reply(self.compare_report_runs_json(args))
     }
 
     /// Runs one of list_reports' reports with its parameters, as DbRover runs it: each source
