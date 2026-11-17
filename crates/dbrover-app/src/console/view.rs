@@ -97,6 +97,11 @@ pub enum ConsoleAction {
     ExportChart(PictureFormat),
     /// Writes the shown chart's kind, X and Y into the block above its statement.
     SaveChartToQuery,
+    /// Writes a statement summarising `column` below the one that produced the result (CH5f).
+    Summarise {
+        summary: dbrover_sql::Summary,
+        column: String,
+    },
     /// Changes the shown Redis key from its key bar with `command`, then reads it again with
     /// `then`'s command: the same key, or the key it was renamed to.
     KeyCommand {

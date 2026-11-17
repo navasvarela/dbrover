@@ -19,6 +19,7 @@ pub(crate) mod plan;
 mod problems;
 mod results;
 mod snippet;
+mod summarise;
 mod view;
 
 use std::ops::Range;
@@ -43,7 +44,7 @@ use crate::export_dialog::{ExportPreview, PREVIEW_ROWS};
 use dbrover_language::redis::{KeyView, ViewShape};
 use dbrover_language::{EditsRun, ExplainDepth, QueryLanguage, command_at};
 use dbrover_plan::PlanFormat;
-use dbrover_sql::{Dialect, FormatOptions, ParameterValues, format_ranges};
+use dbrover_sql::{Dialect, FormatOptions, ParameterValues, Summary, format_ranges};
 use dbrover_store::{ConsoleKey, Snippet, SnippetBody, SqlFileContents};
 
 use edit::{EditTarget, Editability};
@@ -205,8 +206,9 @@ pub struct QueryConsole {
     snippet_fields: Option<snippet::SnippetFields>,
     /// The candidate accepted last, until the app records it as recent.
     accepted_completion: Option<completion::Candidate>,
-    /// How the last export went: where the rows went, or why they didn't.
-    export_status: Option<Result<String, String>>,
+    /// How the last thing the console wrote went, and where it went: an export, a copy, or a
+    /// summary.
+    written_status: Option<Result<String, String>>,
     /// An export of every row in progress: its run, to cancel it, and how many rows it has
     /// written.
     exporting: Option<(RunId, usize)>,
@@ -596,7 +598,7 @@ impl QueryConsole {
             completion: None,
             accepted_completion: None,
             snippet_fields: None,
-            export_status: None,
+            written_status: None,
             exporting: None,
             last_export: None,
             chart_export: None,
@@ -940,7 +942,7 @@ impl QueryConsole {
         match copy.text(&selection, options) {
             Ok(text) => Some(text),
             Err(reason) => {
-                self.export_status = Some(Err(reason.to_owned()));
+                self.written_status = Some(Err(reason.to_owned()));
                 None
             }
         }
@@ -958,7 +960,7 @@ impl QueryConsole {
             Ok(ExportSpec::Program(spec)) => *spec,
             Ok(_) => return None,
             Err(reason) => {
-                self.export_status = Some(Err(reason.to_owned()));
+                self.written_status = Some(Err(reason.to_owned()));
                 return None;
             }
         };
@@ -996,7 +998,7 @@ impl QueryConsole {
         self.run = None;
         self.to_file = Some(path.clone());
         self.exporting = Some((run, 0));
-        self.export_status = None;
+        self.written_status = None;
         self.last_export = Some(spec.clone());
         self.remember_parameters(&parameters);
         Some(Command::RunToFile {
@@ -1132,7 +1134,7 @@ impl QueryConsole {
         }
         let sql = statement.resubmission(self.dialect()).ok()?.sql;
         self.exporting = Some((run, 0));
-        self.export_status = None;
+        self.written_status = None;
         self.last_export = Some(spec.clone());
         Some(Command::ExportAllRows {
             console: self.id,
@@ -1562,6 +1564,51 @@ impl QueryConsole {
         self.edited(now);
     }
 
+    /// Writes a statement summarising `column` of the shown result below the statement that
+    /// produced it (CH5f), and says in the status line which line it went on.
+    ///
+    /// It only ever inserts: the original is left untouched, and the whole insertion is one
+    /// replacement, so one undo takes back the block and the statement together.
+    pub fn summarise_column(&mut self, summary: Summary, column: &str, now: Instant) {
+        let Some(run) = &mut self.run else {
+            return;
+        };
+        let Some(statement) = run.statements.get(run.selected) else {
+            return;
+        };
+        let ran = chart::block::Ran {
+            range: statement.range.clone(),
+            sql: &statement.sql,
+        };
+        let inserted =
+            match summarise::insert(self.language, &self.editor.text, &ran, summary, column) {
+                Ok(inserted) => inserted,
+                Err(error) => {
+                    self.written_status = Some(Err(error));
+                    return;
+                }
+            };
+        let moved = inserted.written.cast_signed();
+        for statement in &mut run.statements {
+            if statement.range.start >= inserted.at.end {
+                statement.range = shifted(&statement.range, moved);
+            }
+        }
+        let (cursor, _) = self.editor.ordered_selection();
+        let cursor = if cursor >= inserted.at.end {
+            cursor.saturating_add_signed(moved)
+        } else {
+            cursor.min(inserted.at.start)
+        };
+        self.written_status = Some(Ok(format!(
+            "{} written at line {}",
+            summary.label(),
+            inserted.line
+        )));
+        self.editor.replace_text(inserted.text, cursor);
+        self.edited(now);
+    }
+
     /// Records that the user changed the text at `now`.
     pub fn edited(&mut self, now: Instant) {
         self.error_marker = None;
@@ -1874,7 +1921,7 @@ impl QueryConsole {
     /// is drawn. The toolbar says how it went once it is written.
     pub fn export_chart(&mut self, format: PictureFormat, path: &Path) -> Option<Command> {
         let picture = self.shown_chart_tab()?.picture(format)?;
-        self.export_status = None;
+        self.written_status = None;
         self.chart_export = Some(path.to_owned());
         Some(Command::ExportPicture {
             path: path.to_owned(),
@@ -2129,11 +2176,11 @@ impl QueryConsole {
                     .as_ref()
                     .map(|&rows| self.exported(rows, path))
                     .map_err(Clone::clone);
-                self.export_status = Some(status);
+                self.written_status = Some(status);
             }
             Event::PictureExported { path, result } if self.chart_export.as_ref() == Some(path) => {
                 self.chart_export = None;
-                self.export_status = Some(
+                self.written_status = Some(
                     result
                         .clone()
                         .map(|()| format!("Exported to {}", path.display())),

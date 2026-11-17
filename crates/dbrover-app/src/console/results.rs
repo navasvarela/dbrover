@@ -7,9 +7,9 @@ use dbrover_engine::{RunId, StatementSummary};
 use dbrover_export::CustomFormat;
 use dbrover_language::ExplainDepth;
 use dbrover_language::redis::KeyView;
-use dbrover_sql::first_word;
+use dbrover_sql::{Summary, first_word};
 use dbrover_store::{ActionId, CustomAction};
-use egui::{Align, Label, Layout, RichText, Sense, TextEdit, Ui};
+use egui::{Align, Label, Layout, Response, RichText, Sense, TextEdit, Ui};
 use egui_extras::{Column, TableBuilder};
 
 use super::cell_viewer::ValuePanel;
@@ -63,7 +63,7 @@ pub fn show(
             ui,
             path,
             console.exporting,
-            console.export_status.as_ref(),
+            console.written_status.as_ref(),
             actions,
         );
         return;
@@ -106,7 +106,7 @@ pub fn show(
     if statement.returns_rows() {
         let mut toolbar = Toolbar {
             dialect,
-            export_status: console.export_status.as_ref(),
+            written_status: console.written_status.as_ref(),
             exporting: console.exporting,
             value_panel: &mut console.value_panel,
         };
@@ -121,7 +121,7 @@ pub fn show(
                 documents::document_view(ui, results, shown, egui::Id::new(("document", run_id.0)));
             }
             _ => {
-                grid_output = grid(ui, run_id, statement, keymap, cell_menu);
+                grid_output = grid(ui, run_id, statement, keymap, cell_menu, dialect);
                 grid_output.rearrange |= rearrange;
             }
         }
@@ -151,6 +151,11 @@ pub fn show(
             .map(|(action, cells)| ConsoleAction::RunAction(action, cells)),
     );
     actions.extend(grid_output.copy.map(ConsoleAction::Copy));
+    actions.extend(
+        grid_output
+            .summarise
+            .map(|(summary, column)| ConsoleAction::Summarise { summary, column }),
+    );
     if grid_output.rearrange {
         match console.rearrange() {
             Ok(run) => actions.push(ConsoleAction::Run(run)),
@@ -299,7 +304,7 @@ struct Toolbar<'a> {
     /// to sort and filter.
     dialect: Option<dbrover_sql::Dialect>,
     /// How the last export went.
-    export_status: Option<&'a Result<String, String>>,
+    written_status: Option<&'a Result<String, String>>,
     /// An export of every row in progress: its run and the rows written so far.
     exporting: Option<(RunId, usize)>,
     value_panel: &'a mut ValuePanel,
@@ -325,9 +330,12 @@ fn grid_toolbar(
                 chart::controls(ui, tab, &source).map(|action| match action {
                     chart::ChartAction::Export(format) => ConsoleAction::ExportChart(format),
                     chart::ChartAction::SaveToQuery => ConsoleAction::SaveChartToQuery,
+                    chart::ChartAction::Summarise { summary, column } => {
+                        ConsoleAction::Summarise { summary, column }
+                    }
                 }),
             );
-            export_status(ui, toolbar.export_status);
+            written_status(ui, toolbar.written_status);
             return false;
         }
         let in_database = statement.grid.is_in_database();
@@ -382,6 +390,7 @@ fn chart_parts(
     let source = chart::Source {
         columns: &statement.columns,
         rows: &statement.rows,
+        sql: &statement.sql,
         order: statement.grid.order(),
         dialect,
     };
@@ -496,11 +505,55 @@ fn export_button(ui: &mut Ui, toolbar: &Toolbar<'_>, actions: &mut Vec<ConsoleAc
     {
         actions.push(ConsoleAction::OpenExportDialog);
     }
-    export_status(ui, toolbar.export_status);
+    written_status(ui, toolbar.written_status);
+}
+
+/// **Summarise ›** on a column of numbers in the grid's header: the items the chart toolbar's
+/// menu has, for the column the user pointed at. `None` for a column that doesn't hold numbers,
+/// or a console whose language isn't SQL.
+fn summarise_menu(
+    response: &Response,
+    dialect: Option<dbrover_sql::Dialect>,
+    column: &ColumnInfo,
+    rows: &[Row],
+    index: usize,
+) -> Option<(Summary, String)> {
+    let dialect = dialect?;
+    let kind = dialect.value_kind(column.type_name.as_deref());
+    let role = dbrover_chart::Role::of(kind, rows.iter().filter_map(|row| row.get(index)));
+    if role != dbrover_chart::Role::Number {
+        return None;
+    }
+    let mut asked = None;
+    widgets::context_menu(response, |ui| {
+        widgets::menu_button(ui, "Summarise", |ui| {
+            let summaries = dbrover_sql::BUCKET_COUNTS
+                .map(|buckets| Summary::Distribution { buckets })
+                .into_iter()
+                .chain([Summary::Percentiles]);
+            for summary in summaries {
+                let refusal = summary.refusal(dialect);
+                let item = ui.add_enabled(refusal.is_none(), egui::Button::new(summary.label()));
+                let item = match &refusal {
+                    Some(reason) => item.on_disabled_hover_text(reason),
+                    None => item,
+                };
+                if item.clicked() {
+                    asked = Some((summary, column.name.clone()));
+                }
+            }
+        })
+        .response
+        .on_hover_text(
+            "Write a statement below this one summarising this column, which sees every row \
+             rather than the page the grid holds",
+        );
+    });
+    asked
 }
 
 /// How the last export, of rows or of the chart, went.
-fn export_status(ui: &mut Ui, status: Option<&Result<String, String>>) {
+fn written_status(ui: &mut Ui, status: Option<&Result<String, String>>) {
     match status {
         Some(Ok(done)) => {
             ui.weak(done);
@@ -746,6 +799,8 @@ struct GridOutput {
     copy: Option<ClipboardCopy>,
     /// A column of documents to expand or collapse.
     fold: Option<ColumnFold>,
+    /// A summary asked for on a column of numbers in the header (CH5f).
+    summarise: Option<(Summary, String)>,
 }
 
 /// What the user did to a cell this frame, applied once the table is drawn.
@@ -781,6 +836,7 @@ fn grid(
     statement: &mut StatementView,
     keymap: &Keymap,
     cell_menu: CellMenuItems<'_>,
+    dialect: Option<dbrover_sql::Dialect>,
 ) -> GridOutput {
     let StatementView {
         columns,
@@ -800,6 +856,7 @@ fn grid(
     let mut inputs = Vec::new();
     let mut sort_clicked = None;
     let mut fold = None;
+    let mut summarise = None;
     let mut table = TableBuilder::new(ui)
         .id_salt(("results_grid", run.0, range.start))
         .striped(true)
@@ -835,6 +892,9 @@ fn grid(
                             .take()
                             .or(documents::header_menu(&response, results, index));
                     }
+                    summarise = summarise
+                        .take()
+                        .or_else(|| summarise_menu(&response, dialect, column, rows, index));
                 });
             }
         })
@@ -882,6 +942,7 @@ fn grid(
         });
 
     output.fold = fold;
+    output.summarise = summarise;
     // In the database, sorting runs the statement again, which would drop pending changes.
     if let Some(column) = sort_clicked
         && !(grid.is_in_database() && !edits.pending.is_empty())
