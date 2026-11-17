@@ -17,12 +17,22 @@ pub const MAX_BARS: usize = 250;
 /// first guess, to be confirmed by measuring the frame time of a scatter this big.
 pub const MAX_POINTS: usize = 50_000;
 
+/// Points charted at most on a stacked area. A band's cost grows with the points *and* the
+/// series, unlike a line's: 50,000 points across eight series is a 400,000-coordinate picture
+/// and several megabytes of SVG, which a report would write unattended. At 5,000 the widest
+/// band is about 10,000 coordinates, roughly 120 KB a series, a file that still opens in a
+/// browser — and a stacked area over more than a few thousand X positions is a solid block
+/// anyway.
+pub const MAX_AREA_POINTS: usize = 5_000;
+
 impl ChartKind {
-    /// The most rows a chart of this kind draws: [`MAX_BARS`] or [`MAX_POINTS`].
+    /// The most rows a chart of this kind draws: [`MAX_BARS`], [`MAX_POINTS`] or
+    /// [`MAX_AREA_POINTS`].
     pub fn max_rows(self) -> usize {
         match self {
             Self::Bars | Self::Hbars => MAX_BARS,
             Self::Lines | Self::Scatter => MAX_POINTS,
+            Self::Area => MAX_AREA_POINTS,
         }
     }
 }
@@ -133,7 +143,11 @@ impl ChartData {
             repeated,
             ..
         } = reader;
-        if choice.kind == ChartKind::Lines && placement != Placement::Categories {
+        // A line and a band both join their points along the axis, so both need them in the
+        // axis's order; bars and a scatter don't.
+        if matches!(choice.kind, ChartKind::Lines | ChartKind::Area)
+            && placement != Placement::Categories
+        {
             points.sort_by(|a, b| a.x.position().total_cmp(&b.x.position()));
         }
         let series = names
@@ -685,6 +699,43 @@ mod tests {
         assert_eq!(
             data.x,
             XValues::Categories(vec!["b".to_owned(), "a".to_owned()])
+        );
+    }
+
+    #[test]
+    fn an_area_draws_fewer_points_than_a_line_and_says_when_it_cut_them() {
+        assert_eq!(ChartKind::Area.max_rows(), MAX_AREA_POINTS);
+        assert_eq!(ChartKind::Hbars.max_rows(), MAX_BARS);
+        // A band costs more a point than a line does, so it draws fewer of them.
+        const { assert!(MAX_AREA_POINTS < MAX_POINTS) };
+
+        let rows: Vec<Row> = (0..=MAX_AREA_POINTS)
+            .map(|n| vec![Some(format!("{n}")), Some("1".to_owned())])
+            .collect();
+        let choice = Choice::of(ChartKind::Area, 0, vec![1]);
+        let data = read(&[Role::Text, Role::Number], &rows, &choice);
+
+        assert_eq!(data.len(), MAX_AREA_POINTS);
+        assert_eq!(data.summary.limit, Some(MAX_AREA_POINTS));
+        assert_eq!(data.summary.rows, MAX_AREA_POINTS + 1);
+    }
+
+    /// A band joins its points along the axis, so an area over numbers or times puts them in
+    /// the axis's order, as a line does, however the rows arrived.
+    #[test]
+    fn an_area_over_numbers_sorts_its_points_along_the_axis() {
+        let rows = rows(&[
+            &[Some("3"), Some("30")],
+            &[Some("1"), Some("10")],
+            &[Some("2"), Some("20")],
+        ]);
+        let choice = Choice::of(ChartKind::Area, 0, vec![1]);
+        let data = read(&[Role::Number, Role::Number], &rows, &choice);
+
+        assert_eq!(data.x, XValues::Numbers(vec![1.0, 2.0, 3.0]));
+        assert_eq!(
+            data.series[0].values,
+            vec![Some(10.0), Some(20.0), Some(30.0)]
         );
     }
 }

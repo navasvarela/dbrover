@@ -246,7 +246,7 @@ mod tests {
 
         assert_eq!(
             error.message,
-            "chart.kind: `kind` is bars, hbars (horizontal bars), lines or scatter, not \"pie\"; \
+            "chart.kind: `kind` is bars, hbars (horizontal bars), lines, scatter or area, not \"pie\"; \
              chart.ys: no key `ys`; \
              did you mean `y`?"
         );

@@ -286,7 +286,7 @@ A report's `[[chart]]` adds the keys that make a file — `file`, `width`, `heig
 
 **Problems** are said where they are found. A misspelt key, a value of the wrong kind or TOML
 that doesn't read is underlined in the editor, and shown in the tab in place of the chart, with
-**Grid** one click away: "chart, line 4: `kind` is bars, hbars (horizontal bars), lines or scatter, not "pie"". A column
+**Grid** one click away: "chart, line 4: `kind` is bars, hbars (horizontal bars), lines, scatter or area, not "pie"". A column
 the result doesn't have is known once the result's columns arrive, and shown over the chart
 **Chart** would start with, so the result is still seen: "chart: `y = "nett"` isn't a column of
 this result: month, net".

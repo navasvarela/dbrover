@@ -238,17 +238,35 @@ impl Named {
         let kind = spec
             .kind
             .unwrap_or_else(|| ChartKind::starting(roles.get(x).copied()));
-        if spec.stack && !kind.is_bars() {
-            return Err(vec![ColumnProblem {
-                detail: format!("`stack` stacks bars; this chart draws {}", kind.spec_name()),
-            }]);
+        if let Some(problem) = stack_problem(spec.stack, kind) {
+            return Err(vec![problem]);
         }
         Ok(Choice {
             series: self.series,
-            stack: spec.stack,
+            stack: spec.stack.unwrap_or(false),
             ..Choice::of(kind, x, ys)
         })
     }
+}
+
+/// What `stack` and `kind` together can't mean.
+///
+/// An area always stacks, so `stack = true` on one is accepted — it states what is true — and
+/// `stack = false` is refused rather than quietly ignored. The asymmetry is deliberate: a key
+/// that reads as a choice and isn't one would be worse than a sentence saying so. On a line or
+/// a scatter, `stack = true` is refused as before, and `stack = false` still passes, since it
+/// also states what is true.
+fn stack_problem(stack: Option<bool>, kind: ChartKind) -> Option<ColumnProblem> {
+    let detail = match (stack, kind) {
+        (Some(false), ChartKind::Area) => {
+            "`stack = false`: an area always stacks; leave `stack` out".to_owned()
+        }
+        (Some(true), kind) if !kind.is_bars() && kind != ChartKind::Area => {
+            format!("`stack` stacks bars; this chart draws {}", kind.spec_name())
+        }
+        _ => return None,
+    };
+    Some(ColumnProblem { detail })
 }
 
 struct Finder<'a> {
@@ -564,7 +582,7 @@ mod tests {
         let bars = ChartSpec {
             kind: Some(ChartKind::Bars),
             series: named("category"),
-            stack: true,
+            stack: Some(true),
             ..ChartSpec::default()
         };
         assert!(choice(&bars).stack);
@@ -756,5 +774,67 @@ mod tests {
             ["`y = \"nett\"` isn't a column of this result: month, category, net, orders"]
         );
         assert_eq!(ChartSpec::default().check_names(&[]), Ok(()));
+    }
+
+    #[test]
+    fn stack_says_what_each_kind_does_with_it() {
+        let spec = |kind: ChartKind, stack: Option<bool>| ChartSpec {
+            kind: Some(kind),
+            y: vec!["net".to_owned()],
+            stack,
+            ..ChartSpec::default()
+        };
+        // An area always stacks, so `true` states what is true and `false` is refused; bars
+        // take either; a line or a scatter refuses only `true`.
+        let cases = [
+            (ChartKind::Area, Some(true), None),
+            (ChartKind::Area, None, None),
+            (
+                ChartKind::Area,
+                Some(false),
+                Some("chart: `stack = false`: an area always stacks; leave `stack` out"),
+            ),
+            (ChartKind::Bars, Some(true), None),
+            (ChartKind::Hbars, Some(true), None),
+            (ChartKind::Bars, Some(false), None),
+            (
+                ChartKind::Lines,
+                Some(true),
+                Some("chart: `stack` stacks bars; this chart draws lines"),
+            ),
+            (ChartKind::Lines, Some(false), None),
+            (
+                ChartKind::Scatter,
+                Some(true),
+                Some("chart: `stack` stacks bars; this chart draws scatter"),
+            ),
+        ];
+        for (kind, stack, expected) in cases {
+            let resolved = resolve(&spec(kind, stack));
+            match expected {
+                Some(problem) => assert_eq!(
+                    resolved.err().as_deref(),
+                    Some(&[problem.to_owned()][..]),
+                    "{kind:?} with stack = {stack:?}"
+                ),
+                None => assert!(
+                    resolved.is_ok(),
+                    "{kind:?} with stack = {stack:?}: {resolved:?}"
+                ),
+            }
+        }
+    }
+
+    /// An area stacks whether or not the spec said so, and a stacked chart's choice says it.
+    #[test]
+    fn an_area_resolves_to_a_stacked_choice() {
+        let spec = ChartSpec {
+            kind: Some(ChartKind::Area),
+            y: vec!["net".to_owned()],
+            ..ChartSpec::default()
+        };
+        let choice = choice(&spec);
+        assert!(choice.stacked());
+        assert!(!choice.stack, "nothing asked for it");
     }
 }

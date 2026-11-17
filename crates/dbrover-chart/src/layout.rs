@@ -134,6 +134,17 @@ pub enum Mark {
         points: Vec<Point>,
         paint: Paint,
     },
+    /// A filled band between a series and the stack below it, as a closed ring: the series' own
+    /// edge along the category axis, then the edge below it back again. Its length is even, and
+    /// its first half is the series' edge in the points' order.
+    ///
+    /// One mark, whatever draws it. An SVG writes the ring as a single `<polygon>`; a painter
+    /// that fills only convex shapes, as egui's does, splits it with [`band_quads`], which is
+    /// exact rather than approximate — see that function.
+    Band {
+        points: Vec<Point>,
+        paint: Paint,
+    },
     Circle {
         centre: Point,
         radius: f32,
@@ -230,7 +241,9 @@ impl Frame {
     fn for_kind(kind: ChartKind, plot: Rect) -> Self {
         match kind {
             ChartKind::Hbars => Self::lying_down(plot),
-            ChartKind::Bars | ChartKind::Lines | ChartKind::Scatter => Self::upright(plot),
+            ChartKind::Bars | ChartKind::Lines | ChartKind::Scatter | ChartKind::Area => {
+                Self::upright(plot)
+            }
         }
     }
 
@@ -329,7 +342,7 @@ impl Drawing {
         }
         match self.kind {
             ChartKind::Scatter => self.nearest_point(at),
-            ChartKind::Bars | ChartKind::Hbars | ChartKind::Lines => {
+            ChartKind::Bars | ChartKind::Hbars | ChartKind::Lines | ChartKind::Area => {
                 self.nearest_category(category)
             }
         }
@@ -462,7 +475,7 @@ pub fn layout(
     };
     let top = PADDING + title_room + line + LABEL_GAP;
     let bottom = size.height - PADDING - line - LABEL_GAP - line - LABEL_GAP;
-    let from_zero = options.y_zero || data.kind.is_bars();
+    let from_zero = options.y_zero || data.kind.starts_at_zero();
     let low = value_low(data, from_zero);
     let high = value_high(data, from_zero);
     let measured = match data.kind {
@@ -799,6 +812,30 @@ fn category_axis(
     }
 }
 
+/// The four-sided pieces a band's ring splits into, one between each pair of neighbouring
+/// points.
+///
+/// The pieces cover exactly the region the ring covers, rather than approximating it: between
+/// two neighbouring points both of a band's edges are a straight segment, so the quad spanning
+/// them covers exactly what the ring covers there, and the union of the quads is the ring. Each
+/// piece has two parallel sides along the value axis, so it is convex, which is what a painter
+/// that fills only convex shapes needs.
+///
+/// Empty for a ring of fewer than four points, which spans no width.
+pub fn band_quads(ring: &[Point]) -> impl Iterator<Item = [Point; 4]> + '_ {
+    let half = ring.len() / 2;
+    let (edge, below) = ring.split_at(half);
+    // `below` holds the lower edge backwards, so its point at `index` is at `half - 1 - index`.
+    (0..half.saturating_sub(1)).filter_map(move |index| {
+        Some([
+            *edge.get(index)?,
+            *edge.get(index + 1)?,
+            *below.get(half - 2 - index)?,
+            *below.get(half - 1 - index)?,
+        ])
+    })
+}
+
 fn range(values: &[f64]) -> (f64, f64) {
     let low = values.iter().copied().fold(f64::INFINITY, f64::min);
     let high = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
@@ -851,6 +888,7 @@ fn series_marks(drawing: &mut Drawing, data: &ChartData, frame: Frame, value_sca
         ChartKind::Bars | ChartKind::Hbars => bars(drawing, frame, value_scale),
         ChartKind::Lines => lines(drawing, frame),
         ChartKind::Scatter => dots(drawing, frame),
+        ChartKind::Area => bands(drawing, data, frame, value_scale),
     }
 }
 
@@ -929,6 +967,56 @@ fn lines(drawing: &mut Drawing, frame: Frame) {
                         paint,
                     }));
             }
+        }
+    }
+}
+
+/// A band per series: the region between the series' own edge and the stack below it, as a
+/// closed ring.
+///
+/// The pieces pile on the running totals exactly as [`stacked_bars`] piles them — positives up
+/// from zero, negatives down from it — so a result charted both ways puts the same values in
+/// the same places. A gap breaks a band, as it breaks a line: a run of points the series has a
+/// value at becomes a ring of its own, and a run of one draws nothing, since a band needs two
+/// points to have width. The stack below still skips a gap, as a stacked bar's pieces do, so
+/// the series above sit lower there.
+fn bands(drawing: &mut Drawing, data: &ChartData, frame: Frame, value_scale: Scale) {
+    let points = drawing.categories.len();
+    // The tops of the positive stack and the bottoms of the negative one, point by point.
+    let mut below = vec![(0.0_f64, 0.0_f64); points];
+    for (series, values) in data.series.iter().enumerate() {
+        let mut edges: Vec<Option<(Point, Point)>> = Vec::with_capacity(points);
+        for (point, carried) in below.iter_mut().enumerate() {
+            let (Some(value), Some(category)) = (
+                values.values.get(point).copied().flatten(),
+                drawing.categories.get(point).copied(),
+            ) else {
+                edges.push(None);
+                continue;
+            };
+            let end = if value >= 0.0 {
+                &mut carried.0
+            } else {
+                &mut carried.1
+            };
+            let from = *end;
+            *end += value;
+            edges.push(Some((
+                frame.at(value_scale.at(*end), category),
+                frame.at(value_scale.at(from), category),
+            )));
+        }
+        for run in edges.split(Option::is_none) {
+            let run: Vec<(Point, Point)> = run.iter().flatten().copied().collect();
+            if run.len() < 2 {
+                continue;
+            }
+            let mut ring: Vec<Point> = run.iter().map(|(edge, _)| *edge).collect();
+            ring.extend(run.iter().rev().map(|(_, below)| *below));
+            drawing.marks.push(Mark::Band {
+                points: ring,
+                paint: Paint::Series(series),
+            });
         }
     }
 }
@@ -1102,6 +1190,34 @@ mod tests {
                 ..Summary::default()
             },
         }
+    }
+
+    /// The bands' rings, in the order they were emitted.
+    fn rings(drawing: &Drawing) -> Vec<(Vec<Point>, Paint)> {
+        drawing
+            .marks
+            .iter()
+            .filter_map(|mark| match mark {
+                Mark::Band { points, paint } => Some((points.clone(), *paint)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A band's two edges from its ring: the series' own, and the stack below it, both in the
+    /// points' order.
+    fn band_edges(ring: &[Point]) -> (Vec<Point>, Vec<Point>) {
+        let half = ring.len() / 2;
+        let (edge, below) = ring.split_at(half);
+        (edge.to_vec(), below.iter().rev().copied().collect())
+    }
+
+    /// An area of `series` over as many months as they have values.
+    fn area(series: &[(&str, &[Option<f64>])]) -> ChartData {
+        let points = series.first().map_or(0, |(_, values)| values.len());
+        let mut chart = data(ChartKind::Area, months(points), series);
+        chart.stacked = true;
+        chart
     }
 
     fn named(names: &[&str]) -> XValues {
@@ -1695,5 +1811,125 @@ mod tests {
             month.y < drawing.plot.min.y,
             "the categories run up the side, so their name is above the plot"
         );
+    }
+
+    #[test]
+    fn an_areas_bands_pile_on_each_other_as_stacked_bars_do() {
+        let chart = area(&[
+            ("bikes", &[Some(10.0), Some(20.0), Some(30.0)]),
+            ("parts", &[Some(5.0), Some(5.0), Some(5.0)]),
+        ]);
+        let drawing = layout(&chart, &LayoutOptions::default(), SIZE, &Fixed);
+        let rings = rings(&drawing);
+        assert_eq!(rings.len(), 2, "one band a series");
+        assert_eq!(rings[0].1, Paint::Series(0));
+        assert_eq!(rings[1].1, Paint::Series(1));
+        let (bikes, bikes_below) = band_edges(&rings[0].0);
+        let (parts, parts_below) = band_edges(&rings[1].0);
+        assert_eq!(bikes.len(), 3, "a point per row: {bikes:?}");
+        let zero = drawing.plot.max.y;
+        for point in &bikes_below {
+            assert!(
+                (point.y - zero).abs() < 0.01,
+                "the first band sits on zero: {point:?}"
+            );
+        }
+        for (above, below) in bikes.iter().zip(&parts_below) {
+            assert!(
+                (above.y - below.y).abs() < 0.01,
+                "parts sits on bikes: {above:?} and {below:?}"
+            );
+        }
+        assert!(
+            parts
+                .iter()
+                .zip(&bikes)
+                .all(|(top, bottom)| top.y < bottom.y),
+            "the stack grows upwards"
+        );
+        assert!(
+            bikes[0].y > bikes[2].y,
+            "bikes grows over the months: {bikes:?}"
+        );
+    }
+
+    #[test]
+    fn a_negative_band_hangs_below_zero_while_the_positive_ones_pile_above_it() {
+        let chart = area(&[
+            ("bikes", &[Some(10.0), Some(10.0)]),
+            ("returns", &[Some(-4.0), Some(-6.0)]),
+            ("parts", &[Some(5.0), Some(5.0)]),
+        ]);
+        let drawing = layout(&chart, &LayoutOptions::default(), SIZE, &Fixed);
+        let rings = rings(&drawing);
+        assert_eq!(rings.len(), 3);
+        let (bikes, _) = band_edges(&rings[0].0);
+        let (returns, returns_below) = band_edges(&rings[1].0);
+        let (_, parts_below) = band_edges(&rings[2].0);
+        for (edge, below) in returns.iter().zip(&returns_below) {
+            assert!(
+                edge.y > below.y,
+                "returns hangs below the zero line it starts at: {edge:?} under {below:?}"
+            );
+        }
+        for (above, below) in bikes.iter().zip(&parts_below) {
+            assert!(
+                (above.y - below.y).abs() < 0.01,
+                "parts sits on bikes, not on the negative band"
+            );
+        }
+    }
+
+    #[test]
+    fn a_gap_breaks_a_band_as_it_breaks_a_line() {
+        let chart = area(&[("net", &[Some(1.0), Some(2.0), None, Some(4.0), Some(5.0)])]);
+        let drawing = layout(&chart, &LayoutOptions::default(), SIZE, &Fixed);
+        let rings = rings(&drawing);
+        assert_eq!(rings.len(), 2, "a ring either side of the gap");
+        for (ring, _) in &rings {
+            assert_eq!(ring.len(), 4, "two points, two edges: {ring:?}");
+        }
+    }
+
+    #[test]
+    fn a_run_of_one_point_draws_no_band() {
+        let chart = area(&[("net", &[Some(1.0), None, Some(3.0)])]);
+        let drawing = layout(&chart, &LayoutOptions::default(), SIZE, &Fixed);
+        assert!(
+            rings(&drawing).is_empty(),
+            "a band needs two points to have width"
+        );
+    }
+
+    #[test]
+    fn a_bands_quads_cover_it_piece_by_piece() {
+        let ring = [
+            Point::new(0.0, 0.0),
+            Point::new(10.0, 2.0),
+            Point::new(20.0, 4.0),
+            Point::new(20.0, 14.0),
+            Point::new(10.0, 12.0),
+            Point::new(0.0, 10.0),
+        ];
+        let quads: Vec<[Point; 4]> = band_quads(&ring).collect();
+        assert_eq!(
+            quads,
+            [
+                [
+                    Point::new(0.0, 0.0),
+                    Point::new(10.0, 2.0),
+                    Point::new(10.0, 12.0),
+                    Point::new(0.0, 10.0),
+                ],
+                [
+                    Point::new(10.0, 2.0),
+                    Point::new(20.0, 4.0),
+                    Point::new(20.0, 14.0),
+                    Point::new(10.0, 12.0),
+                ],
+            ]
+        );
+        assert_eq!(band_quads(&ring[..2]).count(), 0, "no width, no piece");
+        assert_eq!(band_quads(&[]).count(), 0);
     }
 }

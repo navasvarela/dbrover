@@ -14,10 +14,19 @@ pub enum ChartKind {
     Hbars,
     Lines,
     Scatter,
+    /// The band between each series and the one below it, filled. Always stacked: unstacked
+    /// areas hide whichever series is behind the front one (`docs/charts-as-code.md`, CH5c).
+    Area,
 }
 
 impl ChartKind {
-    pub const ALL: [Self; 4] = [Self::Bars, Self::Hbars, Self::Lines, Self::Scatter];
+    pub const ALL: [Self; 5] = [
+        Self::Bars,
+        Self::Hbars,
+        Self::Lines,
+        Self::Scatter,
+        Self::Area,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -27,6 +36,7 @@ impl ChartKind {
             Self::Hbars => "Hbars",
             Self::Lines => "Lines",
             Self::Scatter => "Scatter",
+            Self::Area => "Area",
         }
     }
 
@@ -37,6 +47,7 @@ impl ChartKind {
             Self::Hbars => "Horizontal bars: the categories up the left side, so long names fit",
             Self::Lines => "A line per series through its points",
             Self::Scatter => "A dot per point, placed by both its values",
+            Self::Area => "The series piled on each other as filled bands; always stacked",
         }
     }
 
@@ -47,6 +58,7 @@ impl ChartKind {
             Self::Hbars => "hbars",
             Self::Lines => "lines",
             Self::Scatter => "scatter",
+            Self::Area => "area",
         }
     }
 
@@ -54,6 +66,13 @@ impl ChartKind {
     /// from the zero line, and stackable.
     pub fn is_bars(self) -> bool {
         matches!(self, Self::Bars | Self::Hbars)
+    }
+
+    /// Whether its value axis must reach zero whatever the values. A bar's length and a band's
+    /// thickness are both read from the zero line, so an axis that doesn't reach it misstates
+    /// them; a line or a scatter only has to reach its points, unless `y_zero` says otherwise.
+    pub fn starts_at_zero(self) -> bool {
+        self.is_bars() || self == Self::Area
     }
 
     /// The kind as a problem names it: the word a spec writes, glossed where the word alone
@@ -71,7 +90,7 @@ impl ChartKind {
     }
 
     /// The kind a chart starts with over an X of `role`: lines over times, a scatter over
-    /// numbers, bars over text.
+    /// numbers, bars over text. Never an area, which a spec or the toolbar has to ask for.
     pub(crate) fn starting(role: Option<Role>) -> Self {
         match role {
             Some(Role::Time) => Self::Lines,
@@ -168,9 +187,13 @@ impl Choice {
         self.series.is_some() || self.ys.len() > 1
     }
 
-    /// Whether its bars are drawn stacked: asked for, and bars, upright or lying down.
+    /// Whether its series are drawn piled on each other: bars asked to stack, upright or lying
+    /// down, and an area, which always stacks.
     pub fn stacked(&self) -> bool {
-        self.stack && self.kind.is_bars()
+        match self.kind {
+            ChartKind::Area => true,
+            kind => self.stack && kind.is_bars(),
+        }
     }
 }
 
@@ -271,6 +294,9 @@ mod tests {
         assert!(choice.stacked(), "bars lying down stack too");
         choice.kind = ChartKind::Lines;
         assert!(!choice.stacked());
+        choice.stack = false;
+        choice.kind = ChartKind::Area;
+        assert!(choice.stacked(), "an area stacks without being asked");
     }
 
     #[test]
@@ -281,7 +307,7 @@ mod tests {
         assert_eq!(ChartKind::from_spec_name("pie"), None);
         assert_eq!(ChartKind::Hbars.spec_gloss(), "hbars (horizontal bars)");
         let bars: Vec<bool> = ChartKind::ALL.iter().map(|kind| kind.is_bars()).collect();
-        assert_eq!(bars, [true, true, false, false]);
+        assert_eq!(bars, [true, true, false, false, false]);
     }
 
     #[test]
