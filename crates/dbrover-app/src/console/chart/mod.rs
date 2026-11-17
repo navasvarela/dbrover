@@ -1180,25 +1180,58 @@ mod tests {
         drawing
     }
 
-    /// `drawing` as the chart tab paints it, rendered through egui at one pixel a point.
-    fn painted(drawing: &Drawing) -> image::RgbaImage {
-        let size = Vec2::new(drawing.size.width, drawing.size.height);
-        let paints = Paints::of(&Palette::LIGHT);
-        let font = FontId::proportional(FILE_TEXT_SIZE);
-        let mut harness = egui_kittest::HarnessBuilder::default()
-            .with_size(size)
-            .with_pixels_per_point(1.0)
-            .wgpu()
-            .build_ui(|ui| {
-                // The whole screen, not the Ui's rect: the harness insets its panel, and a
-                // mark's coordinates are the picture's own, from its top left corner.
-                let screen = egui::Rect::from_min_size(Pos2::ZERO, size);
-                let painter = ui.ctx().layer_painter(egui::LayerId::background());
-                painter.rect_filled(screen, 0, Color32::WHITE);
-                paint(&painter, Pos2::ZERO, drawing, &paints, &font);
-            });
-        harness.run();
-        harness.render().expect("a rendered frame")
+    /// `drawing`'s bands as egui tessellates them: the triangles the tab's painter hands the
+    /// renderer for the same `Shape::convex_polygon` calls [`paint`] makes.
+    ///
+    /// egui's own tessellator, on the CPU. Rendering a frame would be closer to the tab still,
+    /// but egui_kittest's only renderer is a wgpu one and a GitHub Linux runner has no GPU
+    /// adapter, so a rendered frame can't be had where this has to run. Feathering is off, so
+    /// the triangles are the shape itself rather than the shape plus the fringe a rasteriser
+    /// would antialias — which is the geometry this is about.
+    fn tessellated(drawing: &Drawing) -> Vec<[Pos2; 3]> {
+        let mut tessellator = egui::epaint::Tessellator::new(
+            1.0,
+            egui::epaint::TessellationOptions {
+                feathering: false,
+                ..egui::epaint::TessellationOptions::default()
+            },
+            [1, 1],
+            Vec::new(),
+        );
+        let mut mesh = egui::epaint::Mesh::default();
+        for mark in &drawing.marks {
+            let dbrover_chart::Mark::Band { points, .. } = mark else {
+                continue;
+            };
+            for quad in dbrover_chart::band_quads(points) {
+                let corners = quad
+                    .iter()
+                    .map(|point| Pos2::new(point.x, point.y))
+                    .collect();
+                let shape = egui::Shape::convex_polygon(corners, Color32::WHITE, Stroke::NONE);
+                tessellator.tessellate_shape(shape, &mut mesh);
+            }
+        }
+        mesh.indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .filter_map(|corners| {
+                let at = |index: u32| mesh.vertices.get(index as usize).map(|vertex| vertex.pos);
+                Some([at(corners[0])?, at(corners[1])?, at(corners[2])?])
+            })
+            .collect()
+    }
+
+    /// Whether `at` is inside `triangle`: it is on the same side of all three edges.
+    fn inside(triangle: &[Pos2; 3], at: Pos2) -> bool {
+        let side = |a: Pos2, b: Pos2| (b.x - a.x) * (at.y - a.y) - (b.y - a.y) * (at.x - a.x);
+        let sides = [
+            side(triangle[0], triangle[1]),
+            side(triangle[1], triangle[2]),
+            side(triangle[2], triangle[0]),
+        ];
+        sides.iter().all(|side| *side >= 0.0) || sides.iter().all(|side| *side <= 0.0)
     }
 
     /// Where a picture has ink: anything that isn't the white it was drawn on. With only the
@@ -1230,8 +1263,8 @@ mod tests {
     /// `<polygon>`. Between two neighbouring points both of a band's edges are a straight
     /// segment, so the pieces' union *is* the polygon — nothing is approximated — and the two
     /// can only differ in how a rasteriser lands on the edges they share. So: rasterise the
-    /// file with resvg, compare it with the painted frame pixel by pixel, and allow a
-    /// difference only beside an edge.
+    /// file with resvg, cover the same pixels from egui's tessellation of the quads, and allow
+    /// a difference only beside an edge.
     #[test]
     fn a_bands_polygon_and_its_quads_cover_the_same_pixels() {
         let drawing = area_bands();
@@ -1240,22 +1273,32 @@ mod tests {
 
         let bytes = dbrover_picture::png(&svg, 1.0, &Fonts::bundled()).expect("the file drawn");
         let file = image::load_from_memory(&bytes).expect("a PNG").to_rgba8();
-        let frame = painted(&drawing);
         assert_eq!(
-            (file.width(), file.height()),
-            (frame.width(), frame.height()),
-            "one size, one pixel a point"
+            (file.width() as f32, file.height() as f32),
+            (drawing.size.width, drawing.size.height),
+            "one pixel a point, so a pixel is a mark's own coordinate"
         );
+        let triangles = tessellated(&drawing);
+        assert!(!triangles.is_empty(), "the quads tessellate into triangles");
 
         let width = file.width() as usize;
-        let from_file = inked(file.pixels().map(|p| (p.0[0], p.0[1], p.0[2])));
-        let from_frame = inked(frame.pixels().map(|p| (p.0[0], p.0[1], p.0[2])));
+        let from_file = inked(
+            file.pixels()
+                .map(|pixel| (pixel.0[0], pixel.0[1], pixel.0[2])),
+        );
         let filled = from_file.iter().filter(|ink| **ink).count();
         assert!(filled > width * 50, "{filled} pixels of band in the file");
+        // A rasteriser samples a pixel at its centre, so this does too.
+        let from_quads: Vec<bool> = (0..from_file.len())
+            .map(|index| {
+                let at = Pos2::new((index % width) as f32 + 0.5, (index / width) as f32 + 0.5);
+                triangles.iter().any(|triangle| inside(triangle, at))
+            })
+            .collect();
 
         let differing: Vec<usize> = (0..from_file.len())
-            .filter(|&index| from_file[index] != from_frame[index])
-            .filter(|&index| !beside_an_edge([&from_file, &from_frame], width, index))
+            .filter(|&index| from_file[index] != from_quads[index])
+            .filter(|&index| !beside_an_edge([&from_file, &from_quads], width, index))
             .collect();
         assert!(
             differing.is_empty(),
