@@ -5,14 +5,14 @@
 use std::collections::BTreeSet;
 
 use dbrover_core::{BlobId, ByteCount};
+use dbrover_insight::insights::{self, StepKey, seconds};
+use dbrover_insight::{compare, hints};
 use dbrover_report::{HintId, grouped};
 use dbrover_store::{ReportName, ReportRun, RunOrigin, RunOutcome, StepMetrics};
 use egui::{Grid, RichText, Ui};
 use jiff::tz::TimeZone;
 
-use super::insights::{self, StepKey, seconds};
 use super::{ReportAction, Reports};
-use super::{compare, hints};
 use crate::icons;
 use crate::theme::Palette;
 use crate::widgets;

@@ -7,20 +7,13 @@
 //! are typed, but never runs one: the worker reads the file again and runs it, so what runs is
 //! what is saved.
 
-pub mod compare;
 mod compare_view;
 mod explain_view;
-pub mod explanation;
 mod file;
-mod funnel;
 mod highlight;
-pub mod hints;
-pub mod insights;
 mod launcher;
 pub mod live;
-mod plan_hints;
 mod problems;
-pub mod profile;
 mod profile_view;
 mod rename_dialog;
 mod runs_table;
@@ -36,6 +29,7 @@ use dbrover_engine::{
     Command, Event, KeepAwake, ReportSaveFailure, ReportText, RunWatch, WatchedFile,
 };
 use dbrover_export::CustomFormat;
+use dbrover_insight::explanation;
 use dbrover_report::{
     Batch, Busy, CombineCaps, CombineLimits, ExplainRequest, Explanation, LimitDefaults,
     LoadedColumn, OutputLimits, PartDone, Parts, Plan, Preview, Report, RunEvent, RunFailure,

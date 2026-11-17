@@ -10,8 +10,8 @@ use dbrover_report::{
 };
 use dbrover_store::{ReportRun, RunOutcome, StepMetrics};
 
-use super::hints::Hint;
-use super::plan_hints::{SourceFacts, plan_hints};
+use crate::hints::Hint;
+use crate::plan_hints::{SourceFacts, plan_hints};
 
 /// The tables the newest finished run of `runs` loaded, which the combine step is planned over
 /// for a source whose file declares no columns.

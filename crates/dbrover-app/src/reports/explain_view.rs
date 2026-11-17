@@ -2,12 +2,12 @@
 //! with its engine's plan and its cost guard's estimate, then the combine step's plan over
 //! empty tables. Plans are shown as their text plan, as W10's **Text** view writes them.
 
+use dbrover_insight::explanation;
+use dbrover_insight::hints::Hint;
 use dbrover_report::{CombineExplanation, ExplainedPlan, SourceExplanation};
 use dbrover_store::ReportName;
 use egui::{RichText, Ui};
 
-use super::explanation;
-use super::hints::Hint;
 use super::{ExplainState, Reports};
 use crate::icons;
 use crate::theme::Palette;

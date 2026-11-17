@@ -5,6 +5,7 @@
 use std::ops::Range;
 
 use dbrover_core::DataSource;
+use dbrover_insight::hints::{self, HintAt};
 use dbrover_report::{
     HintId, Locator, Place, Plan, ReportProblem, StepLanguage, Table, embedded_code,
 };
@@ -12,7 +13,6 @@ use dbrover_sql::{Dialect, ProblemSource, Severity as SqlSeverity};
 use dbrover_store::ReportRun;
 
 use super::highlight::language_of;
-use super::hints::{self, HintAt};
 use crate::code_editor::{EditorProblem, Severity};
 use crate::console::LintOptions;
 

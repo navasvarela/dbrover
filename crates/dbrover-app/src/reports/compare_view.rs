@@ -2,12 +2,12 @@
 //! the runs the history keeps, each step's numbers side by side with the large changes marked,
 //! the parameters and limits that differ, and whether the report's file changed.
 
+use dbrover_insight::compare::{self, Change, Comparison, Differs};
+use dbrover_insight::insights::seconds;
 use dbrover_store::{ReportName, ReportRun, RunOutcome};
 use egui::{Grid, RichText, Ui};
 use jiff::tz::TimeZone;
 
-use super::compare::{self, Change, Comparison, Differs};
-use super::insights::seconds;
 use super::runs_table::STARTED_FORMAT;
 use super::{ComparedRuns, Reports};
 use crate::icons;

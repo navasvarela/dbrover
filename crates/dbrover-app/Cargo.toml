@@ -21,6 +21,7 @@ dbrover-picture.workspace = true
 dbrover-document.workspace = true
 dbrover-engine.workspace = true
 dbrover-export.workspace = true
+dbrover-insight.workspace = true
 dbrover-language.workspace = true
 dbrover-mcp.workspace = true
 dbrover-plan.workspace = true
