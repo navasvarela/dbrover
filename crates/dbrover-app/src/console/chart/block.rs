@@ -313,13 +313,13 @@ mod tests {
 
     #[test]
     fn a_blocks_problems_say_the_consoles_line() {
-        let text = "SELECT 1;\n-- [chart]\n-- kind = \"area\"\nSELECT 2";
+        let text = "SELECT 1;\n-- [chart]\n-- kind = \"pie\"\nSELECT 2";
         let blocks = Blocks::of(SQL, text);
         let range = SQL.split(text).remove(1);
         let spec = blocks.spec_for(&range).unwrap();
         assert_eq!(
             spec.read(),
-            Err(&["chart, line 3: `kind` is bars, lines or scatter, not \"area\"".to_owned()][..])
+            Err(&["chart, line 3: `kind` is bars, hbars (horizontal bars), lines or scatter, not \"pie\"".to_owned()][..])
         );
     }
 

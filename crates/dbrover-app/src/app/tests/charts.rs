@@ -2,7 +2,7 @@
 //! and a chart in a query's text (CH1) and its series and stacked bars (CH2) against the SQLite
 //! shop of the example reports.
 
-use dbrover_chart::{Drawing, Mark};
+use dbrover_chart::{Drawing, Mark, Rect};
 
 use super::plans::{console_with, start_on};
 use super::*;
@@ -263,6 +263,80 @@ fn a_chart_block_opens_its_chart_and_save_to_query_writes_it_back() {
     step_until_visible(
         &mut harness,
         "chart: `y = \"nett\"` isn't a column of this result: month, net",
+    );
+}
+
+/// Net sales by product and category on the shop: names longer than a slot along the bottom
+/// holds, which is what horizontal bars are for.
+const SHOP_BY_PRODUCT: &str = "-- [chart]
+-- kind = \"hbars\"
+-- x = \"product\"
+-- y = \"net\"
+-- sort = \"net desc\"
+SELECT p.name || ' (' || p.category || ')' AS product, SUM(l.amount) AS net
+FROM order_lines l JOIN products p ON p.id = l.product_id
+GROUP BY product ORDER BY product;";
+
+/// CH5b's exit: a chart of long names draws as horizontal bars whose names are readable, where
+/// the same chart standing up cuts them to a slot; and the fourth kind in the toolbar is the
+/// block's, so switching back to it leaves nothing to save.
+#[test]
+fn long_names_chart_as_horizontal_bars_whose_names_are_readable() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(dir.path(), SHOP);
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    console_with(&mut harness, "shop", SHOP_BY_PRODUCT);
+    harness.get_by_label("Run").click();
+    step_until(&mut harness, "the horizontal chart", |harness| {
+        shown_chart(harness).is_some()
+    });
+
+    let drawing = shown_chart(&harness).unwrap();
+    let (count, lines, texts) = marks(&drawing);
+    assert_eq!((count, lines), (7, 0), "a bar per product: {texts:?}");
+    assert!(
+        texts.contains(&"Rain jacket (clothing)".to_owned()),
+        "the longest name is whole in the gutter: {texts:?}"
+    );
+    let bars: Vec<Rect> = drawing
+        .marks
+        .iter()
+        .filter_map(|mark| match mark {
+            Mark::Rect { rect, .. } if rect.min.y >= drawing.plot.min.y => Some(*rect),
+            _ => None,
+        })
+        .collect();
+    for bar in &bars {
+        assert!(
+            (bar.min.x - drawing.plot.min.x).abs() < 0.01,
+            "every bar grows from the zero line on the left: {bar:?}"
+        );
+    }
+    assert!(
+        bars[0].max.y <= bars[1].min.y,
+        "the slots run down the plot: {bars:?}"
+    );
+    assert!(
+        bars[0].width() > bars[bars.len() - 1].width(),
+        "sorted largest first: {bars:?}"
+    );
+
+    harness.get_by_label("Bars").click();
+    harness.run_steps(2);
+    let upright = shown_chart(&harness).unwrap();
+    let (_, _, upright_texts) = marks(&upright);
+    assert!(
+        upright_texts.contains(&"Rain jacket (clothi…".to_owned()),
+        "standing up, a slot cuts the same name: {upright_texts:?}"
+    );
+    harness.get_by_label("Not in the query");
+
+    harness.get_by_label("Hbars").click();
+    harness.run_steps(2);
+    assert!(
+        harness.query_by_label("Not in the query").is_none(),
+        "the block's own kind leaves nothing to save"
     );
 }
 

@@ -244,6 +244,7 @@ impl<'a> ChartRun<'a> {
         let most = kind.max_rows();
         let draws = match kind {
             ChartKind::Bars => "bars",
+            ChartKind::Hbars => "horizontal bars",
             ChartKind::Lines => "lines",
             ChartKind::Scatter => "a scatter",
         };

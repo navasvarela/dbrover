@@ -116,10 +116,10 @@ fn names_each_charts_problems_and_the_chart_they_are_in() {
             ],
         ),
         (
-            "[[chart]]\nfile = \"net.svg\"\nfiel = \"net.svg\"\nkind = \"area\"",
+            "[[chart]]\nfile = \"net.svg\"\nfiel = \"net.svg\"\nkind = \"pie\"",
             vec![
                 "chart 1: no key `fiel`; did you mean `file`?",
-                "chart 1: `kind` is bars, lines or scatter, not \"area\"",
+                "chart 1: `kind` is bars, hbars (horizontal bars), lines or scatter, not \"pie\"",
             ],
         ),
         (
@@ -148,7 +148,7 @@ fn a_chart_table_that_isnt_a_list_of_tables_is_a_problem() {
 
 #[test]
 fn places_a_charts_problem_on_its_key() {
-    let text = with_charts("[[chart]]\nfile = \"net.svg\"\nkind = \"area\"");
+    let text = with_charts("[[chart]]\nfile = \"net.svg\"\nkind = \"pie\"");
     let problems = read_with_places(&text).unwrap_err();
     let locator = Locator::new(&text);
 

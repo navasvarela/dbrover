@@ -1959,17 +1959,17 @@ mod charts {
 
     #[test]
     fn a_blocks_key_problem_shows_in_place_of_the_chart_and_in_the_editor() {
-        let text = BY_MONTH.replace("kind = \"bars\"", "kind = \"area\"");
+        let text = BY_MONTH.replace("kind = \"bars\"", "kind = \"pie\"");
         let mut console = ran_with(&text);
         show(&mut console, |harness| {
-            harness.get_by_label("chart, line 4: `kind` is bars, lines or scatter, not \"area\"");
+            harness.get_by_label("chart, line 4: `kind` is bars, hbars (horizontal bars), lines or scatter, not \"pie\"");
             assert!(harness.query_by_label("Charting 3 rows").is_none());
         });
         assert_eq!(console.problem_counts(), (1, 0));
         console.jump_to_problem(true);
         assert_eq!(
             console.editor.ordered_selection().0,
-            text.find("\"area\"").unwrap()
+            text.find("\"pie\"").unwrap()
         );
     }
 

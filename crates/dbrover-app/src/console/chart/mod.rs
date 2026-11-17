@@ -458,16 +458,19 @@ pub fn controls(ui: &mut Ui, tab: &mut ChartTab, source: &Source<'_>) -> Option<
     let drawn = view.laid_out.is_some();
     let choice = view.choice.as_mut()?;
     for kind in ChartKind::ALL {
-        ui.selectable_value(&mut choice.kind, kind, kind.label());
+        ui.selectable_value(&mut choice.kind, kind, kind.label())
+            .on_hover_text(kind.hint());
     }
     ui.separator();
     x_picker(ui, choice, &view.columns);
     y_menu(ui, choice, &view.columns, &view.roles);
     series_picker(ui, choice, &view.columns);
-    let stackable = choice.kind == ChartKind::Bars && choice.has_series();
+    let stackable = choice.kind.is_bars() && choice.has_series();
     ui.add_enabled(stackable, egui::Checkbox::new(&mut choice.stack, "Stacked"))
         .on_hover_text("Stack the series' bars, a bar per X")
-        .on_disabled_hover_text("Bars of several series stack: pick Bars, and a series or two Ys");
+        .on_disabled_hover_text(
+            "Bars of several series stack: pick Bars or Hbars, and a series or two Ys",
+        );
     ui.separator();
     let in_query = view.in_query();
     let mut action = save_to_query(ui, has_block, in_query, save_error.as_deref());
@@ -829,14 +832,10 @@ fn hover(
     let Some(point) = drawing.hit(dbrover_chart::Point::new(local.x, local.y)) else {
         return;
     };
-    if let Some(x) = drawing.x_of(point) {
-        let x = response.rect.min.x + x;
-        let top = response.rect.min.y + drawing.plot.min.y;
-        let bottom = response.rect.min.y + drawing.plot.max.y;
-        ui.painter().line_segment(
-            [Pos2::new(x, top), Pos2::new(x, bottom)],
-            Stroke::new(1.0, paints.guide),
-        );
+    if let Some((from, to)) = drawing.guide(point) {
+        let at = |point: dbrover_chart::Point| response.rect.min + Vec2::new(point.x, point.y);
+        ui.painter()
+            .line_segment([at(from), at(to)], Stroke::new(1.0, paints.guide));
     }
     let Some(lines) = point_values(view, source, point) else {
         return;

@@ -36,7 +36,8 @@ pub(crate) struct ChartArgs {
     /// order in the statement: SELECT month, SUM(amount) AS net … GROUP BY month ORDER BY month.
     pub(crate) sql: String,
     /// The chart, by the keys a chart block above a statement takes in DbRover: kind ("bars",
-    /// "lines" or "scatter"), x (a column), y (a column or a list of them), series (a column
+    /// "hbars" for bars lying down, which fits long category names, "lines" or "scatter"), x (a
+    /// column), y (a column or a list of them), series (a column
     /// whose values split y into a series each), stack (true to stack bars), title, x_title,
     /// y_title, y_zero, sort ("net desc") and limit (rows, after sort). Every key is optional:
     /// one left out takes the value DbRover's chart tab starts with, bars over text, lines over
@@ -241,11 +242,12 @@ mod tests {
 
     #[test]
     fn says_every_key_with_a_problem() {
-        let error = spec(&object(json!({ "kind": "area", "ys": "net" }))).unwrap_err();
+        let error = spec(&object(json!({ "kind": "pie", "ys": "net" }))).unwrap_err();
 
         assert_eq!(
             error.message,
-            "chart.kind: `kind` is bars, lines or scatter, not \"area\"; chart.ys: no key `ys`; \
+            "chart.kind: `kind` is bars, hbars (horizontal bars), lines or scatter, not \"pie\"; \
+             chart.ys: no key `ys`; \
              did you mean `y`?"
         );
     }

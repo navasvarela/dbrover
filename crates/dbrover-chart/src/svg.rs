@@ -278,6 +278,46 @@ mod tests {
         assert!(svg.contains(">bikes</text>") && svg.contains(">parts</text>"));
     }
 
+    /// The value of `name` in an SVG element, as a number.
+    fn attribute(element: &str, name: &str) -> f32 {
+        let after = element
+            .split_once(&format!(" {name}=\""))
+            .unwrap_or_else(|| panic!("{name} in {element}"))
+            .1;
+        let value = after.split_once('"').map_or(after, |(value, _)| value);
+        value
+            .parse()
+            .unwrap_or_else(|_| panic!("{name} is a number in {element}"))
+    }
+
+    #[test]
+    fn writes_horizontal_bars_from_one_zero_line_outwards() {
+        let svg = svg(&months(ChartKind::Hbars), 11.0);
+
+        let bars: Vec<&str> = svg
+            .lines()
+            .filter(|line| line.starts_with("<rect x=") && line.contains(" rx="))
+            .collect();
+        assert_eq!(bars.len(), 3, "{svg}");
+        let zero = attribute(bars[0], "x");
+        for bar in &bars {
+            assert!(
+                (attribute(bar, "x") - zero).abs() < 0.01,
+                "every bar starts at the zero line: {bar}"
+            );
+        }
+        let heights: Vec<f32> = bars.iter().map(|bar| attribute(bar, "height")).collect();
+        assert!(
+            heights
+                .windows(2)
+                .all(|pair| (pair[0] - pair[1]).abs() < 0.01),
+            "the slots are of one height: {heights:?}"
+        );
+        let widths: Vec<f32> = bars.iter().map(|bar| attribute(bar, "width")).collect();
+        assert!(widths[1] < widths[0] && widths[0] < widths[2], "{widths:?}");
+        assert!(svg.contains(">&lt;Q3&gt; &amp; co</text>"));
+    }
+
     #[test]
     fn writes_a_line_as_a_polyline() {
         let svg = svg(&months(ChartKind::Lines), 11.0);
