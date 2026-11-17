@@ -3092,12 +3092,13 @@ is added. It came after CI fixes, the reports track and W13.
   "mean"]` draws two dashed lines in the series' colour over its solid one, under
   "Charting 55 rows · Trend and mean over those 55 rows, by day"; the same spec with `limit` in
   a report is a problem in the file, which `dbrover report run` exits 3 on before anything
-  starts. Departures from the design: five, each small and each written down in
+  starts. Departures from the design: six, each written down in
   [CH5 confirmed](charts-as-code.md#ch5-confirmed) — decade ticks taking how many labels fit
   rather than a decade count, the cross-platform guard being a `const` rather than a second
   example chart, `colours` taking a single colour as a list of one, **Copy the SQL** being a
-  toggle rather than a menu item, and a moving average longer than the chart being a sentence in
-  the note rather than a key problem. Covered by the chart crate's own tests, the SQL crate's
+  toggle rather than a menu item, a moving average longer than the chart being a sentence in
+  the note rather than a key problem, and the toolbar's five kind buttons becoming one picker
+  when the row they were a part of ran out of width. Covered by the chart crate's own tests, the SQL crate's
   per-dialect snapshots, the report crate's file problems and limits, and six kittests on the
   shop, one per layer's exit.
 

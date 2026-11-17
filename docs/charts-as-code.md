@@ -987,7 +987,8 @@ tested on its own, with synthetic data only (the SQLite shop of `examples/report
 #### CH5 confirmed
 
 Built on 2026-11-17, after RS7g, in seven pull requests off `main`. The plan stands; building it
-settled these details, and departed from it in five places, each noted below.
+settled these details, and departed from it in six places, each noted below — one of them a layer the plan
+didn't have.
 
 - **The extents, and the frame.** The layout named its two directions after the axes they
   happened to be. They are now the *value* extent and the *category* extent, and every mark goes
@@ -1032,6 +1033,19 @@ settled these details, and departed from it in five places, each noted below.
   landed: on a log axis the mean of the values is not the mean of their positions. The note's
   basis comes before the gaps it skipped, so the clause reads as one while the basis is still
   always named.
+- **The toolbar had room for one more item, and CH5 adds three.** An unplanned layer between
+  CH5e and CH5f turns the five kind buttons into one picker reading `Bars`, in the same idiom as
+  the X, Y and Series pickers beside it. Measured at the window the app opens with, charting
+  three months with no `[chart]` block — the crowded case, since that toolbar also carries
+  **Save to query**: five kinds and Summarise gave the chart 96 points and a plot of 23, and
+  drew nothing at all; one picker gives it 160 and a plot of 87, and draws its bars. The cost is
+  a click to change kind where there was none; the gain is that the next kind costs nothing,
+  which a row of buttons never had. Weighed and rejected: an overflow menu for **Save to
+  query**, **Copy for a report**, **Export ›** and **Summarise ›**, which hides the actions a
+  reader is looking for; two rows by design, which spends the height on every chart to serve the
+  crowded one; and icons for the kinds, which trades a word everyone reads for a glyph they have
+  to learn. `MIN_PLOT_SIDE` is left alone: a plot of 23 points really can't be drawn, and the
+  floor saying so is not what went wrong.
 - **A GitHub Linux runner has no GPU,** and `egui_kittest`'s only renderer is a wgpu one, so
   CH5c's comparison of a band's two fills uses `egui::epaint::Tessellator` on the CPU — the same
   `Shape::convex_polygon` calls the painter makes, with feathering off — against resvg's
