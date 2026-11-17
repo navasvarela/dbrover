@@ -193,7 +193,52 @@ GROUP BY month, c.country
 ORDER BY month, c.country;
 "#;
 
-const CHART_STACKED: &str = r#"-- [chart]
+const CHART_HBARS: &str = r#"-- [chart]
+-- kind = "hbars"
+-- x = "customer"
+-- y = "revenue"
+-- sort = "revenue desc"
+-- limit = 5
+-- title = "The five best customers"
+SELECT c.name AS customer, ROUND(SUM(t.total), 2) AS revenue
+FROM orders o
+JOIN customers c ON c.id = o.customer_id
+JOIN order_totals t ON t.id = o.id
+WHERE o.status <> 'cancelled'
+GROUP BY customer
+ORDER BY revenue DESC;
+"#;
+
+const CHART_AREA: &str = r#"-- [chart]
+-- kind = "area"
+-- x = "month"
+-- y = "revenue"
+-- series = "country"
+-- title = "Revenue by month and country"
+SELECT strftime('%Y-%m', o.placed_at) AS month, c.country,
+       ROUND(SUM(t.total), 2) AS revenue
+FROM orders o
+JOIN customers c ON c.id = o.customer_id
+JOIN order_totals t ON t.id = o.id
+WHERE o.status <> 'cancelled'
+GROUP BY month, c.country
+ORDER BY month, c.country;
+"#;
+
+const CHART_OVERLAY: &str = r#"-- [chart]
+-- x = "day"
+-- y = "revenue"
+-- overlay = ["trend", "mean"]
+-- title = "Revenue by day, with its trend and mean"
+SELECT date(o.placed_at) AS day, ROUND(SUM(t.total), 2) AS revenue
+FROM orders o
+JOIN order_totals t ON t.id = o.id
+WHERE o.status <> 'cancelled'
+GROUP BY day
+ORDER BY day;
+"#;
+
+const CHART_STACKED: &str = r#"-- [chart]"""
 -- kind = "bars"
 -- stack = true
 -- x = "month"
@@ -702,6 +747,30 @@ const SCENES: &[Scene] = &[
         name: "chart-series",
         data_sources: FixtureSources::Shop,
         play: chart_series,
+        keeps_pointer: false,
+        region: chart_panel,
+        needs: &[],
+    },
+    Scene {
+        name: "chart-hbars",
+        data_sources: FixtureSources::Shop,
+        play: chart_hbars,
+        keeps_pointer: false,
+        region: chart_panel,
+        needs: &[],
+    },
+    Scene {
+        name: "chart-area",
+        data_sources: FixtureSources::Shop,
+        play: chart_area,
+        keeps_pointer: false,
+        region: chart_panel,
+        needs: &[],
+    },
+    Scene {
+        name: "chart-overlay",
+        data_sources: FixtureSources::Shop,
+        play: chart_overlay,
         keeps_pointer: false,
         region: chart_panel,
         needs: &[],
@@ -2598,6 +2667,18 @@ fn chart_scatter(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
 
 fn chart_series(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
     run_charted(harness, CHART_SERIES);
+}
+
+fn chart_hbars(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    run_charted(harness, CHART_HBARS);
+}
+
+fn chart_area(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    run_charted(harness, CHART_AREA);
+}
+
+fn chart_overlay(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    run_charted(harness, CHART_OVERLAY);
 }
 
 fn chart_stacked(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {

@@ -471,6 +471,10 @@ struct Measured {
     ticks: Ticks,
     labels: Vec<String>,
     gutter: f32,
+    /// Room to leave at the right edge. Lying down, a value label is centred on its tick and
+    /// the last tick is at the plot's right edge, so without this half of "2,000" falls outside
+    /// the picture. Upright, the labels are in the gutter and none can overflow.
+    right: f32,
 }
 
 impl Measured {
@@ -496,6 +500,7 @@ impl Measured {
             ticks,
             labels,
             gutter,
+            right: 0.0,
         }
     }
 
@@ -526,10 +531,15 @@ impl Measured {
         // Lying down is a bar kind, which refuses a log scale, so the ticks are always even.
         let ticks = Ticks::nice(low, high, (width / X_TICK_SPACING) as usize);
         let labels = tick_labels(&ticks);
+        // Half the widest label, since the last tick sits at the plot's right edge and its
+        // label is centred on it. The ticks were chosen for the width before this was taken
+        // off, which moves the target by a label's width at most.
+        let right = widest(&labels, measure) / 2.0;
         Self {
             ticks,
             labels,
             gutter,
+            right,
         }
     }
 }
@@ -584,7 +594,7 @@ pub fn layout(
     };
     let plot = Rect {
         min: Point::new(PADDING + measured.gutter + LABEL_GAP, top),
-        max: Point::new(size.width - PADDING, bottom),
+        max: Point::new(size.width - PADDING - measured.right, bottom),
     };
     let frame = Frame::for_kind(data.kind, plot);
     let value_ticks = measured.ticks;
@@ -2300,5 +2310,40 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Lying down, the last value tick sits at the plot's right edge and its label is centred
+    /// on it, so the plot has to leave room for half of it or the label runs off the picture.
+    #[test]
+    fn a_horizontal_charts_last_value_label_stays_inside_the_picture() {
+        let chart = data(
+            ChartKind::Hbars,
+            months(3),
+            &[("net", &[Some(500.0), Some(1_200.0), Some(2_000.0)])],
+        );
+        let drawing = layout(&chart, &LayoutOptions::default(), SIZE, &Fixed);
+
+        for mark in &drawing.marks {
+            let Mark::Text {
+                at,
+                text,
+                anchor: Anchor::Middle,
+                paint: Paint::Label,
+            } = mark
+            else {
+                continue;
+            };
+            let right = at.x + Fixed.width(text) / 2.0;
+            assert!(
+                right <= SIZE.width,
+                "{text} ends at {right}, past the picture's {}",
+                SIZE.width
+            );
+        }
+        assert!(
+            drawing.plot.max.x < SIZE.width - PADDING,
+            "the plot leaves the room: {:?}",
+            drawing.plot
+        );
     }
 }
