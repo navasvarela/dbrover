@@ -2797,6 +2797,7 @@ dependencies = [
  "dbrover-driver-duckdb",
  "dbrover-engine",
  "dbrover-export",
+ "dbrover-insight",
  "dbrover-language",
  "dbrover-picture",
  "dbrover-report",

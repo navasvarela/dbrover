@@ -13,7 +13,7 @@ use dbrover_engine::read_only::{self as guard, Refusal};
 use dbrover_export::{ExportColumn, ExportFormat, ExportSpec, RowSource, render};
 use dbrover_language::{NamedSchemas, QueryLanguage, StatementKind};
 use dbrover_sql::Dialect;
-use dbrover_store::{HistoryOutcome, SchemaScope};
+use dbrover_store::{HistoryFile, HistoryOutcome, SchemaScope};
 use jiff::Timestamp;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -29,6 +29,7 @@ use crate::chart::{self as charts, ChartArgs};
 use crate::connections::Connections;
 use crate::execute::ExecuteArgs;
 use crate::project::ServedProject;
+use crate::report_history::{ReportProfileArgs, ReportRunsArgs};
 use crate::reports::{ReportRunner, RunReportArgs};
 use crate::scope::Scope;
 use crate::transaction::{self, Access, CallSettings, Rows, RunError, Watchdog};
@@ -52,6 +53,9 @@ pub(crate) struct Inner {
     pub(crate) audit: Audit,
     /// What lists and runs reports; `None` where nothing does, as in tests of other tools.
     pub(crate) reports: Option<Arc<dyn ReportRunner>>,
+    /// The run history, opened per call by the report tools that read it (RS8c). The audit
+    /// holds its own handle for writing: a read here never waits on a write there.
+    pub(crate) history: HistoryFile,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -245,6 +249,7 @@ impl DbRoverMcp {
         connections: Arc<Connections>,
         audit: Audit,
         reports: Option<Arc<dyn ReportRunner>>,
+        history: HistoryFile,
     ) -> Self {
         let mut tool_router = Self::tool_router();
         // A project that only reads has nothing for execute to run, so clients don't see it.
@@ -261,6 +266,7 @@ impl DbRoverMcp {
                 connections,
                 audit,
                 reports,
+                history,
             }),
             tool_router,
         }
@@ -399,6 +405,28 @@ impl DbRoverMcp {
     #[tool(annotations(read_only_hint = true, open_world_hint = false))]
     async fn list_reports(&self) -> ToolResult {
         reply(self.list_reports_json())
+    }
+
+    /// The runs this report has kept, newest first: each one's id, when it started, how
+    /// long it took, how it ended, its parameters, where it was run from, the step that took
+    /// the longest share of it, and any step that took far longer than its median over the
+    /// runs kept. Also the step that dominates every finished run, where they agree. Reads
+    /// the history DbRover already keeps and runs nothing. report_profile answers one run in
+    /// full; this is the list to pick from.
+    #[tool(annotations(read_only_hint = true, open_world_hint = false))]
+    async fn report_runs(&self, Parameters(args): Parameters<ReportRunsArgs>) -> ToolResult {
+        reply(self.report_runs_json(args))
+    }
+
+    /// One kept run in full: every step with its phases, waits and ranges; what the run
+    /// measured of itself; the step on the critical path that held it longest; the data
+    /// funnel, a source at a time, of what its engine scanned, what it returned, what the
+    /// combine used of it and what the run wrote; and the hints its numbers give, each marked
+    /// when the report silences it. The widest drop in the funnel is where a source's query
+    /// should filter. Reads the history and runs nothing.
+    #[tool(annotations(read_only_hint = true, open_world_hint = false))]
+    async fn report_profile(&self, Parameters(args): Parameters<ReportProfileArgs>) -> ToolResult {
+        reply(self.report_profile_json(args))
     }
 
     /// Runs one of list_reports' reports with its parameters, as DbRover runs it: each source

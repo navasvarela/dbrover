@@ -124,6 +124,13 @@ impl dbrover_mcp::ReportRunner for StandInReports {
                     .iter()
                     .map(|problem| (*problem).to_owned())
                     .collect(),
+                // `sales` silences one hint, so a test can see a silenced hint answered and
+                // marked rather than left out.
+                quiet_hints: if name == "sales" {
+                    vec![dbrover_report::HintId::SourceReadsMore]
+                } else {
+                    Vec::new()
+                },
             };
         Ok(vec![
             listing("sales", "lake", &[]),
