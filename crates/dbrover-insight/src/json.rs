@@ -8,7 +8,7 @@
 //! `compare_report_runs` answers. They are here, rather than in each caller, so a reader of
 //! one has read all three.
 
-use dbrover_report::HintId;
+use dbrover_report::{Explanation, HintId};
 use dbrover_store::{ReportRun, RunOutcome};
 use serde_json::{Value, json};
 
@@ -88,6 +88,23 @@ fn differs(differs: &[Differs]) -> Vec<Value> {
         .iter()
         .map(|differ| json!({"name": differ.name, "before": differ.before, "after": differ.after}))
         .collect()
+}
+
+/// An explanation as `dbrover report explain --json` writes it and `explain_report` answers
+/// it: the sources and the combine as `dbrover-report` serialises them, with the hints the
+/// plans give beside them.
+///
+/// `quiet` marks a hint the report silences, as it does in [`profile`]. The command line
+/// filters those out before calling and passes none, so its document is unchanged; a tool
+/// answers them all, marked, because a client asking what to change is asking what the plans
+/// show.
+pub fn explanation(explanation: &Explanation, hints: &[Hint], quiet: &[HintId]) -> Value {
+    let mut value = serde_json::to_value(explanation).unwrap_or(Value::Null);
+    let hints: Vec<Value> = hints.iter().map(|found| hint(found, quiet)).collect();
+    if let Value::Object(fields) = &mut value {
+        fields.insert("hints".to_owned(), Value::Array(hints));
+    }
+    value
 }
 
 /// Two runs side by side: the run's own changes, each step's, the parameters and limits that

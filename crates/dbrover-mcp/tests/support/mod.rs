@@ -165,6 +165,49 @@ impl dbrover_mcp::ReportRunner for StandInReports {
         ];
         Ok(Box::new(Scripted(events.into_iter().collect())))
     }
+
+    /// An explanation as the worker would answer with one: the source's statement with the
+    /// parameter written in, a plan for it, and an estimate over the data source's limit, so
+    /// a test sees an estimate reported beside its limit rather than enforced.
+    fn explain(
+        &self,
+        report: &str,
+        values: dbrover_report::TypedValues,
+    ) -> Result<Box<dyn dbrover_mcp::RunningReport>, Vec<String>> {
+        use dbrover_report::{
+            CombineExplanation, Estimate, ExplainedPlan, Explanation, RunEvent, SourceExplained,
+            SourceExplanation,
+        };
+        let since = values
+            .get("since")
+            .cloned()
+            .ok_or_else(|| vec!["since needs a value".to_owned()])?;
+        let explanation = Explanation {
+            sources: vec![SourceExplanation {
+                id: "lines".to_owned(),
+                data_source: "lake".to_owned(),
+                explained: SourceExplained {
+                    statement: format!("SELECT * FROM lines WHERE ordered_on >= '{since}'"),
+                    plan: ExplainedPlan::Text {
+                        text: "SCAN lines".to_owned(),
+                    },
+                    estimate: Some(Estimate {
+                        says: "would scan about 2 GB".to_owned(),
+                        bytes: Some(2_000_000_000),
+                        at_least: false,
+                        limit_bytes: Some(1_000_000_000),
+                        refused: true,
+                    }),
+                },
+                notes: vec![format!("explained for the {report} report")],
+            }],
+            combine: Some(CombineExplanation::Planned {
+                text: r#"{"children":[]}"#.to_owned(),
+            }),
+        };
+        let events = vec![RunEvent::Explained(Box::new(explanation))];
+        Ok(Box::new(Scripted(events.into_iter().collect())))
+    }
 }
 
 struct Scripted(std::collections::VecDeque<dbrover_report::RunEvent>);

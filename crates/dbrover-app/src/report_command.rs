@@ -8,7 +8,7 @@
 //! code per outcome ([`Outcome`]).
 
 mod args;
-mod explain;
+pub(crate) mod explain;
 pub(crate) mod history;
 mod human;
 pub(crate) mod kept;

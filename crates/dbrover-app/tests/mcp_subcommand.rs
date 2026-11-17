@@ -190,6 +190,7 @@ async fn serves_a_project_over_stdio_with_no_window() {
             "compare_report_runs",
             "describe_table",
             "explain",
+            "explain_report",
             "get_definition",
             "list_data_sources",
             "list_objects",

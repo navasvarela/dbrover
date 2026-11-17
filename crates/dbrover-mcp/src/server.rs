@@ -30,7 +30,7 @@ use crate::connections::Connections;
 use crate::execute::ExecuteArgs;
 use crate::project::ServedProject;
 use crate::report_history::{CompareReportRunsArgs, ReportProfileArgs, ReportRunsArgs};
-use crate::reports::{ReportRunner, RunReportArgs};
+use crate::reports::{ExplainReportArgs, ReportRunner, RunReportArgs};
 use crate::scope::Scope;
 use crate::transaction::{self, Access, CallSettings, Rows, RunError, Watchdog};
 
@@ -441,6 +441,25 @@ impl DbRoverMcp {
         Parameters(args): Parameters<CompareReportRunsArgs>,
     ) -> ToolResult {
         reply(self.compare_report_runs_json(args))
+    }
+
+    /// Plans one of list_reports' reports without running it, as Explain in its tab and
+    /// `dbrover report explain` do: each SQL source's statement with the parameters written
+    /// in and its own database's plan for it, the combine step's plan over the columns the
+    /// last finished run loaded, each source's estimated bytes beside its data source's limit
+    /// where its engine estimates, and the hints those plans give. It runs no statement that
+    /// reads data, so a report can be improved before it is ever run. A plan can take seconds
+    /// while each database is asked; cancelling the call stops it.
+    #[tool(annotations(read_only_hint = true, open_world_hint = false))]
+    async fn explain_report(
+        &self,
+        Parameters(args): Parameters<ExplainReportArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> ToolResult {
+        reply(
+            self.explain_report_json(args, context.ct.cancelled_owned())
+                .await,
+        )
     }
 
     /// Runs one of list_reports' reports with its parameters, as DbRover runs it: each source

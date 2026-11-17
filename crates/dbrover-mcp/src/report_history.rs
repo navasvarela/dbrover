@@ -20,7 +20,7 @@ use rmcp::schemars;
 use serde::Deserialize;
 use serde_json::{Value, json as json_value};
 
-use crate::reports::ReportListing;
+use crate::reports::{ReportListing, no_such_report};
 use crate::server::{DbRoverMcp, ToolError};
 
 /// How many of the newest runs `report_runs` answers when the call doesn't say, and the most
@@ -67,39 +67,54 @@ pub(crate) struct CompareReportRunsArgs {
 }
 
 impl DbRoverMcp {
-    /// The report `name` names among those this project sees, with its kept runs, newest
-    /// first. Refuses a name the project isn't shown, listing the ones it is.
-    pub(crate) fn kept_runs(
+    /// The report `name` names among those this project sees. Refuses a name the project
+    /// isn't shown, listing the ones it is, as `run_report` does — never saying whether a
+    /// report it may not see exists.
+    pub(crate) fn project_report(
         &self,
         tool: &str,
         name: &str,
-    ) -> Result<(ReportListing, Vec<ReportRun>), ToolError> {
+    ) -> Result<ReportListing, ToolError> {
         let reports = self.project_reports(tool)?;
-        let Some(report) = reports.iter().find(|report| report.name == name) else {
-            let names: Vec<&str> = reports.iter().map(|report| report.name.as_str()).collect();
-            return Err(ToolError::invalid(format!(
-                "the project has no report {name:?}; it has: {}",
-                names.join(", ")
-            )));
-        };
-        // The folder gave the name, so this holds; a name it can't hold reaches no file.
-        let Some(report_name) = ReportName::new(&report.name) else {
+        match reports.iter().find(|report| report.name == name) {
+            Some(report) => Ok(report.clone()),
+            None => Err(no_such_report(name, &reports)),
+        }
+    }
+
+    /// The runs `report` has kept, newest first.
+    pub(crate) fn runs_kept(
+        &self,
+        tool: &str,
+        report: &ReportListing,
+    ) -> Result<Vec<ReportRun>, ToolError> {
+        // The reports folder gave the name, so a name no file can hold reaches no file.
+        let Some(name) = ReportName::new(&report.name) else {
             return Err(ToolError::refused(format!(
                 "{:?} can't be a report's name",
                 report.name
             )));
         };
-        let runs = self
-            .inner
+        self.inner
             .history
             .open()
-            .and_then(|history| history.runs(&report_name, RUNS_READ))
+            .and_then(|history| history.runs(&name, RUNS_READ))
             .map_err(|error| {
                 let reason = format!("the run history can't be read: {error}");
                 self.inner.audit.refused(tool, "-", &reason);
                 ToolError::refused(reason)
-            })?;
-        Ok((report.clone(), runs))
+            })
+    }
+
+    /// The report `name` names and its kept runs, for the tools that are about the runs.
+    pub(crate) fn kept_runs(
+        &self,
+        tool: &str,
+        name: &str,
+    ) -> Result<(ReportListing, Vec<ReportRun>), ToolError> {
+        let report = self.project_report(tool, name)?;
+        let runs = self.runs_kept(tool, &report)?;
+        Ok((report, runs))
     }
 
     /// The run `id` names among `runs`, or the newest of them when it names none. The reason

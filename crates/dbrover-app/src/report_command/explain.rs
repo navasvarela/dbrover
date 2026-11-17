@@ -80,7 +80,7 @@ pub fn explain(args: &ExplainArgs) -> Outcome {
 /// The report's runs the history keeps, newest first: their tables plan the combine step, and
 /// their rows weigh its hints. None when it keeps no run of it, or can't be read, which leaves
 /// a combine over undeclared columns unexplained, and says why.
-fn kept_runs(paths: &AppPaths, report: &Path) -> Vec<ReportRun> {
+pub(crate) fn kept_runs(paths: &AppPaths, report: &Path) -> Vec<ReportRun> {
     let Some(name) = report
         .file_stem()
         .and_then(|stem| stem.to_str())
