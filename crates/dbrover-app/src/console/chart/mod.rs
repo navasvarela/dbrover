@@ -397,9 +397,10 @@ impl ChartView {
             .spec
             .resolved()
             .and_then(|resolved| resolved.arrangement(&self.columns));
+        let scale = self.spec.options().y_scale;
         match arranged {
-            Some(arranged) => format!("{} · {arranged}", data.note()),
-            None => data.note(),
+            Some(arranged) => format!("{} · {arranged}", data.note(scale)),
+            None => data.note(scale),
         }
     }
 }

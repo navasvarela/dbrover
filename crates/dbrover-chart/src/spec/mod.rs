@@ -19,7 +19,7 @@ pub use read::KeyProblem;
 pub use resolve::{ColumnProblem, Resolved, SortBy};
 pub use write::{SavedChoice, WriteError, for_report, write_back};
 
-use crate::ChartKind;
+use crate::{ChartKind, YScale};
 
 /// The table a spec's keys are under.
 pub const SPEC_TABLE: &str = "chart";
@@ -46,6 +46,8 @@ pub struct ChartSpec {
     pub sort: Option<Sort>,
     /// How many rows to chart, after `sort`.
     pub limit: Option<usize>,
+    /// How the value axis progresses: evenly, or by powers of ten.
+    pub y_scale: YScale,
 }
 
 /// A column to sort the rows by before charting them, and which way.
@@ -105,10 +107,11 @@ enum Key {
     YZero,
     Sort,
     Limit,
+    YScale,
 }
 
 impl Key {
-    const ALL: [Self; 11] = [
+    const ALL: [Self; 12] = [
         Self::Kind,
         Self::X,
         Self::Y,
@@ -120,6 +123,7 @@ impl Key {
         Self::YZero,
         Self::Sort,
         Self::Limit,
+        Self::YScale,
     ];
 
     fn name(self) -> &'static str {
@@ -135,6 +139,7 @@ impl Key {
             Self::YZero => "y_zero",
             Self::Sort => "sort",
             Self::Limit => "limit",
+            Self::YScale => "y_scale",
         }
     }
 

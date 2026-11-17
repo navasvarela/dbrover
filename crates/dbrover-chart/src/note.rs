@@ -1,12 +1,15 @@
 //! The line under a chart, on screen and in a file: what was charted, and what was left out and
 //! why, so a picture never shows part of the data without saying so.
 
-use crate::{ChartData, STARTING_SERIES, Summary};
+use crate::{ChartData, STARTING_SERIES, Summary, YScale};
 
 impl ChartData {
     /// What was charted, rows left out and gaps, as one line: "Charting 12 rows · 2 gaps in
     /// net: null or not a number".
-    pub fn note(&self) -> String {
+    ///
+    /// `scale` is the value axis's, since a log one can't place a value at or below zero and
+    /// those are gaps of their own.
+    pub fn note(&self, scale: YScale) -> String {
         let summary = &self.summary;
         if summary.rows == 0 {
             return "No rows to chart".to_owned();
@@ -18,13 +21,14 @@ impl ChartData {
             ),
             None => format!("Charting {}", rows(summary.rows)),
         }];
-        parts.extend(self.left_out());
+        parts.extend(self.left_out(scale));
         parts.join(" · ")
     }
 
     /// Each kind of row or value the chart couldn't draw, a sentence each: rows without an X,
-    /// a split's values past the colours and repeated rows, and each series' gaps.
-    pub fn left_out(&self) -> Vec<String> {
+    /// a split's values past the colours, repeated rows, each series' gaps, and on a log scale
+    /// the values at or below zero, which have no place on one.
+    pub fn left_out(&self, scale: YScale) -> Vec<String> {
         let summary = &self.summary;
         let mut parts = Vec::new();
         if summary.without_x > 0 {
@@ -44,8 +48,22 @@ impl ChartData {
         for series in &self.series {
             let gaps = series.gaps();
             if gaps > 0 {
-                let noun = if gaps == 1 { "gap" } else { "gaps" };
-                parts.push(format!("{gaps} {noun} in {}: {why}", series.name));
+                parts.push(format!("{} in {}: {why}", gaps_counted(gaps), series.name));
+            }
+            if scale == YScale::Log {
+                let unplaceable = series
+                    .values
+                    .iter()
+                    .flatten()
+                    .filter(|value| **value <= 0.0)
+                    .count();
+                if unplaceable > 0 {
+                    parts.push(format!(
+                        "{} in {}: zero or negative on a log scale",
+                        gaps_counted(unplaceable),
+                        series.name
+                    ));
+                }
             }
         }
         parts
@@ -71,6 +89,11 @@ fn split_left_out(summary: &Summary, split_by: &str, x_name: &str) -> Vec<String
         ));
     }
     parts
+}
+
+fn gaps_counted(count: usize) -> String {
+    let noun = if count == 1 { "gap" } else { "gaps" };
+    format!("{count} {noun}")
 }
 
 fn rows(count: usize) -> String {
@@ -109,7 +132,7 @@ mod tests {
             rows: 12,
             ..Summary::default()
         };
-        assert_eq!(data(all, 0).note(), "Charting 12 rows");
+        assert_eq!(data(all, 0).note(YScale::Linear), "Charting 12 rows");
         let some = Summary {
             rows: 1200,
             limit: Some(250),
@@ -117,11 +140,14 @@ mod tests {
             ..Summary::default()
         };
         assert_eq!(
-            data(some, 2).note(),
+            data(some, 2).note(YScale::Linear),
             "Charting the first 250 of 1200 rows; group them in the query to chart them all \
              · 1 row left out: no month value · 2 gaps in total: null or not a number"
         );
-        assert_eq!(data(Summary::default(), 0).note(), "No rows to chart");
+        assert_eq!(
+            data(Summary::default(), 0).note(YScale::Linear),
+            "No rows to chart"
+        );
     }
 
     #[test]
@@ -139,11 +165,11 @@ mod tests {
             )
         };
         assert_eq!(
-            split.note(),
+            split.note(YScale::Linear),
             "Charting 30 rows · 2 values of category left out, past 8 colours: helmets, tyres \
              · 1 row left out: an earlier row has the same month and category \
              · 1 gap in total: no row, null or not a number"
         );
-        assert_eq!(split.left_out().len(), 3);
+        assert_eq!(split.left_out(YScale::Linear).len(), 3);
     }
 }

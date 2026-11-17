@@ -183,13 +183,14 @@ impl<'a> ChartRun<'a> {
         if !data.summary.series_left_out.is_empty() {
             return Err(self.past_colours(&data));
         }
+        let scale = resolved.options.y_scale;
         let note = match resolved.arrangement(&self.columns) {
-            Some(arranged) => format!("{} · {arranged}", data.note()),
-            None => data.note(),
+            Some(arranged) => format!("{} · {arranged}", data.note(scale)),
+            None => data.note(scale),
         };
         Ok(Drawn {
             rows: rows.len() as u64,
-            warnings: data.left_out(),
+            warnings: data.left_out(scale),
             options: resolved.options.clone(),
             note,
             data,
@@ -209,7 +210,7 @@ impl<'a> ChartRun<'a> {
             rows: 0,
             warnings: vec![NO_ROWS.to_owned()],
             options: self.spec().layout_options(),
-            note: data.note(),
+            note: data.note(self.spec().y_scale),
             data,
         })
     }
