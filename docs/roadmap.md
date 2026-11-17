@@ -3064,6 +3064,9 @@ is added. It came after CI fixes, the reports track and W13.
   - **CH5e — Colour control (S):** `colours` by position, hex only, overriding the screen's and
     the file's palettes at the same index so a file still matches the screen; a contrast hint in
     the tab rather than a colour the app changes.
+  - **The kinds become one picker (S):** unplanned, between CH5e and CH5f. The chart toolbar's
+    row held one item more than it had; five kinds with **Summarise** beside them wrapped it,
+    and the second row took a small chart's plot under the floor below which nothing is drawn.
   - **CH5f — Summarise writes SQL (M):** a menu on a column of numbers writing a distribution
     or percentiles as a new statement **below** the original, with its own `[chart]` block, the
     original untouched and one undo step; its range read in SQL, never from the rows fetched;

@@ -367,7 +367,16 @@ stacking applies; a `horizontal = true` beside `kind = "bars"` would turn each o
 test of two fields, which is the same discriminator read in four places. It would also have to
 live beside `stack`, since stacked horizontal bars are the natural pairing, leaving two
 interacting booleans on one kind. A fourth kind costs one arm in each `match` the compiler
-already checks, and one more button in a toolbar that is a row of them.
+already checks.
+
+~~And one more button in a toolbar that is a row of them.~~ **That part was wrong, and building
+CH5 proved it.** The row held exactly one item more than it had: at five kinds with
+**Summarise** beside them it wrapped at the window the app opens with, and the second row cost
+the results panel 62 points — which took a small chart's plot to 23 against `MIN_PLOT_SIDE`'s
+30, below which the layout draws nothing at all, so a result with no block charted as an empty
+rectangle. A one-character label for Summarise still wrapped, so the row was already full at
+CH5e. The kinds are one picker now, in the same idiom as the X, Y and Series pickers beside
+them; the reasoning for a kind of its own is untouched, since it was never about the button.
 
 `"hbars"` is short where the other kinds are short, and the sentence that refuses a bad value
 spells it out: "`kind` is bars, hbars (horizontal bars), lines, scatter or area, not `pie`".

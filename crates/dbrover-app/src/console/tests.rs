@@ -1653,6 +1653,7 @@ fn the_empty_results_panel_names_the_run_keys_the_keymap_has() {
 /// Charts from results (W12): the chart tab beside the grid.
 mod charts {
     use dbrover_chart::{ChartKind, Mark};
+    use egui::accesskit::Role;
     use egui_kittest::kittest::Queryable;
 
     use crate::test_support::ui_harness;
@@ -1745,8 +1746,7 @@ mod charts {
             harness.query_by_label("2026-02").is_none(),
             "the grid is hidden"
         );
-        harness.get_by_label("Lines").click();
-        harness.run();
+        pick_kind(&mut harness, "Lines");
         harness.get_by_label("Grid").click();
         harness.run();
         harness.get_by_label("2026-02");
@@ -1804,8 +1804,7 @@ mod charts {
             });
             harness.get_by_label("Chart").click();
             harness.run();
-            harness.get_by_label("Lines").click();
-            harness.run();
+            pick_kind(&mut harness, "Lines");
         }
         ran(
             &mut console,
@@ -1857,6 +1856,23 @@ mod charts {
         &[Some("2026-03"), Some("200")],
     ];
 
+    /// Picks a kind from the chart toolbar's picker, which shows the one in use and the rest
+    /// when it is opened. The picker is the combo whose value is a kind's name; the others
+    /// read "X: …" and "Series: …".
+    fn pick_kind(harness: &mut egui_kittest::Harness<'_>, kind: &str) {
+        harness
+            .get_by(|node| {
+                node.role() == Role::ComboBox
+                    && node.value().as_deref().is_some_and(|shown| {
+                        ChartKind::ALL.iter().any(|kind| kind.label() == shown)
+                    })
+            })
+            .click();
+        harness.run();
+        harness.get_by_label(kind).click();
+        harness.run();
+    }
+
     fn ran_with(text: &str) -> QueryConsole {
         let mut console = console(text);
         ran(&mut console, RunId(1), &["month", "total"], &MONTHS_ROWS);
@@ -1896,7 +1912,7 @@ mod charts {
     fn save_to_query_rewrites_only_the_kind_in_one_undo_step() {
         let mut console = ran_with(BY_MONTH);
         let asked = show(&mut console, |harness| {
-            harness.get_by_label("Lines").click();
+            pick_kind(harness, "Lines");
             harness.run();
             harness.get_by_label("Not in the query");
             harness.get_by_label("Save to query").click();
@@ -2003,7 +2019,7 @@ mod charts {
     fn a_toolbar_change_lasts_until_the_block_is_edited() {
         let mut console = ran_with(BY_MONTH);
         show(&mut console, |harness| {
-            harness.get_by_label("Lines").click();
+            pick_kind(harness, "Lines");
             harness.run();
         });
         ran(&mut console, RunId(2), &["month", "total"], &MONTHS_ROWS);
@@ -2026,7 +2042,7 @@ mod charts {
     fn copies_the_chart_for_a_report() {
         let mut console = ran_with(BY_MONTH);
         show(&mut console, |harness| {
-            harness.get_by_label("Lines").click();
+            pick_kind(harness, "Lines");
             harness.run();
         });
         assert_eq!(
@@ -2122,7 +2138,7 @@ mod charts {
         show(&mut console, |harness| {
             harness.get_by_label("Chart").click();
             harness.run();
-            harness.get_by_label("Bars").click();
+            pick_kind(harness, "Bars");
             harness.run();
             harness.get_by_value("Series: none").click();
             harness.run();
