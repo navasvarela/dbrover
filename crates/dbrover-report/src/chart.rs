@@ -247,6 +247,7 @@ impl<'a> ChartRun<'a> {
             ChartKind::Hbars => "horizontal bars",
             ChartKind::Lines => "lines",
             ChartKind::Scatter => "a scatter",
+            ChartKind::Area => "a stacked area",
         };
         let seen = grouped(self.seen);
         let shown_most = grouped(most as u64);

@@ -34,8 +34,10 @@ pub struct ChartSpec {
     pub y: Vec<String>,
     /// A column whose values split the one Y into a series each.
     pub series: Option<String>,
-    /// Stack the series' bars.
-    pub stack: bool,
+    /// Stack the series' bars. `None` when the spec leaves `stack` out, which an area needs to
+    /// tell from `stack = false`: an area always stacks, so `true` says what is true and
+    /// `false` is refused.
+    pub stack: Option<bool>,
     pub title: Option<String>,
     pub x_title: Option<String>,
     pub y_title: Option<String>,

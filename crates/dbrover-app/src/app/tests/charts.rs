@@ -266,6 +266,97 @@ fn a_chart_block_opens_its_chart_and_save_to_query_writes_it_back() {
     );
 }
 
+/// Category shares by month on the shop, as a stacked area: the same `GROUP BY` shape as the
+/// stacked bars, drawn as filled bands.
+const SHOP_SHARES: &str = "-- [chart]
+-- kind = \"area\"
+-- x = \"month\"
+-- y = \"net\"
+-- series = \"category\"
+SELECT strftime('%Y-%m', l.ordered_on) AS month, p.category, SUM(l.amount) AS net
+FROM order_lines l JOIN products p ON p.id = l.product_id
+GROUP BY month, p.category ORDER BY month, p.category;";
+
+/// CH5c's exit: category shares by month draw as a stacked area, a band a category piled on the
+/// one below it, and the exported SVG writes each band as one polygon.
+#[test]
+fn category_shares_by_month_draw_as_a_stacked_area() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(dir.path(), SHOP);
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    console_with(&mut harness, "shop", SHOP_SHARES);
+    harness.get_by_label("Run").click();
+    step_until(&mut harness, "the area chart", |harness| {
+        shown_chart(harness).is_some()
+    });
+
+    let drawing = shown_chart(&harness).unwrap();
+    let rings: Vec<Vec<dbrover_chart::Point>> = drawing
+        .marks
+        .iter()
+        .filter_map(|mark| match mark {
+            Mark::Band { points, .. } => Some(points.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(rings.len(), 4, "a band per category: {rings:?}");
+    // A band's ring is its own edge forwards then the edge below it back, so the lower edge of
+    // each band is the upper edge of the one before it: the bands are piled, not overlaid.
+    let edges: Vec<(Vec<f32>, Vec<f32>)> = rings
+        .iter()
+        .map(|ring| {
+            let half = ring.len() / 2;
+            let (edge, below) = ring.split_at(half);
+            (
+                edge.iter().map(|point| point.y).collect(),
+                below.iter().rev().map(|point| point.y).collect(),
+            )
+        })
+        .collect();
+    assert_eq!(edges[0].0.len(), 3, "three months: {edges:?}");
+    for pair in edges.windows(2) {
+        for (above, below) in pair[0].0.iter().zip(&pair[1].1) {
+            assert!(
+                (above - below).abs() < 0.01,
+                "each band sits on the one below: {above} and {below}"
+            );
+        }
+    }
+    let (_, _, texts) = marks(&drawing);
+    for category in ["accessories", "bikes", "clothing", "parts"] {
+        assert!(
+            texts.contains(&category.to_owned()),
+            "{category} in {texts:?}"
+        );
+    }
+    // An area always stacks, so the box says so and there is nothing to turn off.
+    harness.get_by_label("Stacked");
+
+    let pictures = dir.path().join("pictures");
+    std::fs::create_dir_all(&pictures).unwrap();
+    let answer = pictures.clone();
+    harness.state_mut().pick_picture =
+        Box::new(move |name, format| Some(answer.join(format!("{name}.{}", format.extension()))));
+    harness.get_by_label("Export").click();
+    harness.run_steps(2);
+    harness.get_by_label("SVG…").click();
+    let file = pictures.join("net by month.svg");
+    step_until_visible(&mut harness, &format!("Exported to {}", file.display()));
+    let svg = std::fs::read_to_string(&file).unwrap();
+    assert_eq!(
+        svg.matches("<polygon ").count(),
+        4,
+        "one polygon a band: {svg}"
+    );
+    for category in ["accessories", "bikes", "clothing", "parts"] {
+        assert!(
+            svg.contains(&format!(">{category}</text>")),
+            "{category} in the SVG"
+        );
+    }
+}
+
 /// Net sales by product and category on the shop: names longer than a slot along the bottom
 /// holds, which is what horizontal bars are for.
 const SHOP_BY_PRODUCT: &str = "-- [chart]

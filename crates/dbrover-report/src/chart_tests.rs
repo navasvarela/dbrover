@@ -119,7 +119,7 @@ fn names_each_charts_problems_and_the_chart_they_are_in() {
             "[[chart]]\nfile = \"net.svg\"\nfiel = \"net.svg\"\nkind = \"pie\"",
             vec![
                 "chart 1: no key `fiel`; did you mean `file`?",
-                "chart 1: `kind` is bars, hbars (horizontal bars), lines or scatter, not \"pie\"",
+                "chart 1: `kind` is bars, hbars (horizontal bars), lines, scatter or area, not \"pie\"",
             ],
         ),
         (
@@ -357,6 +357,58 @@ async fn fails_past_its_kinds_rows_and_leaves_no_file() {
     );
     assert_eq!(files_in(folder.path()), Vec::<String>::new());
     assert!(written(&events).is_empty());
+}
+
+/// An area's own limit, lower than a line's because a band costs more a point, fails a run the
+/// same way bars' 250 does: at the limit, with exit 5's `LimitHit` on it.
+#[tokio::test]
+async fn fails_past_an_areas_own_point_limit() {
+    let folder = tempfile::tempdir().unwrap();
+    let (outcome, events) = run_charts(
+        "[[chart]]\nfile = \"net.svg\"\nkind = \"area\"",
+        categories(dbrover_chart::MAX_AREA_POINTS + 1),
+        folder.path(),
+    )
+    .await;
+
+    let failure = outcome.unwrap_err();
+    assert_eq!(
+        failure.to_string(),
+        "chart 1 (net.svg): it draws a stacked area, at most 5,000 rows, and the result has \
+         5,001; group the rows in the query, or set limit to draw the first ones"
+    );
+    let limit = failure.limit.unwrap();
+    assert_eq!(
+        (limit.key.as_str(), limit.value.as_str()),
+        ("limit", "5,000 rows of area")
+    );
+    assert_eq!(files_in(folder.path()), Vec::<String>::new());
+    assert!(written(&events).is_empty());
+}
+
+/// An area always stacks, so `stack = true` states what is true and `stack = false` is a
+/// problem of the file, before the run.
+#[tokio::test]
+async fn an_areas_stack_key_is_accepted_true_and_refused_false() {
+    let folder = tempfile::tempdir().unwrap();
+    let (outcome, _) = run_charts(
+        "[[chart]]\nfile = \"stacked.svg\"\nkind = \"area\"\nstack = true",
+        categories(3),
+        folder.path(),
+    )
+    .await;
+    outcome.unwrap();
+
+    let (outcome, _) = run_charts(
+        "[[chart]]\nfile = \"flat.svg\"\nkind = \"area\"\nstack = false",
+        categories(3),
+        folder.path(),
+    )
+    .await;
+    assert_eq!(
+        outcome.unwrap_err().message,
+        "`stack = false`: an area always stacks; leave `stack` out"
+    );
 }
 
 #[tokio::test]

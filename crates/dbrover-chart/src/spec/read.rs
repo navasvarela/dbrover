@@ -351,7 +351,7 @@ impl<P> Reader<P> {
             Key::XTitle => spec.x_title = self.text_value(value, "`x_title` is text, in quotes"),
             Key::YTitle => spec.y_title = self.text_value(value, "`y_title` is text, in quotes"),
             Key::YZero => spec.y_zero = self.flag(value, "`y_zero` is true or false"),
-            Key::Stack => spec.stack = self.flag(value, "`stack` is true or false"),
+            Key::Stack => spec.stack = Some(self.flag(value, "`stack` is true or false")),
             Key::Sort => spec.sort = self.sort(value),
             Key::Limit => spec.limit = self.limit(value),
         }
@@ -559,7 +559,7 @@ limit = 10
                 x: Some("month".to_owned()),
                 y: vec!["net".to_owned(), "refunds".to_owned()],
                 series: Some("category".to_owned()),
-                stack: true,
+                stack: Some(true),
                 title: Some("Net sales".to_owned()),
                 x_title: Some("Month".to_owned()),
                 y_title: Some("Euros".to_owned()),
@@ -607,13 +607,13 @@ limit = 10
             (
                 "kind = \"pie\"",
                 &[
-                    "chart, line 2: `kind` is bars, hbars (horizontal bars), lines or scatter, not \"pie\"",
+                    "chart, line 2: `kind` is bars, hbars (horizontal bars), lines, scatter or area, not \"pie\"",
                 ],
             ),
             (
                 "kind = \"Bars\"",
                 &[
-                    "chart, line 2: `kind` is bars, hbars (horizontal bars), lines or scatter, not \"Bars\"",
+                    "chart, line 2: `kind` is bars, hbars (horizontal bars), lines, scatter or area, not \"Bars\"",
                 ],
             ),
             (
@@ -706,7 +706,7 @@ limit = 10
         assert_eq!(&text[problem.span.clone()], "\"pie\"");
         assert_eq!(
             problem.moved_to(10).to_string(),
-            "chart, line 11: `kind` is bars, hbars (horizontal bars), lines or scatter, not \"pie\""
+            "chart, line 11: `kind` is bars, hbars (horizontal bars), lines, scatter or area, not \"pie\""
         );
     }
 
@@ -770,7 +770,7 @@ limit = 10
                 "kind = \"pie\"",
                 problem(
                     "kind",
-                    "`kind` is bars, hbars (horizontal bars), lines or scatter, not \"pie\"",
+                    "`kind` is bars, hbars (horizontal bars), lines, scatter or area, not \"pie\"",
                 ),
             ),
             (
@@ -810,6 +810,7 @@ limit = 10
             Ok(ChartSpec {
                 kind: Some(ChartKind::Bars),
                 y: vec!["net".to_owned()],
+                stack: Some(false),
                 limit: Some(5),
                 ..ChartSpec::default()
             })
@@ -825,7 +826,7 @@ limit = 10
             [
                 (
                     "kind",
-                    "`kind` is bars, hbars (horizontal bars), lines or scatter, not \"pie\""
+                    "`kind` is bars, hbars (horizontal bars), lines, scatter or area, not \"pie\""
                 ),
                 ("ys", "no key `ys`; did you mean `y`?"),
                 ("x", "`x` is a column's name, in quotes, not null"),

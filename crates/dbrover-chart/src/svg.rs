@@ -54,6 +54,16 @@ pub fn svg(drawing: &Drawing, text_size: f32) -> String {
     out.text
 }
 
+/// Points as SVG writes a list of them: `x,y x,y`, each to a hundredth of a point.
+fn coordinates(points: &[Point]) -> String {
+    let mut written = String::new();
+    for point in points {
+        let _ = write!(written, "{},{} ", Points(point.x), Points(point.y));
+    }
+    written.truncate(written.trim_end().len());
+    written
+}
+
 struct Svg {
     text: String,
     text_size: f32,
@@ -76,6 +86,7 @@ impl Svg {
                 FILE_COLOURS.of(*paint)
             )),
             Mark::Polyline { points, paint } => self.polyline(points, FILE_COLOURS.of(*paint)),
+            Mark::Band { points, paint } => self.polygon(points, FILE_COLOURS.of(*paint)),
             Mark::Circle {
                 centre,
                 radius,
@@ -112,15 +123,20 @@ impl Svg {
     }
 
     fn polyline(&mut self, points: &[Point], stroke: Rgb) {
-        let mut coordinates = String::new();
-        for point in points {
-            let _ = write!(coordinates, "{},{} ", Points(point.x), Points(point.y));
-        }
         self.line(format_args!(
             "<polyline points=\"{}\" fill=\"none\" stroke=\"{stroke}\" stroke-width=\"{}\" \
              stroke-linejoin=\"round\" stroke-linecap=\"round\"/>",
-            coordinates.trim_end(),
+            coordinates(points),
             Points(LINE_WIDTH)
+        ));
+    }
+
+    /// A band's ring, as one filled shape. SVG closes a polygon itself, so the ring's last
+    /// point needn't repeat its first.
+    fn polygon(&mut self, points: &[Point], fill: Rgb) {
+        self.line(format_args!(
+            "<polygon points=\"{}\" fill=\"{fill}\"/>",
+            coordinates(points)
         ));
     }
 
@@ -316,6 +332,48 @@ mod tests {
         let widths: Vec<f32> = bars.iter().map(|bar| attribute(bar, "width")).collect();
         assert!(widths[1] < widths[0] && widths[0] < widths[2], "{widths:?}");
         assert!(svg.contains(">&lt;Q3&gt; &amp; co</text>"));
+    }
+
+    #[test]
+    fn writes_each_band_as_one_polygon() {
+        let rows = rows(&[
+            &["2026-09", "bikes", "1290"],
+            &["2026-09", "parts", "42"],
+            &["2026-10", "bikes", "649"],
+            &["2026-10", "parts", "70"],
+        ]);
+        let borrowed: Vec<&Row> = rows.iter().collect();
+        let choice = Choice {
+            series: Some(1),
+            ..Choice::of(ChartKind::Area, 0, vec![2])
+        };
+        let roles = [Role::Text, Role::Text, Role::Number];
+        let data = ChartData::read(
+            &columns(&["month", "category", "net"]),
+            &roles,
+            &borrowed,
+            &choice,
+        );
+        let svg = svg(&laid_out(&data), 11.0);
+
+        let polygons: Vec<&str> = svg
+            .lines()
+            .filter(|line| line.starts_with("<polygon "))
+            .collect();
+        assert_eq!(polygons.len(), 2, "one polygon a series: {svg}");
+        for polygon in &polygons {
+            let points = polygon
+                .split_once("points=\"")
+                .and_then(|(_, rest)| rest.split_once('"'))
+                .map(|(points, _)| points)
+                .unwrap_or_default();
+            assert_eq!(
+                points.split(' ').count(),
+                4,
+                "two months, two edges: {polygon}"
+            );
+        }
+        assert!(svg.contains(">bikes</text>") && svg.contains(">parts</text>"));
     }
 
     #[test]

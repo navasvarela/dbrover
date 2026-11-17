@@ -465,12 +465,21 @@ pub fn controls(ui: &mut Ui, tab: &mut ChartTab, source: &Source<'_>) -> Option<
     x_picker(ui, choice, &view.columns);
     y_menu(ui, choice, &view.columns, &view.roles);
     series_picker(ui, choice, &view.columns);
+    let always = choice.kind == ChartKind::Area;
     let stackable = choice.kind.is_bars() && choice.has_series();
-    ui.add_enabled(stackable, egui::Checkbox::new(&mut choice.stack, "Stacked"))
+    // Ticked and greyed for an area, which says in the one place a reader looks that the
+    // stacking isn't theirs to turn off.
+    let mut stacked = choice.stack || always;
+    ui.add_enabled(stackable, egui::Checkbox::new(&mut stacked, "Stacked"))
         .on_hover_text("Stack the series' bars, a bar per X")
-        .on_disabled_hover_text(
-            "Bars of several series stack: pick Bars or Hbars, and a series or two Ys",
-        );
+        .on_disabled_hover_text(if always {
+            "An area always stacks: its bands are the parts of each point's total"
+        } else {
+            "Bars of several series stack: pick Bars or Hbars, and a series or two Ys"
+        });
+    if stackable {
+        choice.stack = stacked;
+    }
     ui.separator();
     let in_query = view.in_query();
     let mut action = save_to_query(ui, has_block, in_query, save_error.as_deref());
@@ -792,6 +801,20 @@ fn paint(painter: &Painter, origin: Pos2, drawing: &Drawing, paints: &Paints, fo
                     Stroke::new(LINE_WIDTH, paints.colour(*paint)),
                 ));
             }
+            // egui fills only convex shapes, so a band is drawn as the four-sided pieces it
+            // splits into. The splitting lives here, where that limitation is, rather than in
+            // the layout, which stays the one description of the picture: a file writes the
+            // same mark as one polygon.
+            Mark::Band { points, paint } => {
+                let colour = paints.colour(*paint);
+                for quad in dbrover_chart::band_quads(points) {
+                    painter.add(egui::Shape::convex_polygon(
+                        quad.iter().map(|point| at(*point)).collect(),
+                        colour,
+                        Stroke::NONE,
+                    ));
+                }
+            }
             Mark::Circle {
                 centre,
                 radius,
@@ -914,7 +937,8 @@ fn number_text(value: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use dbrover_chart::FILE_COLOURS;
+    use dbrover_chart::{ChartData, FILE_COLOURS, FILE_TEXT_SIZE, Series, Summary, XValues};
+    use dbrover_picture::{FontMeasure, Fonts};
 
     use super::*;
 
@@ -1111,6 +1135,135 @@ mod tests {
         assert_eq!(
             view.choice.as_ref().map(|choice| choice.kind),
             Some(ChartKind::Scatter)
+        );
+    }
+
+    /// Net sales by month, two categories, as a stacked area, laid out with the font file's
+    /// measure so the file and the frame are laid out alike.
+    fn area_bands() -> Drawing {
+        let months = ["2026-09", "2026-10", "2026-11", "2026-12"];
+        let series = [
+            ("bikes", [1290.0, 649.0, 940.0, 1290.0]),
+            ("parts", [42.0, 70.0, 24.0, 90.0]),
+        ];
+        let data = ChartData {
+            kind: ChartKind::Area,
+            x_name: "month".to_owned(),
+            x: XValues::Categories(months.iter().map(|m| (*m).to_owned()).collect()),
+            series: series
+                .iter()
+                .map(|(name, values)| Series {
+                    name: (*name).to_owned(),
+                    values: values.iter().map(|value| Some(*value)).collect(),
+                    rows: (0..values.len()).map(Some).collect(),
+                })
+                .collect(),
+            split_by: Some("category".to_owned()),
+            rows: (0..months.len()).collect(),
+            stacked: true,
+            summary: Summary {
+                rows: months.len(),
+                ..Summary::default()
+            },
+        };
+        let measure = FontMeasure::inter(FILE_TEXT_SIZE).unwrap();
+        let size = Size {
+            width: 600.0,
+            height: 300.0,
+        };
+        let mut drawing = dbrover_chart::layout(&data, &LayoutOptions::default(), size, &measure);
+        // Only the bands: the two paths draw text with different font machinery, and this is
+        // about the fills.
+        drawing
+            .marks
+            .retain(|mark| matches!(mark, dbrover_chart::Mark::Band { .. }));
+        drawing
+    }
+
+    /// `drawing` as the chart tab paints it, rendered through egui at one pixel a point.
+    fn painted(drawing: &Drawing) -> image::RgbaImage {
+        let size = Vec2::new(drawing.size.width, drawing.size.height);
+        let paints = Paints::of(&Palette::LIGHT);
+        let font = FontId::proportional(FILE_TEXT_SIZE);
+        let mut harness = egui_kittest::HarnessBuilder::default()
+            .with_size(size)
+            .with_pixels_per_point(1.0)
+            .wgpu()
+            .build_ui(|ui| {
+                // The whole screen, not the Ui's rect: the harness insets its panel, and a
+                // mark's coordinates are the picture's own, from its top left corner.
+                let screen = egui::Rect::from_min_size(Pos2::ZERO, size);
+                let painter = ui.ctx().layer_painter(egui::LayerId::background());
+                painter.rect_filled(screen, 0, Color32::WHITE);
+                paint(&painter, Pos2::ZERO, drawing, &paints, &font);
+            });
+        harness.run();
+        harness.render().expect("a rendered frame")
+    }
+
+    /// Where a picture has ink: anything that isn't the white it was drawn on. With only the
+    /// bands drawn, that is the bands.
+    fn inked(pixels: impl Iterator<Item = (u8, u8, u8)>) -> Vec<bool> {
+        pixels
+            .map(|(red, green, blue)| red < 240 || green < 240 || blue < 240)
+            .collect()
+    }
+
+    /// Whether either mask changes value anywhere in the eight pixels around `index`, which is
+    /// what makes it a pixel beside an edge.
+    fn beside_an_edge(masks: [&[bool]; 2], width: usize, index: usize) -> bool {
+        let (x, y) = (index % width, index / width);
+        let height = masks[0].len() / width;
+        masks.iter().any(|mask| {
+            let here = mask[index];
+            (y.saturating_sub(1)..=(y + 1).min(height - 1)).any(|row| {
+                (x.saturating_sub(1)..=(x + 1).min(width - 1))
+                    .any(|column| mask[row * width + column] != here)
+            })
+        })
+    }
+
+    /// Both ways of filling a band cover the same region.
+    ///
+    /// egui fills only convex shapes, so the tab paints a band as the four-sided pieces
+    /// [`dbrover_chart::band_quads`] splits its ring into, while a file writes the ring as one
+    /// `<polygon>`. Between two neighbouring points both of a band's edges are a straight
+    /// segment, so the pieces' union *is* the polygon — nothing is approximated — and the two
+    /// can only differ in how a rasteriser lands on the edges they share. So: rasterise the
+    /// file with resvg, compare it with the painted frame pixel by pixel, and allow a
+    /// difference only beside an edge.
+    #[test]
+    fn a_bands_polygon_and_its_quads_cover_the_same_pixels() {
+        let drawing = area_bands();
+        let svg = dbrover_chart::svg(&drawing, FILE_TEXT_SIZE);
+        assert_eq!(svg.matches("<polygon ").count(), 2, "{svg}");
+
+        let bytes = dbrover_picture::png(&svg, 1.0, &Fonts::bundled()).expect("the file drawn");
+        let file = image::load_from_memory(&bytes).expect("a PNG").to_rgba8();
+        let frame = painted(&drawing);
+        assert_eq!(
+            (file.width(), file.height()),
+            (frame.width(), frame.height()),
+            "one size, one pixel a point"
+        );
+
+        let width = file.width() as usize;
+        let from_file = inked(file.pixels().map(|p| (p.0[0], p.0[1], p.0[2])));
+        let from_frame = inked(frame.pixels().map(|p| (p.0[0], p.0[1], p.0[2])));
+        let filled = from_file.iter().filter(|ink| **ink).count();
+        assert!(filled > width * 50, "{filled} pixels of band in the file");
+
+        let differing: Vec<usize> = (0..from_file.len())
+            .filter(|&index| from_file[index] != from_frame[index])
+            .filter(|&index| !beside_an_edge([&from_file, &from_frame], width, index))
+            .collect();
+        assert!(
+            differing.is_empty(),
+            "{} pixels differ away from any edge, the first at {:?}",
+            differing.len(),
+            differing
+                .first()
+                .map(|index| (index % width, index / width))
         );
     }
 }

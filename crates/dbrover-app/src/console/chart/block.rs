@@ -319,7 +319,7 @@ mod tests {
         let spec = blocks.spec_for(&range).unwrap();
         assert_eq!(
             spec.read(),
-            Err(&["chart, line 3: `kind` is bars, hbars (horizontal bars), lines or scatter, not \"pie\"".to_owned()][..])
+            Err(&["chart, line 3: `kind` is bars, hbars (horizontal bars), lines, scatter or area, not \"pie\"".to_owned()][..])
         );
     }
 

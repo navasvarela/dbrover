@@ -62,7 +62,9 @@ pub fn write_back(text: Option<&str>, saved: &SavedChoice) -> Result<String, Wri
         Some(series) => set(table, Key::Series, Value::from(series.as_str())),
         None => drop(table.remove(Key::Series.name())),
     }
-    if saved.stack {
+    // Never for an area, which always stacks: writing `stack = true` there would be a key that
+    // reads as a choice and isn't one, and `stack = false` is refused.
+    if saved.stack && saved.kind.is_bars() {
         set(table, Key::Stack, Value::from(true));
     } else {
         table.remove(Key::Stack.name());
