@@ -3039,7 +3039,7 @@ is added. It came after CI fixes, the reports track and W13.
   are in [CH4 confirmed](charts-as-code.md#ch4-confirmed). Covered by the MCP crate's unit tests
   of the spec, the drawing and both replies, and `crates/dbrover-mcp/tests/chart.rs`, the exit
   over stdio on the shop.
-- **CH5 — A fuller chart (L):** planned, not built; planned on 2026-11-16 in
+- **CH5 — A fuller chart (L):** built on 2026-11-17, after RS7g; planned on 2026-11-16 in
   [A fuller chart](charts-as-code.md#a-fuller-chart). The kinds and keys CH1 to CH4 left for
   later (horizontal bars as `kind = "hbars"`, stacked area as `kind = "area"`, a log scale
   through `y_scale`, per-series `colours` and a reference line), and statistics in two
@@ -3077,6 +3077,29 @@ is added. It came after CI fixes, the reports track and W13.
     and on stacked bars, and `overlay` with `limit` refused in a report.
   - **CH5h — Manual and demo note (S):** the new kinds, keys and **Summarise** written into the
     manual's charts page, extending it rather than repeating it.
+
+  Demonstrated on the SQLite shop of `examples/reports/shop.sql` and the manual's own gallery
+  database. The five best customers draw as horizontal bars with their names in full down the
+  left side, where the same chart standing up cuts "Rain jacket (clothing)" to twenty
+  characters. Category shares by month draw as four piled bands whose blue one visibly breaks
+  where March has no Swiss order, and the exported SVG writes one `<polygon>` a band. Every
+  product's net sales against its price on a log scale draws seven of eight points with
+  "1 gap in net: zero or negative on a log scale" under it, the axis labelled by powers of ten.
+  `colours = ["#e34948"]` puts that exact red in the exported file while the second series keeps
+  the palette's own `#eb6834`. **Summarise › Distribution into 10 buckets** on a price column
+  writes a bucketing statement at line 3, below an untouched original, which ⌘Z takes back whole
+  and which runs and opens as bars of `bucket` against `row_count`. `overlay = ["trend",
+  "mean"]` draws two dashed lines in the series' colour over its solid one, under
+  "Charting 55 rows · Trend and mean over those 55 rows, by day"; the same spec with `limit` in
+  a report is a problem in the file, which `dbrover report run` exits 3 on before anything
+  starts. Departures from the design: five, each small and each written down in
+  [CH5 confirmed](charts-as-code.md#ch5-confirmed) — decade ticks taking how many labels fit
+  rather than a decade count, the cross-platform guard being a `const` rather than a second
+  example chart, `colours` taking a single colour as a list of one, **Copy the SQL** being a
+  toggle rather than a menu item, and a moving average longer than the chart being a sentence in
+  the note rather than a key problem. Covered by the chart crate's own tests, the SQL crate's
+  per-dialect snapshots, the report crate's file problems and limits, and six kittests on the
+  shop, one per layer's exit.
 
   **Exit:** on the SQLite shop, a top-twenty of customers draws as horizontal bars with
   readable names; category shares by month draw as a stacked area that matches its SVG; a

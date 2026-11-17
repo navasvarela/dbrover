@@ -984,6 +984,59 @@ tested on its own, with synthetic data only (the SQLite shop of `examples/report
    written again here. *Exit:* the page documents every key in
    [What a chart spec holds](#what-a-chart-spec-holds), with no key documented twice.
 
+#### CH5 confirmed
+
+Built on 2026-11-17, after RS7g, in seven pull requests off `main`. The plan stands; building it
+settled these details, and departed from it in five places, each noted below.
+
+- **The extents, and the frame.** The layout named its two directions after the axes they
+  happened to be. They are now the *value* extent and the *category* extent, and every mark goes
+  through a `Frame` holding both and whether they are swapped. The renaming commit changed no
+  mark: the example report's SVG was byte-identical and the crate's tests passed unchanged, which
+  is what made the kind reviewable on its own. What the frame deliberately does not make
+  symmetric is where a label sits, since an upright chart's value labels and a horizontal one's
+  are at different ends of their axis, so `value_label` and `category_label` each branch once.
+- **Hovering needed no new arm** — one fewer than the plan expected: the pointer is read back
+  through the frame, so one slot lookup serves both bar kinds. `Drawing::x_of` became
+  `Drawing::guide`, which gives the whole segment, since a vertical line is wrong lying down.
+- **A departure, CH5d: decade ticks take how many labels *fit*,** a line's height apiece, rather
+  than `Ticks::nice`'s comfortable target of one per 90 points. Read as a decade count alone, the
+  plan's rule crowded a short plot badly — the first golden SVG had ten labels in 147 points. An
+  even axis can pick any step, so a target suits it; a log axis's granularity is the decade, and
+  the only question is collision.
+- **Two of the three logarithms are gone.** The axis's ends are powers of ten whose exponents
+  come from `decimal_exponent`, the trick `ticks.rs` already used for the steps. Only each
+  value's own logarithm needs `log10`.
+- **A departure, CH5d: the cross-platform guard is a `const` in the crate's tests,** a log
+  scatter compared byte for byte, rather than a second chart in the example report: it gives the
+  same three-platform comparison without a new output file or the manual debt that would follow.
+- **A departure, CH5e: a single colour reads as a list of one,** as `y` takes one column's name
+  or a list, and `colours = []` is a problem. The other spelling, `colors`, is read as the key
+  but never suggested or listed, so `colour` and `color` are both pointed at `colours`. **Save to
+  query** writes no colours at all — the toolbar sets none — so a spec's `colors` survives a save
+  with its spelling and its colours untouched.
+- **A departure, CH5f: the generated statement wraps the original as a CTE.** An original that is
+  itself a `WITH` then nests one, which PostgreSQL, SQLite and DuckDB allow and SQL Server and
+  MySQL do not; the statement is the user's, below theirs and untouched, so it is theirs to
+  adjust. **Copy the SQL** is a toggle beside the chart rather than a fifth menu item, so each
+  summary can be had either way without a menu three levels deep.
+- **DbRover's own SQLite has no `FLOOR`.** `libsqlite3-sys` doesn't define
+  `SQLITE_ENABLE_MATH_FUNCTIONS`, so the first bucketing statement ran against a system `sqlite3`
+  and failed inside the app. SQLite gets `CAST(… AS INTEGER)`, a floor for a value that can't be
+  negative; not a cast everywhere, since BigQuery's rounds.
+- **A departure, CH5g: a window longer than the chart is a sentence, not a problem.** How many
+  points there are isn't known until the rows arrive, long after the keys are read, so
+  `average 1` and below is a key problem and a longer window isn't drawn while the note says why
+  — which keeps the key from looking inert, and puts the sentence in a report's caption.
+- **Overlays are computed from the values and then placed,** not fitted to where the points
+  landed: on a log axis the mean of the values is not the mean of their positions. The note's
+  basis comes before the gaps it skipped, so the clause reads as one while the basis is still
+  always named.
+- **A GitHub Linux runner has no GPU,** and `egui_kittest`'s only renderer is a wgpu one, so
+  CH5c's comparison of a band's two fills uses `egui::epaint::Tessellator` on the CPU — the same
+  `Shape::convex_polygon` calls the painter makes, with feathering off — against resvg's
+  rasterisation of the polygon. The claim at risk is geometric, so it tests it just as well.
+
 **Exit:** on the SQLite shop, a top-twenty of customers draws as horizontal bars with readable
 names; category shares by month draw as a stacked area that matches its SVG; a scatter of
 prices on a log scale reads at every size; `colours = ["#e34948"]` holds on both themes and in

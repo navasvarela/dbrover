@@ -12,11 +12,11 @@ returned, without running anything again, and writes it where you need it.
   Parquet files, every time it runs.
 - **To an AI assistant,** the MCP server's `chart` tool answers a question with a picture.
 
-The same three kinds and the same keys serve all four. This chapter is the one place that says
+The same five kinds and the same keys serve all four. This chapter is the one place that says
 what a chart can be; [Reports](reports.md#charts) and
 [Connecting an AI assistant](mcp.md) add only what is their own.
 
-## The three kinds
+## The five kinds
 
 Each example below is a statement with the chart that draws it written above it, as
 [A chart in the query](#a-chart-in-the-query) explains. They run on a small shop database of
@@ -43,6 +43,37 @@ ORDER BY month;
 
 ![Revenue by month as six bars, 2026-01 to 2026-06, each between 1,700 and 2,500, titled
 Revenue by month, with "Charting 6 rows" under them](images/chart-bars.png)
+
+### Horizontal bars
+
+`kind = "hbars"` lays the bars down: the categories up the left side, the values along the
+bottom. Names too long to fit under an upright bar fit beside a horizontal one, which is what
+the kind is for — a top-twenty of customers, a list of error messages, anything named rather
+than numbered.
+
+```sql
+-- [chart]
+-- kind = "hbars"
+-- x = "customer"
+-- y = "revenue"
+-- sort = "revenue desc"
+-- limit = 5
+-- title = "The five best customers"
+SELECT c.name AS customer, ROUND(SUM(t.total), 2) AS revenue
+FROM orders o
+JOIN customers c ON c.id = o.customer_id
+JOIN order_totals t ON t.id = o.id
+WHERE o.status <> 'cancelled'
+GROUP BY customer
+ORDER BY revenue DESC;
+```
+
+![Five horizontal bars, the customers' names in full down the left side and revenue along the
+bottom from 0 to 2,000, the longest bar at the top](images/chart-hbars.png)
+
+The left gutter grows to fit the names, up to a third of the width; past that a name is cut with
+an ellipsis to the room it has. Everything else is bars: the slots, the growth from zero, the
+stacking, and the 250-row limit.
 
 ### Lines
 
@@ -90,6 +121,38 @@ ORDER BY day_of_year;
 ![A scatter of fifty-five orders, the day of the year along the bottom from 0 to 200 and each
 order's total up the side from 0 to 600, the points spread across the whole
 area](images/chart-scatter.png)
+
+### Area
+
+`kind = "area"` fills the band between each series and the one below it, for shares of a total
+over time. **An area always stacks** — unstacked areas hide whichever series is in front — so
+it wants a `series`, or several columns of numbers; see
+[Several series on one chart](#several-series-on-one-chart) for where those come from. Writing
+`stack = true` on one is allowed, since it says what is true; `stack = false` is a problem.
+
+```sql
+-- [chart]
+-- kind = "area"
+-- x = "month"
+-- y = "revenue"
+-- series = "country"
+-- title = "Revenue by month and country"
+SELECT strftime('%Y-%m', o.placed_at) AS month, c.country,
+       ROUND(SUM(t.total), 2) AS revenue
+FROM orders o
+JOIN customers c ON c.id = o.customer_id
+JOIN order_totals t ON t.id = o.id
+WHERE o.status <> 'cancelled'
+GROUP BY month, c.country
+ORDER BY month, c.country;
+```
+
+![Four filled bands piled on each other over six months, each a country, with a legend naming
+CH, GB, NL and US; the blue CH band breaks where March has no Swiss order](images/chart-area.png)
+
+An area draws at most 5,000 rows, fewer than a line's 50,000: a band's cost grows with the
+points *and* the series. A gap breaks a band as it breaks a line, and a run of one point draws
+nothing, since a band needs two points to have a width.
 
 ## Several series on one chart
 
@@ -261,7 +324,7 @@ value the **Chart** tab would start with, given the keys that are there: with on
 
 | Key | Takes | Left out |
 | --- | --- | --- |
-| `kind` | `"bars"`, `"lines"` or `"scatter"` | lines over dates, a scatter over numbers, bars over text |
+| `kind` | `"bars"`, `"hbars"`, `"lines"`, `"scatter"` or `"area"` | lines over dates, a scatter over numbers, bars over text |
 | `x` | a column's name | the first column of dates or text |
 | `y` | a column's name, or a list of them: `["net", "refunds"]` | every other column of numbers, up to eight; with `series`, the first |
 | `series` | a column's name, whose values split the one Y into a series each | none |
@@ -271,9 +334,24 @@ value the **Chart** tab would start with, given the keys that are there: with on
 | `y_zero` | `true` to start the Y axis at zero for lines and scatters; bars always do | `false` |
 | `sort` | a column's name, then `asc` or `desc`: `"net desc"` | the order the rows come in |
 | `limit` | the number of rows to chart, after `sort` | every row, up to the kind's limit |
+| `y_scale` | `"log"` to run the Y axis by powers of ten, for lines and scatters | `"linear"` |
+| `colours` | hex colours given to the series from the first: `["#e34948"]` | the theme's eight |
+| `overlay` | lines computed from the points drawn: `["trend", "mean", "average 7", "line 100"]` | none |
 
 - **Column names are exact,** since databases differ on case: `y = "Net"` doesn't find `net`,
   and says so, suggesting it.
+- **`y_scale = "log"`** suits a measure whose range is decades — prices from cents to thousands,
+  latencies from a millisecond to a minute — where an even axis crushes the small values into
+  the axis. The ticks are powers of ten, with 2 and 5 inside each while they fit. A log axis has
+  no place for zero or a negative value, so those become gaps, counted and named under the
+  chart: `1 gap in price: zero or negative on a log scale`. It draws lines and scatters only: a
+  bar's length and a band's thickness are read as ratios from the zero line, and one grown from
+  a log axis's baseline would misstate exactly that.
+- **`colours`** names a hue per series, from the first, so a brand's red is that red — on both
+  themes and in the exported file alike. `colors` reads the same key. Hex only, `#rrggbb` or
+  `#rgb`; a list shorter than the series recolours only the ones it names, and the rest keep the
+  palette's own. The colour is used as given, so where one is hard to see on the current theme
+  the tab says so beside the chart rather than changing it.
 - **`sort` and `limit`** sort and cut the rows the chart was given, before they are charted, and
   the line under the chart says so: `Charting 10 rows · sorted by net, largest first, the first
   10`. A row whose value is null comes last. In a console, `ORDER BY` and `LIMIT` in the query do
@@ -318,19 +396,99 @@ y = "net"
 Paste it into a report file, and each run writes the chart as a picture beside the report's
 other files.
 
-## Statistics stay in the query
+## Statistics: in the query, or over the points drawn
 
-A chart has no statistical functions: nothing bins rows, takes a percentile, fits a line or
-smooths a series. That is deliberate. A chart draws the rows it was given — in a console, the
-rows the grid holds, which may be the first page of a much larger table — so binning there
-would bin a page and call it a distribution. The query sees every row, and the database already
-has the functions, so that is where the statistics belong. The chart then draws the answer.
+Statistics split in two, and the split decides which answer you get.
 
-Two shapes cover most of what readers come looking for.
+**What has to see every row belongs in the query.** A distribution and a percentile are exactly
+the statistics that go wrong when they are worked out over a page: a chart draws the rows it was
+given — in a console, the rows the grid holds, which may be the first page of a much larger
+table — so binning there would bin a page and call it a distribution. The database sees every
+row and already has the functions, so that is where those belong, and
+[Summarise](#summarise-writes-the-sql) writes the SQL for you.
 
-### A moving average
+**What is honest over the points already drawn belongs in the chart.** A trend through the
+points on screen, a moving average of them, a line at their mean or median: each is a statement
+about *those points*, and the points are in front of you. Those are
+[the `overlay` key](#overlays-over-the-points-drawn), and the line under the chart always says
+what each one was computed over.
 
-A window function smooths a noisy series, and both the measure and its average chart as lines:
+### Summarise writes the SQL
+
+**Summarise ›** sits beside the chart's toolbar and in the grid's column header, on any column
+of numbers, and writes a statement summarising that column:
+
+- **Distribution into 10, 20 or 50 buckets** — each bucket's lower bound and how many rows fell
+  in it, which charts as bars with nothing more to do.
+- **Percentiles** — the median, p90, p95 and p99, with the smallest and largest value, a row
+  each so they chart too.
+
+It writes the statement **below the one that produced the result**, with its own `[chart]` block
+above it, and leaves the original alone: the query you ran is still the query above the result,
+and one undo takes the whole insertion back. Tick **Copy the SQL instead** to have it on the
+clipboard and your file untouched.
+
+The statement reads the one above it as a common table expression and asks the database for the
+range, so the buckets come from every row that statement returns rather than from the page on
+screen. That is the whole reason it writes SQL rather than binning what the chart has. Bucketing
+is arithmetic every engine can do; percentiles are not, so where an engine has none the item is
+greyed with the reason in its tooltip, rather than writing a statement that would fail when it
+ran.
+
+### Overlays over the points drawn
+
+`overlay` takes a list of short phrases. Each is drawn once per series, in that series' colour,
+dashed and thinner than the series' own line so it reads as derived rather than measured.
+
+| Phrase | Draws |
+| --- | --- |
+| `"trend"` | a least-squares straight line through the series' points |
+| `"average N"` | a moving average over N points, ending at each one |
+| `"mean"`, `"median"` | a line across the plot at that statistic of the series' values |
+| `"line V"` | a line across the plot at the value V: a target, a threshold, last year's figure |
+
+```sql
+-- [chart]
+-- x = "day"
+-- y = "revenue"
+-- overlay = ["trend", "mean"]
+-- title = "Revenue by day, with its trend and mean"
+SELECT date(o.placed_at) AS day, ROUND(SUM(t.total), 2) AS revenue
+FROM orders o
+JOIN order_totals t ON t.id = o.id
+WHERE o.status <> 'cancelled'
+GROUP BY day
+ORDER BY day;
+```
+
+![Revenue by day as a line swinging between nothing and 600, with two dashed lines over it in
+the same blue: one flat near 230 and one rising gently from about 210 to
+270](images/chart-overlay.png)
+
+**The line under the chart names every overlay and what it was computed over,** always:
+`Charting 55 rows · Trend and mean over those 55 rows, by day`, as under the picture above. Where the rows were cut, the
+clause that says so reads straight into it. Over text along the bottom the fit is by position —
+the slot's index — and the note says `by position`, since that is what was fitted. Gaps stay
+gaps: a trend skips them and counts them, and a moving average whose window holds one gives a
+gap rather than quietly averaging a shorter window.
+
+Where an overlay would mislead, it is refused rather than drawn:
+
+- **On an area and on stacked bars,** `trend`, `average`, `mean` and `median` are a problem: the
+  series are piled on each other, so a line at one series' own values would sit where nothing
+  was drawn. `"line V"` still works there, because an absolute value is read against the axis
+  and so is a stack's total.
+- **In a report, `overlay` together with `limit`** is a problem in the file, before the run
+  starts: an overlay is computed over the rows charted, and `limit` charts only some of them, so
+  an unattended file would carry a statistic over a deliberate subset with nobody there to read
+  the caption. In a console the same chart is drawn, because the note is right under it and you
+  set the limit a moment ago.
+
+### A moving average in the query
+
+`overlay = ["average 7"]` averages the points the chart drew. A window function averages every
+row the query returned, which is the one to reach for when the grid holds a page of a larger
+result — and both the measure and its average then chart as lines:
 
 ```sql
 -- [chart]
@@ -360,10 +518,11 @@ row and the six before it. Widen or narrow it there, and the chart follows. The 
 a running total (`SUM(…) OVER (ORDER BY day)`), a share of the whole, or a change on the row
 before (`revenue - LAG(revenue) OVER (ORDER BY day)`).
 
-### Counts in bands
+### Counts in bands, by hand
 
-A histogram is a count per band, and a count per band is a `GROUP BY`. Band the measure in the
-query, count the rows in each band, and chart it as bars:
+[Summarise](#summarise-writes-the-sql) writes this statement for you, and it is worth reading
+once to see what it writes. A histogram is a count per band, and a count per band is a
+`GROUP BY`. Band the measure in the query, count the rows in each band, and chart it as bars:
 
 ```sql
 -- [chart]
@@ -391,22 +550,32 @@ to the counts.
 Every database writes the banding its own way — `width_bucket(total, 0, 1000, 10)` in
 PostgreSQL and DuckDB, `FLOOR(total / 100) * 100` elsewhere — and `date_trunc` or `strftime`
 band a time the same way. Percentiles come from the query too, through `percentile_cont` or
-`NTILE`, and chart as bars or a line like any other result.
+`NTILE`, and chart as bars or a line like any other result. A chart's own `query` in a report
+takes exactly this kind of statement, which is how a distribution gets into a report: write
+there what **Summarise** would have written.
 
 ## What charts don't do
 
-A chart in DbRover is three kinds, eleven keys and a picture of one result. The limits are
+A chart in DbRover is five kinds, fourteen keys and a picture of one result. The limits are
 chosen, not missing by accident, and each is weighed again when someone asks for it.
 
-- **The kinds are bars, lines and a scatter.** There is no pie: slices are hard to compare, and
-  bars say the same thing better. There is no heatmap, which would need two category axes, a
-  colour scale and a legend of its own. Horizontal bars, for long category names, and stacked
-  areas, for shares over time, are the two most likely to come next.
-- **No statistical functions,** as above: binning, percentiles, smoothing and fits belong in the
-  query, where the database sees every row.
-- **No log scales, no colours of your own, no annotations.** A chart's colours are a palette of
-  eight that reads on both themes, and exported files are always the light theme's colours on
-  white.
+- **The kinds are bars, horizontal bars, lines, a scatter and a stacked area.** There is no pie:
+  slices are hard to compare, and bars say the same thing better. There is no heatmap, which
+  would need two category axes, a colour scale and a legend of its own. There is no histogram as
+  a kind, because binning belongs where every row is — see
+  [Summarise](#summarise-writes-the-sql).
+- **No distributions or percentiles in the chart layer,** as above: those see a page, so they
+  are written as SQL instead. What the chart layer computes is what is honest over the points it
+  drew, and it says so under every picture.
+- **No annotations:** no arrow or label placed at a point by hand. `overlay` draws lines
+  computed from the data or set at a value, not prose.
+- **A log scale on Y only,** through `y_scale`, and on lines and scatters only. X is already
+  placed three ways — by category, by number and by time — and a fourth would double that work
+  for a scatter of two numbers.
+- **Colours per series, not a palette by name.** `colours` names the hues you want; there is no
+  `palette = "viridis"`, which would be a word DbRover owns forever and still wouldn't hold
+  anyone's three particular hues. Exported files are always the light theme's colours on white,
+  with the ones you named used as given.
 - **No pan or zoom.** Narrowing is the grid's filter, or the query.
 - **No dashboards:** no page, file or tab of several charts, and no chart that refreshes on a
   timer or a live connection. A report writes as many charts as you like, each its own file, and
