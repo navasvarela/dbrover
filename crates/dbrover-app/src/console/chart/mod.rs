@@ -10,7 +10,7 @@ use std::sync::Arc;
 use dbrover_chart::{
     Anchor, BAR_ROUNDING, ChartData, ChartKind, Choice, Column, Drawing, LINE_WIDTH, LayoutOptions,
     MAX_POINTS, Mark, Paint, ROUNDED_BAR_WIDTH, Resolved, Role, SERIES_DARK, SERIES_LIGHT,
-    SavedChoice, Size, TextMeasure,
+    SavedChoice, Size, TextMeasure, series_colour,
 };
 use dbrover_core::{ColumnInfo, Row, ValueKind};
 use dbrover_engine::Picture;
@@ -161,7 +161,7 @@ impl ChartTab {
     /// The chart as it was last drawn, as `format`; `None` until it has been drawn.
     pub fn picture(&self, format: PictureFormat) -> Option<Picture> {
         let laid_out = self.laid_out()?;
-        let svg = dbrover_chart::svg(&laid_out.drawing, laid_out.text_size);
+        let svg = dbrover_chart::svg(&laid_out.drawing, laid_out.text_size, &laid_out.colours);
         Some(match format {
             PictureFormat::Svg => Picture::Svg(svg),
             PictureFormat::Png { scale } => Picture::Png {
@@ -253,6 +253,8 @@ struct LaidOut {
     size: Size,
     /// The size of the text it measured, which an export writes its text at.
     text_size: f32,
+    /// The colours the spec named, which an export writes in the palette's place.
+    colours: Vec<Rgb>,
     drawing: Arc<Drawing>,
 }
 
@@ -631,6 +633,10 @@ pub fn show(ui: &mut Ui, tab: &mut ChartTab, source: &Source<'_>) {
         SpecState::Unresolved(problems) => spec_problems(ui, problems),
         SpecState::None | SpecState::Resolved(_) => {}
     }
+    let palette = Palette::for_visuals(ui.visuals());
+    for hint in contrast_hints(&view.spec.options().colours, &palette) {
+        ui.weak(hint);
+    }
     if view.choice.is_none() {
         ui.weak("A chart needs a column of numbers");
         return;
@@ -670,10 +676,59 @@ pub fn show(ui: &mut Ui, tab: &mut ChartTab, source: &Source<'_>) {
         font: &font,
     };
     let drawing = drawing(laid_out, &charted.data, &options, size, &measure);
-    let paints = Paints::of(&Palette::for_visuals(ui.visuals()));
+    let paints = Paints::of(&palette, &options.colours);
     paint(&painter, response.rect.min, &drawing, &paints, &font);
     hover(ui, &response, &drawing, view, source, &paints);
     ui.weak(note);
+}
+
+/// WCAG's contrast ratio for graphical objects. Below it, a colour is hard to make out against
+/// the background it is drawn on, which is what the palette's own "stepped for its theme's
+/// background" is already reaching for.
+const READABLE_CONTRAST: f32 = 3.0;
+
+/// A hint for each colour a spec named that is hard to see on this theme.
+///
+/// A user's hex is used as given, on both surfaces: adjusting it for contrast would make the
+/// screen and the file disagree again, and would surprise someone who pasted in a brand colour.
+/// But how a hue lands on the other theme is the one thing the TOML doesn't show, so the tab
+/// says it. A hint, not a problem — the chart draws and a report runs — and console-only, since
+/// a report has nobody to read a hint and its file is always light on white, where the question
+/// doesn't arise.
+fn contrast_hints(colours: &[Rgb], palette: &Palette) -> Vec<String> {
+    let theme = if palette.dark { "dark" } else { "light" };
+    let background = rgb(palette.field);
+    colours
+        .iter()
+        .filter(|colour| contrast(**colour, background) < READABLE_CONTRAST)
+        .map(|colour| format!("{colour} is hard to see on the {theme} theme"))
+        .collect()
+}
+
+/// WCAG's contrast ratio between two colours: 1 for one colour against itself, 21 for black on
+/// white.
+fn contrast(a: Rgb, b: Rgb) -> f32 {
+    let (first, second) = (luminance(a), luminance(b));
+    let (lighter, darker) = if first > second {
+        (first, second)
+    } else {
+        (second, first)
+    };
+    (lighter + 0.05) / (darker + 0.05)
+}
+
+/// WCAG's relative luminance of a colour: each channel brought back from sRGB's curve, then
+/// weighted by how much the eye sees of it.
+fn luminance(colour: Rgb) -> f32 {
+    let channel = |value: u8| {
+        let share = f32::from(value) / 255.0;
+        if share <= 0.040_45 {
+            share / 12.92
+        } else {
+            ((share + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel(colour.0) + 0.7152 * channel(colour.1) + 0.0722 * channel(colour.2)
 }
 
 fn spec_problems(ui: &mut Ui, problems: &[String]) {
@@ -694,6 +749,7 @@ fn drawing(
     if let Some(cached) = laid_out
         && cached.size == size
         && cached.text_size == text_size
+        && cached.colours == options.colours
     {
         return Arc::clone(&cached.drawing);
     }
@@ -701,6 +757,7 @@ fn drawing(
     *laid_out = Some(LaidOut {
         size,
         text_size,
+        colours: options.colours.clone(),
         drawing: Arc::clone(&drawing),
     });
     drawing
@@ -728,9 +785,13 @@ impl TextMeasure for Measure<'_> {
     }
 }
 
-/// The colours of a chart's marks in the current theme.
+/// The colours of a chart's marks in the current theme, with the ones a spec named standing in
+/// for the theme's own.
 struct Paints {
-    series: [Color32; 8],
+    /// This theme's hues, kept as [`Rgb`] so the screen and a file ask one resolver,
+    /// [`series_colour`], the same question.
+    series: [Rgb; 8],
+    named: Vec<Rgb>,
     axis: Color32,
     grid: Color32,
     label: Color32,
@@ -739,14 +800,14 @@ struct Paints {
 }
 
 impl Paints {
-    fn of(palette: &Palette) -> Self {
+    fn of(palette: &Palette, named: &[Rgb]) -> Self {
         Self {
             series: if palette.dark {
                 SERIES_DARK
             } else {
                 SERIES_LIGHT
-            }
-            .map(color32),
+            },
+            named: named.to_vec(),
             axis: palette.text_weak,
             grid: palette.border,
             label: palette.text_weak,
@@ -757,7 +818,7 @@ impl Paints {
 
     fn colour(&self, paint: Paint) -> Color32 {
         match paint {
-            Paint::Series(index) => self.series[index % self.series.len()],
+            Paint::Series(index) => color32(series_colour(index, &self.named, &self.series)),
             Paint::Axis => self.axis,
             Paint::Grid => self.grid,
             Paint::Label => self.label,
@@ -768,6 +829,10 @@ impl Paints {
 
 fn color32(rgb: Rgb) -> Color32 {
     Color32::from_rgb(rgb.0, rgb.1, rgb.2)
+}
+
+fn rgb(colour: Color32) -> Rgb {
+    Rgb(colour.r(), colour.g(), colour.b())
 }
 
 fn paint(painter: &Painter, origin: Pos2, drawing: &Drawing, paints: &Paints, font: &FontId) {
@@ -974,7 +1039,7 @@ mod tests {
     /// so **Export ›** writes what the tab shows in the light theme.
     #[test]
     fn a_files_colours_are_the_light_themes() {
-        let light = Paints::of(&Palette::LIGHT);
+        let light = Paints::of(&Palette::LIGHT, &[]);
         let paints = [
             Paint::Axis,
             Paint::Grid,
@@ -986,7 +1051,7 @@ mod tests {
         for paint in paints {
             assert_eq!(
                 light.colour(paint),
-                color32(FILE_COLOURS.of(paint)),
+                color32(FILE_COLOURS.of(paint, &[])),
                 "{paint:?}"
             );
         }
@@ -1269,7 +1334,7 @@ mod tests {
     #[test]
     fn a_bands_polygon_and_its_quads_cover_the_same_pixels() {
         let drawing = area_bands();
-        let svg = dbrover_chart::svg(&drawing, FILE_TEXT_SIZE);
+        let svg = dbrover_chart::svg(&drawing, FILE_TEXT_SIZE, &[]);
         assert_eq!(svg.matches("<polygon ").count(), 2, "{svg}");
 
         let bytes = dbrover_picture::png(&svg, 1.0, &Fonts::bundled()).expect("the file drawn");
@@ -1308,6 +1373,40 @@ mod tests {
             differing
                 .first()
                 .map(|index| (index % width, index / width))
+        );
+    }
+
+    /// WCAG's 3:1 for graphical objects, either side of it, on each theme.
+    #[test]
+    fn hints_only_where_a_named_colour_is_hard_to_see() {
+        let near_black = Rgb(0x1d, 0x1f, 0x26);
+        let palette_blue = Rgb(0x2a, 0x78, 0xd6);
+        let white = Rgb(0xff, 0xff, 0xff);
+
+        // The dark theme: near-black all but vanishes on it; the palette's own blue does not.
+        let dark = contrast_hints(&[near_black, palette_blue], &Palette::DARK);
+        assert_eq!(dark, ["#1d1f26 is hard to see on the dark theme"]);
+
+        // The light theme: white all but vanishes on it; near-black is fine.
+        let light = contrast_hints(&[white, near_black], &Palette::LIGHT);
+        assert_eq!(light, ["#ffffff is hard to see on the light theme"]);
+
+        assert!(
+            contrast_hints(&[], &Palette::DARK).is_empty(),
+            "a spec that names no colour has nothing to hint about"
+        );
+    }
+
+    /// The ratio itself, at the two ends it is defined by.
+    #[test]
+    fn contrast_runs_from_one_to_twenty_one() {
+        let white = Rgb(0xff, 0xff, 0xff);
+        let black = Rgb(0, 0, 0);
+        assert!((contrast(white, white) - 1.0).abs() < 0.01);
+        assert!((contrast(black, white) - 21.0).abs() < 0.01);
+        assert!(
+            (contrast(black, white) - contrast(white, black)).abs() < 0.01,
+            "which colour is which doesn't matter"
         );
     }
 }

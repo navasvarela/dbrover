@@ -266,6 +266,59 @@ fn a_chart_block_opens_its_chart_and_save_to_query_writes_it_back() {
     );
 }
 
+/// Net sales by month and category, with the first category picked out in a brand's red.
+const SHOP_RED_FIRST: &str = "-- [chart]
+-- kind = \"bars\"
+-- x = \"month\"
+-- y = \"net\"
+-- series = \"category\"
+-- colours = [\"#e34948\"]
+SELECT strftime('%Y-%m', l.ordered_on) AS month, p.category, SUM(l.amount) AS net
+FROM order_lines l JOIN products p ON p.id = l.product_id
+GROUP BY month, p.category ORDER BY month, p.category;";
+
+/// CH5e's exit: a named colour is that exact hue in the exported file, and the series the spec
+/// doesn't name keep the palette's own.
+#[test]
+fn a_named_colour_holds_in_the_exported_file() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(dir.path(), SHOP);
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    console_with(&mut harness, "shop", SHOP_RED_FIRST);
+    harness.get_by_label("Run").click();
+    step_until(&mut harness, "the recoloured chart", |harness| {
+        shown_chart(harness).is_some()
+    });
+
+    let pictures = dir.path().join("pictures");
+    std::fs::create_dir_all(&pictures).unwrap();
+    let answer = pictures.clone();
+    harness.state_mut().pick_picture =
+        Box::new(move |name, format| Some(answer.join(format!("{name}.{}", format.extension()))));
+    harness.get_by_label("Export").click();
+    harness.run_steps(2);
+    harness.get_by_label("SVG…").click();
+    let file = pictures.join("net by month.svg");
+    step_until_visible(&mut harness, &format!("Exported to {}", file.display()));
+
+    let svg = std::fs::read_to_string(&file).unwrap();
+    let first = dbrover_chart::SERIES_LIGHT[0];
+    assert!(
+        svg.contains("fill=\"#e34948\""),
+        "the named hue, as given: {svg}"
+    );
+    assert!(
+        !svg.contains(&format!("fill=\"{first}\"")),
+        "nothing is left in the palette's first hue, {first}"
+    );
+    let second = dbrover_chart::SERIES_LIGHT[1];
+    assert!(
+        svg.contains(&format!("fill=\"{second}\"")),
+        "the second series keeps the palette's own {second}: {svg}"
+    );
+}
+
 /// Every product's net sales against its price, on a log scale: the nets span decades, and the
 /// bell, which is never ordered, has none, so a log axis has no place for it.
 const SHOP_PRICES: &str = "-- [chart]

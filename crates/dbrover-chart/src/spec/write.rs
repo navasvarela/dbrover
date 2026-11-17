@@ -248,4 +248,30 @@ mod tests {
         );
         assert_eq!(for_report("chart = 1", "a.svg"), Err(WriteError::NotATable));
     }
+
+    /// The toolbar sets no colours, so **Save to query** neither writes the key nor respells
+    /// one that is there: a spec's `colors` stays `colors`, and its colours stay its own.
+    #[test]
+    fn save_to_query_leaves_a_colours_key_as_the_spec_wrote_it() {
+        let saved = SavedChoice {
+            kind: ChartKind::Lines,
+            x: "month".to_owned(),
+            y: vec!["net".to_owned()],
+            series: None,
+            stack: false,
+        };
+        for spelling in ["colours", "colors"] {
+            let text = format!(
+                "[chart]\nkind = \"bars\"\nx = \"month\"\ny = \"net\"\n{spelling} = [\"#e34948\"]\n"
+            );
+
+            let written = write_back(Some(&text), &saved).unwrap();
+
+            assert!(written.contains("kind = \"lines\""), "{written}");
+            assert!(
+                written.contains(&format!("{spelling} = [\"#e34948\"]")),
+                "{written}"
+            );
+        }
+    }
 }

@@ -6,8 +6,10 @@ use std::ops::Range;
 
 use toml_edit::{Document, Item, Table, Value};
 
+use dbrover_picture::Rgb;
+
 use super::{ChartSpec, Key, SPEC_TABLE, Sort, SpecProblem};
-use crate::{ChartKind, YScale};
+use crate::{ChartKind, YScale, hex_colour};
 
 /// A misspelt key is suggested when it is at most this many letters' edits from a key: `ys`
 /// and `kinds` are one away. Three would suggest `x` for any key of up to three letters.
@@ -362,8 +364,39 @@ impl<P> Reader<P> {
             Key::Sort => spec.sort = self.sort(value),
             Key::Limit => spec.limit = self.limit(value),
             Key::YScale => spec.y_scale = self.y_scale(value),
+            Key::Colours => spec.colours = self.colours(value),
         }
         self.places.push((key, value.place()));
+    }
+
+    /// `colours`: a hex colour, or a list of them, given to the series from the first.
+    fn colours<V: KeyValue<Place = P>>(&mut self, value: &V) -> Vec<Rgb> {
+        // One colour on its own is a list of one, as `y` takes one column's name or a list.
+        let items = match value.items() {
+            Some(items) => items,
+            None => return self.colour(value).into_iter().collect(),
+        };
+        if items.is_empty() {
+            self.problem(
+                value.place(),
+                "`colours = []` names no colour; leave `colours` out to keep the theme's",
+            );
+            return Vec::new();
+        }
+        items.iter().filter_map(|item| self.colour(item)).collect()
+    }
+
+    /// One hex colour, or a problem naming what one looks like.
+    fn colour<V: KeyValue<Place = P>>(&mut self, value: &V) -> Option<Rgb> {
+        let colour = value.text().and_then(hex_colour);
+        if colour.is_none() {
+            let detail = format!(
+                "`colours`: write a hex colour such as `#2a78d6`, not {}",
+                value.written()
+            );
+            self.problem(value.place(), detail);
+        }
+        colour
     }
 
     fn y_scale<V: KeyValue<Place = P>>(&mut self, value: &V) -> YScale {
@@ -531,6 +564,9 @@ fn unknown_key<'a>(name: &str, others: &[&'a str]) -> String {
         .map(|key| -> &'a str { key.name() })
         .chain(others.iter().copied())
         .collect();
+    // `colours`' other spelling is read as the key but never suggested or listed: it is a
+    // spelling, not a key of its own, so a near miss is pointed at the canonical name and the
+    // list of what a chart takes stays one name per key.
     let nearest = known
         .iter()
         .map(|known| (distance(&lowered, known), *known))
@@ -587,7 +623,7 @@ mod tests {
     #[test]
     fn reads_every_key() {
         let spec = read(
-            r#"
+            r##"
 kind = "bars"   # by month
 x = "month"
 y = ["net", "refunds"]
@@ -600,7 +636,8 @@ y_zero = true
 sort = "net desc"
 limit = 10
 y_scale = "linear"
-"#,
+colours = ["#e34948"]
+"##,
         );
         assert_eq!(
             spec,
@@ -620,6 +657,7 @@ y_scale = "linear"
                 }),
                 limit: Some(10),
                 y_scale: YScale::Linear,
+                colours: vec![Rgb(0xe3, 0x49, 0x48)],
             })
         );
     }
@@ -635,7 +673,7 @@ y_scale = "linear"
 
     #[test]
     fn says_each_problem_at_its_line() {
-        let cases: [(&str, &[&str]); 18] = [
+        let cases: [(&str, &[&str]); 21] = [
             (
                 "kind = ",
                 &["chart, line 2: string values must be quoted, expected literal string"],
@@ -650,9 +688,24 @@ y_scale = "linear"
             ),
             (
                 "colour = \"red\"",
+                &["chart, line 2: no key `colour`; did you mean `colours`?"],
+            ),
+            // The other spelling is read as the key; a near miss is sent to the canonical name.
+            (
+                "colors = \"red\"",
+                &["chart, line 2: `colours`: write a hex colour such as `#2a78d6`, not \"red\""],
+            ),
+            (
+                "color = \"red\"",
+                &["chart, line 2: no key `color`; did you mean `colours`?"],
+            ),
+            // Nothing near it, so the keys there are — one name per key, the spelling left out.
+            (
+                "palette = \"viridis\"",
                 &[
-                    "chart, line 2: no key `colour`; a chart's keys are `kind`, `x`, `y`, \
-                   `series`, `stack`, `title`, `x_title`, `y_title`, `y_zero`, `sort`, `limit`, `y_scale`",
+                    "chart, line 2: no key `palette`; a chart's keys are `kind`, `x`, `y`, \
+                   `series`, `stack`, `title`, `x_title`, `y_title`, `y_zero`, `sort`, `limit`, \
+                   `y_scale`, `colours`",
                 ],
             ),
             (

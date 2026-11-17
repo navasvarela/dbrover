@@ -211,6 +211,11 @@ pub struct LayoutOptions {
     pub y_zero: bool,
     /// How the value axis progresses: evenly, or by powers of ten.
     pub y_scale: YScale,
+    /// Colours for the series, from the first. A series past the end of the list keeps the
+    /// palette's own hue, stepped for the surface it is drawn on. The layout never reads these
+    /// — it emits only [`Paint::Series`] — so whoever paints the marks resolves them, which is
+    /// how one named colour comes out the same hue on screen and in a file.
+    pub colours: Vec<dbrover_picture::Rgb>,
 }
 
 /// How far an axis reaches in the drawing: the point its low value sits at, and the point its

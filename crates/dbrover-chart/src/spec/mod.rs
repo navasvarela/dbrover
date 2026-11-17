@@ -19,10 +19,16 @@ pub use read::KeyProblem;
 pub use resolve::{ColumnProblem, Resolved, SortBy};
 pub use write::{SavedChoice, WriteError, for_report, write_back};
 
+use dbrover_picture::Rgb;
+
 use crate::{ChartKind, YScale};
 
 /// The table a spec's keys are under.
 pub const SPEC_TABLE: &str = "chart";
+
+/// The other spelling of `colours`, read as the same key. It is a spelling, not a misspelling,
+/// and refusing it would be a papercut for no gain.
+pub(crate) const COLORS_SPELLING: &str = "colors";
 
 /// A chart as its spec writes it. Every key is optional: one left out takes the value the chart
 /// tab would start with, given the keys that are present.
@@ -48,6 +54,8 @@ pub struct ChartSpec {
     pub limit: Option<usize>,
     /// How the value axis progresses: evenly, or by powers of ten.
     pub y_scale: YScale,
+    /// Colours for the series, from the first; empty when the spec names none.
+    pub colours: Vec<Rgb>,
 }
 
 /// A column to sort the rows by before charting them, and which way.
@@ -108,10 +116,11 @@ enum Key {
     Sort,
     Limit,
     YScale,
+    Colours,
 }
 
 impl Key {
-    const ALL: [Self; 12] = [
+    const ALL: [Self; 13] = [
         Self::Kind,
         Self::X,
         Self::Y,
@@ -124,6 +133,7 @@ impl Key {
         Self::Sort,
         Self::Limit,
         Self::YScale,
+        Self::Colours,
     ];
 
     fn name(self) -> &'static str {
@@ -140,10 +150,14 @@ impl Key {
             Self::Sort => "sort",
             Self::Limit => "limit",
             Self::YScale => "y_scale",
+            Self::Colours => "colours",
         }
     }
 
     fn named(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|key| key.name() == name)
+        Self::ALL
+            .into_iter()
+            .find(|key| key.name() == name)
+            .or_else(|| (name == COLORS_SPELLING).then_some(Self::Colours))
     }
 }

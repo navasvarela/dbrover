@@ -39,7 +39,9 @@ pub(crate) struct ChartArgs {
     /// "hbars" for bars lying down, which fits long category names, "lines" or "scatter"), x (a
     /// column), y (a column or a list of them), series (a column
     /// whose values split y into a series each), stack (true to stack bars), title, x_title,
-    /// y_title, y_zero, sort ("net desc") and limit (rows, after sort). Every key is optional:
+    /// y_title, y_zero, y_scale ("linear" or "log", for lines and scatters), colours (hex
+    /// colours given to the series from the first, such as ["#e34948"]), sort ("net desc") and
+    /// limit (rows, after sort). Every key is optional:
     /// one left out takes the value DbRover's chart tab starts with, bars over text, lines over
     /// dates.
     #[serde(default)]

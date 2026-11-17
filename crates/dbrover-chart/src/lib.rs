@@ -41,7 +41,7 @@ pub use layout::{
 };
 pub use palette::{
     BAR_ROUNDING, FILE_COLOURS, FILE_TEXT_SIZE, FileColours, LINE_WIDTH, ROUNDED_BAR_WIDTH,
-    SERIES_DARK, SERIES_LIGHT,
+    SERIES_DARK, SERIES_LIGHT, hex_colour, series_colour,
 };
 pub use role::{Column, Role};
 pub use spec::{

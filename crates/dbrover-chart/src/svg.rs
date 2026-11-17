@@ -23,16 +23,18 @@ pub fn file_svg(
 ) -> Result<String, MeasureError> {
     let measure = FontMeasure::inter(FILE_TEXT_SIZE)?;
     let drawing = layout_file(data, options, size, &measure, note);
-    Ok(svg(&drawing, FILE_TEXT_SIZE))
+    Ok(svg(&drawing, FILE_TEXT_SIZE, &options.colours))
 }
 
-/// `drawing` as an SVG document, its text at `text_size` points, the size it was measured at.
-/// Every number is written to a hundredth of a point ([`Points`]), so the same drawing is the
-/// same bytes on every platform.
-pub fn svg(drawing: &Drawing, text_size: f32) -> String {
+/// `drawing` as an SVG document, its text at `text_size` points, the size it was measured at,
+/// in [`FILE_COLOURS`] with `colours` — a spec's own — in the palette's place for the series
+/// they name. Every number is written to a hundredth of a point ([`Points`]), so the same
+/// drawing is the same bytes on every platform.
+pub fn svg(drawing: &Drawing, text_size: f32, colours: &[Rgb]) -> String {
     let mut out = Svg {
         text: String::new(),
         text_size,
+        colours,
     };
     let (width, height) = (
         Points(drawing.size.width.ceil()),
@@ -64,29 +66,35 @@ fn coordinates(points: &[Point]) -> String {
     written
 }
 
-struct Svg {
+struct Svg<'a> {
     text: String,
     text_size: f32,
+    /// The colours a spec named, which stand in for the palette's at their series' index.
+    colours: &'a [Rgb],
 }
 
-impl Svg {
+impl Svg<'_> {
+    fn colour(&self, paint: crate::Paint) -> Rgb {
+        FILE_COLOURS.of(paint, self.colours)
+    }
+
     fn mark(&mut self, mark: &Mark) {
         match mark {
             Mark::Rect {
                 rect,
                 paint,
                 rounded,
-            } => self.rect(*rect, *rounded, FILE_COLOURS.of(*paint)),
+            } => self.rect(*rect, *rounded, self.colour(*paint)),
             Mark::Line { from, to, paint } => self.line(format_args!(
                 "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{}\" stroke-width=\"1\"/>",
                 Points(from.x),
                 Points(from.y),
                 Points(to.x),
                 Points(to.y),
-                FILE_COLOURS.of(*paint)
+                self.colour(*paint)
             )),
-            Mark::Polyline { points, paint } => self.polyline(points, FILE_COLOURS.of(*paint)),
-            Mark::Band { points, paint } => self.polygon(points, FILE_COLOURS.of(*paint)),
+            Mark::Polyline { points, paint } => self.polyline(points, self.colour(*paint)),
+            Mark::Band { points, paint } => self.polygon(points, self.colour(*paint)),
             Mark::Circle {
                 centre,
                 radius,
@@ -96,14 +104,14 @@ impl Svg {
                 Points(centre.x),
                 Points(centre.y),
                 Points(*radius),
-                FILE_COLOURS.of(*paint)
+                self.colour(*paint)
             )),
             Mark::Text {
                 at,
                 text,
                 anchor,
                 paint,
-            } => self.text(*at, text, *anchor, FILE_COLOURS.of(*paint)),
+            } => self.text(*at, text, *anchor, self.colour(*paint)),
         }
     }
 
@@ -228,7 +236,7 @@ mod tests {
 
     #[test]
     fn writes_bars_labels_and_escaped_text_on_white() {
-        let svg = svg(&months(ChartKind::Bars), 11.0);
+        let svg = svg(&months(ChartKind::Bars), 11.0, &[]);
 
         assert!(
             svg.starts_with(
@@ -252,8 +260,26 @@ mod tests {
     }
 
     #[test]
+    fn writes_a_named_colour_in_the_palettes_place() {
+        let drawing = months(ChartKind::Bars);
+        let plain = svg(&drawing, 11.0, &[]);
+        let named = svg(&drawing, 11.0, &[dbrover_picture::Rgb(0xe3, 0x49, 0x48)]);
+
+        assert!(
+            plain.contains("fill=\"#2a78d6\""),
+            "the palette's first hue: {plain}"
+        );
+        assert!(named.contains("fill=\"#e34948\""), "{named}");
+        assert_eq!(
+            plain.replace("#2a78d6", "#e34948"),
+            named,
+            "a named colour changes its series' hue and nothing else"
+        );
+    }
+
+    #[test]
     fn writes_every_number_to_a_hundredth() {
-        let svg = svg(&months(ChartKind::Lines), 11.0);
+        let svg = svg(&months(ChartKind::Lines), 11.0, &[]);
 
         let numbers = svg
             .split(|c: char| !(c.is_ascii_digit() || c == '.'))
@@ -284,7 +310,7 @@ mod tests {
             &borrowed,
             &choice,
         );
-        let svg = svg(&laid_out(&data), 11.0);
+        let svg = svg(&laid_out(&data), 11.0, &[]);
 
         let pieces: Vec<&str> = svg
             .lines()
@@ -310,7 +336,7 @@ mod tests {
 
     #[test]
     fn writes_horizontal_bars_from_one_zero_line_outwards() {
-        let svg = svg(&months(ChartKind::Hbars), 11.0);
+        let svg = svg(&months(ChartKind::Hbars), 11.0, &[]);
 
         let bars: Vec<&str> = svg
             .lines()
@@ -356,7 +382,7 @@ mod tests {
             &borrowed,
             &choice,
         );
-        let svg = svg(&laid_out(&data), 11.0);
+        let svg = svg(&laid_out(&data), 11.0, &[]);
 
         let polygons: Vec<&str> = svg
             .lines()
@@ -380,7 +406,7 @@ mod tests {
 
     #[test]
     fn writes_a_line_as_a_polyline() {
-        let svg = svg(&months(ChartKind::Lines), 11.0);
+        let svg = svg(&months(ChartKind::Lines), 11.0, &[]);
 
         assert_eq!(svg.matches("<polyline ").count(), 1);
         assert_eq!(svg.matches("<circle ").count(), 3);
@@ -454,7 +480,7 @@ mod tests {
 
     #[test]
     fn draws_as_a_png_with_the_bundled_fonts() {
-        let svg = svg(&months(ChartKind::Bars), 11.0);
+        let svg = svg(&months(ChartKind::Bars), 11.0, &[]);
 
         let png = dbrover_picture::png(&svg, 2.0, &dbrover_picture::Fonts::bundled());
 
