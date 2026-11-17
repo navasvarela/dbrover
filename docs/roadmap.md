@@ -3033,8 +3033,9 @@ is added. It came after CI fixes, the reports track and W13.
   project's row limit lowered to 5, charting every product's price draws five bars, and both the
   picture and the reply say "only the first 5 rows were read, the project's row limit". A SQL
   Server data source without an MCP login isn't served, so `chart` on it answers that the
-  project has no such data source. `"kind": "pie"` answers "chart.kind: `kind` is bars, lines
-  or scatter, not "pie"". Departures from the design: none of substance; the details settled
+  project has no such data source. `"kind": "pie"` answers "chart.kind: `kind` is bars, hbars
+  (horizontal bars), lines or scatter, not "pie"" — the sentence names whichever kinds there
+  are, and CH5 adds to them. Departures from the design: none of substance; the details settled
   are in [CH4 confirmed](charts-as-code.md#ch4-confirmed). Covered by the MCP crate's unit tests
   of the spec, the drawing and both replies, and `crates/dbrover-mcp/tests/chart.rs`, the exit
   over stdio on the shop.

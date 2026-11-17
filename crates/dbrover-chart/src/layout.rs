@@ -34,8 +34,13 @@ pub const POINT_RADIUS: f32 = 4.0;
 const MAX_DOTTED_POINTS: usize = 60;
 /// How near a scatter's point the pointer must be to hover it.
 const HOVER_DISTANCE: f32 = 10.0;
-/// Categories' labels are cut to this many characters, with an ellipsis.
+/// Categories' labels are cut to this many characters, with an ellipsis, where a slot along the
+/// bottom is what holds them: 20 characters is about what a slot holds.
 const MAX_LABEL_CHARS: usize = 20;
+/// Lying down, the category names have the left gutter to themselves, and it grows to fit them
+/// up to this share of the width. Long names are the reason for the kind, so the gutter gives
+/// way first; past this share the plot would have less room than its labels.
+const MAX_GUTTER_SHARE: f32 = 1.0 / 3.0;
 /// A legend's colour square.
 const SWATCH: f32 = 10.0;
 /// Smaller than this, a plot has no room for its points, and nothing is drawn.
@@ -211,6 +216,32 @@ impl Frame {
         }
     }
 
+    /// Values rightwards from the plot's left edge, categories downwards from its top one, so
+    /// the first category reads first.
+    fn lying_down(plot: Rect) -> Self {
+        Self {
+            value: Extent::new(plot.min.x, plot.max.x),
+            category: Extent::new(plot.min.y, plot.max.y),
+            lying_down: true,
+        }
+    }
+
+    /// The frame a chart of `kind` is drawn in.
+    fn for_kind(kind: ChartKind, plot: Rect) -> Self {
+        match kind {
+            ChartKind::Hbars => Self::lying_down(plot),
+            ChartKind::Bars | ChartKind::Lines | ChartKind::Scatter => Self::upright(plot),
+        }
+    }
+
+    /// How wide a category's label may be, lying down: the gutter between the drawing's edge
+    /// and the value axis, which is all a name has. `None` upright, where a name is cut to a
+    /// slot's worth of characters instead and no width bounds it.
+    fn name_room(self) -> Option<f32> {
+        self.lying_down
+            .then(|| (self.value.from - LABEL_GAP - PADDING).max(0.0))
+    }
+
     /// The point `value` along the value axis and `category` along the category axis.
     fn at(self, value: f32, category: f32) -> Point {
         if self.lying_down {
@@ -298,13 +329,20 @@ impl Drawing {
         }
         match self.kind {
             ChartKind::Scatter => self.nearest_point(at),
-            ChartKind::Bars | ChartKind::Lines => self.nearest_category(category),
+            ChartKind::Bars | ChartKind::Hbars | ChartKind::Lines => {
+                self.nearest_category(category)
+            }
         }
     }
 
-    /// The X, in points, of the point at `index`.
-    pub fn x_of(&self, index: usize) -> Option<f32> {
-        self.categories.get(index).copied()
+    /// The ends of the line to draw across the plot at the point at `index`, to show which
+    /// point is hovered: down the plot upright, across it lying down.
+    pub fn guide(&self, index: usize) -> Option<(Point, Point)> {
+        let category = self.categories.get(index).copied()?;
+        Some((
+            self.frame.at(self.frame.value.from, category),
+            self.frame.at(self.frame.value.to, category),
+        ))
     }
 
     fn nearest_category(&self, category: f32) -> Option<usize> {
@@ -333,6 +371,82 @@ impl Drawing {
     }
 }
 
+/// The value axis's ticks, their labels, and the left gutter they or the category names leave
+/// for the plot.
+///
+/// This is the one thing the two orientations do in a different order. Upright, the value
+/// labels are what the gutter has to hold, and the plot's height — which the gutter doesn't
+/// change — is what decides how many ticks fit, so the ticks come first. Lying down, the
+/// category names are in the gutter and the value labels are under the plot, so the gutter
+/// comes first, and only then is the plot's width, and with it the number of ticks, known.
+struct Measured {
+    ticks: Ticks,
+    labels: Vec<String>,
+    gutter: f32,
+}
+
+impl Measured {
+    /// Ticks for a plot `height` tall, and a gutter wide enough for the widest of their labels.
+    fn upright(height: f32, low: f64, high: f64, measure: &impl TextMeasure) -> Self {
+        let ticks = Ticks::nice(low, high, (height / Y_TICK_SPACING) as usize);
+        let labels = tick_labels(&ticks);
+        let gutter = widest(&labels, measure);
+        Self {
+            ticks,
+            labels,
+            gutter,
+        }
+    }
+
+    /// A gutter for the category names, capped at [`MAX_GUTTER_SHARE`] of the width, and ticks
+    /// for the plot's remaining width.
+    ///
+    /// The value labels lie side by side along the bottom here, where upright they are stacked
+    /// up the side, so they take [`X_TICK_SPACING`]'s wider target: a horizontal chart gets
+    /// fewer value ticks than the same chart standing up, which is what gives the labels room.
+    fn lying_down(
+        data: &ChartData,
+        size: Size,
+        low: f64,
+        high: f64,
+        measure: &impl TextMeasure,
+    ) -> Self {
+        let names = match &data.x {
+            XValues::Categories(names) => names.as_slice(),
+            // Bars, upright or lying down, always read their X as categories.
+            XValues::Numbers(_) | XValues::Times(_) => &[],
+        };
+        let wanted = names
+            .iter()
+            .map(|name| measure.width(name))
+            .fold(0.0, f32::max);
+        let gutter = wanted.min(size.width * MAX_GUTTER_SHARE).max(0.0);
+        let width = size.width - 2.0 * PADDING - gutter - LABEL_GAP;
+        let ticks = Ticks::nice(low, high, (width / X_TICK_SPACING) as usize);
+        let labels = tick_labels(&ticks);
+        Self {
+            ticks,
+            labels,
+            gutter,
+        }
+    }
+}
+
+fn tick_labels(ticks: &Ticks) -> Vec<String> {
+    ticks
+        .values
+        .iter()
+        .map(|value| ticks.label(*value))
+        .collect()
+}
+
+fn widest(texts: &[String], measure: &impl TextMeasure) -> f32 {
+    texts
+        .iter()
+        .map(|text| measure.width(text))
+        .fold(0.0, f32::max)
+}
+
 /// Lays `data` out in `size` as `options` say, measuring text with `measure`.
 pub fn layout(
     data: &ChartData,
@@ -348,28 +462,20 @@ pub fn layout(
     };
     let top = PADDING + title_room + line + LABEL_GAP;
     let bottom = size.height - PADDING - line - LABEL_GAP - line - LABEL_GAP;
-    let from_zero = options.y_zero || data.kind == ChartKind::Bars;
-    let value_ticks = Ticks::nice(
-        value_low(data, from_zero),
-        value_high(data, from_zero),
-        ((bottom - top) / Y_TICK_SPACING) as usize,
-    );
-    let value_labels: Vec<String> = value_ticks
-        .values
-        .iter()
-        .map(|value| value_ticks.label(*value))
-        .collect();
-    // Upright, the value labels set the left gutter: the category axis starts past the widest
-    // of them.
-    let gutter = value_labels
-        .iter()
-        .map(|label| measure.width(label))
-        .fold(0.0, f32::max);
+    let from_zero = options.y_zero || data.kind.is_bars();
+    let low = value_low(data, from_zero);
+    let high = value_high(data, from_zero);
+    let measured = match data.kind {
+        ChartKind::Hbars => Measured::lying_down(data, size, low, high, measure),
+        _ => Measured::upright(bottom - top, low, high, measure),
+    };
     let plot = Rect {
-        min: Point::new(PADDING + gutter + LABEL_GAP, top),
+        min: Point::new(PADDING + measured.gutter + LABEL_GAP, top),
         max: Point::new(size.width - PADDING, bottom),
     };
-    let frame = Frame::upright(plot);
+    let frame = Frame::for_kind(data.kind, plot);
+    let value_ticks = measured.ticks;
+    let value_labels = measured.labels;
     let mut drawing = Drawing {
         size,
         plot,
@@ -405,7 +511,15 @@ pub fn layout(
         })
         .collect();
     series_marks(&mut drawing, data, frame, value_scale);
-    titles(&mut drawing.marks, data, options, size, measure, plot);
+    titles(
+        &mut drawing.marks,
+        data,
+        options,
+        size,
+        measure,
+        plot,
+        frame,
+    );
     drawing
 }
 
@@ -619,6 +733,7 @@ fn category_axis(
 ) {
     let category = frame.category;
     let target = (category.span().abs() / X_TICK_SPACING) as usize;
+    let room = frame.name_room();
     let inner = Scale::new(0.0, 1.0, category.from + INSET, category.to - INSET);
     let mut label = |at: f32, text: String| {
         let (at, anchor) = frame.category_label(at, line);
@@ -632,12 +747,24 @@ fn category_axis(
     match &data.x {
         XValues::Categories(names) => {
             let slot = category.span() / names.len().max(1) as f32;
-            let names: Vec<String> = names.iter().map(|name| shortened(name)).collect();
-            let widest = names
-                .iter()
-                .map(|name| measure.width(name))
-                .fold(0.0, f32::max);
-            let every = ((widest + LABEL_GAP) / slot).ceil().max(1.0) as usize;
+            // Upright, a slot along the bottom is what holds a name, and 20 characters is
+            // about what a slot holds. Lying down, the gutter is the constraint, and a
+            // measure is the honest test of whether a name fits it.
+            let names: Vec<String> = match room {
+                Some(room) => names
+                    .iter()
+                    .map(|name| shortened_to(name, room, measure))
+                    .collect(),
+                None => names.iter().map(|name| shortened(name)).collect(),
+            };
+            // What crowds the labels along the axis: their width upright, where they sit side
+            // by side; a line's height lying down, where they are stacked.
+            let thickness = if frame.lying_down {
+                line
+            } else {
+                widest(&names, measure)
+            };
+            let every = ((thickness + LABEL_GAP) / slot).ceil().max(1.0) as usize;
             let centre = |index: usize| category.from + slot * (index as f32 + 0.5);
             for (index, name) in names.into_iter().enumerate().step_by(every) {
                 label(centre(index), name);
@@ -690,10 +817,38 @@ fn shortened(name: &str) -> String {
     format!("{kept}…")
 }
 
+/// `name` cut with an ellipsis to fit `room` points, measured rather than counted.
+///
+/// The characters are measured one at a time and summed, which ignores the kerning between a
+/// pair, so a name may end a fraction of a point narrower than it could be. That errs towards
+/// fitting, which is the way to err against a gutter, and it is the same arithmetic on every
+/// platform, which a file compared byte for byte needs.
+fn shortened_to(name: &str, room: f32, measure: &impl TextMeasure) -> String {
+    if measure.width(name) <= room {
+        return name.to_owned();
+    }
+    let mut kept = String::new();
+    let mut taken = measure.width("…");
+    for character in name.chars() {
+        let wider = taken + measure.width(&character.to_string());
+        if wider > room {
+            break;
+        }
+        taken = wider;
+        kept.push(character);
+    }
+    // A gutter with room for nothing still says a name was cut, rather than dropping it.
+    format!("{kept}…")
+}
+
 fn series_marks(drawing: &mut Drawing, data: &ChartData, frame: Frame, value_scale: Scale) {
     match data.kind {
-        ChartKind::Bars if data.stacked => stacked_bars(drawing, data, frame, value_scale),
-        ChartKind::Bars => bars(drawing, frame, value_scale),
+        // Stacking is worked out in the values, so only where a piece goes differs between the
+        // two bar kinds, and the frame is what differs.
+        ChartKind::Bars | ChartKind::Hbars if data.stacked => {
+            stacked_bars(drawing, data, frame, value_scale);
+        }
+        ChartKind::Bars | ChartKind::Hbars => bars(drawing, frame, value_scale),
         ChartKind::Lines => lines(drawing, frame),
         ChartKind::Scatter => dots(drawing, frame),
     }
@@ -792,8 +947,13 @@ fn dots(drawing: &mut Drawing, frame: Frame) {
     }
 }
 
-/// The title above everything; the X column's name, or `x_title`, under the axis; and above the
-/// plot the Y column's name, or `y_title`, then a legend when there are several series.
+/// The title above everything, and each axis's name beside that axis: the one along the bottom
+/// under the plot, the one up the side above it, where a legend of several series follows it.
+///
+/// Upright that puts the X column's name, or `x_title`, under the chart and the Y column's, or
+/// `y_title`, above the plot. Lying down the two axes have swapped, so the names swap with
+/// them, and each still sits beside what it names. A value axis of several series has no one
+/// name; the legend names them instead, and that slot is left empty.
 fn titles(
     marks: &mut Vec<Mark>,
     data: &ChartData,
@@ -801,6 +961,7 @@ fn titles(
     size: Size,
     measure: &impl TextMeasure,
     plot: Rect,
+    frame: Frame,
 ) {
     let line = measure.line_height();
     let mut y = PADDING + line / 2.0;
@@ -813,25 +974,33 @@ fn titles(
         });
         y += line + LABEL_GAP;
     }
-    marks.push(Mark::Text {
-        at: Point::new(
-            (plot.min.x + plot.max.x) / 2.0,
-            size.height - PADDING - line / 2.0,
-        ),
-        text: options
-            .x_title
-            .clone()
-            .unwrap_or_else(|| data.x_name.clone()),
-        anchor: Anchor::Middle,
-        paint: Paint::Title,
-    });
-    let mut x = plot.min.x;
-    let y_name = match (&options.y_title, data.series.as_slice()) {
+    let category_name = options
+        .x_title
+        .clone()
+        .unwrap_or_else(|| data.x_name.clone());
+    let value_name = match (&options.y_title, data.series.as_slice()) {
         (Some(title), _) => Some(title.clone()),
         (None, [only]) => Some(only.name.clone()),
         (None, _) => None,
     };
-    if let Some(name) = y_name {
+    let (under, above) = if frame.lying_down {
+        (value_name, Some(category_name))
+    } else {
+        (Some(category_name), value_name)
+    };
+    if let Some(name) = under {
+        marks.push(Mark::Text {
+            at: Point::new(
+                (plot.min.x + plot.max.x) / 2.0,
+                size.height - PADDING - line / 2.0,
+            ),
+            text: name,
+            anchor: Anchor::Middle,
+            paint: Paint::Title,
+        });
+    }
+    let mut x = plot.min.x;
+    if let Some(name) = above {
         x += measure.width(&name) + 2.0 * LABEL_GAP;
         marks.push(Mark::Text {
             at: Point::new(plot.min.x, y),
@@ -933,6 +1102,10 @@ mod tests {
                 ..Summary::default()
             },
         }
+    }
+
+    fn named(names: &[&str]) -> XValues {
+        XValues::Categories(names.iter().map(|name| (*name).to_owned()).collect())
     }
 
     fn months(count: usize) -> XValues {
@@ -1110,7 +1283,7 @@ mod tests {
             SIZE,
             &Fixed,
         );
-        let second = Point::new(scatter.x_of(1).unwrap(), scatter.values[0][1].unwrap());
+        let second = Point::new(scatter.categories[1], scatter.values[0][1].unwrap());
         assert_eq!(scatter.hit(second), Some(1));
         let far = Point::new(
             (scatter.plot.min.x + scatter.plot.max.x) / 2.0,
@@ -1313,5 +1486,214 @@ mod tests {
             .collect();
         assert_eq!(texts, ["Net sales", "No rows to chart"]);
         assert_eq!(drawing.marks.len(), 2);
+    }
+
+    #[test]
+    fn horizontal_bars_grow_rightwards_in_slots_down_the_plot() {
+        let chart = data(
+            ChartKind::Hbars,
+            months(3),
+            &[("total", &[Some(10.0), Some(30.0), Some(20.0)])],
+        );
+        let drawing = layout(&chart, &LayoutOptions::default(), SIZE, &Fixed);
+        let bars = rects(&drawing);
+        assert_eq!(bars.len(), 3);
+        let zero = drawing.plot.min.x;
+        for (rect, _) in &bars {
+            assert!((rect.min.x - zero).abs() < 0.01, "{rect:?} starts at zero");
+        }
+        assert!(bars[1].0.width() > bars[2].0.width());
+        assert!(bars[2].0.width() > bars[0].0.width());
+        assert!(
+            bars[0].0.max.y <= bars[1].0.min.y,
+            "the first category reads first, at the top"
+        );
+    }
+
+    #[test]
+    fn a_long_names_gutter_stops_at_a_third_of_the_width() {
+        let long = "Wholesale & Distribution (Northern Europe)";
+        let chart = data(
+            ChartKind::Hbars,
+            named(&[long, "Acme"]),
+            &[("net", &[Some(1.0), Some(2.0)])],
+        );
+        let drawing = layout(&chart, &LayoutOptions::default(), SIZE, &Fixed);
+        let gutter = drawing.plot.min.x - PADDING - LABEL_GAP;
+        assert!(
+            (gutter - SIZE.width * MAX_GUTTER_SHARE).abs() < 0.01,
+            "the gutter stops at a third of the width, not at {gutter}"
+        );
+        let labels = texts(&drawing, Paint::Label);
+        let cut = labels
+            .iter()
+            .find(|label| label.ends_with('…'))
+            .unwrap_or_else(|| panic!("the long name is cut: {labels:?}"));
+        assert!(
+            Fixed.width(cut) <= gutter,
+            "{cut} is measured into the gutter"
+        );
+        assert!(
+            labels.contains(&"Acme".to_owned()),
+            "a name that fits is left whole: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn names_are_cut_to_the_room_they_have() {
+        // Fixed measures every character 7 points wide, so 35 points holds five of them.
+        let cases = [
+            ("Acme", 35.0, "Acme"),
+            ("Wholesale", 35.0, "Whol…"),
+            ("Wholesale", 7.0, "…"),
+            ("Wholesale", 0.0, "…"),
+        ];
+        for (name, room, expected) in cases {
+            assert_eq!(
+                shortened_to(name, room, &Fixed),
+                expected,
+                "{name} in {room}"
+            );
+        }
+    }
+
+    /// The reason the value ticks lie down at [`X_TICK_SPACING`]'s wider target rather than
+    /// [`Y_TICK_SPACING`]'s: side by side, each label needs room for itself.
+    #[test]
+    fn the_value_labels_lying_down_never_collide() {
+        let values: Vec<Option<f64>> = (0..8).map(|n| Some(f64::from(n) * 125_000.0)).collect();
+        let chart = data(ChartKind::Hbars, months(8), &[("net", &values)]);
+        let drawing = layout(&chart, &LayoutOptions::default(), SIZE, &Fixed);
+        let mut placed: Vec<(f32, f32)> = drawing
+            .marks
+            .iter()
+            .filter_map(|mark| match mark {
+                Mark::Text {
+                    at,
+                    text,
+                    paint: Paint::Label,
+                    ..
+                } if text.chars().all(|c| c.is_ascii_digit() || c == ',') => {
+                    Some((at.x, Fixed.width(text)))
+                }
+                _ => None,
+            })
+            .collect();
+        placed.sort_by(|a, b| a.0.total_cmp(&b.0));
+        assert!(placed.len() > 2, "{placed:?}");
+        for pair in placed.windows(2) {
+            let (left, right) = (pair[0], pair[1]);
+            assert!(
+                right.0 - left.0 >= (left.1 + right.1) / 2.0,
+                "{left:?} and {right:?} overlap"
+            );
+        }
+    }
+
+    #[test]
+    fn negative_horizontal_bars_grow_leftwards_from_a_vertical_zero_line() {
+        let chart = data(
+            ChartKind::Hbars,
+            months(2),
+            &[("net", &[Some(-5.0), Some(5.0)])],
+        );
+        let drawing = layout(&chart, &LayoutOptions::default(), SIZE, &Fixed);
+        let bars = rects(&drawing);
+        let zero = bars[1].0.min.x;
+        assert!(
+            (bars[0].0.max.x - zero).abs() < 0.01,
+            "the negative bar ends where the positive one starts"
+        );
+        assert!(
+            drawing.marks.iter().any(|mark| matches!(
+                mark,
+                Mark::Line { from, to, paint: Paint::Axis }
+                    if (from.x - zero).abs() < 0.01 && (from.x - to.x).abs() < 0.01
+            )),
+            "the zero line is drawn down the plot: {:?}",
+            drawing.marks
+        );
+    }
+
+    #[test]
+    fn stacked_horizontal_pieces_lie_left_to_right_from_zero() {
+        let mut chart = data(
+            ChartKind::Hbars,
+            months(2),
+            &[
+                ("bikes", &[Some(10.0), Some(-4.0)]),
+                ("parts", &[Some(5.0), Some(6.0)]),
+            ],
+        );
+        chart.stacked = true;
+        let drawing = layout(&chart, &LayoutOptions::default(), SIZE, &Fixed);
+        let bars = rects(&drawing);
+        assert_eq!(bars.len(), 4, "a piece per value");
+        let (bikes, parts) = (bars[0].0, bars[1].0);
+        assert!(
+            (bikes.max.x - parts.min.x).abs() < 0.01,
+            "parts start where bikes end"
+        );
+        assert!(
+            (bikes.min.y - parts.min.y).abs() < 0.01,
+            "one bar per month, its pieces in a row"
+        );
+        assert!(bikes.width() > parts.width());
+        let (negative_bikes, positive_parts) = (bars[2].0, bars[3].0);
+        assert!(
+            negative_bikes.max.x <= positive_parts.min.x,
+            "a negative piece hangs left of zero, a positive one right of it"
+        );
+    }
+
+    #[test]
+    fn hovering_a_horizontal_chart_finds_the_slot_down_the_plot() {
+        let drawing = layout(
+            &data(ChartKind::Hbars, months(4), &[("total", &[Some(1.0); 4])]),
+            &LayoutOptions::default(),
+            SIZE,
+            &Fixed,
+        );
+        let plot = drawing.plot;
+        let third = Point::new(plot.min.x + 1.0, plot.min.y + plot.height() * 0.6);
+        assert_eq!(drawing.hit(third), Some(2));
+        assert_eq!(drawing.hit(Point::new(1.0, 1.0)), None);
+        let (from, to) = drawing.guide(2).expect("a guide at the third slot");
+        assert!(
+            (from.y - to.y).abs() < 0.01 && (from.x - to.x).abs() > 1.0,
+            "the guide lies across the plot: {from:?} to {to:?}"
+        );
+    }
+
+    #[test]
+    fn a_horizontal_charts_axis_names_follow_their_axes() {
+        let chart = data(
+            ChartKind::Hbars,
+            months(2),
+            &[("net", &[Some(1.0), Some(2.0)])],
+        );
+        let drawing = layout(&chart, &LayoutOptions::default(), SIZE, &Fixed);
+        let at = |wanted: &str| {
+            drawing.marks.iter().find_map(|mark| match mark {
+                Mark::Text {
+                    at,
+                    text,
+                    paint: Paint::Title,
+                    ..
+                } if text == wanted => Some(*at),
+                _ => None,
+            })
+        };
+        let (Some(net), Some(month)) = (at("net"), at("month")) else {
+            panic!("expected both axes named: {:?}", drawing.marks)
+        };
+        assert!(
+            net.y > drawing.plot.max.y,
+            "the values run along the bottom, so their name is under the chart"
+        );
+        assert!(
+            month.y < drawing.plot.min.y,
+            "the categories run up the side, so their name is above the plot"
+        );
     }
 }

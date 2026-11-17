@@ -8,18 +8,35 @@ pub const STARTING_SERIES: usize = 8;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ChartKind {
     Bars,
+    /// Bars lying down: the categories up the left side, the values along the bottom. A kind of
+    /// its own rather than a flag on [`Self::Bars`], since the row limit, the starting kind,
+    /// hovering and stacking each read the kind already (`docs/charts-as-code.md`, CH5b).
+    Hbars,
     Lines,
     Scatter,
 }
 
 impl ChartKind {
-    pub const ALL: [Self; 3] = [Self::Bars, Self::Lines, Self::Scatter];
+    pub const ALL: [Self; 4] = [Self::Bars, Self::Hbars, Self::Lines, Self::Scatter];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Bars => "Bars",
+            // Short where the other kinds are short, and the same word the spec writes, so the
+            // button teaches the key; [`Self::hint`] is what glosses it.
+            Self::Hbars => "Hbars",
             Self::Lines => "Lines",
             Self::Scatter => "Scatter",
+        }
+    }
+
+    /// What the kind draws, in a few words: a toolbar button's hover text.
+    pub fn hint(self) -> &'static str {
+        match self {
+            Self::Bars => "A bar per category, standing on the bottom axis",
+            Self::Hbars => "Horizontal bars: the categories up the left side, so long names fit",
+            Self::Lines => "A line per series through its points",
+            Self::Scatter => "A dot per point, placed by both its values",
         }
     }
 
@@ -27,8 +44,24 @@ impl ChartKind {
     pub fn spec_name(self) -> &'static str {
         match self {
             Self::Bars => "bars",
+            Self::Hbars => "hbars",
             Self::Lines => "lines",
             Self::Scatter => "scatter",
+        }
+    }
+
+    /// Whether it draws bars, upright or lying down: in slots along the category axis, growing
+    /// from the zero line, and stackable.
+    pub fn is_bars(self) -> bool {
+        matches!(self, Self::Bars | Self::Hbars)
+    }
+
+    /// The kind as a problem names it: the word a spec writes, glossed where the word alone
+    /// doesn't say what it draws.
+    pub(crate) fn spec_gloss(self) -> &'static str {
+        match self {
+            Self::Hbars => "hbars (horizontal bars)",
+            other => other.spec_name(),
         }
     }
 
@@ -135,9 +168,9 @@ impl Choice {
         self.series.is_some() || self.ys.len() > 1
     }
 
-    /// Whether its bars are drawn stacked: asked for, and bars.
+    /// Whether its bars are drawn stacked: asked for, and bars, upright or lying down.
     pub fn stacked(&self) -> bool {
-        self.stack && self.kind == ChartKind::Bars
+        self.stack && self.kind.is_bars()
     }
 }
 
@@ -230,12 +263,25 @@ mod tests {
     }
 
     #[test]
-    fn only_bars_stack() {
+    fn only_bars_stack_and_both_bar_kinds_do() {
         let mut choice = Choice::of(ChartKind::Bars, 0, vec![1, 2]);
         choice.stack = true;
         assert!(choice.stacked());
+        choice.kind = ChartKind::Hbars;
+        assert!(choice.stacked(), "bars lying down stack too");
         choice.kind = ChartKind::Lines;
         assert!(!choice.stacked());
+    }
+
+    #[test]
+    fn every_kind_reads_back_from_the_name_a_spec_writes() {
+        for kind in ChartKind::ALL {
+            assert_eq!(ChartKind::from_spec_name(kind.spec_name()), Some(kind));
+        }
+        assert_eq!(ChartKind::from_spec_name("pie"), None);
+        assert_eq!(ChartKind::Hbars.spec_gloss(), "hbars (horizontal bars)");
+        let bars: Vec<bool> = ChartKind::ALL.iter().map(|kind| kind.is_bars()).collect();
+        assert_eq!(bars, [true, true, false, false]);
     }
 
     #[test]

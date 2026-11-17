@@ -21,7 +21,7 @@ impl ChartKind {
     /// The most rows a chart of this kind draws: [`MAX_BARS`] or [`MAX_POINTS`].
     pub fn max_rows(self) -> usize {
         match self {
-            Self::Bars => MAX_BARS,
+            Self::Bars | Self::Hbars => MAX_BARS,
             Self::Lines | Self::Scatter => MAX_POINTS,
         }
     }
@@ -318,10 +318,13 @@ enum Placement {
 }
 
 impl Placement {
-    /// Bars are always categories, as is text; numbers and times are placed by value.
+    /// Bars are always categories, upright or lying down, as is text; numbers and times are
+    /// placed by value.
     fn of(kind: ChartKind, x: Option<Role>) -> Self {
         match (kind, x) {
-            (ChartKind::Bars, _) | (_, Some(Role::Text) | None) => Self::Categories,
+            (ChartKind::Bars | ChartKind::Hbars, _) | (_, Some(Role::Text) | None) => {
+                Self::Categories
+            }
             (_, Some(Role::Number)) => Self::Numbers,
             (_, Some(Role::Time)) => Self::Times,
         }

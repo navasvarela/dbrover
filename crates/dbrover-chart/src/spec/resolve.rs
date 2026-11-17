@@ -238,7 +238,7 @@ impl Named {
         let kind = spec
             .kind
             .unwrap_or_else(|| ChartKind::starting(roles.get(x).copied()));
-        if spec.stack && kind != ChartKind::Bars {
+        if spec.stack && !kind.is_bars() {
             return Err(vec![ColumnProblem {
                 detail: format!("`stack` stacks bars; this chart draws {}", kind.spec_name()),
             }]);

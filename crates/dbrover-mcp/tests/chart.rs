@@ -179,7 +179,7 @@ async fn charts_a_query_over_stdio() {
     .await;
     assert_eq!(
         misspelt["message"],
-        "chart.kind: `kind` is bars, lines or scatter, not \"pie\""
+        "chart.kind: `kind` is bars, hbars (horizontal bars), lines or scatter, not \"pie\""
     );
     let listed = ok(client, "list_data_sources", json!({})).await;
     assert_eq!(listed["data_sources"].as_array().unwrap().len(), 1);

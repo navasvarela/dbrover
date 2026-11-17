@@ -360,7 +360,7 @@ impl<P> Reader<P> {
     fn kind<V: KeyValue<Place = P>>(&mut self, value: &V) -> Option<ChartKind> {
         let kind = value.text().and_then(ChartKind::from_spec_name);
         if kind.is_none() {
-            let names: Vec<&str> = ChartKind::ALL.map(ChartKind::spec_name).to_vec();
+            let names: Vec<&str> = ChartKind::ALL.map(ChartKind::spec_gloss).to_vec();
             let detail = format!("`kind` is {}", or_list(&names));
             self.wrong(value, &detail);
         }
@@ -605,12 +605,16 @@ limit = 10
                 ],
             ),
             (
-                "kind = \"area\"",
-                &["chart, line 2: `kind` is bars, lines or scatter, not \"area\""],
+                "kind = \"pie\"",
+                &[
+                    "chart, line 2: `kind` is bars, hbars (horizontal bars), lines or scatter, not \"pie\"",
+                ],
             ),
             (
                 "kind = \"Bars\"",
-                &["chart, line 2: `kind` is bars, lines or scatter, not \"Bars\""],
+                &[
+                    "chart, line 2: `kind` is bars, hbars (horizontal bars), lines or scatter, not \"Bars\"",
+                ],
             ),
             (
                 "x = 3",
@@ -697,12 +701,12 @@ limit = 10
 
     #[test]
     fn a_problem_points_at_its_bytes_and_moves_with_its_block() {
-        let text = "[chart]\nkind = \"area\"";
+        let text = "[chart]\nkind = \"pie\"";
         let problem = ChartSpec::read(text).unwrap_err().remove(0);
-        assert_eq!(&text[problem.span.clone()], "\"area\"");
+        assert_eq!(&text[problem.span.clone()], "\"pie\"");
         assert_eq!(
             problem.moved_to(10).to_string(),
-            "chart, line 11: `kind` is bars, lines or scatter, not \"area\""
+            "chart, line 11: `kind` is bars, hbars (horizontal bars), lines or scatter, not \"pie\""
         );
     }
 
@@ -763,8 +767,11 @@ limit = 10
                 problem("fiel", "no key `fiel`; did you mean `file`?"),
             ),
             (
-                "kind = \"area\"",
-                problem("kind", "`kind` is bars, lines or scatter, not \"area\""),
+                "kind = \"pie\"",
+                problem(
+                    "kind",
+                    "`kind` is bars, hbars (horizontal bars), lines or scatter, not \"pie\"",
+                ),
             ),
             (
                 "y = [\"net\", 3]",
@@ -808,7 +815,7 @@ limit = 10
             })
         );
         let problems =
-            read(serde_json::json!({ "kind": "area", "ys": "net", "x": null })).unwrap_err();
+            read(serde_json::json!({ "kind": "pie", "ys": "net", "x": null })).unwrap_err();
         let details: Vec<(&str, &str)> = problems
             .iter()
             .map(|problem| (problem.key.as_str(), problem.detail.as_str()))
@@ -816,7 +823,10 @@ limit = 10
         assert_eq!(
             details,
             [
-                ("kind", "`kind` is bars, lines or scatter, not \"area\""),
+                (
+                    "kind",
+                    "`kind` is bars, hbars (horizontal bars), lines or scatter, not \"pie\""
+                ),
                 ("ys", "no key `ys`; did you mean `y`?"),
                 ("x", "`x` is a column's name, in quotes, not null"),
             ]
