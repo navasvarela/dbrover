@@ -809,7 +809,18 @@ runs the small cases.
   month, and reads 20,796 of the lake's 212,473 bytes in three requests.
   **Exit:** on MinIO in CI, a report joins a PostgreSQL source with a partitioned Parquet lake,
   and the profile shows the lake's bytes read far below its size.
-- **RS8 — Reports over MCP:** the read-only tools above, and the decision on running reports.
+- **RS8 — Reports over MCP:** the read-only tools above, and the decision on running reports,
+  which [RS8 against today's code](#rs8-against-todays-code) finds RP4j already made. Its
+  layers, their exits and its own exit test are in that section.
+  - RS8a — Plan.
+  - RS8b — The rules over a kept run move to a crate `dbrover mcp` can call.
+  - RS8c — `report_runs` and `report_profile`.
+  - RS8d — `compare_report_runs`.
+  - RS8e — `explain_report`.
+  - RS8f — Manual and status.
+  **Exit:** an assistant served one project reads what a report's runs measured and what to
+  change, and plans the report without running it; running it stays off unless the project
+  allows it.
 - **RS9 — Composing reports:** independent of RS1 to RS8 except `reuse`, so it can be
   scheduled at any point after RP5.
   - RS9a — Plan.
@@ -1273,6 +1284,76 @@ What the whole of RS7 doesn't carry, after both halves:
 - **The `lake-scan` hint** (RS7e), which waits for a run that wants it, and the other gaps the
   lake path left above.
 
+## RS8 against today's code
+
+Settled on 2026-11-17, when RS8 started, by reading the plan against the code as of CH5's
+merge (8a1b608): `crates/dbrover-mcp/`, the rules over a kept run in
+`crates/dbrover-app/src/reports/`, and the run history in
+`crates/dbrover-store/src/history/runs.rs`. Where the code changes the plan, the plan above
+still says what it said; this section wins. Each row is a decision for the reviewer to confirm.
+
+| The plan said | Today's code | RS8 does |
+| --- | --- | --- |
+| Whether an MCP client may *run* a report stays [Reports](reporting.md#open-questions)' open question; this plan proposes deciding it with RS8, off by default, behind the MCP server's scope. | **Already decided and built.** RP4j shipped with RP5 on 2026-11-04: `run_report` is in `crates/dbrover-mcp/src/reports.rs` behind a project permission **Run reports** (`reports` in `[mcp]` and `[mcp_defaults]`), off by default, and the server removes the tool's route altogether when the permission is off, so a client that may not run reports is never offered one. `docs/reporting.md`'s open question is struck through and names RP4j. This document's own copy of the question still asks. | **Records the question closed, and decides nothing again.** The answer stands as RP4j built it: yes, behind a project permission that is off by default. This document's open question is struck through with the same answer and a pointer to RP4j, so the two documents agree. No permission, default or wording changes. |
+| **MCP:** read-only tools … `list_reports`, `explain_report`, `report_runs` and `report_profile`, and `compare_report_runs`. | `list_reports` and `run_report` exist. The other four don't. | The four are added, each read-only (`read_only_hint = true`, `open_world_hint = false`), each offered to every project that has reports, as `list_reports` is: a project that may not *run* a report may still read what its runs measured. |
+| (Not said: where the server gets the run history.) | The server already opens the query history — `Audit::open` opens `HistoryFile` for the audit log — and `dbrover-store`'s `History::runs(report, limit)` returns the kept `ReportRun`s with their profiles. `dbrover-mcp` already depends on `dbrover-store`. | **The server reads the run history itself,** through `dbrover-store`, rather than through the `ReportRunner` the app hands it. The runner keeps what only the app can do: list the reports folder (`list`), start the worker (`start`, and RS8e's `explain`). So `report_runs`, `report_profile` and `compare_report_runs` need no new trait method and work in `dbrover mcp` with no app running. |
+| (Not said: which reports' history a project may read.) | `list_reports` and `run_report` share `project_reports`, which shows a project only the reports whose every data source is one of its own. The history is keyed by the report's name alone and knows nothing of projects. | **Every new tool goes through `project_reports` first,** and a report the project doesn't see is refused with the same wording `run_report` uses — not answered with an empty history, which would say whether the report exists. A project cannot read the runs of a report that reads another project's data sources. |
+| The hints' rules are pure functions of a run profile, in `dbrover-report`; RS8 moves them where `dbrover mcp` can call them ([RS1 against today's code](#rs1-against-todays-code)). | The rules take `dbrover_store::ReportRun`, which `dbrover-report` doesn't know and must not, and the plan hints also take `dbrover_plan::Plan`, which neither `dbrover-report` nor `dbrover-store` depends on. They are not alone: `insights.rs` (step keys, a step's own time), `compare.rs` (two runs side by side, and the steps slower than usual), `profile.rs` (the timeline and the bottleneck) and `explanation.rs` (what an explanation needs from the history) are the same shape — pure functions over a kept run, in `dbrover-app`, where `dbrover-mcp` cannot reach them, since the app depends on the server and not the other way about. | **A new crate, `dbrover-insight`,** holds the six of them: the rules and summaries over a kept run. It depends on `dbrover-core`, `dbrover-report`, `dbrover-store` and `dbrover-plan`, and both `dbrover-app` and `dbrover-mcp` depend on it. RS8b is the move alone, behaviour-preserving, with the app's tests passing unchanged. |
+| **How it's built:** no new crate is planned. | The only homes that need no new crate are the two the plan itself rules out. `dbrover-report` cannot depend on `dbrover-store`, nor `dbrover-store` on `dbrover-report`: beyond the layering, `dbrover-report` depends on `dbrover-driver-duckdb`, so the edge would pull DuckDB into the dependency tree of every crate that reads the settings folder. Putting the rules in `dbrover-mcp` would have the app draw its own tab from the MCP server's crate. | **One new crate,** and this row is the departure from "no new crate". It is small, pure and has no I/O, it adds no external dependency, and it takes about 2,900 lines out of `dbrover-app`, the slowest crate in the workspace to compile, into a unit that builds beside it. |
+| **Explain report** … `dbrover report explain` plans a report without running it, through the worker. | `dbrover report explain` prepares the report, sets `request.explain = Some(ExplainRequest { tables })` from the newest finished run in the history, starts `dbrover report-worker`, and reads one `RunEvent::Explained(Box<Explanation>)`. `Explanation`, `ExplainRequest` and `KnownTable` are `dbrover-report`'s, which `dbrover-mcp` already has. | **`ReportRunner` grows one method, `explain`,** beside `start`: the app builds the request from its own history and starts the worker, and the server reads the `Explained` event from the same `RunningReport` stream `run_report` reads. Cancelling the call stops the worker, as it does for a run. |
+| `explain_report` under the cost guard, as `dbrover mcp`'s other tools. | The other tools' guard is `transaction::check_cost`, a data source's `CostGuard` applied to one statement before it runs. Explaining runs no statement that reads data, so there is nothing to guard that way; what the plan wants is the estimate shown. `dbrover_report::explain` already reports each source's estimate beside its data source's `ask_above_bytes`. | **The estimate is reported, not enforced:** each source's estimated bytes with its data source's limit beside it, and a note where the estimate is an upper bound or missing. The tool runs no statement that reads data, which its description says, so `check_cost` has nothing to check. A source whose estimate is over its limit is named as such; the tool does not refuse, because it is the refusal `run_report` would give that the assistant is being told about. |
+| **Compare** picks any two runs of a report … the combine's plan beside the other's, operators that appeared or disappeared marked. | `compare.rs`'s `Comparison` carries the per-step changes, the parameters and limits that differ and whether the file changed. It does not diff the two combines' plans: the tab draws each plan and the reader compares them by eye. | **The tool answers what `Comparison` holds,** which is what the tab's **Compare** and `dbrover report compare` answer. Comparing the two plans' operators is not RS8's to add: it is missing from the app as well, so it belongs where the app gains it, and [RS8's remaining gaps](#rs8s-remaining-gaps) records it. |
+| The profile is what the app draws, the command line writes and MCP serves. | `profile.rs` gives the lanes, phases and the bottleneck; `funnel.rs` is the drawing of the data funnel and `profile_view.rs` the drawing of the timeline. The numbers behind both are in the `ReportRun`'s steps. | **`report_profile` answers the numbers, not a drawing:** the run, its steps with their phases, waits and ranges, the bottleneck, the data funnel's four numbers per source, and the hints. An assistant optimising a report reads numbers; the pictures stay in the tab. |
+
+### RS8's layers
+
+- **RS8a — Plan:** this section, the layers below, and the open question closed.
+- **RS8b — The rules over a kept run move:** `dbrover-insight`, with `insights`, `hints`,
+  `plan_hints`, `compare`, `profile` and `explanation` moved out of `dbrover-app`.
+  *Exit:* `dbrover-mcp` can call the hints' rules, and the app's tests pass unchanged.
+- **RS8c — `report_runs` and `report_profile`:** a report's kept runs, newest first, with the
+  steps slower than usual marked; and one run's profile with its steps, bottleneck, funnel and
+  hints. *Exit:* an assistant reads a run's hints for a report of the project it is served, and
+  is refused a report that reads another project's data sources.
+- **RS8d — `compare_report_runs`:** two of a report's runs side by side. *Exit:* the tool's
+  changes equal `dbrover report compare`'s for the same two runs.
+- **RS8e — `explain_report`:** a report planned without running it, through the worker.
+  *Exit:* the tool explains the shop example's report without running it, and its combine's plan
+  is the one `dbrover report explain` prints.
+- **RS8f — Manual and status:** the **MCP** chapter's tool table and permissions, a demo note,
+  and RS8's status and gaps in the roadmap.
+
+### RS8's exit test
+
+The SQLite **shop** of `examples/reports/shop.sql` with `sales-by-week.toml` in the reports
+folder, a project that allows only that data source, and `dbrover mcp --project <slug>` driven
+over standard input and output:
+
+1. `list_reports` lists **Sales by week** with `may_run` false.
+2. `run_report` is not offered at all.
+3. `report_runs` gives the runs the report kept, newest first.
+4. `report_profile` on the newest gives its steps, its bottleneck and its hints.
+5. `compare_report_runs` on two of them gives the same changes `dbrover report compare` prints.
+6. `explain_report` gives each source's statement and plan and the combine's, having run no
+   statement that reads data.
+7. A second project that does not have the shop as a data source is refused every one of them,
+   naming no report it may not see.
+
+### RS8's remaining gaps
+
+Known before the first layer, and added to as RS8 is built (RS8f):
+
+- **Two combines' plans are not diffed.** `compare_report_runs` answers what `Comparison`
+  holds, which the app and `dbrover report compare` answer too; the plan the section above
+  describes — the operators that appeared or disappeared, marked — exists nowhere yet, so it
+  belongs where the app gains it rather than in the MCP tool alone.
+- **A run going on is not visible.** The live view's throughput and waiting (RS1d) are the
+  tab's; an assistant sees a run only once `run_report` returns or a run is kept in the
+  history. Live progress over MCP would need a tool that polls, or notifications, and no
+  milestone asks for one.
+- **Resuming and discarding are not offered.** `--resume` and **Discard** act on a kept work
+  folder (RS5); `report_profile` says a run kept one, and nothing over MCP acts on it.
+
 ## Benchmark
 
 RS1g's baseline, the numbers RS3c's typed loading and RS6's columnar sources are judged by.
@@ -1520,6 +1601,9 @@ Proposed defaults; each is confirmed when its milestone starts.
 | What a handoff refuses | **The keys that count or shape rows it never receives:** `max_rows`, `max_bytes`, `columnar`, `columns`, `partition` and `lookup`. | The engine's cost guard bounds what the statement scans, which is the bill; `timeout` bounds the statement; a cast in the source's own query shapes the files, which is where a warehouse decides them. |
 | Handoff leftovers | **A folder per run under the report's prefix,** removed as the run ends, and the older folders of that report removed by the next run that starts. | A run killed before its delete costs the next run of the same report, and nothing else; a run beside it is never touched, because only folders last modified before this run started are removed. |
 | The profile | **One JSON document per run,** versioned, in `report_runs`' `steps`. | No schema migration; the app, the command line and MCP read the same thing. |
+| An MCP client running a report | **Yes, behind a project permission that is off by default,** as RP4j built it before RS8 started. | The question the plan left to RS8 was already answered, and RS8 records it; a client that may not run reports is offered no tool that does. |
+| Where the rules over a kept run live | **A crate of their own, `dbrover-insight`,** which both the app and `dbrover mcp` depend on. | One table of rules, one comparison and one timeline, read by the tab, the command line and an assistant alike; the two homes that would need no new crate are the two the plan rules out. |
+| What the read-only tools read | **The run history directly, through `dbrover-store`,** which the server already opens for its audit log. | The tools work with no app running, and the `ReportRunner` the app hands the server keeps only what needs the app: the reports folder and the worker. |
 | A flame graph | **W10's plan view for DuckDB's operator tree,** a timeline for the steps. | One plan view to maintain; the timeline covers what a flame graph of steps would. |
 | New engines | **None.** DataFusion, Polars, Flight and ADBC are out. | The binary and CI's build time stay where they are; one combine dialect. |
 | Composing reports | **A report as a source:** its result by name, with its parameters bound, run in the same worker and DuckDB. | Reports reuse each other through a contract, their result, not through copied text. One set of limits bounds the whole run. |
@@ -1568,6 +1652,19 @@ Proposed defaults; each is confirmed when its milestone starts.
   measured, which is better than a run that fails for its own instrumentation.
 - **CI time.** Large-data tests are slow tests run by hand; CI runs small cases only, and RS7's
   lake test reuses C2's MinIO.
+- **A project's history leaking between projects (RS8).** The run history is keyed by a
+  report's name and knows nothing of projects, so a tool that read it without asking
+  `project_reports` first would serve one project the runs of another's report. Every new tool
+  goes through that filter, and refuses an unseen report exactly as `run_report` does rather
+  than answering an empty history, which would itself say whether the report exists.
+- **A moved rule changing what it says (RS8b).** The rules over a kept run are read by the
+  tab, the command line and now an assistant; moving them between crates must change no
+  sentence and no threshold. The move is its own layer with the tests moved with it, so a
+  changed hint shows as a failing test rather than as different advice in the app.
+- **An assistant asking for a report's whole history.** A profile is tens of kilobytes to a
+  megabyte (above), and `runs_kept` can be large, so answering every kept run at once would
+  fill a client's context. `report_runs` answers a summary a run and takes a limit;
+  `report_profile` answers one run.
 
 ## What stays out
 
@@ -1579,7 +1676,13 @@ Proposed defaults; each is confirmed when its milestone starts.
 
 ## Open questions
 
-- Should an MCP client run reports (RS8)? The read-only tools come first either way.
+- ~~Should an MCP client run reports (RS8)?~~ Settled before RS8 started, by RP4j with RP5
+  (2026-11-04): **yes, behind a project permission that is off by default.** `run_report` runs
+  the reports whose data sources are all the project's own, under the report's own limits, and
+  the server offers the tool at all only where **Run reports** is on
+  ([Reports](reporting.md#open-questions), and
+  [RS8 against today's code](#rs8-against-todays-code), which records it rather than deciding
+  it again). The read-only tools came after it, with RS8.
 - ~~Is the BigQuery Storage Read API worth gRPC in the build, or does the bucket handoff cover
   BigQuery's large results?~~ Settled with RS7 (2026-11-15): **the handoff covers them.**
   `EXPORT DATA` writes Parquet to a bucket DuckDB already reads, so BigQuery's large results
