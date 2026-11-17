@@ -8,9 +8,9 @@ pub mod block;
 use std::sync::Arc;
 
 use dbrover_chart::{
-    Anchor, BAR_ROUNDING, ChartData, ChartKind, Choice, Column, Drawing, LINE_WIDTH, LayoutOptions,
-    MAX_POINTS, Mark, Paint, ROUNDED_BAR_WIDTH, Resolved, Role, SERIES_DARK, SERIES_LIGHT,
-    SavedChoice, Size, TextMeasure, series_colour,
+    Anchor, BAR_ROUNDING, ChartData, ChartKind, Choice, Column, Drawing, LayoutOptions, MAX_POINTS,
+    Mark, Paint, ROUNDED_BAR_WIDTH, Resolved, Role, SERIES_DARK, SERIES_LIGHT, SavedChoice, Size,
+    TextMeasure, series_colour,
 };
 use dbrover_core::{ColumnInfo, Row, ValueKind};
 use dbrover_engine::Picture;
@@ -411,10 +411,10 @@ impl ChartView {
             .spec
             .resolved()
             .and_then(|resolved| resolved.arrangement(&self.columns));
-        let scale = self.spec.options().y_scale;
+        let options = self.spec.options();
         match arranged {
-            Some(arranged) => format!("{} · {arranged}", data.note(scale)),
-            None => data.note(scale),
+            Some(arranged) => format!("{} · {arranged}", data.note(&options)),
+            None => data.note(&options),
         }
     }
 }
@@ -955,11 +955,21 @@ fn paint(painter: &Painter, origin: Pos2, drawing: &Drawing, paints: &Paints, fo
                     Stroke::new(1.0, paints.colour(*paint)),
                 );
             }
-            Mark::Polyline { points, paint } => {
-                painter.add(egui::Shape::line(
-                    points.iter().map(|point| at(*point)).collect(),
-                    Stroke::new(LINE_WIDTH, paints.colour(*paint)),
-                ));
+            Mark::Polyline {
+                points,
+                paint,
+                stroke,
+            } => {
+                let placed: Vec<Pos2> = points.iter().map(|point| at(*point)).collect();
+                let egui_stroke = Stroke::new(stroke.width, paints.colour(*paint));
+                match stroke.dash {
+                    // A line computed from a series, not measured: dashed, as the file writes
+                    // it, from the one mark that says so.
+                    Some(dash) => {
+                        painter.add(egui::Shape::dashed_line(&placed, egui_stroke, dash, dash))
+                    }
+                    None => painter.add(egui::Shape::line(placed, egui_stroke)),
+                };
             }
             // egui fills only convex shapes, so a band is drawn as the four-sided pieces it
             // splits into. The splitting lives here, where that limitation is, rather than in

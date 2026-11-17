@@ -9,7 +9,9 @@ use dbrover_language::{ChartBlock, QueryLanguage};
 use crate::code_editor::{EditorProblem, Severity};
 
 /// A statement's block, as it was read from the console's text.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Not `Eq`: a spec's `overlay` can carry the value a `line V` is drawn at, and a float is not.
+#[derive(Debug, Clone, PartialEq)]
 pub struct QuerySpec {
     /// The spec's text without its comment markers, to tell an edited block from the same one.
     text: String,
@@ -74,7 +76,7 @@ pub struct Ran<'a> {
 }
 
 /// The console's text after **Save to query**.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub struct Saved {
     pub text: String,
     /// The bytes of the old text that were replaced.

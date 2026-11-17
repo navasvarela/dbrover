@@ -21,7 +21,7 @@ pub use write::{SavedChoice, WriteError, for_report, write_back};
 
 use dbrover_picture::Rgb;
 
-use crate::{ChartKind, YScale};
+use crate::{ChartKind, Overlay, YScale};
 
 /// The table a spec's keys are under.
 pub const SPEC_TABLE: &str = "chart";
@@ -32,7 +32,9 @@ pub(crate) const COLORS_SPELLING: &str = "colors";
 
 /// A chart as its spec writes it. Every key is optional: one left out takes the value the chart
 /// tab would start with, given the keys that are present.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+///
+/// Not `Eq`: `overlay`'s `line V` carries the value it is drawn at, and a float is not.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ChartSpec {
     pub kind: Option<ChartKind>,
     pub x: Option<String>,
@@ -56,6 +58,8 @@ pub struct ChartSpec {
     pub y_scale: YScale,
     /// Colours for the series, from the first; empty when the spec names none.
     pub colours: Vec<Rgb>,
+    /// Lines computed from the points already drawn, each drawn per series.
+    pub overlay: Vec<Overlay>,
 }
 
 /// A column to sort the rows by before charting them, and which way.
@@ -117,10 +121,11 @@ enum Key {
     Limit,
     YScale,
     Colours,
+    Overlay,
 }
 
 impl Key {
-    const ALL: [Self; 13] = [
+    const ALL: [Self; 14] = [
         Self::Kind,
         Self::X,
         Self::Y,
@@ -134,6 +139,7 @@ impl Key {
         Self::Limit,
         Self::YScale,
         Self::Colours,
+        Self::Overlay,
     ];
 
     fn name(self) -> &'static str {
@@ -151,6 +157,7 @@ impl Key {
             Self::Limit => "limit",
             Self::YScale => "y_scale",
             Self::Colours => "colours",
+            Self::Overlay => "overlay",
         }
     }
 

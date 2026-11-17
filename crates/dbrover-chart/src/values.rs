@@ -9,6 +9,20 @@ use jiff::fmt::temporal::Pieces;
 use jiff::tz::Offset;
 
 /// `text` as a number, if it is a finite decimal: `42`, `-0.5`, `1e5`.
+/// `value` as a chart writes it: whole numbers without a point, others to at most six places,
+/// without the float's noise (`0.1 + 0.2` is `0.3`).
+///
+/// A hovered stack's total, and a value an `overlay` phrase names, are the same number written
+/// the same way, so they are written in one place.
+pub fn number_text(value: f64) -> String {
+    let fixed = format!("{value:.6}");
+    let trimmed = fixed.trim_end_matches('0').trim_end_matches('.');
+    match trimmed {
+        "-0" => "0".to_owned(),
+        trimmed => trimmed.to_owned(),
+    }
+}
+
 pub(crate) fn number(text: &str) -> Option<f64> {
     let trimmed = text.trim();
     let starts_like_a_number = trimmed

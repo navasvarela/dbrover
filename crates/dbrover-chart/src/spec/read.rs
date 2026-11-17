@@ -9,7 +9,7 @@ use toml_edit::{Document, Item, Table, Value};
 use dbrover_picture::Rgb;
 
 use super::{ChartSpec, Key, SPEC_TABLE, Sort, SpecProblem};
-use crate::{ChartKind, YScale, hex_colour};
+use crate::{ChartKind, Overlay, YScale, hex_colour};
 
 /// A misspelt key is suggested when it is at most this many letters' edits from a key: `ys`
 /// and `kinds` are one away. Three would suggest `x` for any key of up to three letters.
@@ -39,7 +39,9 @@ impl ChartSpec {
         })?;
         let mut reader = Reader::default();
         let spec = document_spec(text, &document, &mut reader);
-        reader.contradictions(&spec);
+        // A block in a console: the person is looking at the chart, so `limit` with an
+        // overlay is theirs to read.
+        reader.contradictions(&spec, false);
         let mut problems: Vec<SpecProblem> = reader
             .problems
             .into_iter()
@@ -74,7 +76,8 @@ impl ChartSpec {
             };
             reader.key(&mut spec, key, &TomlValue { value, key: name });
         }
-        reader.contradictions(&spec);
+        // A report's file: nobody reads its caption, so an overlay beside `limit` is refused.
+        reader.contradictions(&spec, true);
         if reader.problems.is_empty() {
             Ok(spec)
         } else {
@@ -107,7 +110,9 @@ impl ChartSpec {
             };
             reader.key(&mut spec, key, &JsonValue { value, key: name });
         }
-        reader.contradictions(&spec);
+        // An assistant reads the reply, so it draws and says what it drew over, as CH4 settled
+        // for every limit.
+        reader.contradictions(&spec, false);
         if reader.problems.is_empty() {
             Ok(spec)
         } else {
@@ -365,8 +370,39 @@ impl<P> Reader<P> {
             Key::Limit => spec.limit = self.limit(value),
             Key::YScale => spec.y_scale = self.y_scale(value),
             Key::Colours => spec.colours = self.colours(value),
+            Key::Overlay => spec.overlay = self.overlays(value),
         }
         self.places.push((key, value.place()));
+    }
+
+    /// `overlay`: a phrase, or a list of them, each a line computed from the points drawn.
+    fn overlays<V: KeyValue<Place = P>>(&mut self, value: &V) -> Vec<Overlay> {
+        let items = match value.items() {
+            Some(items) => items,
+            None => return self.overlay(value).into_iter().collect(),
+        };
+        if items.is_empty() {
+            self.problem(
+                value.place(),
+                "`overlay = []` names no overlay; leave `overlay` out to draw none",
+            );
+            return Vec::new();
+        }
+        items.iter().filter_map(|item| self.overlay(item)).collect()
+    }
+
+    /// One overlay phrase, or a problem naming what one looks like.
+    fn overlay<V: KeyValue<Place = P>>(&mut self, value: &V) -> Option<Overlay> {
+        let overlay = value.text().and_then(Overlay::parse);
+        if overlay.is_none() {
+            let detail = format!(
+                "`overlay`: `\"trend\"`, `\"average 7\"`, `\"mean\"`, `\"median\"` or \
+                 `\"line 100\"`, not {}",
+                value.written()
+            );
+            self.problem(value.place(), detail);
+        }
+        overlay
     }
 
     /// `colours`: a hex colour, or a list of them, given to the series from the first.
@@ -411,10 +447,29 @@ impl<P> Reader<P> {
 
     /// Problems no single key has: two keys that each read well and can't both be honoured.
     /// Each is placed at the key a reader would change, so the editor underlines that one.
-    fn contradictions(&mut self, spec: &ChartSpec)
+    ///
+    /// `unattended` is a file nobody is looking at — a report's. An overlay beside `limit` is
+    /// refused only there: it is computed over the rows charted, and `limit` charts only some
+    /// of them, so an unattended file would carry a statistic over a deliberate subset with
+    /// nobody there to read the caption. In a console the same spec is allowed, because the
+    /// note is under the chart and the person set the limit a moment ago — the asymmetry the
+    /// row limit already has.
+    fn contradictions(&mut self, spec: &ChartSpec, unattended: bool)
     where
         P: Clone,
     {
+        if unattended && !spec.overlay.is_empty() && spec.limit.is_some() {
+            let place = self
+                .place_of(Key::Limit)
+                .or_else(|| self.place_of(Key::Overlay));
+            if let Some(place) = place {
+                self.problem(
+                    place,
+                    "an overlay is computed over the rows charted, and `limit` charts only some \
+                     of them; drop `limit`, or group the rows in the query",
+                );
+            }
+        }
         if spec.y_zero && spec.y_scale == YScale::Log {
             let place = self
                 .place_of(Key::YZero)
@@ -637,6 +692,7 @@ sort = "net desc"
 limit = 10
 y_scale = "linear"
 colours = ["#e34948"]
+overlay = ["trend", "average 7"]
 "##,
         );
         assert_eq!(
@@ -658,6 +714,7 @@ colours = ["#e34948"]
                 limit: Some(10),
                 y_scale: YScale::Linear,
                 colours: vec![Rgb(0xe3, 0x49, 0x48)],
+                overlay: vec![Overlay::Trend, Overlay::Average(7)],
             })
         );
     }
@@ -705,7 +762,7 @@ colours = ["#e34948"]
                 &[
                     "chart, line 2: no key `palette`; a chart's keys are `kind`, `x`, `y`, \
                    `series`, `stack`, `title`, `x_title`, `y_title`, `y_zero`, `sort`, `limit`, \
-                   `y_scale`, `colours`",
+                   `y_scale`, `colours`, `overlay`",
                 ],
             ),
             (
@@ -981,5 +1038,77 @@ colours = ["#e34948"]
             read("y_zero = false\ny_scale = \"log\"").is_ok(),
             "only `y_zero = true` reaches for zero"
         );
+    }
+
+    #[test]
+    fn overlay_takes_a_phrase_or_a_list_of_them() {
+        assert_eq!(
+            read("overlay = \"trend\"").map(|spec| spec.overlay),
+            Ok(vec![Overlay::Trend])
+        );
+        assert_eq!(
+            read("overlay = [\"mean\", \"line 100\"]").map(|spec| spec.overlay),
+            Ok(vec![Overlay::Mean, Overlay::Line(100.0)])
+        );
+        let what = "`overlay`: `\"trend\"`, `\"average 7\"`, `\"mean\"`, `\"median\"` or \
+                    `\"line 100\"`, not";
+        let cases = [
+            (
+                "overlay = \"regression\"",
+                format!("chart, line 2: {what} \"regression\""),
+            ),
+            // One point is the point, so a window of one is none.
+            (
+                "overlay = \"average 1\"",
+                format!("chart, line 2: {what} \"average 1\""),
+            ),
+            (
+                "overlay = 7".to_string().leak(),
+                format!("chart, line 2: {what} 7"),
+            ),
+            (
+                "overlay = []",
+                "chart, line 2: `overlay = []` names no overlay; leave `overlay` out to draw none"
+                    .to_owned(),
+            ),
+        ];
+        for (keys, expected) in cases {
+            assert_eq!(read(keys), Err(vec![expected]), "{keys}");
+        }
+    }
+
+    /// The honesty crux: an overlay beside `limit` is refused in a report's file, where nobody
+    /// reads the caption, and allowed in a console and over MCP, where somebody does.
+    #[test]
+    fn an_overlay_beside_limit_is_refused_only_where_nobody_reads_the_caption() {
+        const KEYS: &str = "overlay = \"trend\"\nlimit = 10";
+        const REFUSAL: &str = "an overlay is computed over the rows charted, and `limit` charts \
+                               only some of them; drop `limit`, or group the rows in the query";
+
+        // A console's block: the person set the limit a moment ago and the note is right there.
+        assert!(read(KEYS).is_ok(), "{:?}", read(KEYS));
+
+        // A report's `[[chart]]`: refused when the file is read, before anything runs.
+        let table: toml::Table = toml::from_str(KEYS).unwrap();
+        let problems = ChartSpec::from_table(&table, &["file"]).unwrap_err();
+        assert_eq!(
+            problems,
+            vec![KeyProblem {
+                key: "limit".to_owned(),
+                detail: REFUSAL.to_owned(),
+            }]
+        );
+        // Either key on its own is fine there.
+        let only_overlay: toml::Table = toml::from_str("overlay = \"trend\"").unwrap();
+        assert!(ChartSpec::from_table(&only_overlay, &["file"]).is_ok());
+        let only_limit: toml::Table = toml::from_str("limit = 10").unwrap();
+        assert!(ChartSpec::from_table(&only_limit, &["file"]).is_ok());
+
+        // Over MCP it draws and says what it drew over, as CH4 settled for every limit.
+        let json = serde_json::json!({ "overlay": "trend", "limit": 10 });
+        let serde_json::Value::Object(object) = json else {
+            panic!("an object");
+        };
+        assert!(ChartSpec::from_json(&object).is_ok());
     }
 }

@@ -240,7 +240,7 @@ pub enum OutputColumns {
 }
 
 /// A chart a run draws of its rows, written as a picture file beside the outputs'.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Chart {
     /// The chart's keys, as a block above a statement holds them.
     pub spec: ChartSpec,

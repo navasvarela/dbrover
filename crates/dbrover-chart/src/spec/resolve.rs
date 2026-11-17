@@ -5,10 +5,12 @@ use std::fmt;
 
 use super::ChartSpec;
 use crate::choice::{starting_x, starting_ys};
-use crate::{ChartKind, Choice, Column, LayoutOptions, Role, STARTING_SERIES, YScale};
+use crate::{ChartKind, Choice, Column, LayoutOptions, Overlay, Role, STARTING_SERIES, YScale};
 
 /// A spec's chart of one result.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Not `Eq`: its options carry `overlay`'s `line V` value, and a float is not.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Resolved {
     pub choice: Choice,
     pub sort: Option<SortBy>,
@@ -103,6 +105,7 @@ impl ChartSpec {
             y_zero: self.y_zero,
             y_scale: self.y_scale,
             colours: self.colours.clone(),
+            overlay: self.overlay.clone(),
         }
     }
 }
@@ -246,12 +249,41 @@ impl Named {
         if let Some(problem) = scale_problem(spec.y_scale, kind) {
             return Err(vec![problem]);
         }
+        let stacked = kind == ChartKind::Area || (spec.stack == Some(true) && kind.is_bars());
+        if let Some(problem) = overlay_problem(&spec.overlay, kind, stacked) {
+            return Err(vec![problem]);
+        }
         Ok(Choice {
             series: self.series,
             stack: spec.stack.unwrap_or(false),
             ..Choice::of(kind, x, ys)
         })
     }
+}
+
+/// An overlay the picture would hide the basis of.
+///
+/// On an area and on stacked bars the series are drawn piled on each other, so a line at one
+/// series' own values sits where nothing was drawn. A line at an absolute value is still
+/// allowed on stacked bars, because an absolute reference is read against the axis and a
+/// stack's total is too.
+fn overlay_problem(overlays: &[Overlay], kind: ChartKind, stacked: bool) -> Option<ColumnProblem> {
+    if !stacked {
+        return None;
+    }
+    let hidden = overlays.iter().find(|overlay| overlay.reads_a_series())?;
+    let piled = if kind == ChartKind::Area {
+        "an area".to_owned()
+    } else {
+        format!("stacked {}", kind.spec_name())
+    };
+    Some(ColumnProblem {
+        detail: format!(
+            "`{}` reads a series against the axis, and {piled} piles the series on each \
+             other; `line` still works",
+            hidden.written()
+        ),
+    })
 }
 
 /// A log scale the kind can't honour.
@@ -905,5 +937,69 @@ mod tests {
             ChartSpec::default().layout_options().colours.is_empty(),
             "a spec that names none leaves the theme's alone"
         );
+    }
+
+    #[test]
+    fn an_overlay_is_refused_where_the_picture_would_hide_its_basis() {
+        let spec = |kind: ChartKind, stack: Option<bool>, overlay: Vec<Overlay>| ChartSpec {
+            kind: Some(kind),
+            y: vec!["net".to_owned()],
+            series: Some("category".to_owned()),
+            stack,
+            overlay,
+            ..ChartSpec::default()
+        };
+        let piled = |what: &str, piles: &str| {
+            format!(
+                "chart: `{what}` reads a series against the axis, and {piles} piles the series \
+                 on each other; `line` still works"
+            )
+        };
+        let cases = [
+            // Side by side, every overlay reads its own series' points, which are drawn.
+            (ChartKind::Bars, None, vec![Overlay::Trend], None),
+            (ChartKind::Lines, None, vec![Overlay::Mean], None),
+            // Piled, a line at one series' own values sits where nothing was drawn.
+            (
+                ChartKind::Bars,
+                Some(true),
+                vec![Overlay::Trend],
+                Some(piled("trend", "stacked bars")),
+            ),
+            (
+                ChartKind::Hbars,
+                Some(true),
+                vec![Overlay::Average(7)],
+                Some(piled("average 7", "stacked hbars")),
+            ),
+            (
+                ChartKind::Area,
+                None,
+                vec![Overlay::Median],
+                Some(piled("median", "an area")),
+            ),
+            // An absolute reference is read against the axis, and so is a stack's total.
+            (
+                ChartKind::Bars,
+                Some(true),
+                vec![Overlay::Line(100.0)],
+                None,
+            ),
+            (ChartKind::Area, None, vec![Overlay::Line(100.0)], None),
+        ];
+        for (kind, stack, overlay, expected) in cases {
+            let resolved = resolve(&spec(kind, stack, overlay.clone()));
+            match expected {
+                Some(problem) => assert_eq!(
+                    resolved.err().as_deref(),
+                    Some(&[problem][..]),
+                    "{kind:?} stacked {stack:?} with {overlay:?}"
+                ),
+                None => assert!(
+                    resolved.is_ok(),
+                    "{kind:?} stacked {stack:?} with {overlay:?}: {resolved:?}"
+                ),
+            }
+        }
     }
 }
