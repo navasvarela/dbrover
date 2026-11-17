@@ -1352,7 +1352,18 @@ Known before the first layer, and added to as RS8 is built (RS8f):
   history. Live progress over MCP would need a tool that polls, or notifications, and no
   milestone asks for one.
 - **Resuming and discarding are not offered.** `--resume` and **Discard** act on a kept work
-  folder (RS5); `report_profile` says a run kept one, and nothing over MCP acts on it.
+  folder (RS5); `report_profile` says a run kept one, and nothing over MCP acts on it. What it
+  says is `kept_work`, the folder the run kept, not whether that folder is still there: only
+  the app knows, since it is the app that discards them.
+- **A warehouse's estimate is untested.** `explain_report` reports each source's estimate
+  beside its data source's limit, and the estimate is the engine's own, through its cost
+  guard: only BigQuery, Athena and DynamoDB give one, and none has been exercised through this
+  tool against an account. The shop example's SQLite gives none, so what was checked end to
+  end is the field being absent, and a stand-in's estimate over its limit in the tests.
+- **Two of `report_profile`'s fields differ from the `--profile` document,** for reasons that
+  belong to the history rather than to either writer: a kept run has an `id` and a run written
+  as it finishes has none, and the history keeps `started_at` to the millisecond while a live
+  run's has microseconds. Everything else is the same document, written by the same function.
 
 ## Benchmark
 
