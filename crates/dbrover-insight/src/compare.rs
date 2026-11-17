@@ -11,7 +11,7 @@ use dbrover_core::ByteCount;
 use dbrover_report::grouped;
 use dbrover_store::{ReportRun, RunOutcome, StepMetrics};
 
-use super::insights::{StepKey, own_time, seconds, step_keys};
+use crate::insights::{StepKey, own_time, seconds, step_keys};
 
 /// A change past this share of the number before it is marked: half again, or half less.
 const MARKED_CHANGE: f64 = 0.5;

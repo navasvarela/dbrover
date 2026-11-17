@@ -2345,6 +2345,7 @@ dependencies = [
  "dbrover-document",
  "dbrover-engine",
  "dbrover-export",
+ "dbrover-insight",
  "dbrover-language",
  "dbrover-mcp",
  "dbrover-picture",
@@ -2758,6 +2759,19 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "zip",
+]
+
+[[package]]
+name = "dbrover-insight"
+version = "0.34.0"
+dependencies = [
+ "dbrover-core",
+ "dbrover-plan",
+ "dbrover-report",
+ "dbrover-store",
+ "jiff",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]

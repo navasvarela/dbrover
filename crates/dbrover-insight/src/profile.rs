@@ -11,7 +11,7 @@ use dbrover_store::{
     CombineMetrics, OutputMetrics, PartMetrics, ReportRun, SourceMetrics, StepMetrics,
 };
 
-use super::insights::{StepKey, own_time, seconds};
+use crate::insights::{StepKey, own_time, seconds};
 
 /// How far a step may start before the one it waits for ends and still be counted as waiting
 /// for it: events reach the app a few milliseconds apart, and a source of the next round is

@@ -32,6 +32,7 @@ dbrover-driver-trino = { path = "crates/dbrover-driver-trino" }
 dbrover-document = { path = "crates/dbrover-document" }
 dbrover-engine = { path = "crates/dbrover-engine" }
 dbrover-export = { path = "crates/dbrover-export" }
+dbrover-insight = { path = "crates/dbrover-insight" }
 dbrover-language = { path = "crates/dbrover-language" }
 dbrover-mcp = { path = "crates/dbrover-mcp" }
 dbrover-picture = { path = "crates/dbrover-picture" }

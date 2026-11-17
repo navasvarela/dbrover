@@ -14,7 +14,7 @@ use dbrover_core::ByteCount;
 use dbrover_plan::{Plan, TableRead};
 use dbrover_report::{HintId, grouped};
 
-use super::hints::{Hint, HintAt};
+use crate::hints::{Hint, HintAt};
 
 /// `unused-columns`: the share of a source's bytes, from 0 to 100, its unread columns must
 /// hold: under a fifth, dropping them saves too little to mention.

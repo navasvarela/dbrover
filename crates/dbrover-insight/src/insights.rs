@@ -3,7 +3,7 @@
 
 use std::fmt;
 
-use dbrover_store::{ReportRun, RunOutcome, StepMetrics};
+use dbrover_store::{ReportRun, RunOrigin, RunOutcome, StepMetrics};
 
 /// A step of a report, the same one from one run to the next.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,6 +90,31 @@ pub fn own_time(run: &ReportRun, step: &StepMetrics) -> Option<u64> {
 /// `1.2 s`, as the report's tab writes a time.
 pub fn seconds(ms: u64) -> String {
     format!("{:.1} s", ms as f64 / 1000.0)
+}
+
+/// How long the run took, saturating rather than wrapping: a run of more than 584 million
+/// years is not a number anything downstream has to be right about.
+pub fn millis(run: &ReportRun) -> u64 {
+    u64::try_from(run.elapsed.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// How a run ended, in the one word the tab, `dbrover report runs`, `--profile` and
+/// `dbrover mcp` all use for it.
+pub fn outcome(run: &ReportRun) -> &'static str {
+    match run.outcome {
+        RunOutcome::Finished => "finished",
+        RunOutcome::Failed(_) => "failed",
+        RunOutcome::Cancelled => "cancelled",
+    }
+}
+
+/// What started a run, in the one word every surface uses for it.
+pub fn origin(run: &ReportRun) -> &'static str {
+    match run.origin {
+        RunOrigin::App => "app",
+        RunOrigin::Command => "command",
+        RunOrigin::Mcp => "mcp",
+    }
 }
 
 /// Whether a source's rows go straight to the outputs: a run without a combine step.

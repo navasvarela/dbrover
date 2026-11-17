@@ -7,29 +7,24 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use dbrover_core::describe_error;
+use dbrover_insight::compare::{self, Change, Comparison};
+use dbrover_insight::insights::{millis, outcome, seconds};
+use dbrover_insight::json;
+use dbrover_insight::profile;
 use dbrover_report::{HintId, read_report};
 use dbrover_store::{AppPaths, HistoryFile, ReportName, ReportRun, RunId, RunOrigin, RunOutcome};
 use jiff::tz::TimeZone;
-use serde_json::{Value, json};
 
 use super::args::{CompareArgs, OutputStyle, ReportArg, RunsArgs};
 use super::history::listed_name;
 use super::outcome::Outcome;
 use crate::report_worker;
-use crate::reports::compare::{self, Change, Comparison, Differs};
-use crate::reports::hints::{self, HintAt};
-use crate::reports::insights::seconds;
-use crate::reports::profile;
 
 /// The most runs read back: more than Settings › Reports lets the history keep.
 const RUNS_READ: usize = 10_000;
 
 /// How a run's start is written, in the system's time zone.
 const STARTED_FORMAT: &str = "%Y-%m-%d %H:%M";
-
-/// The format of the profile `--profile` writes and `runs --json` prints, for scripts that
-/// read it; a change that removes or renames a field raises it.
-const PROFILE_FORMAT: u32 = 1;
 
 /// `dbrover report runs`.
 pub fn runs(args: &RunsArgs) -> Outcome {
@@ -44,7 +39,7 @@ pub fn runs(args: &RunsArgs) -> Outcome {
         OutputStyle::JsonLines => kept
             .runs
             .iter()
-            .try_for_each(|run| writeln!(out, "{}", profile_json(run, &kept.quiet))),
+            .try_for_each(|run| writeln!(out, "{}", json::profile(run, &kept.quiet))),
     };
     Outcome::Finished
 }
@@ -74,7 +69,7 @@ pub fn compare(args: &CompareArgs) -> Outcome {
     let mut out = io::stdout().lock();
     let _ = match args.style {
         OutputStyle::Human => print_comparison(&mut out, before, after, &comparison),
-        OutputStyle::JsonLines => writeln!(out, "{}", comparison_json(before, after, &comparison)),
+        OutputStyle::JsonLines => writeln!(out, "{}", json::comparison(before, after, &comparison)),
     };
     Outcome::Finished
 }
@@ -88,7 +83,7 @@ pub fn compare(args: &CompareArgs) -> Outcome {
 pub fn write_profile(file: &Path, run: &ReportRun, report: &Path) -> io::Result<()> {
     let quiet = quiet_hints(report);
     let text =
-        serde_json::to_string_pretty(&profile_json(run, &quiet)).map_err(io::Error::other)?;
+        serde_json::to_string_pretty(&json::profile(run, &quiet)).map_err(io::Error::other)?;
     std::fs::write(file, text + "\n")
 }
 
@@ -195,26 +190,6 @@ fn started(run: &ReportRun) -> String {
         .to_zoned(TimeZone::system())
         .strftime(STARTED_FORMAT)
         .to_string()
-}
-
-fn millis(run: &ReportRun) -> u64 {
-    u64::try_from(run.elapsed.as_millis()).unwrap_or(u64::MAX)
-}
-
-fn outcome(run: &ReportRun) -> &'static str {
-    match run.outcome {
-        RunOutcome::Finished => "finished",
-        RunOutcome::Failed(_) => "failed",
-        RunOutcome::Cancelled => "cancelled",
-    }
-}
-
-fn origin(run: &ReportRun) -> &'static str {
-    match run.origin {
-        RunOrigin::App => "app",
-        RunOrigin::Command => "command",
-        RunOrigin::Mcp => "mcp",
-    }
 }
 
 fn id_text(run: &ReportRun) -> String {
@@ -327,83 +302,6 @@ fn print_comparison(
     Ok(())
 }
 
-/// A run's whole profile, as `--profile` writes it and `runs --json` prints it a line each.
-pub fn profile_json(run: &ReportRun, quiet: &[HintId]) -> Value {
-    let hints: Vec<Value> = hints::hints(std::slice::from_ref(run))
-        .into_iter()
-        .map(|hint| {
-            json!({
-                "id": hint.id.as_str(),
-                "at": hint_at(&hint.at),
-                "text": hint.text,
-                "quiet": quiet.contains(&hint.id),
-            })
-        })
-        .collect();
-    let (failed_at, failure) = match &run.outcome {
-        RunOutcome::Failed(error) => (Some(error.step.clone()), Some(error.message.clone())),
-        RunOutcome::Finished | RunOutcome::Cancelled => (None, None),
-    };
-    json!({
-        "format": PROFILE_FORMAT,
-        "id": run.id,
-        "report": run.report.as_str(),
-        "started_at": run.started_at.to_string(),
-        "elapsed_ms": millis(run),
-        "outcome": outcome(run),
-        "failed_at": failed_at,
-        "failure": failure,
-        "origin": origin(run),
-        "params": run.params,
-        "version": run.version.map(|version| version.to_string()),
-        "machine": run.profile,
-        "steps": run.steps,
-        "bottleneck": profile::bottleneck(run).map(|bottleneck| bottleneck.to_string()),
-        "hints": hints,
-    })
-}
-
-pub(super) fn hint_at(at: &HintAt) -> String {
-    match at {
-        HintAt::Report => "report".to_owned(),
-        HintAt::Source(id) => format!("source {id}"),
-        HintAt::Combine => "combine".to_owned(),
-        HintAt::Output(number) => format!("output {number}"),
-    }
-}
-
-fn change_json(change: &Change) -> Value {
-    json!({
-        "what": change.what,
-        "before": change.before,
-        "after": change.after,
-        "change": change.ratio(),
-        "marked": change.marked(),
-    })
-}
-
-fn differs_json(differs: &[Differs]) -> Vec<Value> {
-    differs
-        .iter()
-        .map(|differ| json!({"name": differ.name, "before": differ.before, "after": differ.after}))
-        .collect()
-}
-
-fn comparison_json(before: &ReportRun, after: &ReportRun, comparison: &Comparison) -> Value {
-    json!({
-        "before": before.id,
-        "after": after.id,
-        "file_changed": comparison.file_changed,
-        "run": comparison.run.iter().map(change_json).collect::<Vec<_>>(),
-        "steps": comparison.steps.iter().map(|step| json!({
-            "step": step.step.to_string(),
-            "changes": step.changes.iter().map(change_json).collect::<Vec<_>>(),
-        })).collect::<Vec<_>>(),
-        "params": differs_json(&comparison.params),
-        "limits": differs_json(&comparison.limits),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -477,7 +375,7 @@ mod tests {
     #[test]
     fn writes_a_profile_with_its_hints_and_whether_the_file_silences_them() {
         let slow = run(12, 9_000, 8_000);
-        let profile = profile_json(&slow, &[HintId::SlowFirstRow]);
+        let profile = json::profile(&slow, &[HintId::SlowFirstRow]);
         assert_eq!(profile["format"], 1);
         assert_eq!(profile["id"], 12);
         assert_eq!(profile["steps"][0]["phases"]["server_ms"], 8_000);

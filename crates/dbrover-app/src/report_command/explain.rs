@@ -7,6 +7,9 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use dbrover_core::describe_error;
+use dbrover_insight::explanation;
+use dbrover_insight::hints::Hint;
+use dbrover_insight::json;
 use dbrover_report::{ExplainRequest, Explanation, RunEvent};
 use dbrover_store::{AppPaths, HistoryFile, ReportName, ReportRun};
 use serde_json::{Value, json};
@@ -17,8 +20,8 @@ use super::outcome::Outcome;
 use super::stopping::Stopping;
 use super::{prepare, report_path, run_worker, start_logging};
 use crate::report_worker;
-use crate::reports::hints::Hint;
-use crate::reports::{self, explanation};
+
+use crate::reports;
 
 /// The runs read to find the newest finished one: enough to pass the failed and cancelled runs
 /// a report gathers while its author works on it.
@@ -112,7 +115,7 @@ fn print(
                 .map(|hint| {
                     json!({
                         "id": hint.id.as_str(),
-                        "at": kept::hint_at(&hint.at),
+                        "at": json::hint_at(&hint.at),
                         "text": hint.text,
                     })
                 })

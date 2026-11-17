@@ -3,6 +3,9 @@
 //! wait for the round before hatched, and the step and phase that held the run named under it;
 //! then the data funnel and the combine step's plan (RS2c).
 
+use dbrover_insight::funnel::{self, Funnel};
+use dbrover_insight::insights::seconds;
+use dbrover_insight::profile::{self, Lane, Phase, Timeline};
 use dbrover_plan::PlanFormat;
 use dbrover_report::grouped;
 use dbrover_store::{ReportName, ReportRun, RunOutcome, StepMetrics};
@@ -12,9 +15,6 @@ use egui::{
 };
 use jiff::tz::TimeZone;
 
-use super::funnel::{self, Funnel};
-use super::insights::seconds;
-use super::profile::{self, Lane, Phase, Timeline};
 use super::runs_table::STARTED_FORMAT;
 use super::{ProfilePlan, Reports};
 use crate::console::plan::{self, AnalyseButton, PlanView};
@@ -426,8 +426,8 @@ mod tests {
     use egui_kittest::kittest::Queryable;
 
     use super::*;
-    use crate::reports::insights::StepKey;
-    use crate::reports::profile::Segment;
+    use dbrover_insight::insights::StepKey;
+    use dbrover_insight::profile::Segment;
 
     const PHASES: [Phase; 10] = [
         Phase::Connect,

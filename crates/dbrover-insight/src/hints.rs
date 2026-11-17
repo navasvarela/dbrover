@@ -3,9 +3,10 @@
 //! it by, thresholds named here and in the manual, and one sentence naming the step and the
 //! number behind it.
 //!
-//! The rules live in the app rather than `dbrover-report` because a kept run is
-//! `dbrover-store`'s type, which `dbrover-report` doesn't know (`docs/reports-at-scale.md`,
-//! "RS1 against today's code").
+//! The rules live here rather than in `dbrover-report`, which the plan first asked for,
+//! because a kept run is `dbrover-store`'s type and the plan hints read `dbrover-plan`'s:
+//! see this crate's own documentation, and `docs/reports-at-scale.md`'s "RS1 against today's
+//! code" and "RS8 against today's code".
 
 use std::fmt;
 
@@ -15,8 +16,8 @@ use dbrover_store::{
     CombineMetrics, OutputMetrics, PartMetrics, ReportRun, RunOutcome, SourceMetrics, StepMetrics,
 };
 
-use super::insights::seconds;
-use super::plan_hints::{SourceFacts, plan_hints};
+use crate::insights::seconds;
+use crate::plan_hints::{SourceFacts, plan_hints};
 
 /// `source-reads-more`: a source must read at least this many rows, below which filtering in
 /// its query saves too little to mention...
@@ -137,7 +138,7 @@ fn percent(part: u64, whole: u64) -> u64 {
 /// `unused-columns`, `filter-one-source` and `aggregate-one-source`: what the combine step's
 /// plan did to one source alone (RS2e).
 fn combine_plan(run: &ReportRun) -> Vec<Hint> {
-    let Some(plan) = super::funnel::combine_plan(run) else {
+    let Some(plan) = crate::funnel::combine_plan(run) else {
         return Vec::new();
     };
     let facts: Vec<SourceFacts> = sources(run)
