@@ -2,7 +2,7 @@
 //! and a chart in a query's text (CH1) and its series and stacked bars (CH2) against the SQLite
 //! shop of the example reports.
 
-use dbrover_chart::{Drawing, Mark, Rect};
+use dbrover_chart::{ChartKind, Drawing, Mark, Rect};
 
 use super::plans::{console_with, start_on};
 use super::*;
@@ -59,6 +59,23 @@ impl Drop for Orders<'_> {
             &format!("DROP SCHEMA IF EXISTS {} CASCADE", self.schema),
         );
     }
+}
+
+/// Picks a kind from the chart toolbar's picker, which shows the one in use and the rest when
+/// it is opened.
+fn pick_kind(harness: &mut Harness<'_, DbRoverApp>, kind: &str) {
+    harness
+        .get_by(|node| {
+            node.role() == Role::ComboBox
+                && node
+                    .value()
+                    .as_deref()
+                    .is_some_and(|shown| ChartKind::ALL.iter().any(|kind| kind.label() == shown))
+        })
+        .click();
+    harness.run_steps(2);
+    harness.get_by_label(kind).click();
+    harness.run_steps(2);
 }
 
 fn shown_chart(harness: &Harness<'_, DbRoverApp>) -> Option<Drawing> {
@@ -155,7 +172,7 @@ fn charts_totals_by_month_as_bars_and_lines_and_exports_an_svg() {
     let png = std::fs::read(pictures.join("total by month.png")).unwrap();
     assert!(png.starts_with(b"\x89PNG"));
 
-    harness.get_by_label("Lines").click();
+    pick_kind(&mut harness, "Lines");
     harness.run_steps(2);
     let (bars, lines, _) = marks(&shown_chart(&harness).unwrap());
     assert_eq!((bars, lines), (0, 1));
@@ -238,7 +255,7 @@ fn a_chart_block_opens_its_chart_and_save_to_query_writes_it_back() {
         assert!(texts.contains(&label.to_owned()), "{label} in {texts:?}");
     }
 
-    harness.get_by_label("Lines").click();
+    pick_kind(&mut harness, "Lines");
     harness.run_steps(2);
     harness.get_by_label("Not in the query");
     harness.get_by_label("Save to query").click();
@@ -464,6 +481,52 @@ fn category_shares_by_month_draw_as_a_stacked_area() {
     }
 }
 
+/// The toolbar fits on one row, so the chart keeps the room it needs to be drawn at all.
+///
+/// A result with **no `[chart]` block** is the crowded case: its toolbar also carries **Save to
+/// query**. With a button per kind that row wrapped, and the second row cost the results panel
+/// 62 points — which took the plot to 23 against the 30 below which the layout draws nothing,
+/// so the Chart tab showed an empty rectangle. This is that case, at the window the app opens
+/// with.
+#[test]
+fn the_chart_toolbar_leaves_room_to_draw_at_the_default_window() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(dir.path(), SHOP);
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    console_with(
+        &mut harness,
+        "shop",
+        "SELECT strftime('%Y-%m', ordered_on) AS month, SUM(amount) AS total\n\
+         FROM order_lines GROUP BY month ORDER BY month;",
+    );
+    harness.get_by_label("Run").click();
+    step_until_visible(&mut harness, "2026-09");
+    harness.get_by_label("Chart").click();
+    step_until(&mut harness, "the chart to be drawn", |harness| {
+        shown_chart(harness).is_some()
+    });
+    // The block-less toolbar's own button, which is what made the row overflow.
+    harness.get_by_label("Save to query");
+
+    let drawing = shown_chart(&harness).unwrap();
+    let (bars, lines, texts) = marks(&drawing);
+    assert_eq!(
+        (bars, lines),
+        (3, 0),
+        "a bar a month, in a plot of {:?}",
+        drawing.plot
+    );
+    assert!(
+        drawing.plot.height() >= 30.0,
+        "the plot clears the floor below which nothing is drawn: {:?}",
+        drawing.plot
+    );
+    for label in ["2026-09", "month", "total"] {
+        assert!(texts.contains(&label.to_owned()), "{label} in {texts:?}");
+    }
+}
+
 /// Net sales by product and category on the shop: names longer than a slot along the bottom
 /// holds, which is what horizontal bars are for.
 const SHOP_BY_PRODUCT: &str = "-- [chart]
@@ -520,7 +583,7 @@ fn long_names_chart_as_horizontal_bars_whose_names_are_readable() {
         "sorted largest first: {bars:?}"
     );
 
-    harness.get_by_label("Bars").click();
+    pick_kind(&mut harness, "Bars");
     harness.run_steps(2);
     let upright = shown_chart(&harness).unwrap();
     let (_, _, upright_texts) = marks(&upright);
@@ -530,7 +593,7 @@ fn long_names_chart_as_horizontal_bars_whose_names_are_readable() {
     );
     harness.get_by_label("Not in the query");
 
-    harness.get_by_label("Hbars").click();
+    pick_kind(&mut harness, "Hbars");
     harness.run_steps(2);
     assert!(
         harness.query_by_label("Not in the query").is_none(),

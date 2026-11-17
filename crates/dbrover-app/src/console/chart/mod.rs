@@ -460,10 +460,7 @@ pub fn controls(ui: &mut Ui, tab: &mut ChartTab, source: &Source<'_>) -> Option<
     let view = tab.view(source);
     let drawn = view.laid_out.is_some();
     let choice = view.choice.as_mut()?;
-    for kind in ChartKind::ALL {
-        ui.selectable_value(&mut choice.kind, kind, kind.label())
-            .on_hover_text(kind.hint());
-    }
+    kind_picker(ui, choice);
     ui.separator();
     x_picker(ui, choice, &view.columns);
     y_menu(ui, choice, &view.columns, &view.roles);
@@ -525,6 +522,29 @@ fn save_to_query(
         .on_hover_text(hover)
         .clicked()
         .then_some(ChartAction::SaveToQuery)
+}
+
+/// **Kind**: how the chart draws, as one picker rather than a button each.
+///
+/// A button each read well while there were three. At five, with **Summarise** beside them, the
+/// row wrapped at the window the app opens with, and the second row cost the results panel 62
+/// points — which took a small chart's plot to 23 against the 30 below which nothing is drawn
+/// at all, so a result with no block charted as an empty rectangle. One picker gives four
+/// buttons' width back, so the row fits with margin and the next kind costs nothing, which is
+/// the property a row of buttons never had. The cost is a click where there was none; each
+/// kind keeps its [`ChartKind::hint`] as the item's hover text, so nothing it explained is
+/// lost.
+fn kind_picker(ui: &mut Ui, choice: &mut Choice) {
+    egui::ComboBox::from_id_salt("chart_kind")
+        .selected_text(choice.kind.label())
+        .show_ui(ui, |ui| {
+            for kind in ChartKind::ALL {
+                ui.selectable_value(&mut choice.kind, kind, kind.label())
+                    .on_hover_text(kind.hint());
+            }
+        })
+        .response
+        .on_hover_text("How the chart draws its points");
 }
 
 /// **X**: any column along the bottom.
