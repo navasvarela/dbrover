@@ -62,11 +62,18 @@ ranges several at once or a whole report a range at a time, appended to one Parq
 file a range, with a range-skew hint and each range drawn in the Profile; and long runs that
 stop and resume: a stopped run keeps its finished ranges and sources, and carries on with
 **Resume** or `--resume`, or starts over with **Discard** or `--from-scratch`, with `:as_of`
-kept across the gap) and v0.34.0 (sources read in bulk: a DuckDB or ClickHouse source hands the
+kept across the gap), v0.34.0 (sources read in bulk: a DuckDB or ClickHouse source hands the
 run its rows as typed Arrow batches instead of a row at a time; and reports read a data lake in
 place: a `lake` on a source points at Parquet, CSV, JSON, Iceberg or Delta files in a bucket, the
 locked workspace reads only that bucket's prefix, a Parquet lake's size is judged from its footers
-before the run starts, and the bytes each scan read show in the Profile).
+before the run starts, and the bytes each scan read show in the Profile) and v0.35.0 (a large
+result handed over through a bucket instead of read row by row: `handoff` on a source lets Athena
+and BigQuery write Parquet to a prefix of their own, which the locked workspace loads and then
+deletes; a fuller chart: bars lying down, a stacked area, a log scale, colours given to the
+series, lines computed from the points drawn through `overlay`, and **Summarise** writing the SQL
+for a column below the statement it came from; and reports read over MCP: a client can list a
+report's runs, read a run's profile and hints, compare two runs and explain a report before it
+runs, each read-only and within the project's own data sources).
 R3's update notice is built, ahead of R2 (see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
