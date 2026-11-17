@@ -283,6 +283,56 @@ fn a_chart_block_opens_its_chart_and_save_to_query_writes_it_back() {
     );
 }
 
+/// Net sales by month on the shop, with a trend and a mean drawn over them.
+const SHOP_OVERLAID: &str = "-- [chart]
+-- kind = \"lines\"
+-- x = \"month\"
+-- y = \"net\"
+-- overlay = [\"trend\", \"mean\"]
+SELECT strftime('%Y-%m', ordered_on) AS month, SUM(amount) AS net
+FROM order_lines GROUP BY month ORDER BY month;";
+
+/// CH5g's exit: `overlay = ["trend", "mean"]` draws both, dashed and in the series' colour, and
+/// the line under the chart names each of them and what it was computed over.
+#[test]
+fn overlays_draw_dashed_and_the_note_names_what_each_was_computed_over() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(dir.path(), SHOP);
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    console_with(&mut harness, "shop", SHOP_OVERLAID);
+    harness.get_by_label("Run").click();
+    step_until(&mut harness, "the overlaid chart", |harness| {
+        shown_chart(harness).is_some()
+    });
+
+    let drawing = shown_chart(&harness).unwrap();
+    let strokes: Vec<(bool, dbrover_chart::Paint)> = drawing
+        .marks
+        .iter()
+        .filter_map(|mark| match mark {
+            Mark::Polyline { stroke, paint, .. } => Some((stroke.dash.is_some(), *paint)),
+            _ => None,
+        })
+        .collect();
+    let dashed = strokes.iter().filter(|(dashed, _)| *dashed).count();
+    assert_eq!(dashed, 2, "the trend and the mean: {strokes:?}");
+    assert!(
+        strokes.iter().any(|(dashed, _)| !dashed),
+        "the series' own line is solid: {strokes:?}"
+    );
+    assert!(
+        strokes
+            .iter()
+            .all(|(_, paint)| *paint == dbrover_chart::Paint::Series(0)),
+        "an overlay belongs to the series it came from: {strokes:?}"
+    );
+    step_until_visible(
+        &mut harness,
+        "Charting 3 rows · Trend and mean over those 3 rows, by position",
+    );
+}
+
 /// Every product's price on the shop: `price` is the column a distribution is worth looking at,
 /// and the chart's Y, so the toolbar's **Summarise** is about it.
 const SHOP_PRICES_ONLY: &str = "SELECT name, price FROM products;";

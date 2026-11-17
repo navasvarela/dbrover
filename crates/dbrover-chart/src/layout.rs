@@ -10,6 +10,8 @@
 
 use crate::ChartKind;
 use crate::data::{ChartData, XValues};
+use crate::overlay::Overlay;
+use crate::palette::LINE_WIDTH;
 use crate::ticks::{Ticks, decimal_exponent};
 use crate::time::TimeTicks;
 
@@ -45,6 +47,10 @@ const MAX_GUTTER_SHARE: f32 = 1.0 / 3.0;
 const SWATCH: f32 = 10.0;
 /// Smaller than this, a plot has no room for its points, and nothing is drawn.
 const MIN_PLOT_SIDE: f32 = 30.0;
+/// An overlay's line, thinner than a series' own so it reads as derived from it.
+const DERIVED_WIDTH: f32 = 1.5;
+/// A dash of an overlay's line, and the gap after it.
+const DERIVED_DASH: f32 = 4.0;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Point {
@@ -133,6 +139,7 @@ pub enum Mark {
     Polyline {
         points: Vec<Point>,
         paint: Paint,
+        stroke: Stroke,
     },
     /// A filled band between a series and the stack below it, as a closed ring: the series' own
     /// edge along the category axis, then the edge below it back again. Its length is even, and
@@ -141,10 +148,7 @@ pub enum Mark {
     /// One mark, whatever draws it. An SVG writes the ring as a single `<polygon>`; a painter
     /// that fills only convex shapes, as egui's does, splits it with [`band_quads`], which is
     /// exact rather than approximate — see that function.
-    Band {
-        points: Vec<Point>,
-        paint: Paint,
-    },
+    Band { points: Vec<Point>, paint: Paint },
     Circle {
         centre: Point,
         radius: f32,
@@ -156,6 +160,31 @@ pub enum Mark {
         anchor: Anchor,
         paint: Paint,
     },
+}
+
+/// How a line is drawn beyond its colour: solid for a series' own, dashed for one computed from
+/// it, which reads as derived rather than measured. One mark drives both surfaces:
+/// `stroke-dasharray` in a file, egui's dashed line on screen.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Stroke {
+    pub width: f32,
+    /// The length of a dash, and of the gap after it; `None` for a solid line.
+    pub dash: Option<f32>,
+}
+
+impl Stroke {
+    /// A series' own line: solid, at the chart's line width.
+    pub const SERIES: Self = Self {
+        width: LINE_WIDTH,
+        dash: None,
+    };
+
+    /// A line computed from a series: thinner and dashed, since the mean of two different
+    /// measures is not a number worth drawing as boldly as the measures.
+    pub const DERIVED: Self = Self {
+        width: DERIVED_WIDTH,
+        dash: Some(DERIVED_DASH),
+    };
 }
 
 /// How wide a text is, and how tall a line of it, in the one size every label uses: the tab
@@ -198,8 +227,11 @@ impl YScale {
     }
 }
 
-/// What a chart spec sets of its look: titles, and the Y axis's start.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// What a chart spec sets of its look: titles, the Y axis, the series' colours and the lines
+/// computed from their points.
+///
+/// Not `Eq`: `overlay`'s `line V` carries the value it is drawn at, and a float is not.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct LayoutOptions {
     /// A line above the chart.
     pub title: Option<String>,
@@ -211,6 +243,9 @@ pub struct LayoutOptions {
     pub y_zero: bool,
     /// How the value axis progresses: evenly, or by powers of ten.
     pub y_scale: YScale,
+    /// Lines computed from the points already drawn, each drawn per series and named under the
+    /// chart.
+    pub overlay: Vec<Overlay>,
     /// Colours for the series, from the first. A series past the end of the list keeps the
     /// palette's own hue, stepped for the surface it is drawn on. The layout never reads these
     /// — it emits only [`Paint::Series`] — so whoever paints the marks resolves them, which is
@@ -592,6 +627,7 @@ pub fn layout(
         })
         .collect();
     series_marks(&mut drawing, data, frame, value_scale);
+    overlay_marks(&mut drawing, data, frame, value_scale, &options.overlay);
     titles(
         &mut drawing.marks,
         data,
@@ -1093,6 +1129,7 @@ fn lines(drawing: &mut Drawing, frame: Frame) {
                 drawing.marks.push(Mark::Polyline {
                     points: points.clone(),
                     paint,
+                    stroke: Stroke::SERIES,
                 });
             }
             if dotted || points.len() == 1 {
@@ -1170,6 +1207,61 @@ fn dots(drawing: &mut Drawing, frame: Frame) {
                 });
             }
         }
+    }
+}
+
+/// A dashed line per overlay per series, in that series' colour, from the series' own points.
+///
+/// Drawn after the series, so a trend reads over its points rather than under them, and from
+/// the values rather than from where they landed: on a log axis the mean of the values is not
+/// the mean of their positions, and it is the values the word means.
+fn overlay_marks(
+    drawing: &mut Drawing,
+    data: &ChartData,
+    frame: Frame,
+    value_scale: Scale,
+    overlays: &[Overlay],
+) {
+    if overlays.is_empty() || drawing.categories.is_empty() {
+        return;
+    }
+    let xs = x_positions(data);
+    for overlay in overlays {
+        for (series, values) in data.series.iter().enumerate() {
+            let placed: Vec<Option<Point>> = overlay
+                .over(&xs, &values.values)
+                .into_iter()
+                .zip(&drawing.categories)
+                .map(|(value, category)| {
+                    let at = value.and_then(|value| value_scale.at(value))?;
+                    Some(frame.at(at, *category))
+                })
+                .collect();
+            for run in placed.split(Option::is_none) {
+                let points: Vec<Point> = run.iter().flatten().copied().collect();
+                if points.len() > 1 {
+                    drawing.marks.push(Mark::Polyline {
+                        points,
+                        paint: Paint::Series(series),
+                        stroke: Stroke::DERIVED,
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// The X of each point as an overlay reads it: the slot's index for categories, the value for
+/// numbers, the instant for times.
+///
+/// Uniform slots make the index the distance, so a fit over categories matches what the eye
+/// sees, and a trend over months that `strftime` made text works rather than being refused on a
+/// technicality. The line under the chart says which it was.
+fn x_positions(data: &ChartData) -> Vec<f64> {
+    match &data.x {
+        XValues::Categories(names) => (0..names.len()).map(|index| index as f64).collect(),
+        XValues::Numbers(numbers) => numbers.clone(),
+        XValues::Times(times) => times.seconds.clone(),
     }
 }
 
@@ -1356,6 +1448,14 @@ mod tests {
         let mut chart = data(ChartKind::Area, months(points), series);
         chart.stacked = true;
         chart
+    }
+
+    /// Options whose value axis runs by powers of ten.
+    fn logarithmic() -> LayoutOptions {
+        LayoutOptions {
+            y_scale: YScale::Log,
+            ..LayoutOptions::default()
+        }
     }
 
     fn named(names: &[&str]) -> XValues {
@@ -2116,11 +2216,11 @@ mod tests {
         let placed = drawing.values[0].iter().flatten().count();
         assert_eq!(placed, 2, "zero and the negative value have no place");
         assert_eq!(
-            chart.note(YScale::Log),
+            chart.note(&logarithmic()),
             "Charting 4 rows · 2 gaps in net: zero or negative on a log scale"
         );
         assert_eq!(
-            chart.note(YScale::Linear),
+            chart.note(&LayoutOptions::default()),
             "Charting 4 rows",
             "an even axis places all four"
         );
@@ -2150,7 +2250,7 @@ mod tests {
         );
         assert!(
             chart
-                .note(YScale::Log)
+                .note(&logarithmic())
                 .contains("2 gaps in net: zero or negative")
         );
     }

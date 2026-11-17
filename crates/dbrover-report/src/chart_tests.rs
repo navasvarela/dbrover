@@ -130,6 +130,15 @@ fn names_each_charts_problems_and_the_chart_they_are_in() {
             "[[chart]]\nfile = \"net.svg\"\n[[chart]]\nfile = \"net.svg\"",
             vec!["chart 2: another output or chart already writes \"net.svg\""],
         ),
+        // An overlay is computed over the rows charted, and nobody reads an unattended file's
+        // caption, so a report refuses the pair when the file is read — before anything runs.
+        (
+            "[[chart]]\nfile = \"net.svg\"\noverlay = \"trend\"\nlimit = 10",
+            vec![
+                "chart 1: an overlay is computed over the rows charted, and `limit` charts only \
+                 some of them; drop `limit`, or group the rows in the query",
+            ],
+        ),
     ];
     for (charts, expected) in cases {
         assert_eq!(problems(charts), expected, "{charts}");

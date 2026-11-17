@@ -144,7 +144,7 @@ pub(crate) fn draw(spec: &ChartSpec, read: &Read<'_>) -> Result<Drawn, ToolError
         .collect();
     let data = ChartData::read(&columns, &roles, &rows, &resolved.choice);
     let scale = resolved.options.y_scale;
-    let mut note = data.note(scale);
+    let mut note = data.note(&resolved.options);
     if let Some(arranged) = resolved.arrangement(&columns) {
         note.push_str(&format!(" · {arranged}"));
     }

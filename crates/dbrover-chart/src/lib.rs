@@ -25,6 +25,7 @@ mod data;
 mod layout;
 mod measure;
 mod note;
+mod overlay;
 mod palette;
 mod role;
 mod spec;
@@ -36,9 +37,10 @@ mod values;
 pub use choice::{ChartKind, Choice, STARTING_SERIES};
 pub use data::{ChartData, MAX_AREA_POINTS, MAX_BARS, MAX_POINTS, Series, Summary, Times, XValues};
 pub use layout::{
-    Anchor, Drawing, LayoutOptions, Mark, POINT_RADIUS, Paint, Point, Rect, Size, TextMeasure,
-    YScale, band_quads, layout, layout_file,
+    Anchor, Drawing, LayoutOptions, Mark, POINT_RADIUS, Paint, Point, Rect, Size, Stroke,
+    TextMeasure, YScale, band_quads, layout, layout_file,
 };
+pub use overlay::{MIN_AVERAGE, Overlay};
 pub use palette::{
     BAR_ROUNDING, FILE_COLOURS, FILE_TEXT_SIZE, FileColours, LINE_WIDTH, ROUNDED_BAR_WIDTH,
     SERIES_DARK, SERIES_LIGHT, hex_colour, series_colour,
@@ -49,3 +51,4 @@ pub use spec::{
     SpecProblem, WriteError, arrange, for_report, write_back,
 };
 pub use svg::{file_svg, svg};
+pub use values::number_text;

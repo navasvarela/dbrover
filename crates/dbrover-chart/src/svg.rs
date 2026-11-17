@@ -5,8 +5,10 @@ use std::fmt::{self, Write as _};
 
 use dbrover_picture::{BASELINE_DROP, Escaped, FontMeasure, MeasureError, Points, Rgb, SANS};
 
-use crate::palette::{BAR_ROUNDING, FILE_COLOURS, FILE_TEXT_SIZE, LINE_WIDTH, ROUNDED_BAR_WIDTH};
-use crate::{Anchor, ChartData, Drawing, LayoutOptions, Mark, Point, Rect, Size, layout_file};
+use crate::palette::{BAR_ROUNDING, FILE_COLOURS, FILE_TEXT_SIZE, ROUNDED_BAR_WIDTH};
+use crate::{
+    Anchor, ChartData, Drawing, LayoutOptions, Mark, Point, Rect, Size, Stroke, layout_file,
+};
 
 /// `data` drawn as a file draws it, with no window: laid out in `size` with the bundled font's
 /// measure at [`FILE_TEXT_SIZE`], `note` in its last line, and written as SVG. What a report's
@@ -93,7 +95,11 @@ impl Svg<'_> {
                 Points(to.y),
                 self.colour(*paint)
             )),
-            Mark::Polyline { points, paint } => self.polyline(points, self.colour(*paint)),
+            Mark::Polyline {
+                points,
+                paint,
+                stroke,
+            } => self.polyline(points, self.colour(*paint), *stroke),
             Mark::Band { points, paint } => self.polygon(points, self.colour(*paint)),
             Mark::Circle {
                 centre,
@@ -130,12 +136,16 @@ impl Svg<'_> {
         ));
     }
 
-    fn polyline(&mut self, points: &[Point], stroke: Rgb) {
+    fn polyline(&mut self, points: &[Point], colour: Rgb, stroke: Stroke) {
+        let dashes = match stroke.dash {
+            Some(dash) => format!(" stroke-dasharray=\"{0} {0}\"", Points(dash)),
+            None => String::new(),
+        };
         self.line(format_args!(
-            "<polyline points=\"{}\" fill=\"none\" stroke=\"{stroke}\" stroke-width=\"{}\" \
+            "<polyline points=\"{}\" fill=\"none\" stroke=\"{colour}\" stroke-width=\"{}\"{dashes} \
              stroke-linejoin=\"round\" stroke-linecap=\"round\"/>",
             coordinates(points),
-            Points(LINE_WIDTH)
+            Points(stroke.width)
         ));
     }
 
@@ -188,6 +198,14 @@ mod tests {
 
         fn line_height(&self) -> f32 {
             13.0
+        }
+    }
+
+    /// Options whose value axis runs by powers of ten.
+    fn logarithmic() -> LayoutOptions {
+        LayoutOptions {
+            y_scale: YScale::Log,
+            ..LayoutOptions::default()
         }
     }
 
@@ -405,6 +423,48 @@ mod tests {
     }
 
     #[test]
+    fn writes_an_overlay_dashed_and_thinner_than_the_series_it_came_from() {
+        let rows = rows(&[&["1", "2"], &["2", "4"], &["3", "7"]]);
+        let borrowed: Vec<&Row> = rows.iter().collect();
+        let choice = Choice::of(ChartKind::Lines, 0, vec![1]);
+        let roles = [Role::Number, Role::Number];
+        let data = ChartData::read(&columns(&["day", "net"]), &roles, &borrowed, &choice);
+        let options = LayoutOptions {
+            overlay: vec![crate::Overlay::Trend],
+            ..LayoutOptions::default()
+        };
+        let size = Size {
+            width: 600.0,
+            height: 300.0,
+        };
+        let measure = Fixed;
+        let drawing = crate::layout(&data, &options, size, &measure);
+
+        let svg = svg(&drawing, 11.0, &[]);
+
+        let polylines: Vec<&str> = svg
+            .lines()
+            .filter(|line| line.starts_with("<polyline "))
+            .collect();
+        assert_eq!(polylines.len(), 2, "the series and its trend: {svg}");
+        let measured = polylines
+            .iter()
+            .find(|line| !line.contains("stroke-dasharray"))
+            .expect("the series' own line is solid");
+        let derived = polylines
+            .iter()
+            .find(|line| line.contains("stroke-dasharray"))
+            .expect("the trend is dashed");
+        assert!(derived.contains("stroke-dasharray=\"4 4\""), "{derived}");
+        assert!(
+            attribute(derived, "stroke-width") < attribute(measured, "stroke-width"),
+            "the derived line is the thinner: {derived} against {measured}"
+        );
+        // Same colour: a trend belongs to the series it came from.
+        assert!(derived.contains("stroke=\"#2a78d6\"") && measured.contains("stroke=\"#2a78d6\""));
+    }
+
+    #[test]
     fn writes_a_line_as_a_polyline() {
         let svg = svg(&months(ChartKind::Lines), 11.0, &[]);
 
@@ -470,7 +530,7 @@ mod tests {
             height: 240.0,
         };
 
-        let svg = file_svg(&data, &options, size, &data.note(YScale::Log)).unwrap();
+        let svg = file_svg(&data, &options, size, &data.note(&logarithmic())).unwrap();
 
         assert_eq!(svg, LOG_SCATTER);
         // Four of the five rows: the price of zero has no place on a log axis, and the note

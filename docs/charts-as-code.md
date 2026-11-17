@@ -714,7 +714,7 @@ returns a picture of a query's result:
 - **Annotations:** read-only and closed-world, as `query`.
 - **Running a report** over MCP stays RS8's question; this tool charts one query.
 - **CH5's keys** are all read here, by the same reader, with the same problems as a block's: the
-  new kinds, `y_scale`, `colours` and `overlay`. `overlay` with `limit` is drawn and explained
+  new kinds, `y_scale`, `colours`, `overlay` and `overlay`. `overlay` with `limit` is drawn and explained
   rather than refused, unlike in a report, for CH4's reason: an assistant reads the reply, so
   the picture's last line and the reply's summary both say what each overlay was computed over,
   including when the project's row limit cut the rows. **Summarise** has no tool: an assistant
