@@ -1,5 +1,12 @@
 //! Laying a chart out: from its points and a size to the marks that draw it, in points, the
 //! same marks whether they are painted in the tab or written to a file.
+//!
+//! A chart has two axes, and which way each runs is the kind's business, not the marks'. One is
+//! the **value** axis, which the Y columns are measured along; the other is the **category**
+//! axis, which the X values are placed along. Upright, values run up the side and categories
+//! along the bottom. Every mark is placed through a [`Frame`], which holds how far each axis
+//! reaches and which way about they are, so a kind that lies the chart down swaps the two
+//! without a second description of the picture.
 
 use crate::ChartKind;
 use crate::data::{ChartData, XValues};
@@ -155,6 +162,109 @@ pub struct LayoutOptions {
     pub y_zero: bool,
 }
 
+/// How far an axis reaches in the drawing: the point its low value sits at, and the point its
+/// high value sits at. `from` may be past `to`, as an upright chart's value axis runs from the
+/// plot's bottom edge up to its top one.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Extent {
+    from: f32,
+    to: f32,
+}
+
+impl Extent {
+    const fn new(from: f32, to: f32) -> Self {
+        Self { from, to }
+    }
+
+    /// How far it reaches, which is negative when it runs backwards.
+    fn span(self) -> f32 {
+        self.to - self.from
+    }
+}
+
+/// Which way a chart's two axes run, and so which coordinate of a point each one drives.
+///
+/// Every mark goes through here. Upright, a value is a point's Y and a category its X; a kind
+/// that lies the chart down swaps them, and nothing that places a mark has to know which it
+/// was. The one thing that doesn't swap is where a label sits: an upright chart's value labels
+/// are to the left of the plot and its category labels under it, and lying down they are under
+/// it and to the left of it, so [`Frame::value_label`] and [`Frame::category_label`] are where
+/// that is decided, once each.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Frame {
+    /// The axis the Y columns are measured along.
+    value: Extent,
+    /// The axis the X values are placed along.
+    category: Extent,
+    /// Values run across the drawing and categories down it, rather than the other way about.
+    lying_down: bool,
+}
+
+impl Frame {
+    /// Values up the side from the plot's bottom edge, categories along the bottom from its
+    /// left edge.
+    fn upright(plot: Rect) -> Self {
+        Self {
+            value: Extent::new(plot.max.y, plot.min.y),
+            category: Extent::new(plot.min.x, plot.max.x),
+            lying_down: false,
+        }
+    }
+
+    /// The point `value` along the value axis and `category` along the category axis.
+    fn at(self, value: f32, category: f32) -> Point {
+        if self.lying_down {
+            Point::new(value, category)
+        } else {
+            Point::new(category, value)
+        }
+    }
+
+    /// Where along each axis `point` is: the inverse of [`Self::at`].
+    fn of(self, point: Point) -> (f32, f32) {
+        if self.lying_down {
+            (point.x, point.y)
+        } else {
+            (point.y, point.x)
+        }
+    }
+
+    /// The ends of a line at `value` spanning the whole category axis: a grid line, the zero
+    /// line, and the axis line itself.
+    fn across(self, value: f32) -> (Point, Point) {
+        (
+            self.at(value, self.category.from),
+            self.at(value, self.category.to),
+        )
+    }
+
+    /// Where a value's tick label sits, and how it is anchored there: upright, left of the
+    /// plot and ending at it; lying down, under the plot and centred on the tick.
+    fn value_label(self, value: f32, line: f32) -> (Point, Anchor) {
+        if self.lying_down {
+            (
+                self.at(value, self.category.to + LABEL_GAP + line / 2.0),
+                Anchor::Middle,
+            )
+        } else {
+            (self.at(value, self.category.from - LABEL_GAP), Anchor::End)
+        }
+    }
+
+    /// Where a category's label sits, and how it is anchored there: upright, under the plot and
+    /// centred on the slot; lying down, left of the plot and ending at it.
+    fn category_label(self, category: f32, line: f32) -> (Point, Anchor) {
+        if self.lying_down {
+            (self.at(self.value.from - LABEL_GAP, category), Anchor::End)
+        } else {
+            (
+                self.at(self.value.from + LABEL_GAP + line / 2.0, category),
+                Anchor::Middle,
+            )
+        }
+    }
+}
+
 /// A chart laid out: its marks in drawing order, and where each point went, for hovering.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Drawing {
@@ -163,52 +273,60 @@ pub struct Drawing {
     pub plot: Rect,
     pub marks: Vec<Mark>,
     kind: ChartKind,
-    /// Categories were placed in slots of this width; `None` when placed by value.
+    /// Which way the axes run, to read a pointer's position back into the axes' terms.
+    frame: Frame,
+    /// Categories were placed in slots of this width along the category axis; `None` when
+    /// placed by value.
     slot: Option<f32>,
-    /// Each point's X, and its Y in each series, in points.
-    xs: Vec<f32>,
-    ys: Vec<Vec<Option<f32>>>,
+    /// Each point's place along the category axis.
+    categories: Vec<f32>,
+    /// Each series' value at each point, along the value axis.
+    values: Vec<Vec<Option<f32>>>,
 }
 
 impl Drawing {
     /// The point under `at`: the category it is over, on lines the nearest point along the
-    /// bottom, on a scatter the nearest point within reach.
+    /// category axis, on a scatter the nearest point within reach.
     pub fn hit(&self, at: Point) -> Option<usize> {
-        if !self.plot.contains(at) || self.xs.is_empty() {
+        if !self.plot.contains(at) || self.categories.is_empty() {
             return None;
         }
+        let (_, category) = self.frame.of(at);
         if let Some(slot) = self.slot {
-            let index = ((at.x - self.plot.min.x) / slot).floor() as usize;
-            return (index < self.xs.len()).then_some(index);
+            let index = ((category - self.frame.category.from) / slot).floor() as usize;
+            return (index < self.categories.len()).then_some(index);
         }
         match self.kind {
             ChartKind::Scatter => self.nearest_point(at),
-            ChartKind::Bars | ChartKind::Lines => self.nearest_x(at.x),
+            ChartKind::Bars | ChartKind::Lines => self.nearest_category(category),
         }
     }
 
     /// The X, in points, of the point at `index`.
     pub fn x_of(&self, index: usize) -> Option<f32> {
-        self.xs.get(index).copied()
+        self.categories.get(index).copied()
     }
 
-    fn nearest_x(&self, x: f32) -> Option<usize> {
-        self.xs
+    fn nearest_category(&self, category: f32) -> Option<usize> {
+        self.categories
             .iter()
             .enumerate()
-            .min_by(|(_, a), (_, b)| (*a - x).abs().total_cmp(&(*b - x).abs()))
+            .min_by(|(_, a), (_, b)| (*a - category).abs().total_cmp(&(*b - category).abs()))
             .map(|(index, _)| index)
     }
 
     fn nearest_point(&self, at: Point) -> Option<usize> {
-        let distance = |index: usize, y: f32| {
-            let x = self.xs.get(index).copied().unwrap_or(f32::INFINITY);
-            (x - at.x).hypot(y - at.y)
+        let distance = |index: usize, value: f32| {
+            let Some(category) = self.categories.get(index).copied() else {
+                return f32::INFINITY;
+            };
+            let point = self.frame.at(value, category);
+            (point.x - at.x).hypot(point.y - at.y)
         };
-        self.ys
+        self.values
             .iter()
             .flat_map(|series| series.iter().enumerate())
-            .filter_map(|(index, y)| y.map(|y| (index, distance(index, y))))
+            .filter_map(|(index, value)| value.map(|value| (index, distance(index, value))))
             .filter(|(_, distance)| *distance <= HOVER_DISTANCE)
             .min_by(|(_, a), (_, b)| a.total_cmp(b))
             .map(|(index, _)| index)
@@ -231,47 +349,62 @@ pub fn layout(
     let top = PADDING + title_room + line + LABEL_GAP;
     let bottom = size.height - PADDING - line - LABEL_GAP - line - LABEL_GAP;
     let from_zero = options.y_zero || data.kind == ChartKind::Bars;
-    let y_ticks = Ticks::nice(
-        y_low(data, from_zero),
-        y_high(data, from_zero),
+    let value_ticks = Ticks::nice(
+        value_low(data, from_zero),
+        value_high(data, from_zero),
         ((bottom - top) / Y_TICK_SPACING) as usize,
     );
-    let y_labels: Vec<String> = y_ticks.values.iter().map(|v| y_ticks.label(*v)).collect();
-    let widest = y_labels
+    let value_labels: Vec<String> = value_ticks
+        .values
+        .iter()
+        .map(|value| value_ticks.label(*value))
+        .collect();
+    // Upright, the value labels set the left gutter: the category axis starts past the widest
+    // of them.
+    let gutter = value_labels
         .iter()
         .map(|label| measure.width(label))
         .fold(0.0, f32::max);
     let plot = Rect {
-        min: Point::new(PADDING + widest + LABEL_GAP, top),
+        min: Point::new(PADDING + gutter + LABEL_GAP, top),
         max: Point::new(size.width - PADDING, bottom),
     };
+    let frame = Frame::upright(plot);
     let mut drawing = Drawing {
         size,
         plot,
         marks: Vec::new(),
         kind: data.kind,
+        frame,
         slot: None,
-        xs: Vec::new(),
-        ys: Vec::new(),
+        categories: Vec::new(),
+        values: Vec::new(),
     };
     if plot.width() < MIN_PLOT_SIDE || plot.height() < MIN_PLOT_SIDE {
         return drawing;
     }
-    let y_scale = Scale::new(y_ticks.low, y_ticks.high, plot.max.y, plot.min.y);
-    y_axis(&mut drawing.marks, plot, &y_ticks, &y_labels, y_scale);
-    x_axis(&mut drawing, data, measure);
-    drawing.ys = data
+    let value_scale = Scale::over(value_ticks.low, value_ticks.high, frame.value);
+    value_axis(
+        &mut drawing.marks,
+        frame,
+        &value_ticks,
+        &value_labels,
+        value_scale,
+        line,
+    );
+    category_axis(&mut drawing, data, frame, measure, line);
+    drawing.values = data
         .series
         .iter()
         .map(|series| {
             series
                 .values
                 .iter()
-                .map(|value| value.map(|value| y_scale.at(value)))
+                .map(|value| value.map(|value| value_scale.at(value)))
                 .collect()
         })
         .collect();
-    series_marks(&mut drawing, data, y_scale);
+    series_marks(&mut drawing, data, frame, value_scale);
     titles(&mut drawing.marks, data, options, size, measure, plot);
     drawing
 }
@@ -328,17 +461,19 @@ fn without_points(
         anchor: Anchor::Middle,
         paint: Paint::Label,
     });
+    let plot = Rect {
+        min: middle,
+        max: middle,
+    };
     Drawing {
         size,
-        plot: Rect {
-            min: middle,
-            max: middle,
-        },
+        plot,
         marks,
         kind,
+        frame: Frame::upright(plot),
         slot: None,
-        xs: Vec::new(),
-        ys: Vec::new(),
+        categories: Vec::new(),
+        values: Vec::new(),
     }
 }
 
@@ -361,6 +496,11 @@ impl Scale {
         }
     }
 
+    /// `low` to `high` laid along `extent`, whichever way it runs.
+    fn over(low: f64, high: f64, extent: Extent) -> Self {
+        Self::new(low, high, extent.from, extent.to)
+    }
+
     fn at(&self, value: f64) -> f32 {
         let span = self.high - self.low;
         let share = if span > 0.0 {
@@ -378,8 +518,8 @@ fn values(data: &ChartData) -> impl Iterator<Item = f64> + '_ {
         .flat_map(|series| series.values.iter().flatten().copied())
 }
 
-/// The values the Y axis must reach: each value, or for stacked bars the top and bottom of each
-/// stack.
+/// The values the value axis must reach: each value, or for stacked bars the top and bottom of
+/// each stack.
 fn reach(data: &ChartData) -> Vec<f64> {
     if !data.stacked {
         return values(data).collect();
@@ -407,9 +547,9 @@ fn stack_ends(data: &ChartData, point: usize) -> (f64, f64) {
         })
 }
 
-/// The bottom of the Y axis: the lowest value, and never above zero `from_zero`, as for bars,
-/// which grow from it.
-fn y_low(data: &ChartData, from_zero: bool) -> f64 {
+/// The low end of the value axis: the lowest value, and never above zero `from_zero`, as for
+/// bars, which grow from it.
+fn value_low(data: &ChartData, from_zero: bool) -> f64 {
     let low = reach(data).into_iter().fold(f64::INFINITY, f64::min);
     match (from_zero, low.is_finite()) {
         (_, false) => 0.0,
@@ -418,7 +558,7 @@ fn y_low(data: &ChartData, from_zero: bool) -> f64 {
     }
 }
 
-fn y_high(data: &ChartData, from_zero: bool) -> f64 {
+fn value_high(data: &ChartData, from_zero: bool) -> f64 {
     let high = reach(data).into_iter().fold(f64::NEG_INFINITY, f64::max);
     match (from_zero, high.is_finite()) {
         (_, false) => 1.0,
@@ -427,65 +567,83 @@ fn y_high(data: &ChartData, from_zero: bool) -> f64 {
     }
 }
 
-fn y_axis(marks: &mut Vec<Mark>, plot: Rect, ticks: &Ticks, labels: &[String], scale: Scale) {
+/// A grid line and a label at each tick of the value axis, the zero line where the values fall
+/// either side of it, and the axis line along the low end.
+fn value_axis(
+    marks: &mut Vec<Mark>,
+    frame: Frame,
+    ticks: &Ticks,
+    labels: &[String],
+    scale: Scale,
+    line: f32,
+) {
     for (value, label) in ticks.values.iter().zip(labels) {
-        let y = scale.at(*value);
+        let at = scale.at(*value);
+        let (from, to) = frame.across(at);
         marks.push(Mark::Line {
-            from: Point::new(plot.min.x, y),
-            to: Point::new(plot.max.x, y),
+            from,
+            to,
             paint: Paint::Grid,
         });
+        let (at, anchor) = frame.value_label(at, line);
         marks.push(Mark::Text {
-            at: Point::new(plot.min.x - LABEL_GAP, y),
+            at,
             text: label.clone(),
-            anchor: Anchor::End,
+            anchor,
             paint: Paint::Label,
         });
     }
     if ticks.low < 0.0 && ticks.high > 0.0 {
-        let zero = scale.at(0.0);
+        let (from, to) = frame.across(scale.at(0.0));
         marks.push(Mark::Line {
-            from: Point::new(plot.min.x, zero),
-            to: Point::new(plot.max.x, zero),
+            from,
+            to,
             paint: Paint::Axis,
         });
     }
+    let (from, to) = frame.across(frame.value.from);
     marks.push(Mark::Line {
-        from: Point::new(plot.min.x, plot.max.y),
-        to: Point::new(plot.max.x, plot.max.y),
+        from,
+        to,
         paint: Paint::Axis,
     });
 }
 
-/// Places each point along the bottom, and labels the axis.
-fn x_axis(drawing: &mut Drawing, data: &ChartData, measure: &impl TextMeasure) {
-    let plot = drawing.plot;
-    let label_y = plot.max.y + LABEL_GAP + measure.line_height() / 2.0;
-    let target = (plot.width() / X_TICK_SPACING) as usize;
-    let inner = Scale::new(0.0, 1.0, plot.min.x + INSET, plot.max.x - INSET);
-    let mut label = |x: f32, text: String| {
+/// Places each point along the category axis, and labels it.
+fn category_axis(
+    drawing: &mut Drawing,
+    data: &ChartData,
+    frame: Frame,
+    measure: &impl TextMeasure,
+    line: f32,
+) {
+    let category = frame.category;
+    let target = (category.span().abs() / X_TICK_SPACING) as usize;
+    let inner = Scale::new(0.0, 1.0, category.from + INSET, category.to - INSET);
+    let mut label = |at: f32, text: String| {
+        let (at, anchor) = frame.category_label(at, line);
         drawing.marks.push(Mark::Text {
-            at: Point::new(x, label_y),
+            at,
             text,
-            anchor: Anchor::Middle,
+            anchor,
             paint: Paint::Label,
         });
     };
     match &data.x {
         XValues::Categories(names) => {
-            let slot = plot.width() / names.len().max(1) as f32;
+            let slot = category.span() / names.len().max(1) as f32;
             let names: Vec<String> = names.iter().map(|name| shortened(name)).collect();
             let widest = names
                 .iter()
                 .map(|name| measure.width(name))
                 .fold(0.0, f32::max);
             let every = ((widest + LABEL_GAP) / slot).ceil().max(1.0) as usize;
-            let centre = |index: usize| plot.min.x + slot * (index as f32 + 0.5);
+            let centre = |index: usize| category.from + slot * (index as f32 + 0.5);
             for (index, name) in names.into_iter().enumerate().step_by(every) {
                 label(centre(index), name);
             }
             drawing.slot = Some(slot);
-            drawing.xs = (0..data.len()).map(centre).collect();
+            drawing.categories = (0..data.len()).map(centre).collect();
         }
         XValues::Numbers(numbers) => {
             let (low, high) = range(numbers);
@@ -494,7 +652,7 @@ fn x_axis(drawing: &mut Drawing, data: &ChartData, measure: &impl TextMeasure) {
             for value in &ticks.values {
                 label(scale.at(*value), ticks.label(*value));
             }
-            drawing.xs = numbers.iter().map(|number| scale.at(*number)).collect();
+            drawing.categories = numbers.iter().map(|number| scale.at(*number)).collect();
         }
         XValues::Times(times) => {
             let (low, high) = range(&times.seconds);
@@ -509,7 +667,7 @@ fn x_axis(drawing: &mut Drawing, data: &ChartData, measure: &impl TextMeasure) {
             for value in &ticks.values {
                 label(scale.at(*value), ticks.label(*value));
             }
-            drawing.xs = times.seconds.iter().map(|time| scale.at(*time)).collect();
+            drawing.categories = times.seconds.iter().map(|time| scale.at(*time)).collect();
         }
     }
 }
@@ -532,29 +690,29 @@ fn shortened(name: &str) -> String {
     format!("{kept}…")
 }
 
-fn series_marks(drawing: &mut Drawing, data: &ChartData, y_scale: Scale) {
+fn series_marks(drawing: &mut Drawing, data: &ChartData, frame: Frame, value_scale: Scale) {
     match data.kind {
-        ChartKind::Bars if data.stacked => stacked_bars(drawing, data, y_scale),
-        ChartKind::Bars => bars(drawing, y_scale),
-        ChartKind::Lines => lines(drawing),
-        ChartKind::Scatter => dots(drawing),
+        ChartKind::Bars if data.stacked => stacked_bars(drawing, data, frame, value_scale),
+        ChartKind::Bars => bars(drawing, frame, value_scale),
+        ChartKind::Lines => lines(drawing, frame),
+        ChartKind::Scatter => dots(drawing, frame),
     }
 }
 
-fn bars(drawing: &mut Drawing, y_scale: Scale) {
+fn bars(drawing: &mut Drawing, frame: Frame, value_scale: Scale) {
     let slot = drawing.slot.unwrap_or_default();
     let group = slot * BAR_GROUP_SHARE;
-    let width = group / drawing.ys.len().max(1) as f32;
+    let width = group / drawing.values.len().max(1) as f32;
     let gap = if width >= MIN_BAR_GAP_WIDTH { 1.0 } else { 0.0 };
-    let zero = y_scale.at(0.0);
-    for (series, ys) in drawing.ys.iter().enumerate() {
-        for (index, y) in ys.iter().enumerate() {
-            let (Some(y), Some(centre)) = (y, drawing.xs.get(index)) else {
+    let zero = value_scale.at(0.0);
+    for (series, values) in drawing.values.iter().enumerate() {
+        for (index, value) in values.iter().enumerate() {
+            let (Some(value), Some(centre)) = (value, drawing.categories.get(index)) else {
                 continue;
             };
-            let left = centre - group / 2.0 + width * series as f32;
+            let near = centre - group / 2.0 + width * series as f32;
             drawing.marks.push(Mark::Rect {
-                rect: Rect::spanning(Point::new(left, zero), Point::new(left + width - gap, *y)),
+                rect: Rect::spanning(frame.at(zero, near), frame.at(*value, near + width - gap)),
                 paint: Paint::Series(series),
                 rounded: true,
             });
@@ -564,10 +722,10 @@ fn bars(drawing: &mut Drawing, y_scale: Scale) {
 
 /// A bar per point as wide as a group of bars, its series' values stacked on each other in the
 /// series' order: positive values up from zero, negative ones down from it.
-fn stacked_bars(drawing: &mut Drawing, data: &ChartData, y_scale: Scale) {
+fn stacked_bars(drawing: &mut Drawing, data: &ChartData, frame: Frame, value_scale: Scale) {
     let width = drawing.slot.unwrap_or_default() * BAR_GROUP_SHARE;
-    for (point, centre) in drawing.xs.iter().enumerate() {
-        let left = centre - width / 2.0;
+    for (point, centre) in drawing.categories.iter().enumerate() {
+        let near = centre - width / 2.0;
         let (mut up, mut down) = (0.0, 0.0);
         for (series, values) in data.series.iter().enumerate() {
             let Some(value) = values.values.get(point).copied().flatten() else {
@@ -578,8 +736,8 @@ fn stacked_bars(drawing: &mut Drawing, data: &ChartData, y_scale: Scale) {
             *end += value;
             drawing.marks.push(Mark::Rect {
                 rect: Rect::spanning(
-                    Point::new(left, y_scale.at(from)),
-                    Point::new(left + width, y_scale.at(*end)),
+                    frame.at(value_scale.at(from), near),
+                    frame.at(value_scale.at(*end), near + width),
                 ),
                 paint: Paint::Series(series),
                 rounded: false,
@@ -590,14 +748,14 @@ fn stacked_bars(drawing: &mut Drawing, data: &ChartData, y_scale: Scale) {
 
 /// A line per series, broken where a value is missing; a point on its own between two gaps is
 /// a dot, since a line needs two.
-fn lines(drawing: &mut Drawing) {
-    let dotted = drawing.xs.len() <= MAX_DOTTED_POINTS;
-    for (series, ys) in drawing.ys.iter().enumerate() {
+fn lines(drawing: &mut Drawing, frame: Frame) {
+    let dotted = drawing.categories.len() <= MAX_DOTTED_POINTS;
+    for (series, values) in drawing.values.iter().enumerate() {
         let paint = Paint::Series(series);
-        let runs = ys
+        let runs = values
             .iter()
-            .zip(&drawing.xs)
-            .map(|(y, x)| y.map(|y| Point::new(*x, y)))
+            .zip(&drawing.categories)
+            .map(|(value, category)| value.map(|value| frame.at(value, *category)))
             .collect::<Vec<_>>();
         for run in runs.split(Option::is_none) {
             let points: Vec<Point> = run.iter().flatten().copied().collect();
@@ -620,12 +778,12 @@ fn lines(drawing: &mut Drawing) {
     }
 }
 
-fn dots(drawing: &mut Drawing) {
-    for (series, ys) in drawing.ys.iter().enumerate() {
-        for (y, x) in ys.iter().zip(&drawing.xs) {
-            if let Some(y) = y {
+fn dots(drawing: &mut Drawing, frame: Frame) {
+    for (series, values) in drawing.values.iter().enumerate() {
+        for (value, category) in values.iter().zip(&drawing.categories) {
+            if let Some(value) = value {
                 drawing.marks.push(Mark::Circle {
-                    centre: Point::new(*x, *y),
+                    centre: frame.at(*value, *category),
                     radius: POINT_RADIUS,
                     paint: Paint::Series(series),
                 });
@@ -952,7 +1110,7 @@ mod tests {
             SIZE,
             &Fixed,
         );
-        let second = Point::new(scatter.x_of(1).unwrap(), scatter.ys[0][1].unwrap());
+        let second = Point::new(scatter.x_of(1).unwrap(), scatter.values[0][1].unwrap());
         assert_eq!(scatter.hit(second), Some(1));
         let far = Point::new(
             (scatter.plot.min.x + scatter.plot.max.x) / 2.0,
