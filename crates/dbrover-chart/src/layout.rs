@@ -10,7 +10,7 @@
 
 use crate::ChartKind;
 use crate::data::{ChartData, XValues};
-use crate::ticks::Ticks;
+use crate::ticks::{Ticks, decimal_exponent};
 use crate::time::TimeTicks;
 
 /// Room around everything, and between a label and what it labels.
@@ -165,6 +165,39 @@ pub trait TextMeasure {
     fn line_height(&self) -> f32;
 }
 
+/// How the value axis progresses: evenly, or by powers of ten.
+///
+/// A log scale draws lines and scatters only. A bar's length and a band's thickness are read as
+/// ratios from the zero line, and one grown from a log axis's arbitrary baseline misstates
+/// exactly that, so the bar kinds and an area refuse it rather than draw it wrong.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum YScale {
+    #[default]
+    Linear,
+    /// Powers of ten. A value at or below zero has no place on one, so it is a gap, counted
+    /// and named in the line under the chart — never a clamped epsilon and never a dropped row
+    /// nobody hears about.
+    Log,
+}
+
+impl YScale {
+    pub const ALL: [Self; 2] = [Self::Linear, Self::Log];
+
+    /// The scale's name in a chart spec: `y_scale = "log"`.
+    pub fn spec_name(self) -> &'static str {
+        match self {
+            Self::Linear => "linear",
+            Self::Log => "log",
+        }
+    }
+
+    pub fn from_spec_name(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|scale| scale.spec_name() == name)
+    }
+}
+
 /// What a chart spec sets of its look: titles, and the Y axis's start.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LayoutOptions {
@@ -176,6 +209,8 @@ pub struct LayoutOptions {
     pub y_title: Option<String>,
     /// Start the Y axis at zero for lines and scatters, as bars always do.
     pub y_zero: bool,
+    /// How the value axis progresses: evenly, or by powers of ten.
+    pub y_scale: YScale,
 }
 
 /// How far an axis reaches in the drawing: the point its low value sits at, and the point its
@@ -400,8 +435,21 @@ struct Measured {
 
 impl Measured {
     /// Ticks for a plot `height` tall, and a gutter wide enough for the widest of their labels.
-    fn upright(height: f32, low: f64, high: f64, measure: &impl TextMeasure) -> Self {
-        let ticks = Ticks::nice(low, high, (height / Y_TICK_SPACING) as usize);
+    fn upright(
+        height: f32,
+        low: f64,
+        high: f64,
+        scale: YScale,
+        measure: &impl TextMeasure,
+    ) -> Self {
+        let line = measure.line_height();
+        let ticks = ticks_over(
+            low,
+            high,
+            scale,
+            (height / Y_TICK_SPACING) as usize,
+            (height / (line + LABEL_GAP)) as usize,
+        );
         let labels = tick_labels(&ticks);
         let gutter = widest(&labels, measure);
         Self {
@@ -435,6 +483,7 @@ impl Measured {
             .fold(0.0, f32::max);
         let gutter = wanted.min(size.width * MAX_GUTTER_SHARE).max(0.0);
         let width = size.width - 2.0 * PADDING - gutter - LABEL_GAP;
+        // Lying down is a bar kind, which refuses a log scale, so the ticks are always even.
         let ticks = Ticks::nice(low, high, (width / X_TICK_SPACING) as usize);
         let labels = tick_labels(&ticks);
         Self {
@@ -442,6 +491,18 @@ impl Measured {
             labels,
             gutter,
         }
+    }
+}
+
+/// The value axis's ticks: round steps over the range, or the decades it spans.
+///
+/// An even axis aims for a comfortable `target`, one tick per [`Y_TICK_SPACING`] points, since
+/// it can pick any step. A log axis's granularity is the decade, so what it needs to know is
+/// how many labels physically `fit` — a line's height apiece.
+fn ticks_over(low: f64, high: f64, scale: YScale, target: usize, fits: usize) -> Ticks {
+    match scale {
+        YScale::Linear => Ticks::nice(low, high, target),
+        YScale::Log => Ticks::decades(low, high, fits),
     }
 }
 
@@ -476,11 +537,10 @@ pub fn layout(
     let top = PADDING + title_room + line + LABEL_GAP;
     let bottom = size.height - PADDING - line - LABEL_GAP - line - LABEL_GAP;
     let from_zero = options.y_zero || data.kind.starts_at_zero();
-    let low = value_low(data, from_zero);
-    let high = value_high(data, from_zero);
+    let (low, high) = value_range(data, from_zero, options.y_scale);
     let measured = match data.kind {
         ChartKind::Hbars => Measured::lying_down(data, size, low, high, measure),
-        _ => Measured::upright(bottom - top, low, high, measure),
+        _ => Measured::upright(bottom - top, low, high, options.y_scale, measure),
     };
     let plot = Rect {
         min: Point::new(PADDING + measured.gutter + LABEL_GAP, top),
@@ -502,7 +562,10 @@ pub fn layout(
     if plot.width() < MIN_PLOT_SIDE || plot.height() < MIN_PLOT_SIDE {
         return drawing;
     }
-    let value_scale = Scale::over(value_ticks.low, value_ticks.high, frame.value);
+    let value_scale = match options.y_scale {
+        YScale::Linear => Scale::over(value_ticks.low, value_ticks.high, frame.value),
+        YScale::Log => Scale::by_decades(value_ticks.low, value_ticks.high, frame.value),
+    };
     value_axis(
         &mut drawing.marks,
         frame,
@@ -519,7 +582,7 @@ pub fn layout(
             series
                 .values
                 .iter()
-                .map(|value| value.map(|value| value_scale.at(value)))
+                .map(|value| value.and_then(|value| value_scale.at(value)))
                 .collect()
         })
         .collect();
@@ -604,13 +667,14 @@ fn without_points(
     }
 }
 
-/// A linear map from values to points.
+/// A map from values to points, even or by powers of ten.
 #[derive(Debug, Clone, Copy)]
 struct Scale {
     low: f64,
     high: f64,
     from: f32,
     to: f32,
+    progress: YScale,
 }
 
 impl Scale {
@@ -620,6 +684,7 @@ impl Scale {
             high,
             from,
             to,
+            progress: YScale::Linear,
         }
     }
 
@@ -628,10 +693,46 @@ impl Scale {
         Self::new(low, high, extent.from, extent.to)
     }
 
-    fn at(&self, value: f64) -> f32 {
-        let span = self.high - self.low;
+    /// `low` to `high` laid along `extent` by powers of ten. Both ends must be powers of ten,
+    /// which [`Ticks::decades`] makes them.
+    fn by_decades(low: f64, high: f64, extent: Extent) -> Self {
+        Self {
+            progress: YScale::Log,
+            ..Self::over(low, high, extent)
+        }
+    }
+
+    /// Where `value` sits along the extent, or `None` where the scale has no place for it:
+    /// zero or below on a log scale, which the chart then draws as a gap.
+    fn at(&self, value: f64) -> Option<f32> {
+        let (low, high, value) = match self.progress {
+            YScale::Linear => return Some(self.evenly_at(value)),
+            // The axis's ends are powers of ten, and their exponents are read from Rust's own
+            // formatting rather than from `log10`, whose last bit differs between platforms'
+            // maths libraries: on 1,000 one library's 2.9999999999999996 would move every
+            // coordinate on the axis. Only the value's own logarithm needs `log10`, and the
+            // SVG's rounding to a hundredth of a point swallows a difference of that size.
+            YScale::Log if value > 0.0 && self.low > 0.0 => (
+                f64::from(decimal_exponent(self.low)),
+                f64::from(decimal_exponent(self.high)),
+                value.log10(),
+            ),
+            YScale::Log => return None,
+        };
+        Some(self.along(low, high, value))
+    }
+
+    /// Where `value` sits, reading the range evenly. The caller promises the scale is an even
+    /// one, which every category axis is: X is placed by category, by number or by time, never
+    /// by powers of ten (a log X is left for later).
+    fn evenly_at(&self, value: f64) -> f32 {
+        self.along(self.low, self.high, value)
+    }
+
+    fn along(&self, low: f64, high: f64, value: f64) -> f32 {
+        let span = high - low;
         let share = if span > 0.0 {
-            (value - self.low) / span
+            (value - low) / span
         } else {
             0.5
         };
@@ -674,24 +775,37 @@ fn stack_ends(data: &ChartData, point: usize) -> (f64, f64) {
         })
 }
 
-/// The low end of the value axis: the lowest value, and never above zero `from_zero`, as for
-/// bars, which grow from it.
-fn value_low(data: &ChartData, from_zero: bool) -> f64 {
-    let low = reach(data).into_iter().fold(f64::INFINITY, f64::min);
-    match (from_zero, low.is_finite()) {
+/// The range the value axis must cover: every value the chart draws, or for stacked series the
+/// top and bottom of each stack, and zero as well `from_zero`, as for bars, which grow from it.
+///
+/// On a log scale only values above zero count, since the others have no place on one and are
+/// drawn as gaps; with nothing left to place the axis is one plain decade, and the chart draws
+/// no points.
+fn value_range(data: &ChartData, from_zero: bool, scale: YScale) -> (f64, f64) {
+    let mut reached = reach(data);
+    if scale == YScale::Log {
+        reached.retain(|value| *value > 0.0);
+        let low = reached.iter().copied().fold(f64::INFINITY, f64::min);
+        let high = reached.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        return if low.is_finite() && high.is_finite() {
+            (low, high)
+        } else {
+            (1.0, 10.0)
+        };
+    }
+    let low = reached.iter().copied().fold(f64::INFINITY, f64::min);
+    let high = reached.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let low = match (from_zero, low.is_finite()) {
         (_, false) => 0.0,
         (true, true) => low.min(0.0),
         (false, true) => low,
-    }
-}
-
-fn value_high(data: &ChartData, from_zero: bool) -> f64 {
-    let high = reach(data).into_iter().fold(f64::NEG_INFINITY, f64::max);
-    match (from_zero, high.is_finite()) {
+    };
+    let high = match (from_zero, high.is_finite()) {
         (_, false) => 1.0,
         (true, true) => high.max(0.0),
         (false, true) => high,
-    }
+    };
+    (low, high)
 }
 
 /// A grid line and a label at each tick of the value axis, the zero line where the values fall
@@ -705,7 +819,9 @@ fn value_axis(
     line: f32,
 ) {
     for (value, label) in ticks.values.iter().zip(labels) {
-        let at = scale.at(*value);
+        let Some(at) = scale.at(*value) else {
+            continue;
+        };
         let (from, to) = frame.across(at);
         marks.push(Mark::Line {
             from,
@@ -720,8 +836,11 @@ fn value_axis(
             paint: Paint::Label,
         });
     }
-    if ticks.low < 0.0 && ticks.high > 0.0 {
-        let (from, to) = frame.across(scale.at(0.0));
+    if let Some(zero) = scale
+        .at(0.0)
+        .filter(|_| ticks.low < 0.0 && ticks.high > 0.0)
+    {
+        let (from, to) = frame.across(zero);
         marks.push(Mark::Line {
             from,
             to,
@@ -747,7 +866,9 @@ fn category_axis(
     let category = frame.category;
     let target = (category.span().abs() / X_TICK_SPACING) as usize;
     let room = frame.name_room();
-    let inner = Scale::new(0.0, 1.0, category.from + INSET, category.to - INSET);
+    // Points placed by value sit in from the plot's sides, so one at either end isn't cut in
+    // half.
+    let (inset_from, inset_to) = (category.from + INSET, category.to - INSET);
     let mut label = |at: f32, text: String| {
         let (at, anchor) = frame.category_label(at, line);
         drawing.marks.push(Mark::Text {
@@ -788,11 +909,14 @@ fn category_axis(
         XValues::Numbers(numbers) => {
             let (low, high) = range(numbers);
             let ticks = Ticks::nice(low, high, target);
-            let scale = Scale::new(ticks.low, ticks.high, inner.at(0.0), inner.at(1.0));
+            let scale = Scale::new(ticks.low, ticks.high, inset_from, inset_to);
             for value in &ticks.values {
-                label(scale.at(*value), ticks.label(*value));
+                label(scale.evenly_at(*value), ticks.label(*value));
             }
-            drawing.categories = numbers.iter().map(|number| scale.at(*number)).collect();
+            drawing.categories = numbers
+                .iter()
+                .map(|number| scale.evenly_at(*number))
+                .collect();
         }
         XValues::Times(times) => {
             let (low, high) = range(&times.seconds);
@@ -803,11 +927,15 @@ fn category_axis(
                 (low - day, high + day)
             };
             let ticks = TimeTicks::new(low, high, target, !times.has_time);
-            let scale = Scale::new(low, high, inner.at(0.0), inner.at(1.0));
+            let scale = Scale::new(low, high, inset_from, inset_to);
             for value in &ticks.values {
-                label(scale.at(*value), ticks.label(*value));
+                label(scale.evenly_at(*value), ticks.label(*value));
             }
-            drawing.categories = times.seconds.iter().map(|time| scale.at(*time)).collect();
+            drawing.categories = times
+                .seconds
+                .iter()
+                .map(|time| scale.evenly_at(*time))
+                .collect();
         }
     }
 }
@@ -897,7 +1025,11 @@ fn bars(drawing: &mut Drawing, frame: Frame, value_scale: Scale) {
     let group = slot * BAR_GROUP_SHARE;
     let width = group / drawing.values.len().max(1) as f32;
     let gap = if width >= MIN_BAR_GAP_WIDTH { 1.0 } else { 0.0 };
-    let zero = value_scale.at(0.0);
+    // Bars refuse a log scale, so their zero always has a place; without one there is nothing
+    // to grow from and nothing is drawn.
+    let Some(zero) = value_scale.at(0.0) else {
+        return;
+    };
     for (series, values) in drawing.values.iter().enumerate() {
         for (index, value) in values.iter().enumerate() {
             let (Some(value), Some(centre)) = (value, drawing.categories.get(index)) else {
@@ -927,11 +1059,11 @@ fn stacked_bars(drawing: &mut Drawing, data: &ChartData, frame: Frame, value_sca
             let end = if value >= 0.0 { &mut up } else { &mut down };
             let from = *end;
             *end += value;
+            let (Some(bottom), Some(top)) = (value_scale.at(from), value_scale.at(*end)) else {
+                continue;
+            };
             drawing.marks.push(Mark::Rect {
-                rect: Rect::spanning(
-                    frame.at(value_scale.at(from), near),
-                    frame.at(value_scale.at(*end), near + width),
-                ),
+                rect: Rect::spanning(frame.at(bottom, near), frame.at(top, near + width)),
                 paint: Paint::Series(series),
                 rounded: false,
             });
@@ -1001,10 +1133,11 @@ fn bands(drawing: &mut Drawing, data: &ChartData, frame: Frame, value_scale: Sca
             };
             let from = *end;
             *end += value;
-            edges.push(Some((
-                frame.at(value_scale.at(*end), category),
-                frame.at(value_scale.at(from), category),
-            )));
+            let (Some(top), Some(bottom)) = (value_scale.at(*end), value_scale.at(from)) else {
+                edges.push(None);
+                continue;
+            };
+            edges.push(Some((frame.at(top, category), frame.at(bottom, category))));
         }
         for run in edges.split(Option::is_none) {
             let run: Vec<(Point, Point)> = run.iter().flatten().copied().collect();
@@ -1483,7 +1616,7 @@ mod tests {
             title: Some("Net sales by month".to_owned()),
             x_title: Some("Month".to_owned()),
             y_title: Some("Euros".to_owned()),
-            y_zero: false,
+            ..LayoutOptions::default()
         };
         let plain = layout(&chart, &LayoutOptions::default(), SIZE, &Fixed);
         let titled = layout(&chart, &options, SIZE, &Fixed);
@@ -1931,5 +2064,136 @@ mod tests {
         );
         assert_eq!(band_quads(&ring[..2]).count(), 0, "no width, no piece");
         assert_eq!(band_quads(&[]).count(), 0);
+    }
+
+    #[test]
+    fn a_log_axis_puts_equal_ratios_at_equal_distances() {
+        let chart = data(
+            ChartKind::Scatter,
+            XValues::Numbers(vec![1.0, 2.0, 3.0]),
+            &[("price", &[Some(10.0), Some(100.0), Some(1000.0)])],
+        );
+        let options = LayoutOptions {
+            y_scale: YScale::Log,
+            ..LayoutOptions::default()
+        };
+        let drawing = layout(&chart, &options, SIZE, &Fixed);
+
+        let placed: Vec<f32> = drawing.values[0].iter().flatten().copied().collect();
+        assert_eq!(placed.len(), 3);
+        let decade = placed[0] - placed[1];
+        assert!(
+            (decade - (placed[1] - placed[2])).abs() < 0.01,
+            "a tenfold step is one distance: {placed:?}"
+        );
+        let labels = texts(&drawing, Paint::Label);
+        for decade in ["10", "100", "1,000"] {
+            assert!(
+                labels.contains(&decade.to_owned()),
+                "{decade} in {labels:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_log_scale_makes_zero_and_negative_values_counted_gaps() {
+        let chart = data(
+            ChartKind::Lines,
+            XValues::Numbers(vec![1.0, 2.0, 3.0, 4.0]),
+            &[("net", &[Some(10.0), Some(0.0), Some(-5.0), Some(100.0)])],
+        );
+        let options = LayoutOptions {
+            y_scale: YScale::Log,
+            ..LayoutOptions::default()
+        };
+        let drawing = layout(&chart, &options, SIZE, &Fixed);
+
+        let placed = drawing.values[0].iter().flatten().count();
+        assert_eq!(placed, 2, "zero and the negative value have no place");
+        assert_eq!(
+            chart.note(YScale::Log),
+            "Charting 4 rows · 2 gaps in net: zero or negative on a log scale"
+        );
+        assert_eq!(
+            chart.note(YScale::Linear),
+            "Charting 4 rows",
+            "an even axis places all four"
+        );
+    }
+
+    /// With no value a log axis can place, the chart draws no points and the note says why.
+    #[test]
+    fn a_log_axis_with_nothing_to_place_draws_no_points() {
+        let chart = data(
+            ChartKind::Lines,
+            XValues::Numbers(vec![1.0, 2.0]),
+            &[("net", &[Some(0.0), Some(-5.0)])],
+        );
+        let options = LayoutOptions {
+            y_scale: YScale::Log,
+            ..LayoutOptions::default()
+        };
+        let drawing = layout(&chart, &options, SIZE, &Fixed);
+
+        assert!(drawing.values[0].iter().all(Option::is_none));
+        assert!(
+            !drawing
+                .marks
+                .iter()
+                .any(|mark| matches!(mark, Mark::Polyline { .. } | Mark::Circle { .. })),
+            "nothing is drawn where nothing can be placed"
+        );
+        assert!(
+            chart
+                .note(YScale::Log)
+                .contains("2 gaps in net: zero or negative")
+        );
+    }
+
+    /// A log axis's granularity is the decade, so the only way its labels stay readable is to
+    /// show fewer of them when there is less room. At every size, none sits within a line of
+    /// the next.
+    #[test]
+    fn a_log_axis_labels_never_crowd_each_other() {
+        let chart = data(
+            ChartKind::Scatter,
+            XValues::Numbers(vec![1.0, 2.0, 3.0]),
+            &[("price", &[Some(12.0), Some(89.0), Some(1290.0)])],
+        );
+        let options = LayoutOptions {
+            y_scale: YScale::Log,
+            ..LayoutOptions::default()
+        };
+        for height in [120.0_f32, 200.0, 400.0, 900.0] {
+            let size = Size {
+                width: 600.0,
+                height,
+            };
+            let drawing = layout(&chart, &options, size, &Fixed);
+            // A value label is the one anchored at the axis it labels; the categories' are
+            // centred under theirs.
+            let mut placed: Vec<f32> = drawing
+                .marks
+                .iter()
+                .filter_map(|mark| match mark {
+                    Mark::Text {
+                        at,
+                        anchor: Anchor::End,
+                        paint: Paint::Label,
+                        ..
+                    } => Some(at.y),
+                    _ => None,
+                })
+                .collect();
+            placed.sort_by(f32::total_cmp);
+            assert!(placed.len() >= 2, "at {height}: {placed:?}");
+            for pair in placed.windows(2) {
+                assert!(
+                    pair[1] - pair[0] >= Fixed.line_height(),
+                    "at {height}, labels {:?} are within a line of each other",
+                    pair
+                );
+            }
+        }
     }
 }

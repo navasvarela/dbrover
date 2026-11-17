@@ -5,7 +5,7 @@ use std::fmt;
 
 use super::ChartSpec;
 use crate::choice::{starting_x, starting_ys};
-use crate::{ChartKind, Choice, Column, LayoutOptions, Role, STARTING_SERIES};
+use crate::{ChartKind, Choice, Column, LayoutOptions, Role, STARTING_SERIES, YScale};
 
 /// A spec's chart of one result.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,6 +101,7 @@ impl ChartSpec {
             x_title: self.x_title.clone(),
             y_title: self.y_title.clone(),
             y_zero: self.y_zero,
+            y_scale: self.y_scale,
         }
     }
 }
@@ -241,12 +242,31 @@ impl Named {
         if let Some(problem) = stack_problem(spec.stack, kind) {
             return Err(vec![problem]);
         }
+        if let Some(problem) = scale_problem(spec.y_scale, kind) {
+            return Err(vec![problem]);
+        }
         Ok(Choice {
             series: self.series,
             stack: spec.stack.unwrap_or(false),
             ..Choice::of(kind, x, ys)
         })
     }
+}
+
+/// A log scale the kind can't honour.
+///
+/// A bar's length and a band's thickness are read as ratios from the zero line, and one grown
+/// from a log axis's arbitrary baseline misstates exactly that; a stacked band's sum is not the
+/// sum of its positions either. So the bar kinds and an area refuse a log scale rather than
+/// draw it wrong: whatever a key can say, the layout must be able to draw.
+fn scale_problem(scale: YScale, kind: ChartKind) -> Option<ColumnProblem> {
+    let drawn = match (scale, kind) {
+        (YScale::Log, ChartKind::Bars | ChartKind::Hbars | ChartKind::Area) => kind.spec_name(),
+        _ => return None,
+    };
+    Some(ColumnProblem {
+        detail: format!("`y_scale = \"log\"` draws lines or a scatter; this chart draws {drawn}"),
+    })
 }
 
 /// What `stack` and `kind` together can't mean.
@@ -836,5 +856,36 @@ mod tests {
         let choice = choice(&spec);
         assert!(choice.stacked());
         assert!(!choice.stack, "nothing asked for it");
+    }
+
+    #[test]
+    fn a_log_scale_is_refused_where_a_length_is_read_from_zero() {
+        let spec = |kind: ChartKind| ChartSpec {
+            kind: Some(kind),
+            y: vec!["net".to_owned()],
+            y_scale: YScale::Log,
+            ..ChartSpec::default()
+        };
+        let refused = |drawn: &str| {
+            format!("chart: `y_scale = \"log\"` draws lines or a scatter; this chart draws {drawn}")
+        };
+        let cases = [
+            (ChartKind::Lines, None),
+            (ChartKind::Scatter, None),
+            (ChartKind::Bars, Some(refused("bars"))),
+            (ChartKind::Hbars, Some(refused("hbars"))),
+            (ChartKind::Area, Some(refused("area"))),
+        ];
+        for (kind, expected) in cases {
+            let resolved = resolve(&spec(kind));
+            match expected {
+                Some(problem) => assert_eq!(
+                    resolved.err().as_deref(),
+                    Some(&[problem][..]),
+                    "{kind:?} on a log scale"
+                ),
+                None => assert!(resolved.is_ok(), "{kind:?} on a log scale: {resolved:?}"),
+            }
+        }
     }
 }

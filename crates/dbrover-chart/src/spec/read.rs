@@ -7,7 +7,7 @@ use std::ops::Range;
 use toml_edit::{Document, Item, Table, Value};
 
 use super::{ChartSpec, Key, SPEC_TABLE, Sort, SpecProblem};
-use crate::ChartKind;
+use crate::{ChartKind, YScale};
 
 /// A misspelt key is suggested when it is at most this many letters' edits from a key: `ys`
 /// and `kinds` are one away. Three would suggest `x` for any key of up to three letters.
@@ -37,6 +37,7 @@ impl ChartSpec {
         })?;
         let mut reader = Reader::default();
         let spec = document_spec(text, &document, &mut reader);
+        reader.contradictions(&spec);
         let mut problems: Vec<SpecProblem> = reader
             .problems
             .into_iter()
@@ -71,6 +72,7 @@ impl ChartSpec {
             };
             reader.key(&mut spec, key, &TomlValue { value, key: name });
         }
+        reader.contradictions(&spec);
         if reader.problems.is_empty() {
             Ok(spec)
         } else {
@@ -103,6 +105,7 @@ impl ChartSpec {
             };
             reader.key(&mut spec, key, &JsonValue { value, key: name });
         }
+        reader.contradictions(&spec);
         if reader.problems.is_empty() {
             Ok(spec)
         } else {
@@ -328,12 +331,16 @@ impl KeyValue for JsonValue<'_> {
 /// Reads a spec's keys, collecting a problem, placed by `P`, for each one it can't.
 struct Reader<P> {
     problems: Vec<(P, String)>,
+    /// Where each key that was read came from, so a problem about two of them together can be
+    /// placed at one.
+    places: Vec<(Key, P)>,
 }
 
 impl<P> Default for Reader<P> {
     fn default() -> Self {
         Self {
             problems: Vec::new(),
+            places: Vec::new(),
         }
     }
 }
@@ -354,7 +361,49 @@ impl<P> Reader<P> {
             Key::Stack => spec.stack = Some(self.flag(value, "`stack` is true or false")),
             Key::Sort => spec.sort = self.sort(value),
             Key::Limit => spec.limit = self.limit(value),
+            Key::YScale => spec.y_scale = self.y_scale(value),
         }
+        self.places.push((key, value.place()));
+    }
+
+    fn y_scale<V: KeyValue<Place = P>>(&mut self, value: &V) -> YScale {
+        let scale = value.text().and_then(YScale::from_spec_name);
+        if scale.is_none() {
+            let names: Vec<&str> = YScale::ALL.map(YScale::spec_name).to_vec();
+            let detail = format!("`y_scale` is {}", or_list(&names));
+            self.wrong(value, &detail);
+        }
+        scale.unwrap_or_default()
+    }
+
+    /// Problems no single key has: two keys that each read well and can't both be honoured.
+    /// Each is placed at the key a reader would change, so the editor underlines that one.
+    fn contradictions(&mut self, spec: &ChartSpec)
+    where
+        P: Clone,
+    {
+        if spec.y_zero && spec.y_scale == YScale::Log {
+            let place = self
+                .place_of(Key::YZero)
+                .or_else(|| self.place_of(Key::YScale));
+            if let Some(place) = place {
+                self.problem(
+                    place,
+                    "`y_zero` starts the axis at zero, which a log scale can't reach; set one \
+                     or the other",
+                );
+            }
+        }
+    }
+
+    fn place_of(&self, key: Key) -> Option<P>
+    where
+        P: Clone,
+    {
+        self.places
+            .iter()
+            .find(|(at, _)| *at == key)
+            .map(|(_, place)| place.clone())
     }
 
     fn kind<V: KeyValue<Place = P>>(&mut self, value: &V) -> Option<ChartKind> {
@@ -550,6 +599,7 @@ y_title = "Euros"
 y_zero = true
 sort = "net desc"
 limit = 10
+y_scale = "linear"
 "#,
         );
         assert_eq!(
@@ -569,6 +619,7 @@ limit = 10
                     descending: true,
                 }),
                 limit: Some(10),
+                y_scale: YScale::Linear,
             })
         );
     }
@@ -601,7 +652,7 @@ limit = 10
                 "colour = \"red\"",
                 &[
                     "chart, line 2: no key `colour`; a chart's keys are `kind`, `x`, `y`, \
-                   `series`, `stack`, `title`, `x_title`, `y_title`, `y_zero`, `sort`, `limit`",
+                   `series`, `stack`, `title`, `x_title`, `y_title`, `y_zero`, `sort`, `limit`, `y_scale`",
                 ],
             ),
             (
@@ -841,5 +892,41 @@ limit = 10
         assert_eq!(distance("y_zeroo", "y_zero"), 1);
         assert_eq!(distance("colour", "x"), 6);
         assert_eq!(distance("", "kind"), 4);
+    }
+
+    #[test]
+    fn y_scale_is_linear_or_log_and_quarrels_with_y_zero() {
+        assert_eq!(
+            read("y_scale = \"log\"").map(|spec| spec.y_scale),
+            Ok(YScale::Log)
+        );
+        assert_eq!(
+            read("y_scale = \"linear\"").map(|spec| spec.y_scale),
+            Ok(YScale::Linear)
+        );
+        let cases = [
+            (
+                "y_scale = \"logarithmic\"",
+                "chart, line 2: `y_scale` is linear or log, not \"logarithmic\"",
+            ),
+            (
+                "y_scale = true",
+                "chart, line 2: `y_scale` is linear or log, not true",
+            ),
+            // Two keys that each read well and can't both be honoured, placed at the one a
+            // reader would change.
+            (
+                "y_zero = true\ny_scale = \"log\"",
+                "chart, line 2: `y_zero` starts the axis at zero, which a log scale can't \
+                 reach; set one or the other",
+            ),
+        ];
+        for (keys, expected) in cases {
+            assert_eq!(read(keys), Err(vec![expected.to_owned()]), "{keys}");
+        }
+        assert!(
+            read("y_zero = false\ny_scale = \"log\"").is_ok(),
+            "only `y_zero = true` reaches for zero"
+        );
     }
 }

@@ -167,7 +167,9 @@ mod tests {
     use dbrover_core::{Row, ValueKind};
 
     use super::*;
-    use crate::{ChartData, ChartKind, Choice, Column, LayoutOptions, Role, Size, TextMeasure};
+    use crate::{
+        ChartData, ChartKind, Choice, Column, LayoutOptions, Role, Size, TextMeasure, YScale,
+    };
 
     struct Fixed;
 
@@ -382,6 +384,72 @@ mod tests {
 
         assert_eq!(svg.matches("<polyline ").count(), 1);
         assert_eq!(svg.matches("<circle ").count(), 3);
+    }
+
+    /// A log scatter as a report writes it, byte for byte.
+    ///
+    /// This is the guard for the one platform-dependent number in a chart: a log position needs
+    /// `f64::log10`, whose last bit differs between platforms' maths libraries, and a report's
+    /// SVG is compared byte for byte with a checked-in file. The axis's own ends are powers of
+    /// ten whose exponents come from Rust's own formatting, so only each value's logarithm goes
+    /// through `log10`, and rounding every coordinate to a hundredth of a point swallows a
+    /// difference of that size. CI runs this on Linux, macOS and Windows, which is what makes
+    /// the claim worth anything.
+    const LOG_SCATTER: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="480" height="240" viewBox="0 0 480 240" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<line x1="49.4" y1="174.07" x2="472" y2="174.07" stroke="#d3d7df" stroke-width="1"/>
+<text x="43.4" y="177.92" text-anchor="end" fill="#5c6270">10</text>
+<line x1="49.4" y1="125.15" x2="472" y2="125.15" stroke="#d3d7df" stroke-width="1"/>
+<text x="43.4" y="129" text-anchor="end" fill="#5c6270">100</text>
+<line x1="49.4" y1="76.23" x2="472" y2="76.23" stroke="#d3d7df" stroke-width="1"/>
+<text x="43.4" y="80.08" text-anchor="end" fill="#5c6270">1,000</text>
+<line x1="49.4" y1="27.31" x2="472" y2="27.31" stroke="#d3d7df" stroke-width="1"/>
+<text x="43.4" y="31.16" text-anchor="end" fill="#5c6270">10,000</text>
+<line x1="49.4" y1="174.07" x2="472" y2="174.07" stroke="#5c6270" stroke-width="1"/>
+<text x="57.4" y="190.58" text-anchor="middle" fill="#5c6270">0</text>
+<text x="192.93" y="190.58" text-anchor="middle" fill="#5c6270">10</text>
+<text x="328.47" y="190.58" text-anchor="middle" fill="#5c6270">20</text>
+<text x="464" y="190.58" text-anchor="middle" fill="#5c6270">30</text>
+<circle cx="70.95" cy="170.2" r="4" fill="#2a78d6"/>
+<circle cx="111.61" cy="70.82" r="4" fill="#2a78d6"/>
+<circle cx="179.38" cy="127.63" r="4" fill="#2a78d6"/>
+<circle cx="396.23" cy="85.42" r="4" fill="#2a78d6"/>
+<text x="260.7" y="209.89" text-anchor="middle" fill="#1d1f26">units</text>
+<text x="49.4" y="18.5" text-anchor="start" fill="#1d1f26">price</text>
+<text x="8" y="229.2" text-anchor="start" fill="#5c6270">Charting 5 rows · 1 gap in price: zero or negative on a log scale</text>
+</svg>
+"##;
+
+    #[test]
+    fn writes_a_log_scatter_the_same_bytes_on_every_platform() {
+        // Product prices against their units: three decades of price, with one zero among them
+        // that a log axis has no place for.
+        let rows = rows(&[
+            &["1", "12"],
+            &["4", "1290"],
+            &["9", "89"],
+            &["16", "0"],
+            &["25", "649"],
+        ]);
+        let borrowed: Vec<&Row> = rows.iter().collect();
+        let choice = Choice::of(ChartKind::Scatter, 0, vec![1]);
+        let roles = [Role::Number, Role::Number];
+        let data = ChartData::read(&columns(&["units", "price"]), &roles, &borrowed, &choice);
+        let options = LayoutOptions {
+            y_scale: YScale::Log,
+            ..LayoutOptions::default()
+        };
+        let size = Size {
+            width: 480.0,
+            height: 240.0,
+        };
+
+        let svg = file_svg(&data, &options, size, &data.note(YScale::Log)).unwrap();
+
+        assert_eq!(svg, LOG_SCATTER);
+        // Four of the five rows: the price of zero has no place on a log axis, and the note
+        // says so rather than the row vanishing.
+        assert_eq!(svg.matches("<circle ").count(), 4);
     }
 
     #[test]

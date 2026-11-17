@@ -509,7 +509,7 @@ y = "net"
 | `width`, `height` | Its size in points, from 200 to 4,000. 800 by 450 unless you say. |
 | `scale` | For a PNG: 1, 2 or 3 pixels a point, as **Export ›** offers. 2 unless you say. |
 | `query` | Instead of the report's rows: a DuckDB query over the sources' tables, with the report's `:name` parameters. Needs a `[combine]`. |
-| `kind`, `x`, `y`, `series`, `stack`, `title`, `x_title`, `y_title`, `y_zero`, `sort`, `limit` | The chart itself, as [The keys](charts.md#the-keys) describes them. A key left out takes the value **Chart** would start with. |
+| `kind`, `x`, `y`, `series`, `stack`, `title`, `x_title`, `y_title`, `y_zero`, `sort`, `limit`, `y_scale` | The chart itself, as [The keys](charts.md#the-keys) describes them. A key left out takes the value **Chart** would start with. |
 
 ![The sales-by-category example's chart for October 2026: four bars, bikes far above clothing, parts and accessories, titled Net sales by category, with "Charting 4 rows" under them.](images/report-chart.svg)
 

@@ -141,7 +141,8 @@ pub(crate) fn draw(spec: &ChartSpec, read: &Read<'_>) -> Result<Drawn, ToolError
         .filter_map(|&index| read.rows.get(index))
         .collect();
     let data = ChartData::read(&columns, &roles, &rows, &resolved.choice);
-    let mut note = data.note();
+    let scale = resolved.options.y_scale;
+    let mut note = data.note(scale);
     if let Some(arranged) = resolved.arrangement(&columns) {
         note.push_str(&format!(" · {arranged}"));
     }
@@ -167,7 +168,7 @@ pub(crate) fn draw(spec: &ChartSpec, read: &Read<'_>) -> Result<Drawn, ToolError
         "points": data.len(),
         "truncated": read.truncated,
         "truncated_reason": cut,
-        "left_out": data.left_out(),
+        "left_out": data.left_out(scale),
         "note": note,
         "width": SIZE.width,
         "height": SIZE.height,

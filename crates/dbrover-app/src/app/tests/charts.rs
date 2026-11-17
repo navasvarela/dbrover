@@ -266,6 +266,60 @@ fn a_chart_block_opens_its_chart_and_save_to_query_writes_it_back() {
     );
 }
 
+/// Every product's net sales against its price, on a log scale: the nets span decades, and the
+/// bell, which is never ordered, has none, so a log axis has no place for it.
+const SHOP_PRICES: &str = "-- [chart]
+-- kind = \"scatter\"
+-- x = \"price\"
+-- y = \"net\"
+-- y_scale = \"log\"
+SELECT p.price, COALESCE(SUM(l.amount), 0) AS net
+FROM products p LEFT JOIN order_lines l ON l.product_id = p.id
+GROUP BY p.id, p.price ORDER BY p.price;";
+
+/// CH5d's exit: a scatter on a log scale draws its decades, and the one zero in the column is a
+/// gap the line under the chart names rather than a row that quietly vanishes.
+#[test]
+fn a_log_scale_draws_decades_and_names_the_zero_it_cannot_place() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(dir.path(), SHOP);
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    console_with(&mut harness, "shop", SHOP_PRICES);
+    harness.get_by_label("Run").click();
+    step_until(&mut harness, "the log chart", |harness| {
+        shown_chart(harness).is_some()
+    });
+
+    let drawing = shown_chart(&harness).unwrap();
+    let dots = drawing
+        .marks
+        .iter()
+        .filter(|mark| matches!(mark, Mark::Circle { .. }))
+        .count();
+    assert_eq!(dots, 7, "eight products, and the bell's zero has no place");
+    let (_, _, texts) = marks(&drawing);
+    let decades: Vec<&String> = texts
+        .iter()
+        .filter(|text| {
+            text.chars().all(|c| c.is_ascii_digit() || c == ',')
+                && text.starts_with('1')
+                && text
+                    .trim_start_matches(['1', ','])
+                    .chars()
+                    .all(|c| c == '0')
+        })
+        .collect();
+    assert!(
+        decades.len() >= 2,
+        "the axis is labelled by powers of ten: {texts:?}"
+    );
+    step_until_visible(
+        &mut harness,
+        "1 gap in net: zero or negative on a log scale",
+    );
+}
+
 /// Category shares by month on the shop, as a stacked area: the same `GROUP BY` shape as the
 /// stacked bars, drawn as filled bands.
 const SHOP_SHARES: &str = "-- [chart]
