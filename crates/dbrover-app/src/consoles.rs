@@ -541,6 +541,12 @@ impl Consoles {
                 self.open.get_mut(key)?.save_chart_to_query(Instant::now());
                 None
             }
+            ConsoleAction::Summarise { summary, column } => {
+                self.open
+                    .get_mut(key)?
+                    .summarise_column(summary, &column, Instant::now());
+                None
+            }
             ConsoleAction::CompletionAccepted(candidate) => {
                 self.recent_completions.record(&candidate);
                 None

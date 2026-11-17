@@ -1136,7 +1136,7 @@ mod test_language {
             assert_eq!(lines.lines().count(), 2);
             assert!(copy_as(&mut console, ClipboardFormat::SqlInsert).is_none());
             assert_eq!(
-                console.export_status,
+                console.written_status,
                 Some(Err("Not for documents, which have no table".to_owned()))
             );
         }

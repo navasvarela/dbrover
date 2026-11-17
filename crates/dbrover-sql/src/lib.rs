@@ -29,6 +29,7 @@ mod password;
 mod projection;
 mod safety;
 mod split;
+mod summarise;
 mod transaction;
 
 pub use arrange::{Arranged, Arrangement, SortOrder, arrange, can_arrange};
@@ -58,4 +59,5 @@ pub use password::ScramVerifier;
 pub use projection::{ProjectionItem, projection};
 pub use safety::{Hazard, hazard};
 pub use split::{split_statements, statement_at};
+pub use summarise::{BUCKET_COUNTS, Summarised, Summary};
 pub use transaction::{commits_implicitly, controls_transactions};

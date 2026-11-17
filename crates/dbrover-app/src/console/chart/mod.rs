@@ -15,7 +15,7 @@ use dbrover_chart::{
 use dbrover_core::{ColumnInfo, Row, ValueKind};
 use dbrover_engine::Picture;
 use dbrover_picture::Rgb;
-use dbrover_sql::Dialect;
+use dbrover_sql::{BUCKET_COUNTS, Dialect, Summary};
 use egui::{Align2, Color32, FontId, Galley, Painter, Pos2, Sense, Stroke, TextStyle, Ui, Vec2};
 
 use self::block::QuerySpec;
@@ -34,6 +34,9 @@ pub struct ChartTab {
     view: Option<ChartView>,
     /// Why **Save to query** wrote nothing, until it is tried again.
     save_error: Option<String>,
+    /// **Summarise** puts its statement on the clipboard rather than in the text, for anyone
+    /// who would rather their file wasn't touched.
+    summarise_copies: bool,
 }
 
 /// A chart's columns and choice, kept from one run of a console to the next.
@@ -46,10 +49,15 @@ struct Remembered {
 }
 
 /// What the toolbar asks of the console, beyond the chart itself.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChartAction {
     Export(PictureFormat),
     SaveToQuery,
+    /// Writes a summary of `column` as a statement below the one that ran (CH5f).
+    Summarise {
+        summary: Summary,
+        column: String,
+    },
 }
 
 impl ChartTab {
@@ -67,6 +75,7 @@ impl ChartTab {
             spec: None,
             view: None,
             save_error: None,
+            summarise_copies: self.summarise_copies,
         }
     }
 
@@ -187,6 +196,9 @@ impl ChartTab {
 pub struct Source<'a> {
     pub columns: &'a [ColumnInfo],
     pub rows: &'a [Row],
+    /// The statement that returned the rows, which **Summarise** reads every row of by
+    /// wrapping it.
+    pub sql: &'a str,
     /// The grid's order: indexes into `rows`, sorted and filtered.
     pub order: &'a [usize],
     /// The language's SQL dialect, which names its types' kinds; `None` reads every column's
@@ -459,6 +471,12 @@ pub fn controls(ui: &mut Ui, tab: &mut ChartTab, source: &Source<'_>) -> Option<
     let save_error = tab.save_error.clone();
     let view = tab.view(source);
     let drawn = view.laid_out.is_some();
+    // The chart's first Y column, before the toolbar borrows the choice: what **Summarise**
+    // summarises.
+    let chart_column = view.choice.as_ref().and_then(|choice| {
+        let y = *choice.ys.first()?;
+        Some(column_name(&view.columns, y).to_owned())
+    });
     let choice = view.choice.as_mut()?;
     kind_picker(ui, choice);
     ui.separator();
@@ -494,7 +512,63 @@ pub fn controls(ui: &mut Ui, tab: &mut ChartTab, source: &Source<'_>) -> Option<
     if let Some(format) = export_menu(ui, drawn) {
         action = Some(ChartAction::Export(format));
     }
+    if let Some(asked) = summarise_menu(ui, &mut tab.summarise_copies, source, &chart_column) {
+        action = Some(asked);
+    }
     action
+}
+
+/// **Summarise ›**: a distribution or the percentiles of the chart's first Y column, as a
+/// statement written below the one that ran — or copied, for anyone who would rather their file
+/// wasn't touched.
+///
+/// The chart's own Y column rather than a list of every column of numbers: the menu is beside a
+/// chart that is already about that column, and the grid's header is where another one is
+/// picked.
+fn summarise_menu(
+    ui: &mut Ui,
+    copies: &mut bool,
+    source: &Source<'_>,
+    column: &Option<String>,
+) -> Option<ChartAction> {
+    let (Some(column), Some(dialect)) = (column.as_ref(), source.dialect) else {
+        return None;
+    };
+    let mut asked = None;
+    let summaries = BUCKET_COUNTS
+        .map(|buckets| Summary::Distribution { buckets })
+        .into_iter()
+        .chain([Summary::Percentiles]);
+    widgets::menu_button(ui, "Summarise", |ui| {
+        for summary in summaries {
+            let refusal = summary.refusal(dialect);
+            let item = ui.add_enabled(refusal.is_none(), egui::Button::new(summary.label()));
+            let item = match &refusal {
+                Some(reason) => item.on_disabled_hover_text(reason),
+                None => item,
+            };
+            if item.clicked() {
+                match summary.sql(dialect, source.sql, column).filter(|_| *copies) {
+                    Some(summarised) => ui.ctx().copy_text(summarised.sql),
+                    None => {
+                        asked = Some(ChartAction::Summarise {
+                            summary,
+                            column: column.clone(),
+                        });
+                    }
+                }
+            }
+        }
+        ui.separator();
+        ui.checkbox(copies, "Copy the SQL instead")
+            .on_hover_text("Put the statement on the clipboard rather than in the query");
+    })
+    .response
+    .on_hover_text(format!(
+        "Write a statement below this one summarising {column}, which sees every row rather \
+         than the page the grid holds"
+    ));
+    asked
 }
 
 /// "Not in the query" and **Save to query**, while the chart isn't its block's: there is no
@@ -1169,6 +1243,7 @@ mod tests {
             let mut tab = ChartTab::default().with_spec(spec.clone());
             let before = Source {
                 columns: &columns,
+                sql: "SELECT month, net FROM sales",
                 rows: &[],
                 order: &[],
                 dialect: None,
@@ -1199,6 +1274,7 @@ mod tests {
         let mut tab = ChartTab::default();
         let first = Source {
             columns: &columns,
+            sql: "SELECT month, net FROM sales",
             rows: &rows[..1],
             order: &order[..1],
             dialect: None,

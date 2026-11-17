@@ -283,6 +283,84 @@ fn a_chart_block_opens_its_chart_and_save_to_query_writes_it_back() {
     );
 }
 
+/// Every product's price on the shop: `price` is the column a distribution is worth looking at,
+/// and the chart's Y, so the toolbar's **Summarise** is about it.
+const SHOP_PRICES_ONLY: &str = "SELECT name, price FROM products;";
+
+/// CH5f's exit: **Summarise › Distribution** on a price column writes a bucketing statement
+/// below the original, which runs and opens as bars, with the original untouched and one undo
+/// taking the whole insertion back.
+#[test]
+fn summarise_writes_a_distribution_below_the_statement_that_one_undo_takes_back() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(dir.path(), SHOP);
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    console_with(&mut harness, "shop", SHOP_PRICES_ONLY);
+    harness.get_by_label("Run").click();
+    step_until_visible(&mut harness, "1290");
+    // The statement has no block, so the result opens on the grid; **Summarise** sits beside
+    // the chart's toolbar, and in the grid's own column header.
+    harness.get_by_label("Chart").click();
+    step_until(&mut harness, "the prices charted", |harness| {
+        shown_chart(harness).is_some()
+    });
+
+    harness.get_by_label("Summarise").click();
+    harness.run_steps(2);
+    harness.get_by_label("Distribution into 10 buckets").click();
+    step_until(&mut harness, "the summary to be written", |harness| {
+        editor_text(harness).contains("WITH summarised AS (")
+    });
+    let written = editor_text(&harness);
+    assert!(
+        written.starts_with(SHOP_PRICES_ONLY),
+        "the statement that ran is untouched, byte for byte: {written:?}"
+    );
+    assert!(written.contains("-- [chart]"), "{written}");
+    assert!(written.contains("-- x = \"bucket\""), "{written}");
+    assert!(written.contains("-- y = \"row_count\""), "{written}");
+    // The range is the engine's to work out, never a number read off the page.
+    assert!(
+        written.contains("MIN(price)") && written.contains("MAX(price)"),
+        "{written}"
+    );
+    step_until_visible(
+        &mut harness,
+        "Distribution into 10 buckets written at line 3",
+    );
+
+    // One undo takes the block and the statement back together.
+    harness.get_by_role(Role::MultilineTextInput).focus();
+    harness.run_steps(2);
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+    step_until(
+        &mut harness,
+        "undo to take the whole insertion back",
+        |harness| editor_text(harness) == SHOP_PRICES_ONLY,
+    );
+
+    // What it wrote is ordinary SQL, and on its own it runs and opens as the bars its block
+    // asks for.
+    let summary = written[SHOP_PRICES_ONLY.len()..].trim().to_owned();
+    replace_text(&mut harness, &summary);
+    harness.get_by_label("Run").click();
+    step_until(&mut harness, "the distribution charted", |harness| {
+        shown_chart(harness).is_some_and(|drawing| {
+            drawing
+                .marks
+                .iter()
+                .any(|mark| matches!(mark, Mark::Rect { .. }))
+        })
+    });
+    let (bars, lines, texts) = marks(&shown_chart(&harness).unwrap());
+    assert!(bars > 1 && lines == 0, "bars of the buckets: {texts:?}");
+    assert!(
+        texts.iter().any(|text| text == "bucket") && texts.iter().any(|text| text == "row_count"),
+        "the bucketing statement's own columns: {texts:?}"
+    );
+}
+
 /// Net sales by month and category, with the first category picked out in a brand's red.
 const SHOP_RED_FIRST: &str = "-- [chart]
 -- kind = \"bars\"
