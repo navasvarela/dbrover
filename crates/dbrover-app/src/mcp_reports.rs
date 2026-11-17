@@ -12,7 +12,7 @@ use dbrover_report::{Plan, RunEvent, RunFailure, Step, TypedValues};
 use dbrover_store::{AppPaths, ReportName, RunOrigin};
 
 use crate::report_command::history::RunHistory;
-use crate::report_command::{self, list};
+use crate::report_command::{self, kept, list};
 use crate::reports;
 
 pub struct McpReports {
@@ -40,6 +40,7 @@ impl ReportRunner for McpReports {
                     .collect(),
                 data_sources: report.data_sources,
                 problems: report.problems,
+                quiet_hints: kept::quiet_hints(&report.path),
             })
             .collect())
     }

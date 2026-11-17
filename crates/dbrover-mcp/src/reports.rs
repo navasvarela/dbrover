@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use dbrover_report::{RunEvent, RunFailure, TypedValues};
+use dbrover_report::{HintId, RunEvent, RunFailure, TypedValues};
 use rmcp::schemars;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -59,6 +59,9 @@ pub struct ReportListing {
     pub data_sources: Option<Vec<String>>,
     /// What keeps it from running; empty when it can.
     pub problems: Vec<String>,
+    /// The hints its `[report] quiet_hints` silences, so the tools that answer hints can mark
+    /// them without reading the file themselves (RS8c).
+    pub quiet_hints: Vec<HintId>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -74,7 +77,7 @@ pub(crate) struct RunReportArgs {
 
 impl DbRoverMcp {
     /// The reports this project sees: those whose every data source is one of its own.
-    fn project_reports(&self, tool: &str) -> Result<Vec<ReportListing>, ToolError> {
+    pub(crate) fn project_reports(&self, tool: &str) -> Result<Vec<ReportListing>, ToolError> {
         let Some(runner) = &self.inner.reports else {
             return Ok(Vec::new());
         };

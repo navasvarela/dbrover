@@ -16,6 +16,7 @@ dbrover-chart.workspace = true
 dbrover-core.workspace = true
 dbrover-engine.workspace = true
 dbrover-export.workspace = true
+dbrover-insight.workspace = true
 dbrover-language.workspace = true
 dbrover-picture.workspace = true
 # The events of a report's run, which run_report reads.
@@ -37,6 +38,7 @@ dbrover-cloud.workspace = true
 dbrover-driver-duckdb.workspace = true
 dbrover-language = { workspace = true, features = ["test-language"] }
 rmcp = { workspace = true, features = ["client", "transport-child-process"] }
+jiff.workspace = true
 rusqlite.workspace = true
 tempfile.workspace = true
 tracing-subscriber = { workspace = true, features = ["fmt"] }
@@ -86,6 +88,10 @@ harness = false
 
 [[test]]
 name = "reports"
+harness = false
+
+[[test]]
+name = "report_history"
 harness = false
 
 [[test]]

@@ -11,7 +11,7 @@ mod args;
 mod explain;
 pub(crate) mod history;
 mod human;
-mod kept;
+pub(crate) mod kept;
 pub(crate) mod list;
 mod outcome;
 mod printer;

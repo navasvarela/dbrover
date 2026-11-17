@@ -18,6 +18,7 @@ mod chart;
 mod connections;
 mod execute;
 mod project;
+mod report_history;
 mod reports;
 mod scope;
 mod server;
@@ -126,7 +127,13 @@ where
         &project.data_sources,
     );
     connections.sweep_idle();
-    let server = DbRoverMcp::new(project, Arc::clone(&connections), audit, config.reports);
+    let server = DbRoverMcp::new(
+        project,
+        Arc::clone(&connections),
+        audit,
+        config.reports,
+        config.history,
+    );
     let running = server
         .serve(transport)
         .await

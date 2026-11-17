@@ -177,7 +177,7 @@ fn listed(paths: &AppPaths, report: &ReportArg) -> Result<ReportName, Problem> {
 }
 
 /// The hints `report`'s file silences; none when it can't be read.
-pub(super) fn quiet_hints(report: &Path) -> Vec<HintId> {
+pub(crate) fn quiet_hints(report: &Path) -> Vec<HintId> {
     std::fs::read_to_string(report)
         .ok()
         .and_then(|text| read_report(&text).ok())
