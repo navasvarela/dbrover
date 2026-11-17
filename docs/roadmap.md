@@ -2737,8 +2737,43 @@ measurement.
   Checked on macOS against Athena's replayed exchanges with MinIO beside them; not against a
   live Athena or BigQuery account, nor against S3 or Cloud Storage themselves, and not on
   Windows or Linux.
-- **RS8 — Reports over MCP:** read-only tools to list, explain and compare reports and their
-  runs, and the decision on MCP clients running them.
+- **RS8 — Reports over MCP:** built on 2026-11-17, in layers RS8a to RS8f. Four read-only
+  tools join the `list_reports` that existed, so an assistant asked to make a report faster
+  reads what its runs measured instead of guessing: `report_runs` (the kept runs, newest
+  first, with the step that held each one and any step slower than its median),
+  `report_profile` (one run in full, with the data funnel and the hints its numbers give),
+  `compare_report_runs` (two runs side by side) and `explain_report` (the report planned
+  without running it, each estimate beside its data source's limit). All four come with
+  **Read**: reading what a run measured is not running one, and explaining sends no statement
+  that reads data. Three of them read `history.sqlite` directly, which the server already
+  opens for its audit log, so they answer with no app running; `explain_report` goes through
+  the worker, as `dbrover report explain` does. Each answers the same JSON the command line
+  writes, from `dbrover-insight`, a new crate holding the rules over a kept run — the hints,
+  the timeline, the funnel, the comparison and the explanation — which both the app and
+  `dbrover mcp` now depend on, since no existing crate could depend on `dbrover-store`,
+  `dbrover-plan` and `dbrover-report` at once.
+
+  **The decision on MCP clients running reports was already made,** which reading the plan
+  against the code found: RP4j answered it with RP5 on 2026-11-04 and built it — `run_report`
+  behind the project permission **Run reports**, off by default, its route removed from the
+  server entirely where the permission is off. RS8 records the question closed in
+  [Reports at scale](reports-at-scale.md#open-questions) and changes nothing about it.
+
+  **Demo note.** Make the SQLite **shop** from `examples/reports/shop.sql` as the manual's
+  "Your first report" says, copy `sales-by-week.toml` into the reports folder, and run it two
+  or three times for different periods. Switch the project's MCP on but leave **Run reports**
+  off, and ask an assistant what the report's runs say: `report_runs` gives the runs,
+  `report_profile` the newest one's funnel — 720 rows read, 238 used by the combine, 20
+  written — and its bottleneck, `compare_report_runs` the combine's rows up 180% between a
+  one-month and a three-month run, and `explain_report` SQLite's plan for the source and
+  DuckDB's for the combine, with no `run_report` offered at all.
+
+  **What RS8 doesn't carry** is in
+  [RS8's remaining gaps](reports-at-scale.md#rs8s-remaining-gaps): two combines' plans are not
+  diffed, a run going on is not visible over MCP, and nothing over MCP resumes or discards a
+  kept work folder. Checked against the SQLite shop on macOS with a real settings folder, and
+  against a stand-in worker in the tests; not against a live warehouse, where a source's
+  estimate comes from the engine's own cost guard, and not on Windows or Linux beyond CI.
 - **RS9 — Composing reports:** a report used as another's source, by name, with its
   parameters bound, run in the same worker and DuckDB; only its result is visible to the outer
   report. Later, `reuse = "24h"` takes a recent result from RS5's cache. Independent of the
