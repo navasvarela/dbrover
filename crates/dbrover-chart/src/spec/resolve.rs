@@ -102,6 +102,7 @@ impl ChartSpec {
             y_title: self.y_title.clone(),
             y_zero: self.y_zero,
             y_scale: self.y_scale,
+            colours: self.colours.clone(),
         }
     }
 }
@@ -887,5 +888,22 @@ mod tests {
                 None => assert!(resolved.is_ok(), "{kind:?} on a log scale: {resolved:?}"),
             }
         }
+    }
+
+    #[test]
+    fn a_specs_colours_reach_the_layouts_options() {
+        let red = dbrover_picture::Rgb(0xe3, 0x49, 0x48);
+        let spec = ChartSpec {
+            colours: vec![red],
+            ..ChartSpec::default()
+        };
+
+        let resolved = resolve(&spec).unwrap();
+
+        assert_eq!(resolved.options.colours, vec![red]);
+        assert!(
+            ChartSpec::default().layout_options().colours.is_empty(),
+            "a spec that names none leaves the theme's alone"
+        );
     }
 }
