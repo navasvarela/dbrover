@@ -1,6 +1,6 @@
-//! `report_runs` and `report_profile`, driven as a client would (RS8c): what a report's kept
-//! runs say, read by the server from the history DbRover already keeps, and refused for a
-//! report the project isn't shown.
+//! `report_runs`, `report_profile` and `compare_report_runs`, driven as a client would (RS8c,
+//! RS8d): what a report's kept runs say, read by the server from the history DbRover already
+//! keeps, and refused for a report the project isn't shown.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -11,7 +11,7 @@ use std::num::NonZeroU32;
 use std::path::Path;
 use std::time::Duration;
 
-use dbrover_core::{ConnectionConfig, ProjectId, SqliteConfig};
+use dbrover_core::{BlobId, ConnectionConfig, ProjectId, SqliteConfig};
 use dbrover_store::{
     CombineMetrics, HistoryFile, OutputMetrics, Project, ProjectSlug, Projects, ReportName,
     ReportRun, RunOrigin, RunOutcome, RunProfile, SourceMetrics, SourcePhases, StepMetrics,
@@ -71,7 +71,13 @@ fn combine(rows: u64, elapsed_ms: u64) -> CombineMetrics {
 /// A finished run of `report` whose one source read 200,000 rows for the 12 the output writes,
 /// which is `source-reads-more`'s case, and whose source spent `server_ms` of its time before
 /// its first row, which is `slow-first-row`'s.
-fn run(report: &str, started_at: Timestamp, elapsed_ms: u64, server_ms: u64) -> ReportRun {
+fn run(
+    report: &str,
+    started_at: Timestamp,
+    elapsed_ms: u64,
+    server_ms: u64,
+    file: &str,
+) -> ReportRun {
     ReportRun {
         id: None,
         report: ReportName::new(report).unwrap(),
@@ -93,7 +99,7 @@ fn run(report: &str, started_at: Timestamp, elapsed_ms: u64, server_ms: u64) -> 
             }),
         ],
         origin: RunOrigin::Command,
-        version: None,
+        version: Some(BlobId::of(file.as_bytes())),
         profile: RunProfile {
             peak_memory: Some(300 << 20),
             cores: Some(8),
@@ -109,12 +115,15 @@ fn keep_runs(dir: &Path) -> Vec<i64> {
     let history = HistoryFile::new(dir.join("history.sqlite")).open().unwrap();
     let kept = NonZeroU32::new(50).unwrap();
     let base = Timestamp::constant(1_762_000_000, 0);
-    for (minutes, elapsed_ms, server_ms) in
-        [(0, 4_000, 100), (10, 4_200, 120), (20, 30_000, 28_000)]
-    {
+    // The newest run ran a changed report file, which is what `file_changed` reports.
+    for (minutes, elapsed_ms, server_ms, file) in [
+        (0, 4_000, 100, "first"),
+        (10, 4_200, 120, "first"),
+        (20, 30_000, 28_000, "edited"),
+    ] {
         let started = base + Duration::from_secs(minutes * 60);
         history
-            .record_run(&run("sales", started, elapsed_ms, server_ms), kept)
+            .record_run(&run("sales", started, elapsed_ms, server_ms, file), kept)
             .unwrap();
     }
     history
@@ -293,6 +302,86 @@ async fn answers_what_a_reports_runs_measured() {
         assert!(message.contains("sales"), "{refused}");
         assert!(!message.contains("warehouse"), "{refused}");
     }
+
+    assert!(
+        tools.contains(&"compare_report_runs".to_owned()),
+        "{tools:?}"
+    );
+    // The newest run took 30 s against the oldest's 4 s, and its source held the difference.
+    // The run ids are the pair the client is given, and the changes are `compare`'s own, which
+    // the tab's Compare and `dbrover report compare` show from the same function.
+    let compared = ok(
+        client,
+        "compare_report_runs",
+        json!({"report": "sales", "before": ids[2], "after": ids[0]}),
+    )
+    .await;
+    assert_eq!(compared["before"], ids[2], "{compared}");
+    assert_eq!(compared["after"], ids[0], "{compared}");
+    assert_eq!(
+        compared["file_changed"], true,
+        "the file was edited: {compared}"
+    );
+    let elapsed = compared["run"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|change| change["what"] == "time")
+        .unwrap();
+    assert_eq!(elapsed["before"], 4_000, "{compared}");
+    assert_eq!(elapsed["after"], 30_000, "{compared}");
+    assert_eq!(elapsed["marked"], true, "past half again: {compared}");
+    let source = compared["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["step"] == "Source lines")
+        .unwrap();
+    assert!(
+        source["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|change| change["what"] == "time" && change["marked"] == true),
+        "{compared}"
+    );
+    // Both runs ran for the same `since`, so nothing differs in the parameters.
+    assert!(
+        compared["params"].as_array().unwrap().is_empty(),
+        "{compared}"
+    );
+
+    let unchanged = ok(
+        client,
+        "compare_report_runs",
+        json!({"report": "sales", "before": ids[2], "after": ids[1]}),
+    )
+    .await;
+    assert_eq!(
+        unchanged["file_changed"], false,
+        "the same file ran: {unchanged}"
+    );
+
+    // A run id of another report's, or of none, is refused the same way a profile's is.
+    let missing = failure(
+        client,
+        "compare_report_runs",
+        json!({"report": "sales", "before": ids[0], "after": 999_999}),
+    )
+    .await;
+    assert_eq!(missing["kind"], "invalid_arguments", "{missing}");
+    let refused = failure(
+        client,
+        "compare_report_runs",
+        json!({"report": "elsewhere", "before": 1, "after": 2}),
+    )
+    .await;
+    assert!(
+        refused["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("has no report \"elsewhere\"")),
+        "{refused}"
+    );
 
     server.stop().await;
 }

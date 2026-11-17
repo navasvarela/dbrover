@@ -187,6 +187,7 @@ async fn serves_a_project_over_stdio_with_no_window() {
         names,
         [
             "chart",
+            "compare_report_runs",
             "describe_table",
             "explain",
             "get_definition",

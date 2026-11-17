@@ -11,7 +11,7 @@ use dbrover_core::ByteCount;
 use dbrover_report::grouped;
 use dbrover_store::{ReportRun, RunOutcome, StepMetrics};
 
-use crate::insights::{StepKey, own_time, seconds, step_keys};
+use crate::insights::{StepKey, millis, own_time, seconds, step_keys};
 
 /// A change past this share of the number before it is marked: half again, or half less.
 const MARKED_CHANGE: f64 = 0.5;
@@ -145,10 +145,6 @@ pub fn compare(before: &ReportRun, after: &ReportRun) -> Comparison {
             .zip(after.version)
             .map(|(before, after)| before != after),
     }
-}
-
-fn millis(run: &ReportRun) -> u64 {
-    u64::try_from(run.elapsed.as_millis()).unwrap_or(u64::MAX)
 }
 
 fn has_a_number(change: &Change) -> bool {
