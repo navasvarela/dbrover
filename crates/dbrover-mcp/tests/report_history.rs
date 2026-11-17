@@ -1,6 +1,7 @@
-//! `report_runs`, `report_profile` and `compare_report_runs`, driven as a client would (RS8c,
-//! RS8d): what a report's kept runs say, read by the server from the history DbRover already
-//! keeps, and refused for a report the project isn't shown.
+//! The read-only report tools, driven as a client would (RS8c, RS8d, RS8e): what a report's
+//! kept runs say, read by the server from the history DbRover already keeps; two runs
+//! compared; a report planned without running it; and every one of them refused for a report
+//! the project isn't shown.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -295,12 +296,26 @@ async fn answers_what_a_reports_runs_measured() {
 
     // A report of another project is refused in `run_report`'s words, naming only the reports
     // this project is shown, so the answer never says whether `elsewhere` exists.
-    for tool in ["report_runs", "report_profile"] {
-        let refused = failure(client, tool, json!({"report": "elsewhere"})).await;
+    for (tool, args) in [
+        ("report_runs", json!({"report": "elsewhere"})),
+        ("report_profile", json!({"report": "elsewhere"})),
+        (
+            "compare_report_runs",
+            json!({"report": "elsewhere", "before": 1, "after": 2}),
+        ),
+        (
+            "explain_report",
+            json!({"report": "elsewhere", "params": {"since": "2026-10-01"}}),
+        ),
+    ] {
+        let refused = failure(client, tool, args).await;
         let message = refused["message"].as_str().unwrap();
         assert!(message.contains("has no report \"elsewhere\""), "{refused}");
         assert!(message.contains("sales"), "{refused}");
         assert!(!message.contains("warehouse"), "{refused}");
+        // The reports it is shown, never the data source the asked-for report reads, nor
+        // anything that says whether that report exists at all.
+        assert!(!message.contains("no reports at all"), "{refused}");
     }
 
     assert!(
@@ -362,6 +377,46 @@ async fn answers_what_a_reports_runs_measured() {
         "the same file ran: {unchanged}"
     );
 
+    // Explaining is a read: it is offered though this project may not run reports, and the
+    // estimate over the data source's limit is reported rather than enforced — the refusal it
+    // describes is the one `run_report` would give, which is what the client is being told.
+    assert!(tools.contains(&"explain_report".to_owned()), "{tools:?}");
+    let explained = ok(
+        client,
+        "explain_report",
+        json!({"report": "sales", "params": {"since": "2026-10-01"}}),
+    )
+    .await;
+    assert_eq!(explained["sources"][0]["id"], "lines", "{explained}");
+    assert!(
+        explained["sources"][0]["statement"]
+            .as_str()
+            .unwrap()
+            .contains("2026-10-01"),
+        "the parameters are written into the statement: {explained}"
+    );
+    assert_eq!(
+        explained["sources"][0]["plan"]["kind"], "text",
+        "{explained}"
+    );
+    assert_eq!(
+        explained["sources"][0]["estimate"]["bytes"], 2_000_000_000_u64,
+        "{explained}"
+    );
+    assert_eq!(
+        explained["sources"][0]["estimate"]["limit_bytes"], 1_000_000_000_u64,
+        "the limit comes beside the estimate: {explained}"
+    );
+    assert_eq!(
+        explained["sources"][0]["estimate"]["refused"], true,
+        "{explained}"
+    );
+    assert_eq!(explained["combine"]["kind"], "planned", "{explained}");
+    assert!(explained["hints"].is_array(), "{explained}");
+    // A report whose parameters are missing is the client's mistake to fix, not a refusal.
+    let without = failure(client, "explain_report", json!({"report": "sales"})).await;
+    assert_eq!(without["kind"], "invalid_arguments", "{without}");
+
     // A run id of another report's, or of none, is refused the same way a profile's is.
     let missing = failure(
         client,
@@ -370,18 +425,5 @@ async fn answers_what_a_reports_runs_measured() {
     )
     .await;
     assert_eq!(missing["kind"], "invalid_arguments", "{missing}");
-    let refused = failure(
-        client,
-        "compare_report_runs",
-        json!({"report": "elsewhere", "before": 1, "after": 2}),
-    )
-    .await;
-    assert!(
-        refused["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("has no report \"elsewhere\"")),
-        "{refused}"
-    );
-
     server.stop().await;
 }

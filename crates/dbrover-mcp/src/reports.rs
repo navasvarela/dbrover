@@ -8,7 +8,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use dbrover_insight::{explanation, json};
 use dbrover_report::{HintId, RunEvent, RunFailure, TypedValues};
+use dbrover_store::ReportRun;
 use rmcp::schemars;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -34,6 +36,20 @@ pub trait ReportRunner: Send + Sync {
         report: &str,
         values: TypedValues,
     ) -> Result<Box<dyn RunningReport>, Vec<String>>;
+
+    /// Starts an explanation of `report` with `values` (RS8e): the worker plans it, answers
+    /// one [`RunEvent::Explained`], and writes no file. The app builds the request, since
+    /// what explaining the combine step needs — the columns the last finished run loaded —
+    /// comes from the history the app reads for it.
+    ///
+    /// # Errors
+    ///
+    /// What keeps it from starting, as [`ReportRunner::start`] does.
+    fn explain(
+        &self,
+        report: &str,
+        values: TypedValues,
+    ) -> Result<Box<dyn RunningReport>, Vec<String>>;
 }
 
 /// A run going on.
@@ -43,6 +59,23 @@ pub trait RunningReport: Send {
 
     /// What stops the run, from any thread.
     fn stopper(&self) -> Box<dyn Fn() + Send + Sync>;
+}
+
+/// A report this project isn't shown, in the one wording every report tool refuses with. It
+/// names the reports the project *is* shown and nothing else, so the answer never says whether
+/// the asked-for report exists elsewhere.
+pub(crate) fn no_such_report(name: &str, reports: &[ReportListing]) -> ToolError {
+    if reports.is_empty() {
+        return ToolError::invalid(format!(
+            "the project has no report {name:?}, and no reports at all: a report is listed for a \
+             project only when every data source it reads is one of the project's"
+        ));
+    }
+    let names: Vec<&str> = reports.iter().map(|report| report.name.as_str()).collect();
+    ToolError::invalid(format!(
+        "the project has no report {name:?}; it has: {}",
+        names.join(", ")
+    ))
 }
 
 /// A report as the reports folder holds it.
@@ -62,6 +95,17 @@ pub struct ReportListing {
     /// The hints its `[report] quiet_hints` silences, so the tools that answer hints can mark
     /// them without reading the file themselves (RS8c).
     pub quiet_hints: Vec<HintId>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub(crate) struct ExplainReportArgs {
+    /// The report's name, as list_reports gives it.
+    report: String,
+    /// Each parameter's value, as text, by name, as run_report takes them: the plans are
+    /// explained with the values written in, so they are the plans those values would get.
+    #[serde(default)]
+    params: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -122,6 +166,34 @@ impl DbRoverMcp {
         }))
     }
 
+    /// Explains the report, stopping the worker if the client cancels the call.
+    ///
+    /// Not behind **Run reports**: explaining runs no statement that reads data, so it is a
+    /// read like `explain` is (`docs/reports-at-scale.md`, "RS8 against today's code").
+    pub(crate) async fn explain_report_json(
+        &self,
+        args: ExplainReportArgs,
+        cancelled: impl Future<Output = ()>,
+    ) -> Result<Value, ToolError> {
+        let tool = "explain_report";
+        self.inner.audit.call(tool, None, None);
+        let Some(runner) = &self.inner.reports else {
+            let reason = "this settings folder has no reports";
+            self.inner.audit.refused(tool, "-", reason);
+            return Err(ToolError::refused(reason));
+        };
+        let (report, runs) = self.kept_runs(tool, &args.report)?;
+        let runner = Arc::clone(runner);
+        let name = report.name.clone();
+        let values = args.params;
+        let run = tokio::task::spawn_blocking(move || runner.explain(&name, values))
+            .await
+            .map_err(|error| ToolError::refused(error.to_string()))?
+            .map_err(|problems| ToolError::invalid(problems.join("; ")))?;
+        let events = collect(run, cancelled).await?;
+        explanation_json(&events, &runs, &report.quiet_hints)
+    }
+
     /// Runs the report, stopping it if the client cancels the call.
     pub(crate) async fn run_report_json(
         &self,
@@ -138,12 +210,7 @@ impl DbRoverMcp {
         };
         let reports = self.project_reports(tool)?;
         let Some(report) = reports.iter().find(|report| report.name == args.report) else {
-            let names: Vec<&str> = reports.iter().map(|report| report.name.as_str()).collect();
-            return Err(ToolError::invalid(format!(
-                "the project has no report {:?}; it has: {}",
-                args.report,
-                names.join(", ")
-            )));
+            return Err(no_such_report(&args.report, &reports));
         };
         if !report.problems.is_empty() {
             return Err(ToolError::invalid(format!(
@@ -154,28 +221,65 @@ impl DbRoverMcp {
         let runner = Arc::clone(runner);
         let name = report.name.clone();
         let values = args.params;
-        let mut run = tokio::task::spawn_blocking(move || runner.start(&name, values))
+        let run = tokio::task::spawn_blocking(move || runner.start(&name, values))
             .await
             .map_err(|error| ToolError::refused(error.to_string()))?
             .map_err(|problems| ToolError::invalid(problems.join("; ")))?;
-        let stop = run.stopper();
-        let mut events = tokio::task::spawn_blocking(move || {
-            let mut events = Vec::new();
-            while let Some(event) = run.next() {
-                events.push(event);
-            }
-            events
-        });
-        let events = tokio::select! {
-            events = &mut events => events,
-            () = cancelled => {
-                stop();
-                events.await
-            }
-        }
-        .map_err(|error| ToolError::refused(error.to_string()))?;
+        let events = collect(run, cancelled).await?;
         Ok(outcome_json(&events, self.inner.project.limits.max_rows))
     }
+}
+
+/// Every event of a run or an explanation, read on a blocking thread; cancelling the call
+/// stops the worker and takes the events it had already sent, which is how a cancelled run
+/// still says what it managed.
+async fn collect(
+    mut run: Box<dyn RunningReport>,
+    cancelled: impl Future<Output = ()>,
+) -> Result<Vec<RunEvent>, ToolError> {
+    let stop = run.stopper();
+    let mut events = tokio::task::spawn_blocking(move || {
+        let mut events = Vec::new();
+        while let Some(event) = run.next() {
+            events.push(event);
+        }
+        events
+    });
+    tokio::select! {
+        events = &mut events => events,
+        () = cancelled => {
+            stop();
+            events.await
+        }
+    }
+    .map_err(|error| ToolError::refused(error.to_string()))
+}
+
+/// The explanation among `events`, with the hints its plans give: the same document
+/// `dbrover report explain --json` writes, with a silenced hint marked rather than left out.
+/// A worker that answered no explanation failed, and says why.
+fn explanation_json(
+    events: &[RunEvent],
+    runs: &[ReportRun],
+    quiet: &[HintId],
+) -> Result<Value, ToolError> {
+    let explained = events.iter().find_map(|event| match event {
+        RunEvent::Explained(explanation) => Some(explanation.as_ref()),
+        _ => None,
+    });
+    let Some(explanation) = explained else {
+        let why = events
+            .iter()
+            .find_map(|event| match event {
+                RunEvent::Failed(failure) => Some(failure.to_string()),
+                RunEvent::Cancelled => Some("the explanation was cancelled".to_owned()),
+                _ => None,
+            })
+            .unwrap_or_else(|| "the worker sent no explanation".to_owned());
+        return Err(ToolError::refused(why));
+    };
+    let hints = explanation::hints(explanation, runs);
+    Ok(json::explanation(explanation, &hints, quiet))
 }
 
 /// How a run ended, from its events: what each step measured, the files written, the preview's

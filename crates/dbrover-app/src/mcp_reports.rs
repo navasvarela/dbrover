@@ -7,12 +7,13 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use dbrover_engine::WorkerRun;
+use dbrover_insight::explanation;
 use dbrover_mcp::{ReportListing, ReportRunner, RunningReport};
-use dbrover_report::{Plan, RunEvent, RunFailure, Step, TypedValues};
+use dbrover_report::{ExplainRequest, Plan, RunEvent, RunFailure, Step, TypedValues};
 use dbrover_store::{AppPaths, ReportName, RunOrigin};
 
 use crate::report_command::history::RunHistory;
-use crate::report_command::{self, kept, list};
+use crate::report_command::{self, explain, kept, list};
 use crate::reports;
 
 pub struct McpReports {
@@ -67,6 +68,31 @@ impl ReportRunner for McpReports {
             run,
             plan: prepared.plan,
             history,
+            ended: false,
+        }))
+    }
+
+    fn explain(
+        &self,
+        report: &str,
+        values: TypedValues,
+    ) -> Result<Box<dyn RunningReport>, Vec<String>> {
+        let name = ReportName::new(report)
+            .ok_or_else(|| vec![format!("{report:?} can't be a report's name")])?;
+        let path = self.paths.report_files().path(&name);
+        // No output folder: an explanation writes no file.
+        let mut prepared = report_command::prepare(&self.paths, &path, &values, None)?;
+        prepared.request.explain = Some(ExplainRequest {
+            tables: explanation::known_tables(&explain::kept_runs(&self.paths, &path)),
+        });
+        prepared.watch = reports::explain_watch(&prepared.plan);
+        let run = report_command::start_worker(&self.paths, &prepared)
+            .map_err(|error| vec![format!("could not start the worker: {error}")])?;
+        Ok(Box::new(McpRun {
+            run,
+            plan: prepared.plan,
+            // An explanation is not a run, so nothing of it is kept in the history.
+            history: None,
             ended: false,
         }))
     }
