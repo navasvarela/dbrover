@@ -1,21 +1,24 @@
 name: Retry a lost runner
 
 # A runner that is never allocated leaves its job cancelled at about 15 minutes with no steps
-# recorded and no log at all. GitHub's macOS runners did this three times on 2026-11-17, each
-# at 15m01s, once in a release's own packaging build. It is not a build failure: no step of
-# that job ever ran, so nothing inside the job can retry it, and there is nothing to read.
+# recorded and no log at all. GitHub's macOS runners did this four times on 2026-11-17 and
+# 2026-11-18: twice in CI on a pull request, once in CI on main, once in a release's own
+# packaging build. It is not a build failure: no step of that job ever ran, so nothing inside
+# the job can retry it, and there is nothing to read.
 #
 # Re-running the run's failed jobs does fix it — the retried job then records its steps as
-# usual. Because it stays the same run, the jobs that passed are not rebuilt, their artifacts
-# are still there, and Release's `release` job still drafts the commit that run started from,
-# so a release never has to be dispatched again onto a main that may have moved since.
+# usual, and all four passed that way. Because it stays the same run, the jobs that passed are
+# not rebuilt, their artifacts are still there, a pull request's required checks go back to
+# pending on the same check suite, and Release's `release` job still drafts the commit that run
+# started from, so a release never has to be dispatched again onto a main that may have moved.
 #
 # Why a workflow of its own: re-running failed jobs needs the run to have finished, so a job
 # inside the run cannot do it. `workflow_run` fires once the run completes, and runs this file
-# from the default branch with a token that may write to Actions.
+# from the default branch with a token that may write to Actions. It fires on every completed
+# CI run, where the job below is skipped unless that run failed; a skipped job costs no runner.
 on:
   workflow_run:
-    workflows: [Release]
+    workflows: [CI, Release]
     types: [completed]
 
 permissions:
@@ -48,10 +51,15 @@ jobs:
               | select(.conclusion == "failure" or .conclusion == "cancelled")
               | "\(.steps | length)\t\(.name)"' > failed.tsv
           cat failed.tsv
-          lost=$(awk -F'\t' '$1 == 0 {print $2}' failed.tsv | paste -sd, -)
-          ran=$(awk -F'\t' '$1 > 0 {print $2}' failed.tsv | paste -sd, -)
+          join() { awk -F'\t' -v want="$1" 'BEGIN {ORS = ""}
+            ($1 == 0) == (want == "lost") {printf "%s%s", sep, $2; sep = ", "}' failed.tsv; }
+          lost=$(join lost)
+          ran=$(join ran)
+          # Deciding on `ran` first is what keeps CI's `fail-fast` matrix safe: the system that
+          # really failed cancels the other two, and a sibling cancelled while still queued
+          # records no steps, so on its own it would look like a runner that went missing.
           if [[ -n "$ran" ]]; then
-            echo "::notice::Not retrying: $ran failed with its steps recorded, so the build broke and a second run would break the same way."
+            echo "::notice::Not retrying: the build broke. These failed with their steps recorded, so a second run would break the same way: $ran"
             exit 0
           fi
           if [[ -z "$lost" ]]; then

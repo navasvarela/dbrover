@@ -287,12 +287,13 @@ To upgrade DuckDB:
    that draft before running again.
 
 A job cancelled at about 15 minutes with no steps recorded and no log never got a runner, which
-GitHub's macOS runners did three times on 2026-11-17. **Retry a lost runner**
+GitHub's macOS runners did four times on 2026-11-17 and 2026-11-18. **Retry a lost runner**
 (`.github/workflows/retry-lost-runner.yml`) re-runs such a run's failed jobs once, as soon as
-the run finishes. Re-running keeps the same run, so the jobs that passed aren't rebuilt and the
-draft still targets the commit the run started from — a release never has to be dispatched
-again onto a main that may have moved since. A job that failed with its steps recorded is a
-broken build and is left alone. By hand it is `gh run rerun <run-id> --failed`.
+the run finishes, for this workflow and for CI. Re-running keeps the same run, so the jobs that
+passed aren't rebuilt and the draft still targets the commit the run started from — a release
+never has to be dispatched again onto a main that may have moved since. A job that failed with
+its steps recorded is a broken build and is left alone. By hand it is
+`gh run rerun <run-id> --failed`.
 
 Releases run on main rather than on a pushed tag for the Rust cache. A run restores caches only
 from its own ref or from main, so a tag's run could never use the previous release's compiled
