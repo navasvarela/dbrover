@@ -1,0 +1,62 @@
+name: Retry a lost runner
+
+# A runner that is never allocated leaves its job cancelled at about 15 minutes with no steps
+# recorded and no log at all. GitHub's macOS runners did this three times on 2026-11-17, each
+# at 15m01s, once in a release's own packaging build. It is not a build failure: no step of
+# that job ever ran, so nothing inside the job can retry it, and there is nothing to read.
+#
+# Re-running the run's failed jobs does fix it — the retried job then records its steps as
+# usual. Because it stays the same run, the jobs that passed are not rebuilt, their artifacts
+# are still there, and Release's `release` job still drafts the commit that run started from,
+# so a release never has to be dispatched again onto a main that may have moved since.
+#
+# Why a workflow of its own: re-running failed jobs needs the run to have finished, so a job
+# inside the run cannot do it. `workflow_run` fires once the run completes, and runs this file
+# from the default branch with a token that may write to Actions.
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  retry:
+    # Only a failed first attempt. A second attempt is this workflow's own doing, and retrying
+    # that would loop; a cancelled run is someone stopping it on purpose.
+    if: >-
+      github.event.workflow_run.conclusion == 'failure'
+      && github.event.workflow_run.run_attempt == 1
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+    steps:
+      - name: Re-run the failed jobs, if no runner was allocated for them
+        shell: bash
+        run: |
+          # Only `failure` and `cancelled` count as having failed. A skipped job records no
+          # steps either — Release skips `release` on every dry run — and must not be read as
+          # a job whose runner went missing.
+          gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/attempts/$ATTEMPT/jobs" \
+            --jq '.jobs[]
+              | select(.conclusion == "failure" or .conclusion == "cancelled")
+              | "\(.steps | length)\t\(.name)"' > failed.tsv
+          cat failed.tsv
+          lost=$(awk -F'\t' '$1 == 0 {print $2}' failed.tsv | paste -sd, -)
+          ran=$(awk -F'\t' '$1 > 0 {print $2}' failed.tsv | paste -sd, -)
+          if [[ -n "$ran" ]]; then
+            echo "::notice::Not retrying: $ran failed with its steps recorded, so the build broke and a second run would break the same way."
+            exit 0
+          fi
+          if [[ -z "$lost" ]]; then
+            echo "::notice::Not retrying: nothing failed without a runner."
+            exit 0
+          fi
+          echo "::warning::No runner was allocated for $lost; re-running this run's failed jobs."
+          gh run rerun "$RUN_ID" --repo "$GITHUB_REPOSITORY" --failed
