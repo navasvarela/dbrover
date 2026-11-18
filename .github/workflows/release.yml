@@ -133,17 +133,12 @@ jobs:
           mkdir -p target/release
           cp target/universal/release/dbrover target/release/dbrover
           cargo packager -p dbrover-app --release --formats app --out-dir "$GITHUB_WORKSPACE/dist"
-          # Through 0.15, the bundle also answers to the name it had before: MCP clients set up
-          # then start Contents/MacOS/dbdesk, which an update would otherwise remove (see "Names"
-          # in docs/releasing.md). cargo-packager can only copy the binary, so the link is added
-          # here and the update package made again with it. The bundle isn't code-signed yet;
-          # when it is, the link must be added before the signature.
-          ln -s dbrover dist/DbRover.app/Contents/MacOS/dbdesk
           packaging/macos-dmg.sh dist/DbRover.app "dist/dbrover-$VERSION-macos-universal.dmg"
+          # cargo-packager writes the update package and its signature itself; both only need
+          # the names users download. Up to 0.35 the archive was made again here, to carry a
+          # `dbdesk` link added to the bundle after packaging for clients configured before the
+          # rename; the link's promise ran out at 0.16.
           if [[ -f dist/DbRover.app.tar.gz ]]; then
-            rm dist/DbRover.app.tar.gz dist/DbRover.app.tar.gz.sig
-            COPYFILE_DISABLE=1 tar --no-mac-metadata -czf dist/DbRover.app.tar.gz -C dist DbRover.app
-            cargo packager signer sign dist/DbRover.app.tar.gz
             mv dist/DbRover.app.tar.gz "dist/dbrover-$VERSION-macos-universal.app.tar.gz"
             mv dist/DbRover.app.tar.gz.sig "dist/dbrover-$VERSION-macos-universal.app.tar.gz.sig"
             # The updater unpacks the archive's top folder as the new DbRover.app.
@@ -158,9 +153,6 @@ jobs:
           [[ "$archs" == *arm64* && "$archs" == *x86_64* ]] || { echo "::error::archs: $archs"; exit 1; }
           "$binary" --version | tee version.txt
           grep -q "dbrover $VERSION" version.txt
-          previous_name="$mount/DbRover.app/Contents/MacOS/dbdesk"
-          [[ -L "$previous_name" ]] || { echo "::error::no dbdesk link in the bundle"; exit 1; }
-          "$previous_name" --version | grep -q "dbrover $VERSION"
           hdiutil detach -quiet "$mount"
       - uses: actions/upload-artifact@v7
         with:

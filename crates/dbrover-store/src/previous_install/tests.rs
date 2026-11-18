@@ -360,18 +360,16 @@ fn finds_the_newest_previous_install_that_exists() {
     let dir = TempDir::new().unwrap();
     let current = dot_folders(dir.path());
     let platform = one_folder(dir.path(), "dbrover");
-    let renamed = one_folder(dir.path(), "dbdesk");
-    let candidates = || [current.clone(), platform.clone(), renamed.clone()];
+    let candidates = || [current.clone(), platform.clone()];
 
     assert_eq!(find_previous_install(candidates(), &current), None);
 
-    previous_settings(&renamed);
+    previous_settings(&platform);
     assert_eq!(
         find_previous_install(candidates(), &current),
-        Some(renamed.clone())
+        Some(platform.clone())
     );
 
-    previous_settings(&platform);
     previous_settings(&current);
     assert_eq!(
         find_previous_install(candidates(), &current),

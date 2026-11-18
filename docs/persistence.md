@@ -298,11 +298,11 @@ A tab whose file or data source is gone is dropped from the layout instead of fa
 until the engine has read the files, restored tabs show "Loading…". A tab that showed a `.sql`
 file is reopened once the engine has read that file, and dropped if it can't be read.
 
-## The previous name's files
+## Files from an earlier install
 
-`APP_NAME` names the folders, the keychain service and eframe's app id. `PREVIOUS_APP_NAME` is
-the name before it, and while the two differ the first start under the new name brings the old
-files over (the plan: [Migrating existing installs](releasing.md#migrating-existing-installs)).
+`APP_NAME` names the folders, the keychain service and eframe's app id. Versions up to 0.20
+kept their files in the platform's own folders, so the first start of a newer one brings them
+over (the plan: [Settings folders](settings-folders.md)).
 
 - **Folders.** `adopt_previous_install` copies the previous settings folder and, where it is a
   separate one, the window-state folder, each into a `.migrating` staging folder that is then
@@ -314,6 +314,3 @@ files over (the plan: [Migrating existing installs](releasing.md#migrating-exist
 - **When it runs.** First thing in `main` and in `mcp::run`, before telemetry, since on macOS
   the log folder is inside the settings folder. If the copy fails, that session uses the old
   folders (eframe's `persistence_path` included) and the next start tries again.
-- **Secrets.** `os_keychain()` reads the current service, then the previous one; a secret found
-  only under the previous name is saved under the current one, and the old entry is deleted
-  once that succeeded. Deleting removes both. With one name, it is the plain keychain.

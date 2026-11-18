@@ -41,17 +41,17 @@
       </p>
       <div class="hero-actions">
         <a class="button primary" id="download-button" href="#download"
-           data-mac="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/{{files}}-{{version}}-macos-universal.dmg"
-           data-linux="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/{{files}}-{{version}}-x86_64.AppImage"
-           data-windows="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/{{files}}-{{version}}-windows-x64-setup.exe">
+           data-mac="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/dbrover-{{version}}-macos-universal.dmg"
+           data-linux="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/dbrover-{{version}}-x86_64.AppImage"
+           data-windows="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/dbrover-{{version}}-windows-x64-setup.exe">
           <span id="download-label">Download</span> <span class="version">v{{version}}</span>
         </a>
         <a class="button" href="manual/">Read the manual</a>
       </div>
       <p class="alternatives">
         Also for Linux:
-        <a href="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/{{files}}-{{version}}-x86_64.AppImage">AppImage</a> ·
-        <a href="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/{{files}}_{{version}}_amd64.deb">.deb</a> ·
+        <a href="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/dbrover-{{version}}-x86_64.AppImage">AppImage</a> ·
+        <a href="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/dbrover_{{version}}_amd64.deb">.deb</a> ·
         <a href="#download">every download</a>
       </p>
     </section>
@@ -518,7 +518,7 @@ db.orders.<span class="k">find</span>({status: <span class="s">"open"</span>}).<
         <article id="platform-mac">
           <h3>macOS</h3>
           <p>A universal app for Apple silicon and Intel, macOS 11 or newer.</p>
-          <a class="button primary" href="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/{{files}}-{{version}}-macos-universal.dmg">.dmg</a>
+          <a class="button primary" href="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/dbrover-{{version}}-macos-universal.dmg">.dmg</a>
           <p>Or with Homebrew:</p>
           <pre><code>brew install --cask navasvarela/tap/dbrover</code></pre>
           <p class="small">Not signed by Apple yet, so the first launch needs
@@ -529,8 +529,8 @@ db.orders.<span class="k">find</span>({status: <span class="s">"open"</span>}).<
           <p>For 64-bit Intel and AMD: an AppImage for most distributions, or a package for
             Debian and Ubuntu.</p>
           <div class="pair">
-            <a class="button primary" href="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/{{files}}-{{version}}-x86_64.AppImage">AppImage</a>
-            <a class="button" href="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/{{files}}_{{version}}_amd64.deb">.deb</a>
+            <a class="button primary" href="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/dbrover-{{version}}-x86_64.AppImage">AppImage</a>
+            <a class="button" href="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/dbrover_{{version}}_amd64.deb">.deb</a>
           </div>
           <p class="small"><a href="manual/install.html#linux">Installing on Linux</a></p>
         </article>
@@ -538,7 +538,7 @@ db.orders.<span class="k">find</span>({status: <span class="s">"open"</span>}).<
           <h3>Windows</h3>
           <p>An installer for Windows 10 and 11 on 64-bit Intel and AMD. It installs DbRover for
             you alone, without administrator rights.</p>
-          <a class="button primary" href="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/{{files}}-{{version}}-windows-x64-setup.exe">Installer</a>
+          <a class="button primary" href="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/dbrover-{{version}}-windows-x64-setup.exe">Installer</a>
           <p class="small">Not signed yet, so SmartScreen blocks the first run:
             <a href="manual/install.html#windows">More info, then Run anyway</a>.</p>
         </article>
@@ -570,8 +570,7 @@ db.orders.<span class="k">find</span>({status: <span class="s">"open"</span>}).<
   </main>
 
   <footer>
-    <p>DbRover was called dbdesk until version 0.12, and dbdesk.org leads here.
-      DbRover is MIT or Apache-2.0 licensed. Inter and JetBrains Mono are under the SIL Open
+    <p>DbRover is MIT or Apache-2.0 licensed. Inter and JetBrains Mono are under the SIL Open
       Font License. Database logos are from <a href="https://simpleicons.org">Simple Icons</a>
       and remain their owners' trademarks.</p>
   </footer>

@@ -54,7 +54,7 @@ pub use history::{
 };
 pub use in_place::InPlaceError;
 pub use keymap::{KeymapBindings, KeymapError, KeymapFile};
-pub use paths::{APP_NAME, AppPaths, PREVIOUS_APP_NAME};
+pub use paths::{APP_NAME, AppPaths};
 pub use portable::{
     DataSourceImport, Difference, EntryStatus, ImportChoice, ImportChoices, ImportPlan,
     ImportPreview, Incoming, MissingPath, PortableError, ProjectImport, read_export, write_export,
