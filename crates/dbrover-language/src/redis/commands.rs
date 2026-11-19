@@ -10,11 +10,12 @@
 //! search, and an entry out of order is invisible to it, which reads as a command the table
 //! doesn't list. Note that an entry with a long argument line spans several lines.
 //!
-//! `docker-compose.yml` pins both servers to an exact version because that test compares this
-//! table against whichever server the container holds: a floating tag moves the servers without
+//! `docker-compose.yml` pins both servers to an exact version (`redis:8.10.3-alpine` and
+//! `valkey/valkey:9.2.0-alpine`, the versions above) because that test compares this table
+//! against whichever server the container holds: a floating tag moves the servers without
 //! moving the table, and main goes red on a version nobody chose. Valkey 9.2.0 did that on
-//! 2026-11-19, adding the `PH*` hash-path family and the ACL role commands. Raise a pin and
-//! regenerate the table in the same change.
+//! 2026-11-19, adding the `PH*` hash-path family and the ACL role commands, under a tag that
+//! named only the major version. Raise a pin and regenerate the table in the same change.
 
 /// One of the flags `COMMAND INFO` gives a command, among those DbRover acts on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

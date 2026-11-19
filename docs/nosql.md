@@ -370,7 +370,7 @@ arrives, and its milestone's manual chapter describes them.
 - **Dragonfly:** `SCAN`, `TYPE` and `TTL` work as on Redis; `OBJECT` and `SCRIPT KILL` don't,
   and `MEMORY USAGE` partly. The viewers leave out what the server doesn't answer.
   ([Dragonfly's command list](https://www.dragonflydb.io/docs/command-reference/compatibility))
-- **CI:** `redis:8-alpine` (40 MB) and `valkey/valkey:9.2.0-alpine` (19 MB), both starting in about
+- **CI:** `redis:8.10.3-alpine` (40 MB) and `valkey/valkey:9.2.0-alpine` (19 MB), both starting in about
   a second, through a conformance suite for key-value engines: the parts of the shared suite
   that apply (lifecycle, connect failure, catalog walk, cancel) plus key viewers and
   classification. Dragonfly (52 MB, from its own registry; Docker Hub's copy is out of date) is
@@ -384,7 +384,7 @@ refuses `SET`; and an MCP client reads a key through an MCP login.
 #### Layers
 
 Each layer is one pull request in a stack, useful and tested on its own, as N0a's and N0b's
-were. From N1·3 on, each runs against `redis:8-alpine` and `valkey/valkey:9.2.0-alpine` in CI.
+were. From N1·3 on, each runs against `redis:8.10.3-alpine` and `valkey/valkey:9.2.0-alpine` in CI.
 
 - **N1·1 — Plan:** this list, the decisions N1 takes (in [Decisions](#decisions)), and the
   roadmap's status.

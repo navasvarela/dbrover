@@ -154,7 +154,7 @@ services:
   # than 5 s, so a test can kill one promptly, and DEBUG is allowed, for a command nothing
   # stops (`DEBUG SLEEP`).
   redis:
-    image: redis:8-alpine
+    image: redis:8.10.3-alpine
     ports:
       - "56379:6379"
       - "56443:6380"
