@@ -190,7 +190,7 @@ services:
   # Valkey 9, set up as the Redis service is, without TLS: the TLS code is the driver's, which
   # one server tests.
   valkey:
-    image: valkey/valkey:9-alpine
+    image: valkey/valkey:9.2.0-alpine
     ports:
       - "56380:6379"
     command:

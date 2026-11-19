@@ -1,12 +1,20 @@
 //! Every command and subcommand of Redis 8 and Valkey 9, with what the server says of it.
 //!
-//! Generated from the command definitions in Redis 8.10.3's and Valkey 9.1.3's sources
+//! Generated from the command definitions in Redis 8.10.3's and Valkey 9.2.0's sources
 //! (`src/commands/*.json`), from which the servers answer `COMMAND INFO` and `COMMAND DOCS`;
 //! a command only one of them has is listed too. Where their arities differ, the table keeps
 //! the one that accepts more arguments. The modules `redis:8-alpine` ships (search, JSON, time
 //! series, probabilistic structures and vector sets) come from that server's own `COMMAND INFO`
 //! and `COMMAND DOCS`, as `dbrover-driver-redis`'s test of the table prints them. Don't edit the
-//! table by hand: regenerate it.
+//! table by hand: regenerate it, and keep the entries sorted by name — the lookup is a binary
+//! search, and an entry out of order is invisible to it, which reads as a command the table
+//! doesn't list. Note that an entry with a long argument line spans several lines.
+//!
+//! `docker-compose.yml` pins both servers to an exact version because that test compares this
+//! table against whichever server the container holds: a floating tag moves the servers without
+//! moving the table, and main goes red on a version nobody chose. Valkey 9.2.0 did that on
+//! 2026-11-19, adding the `PH*` hash-path family and the ACL role commands. Raise a pin and
+//! regenerate the table in the same change.
 
 /// One of the flags `COMMAND INFO` gives a command, among those DbRover acts on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -182,7 +190,9 @@ pub(super) const COMMANDS: &[CommandSpec] = &[
     command("_ft.debug|yields_counter", -2, &[Flag::Readonly], ""),
     command("acl", -2, &[], ""),
     command("acl|cat", -2, &[], "[category]"),
+    command("acl|delrole", -3, &[Flag::Admin], "rolename [rolename ...]"),
     command("acl|deluser", -3, &[Flag::Admin], "username [username ...]"),
+    command("acl|digest", 2, &[Flag::Admin], ""),
     command(
         "acl|dryrun",
         -4,
@@ -190,12 +200,20 @@ pub(super) const COMMANDS: &[CommandSpec] = &[
         "username command [arg [arg ...]]",
     ),
     command("acl|genpass", -2, &[], "[bits]"),
+    command("acl|getrole", 3, &[Flag::Admin], "rolename"),
     command("acl|getuser", 3, &[Flag::Admin], "username"),
     command("acl|help", 2, &[], ""),
     command("acl|list", 2, &[Flag::Admin], ""),
     command("acl|load", 2, &[Flag::Admin], ""),
     command("acl|log", -2, &[Flag::Admin], "[count | RESET]"),
+    command("acl|roles", 2, &[Flag::Admin], ""),
     command("acl|save", 2, &[Flag::Admin], ""),
+    command(
+        "acl|setrole",
+        -3,
+        &[Flag::Admin],
+        "rolename [rule [rule ...]]",
+    ),
     command(
         "acl|setuser",
         -3,
@@ -604,6 +622,7 @@ pub(super) const COMMANDS: &[CommandSpec] = &[
         "parameter [parameter ...]",
     ),
     command("config|help", 2, &[], ""),
+    command("config|info", -3, &[Flag::Admin], "pattern [pattern ...]"),
     command("config|resetstat", 2, &[Flag::Admin], ""),
     command("config|rewrite", 2, &[Flag::Admin], ""),
     command(
@@ -658,7 +677,12 @@ pub(super) const COMMANDS: &[CommandSpec] = &[
         &[Flag::Readonly],
         "sha1 numkeys [key [key ...]] [arg [arg ...]]",
     ),
-    command("exec", 1, &[], ""),
+    command(
+        "exec",
+        -1,
+        &[],
+        "[IFEQ key value | IFNE key value | NX nonexisting-key | XX existing-key [IFEQ key value | IFNE key value | NX nonexisting-key | XX existing-key ...]]",
+    ),
     command("exists", -2, &[Flag::Readonly], "key [key ...]"),
     command(
         "expire",
@@ -1218,7 +1242,7 @@ pub(super) const COMMANDS: &[CommandSpec] = &[
     ),
     command("module|unload", 3, &[Flag::Admin], "name"),
     command("monitor", 1, &[Flag::Admin], ""),
-    command("move", 3, &[Flag::Write], "key db"),
+    command("move", -3, &[Flag::Write], "key db [REPLACE]"),
     command("mset", -3, &[Flag::Write], "key value [key value ...]"),
     command(
         "msetex",
@@ -1258,6 +1282,48 @@ pub(super) const COMMANDS: &[CommandSpec] = &[
         "destkey [sourcekey [sourcekey ...]]",
     ),
     command("pfselftest", 1, &[Flag::Admin], ""),
+    command("phdel", -3, &[Flag::Write], "key path [field [field ...]]"),
+    command("phget", -4, &[Flag::Readonly], "key path field [field ...]"),
+    command("phgetall", 3, &[Flag::Readonly], "key path"),
+    command(
+        "phmget",
+        -6,
+        &[Flag::Readonly],
+        "key path FIELDS numfields field [field ...] [path FIELDS numfields field [field ...] ...]",
+    ),
+    command(
+        "phmset",
+        -7,
+        &[Flag::Write],
+        "key path FIELDS numfields field value [field value ...] [path FIELDS numfields field value [field value ...] ...]",
+    ),
+    command("phpathcount", -2, &[Flag::Readonly], "key [PREFIX prefix]"),
+    command("phpathdel", -3, &[Flag::Write], "key path [WITHSUBPATHS]"),
+    command("phpathexists", 3, &[Flag::Readonly], "key path"),
+    command(
+        "phpathscan",
+        -3,
+        &[Flag::Readonly],
+        "key cursor [PREFIX prefix] [COUNT count]",
+    ),
+    command(
+        "phprefixes",
+        -3,
+        &[Flag::Readonly],
+        "key query [LENGTHS] [WITHVALUES | FIELDS numfields field [field ...]] [COUNT count] [MAXPATHLEN max-path-bytes] [EXCLUDESELF]",
+    ),
+    command(
+        "phscan",
+        -4,
+        &[Flag::Readonly],
+        "key path cursor [MATCH pattern] [COUNT count]",
+    ),
+    command(
+        "phset",
+        -7,
+        &[Flag::Write],
+        "key path [FNX | FXX] FIELDS numfields field value [field value ...]",
+    ),
     command("ping", -1, &[], "[message]"),
     command("psetex", 4, &[Flag::Write], "key milliseconds value"),
     command("psubscribe", -2, &[], "pattern [pattern ...]"),
@@ -1443,7 +1509,7 @@ pub(super) const COMMANDS: &[CommandSpec] = &[
         &[Flag::Write],
         "destination key [key ...]",
     ),
-    command("sismember", 3, &[Flag::Readonly], "key member"),
+    command("sismember", -3, &[Flag::Readonly], "key member [XX]"),
     command("slaveof", 3, &[Flag::Admin], "<host port | NO ONE>"),
     command("slowlog", -2, &[], ""),
     command("slowlog|get", -2, &[Flag::Admin], "[count]"),
