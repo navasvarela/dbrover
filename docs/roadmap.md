@@ -788,9 +788,10 @@ The full plan, with the order, the groundwork, each milestone's layers and the d
 
 Dialogs that write, show and run the SQL to create and change tables, indexes, views, schemas
 and users, from a **New** submenu and object actions in the explorer. The full plan is in
-[Creating and changing database objects](entity-helpers.md).
+[Creating and changing database objects](entity-helpers.md). E0 to E4 were built between
+2026-10-26 and 2026-10-28, in #106 to #172.
 
-- **E0 — Groundwork:**
+- **E0 — Groundwork:** built on 2026-10-26, with E1, as one stack.
   - object specs and a DDL builder per dialect in `dbrover-sql`;
   - each dialect's capabilities;
   - a review-and-run panel that shows the SQL before anything runs;
@@ -814,9 +815,9 @@ and users, from a **New** submenu and object actions in the explorer. The full p
   `describe_table` now reports each column's type, nullability and default, on every engine.
   Covered by the builder's golden tests, engine tests of all-or-none, partial failure,
   read-only refusal and the history, and kittest tests of the panel in every safety level.
-- **E1 — Tables and indexes:** New table (columns, keys, checks), Rename, Truncate, Drop, and
-  Copy DDL, which also gives PostgreSQL tables their missing `CREATE TABLE`; New index and
-  Drop index.
+- **E1 — Tables and indexes:** built on 2026-10-26. New table (columns, keys, checks), Rename,
+  Truncate, Drop, and Copy DDL, which also gives PostgreSQL tables their missing
+  `CREATE TABLE`; New index and Drop index.
 
   **E1 demo note:** built. Right-click `main` → **New › Table…**, name it `shipments`, add
   `order_id integer`, untick its **Nullable**, and on **Foreign keys** point it at
@@ -831,8 +832,8 @@ and users, from a **New** submenu and object actions in the explorer. The full p
   with a test server and compares `describe_table` with it, an engine test that runs
   PostgreSQL's copied DDL, and kittest tests that create a table with a foreign key, index,
   rename and drop through the dialogs and wait for the tree to show it.
-- **E2 — Views and schemas:** New view and materialized view with the console's editor, Edit,
-  Refresh, Rename, Drop; New schema and Drop schema.
+- **E2 — Views and schemas:** built on 2026-10-26. New view and materialized view with the
+  console's editor, Edit, Refresh, Rename, Drop; New schema and Drop schema.
 
   **E2 demo note:** built. Right-click `main` → **New › View…**, name it `shipped_orders` and
   type its query in an editor highlighted like a console's: the review panel shows
@@ -853,7 +854,7 @@ and users, from a **New** submenu and object actions in the explorer. The full p
   table on every engine with a test server (MySQL's test user can't create databases), a
   PostgreSQL materialized view test, the copied DDL run again on PostgreSQL and SQL Server,
   and kittest tests that create, edit and drop a view on SQLite and a schema on DuckDB.
-- **E3 — Users and roles (PostgreSQL):**
+- **E3 — Users and roles (PostgreSQL):** built on 2026-10-27.
   - a Roles folder in the tree;
   - New user and New role, with passwords hashed into a SCRAM verifier on the client and
     redacted in the review panel, the history and the log;
@@ -883,7 +884,7 @@ and users, from a **New** submenu and object actions in the explorer. The full p
   panel tests of the redaction; and an app test on the PostgreSQL server that creates, edits,
   renames and drops a user through the dialogs and finds no password or verifier anywhere in
   the history store.
-- **E4 — Modify table:**
+- **E4 — Modify table:** built on 2026-10-28.
   - **Modify table…** opens the New table dialog filled from the live table, and writes the
     `ALTER TABLE` statements that turn it into the changed one, shown before they run;
   - renames tracked by the dialog's rows, never read as a drop and an add;
