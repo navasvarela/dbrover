@@ -210,8 +210,8 @@ pass on; otherwise the configuration is what it is today. `dbrover mcp --help` l
 
 - The book's [Where DbRover keeps its files](../book/src/files.md): the new table, and a
   section on choosing the folder, the flag and the variable.
-- [Coming from dbdesk](../book/src/install.md#coming-from-dbdesk) and a new "Settings moved
-  to ~/.config/dbrover" note beside it.
+- "Coming from dbdesk" and a new "Settings moved to ~/.config/dbrover" note beside it (both
+  removed once the compatibility they described ran out).
 - [Connecting an AI assistant](../book/src/mcp.md): `--config-dir` in a client's `args`.
 - [Persistence](persistence.md), "Migrating existing installs" in
   [Releasing](releasing.md), `README.md` and the measurement script's notes.

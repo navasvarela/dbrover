@@ -12,9 +12,6 @@ Oracle is planned. It is a
 learning project first and a personal daily driver second: the goal is a tool small enough to
 understand end to end and easy to bend to my own workflow.
 
-DbRover was called dbdesk until version 0.12; the manual says what happens to your data when you
-update ([Coming from dbdesk](https://dbrover.org/manual/install.html#coming-from-dbdesk)).
-
 <picture>
   <source srcset="site/media/hero-dark-poster.png" media="(prefers-color-scheme: dark)">
   <img src="site/media/hero-light-poster.png" width="720" alt="DbRover with a SQLite data source's tables in the explorer, and a console whose open orders were filtered and sorted by the database">

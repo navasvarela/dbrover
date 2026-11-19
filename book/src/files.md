@@ -42,10 +42,8 @@ before its first run on each machine, because what you trusted is in the data fo
 
 Up to version 0.20, DbRover kept its files in the platform's own folders:
 `~/Library/Application Support/dbrover/` on macOS, and `%APPDATA%\dbrover\` on Windows. The
-first start of a newer version copies them; see
-[Settings moved to ~/.config/dbrover](install.md#settings-moved-to-configdbrover). Before
-version 0.13 the folders and the keychain entries were named `dbdesk`; see
-[Coming from dbdesk](install.md#coming-from-dbdesk).
+first start of a newer version copies them into the folders above and says where they came
+from; the old folder is left as it was, with a note in it.
 
 SSH tunnels share `~/.ssh/known_hosts` with `ssh`: DbRover reads it to check SSH servers' host
 keys, and adds a line when you trust a new one. See

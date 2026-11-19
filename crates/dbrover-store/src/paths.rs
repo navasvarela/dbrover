@@ -10,11 +10,6 @@ use crate::{
 /// id.
 pub const APP_NAME: &str = "dbrover";
 
-/// The name the app had before [`APP_NAME`], whose folders the first start under the new name
-/// copies and whose keychain entries it moves on first use (see "Renaming to DbRover" in
-/// `docs/releasing.md`). While it equals [`APP_NAME`] there is nothing to bring over.
-pub const PREVIOUS_APP_NAME: &str = "dbdesk";
-
 /// The query history database's file name, in the settings folder.
 pub(crate) const HISTORY_FILE_NAME: &str = "history.sqlite";
 
@@ -79,15 +74,13 @@ impl AppPaths {
         }
     }
 
-    /// Where earlier versions kept their files, newest first, whether or not they exist: this
-    /// name's platform folders (`~/Library/Application Support/dbrover` on macOS), then
-    /// [`PREVIOUS_APP_NAME`]'s.
+    /// Where earlier versions kept their files, whether or not they exist: this name's platform
+    /// folders (`~/Library/Application Support/dbrover` on macOS), which versions before the
+    /// settings folder moved to `~/.config/dbrover` used.
     pub fn previous_installs() -> Vec<InstallFolders> {
-        [APP_NAME, PREVIOUS_APP_NAME]
-            .into_iter()
-            .filter_map(|name| ProjectDirs::from("", "", name))
-            .map(|dirs| InstallFolders::of(&dirs))
-            .collect()
+        ProjectDirs::from("", "", APP_NAME)
+            .map(|dirs| vec![InstallFolders::of(&dirs)])
+            .unwrap_or_default()
     }
 
     /// These paths, but in `folders`: a previous install's, for a session whose copy failed.
@@ -251,16 +244,10 @@ mod tests {
     }
 
     #[test]
-    fn previous_installs_are_this_name_then_the_previous_one() {
+    fn previous_installs_are_this_names_platform_folders() {
         let previous = AppPaths::previous_installs();
 
-        assert_eq!(previous.len(), 2);
+        assert_eq!(previous.len(), 1);
         assert!(previous[0].settings.to_string_lossy().contains(APP_NAME));
-        assert!(
-            previous[1]
-                .settings
-                .to_string_lossy()
-                .contains(PREVIOUS_APP_NAME)
-        );
     }
 }

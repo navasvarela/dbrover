@@ -50,9 +50,6 @@ macOS that is the program inside the app bundle, and on Linux it is the AppImage
 }
 ```
 
-A client set up when DbRover was called dbdesk keeps working on macOS until DbRover 0.16;
-copy its configuration again anyway. See [Coming from dbdesk](install.md#coming-from-dbdesk).
-
 ### 3. Add it to the client
 
 Paste the entry into the client's MCP settings:
