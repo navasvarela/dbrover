@@ -15,10 +15,18 @@ sources on their own, as before.
 
 ![Data sources grouped into projects, with Move to project open](images/explorer-projects.png)
 
+- **New data source ›** on a project header's menu creates the data source in that project,
+  rather than in **No project** to be moved afterwards. It offers the same engines as the **+**
+  menu, and the dialog is the usual one. On the **No project** header it means what **+** means.
 - **New project…** is in the **+** menu, on every project header's menu, and at the bottom of
   **Move to project**. From **Move to project**, the data source moves into the new project.
 - **Move to project ›** on a data source's menu lists the projects and **No project**; the one
   it is in now is marked.
+- **Drag a data source onto a header** to move it there. Pick it up by its name and drop it on
+  the project you want; the header you are over is outlined while it will take it. Dropping it
+  on **No project** takes it out of its project, and dropping it on the group it is already in
+  does nothing. Dragging against the top or bottom of the panel scrolls the list, so a project
+  further down is still within reach.
 - **Rename…** on a project changes only its name.
 - **Delete…** on a project moves its data sources to **No project** first. No data source is
   deleted.
