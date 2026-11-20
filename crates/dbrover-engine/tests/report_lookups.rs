@@ -94,6 +94,7 @@ async fn run_report(
         &values,
         &access,
         RunFolders {
+            cache: None,
             folder: out,
             staging: &staging,
             work: &work,

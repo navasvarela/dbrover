@@ -161,6 +161,7 @@ async fn run_into(
     let staging = folder.join(".run");
     let work = staging.with_extension("work");
     let folders = RunFolders {
+        cache: None,
         folder,
         staging: &staging,
         work: &work,
@@ -433,6 +434,7 @@ fn events_are_json_lines_the_app_reads_back() {
             }),
             scanned_bytes: None,
             handed_over: None,
+            reused_ms: None,
         },
         RunEvent::SourceAttached {
             id: "prices".to_owned(),

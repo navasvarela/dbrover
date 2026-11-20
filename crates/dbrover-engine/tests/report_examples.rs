@@ -118,6 +118,7 @@ async fn run_example(
     let staging = out.join(".run");
     let work = staging.with_extension("work");
     let folders = RunFolders {
+        cache: None,
         folder: out,
         staging: &staging,
         work: &work,

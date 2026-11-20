@@ -178,6 +178,9 @@ struct Starting {
     /// The stopped run carried on from, and its work folder.
     resumes: Option<RunId>,
     work: Option<PathBuf>,
+    /// `--from-scratch`: every report it uses as a source runs again, whatever was kept for
+    /// it (RS9f).
+    from_scratch: bool,
 }
 
 impl Starting {
@@ -189,6 +192,7 @@ impl Starting {
             output_dir: args.output_dir.clone(),
             resumes: None,
             work: None,
+            from_scratch: args.start == RunStart::FromScratch,
         };
         let settings = reports::RunSettings::of(&report_settings(paths)?);
         let work_root = resume::work_root(paths, &settings);
@@ -213,6 +217,7 @@ impl Starting {
                     output_dir: Some(args.output_dir.clone().unwrap_or(run.folder)),
                     resumes: Some(resuming.id),
                     work: Some(resuming.work),
+                    from_scratch: false,
                 })
             }
         }
@@ -225,6 +230,7 @@ impl Starting {
             prepared.request.work.clone_from(work);
             prepared.request.resume = true;
         }
+        prepared.request.from_scratch = self.from_scratch;
         Ok(prepared)
     }
 }
@@ -309,7 +315,10 @@ pub(crate) fn prepare(
     let folder = output_dir.map_or_else(current_folder, absolute);
     let default_work_root = paths.report_runs_dir();
     let work_root = settings.work_root(&default_work_root);
-    dbrover_engine::sweep(work_root, settings.kept_runs_total, jiff::Timestamp::now());
+    let now = jiff::Timestamp::now();
+    dbrover_engine::sweep(work_root, settings.kept_runs_total, now);
+    // The results kept for the reports a run uses as sources go by the same two bounds (RS9f).
+    dbrover_engine::sweep_results(&paths.report_results_dir(), settings.kept_runs_total, now);
     let request = RunRequest {
         report: report.to_owned(),
         values: values.clone(),
@@ -320,6 +329,9 @@ pub(crate) fn prepare(
         memory_limit: None,
         explain: None,
         resume: false,
+        results: Some(paths.report_results_dir()),
+        // Set by the caller, which knows whether `--from-scratch` was asked (RS9f).
+        from_scratch: false,
     };
     let watch = reports::run_watch(&plan, &settings, work_root);
     Ok(Prepared {

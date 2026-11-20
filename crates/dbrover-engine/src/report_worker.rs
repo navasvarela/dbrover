@@ -620,6 +620,8 @@ mod tests {
 
     fn request(folder: &Path) -> RunRequest {
         RunRequest {
+            results: None,
+            from_scratch: false,
             report: folder.join("report.toml"),
             values: Default::default(),
             folder: folder.to_owned(),

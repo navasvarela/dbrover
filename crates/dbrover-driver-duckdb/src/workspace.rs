@@ -893,6 +893,23 @@ impl Workspace {
         cursor.finish().await.map(drop)
     }
 
+    /// The rows `table` holds.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError`] if the database hasn't that table.
+    pub async fn count_rows(&self, table: &WorkspaceTable) -> Result<u64, DriverError> {
+        let sql = format!("SELECT count(*) FROM {}", table.qualified());
+        self.connection
+            .run_blocking(move |connection| {
+                connection
+                    .query_row(&sql, [], |row| row.get::<_, i64>(0))
+                    .map(|rows| u64::try_from(rows).unwrap_or_default())
+                    .map_err(|error| statement_error(error, &sql))
+            })
+            .await
+    }
+
     /// How DuckDB would run `sql` with `values` bound, without running it: its plan as
     /// `EXPLAIN (FORMAT JSON)` writes it, which `dbrover-plan` reads.
     ///

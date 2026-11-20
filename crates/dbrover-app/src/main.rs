@@ -267,5 +267,6 @@ fn reports_setup(paths: &AppPaths) -> reports::ReportsSetup {
         }),
         default_folder,
         work_root: paths.report_runs_dir(),
+        results_root: paths.report_results_dir(),
     }
 }

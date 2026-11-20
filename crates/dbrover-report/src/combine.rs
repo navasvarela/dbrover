@@ -21,8 +21,9 @@ use dbrover_core::{
     ScanEstimate, describe_error,
 };
 use dbrover_driver_duckdb::{
-    Allowed, BucketSignIn, DuckDbType, HandoffLoaded, LakeView, LoadColumn, TableLoader, Workspace,
-    WorkspaceLimit, WorkspaceLimits, WorkspaceProfile, WorkspaceStore, WorkspaceTable,
+    Allowed, BucketSignIn, DuckDbType, HandoffLoaded, LakeView, LoadColumn, ParquetCompression,
+    TableLoader, Workspace, WorkspaceLimit, WorkspaceLimits, WorkspaceProfile, WorkspaceStore,
+    WorkspaceTable,
 };
 use dbrover_export::ExportColumn;
 use dbrover_language::Literal;
@@ -34,7 +35,7 @@ mod ranges;
 
 use crate::chart::ChartRun;
 use crate::checkpoints::Checkpoints;
-use crate::composed::{Composed, composed};
+use crate::composed::{Composed, Reused, composed};
 use crate::declared::Shaped;
 use crate::handoff::HandoffFolders;
 use crate::live::{ProgressClock, waiting};
@@ -45,8 +46,9 @@ use crate::typing::{ColumnTyper, DriverTypes};
 use crate::{
     AttachedSource, Batch, Busy, Chart, CombineLimits, Combined, HandedOverFiles, KeptColumn,
     LakeSource, LimitHit, LoadedColumn, Logic, Parts, Plan, PlannedLookup, PlannedSource,
-    PlannedSplit, QuerySource, Resumed, RunEvent, RunFailure, RunFolders, RunValues, SourceError,
-    SourceKept, SourceOpener, SourcePart, SourcePhases, SourceReader, SourceStatement, Step,
+    PlannedSplit, QuerySource, ReportSource, Resumed, RunEvent, RunFailure, RunFolders, RunValues,
+    SourceError, SourceKept, SourceOpener, SourcePart, SourcePhases, SourceReader, SourceStatement,
+    Step,
 };
 
 /// Rows asked of the combine query at a time, as a source's are.
@@ -137,7 +139,13 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
         events: &mut dyn FnMut(RunEvent),
     ) -> Result<(), RunFailure> {
         // The report being run and every report it uses, each loading into its own schema.
-        let reports = composed(self.plan, self.values, self.combined)?;
+        let (reports, reused) =
+            composed(self.plan, self.values, self.combined, self.folders.cache)?;
+        // A result taken from the cache is read in before the lock, so the folder it is in
+        // needs no allowance (RS9f).
+        for taken in &reused {
+            self.take_result(taken, workspace, events).await?;
+        }
         let mut lakes = Vec::new();
         for report in &reports {
             if let Some(schema) = report.schema() {
@@ -153,6 +161,10 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
         let parquet = parquet_files(self.plan, self.values, folders);
         // DuckDB writes only in the folders it writes the Parquet files in.
         let mut writable: Vec<&Path> = parquet.iter().filter_map(ParquetFile::folder).collect();
+        // Where a result kept for a report used as a source is written (RS9f).
+        if let Some(cache) = self.folders.cache.filter(|_| self.keeps_results(&reports)) {
+            writable.push(cache.folder);
+        }
         writable.sort();
         writable.dedup();
         for folder in &writable {
@@ -450,6 +462,7 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
                 combined: report.combined,
                 values,
                 into: None,
+                source: Some(inner),
             };
             let events = RefCell::new(&mut *events);
             self.load_anew(
@@ -465,6 +478,133 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
             .await?;
         }
         Ok(())
+    }
+
+    /// Whether any report of the run keeps its result for a later one (RS9f), which is what
+    /// the cache's folder has to be writable for.
+    fn keeps_results(&self, reports: &[Composed<'_>]) -> bool {
+        reports
+            .iter()
+            .any(|report| report.source.is_some_and(|source| source.reuse.is_some()))
+    }
+
+    /// Reads a result kept for a report used as a source into the table the report that reads
+    /// it looks for, instead of running that report at all (RS9f). Before the lock, so the
+    /// file needs no allowance; a file DuckDB can't read fails the run rather than running
+    /// the report again, since a result the run can't trust is not one to work around
+    /// silently.
+    async fn take_result(
+        &self,
+        taken: &Reused,
+        workspace: &mut Workspace,
+        events: &mut dyn FnMut(RunEvent),
+    ) -> Result<(), RunFailure> {
+        let step = Step::Source {
+            id: taken.step_id.clone(),
+        };
+        let started = Instant::now();
+        let read = dbrover_driver_duckdb::read_parquet(&taken.file);
+        workspace
+            .create_table_as(&taken.table, &read, &[])
+            .await
+            .map_err(|error| {
+                RunFailure::new(
+                    step.clone(),
+                    format!(
+                        "could not read the result kept for it in {}: {}; run the report from \
+                         scratch to make it again",
+                        taken.file.display(),
+                        describe_error(&error)
+                    ),
+                )
+            })?;
+        let rows = workspace
+            .count_rows(&taken.table)
+            .await
+            .map_err(|error| RunFailure::new(step.clone(), describe_error(&error)))?;
+        events(RunEvent::SourceDone {
+            id: taken.step_id.clone(),
+            rows,
+            bytes: taken.file.metadata().map(|file| file.len()).unwrap_or(0),
+            first_row_ms: None,
+            elapsed_ms: millis(started.elapsed()),
+            table: Vec::new(),
+            warnings: Vec::new(),
+            batches: None,
+            parts: None,
+            phases: None,
+            scanned_bytes: None,
+            handed_over: None,
+            reused_ms: Some(millis(taken.age)),
+        });
+        Ok(())
+    }
+
+    /// Keeps the result of a report used as a source as Parquet, for a later run of any
+    /// report that reads it with `reuse` (RS9f). A result that can't be written is a warning,
+    /// not a failure: the rows are right, and the next run makes it again.
+    async fn keep_result(
+        &self,
+        workspace: &mut Workspace,
+        source: &ReportSource,
+        into: &WorkspaceTable,
+        values: &RunValues,
+    ) {
+        let Some(cache) = self.folders.cache else {
+            return;
+        };
+        let Some(file) = source.kept_result(cache.folder, values) else {
+            return;
+        };
+        if let Err(error) = std::fs::create_dir_all(cache.folder) {
+            tracing::warn!(
+                "could not make {}, so the result of {:?} wasn't kept: {error}",
+                cache.folder.display(),
+                source.report
+            );
+            return;
+        }
+        // Written beside its name and renamed into place, so a run killed in the middle of
+        // writing never leaves half a result for the next run to read.
+        let partial = file.with_extension("parquet.partial");
+        let kept = self
+            .copy_result(workspace, into, &partial)
+            .await
+            .and_then(|()| std::fs::rename(&partial, &file).map_err(|error| error.to_string()));
+        if let Err(problem) = kept {
+            let _ = std::fs::remove_file(&partial);
+            tracing::warn!(
+                "the result of {:?} wasn't kept in {}: {problem}",
+                source.report,
+                file.display()
+            );
+        }
+    }
+
+    /// Copies `into`'s rows to `file` as Parquet, with the combine step's DuckDB, under its
+    /// timeout. The folder is one the lock allows, as the staging folder is (RS3d).
+    async fn copy_result(
+        &self,
+        workspace: &mut Workspace,
+        into: &WorkspaceTable,
+        file: &Path,
+    ) -> Result<(), String> {
+        let query = format!("SELECT * FROM {}", into.qualified());
+        let copy = dbrover_driver_duckdb::copy_to_parquet(&query, file, ParquetCompression::Zstd);
+        let reader = CombineReader::start(
+            workspace,
+            &copy,
+            self.values,
+            DuckDbQuery::Combine,
+            self.limits(),
+        )
+        .await
+        .map_err(|error| error.message.clone())?;
+        reader
+            .finish()
+            .await
+            .map(drop)
+            .map_err(|error| error.message.clone())
     }
 
     /// Makes the result of a report used as a source, in the table the report that reads it
@@ -515,6 +655,10 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
             .await
             .map_err(|error| failed(&error))?;
         let rows = made.map_err(|error| error.at(step.clone()))?;
+        if let Some(source) = report.source {
+            self.keep_result(workspace, source, into, &report.values)
+                .await;
+        }
         events(RunEvent::SourceDone {
             id: report.path.join(" › "),
             rows: rows.unwrap_or_default(),
@@ -528,6 +672,7 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
             phases: None,
             scanned_bytes: None,
             handed_over: None,
+            reused_ms: None,
         });
         Ok(())
     }
@@ -722,6 +867,7 @@ fn kept_source_done(source: &SourceKept) -> RunEvent {
         phases: None,
         scanned_bytes: None,
         handed_over: None,
+        reused_ms: None,
     }
 }
 
@@ -1520,6 +1666,7 @@ impl Loading<'_> {
                 files: handed.files,
                 bytes: handed.bytes,
             }),
+            reused_ms: None,
         });
         let read = Count {
             rows: self.read.rows,
@@ -1684,6 +1831,7 @@ impl Loading<'_> {
             phases: Some(phases),
             scanned_bytes: self.scanned,
             handed_over: None,
+            reused_ms: None,
         });
         let read = Count {
             rows: self.read.rows,

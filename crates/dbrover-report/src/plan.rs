@@ -281,6 +281,9 @@ pub struct ReportSource {
     /// Each of the inner report's parameters, in the order it asks for them, and where its
     /// value comes from.
     pub params: Vec<BoundParam>,
+    /// How old a kept result of it, with these parameters, may be and still be taken instead
+    /// of running it again (RS9f); `None` runs it every time.
+    pub reuse: Option<Duration>,
 }
 
 impl ReportSource {
@@ -296,6 +299,28 @@ impl ReportSource {
                 .flat_map(Self::nested),
         );
         found
+    }
+
+    /// The file a kept result of it goes in, under `folder`, for a run whose values are
+    /// `values` (RS9f): the blob id of its own file and a digest of the values its parameters
+    /// take, so a result is taken only for the same report, the same version of it and the
+    /// same parameters. `None` for a source without `reuse`, which runs every time.
+    pub fn kept_result(&self, folder: &Path, values: &RunValues) -> Option<PathBuf> {
+        self.reuse?;
+        let inner = self.values(values).ok()?;
+        let mut key = String::new();
+        for param in &self.plan.params {
+            let value = inner
+                .parameters
+                .get(&param.name)
+                .cloned()
+                .flatten()
+                .unwrap_or_default();
+            // The name and the length go in too, so no two sets of values make one key.
+            key.push_str(&format!("{}={}:{}\n", param.name, value.len(), value));
+        }
+        let key = BlobId::of(key.as_bytes());
+        Some(folder.join(format!("{}-{key}.parquet", self.version)))
     }
 
     /// The inner report's values for a run of the outer report: each parameter bound from
@@ -1336,6 +1361,7 @@ fn plan_report_source(
             version,
             plan: Box::new(plan),
             params: bound,
+            reuse: read.reuse,
         })),
         bound => {
             problems.extend(bound.err().into_iter().flatten());

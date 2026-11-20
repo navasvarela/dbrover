@@ -201,6 +201,7 @@ async fn run_report(
         &plan.values(&BTreeMap::new()).unwrap(),
         &access,
         RunFolders {
+            cache: None,
             folder,
             staging: &staging,
             work: &work,

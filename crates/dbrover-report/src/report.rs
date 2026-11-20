@@ -100,6 +100,9 @@ pub struct ReportRead {
     /// `params`: each of that report's parameters, by name, bound to a value. In the file's
     /// order, which is the TOML table's: the names are sorted.
     pub params: Vec<BoundParam>,
+    /// `reuse`: how old a kept result of that report, with these parameters, may be and
+    /// still be taken instead of running it again (RS9f); `None` runs it every time.
+    pub reuse: Option<Duration>,
 }
 
 /// One of an inner report's parameters, and where its value comes from (RS9b).

@@ -118,6 +118,10 @@ pub enum RunEvent {
         /// (RS7f); `None` for a source whose rows were paged, and from a worker older than it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         handed_over: Option<HandedOverFiles>,
+        /// How old the kept result it took was, for a report source with `reuse` whose report
+        /// didn't run (RS9f); `None` for every step that did its own work.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reused_ms: Option<u64>,
     },
     /// A range of a partitioned source returned its last row (RS4c).
     PartDone(PartDone),
