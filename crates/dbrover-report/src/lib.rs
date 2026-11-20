@@ -18,6 +18,7 @@
 mod chart;
 mod checkpoints;
 mod combine;
+mod composed;
 mod declared;
 mod disk;
 mod embedded;

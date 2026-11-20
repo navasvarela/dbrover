@@ -22,7 +22,7 @@ use dbrover_core::{
 };
 use dbrover_driver_duckdb::{
     Allowed, BucketSignIn, DuckDbType, HandoffLoaded, LakeView, LoadColumn, TableLoader, Workspace,
-    WorkspaceLimit, WorkspaceLimits, WorkspaceProfile, WorkspaceStore,
+    WorkspaceLimit, WorkspaceLimits, WorkspaceProfile, WorkspaceStore, WorkspaceTable,
 };
 use dbrover_export::ExportColumn;
 use dbrover_language::Literal;
@@ -34,6 +34,7 @@ mod ranges;
 
 use crate::chart::ChartRun;
 use crate::checkpoints::Checkpoints;
+use crate::composed::{Composed, composed};
 use crate::declared::Shaped;
 use crate::handoff::HandoffFolders;
 use crate::live::{ProgressClock, waiting};
@@ -43,9 +44,9 @@ use crate::statement::{Statements, lookup_literal};
 use crate::typing::{ColumnTyper, DriverTypes};
 use crate::{
     AttachedSource, Batch, Busy, Chart, CombineLimits, Combined, HandedOverFiles, KeptColumn,
-    LakeSource, LimitHit, LoadedColumn, Parts, Plan, PlannedLookup, PlannedSource, PlannedSplit,
-    QuerySource, Resumed, RunEvent, RunFailure, RunFolders, RunValues, SourceError, SourceKept,
-    SourceOpener, SourcePart, SourcePhases, SourceReader, SourceStatement, Step,
+    LakeSource, LimitHit, LoadedColumn, Logic, Parts, Plan, PlannedLookup, PlannedSource,
+    PlannedSplit, QuerySource, Resumed, RunEvent, RunFailure, RunFolders, RunValues, SourceError,
+    SourceKept, SourceOpener, SourcePart, SourcePhases, SourceReader, SourceStatement, Step,
 };
 
 /// Rows asked of the combine query at a time, as a source's are.
@@ -135,50 +136,18 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
         sink: &mut Sink<'a>,
         events: &mut dyn FnMut(RunEvent),
     ) -> Result<(), RunFailure> {
+        // The report being run and every report it uses, each loading into its own schema.
+        let reports = composed(self.plan, self.values, self.combined)?;
         let mut lakes = Vec::new();
-        for source in &self.combined.sources {
-            match source {
-                PlannedSource::Attached(attached) => {
-                    attach(workspace, attached).await?;
-                    events(RunEvent::SourceAttached {
-                        id: attached.id.clone(),
-                        path: attached.path.clone(),
-                    });
-                }
-                PlannedSource::Lake(lake) => {
-                    let read = self.read_lake(workspace, lake).await?;
-                    events(RunEvent::LakeRead {
-                        id: lake.id.clone(),
-                        url: read.view.reads_from().to_owned(),
-                        format: lake.format.name().to_owned(),
-                    });
-                    lakes.push(read);
-                }
-                // RS9c runs a report source; RS9b reads and plans one.
-                PlannedSource::Report(report) => {
-                    return Err(RunFailure::new(
-                        Step::Source {
-                            id: report.id.clone(),
-                        },
-                        format!(
-                            "this DbRover plans a report that reads the report {:?} but doesn't \
-                             run one yet",
-                            report.report
-                        ),
-                    ));
-                }
-                PlannedSource::Query(_) => {}
+        for report in &reports {
+            if let Some(schema) = report.schema() {
+                workspace
+                    .create_schema(&schema)
+                    .await
+                    .map_err(|error| RunFailure::new(Step::Combine, describe_error(&error)))?;
             }
-        }
-        let mut loaded: Vec<LoadedTable> = self.resume_sources(events)?;
-        for round in self.combined.rounds() {
-            let events = RefCell::new(&mut *events);
-            let loads = round
-                .into_iter()
-                .filter(|source| !loaded.iter().any(|table| table.id == source.id))
-                .map(|source| self.load_anew(source, workspace, &loaded, &events));
-            let tables = try_join_all(loads).await?;
-            loaded.extend(tables);
+            self.load_report(report, workspace, &mut lakes, events)
+                .await?;
         }
         let folders = self.folders;
         let parquet = parquet_files(self.plan, self.values, folders);
@@ -225,6 +194,14 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
                 })?;
         }
 
+        // Each report used as a source makes its result now, innermost first, so the report
+        // that reads it finds it as a table when its own combine runs (RS9c).
+        for report in reports.iter().rev() {
+            let Some(into) = &report.into else {
+                continue;
+            };
+            self.make_result(report, into, workspace, events).await?;
+        }
         let started = Instant::now();
         let combine_query = self.combined.combine.query.sql();
         let copied = if parquet.is_empty() {
@@ -383,37 +360,215 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
         read.map(|()| run)
     }
 
+    /// Attaches, reads in place and loads every source of `report` into its schema: the
+    /// DuckDB files first, then each lake's view, then the sources with a query in the rounds
+    /// their lookups put them in (RS9c; one report is `docs/reporting.md`'s RP2).
+    ///
+    /// A report source whose own report has no combine step has no schema of its own: its one
+    /// source loads straight into the table the report that names it reads, since its rows are
+    /// its result.
+    async fn load_report(
+        &self,
+        report: &Composed<'_>,
+        workspace: &mut Workspace,
+        lakes: &mut Vec<ReadLake>,
+        events: &mut dyn FnMut(RunEvent),
+    ) -> Result<(), RunFailure> {
+        for source in &report.combined.sources {
+            match source {
+                PlannedSource::Attached(attached) => {
+                    // An attached file is a catalog, not a table, so it keeps its id across
+                    // the whole run; planning refused two files under one id.
+                    attach(workspace, attached).await?;
+                    events(RunEvent::SourceAttached {
+                        id: attached.id.clone(),
+                        path: attached.path.clone(),
+                    });
+                }
+                PlannedSource::Lake(lake) => {
+                    let read = self
+                        .read_lake(workspace, lake, report.table(&lake.id))
+                        .await?;
+                    events(RunEvent::LakeRead {
+                        id: report.step_id(&lake.id),
+                        url: read.view.reads_from().to_owned(),
+                        format: lake.format.name().to_owned(),
+                    });
+                    lakes.push(read);
+                }
+                PlannedSource::Query(_) | PlannedSource::Report(_) => {}
+            }
+        }
+        let workspace = &*workspace;
+        let mut loaded: Vec<LoadedTable> = self.resume_sources(report, events)?;
+        for round in report.combined.rounds() {
+            let events = RefCell::new(&mut *events);
+            let loads = round
+                .into_iter()
+                .filter(|source| {
+                    !loaded
+                        .iter()
+                        .any(|table| table.table.name() == source.id.as_str())
+                })
+                .map(|source| {
+                    self.load_anew(
+                        Loaded {
+                            source,
+                            report,
+                            table: report.table(&source.id),
+                        },
+                        workspace,
+                        &loaded,
+                        &events,
+                    )
+                });
+            let tables = try_join_all(loads).await?;
+            loaded.extend(tables);
+        }
+        // A report of one source without a combine: its rows go into the table the report
+        // that names it reads, under that source's id.
+        for source in &report.combined.sources {
+            let Some(inner) = source.report() else {
+                continue;
+            };
+            let Logic::Direct(query) = &inner.plan.logic else {
+                continue;
+            };
+            let values = inner.values(&report.values).map_err(|problems| {
+                RunFailure::new(
+                    Step::Source {
+                        id: report.step_id(&inner.id),
+                    },
+                    problems.join("\n"),
+                )
+            })?;
+            let mut path = report.path.clone();
+            path.push(inner.id.clone());
+            let only = Composed {
+                path,
+                plan: &inner.plan,
+                combined: report.combined,
+                values,
+                into: None,
+            };
+            let events = RefCell::new(&mut *events);
+            self.load_anew(
+                Loaded {
+                    source: query,
+                    report: &only,
+                    table: report.table(&inner.id),
+                },
+                workspace,
+                &[],
+                &events,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Makes the result of a report used as a source, in the table the report that reads it
+    /// looks for, from its own combine query over its own tables (RS9c).
+    ///
+    /// Its `search_path` names its schema, so the query reads its sources as its file writes
+    /// them, and is put back afterwards, so the report that reads it finds its own. The
+    /// statement runs under the outer report's combine limits, which bound the one DuckDB they
+    /// share; the inner report's own `[combine]` limits aren't read.
+    async fn make_result(
+        &self,
+        report: &Composed<'_>,
+        into: &WorkspaceTable,
+        workspace: &mut Workspace,
+        events: &mut dyn FnMut(RunEvent),
+    ) -> Result<(), RunFailure> {
+        let step = Step::Source {
+            id: report.path.join(" › "),
+        };
+        let failed = |error: &DriverError| RunFailure::new(step.clone(), describe_error(error));
+        let schema = report.schema();
+        workspace
+            .set_search_path(schema.as_deref())
+            .await
+            .map_err(|error| failed(&error))?;
+        let started = Instant::now();
+        let query = format!(
+            "CREATE TABLE {} AS {}",
+            into.qualified(),
+            report.combined.combine.query.sql()
+        );
+        let made = async {
+            let reader = CombineReader::start(
+                workspace,
+                &query,
+                &report.values,
+                DuckDbQuery::Combine,
+                self.limits(),
+            )
+            .await?;
+            reader.finish().await
+        }
+        .await;
+        // Put it back whether the statement ran or not: the report that reads this one, and
+        // the outer combine, read their own tables.
+        workspace
+            .set_search_path(None)
+            .await
+            .map_err(|error| failed(&error))?;
+        let rows = made.map_err(|error| error.at(step.clone()))?;
+        events(RunEvent::SourceDone {
+            id: report.path.join(" › "),
+            rows: rows.unwrap_or_default(),
+            bytes: 0,
+            first_row_ms: None,
+            elapsed_ms: millis(started.elapsed()),
+            table: Vec::new(),
+            warnings: Vec::new(),
+            batches: None,
+            parts: None,
+            phases: None,
+            scanned_bytes: None,
+            handed_over: None,
+        });
+        Ok(())
+    }
+
     /// The tables of the sources an earlier run loaded into the workspace this one resumes,
     /// each said done with what it read then; nothing for a run that resumes none.
     fn resume_sources(
         &self,
+        report: &Composed<'_>,
         events: &mut dyn FnMut(RunEvent),
     ) -> Result<Vec<LoadedTable>, RunFailure> {
         let Some(checkpoints) = self.checkpoints.filter(|kept| kept.has_sources()) else {
             return Ok(Vec::new());
         };
-        let kept: Vec<SourceKept> = self
+        let kept: Vec<(SourceKept, &str)> = report
             .combined
             .sources
             .iter()
             .filter_map(|source| match source {
-                PlannedSource::Query(source) => checkpoints.source(&source.id),
-                // Neither loads rows, so neither is a checkpoint a resumed run skips.
+                PlannedSource::Query(source) => checkpoints
+                    .source(&report.step_id(&source.id))
+                    .map(|kept| (kept, source.id.as_str())),
+                // None of them loads rows, so none is a checkpoint a resumed run skips.
                 PlannedSource::Attached(_) | PlannedSource::Lake(_) | PlannedSource::Report(_) => {
                     None
                 }
             })
             .collect();
-        let tables: Vec<LoadedTable> = kept.iter().map(LoadedTable::from_kept).collect();
+        let tables: Vec<LoadedTable> = kept
+            .iter()
+            .map(|(source, id)| LoadedTable::from_kept(source, report.table(id)))
+            .collect();
         events(RunEvent::Resumed(Resumed {
             ranges: Vec::new(),
-            sources: kept.iter().map(|source| source.id.clone()).collect(),
+            sources: kept.iter().map(|(source, _)| source.id.clone()).collect(),
             of: 0,
             rows: 0,
             bytes: 0,
             files: Vec::new(),
         }));
-        for source in &kept {
+        for (source, _) in &kept {
             events(kept_source_done(source));
         }
         Ok(tables)
@@ -423,17 +578,17 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
     /// its table, and records it once loaded.
     async fn load_anew(
         &self,
-        source: &QuerySource,
+        source: Loaded<'_, '_>,
         workspace: &Workspace,
         loaded: &[LoadedTable],
         events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
     ) -> Result<LoadedTable, RunFailure> {
         let step = || Step::Source {
-            id: source.id.clone(),
+            id: source.step_id(),
         };
         if self.checkpoints.is_some_and(Checkpoints::has_sources) {
             workspace
-                .drop_table(&source.id)
+                .drop_table(&source.table)
                 .await
                 .map_err(|error| RunFailure::new(step(), describe_error(&error)))?;
         }
@@ -448,14 +603,20 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
     /// time if it has one, then types its columns; returns the table and what it read.
     async fn load(
         &self,
-        source: &QuerySource,
+        source: Loaded<'_, '_>,
         workspace: &Workspace,
         loaded: &[LoadedTable],
         events: &RefCell<&mut (dyn FnMut(RunEvent) + '_)>,
     ) -> Result<(LoadedTable, Count), RunFailure> {
         let opened = Instant::now();
+        let into = source.table.clone();
+        let step_id = source.step_id();
+        let report = source.report;
+        let source = source.source;
         let mut loading = Loading {
             source,
+            into,
+            step_id,
             limits: self.limits(),
             opened,
             table: None,
@@ -466,7 +627,8 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
             at: At::Whole,
             handed_over: None,
         };
-        let statements = Statements::loaded(self.plan, self.values, source, Some(self.handoffs));
+        let statements =
+            Statements::loaded(report.plan, &report.values, source, Some(self.handoffs));
         let deadline = opened + source.limits.timeout;
         let sent = match &source.split {
             PlannedSplit::Whole => {
@@ -500,7 +662,7 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
                 Sent::Batches(of)
             }
             PlannedSplit::Partition(partition) => {
-                let ranges = self.values.ranges.get(&source.id).ok_or_else(|| {
+                let ranges = report.values.ranges.get(&source.id).ok_or_else(|| {
                     RunFailure::new(loading.step(), "the run's values have no ranges for it")
                 })?;
                 let reading = ranges::Ranges {
@@ -576,7 +738,11 @@ fn make_folder(folder: &Path) -> Result<(), RunFailure> {
 /// A loaded source's table, for the lookups of the rounds after it: its name, and each
 /// column's name and type.
 struct LoadedTable {
-    id: String,
+    /// Where it is: in the schema of the report that reads it (RS9c).
+    table: WorkspaceTable,
+    /// What the run calls its step: the path, so two reports' sources of one id are two
+    /// checkpoints.
+    step_id: String,
     /// Each column with the type DuckDB holds it as, by name: the type the run's loading
     /// chose, or, for a source handed over through a bucket, the files' own, which can be a
     /// type nothing in a report's loading makes (RS7f).
@@ -585,9 +751,10 @@ struct LoadedTable {
 
 impl LoadedTable {
     /// The table of a source an earlier run loaded, as the manifest records it.
-    fn from_kept(kept: &SourceKept) -> Self {
+    fn from_kept(kept: &SourceKept, table: WorkspaceTable) -> Self {
         Self {
-            id: kept.id.clone(),
+            table,
+            step_id: kept.id.clone(),
             columns: kept.columns.clone(),
         }
     }
@@ -595,7 +762,8 @@ impl LoadedTable {
     /// What the manifest records of the table, once its source read `read`.
     fn kept(&self, read: Count) -> SourceKept {
         SourceKept {
-            id: self.id.clone(),
+            // The step's path, so two reports' sources of one id are two checkpoints (RS9c).
+            id: self.step_id.clone(),
             rows: read.rows,
             read: read.bytes,
             columns: self.columns.clone(),
@@ -612,7 +780,7 @@ async fn lookup_values(
 ) -> Result<Vec<Literal>, SourceError> {
     let table = loaded
         .iter()
-        .find(|table| table.id.eq_ignore_ascii_case(&lookup.from))
+        .find(|table| table.table.name().eq_ignore_ascii_case(&lookup.from))
         .ok_or_else(|| {
             SourceError::new(format!(
                 "lookup: {:?} wasn't loaded before this source",
@@ -650,7 +818,7 @@ async fn lookup_values(
             ))
         })?;
     let values = workspace
-        .distinct_values(&table.id, &column.name)
+        .distinct_values(&table.table, &column.name)
         .await
         .map_err(|error| SourceError::new(describe_error(&error)))?;
     Ok(values
@@ -677,6 +845,7 @@ impl<O: SourceOpener> Combining<'_, '_, O> {
         &self,
         workspace: &mut Workspace,
         lake: &LakeSource,
+        into: WorkspaceTable,
     ) -> Result<ReadLake, RunFailure> {
         let failed = |problem: String| {
             RunFailure::new(
@@ -725,7 +894,7 @@ impl<O: SourceOpener> Combining<'_, '_, O> {
             }
         };
         let view = LakeView::new(
-            &lake.id,
+            into,
             &lake.storage,
             &lake.path,
             lake.format,
@@ -873,6 +1042,11 @@ struct Spent {
 /// A source being loaded into its table.
 struct Loading<'a> {
     source: &'a QuerySource,
+    /// The table it fills: in the schema of the report that reads it (RS9c).
+    into: WorkspaceTable,
+    /// What the run's progress calls it: `valued › tx` for a source of a report used as a
+    /// source, and the source's id for one of the report being run.
+    step_id: String,
     limits: &'a CombineLimits,
     /// When the source started to be opened, for the time to its first row.
     opened: Instant,
@@ -1050,10 +1224,24 @@ fn progress_at(step: &Step, read: &Count, opened: Instant, at: At, busy: Busy) -
     }
 }
 
+/// One source about to load, with the report it belongs to: its table and its step's name
+/// come from that report's place in the run (RS9c).
+struct Loaded<'a, 'r> {
+    source: &'a QuerySource,
+    report: &'a Composed<'r>,
+    table: WorkspaceTable,
+}
+
+impl Loaded<'_, '_> {
+    fn step_id(&self) -> String {
+        self.report.step_id(&self.source.id)
+    }
+}
+
 impl Loading<'_> {
     fn step(&self) -> Step {
         Step::Source {
-            id: self.source.id.clone(),
+            id: self.step_id.clone(),
         }
     }
 
@@ -1161,7 +1349,7 @@ impl Loading<'_> {
         let opened = self.opened;
         let clock = &mut self.clock;
         let (loaded, taken) = waiting(
-            Box::pin(workspace.load_handoff(&self.source.id, &found.addresses, handed.format)),
+            Box::pin(workspace.load_handoff(&self.into, &found.addresses, handed.format)),
             |so_far| {
                 let busy = clock.lap_loading(so_far);
                 (events.borrow_mut())(progress_at(&step, read, opened, at, busy));
@@ -1299,7 +1487,7 @@ impl Loading<'_> {
             .collect();
         let spent = &self.spent;
         (events.borrow_mut())(RunEvent::SourceDone {
-            id: self.source.id.clone(),
+            id: self.step_id.clone(),
             rows: self.read.rows,
             bytes: self.read.bytes,
             first_row_ms: self.read.first_row.map(millis),
@@ -1339,7 +1527,8 @@ impl Loading<'_> {
             ..Count::default()
         };
         let table = LoadedTable {
-            id: self.source.id.clone(),
+            table: self.into.clone(),
+            step_id: self.step_id.clone(),
             columns,
         };
         (table, read)
@@ -1384,7 +1573,7 @@ impl Loading<'_> {
             })
             .collect();
         let loader = workspace
-            .loader(&self.source.id, &load_columns)
+            .loader(&self.into, &load_columns)
             .await
             .map_err(|error| self.duckdb_failure(&error))?;
         Ok(Table {
@@ -1468,7 +1657,7 @@ impl Loading<'_> {
             type_ms: millis(spent.typing + typing),
         };
         (events.borrow_mut())(RunEvent::SourceDone {
-            id: self.source.id.clone(),
+            id: self.step_id.clone(),
             rows: self.read.rows,
             bytes: self.read.bytes,
             first_row_ms: self.read.first_row.map(millis),
@@ -1502,7 +1691,8 @@ impl Loading<'_> {
             ..Count::default()
         };
         let table = LoadedTable {
-            id: self.source.id.clone(),
+            table: self.into.clone(),
+            step_id: self.step_id.clone(),
             columns,
         };
         Ok((table, read))
