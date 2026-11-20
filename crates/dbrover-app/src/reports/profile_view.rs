@@ -231,6 +231,19 @@ fn pick_run(ui: &mut Ui, runs: &[ReportRun], chosen: usize) -> usize {
     picked
 }
 
+/// How far a step of a report used as a source is indented under that report's lane (RS9d).
+const NESTED_INDENT: f32 = 14.0;
+
+/// What a lane is called: the last part of a nested step's path, so the column stays narrow,
+/// and the step's own name otherwise.
+fn lane_label(lane: &Lane) -> String {
+    let name = lane.step.to_string();
+    match name.rsplit_once(dbrover_insight::profile::STEP_PATH) {
+        Some((_, last)) if lane.depth > 0 => last.to_owned(),
+        _ => name,
+    }
+}
+
 /// The lanes, a label each beside its bar, and the time axis under them.
 fn draw(ui: &mut Ui, palette: &Palette, timeline: &Timeline) {
     let width = (ui.available_width() - LABELS_WIDTH).max(MIN_TIMELINE_WIDTH);
@@ -242,7 +255,14 @@ fn draw(ui: &mut Ui, palette: &Palette, timeline: &Timeline) {
                 ui.vertical(|ui| {
                     ui.set_min_height(LANE_HEIGHT);
                     ui.horizontal(|ui| {
-                        ui.label(lane.step.to_string());
+                        // A step of a report used as a source nests under that report's lane
+                        // (RS9d), and its label is the last part of its path: the whole path
+                        // is in its hover.
+                        if lane.depth > 0 {
+                            ui.add_space(NESTED_INDENT * lane.depth as f32);
+                        }
+                        ui.label(lane_label(lane))
+                            .on_hover_text(lane.step.to_string());
                         if let Some(engine) = &lane.engine {
                             ui.weak(engine);
                         }
@@ -447,6 +467,7 @@ mod tests {
         let mut lanes: Vec<Lane> = PHASES
             .iter()
             .map(|&phase| Lane {
+                depth: 0,
                 step: StepKey::Combine,
                 engine: None,
                 segments: vec![Segment {
