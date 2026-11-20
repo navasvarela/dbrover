@@ -3478,4 +3478,4 @@ PR each:
 between projects, and out of one, by dragging its row onto a header; the toolbar's `+`, the
 Welcome tab and **Move to project ›** keep working as they did.
 
-**Demo note:** written once D9 is built.
+**Demo note:** built; the design page's demo note says what to try.

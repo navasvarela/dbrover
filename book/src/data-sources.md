@@ -14,6 +14,9 @@ and **Amazon Athena** under **Amazon Web Services**, **BigQuery** under **Google
 sign in with your cloud account rather than a password: see [DynamoDB](dynamodb.md),
 [Athena and Trino](athena-trino.md) and [BigQuery](bigquery.md).
 
+A data source added this way is in no project. To put it straight into one, use **New data
+source ›** on that project's header instead; see [Projects](explorer.md#projects).
+
 ![The New PostgreSQL data source dialog](images/data-source-dialog.png)
 
 Every kind has:
@@ -463,7 +466,7 @@ Right-click a data source in the explorer for:
 | **New › Schema…** | Creates a database, on MySQL, MariaDB and ClickHouse, whose schemas are databases. See [Views and schemas](views-schemas.md#new-schema). |
 | **New › User…**, **New › Role…** | Creates a role that can log in, or one that can't, on PostgreSQL. See [Users and roles](users-roles.md). |
 | **Edit…** | Opens the dialog with the saved settings. |
-| **Move to project ›** | Puts the data source in a project, in **No project**, or in a new project. See [Projects](explorer.md#projects). |
+| **Move to project ›** | Puts the data source in a project, in **No project**, or in a new project. Dragging its row onto a project header does the same. See [Projects](explorer.md#projects). |
 | **Delete…** | Asks for confirmation, then removes the data source and deletes its saved password. |
 | Your actions | [Custom actions](customising.md#actions) that apply to data sources, at the end of the menu. |
 
