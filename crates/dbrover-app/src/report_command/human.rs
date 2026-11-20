@@ -364,6 +364,7 @@ mod tests {
     #[test]
     fn prints_a_prql_combine_steps_sql_under_its_error() {
         let started = |combine_sql: Option<&str>| RunEvent::Started {
+            reports: Vec::new(),
             report: "Sales by month".to_owned(),
             sources: Vec::new(),
             combine: true,
@@ -420,6 +421,7 @@ mod tests {
     fn tells_a_finished_run_and_lists_its_files() {
         let events = [
             RunEvent::Started {
+                reports: Vec::new(),
                 report: "Sales by category".to_owned(),
                 sources: Vec::new(),
                 combine: true,
@@ -560,6 +562,7 @@ mod tests {
     #[test]
     fn names_a_report_without_parameters_alone() {
         let started = RunEvent::Started {
+            reports: Vec::new(),
             report: "Stock".to_owned(),
             sources: Vec::new(),
             combine: false,

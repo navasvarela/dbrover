@@ -850,3 +850,66 @@ async fn explains_every_reports_sources_and_plans_the_outer_combine() {
         "the outer combine reads the inner report's result: {text}"
     );
 }
+
+/// RS9d: the run's start names every report it used, each with the blob id of the text that
+/// ran, so a run says which version of a shared report it read.
+#[test]
+fn a_runs_start_names_every_report_it_used() {
+    let middle = r#"
+[report]
+name = "Middle"
+params = { since = "date", until = "date" }
+
+[[source]]
+id = "sales"
+report = "sales"
+params = { since = ":since", until = ":until" }
+
+[combine]
+query = "SELECT * FROM sales"
+
+[[output]]
+format = "csv"
+file = "middle.csv"
+"#;
+    let outer = OUTER.replace("report = \"sales\"", "report = \"middle\"");
+    let plan = plan(&outer, &[("middle", middle), ("sales", INNER)]).unwrap();
+    let values = plan
+        .values(
+            &[("since", "2026-10-01"), ("until", "2026-11-01")]
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value.to_owned()))
+                .collect(),
+        )
+        .unwrap();
+    let own = BlobId::of(outer.as_bytes());
+    let started = plan.started(
+        &values,
+        own,
+        Machine {
+            cores: 8,
+            dbrover: "0.36.0".to_owned(),
+        },
+    );
+    let RunEvent::Started {
+        version, reports, ..
+    } = started
+    else {
+        panic!("{started:?}");
+    };
+    assert_eq!(version, Some(own), "the report's own file");
+    assert_eq!(
+        reports,
+        vec![
+            UsedReport {
+                name: "middle".to_owned(),
+                version: BlobId::of(middle.as_bytes()),
+            },
+            UsedReport {
+                name: "sales".to_owned(),
+                version: BlobId::of(INNER.as_bytes()),
+            },
+        ],
+        "outermost first"
+    );
+}

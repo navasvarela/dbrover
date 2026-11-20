@@ -91,6 +91,20 @@ pub struct RunProfile {
     /// The run it carried on from, whose work folder it took (RS5d).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resumed_from: Option<RunId>,
+    /// Every report it used as a source, outermost first, each with the version of its file
+    /// that ran (RS9d); empty for a report that used none, and for a run kept before RS9d.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reports: Vec<UsedReport>,
+}
+
+/// A report a run used as a source, and the version of its file that ran (RS9d). The run's own
+/// file hash is [`ReportRun::version`]; this says what the reports under it were.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsedReport {
+    /// Its file's name, without `.toml`.
+    pub name: String,
+    /// The Git blob id of the text that ran.
+    pub version: BlobId,
 }
 
 /// The profile as `report_runs.profile` holds it: the run's numbers, and the format they are
@@ -657,6 +671,7 @@ mod tests {
             origin: RunOrigin::App,
             version: None,
             profile: RunProfile {
+                reports: Vec::new(),
                 peak_memory: Some(2_600_000_000),
                 timeout_ms: Some(1_800_000),
                 cores: Some(10),

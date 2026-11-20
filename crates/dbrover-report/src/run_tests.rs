@@ -364,6 +364,7 @@ async fn passes_on_the_sources_own_failure() {
 fn events_are_json_lines_the_app_reads_back() {
     let events = [
         RunEvent::Started {
+            reports: Vec::new(),
             report: "Trial balance".to_owned(),
             sources: vec![SourceStart {
                 id: "balances".to_owned(),

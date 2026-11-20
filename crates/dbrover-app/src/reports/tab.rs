@@ -107,6 +107,10 @@ struct Seen {
     /// Another report's title, while it runs.
     running_other: Option<String>,
     progress: Option<String>,
+    /// The reports whose `[[source]]` names this one, each with its title (RS9d).
+    used_by: Vec<(ReportName, String)>,
+    /// Each report source of this report: its id and the report it names.
+    reads: Vec<(String, String)>,
 }
 
 pub fn show(
@@ -218,6 +222,8 @@ fn see(
         Some(Ok(runs)) => runs.clone(),
         Some(Err(_)) | None => Vec::new(),
     };
+    let used_by = reports.used_by(name);
+    let reads = listed.map(super::Listed::reads).unwrap_or_default();
     let named = reports.named();
     let inputs = CheckInputs {
         data_sources: view.data_sources,
@@ -254,6 +260,8 @@ fn see(
         running_here: running.as_ref() == Some(name),
         running_other,
         progress,
+        used_by,
+        reads,
     })
 }
 
@@ -855,12 +863,45 @@ fn inputs(
     let palette = Palette::for_visuals(ui.visuals());
     // First when there are any: they are what is read first.
     problems(ui, &palette, seen, after);
+    composed(ui, seen, actions);
     if let Some(plan) = &seen.plan {
         ui.add_enabled_ui(!seen.plan_is_stale, |ui| {
             let state = reports.state_mut(name);
             parameters(ui, &palette, &mut state.values, name, plan);
             output(ui, &palette, &state.values, seen, name, plan, actions);
         });
+    }
+}
+
+/// The reports this one reads and the reports that read it (RS9d): each a button that opens
+/// that report's tab, since changing a report changes every report built on it.
+fn composed(ui: &mut Ui, seen: &Seen, actions: &mut Vec<ReportAction>) {
+    if !seen.reads.is_empty() {
+        section(ui, "Reads");
+        for (id, report) in &seen.reads {
+            ui.horizontal(|ui| {
+                ui.weak(format!("{id} is"));
+                let open = ui
+                    .button(report)
+                    .on_hover_text("Open the report this source reads");
+                if open.clicked()
+                    && let Some(name) = ReportName::new(report)
+                {
+                    actions.push(ReportAction::Open(name));
+                }
+            });
+        }
+    }
+    if !seen.used_by.is_empty() {
+        section(ui, "Used by");
+        for (name, title) in &seen.used_by {
+            let open = ui
+                .button(title)
+                .on_hover_text(format!("{name}.toml reads this report"));
+            if open.clicked() {
+                actions.push(ReportAction::Open(name.clone()));
+            }
+        }
     }
 }
 
