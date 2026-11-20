@@ -93,7 +93,7 @@ to aim at otherwise.
 | --- | --- | --- |
 | What can be dragged | A data source's own row, by its name | The only thing that has a project. Catalog nodes (a schema, a table) keep plain click behaviour, so there is nothing to mistake for a move. |
 | Collapsed or expanded | Both | The row is the handle, and it is there either way; an expanded source moves with its tree, which stays expanded. Refusing the gesture on an expanded source would be a rule with nothing behind it. |
-| What it looks like while dragging | The source's name follows the cursor, egui's `dnd_drag_source` ghost; its row keeps its place, its expander and status dot | Shows what is in flight and where it came from, without the list reflowing under the cursor. |
+| What it looks like while dragging | The source's name is drawn in a pill just below and right of the cursor, over the panel; its row stays as it is | Shows what is in flight without hiding the cursor or the header it is aimed at, and a drag let go over nothing leaves no trace. |
 | Valid target hovered | The header row fills with the accent at low opacity and takes a 1-point accent outline, the full width of the panel | The same row-wide fill the selected data source uses, in the accent rather than the selection colour, so "drop here" and "selected" don't look alike. |
 | The source's own group | No highlight, and dropping does nothing | A move to where it already is. **Move to project ›** already shows the current project checked and does nothing when it is picked; the drag says the same thing by staying quiet. |
 | Any other target | Not a drop zone: no highlight, and a release over it moves nothing | A data source row, a table, **Reports**, **Query folders** — nothing claims the payload, so the drag ends where it started. There is no error to report: the user pointed at something that isn't a project. |
@@ -104,10 +104,17 @@ to aim at otherwise.
 
 egui 0.36 has the whole mechanism; D9 adds the gesture, not a drag framework.
 
-- The name label is wrapped in `Ui::dnd_drag_source`, keyed by the data source's id, with a
-  payload of the dragged source's id and its current project. It paints the ghost and keeps the
-  row's click, double-click and context menu, because `dnd_drag_source` ORs its drag response
-  with the body's own.
+- The name is one widget sensing `Sense::click_and_drag()`, with the payload set through
+  `Response::dnd_set_drag_payload` on the frame the drag starts: the dragged source's id and the
+  group it is shown in.
+
+  Not `Ui::dnd_drag_source`, which was the first plan. That helper lays a separate drag-sense
+  widget over the body it wraps, and the row's **secondary** click went to that widget instead of
+  the label underneath — so every data source's context menu stopped opening, and 27 app tests
+  failed on a missing **Move to project** or **New query console**. One widget that senses both
+  has no overlay to lose the click to, and egui's own drag threshold still decides which gesture
+  a press becomes. The ghost is painted by hand for the same reason: it is what the helper was
+  wanted for.
 - A header's drop target is the full-width row rect, taken with `Ui::interact` and
   `Sense::hover()`. `Response::dnd_hover_payload` drives the highlight and
   `Response::dnd_release_payload` the move, both of which test `contains_pointer` rather than
@@ -166,10 +173,21 @@ points from the press, so a press and release at one position is a click and not
 has to be taken before the release. Positions come from `Node::rect().center()` on the row and
 the header, which keeps the test independent of the explorer's exact metrics.
 
-The tests are on a `ui_harness` showing the explorer alone, with two projects and a data source
-in each, asserting the `ExplorerAction`s the gesture pushes: the move, the silence when the
-target is the source's own group, the silence when the release lands on another data source, and
-the scroll offset changing when the pointer is held in the edge band.
+The gesture turned out to be fully testable, so nothing here is left to a by-hand check. The
+tests are in three places, each where its outcome is visible:
+
+- **What each target does** is a `ui_harness` showing the explorer alone, with a project, a data
+  source in it and one outside, asserting the `ExplorerAction`s the gesture pushes: the move onto
+  a project header, the move onto **No project**, and nothing at all for a drop on the source's
+  own group or on another data source's row. The actions are the only place those last two are
+  observable — a move that does nothing writes a file that looks the same, so the saved file
+  cannot tell a silent drop from a pointless one.
+- **The whole chain** is one app test: drag a data source onto a project header and wait for
+  `data_sources.toml` to show it in that project, pointer to file.
+- **Auto-scroll** is a table-driven test of `drag_scroll_delta`, the pure function that turns the
+  pointer's position in the view into a scroll delta — zero away from the edges, strongest at
+  them, and no faster for a pointer past the edge than on it, so a drag that leaves the panel
+  doesn't bolt. The `Ui` plumbing around it stays thin enough to read.
 
 ## Risks
 
@@ -177,8 +195,9 @@ the scroll offset changing when the pointer is held in the edge band.
   top of it, so the row wins where it overlaps; a drag that starts on empty space still scrolls.
 - **A click becomes a drag** if the pointer moves during it. egui's threshold decides, the same
   threshold as everywhere else in the app, and the row keeps its click.
-- **The ghost leaves its slot empty** while the name follows the cursor. Deliberate, and the row
-  keeps its expander, logo and status dot so it doesn't look deleted.
+- **The drop target covers the whole header row**, including its expander, so it could have taken
+  the clicks that fold the group. It senses hover only, which leaves clicks to the widgets under
+  it; a test folds a project through it to keep that true.
 - **Auto-scroll with no scrollbar**: the band is only read while a payload is in flight, so a
   list that fits the panel never moves.
 

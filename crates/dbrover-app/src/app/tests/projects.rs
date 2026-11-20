@@ -1,7 +1,39 @@
 //! Getting data sources into projects from the explorer (D9), driven through the whole app with
-//! a temporary config folder: created straight into a project from its header's menu.
+//! a temporary config folder: created straight into a project from its header's menu, and
+//! dragged onto a header to move it there.
 
 use super::*;
+
+/// Drags the row labelled `source` onto the row labelled `target`, as a mouse does.
+///
+/// egui_kittest's pointer helpers push events and step no frames of their own, so this steps
+/// between them: a press and a release at one position is a click, and egui starts a drag only
+/// once the pointer has moved a few points from the press, hence the halfway move. `drop_at`
+/// also fires `PointerGone`, so the highlight is gone by the time it returns.
+fn drag_onto(harness: &mut Harness<'_, DbRoverApp>, source: &str, target: &str) {
+    let from = harness.get_by_label(source).rect().center();
+    let to = harness.get_by_label(target).rect().center();
+    harness.hover_at(from);
+    harness.step();
+    harness.drag_at(from);
+    harness.step();
+    harness.hover_at(from.lerp(to, 0.5));
+    harness.step();
+    harness.hover_at(to);
+    harness.step();
+    harness.drop_at(to);
+    harness.run();
+}
+
+/// The projects of the saved data sources, by name.
+fn saved_projects(dir: &Path) -> Vec<(String, Option<dbrover_core::ProjectId>)> {
+    DataSourceFile::new(dir.join("data_sources.toml"))
+        .load()
+        .unwrap()
+        .into_iter()
+        .map(|source| (source.name, source.project))
+        .collect()
+}
 
 /// A project with nothing in it, so the explorer shows its header and no data sources.
 fn save_project(dir: &Path, name: &str) -> dbrover_store::Project {
@@ -77,4 +109,25 @@ fn offers_a_new_data_source_on_the_no_project_header() {
     harness.get_by_label("No project").click_secondary();
     harness.run();
     harness.get_by_label("New data source in No project");
+}
+
+/// Dragging a data source's row onto a project header moves it into that project, all the way
+/// to `data_sources.toml`. What the gesture does over each kind of target is in the explorer's
+/// own tests, which can see the actions it pushes; this one is the whole chain, from the pointer
+/// to the file.
+#[test]
+fn drags_a_data_source_onto_a_project_header() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = save_project(dir.path(), "Analytics");
+    save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY);");
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    step_until_visible(&mut harness, "Analytics");
+    assert_eq!(saved_projects(dir.path()), [("shop".to_owned(), None)]);
+
+    drag_onto(&mut harness, "shop", "Analytics");
+
+    step_until(&mut harness, "shop moving into Analytics", |_| {
+        saved_projects(dir.path()) == [("shop".to_owned(), Some(project.id))]
+    });
 }
