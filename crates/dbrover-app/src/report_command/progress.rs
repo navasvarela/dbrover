@@ -222,6 +222,7 @@ mod tests {
             phases: None,
             scanned_bytes: None,
             handed_over: None,
+            reused_ms: None,
         };
         let cases = [
             (

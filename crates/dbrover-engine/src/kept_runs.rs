@@ -131,6 +131,69 @@ pub fn discard_superseded(root: &Path, report: &Path, keep: Option<&Path>) {
     }
 }
 
+/// Removes the kept results in `root` that expired by `now`, then the oldest ones while all of
+/// them hold more than `total` (`docs/reports-at-scale.md`, RS9f). Returns the files removed.
+///
+/// A kept result is a Parquet file whose name is the blob id of the report's file and a digest
+/// of its parameters, so the folder needs no index: its files' names are their keys and their
+/// modified times are their ages. Swept on the same two bounds as a kept work folder, and by
+/// the same call, since both keep rows of a data source on disk for days.
+pub fn sweep_results(root: &Path, total: u64, now: Timestamp) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut kept: Vec<(PathBuf, Timestamp, u64)> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|name| name == "parquet"))
+        .filter_map(|file| {
+            let read = file.metadata().ok()?;
+            let at = Timestamp::try_from(read.modified().ok()?).ok()?;
+            Some((file, at, read.len()))
+        })
+        .collect();
+    kept.sort_by_key(|(_, at, _)| *at);
+    let mut removed = Vec::new();
+    let mut left = Vec::new();
+    for (file, at, size) in kept {
+        let expired = now
+            .duration_since(at)
+            .try_into()
+            .is_ok_and(|age: Duration| age >= KEPT_FOR);
+        if expired {
+            removed.push(file);
+        } else {
+            left.push((file, size));
+        }
+    }
+    let mut held: u64 = left.iter().map(|(_, size)| size).sum();
+    for (file, size) in left {
+        if held <= total {
+            break;
+        }
+        held -= size;
+        removed.push(file);
+    }
+    removed.retain(|file| {
+        std::fs::remove_file(file)
+            .inspect_err(|error| {
+                tracing::warn!("could not remove {}: {error}", file.display());
+            })
+            .is_ok()
+    });
+    removed
+}
+
+/// Removes every kept result in `root`, for **Clear history** and a run from scratch, which
+/// make every report that uses one run again (RS9f).
+pub fn clear_results(root: &Path) {
+    if let Err(error) = std::fs::remove_dir_all(root)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        tracing::warn!("could not clear {}: {error}", root.display());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use dbrover_report::{Manifest, RangeKept, RunIdentity, TypedValues};
@@ -248,5 +311,40 @@ mod tests {
         discard(&mine).unwrap();
         discard(&mine).unwrap();
         assert_eq!(names(root.path()), ["other"]);
+    }
+    /// RS9f: a kept result expires on the same week as a kept work folder, and the oldest go
+    /// once they hold more than the total together. **Clear history** removes them all.
+    #[test]
+    fn sweeps_expired_results_then_the_oldest_past_the_total() {
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path();
+        let result = |name: &str, bytes: usize| {
+            let file = root.join(format!("{name}.parquet"));
+            std::fs::write(&file, vec![b'x'; bytes]).unwrap();
+            file
+        };
+        let results = ["a", "b", "c"].map(|name| result(name, 100));
+        // A file that isn't a result is left alone.
+        let other = root.join("notes.txt");
+        std::fs::write(&other, "x").unwrap();
+
+        // Nothing is over the total, and nothing has expired.
+        assert!(sweep_results(root, 1_000, Timestamp::now()).is_empty());
+        assert!(results.iter().all(|file| file.is_file()));
+
+        // Two of the three hold more than the total together, so the oldest go.
+        let removed = sweep_results(root, 150, Timestamp::now());
+        assert_eq!(removed.len(), 2, "{removed:?}");
+        assert_eq!(results.iter().filter(|file| file.is_file()).count(), 1);
+        assert!(other.is_file());
+
+        // A week on, what is left has expired.
+        let week = jiff::SignedDuration::try_from(KEPT_FOR + Duration::from_secs(60)).unwrap();
+        let later = Timestamp::now().checked_add(week).unwrap();
+        assert_eq!(sweep_results(root, 1_000, later).len(), 1);
+        assert!(results.iter().all(|file| !file.is_file()));
+
+        clear_results(root);
+        assert!(!root.exists());
     }
 }

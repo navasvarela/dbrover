@@ -272,6 +272,7 @@ async fn run_once(engine: &Engine, columns: Columns, folder: &std::path::Path) -
     let staging = out.join(".run");
     let work = staging.with_extension("work");
     let folders = RunFolders {
+        cache: None,
         folder: &out,
         staging: &staging,
         work: &work,

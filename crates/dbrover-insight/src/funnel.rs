@@ -135,6 +135,7 @@ mod tests {
             scanned_bytes: None,
             parts: Vec::new(),
             handed_over: None,
+            reused_ms: None,
         })
     }
 

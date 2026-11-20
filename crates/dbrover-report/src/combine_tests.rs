@@ -196,6 +196,7 @@ async fn run_with(
     let staging = folder.join(".run");
     let work = staging.with_extension("work");
     let folders = RunFolders {
+        cache: None,
         folder,
         staging: &staging,
         work: &work,
@@ -594,6 +595,7 @@ async fn says_where_each_sources_time_went() {
     let staging = folder.path().join(".run");
     let work = staging.with_extension("work");
     let folders = RunFolders {
+        cache: None,
         folder: folder.path(),
         staging: &staging,
         work: &work,
@@ -645,6 +647,7 @@ async fn says_each_second_what_a_source_waits_on_before_its_first_row() {
     let staging = folder.path().join(".run");
     let work = staging.with_extension("work");
     let folders = RunFolders {
+        cache: None,
         folder: folder.path(),
         staging: &staging,
         work: &work,
@@ -803,6 +806,7 @@ async fn loads_many_pages_through_the_queue_with_phases_that_add_up() {
     let staging = folder.path().join(".run");
     let work = staging.with_extension("work");
     let folders = RunFolders {
+        cache: None,
         folder: folder.path(),
         staging: &staging,
         work: &work,

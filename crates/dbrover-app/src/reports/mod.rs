@@ -211,6 +211,9 @@ pub struct ReportsSetup {
     /// Where runs' work folders go unless Settings › Reports chooses another folder: the data
     /// folder's `report-runs`.
     pub work_root: PathBuf,
+    /// Where the results of the reports a run uses as sources are kept, for a `reuse` on one
+    /// (RS9f): the data folder's `report-cache/results`.
+    pub results_root: PathBuf,
 }
 
 /// The reports, their tabs' state, and the run going on.
@@ -631,6 +634,7 @@ impl RunRecord {
                 table,
                 scanned_bytes,
                 handed_over,
+                reused_ms,
                 ..
             } => {
                 let record = self.source_record(id);
@@ -660,6 +664,7 @@ impl RunRecord {
                         files: handed.files,
                         bytes: handed.bytes,
                     }),
+                    reused_ms: *reused_ms,
                 })
             }
             RunEvent::PartDone(part) if self.run_partition.is_some() => {
@@ -1443,6 +1448,12 @@ impl Reports {
         self.listed().iter().find(|listed| &listed.name == name)
     }
 
+    /// Where the results of the reports a run uses as sources are kept (RS9f); `None` before
+    /// the folder is known.
+    pub fn results_root(&self) -> Option<PathBuf> {
+        self.setup.as_ref().map(|setup| setup.results_root.clone())
+    }
+
     /// The reports whose `[[source]]` names `name`, by file name, each with its title (RS9d):
     /// changing a report changes every report built on it, and its tab says which.
     ///
@@ -1547,7 +1558,9 @@ impl Reports {
             return;
         };
         let work_root = settings.work_root(&setup.work_root);
-        dbrover_engine::sweep(work_root, settings.kept_runs_total, Timestamp::now());
+        let now = Timestamp::now();
+        dbrover_engine::sweep(work_root, settings.kept_runs_total, now);
+        dbrover_engine::sweep_results(&setup.results_root, settings.kept_runs_total, now);
         let (values, folder, work) = match &resumes {
             Some(resumable) => (
                 resumable.values.clone(),
@@ -1572,6 +1585,8 @@ impl Reports {
             memory_limit: None,
             explain: None,
             resume: resumes.is_some(),
+            results: Some(setup.results_root.clone()),
+            from_scratch: false,
         };
         let watch = run_watch(plan, settings, work_root);
         let started = setup.launcher.start(&request, watch, wake);
@@ -1640,6 +1655,9 @@ impl Reports {
             memory_limit: None,
             explain: Some(ExplainRequest { tables }),
             resume: false,
+            // An explanation takes no kept result and keeps none: it plans every report.
+            results: None,
+            from_scratch: false,
         };
         let started = setup
             .launcher
@@ -1999,6 +2017,7 @@ mod tests {
                     phases: None,
                     scanned_bytes: None,
                     handed_over: None,
+                    reused_ms: None,
                 },
             );
             untimed(
@@ -2045,6 +2064,7 @@ mod tests {
                         scanned_bytes: None,
                         parts: Vec::new(),
                         handed_over: None,
+                        reused_ms: None,
                     }),
                     StepMetrics::Output(OutputMetrics {
                         number: 1,
@@ -2124,6 +2144,7 @@ mod tests {
                     phases: Some(phases),
                     scanned_bytes: None,
                     handed_over: None,
+                    reused_ms: None,
                 },
             ),
             (
@@ -2295,6 +2316,7 @@ mod tests {
                 phases: None,
                 scanned_bytes: None,
                 handed_over: None,
+                reused_ms: None,
             }
             .at(Duration::from_millis(1_000)),
         );
@@ -2378,6 +2400,7 @@ mod tests {
                     phases: None,
                     scanned_bytes: Some(10),
                     handed_over: None,
+                    reused_ms: None,
                 },
                 RunEvent::CombineDone {
                     rows: 10 * number,
@@ -2534,6 +2557,7 @@ mod tests {
                 phases: None,
                 scanned_bytes: None,
                 handed_over: None,
+                reused_ms: None,
             },
         );
         assert_eq!(record.rows, 0, "a loaded source's rows aren't the outputs'");

@@ -148,6 +148,8 @@ impl Home {
     fn request(&self, report: &Path, values: &[(&str, &str)]) -> RunRequest {
         let out = self.home.path().join("out");
         RunRequest {
+            results: None,
+            from_scratch: false,
             report: report.to_owned(),
             values: values
                 .iter()

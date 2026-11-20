@@ -88,6 +88,7 @@ async fn run_report(
     let staging = folder.join(".run");
     let work = staging.with_extension("work");
     let folders = RunFolders {
+        cache: None,
         folder,
         staging: &staging,
         work: &work,
