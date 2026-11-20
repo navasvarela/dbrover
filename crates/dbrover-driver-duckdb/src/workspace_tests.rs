@@ -4,6 +4,7 @@ use dbrover_core::{Connection, DriverError, describe_error};
 
 use crate::{
     Allowed, DuckDbType, LoadColumn, Workspace, WorkspaceLimit, WorkspaceLimits, WorkspaceStore,
+    WorkspaceTable,
 };
 
 const MIB: u64 = 1 << 20;
@@ -76,7 +77,10 @@ async fn loads_text_into_typed_columns_with_every_digit() {
             known: Some(DuckDbType::Boolean),
         },
     ];
-    let mut loader = workspace.loader("tx", &columns).await.unwrap();
+    let mut loader = workspace
+        .loader(&WorkspaceTable::in_main("tx"), &columns)
+        .await
+        .unwrap();
     loader
         .append(vec![
             cells(&[
@@ -160,7 +164,7 @@ async fn reads_a_columns_distinct_values_in_order() {
         .await
         .unwrap();
     let mut loader = workspace
-        .loader("tx", &text(&["asset", "amount"]))
+        .loader(&WorkspaceTable::in_main("tx"), &text(&["asset", "amount"]))
         .await
         .unwrap();
     loader
@@ -177,15 +181,26 @@ async fn reads_a_columns_distinct_values_in_order() {
         .await
         .unwrap();
     assert_eq!(
-        workspace.distinct_values("tx", "asset").await.unwrap(),
+        workspace
+            .distinct_values(&WorkspaceTable::in_main("tx"), "asset")
+            .await
+            .unwrap(),
         ["btc", "eth"]
     );
     assert_eq!(
-        workspace.distinct_values("tx", "amount").await.unwrap(),
+        workspace
+            .distinct_values(&WorkspaceTable::in_main("tx"), "amount")
+            .await
+            .unwrap(),
         ["9", "10", "100"],
         "numbers in their order, not the text's"
     );
-    assert!(workspace.distinct_values("tx", "missing").await.is_err());
+    assert!(
+        workspace
+            .distinct_values(&WorkspaceTable::in_main("tx"), "missing")
+            .await
+            .is_err()
+    );
     workspace.close().await;
 }
 
@@ -195,7 +210,10 @@ async fn names_the_value_that_does_not_fit_its_type() {
     let workspace = Workspace::open(&on_file(folder.path()), &roomy(folder.path()))
         .await
         .unwrap();
-    let mut loader = workspace.loader("tx", &text(&["amount"])).await.unwrap();
+    let mut loader = workspace
+        .loader(&WorkspaceTable::in_main("tx"), &text(&["amount"]))
+        .await
+        .unwrap();
     loader.append(vec![cells(&["twelve"])]).await.unwrap();
     let error = loader.finish(&[DuckDbType::BigInt]).await.unwrap_err();
     assert!(describe_error(&error).contains("twelve"), "{error}");
@@ -206,7 +224,10 @@ async fn names_the_value_that_does_not_fit_its_type() {
             scale: 2,
         }),
     };
-    let mut typed = workspace.loader("typed", &[known]).await.unwrap();
+    let mut typed = workspace
+        .loader(&WorkspaceTable::in_main("typed"), &[known])
+        .await
+        .unwrap();
     let error = typed
         .append(vec![cells(&["1.50"]), cells(&["eleven"])])
         .await
@@ -217,7 +238,7 @@ async fn names_the_value_that_does_not_fit_its_type() {
         "a value that doesn't fit fails as it is appended: {message}"
     );
     let short_row = workspace
-        .loader("short", &text(&["a", "b"]))
+        .loader(&WorkspaceTable::in_main("short"), &text(&["a", "b"]))
         .await
         .unwrap()
         .append(vec![cells(&["1"])])
@@ -225,7 +246,7 @@ async fn names_the_value_that_does_not_fit_its_type() {
         .unwrap_err();
     assert!(describe_error(&short_row).contains("a row of 1 values"));
     let wrong_count = workspace
-        .loader("other", &text(&["a"]))
+        .loader(&WorkspaceTable::in_main("other"), &text(&["a"]))
         .await
         .unwrap()
         .finish(&[])
@@ -373,7 +394,10 @@ async fn orders_and_regions(folder: &Path) -> Workspace {
         .await
         .unwrap();
     let mut orders = workspace
-        .loader("orders", &text(&["region", "amount", "note"]))
+        .loader(
+            &WorkspaceTable::in_main("orders"),
+            &text(&["region", "amount", "note"]),
+        )
         .await
         .unwrap();
     let rows = (0..1000)
@@ -388,7 +412,10 @@ async fn orders_and_regions(folder: &Path) -> Workspace {
         .await
         .unwrap();
     let mut regions = workspace
-        .loader("regions", &text(&["code", "name"]))
+        .loader(
+            &WorkspaceTable::in_main("regions"),
+            &text(&["code", "name"]),
+        )
         .await
         .unwrap();
     regions
@@ -551,7 +578,7 @@ async fn keeps_tables_larger_than_its_memory_on_its_file() {
         .await
         .unwrap();
     let mut loader = workspace
-        .loader("wide", &text(&["id", "padding"]))
+        .loader(&WorkspaceTable::in_main("wide"), &text(&["id", "padding"]))
         .await
         .unwrap();
     for page in 0..200 {
@@ -719,7 +746,10 @@ async fn reopens_a_kept_workspace_with_its_tables() {
         .await
         .unwrap();
     for table in ["done", "half"] {
-        let mut loader = workspace.loader(table, &text(&["n"])).await.unwrap();
+        let mut loader = workspace
+            .loader(&WorkspaceTable::in_main(table), &text(&["n"]))
+            .await
+            .unwrap();
         loader
             .append(vec![cells(&["1"]), cells(&["2"])])
             .await
@@ -732,10 +762,17 @@ async fn reopens_a_kept_workspace_with_its_tables() {
         .unwrap();
     let rows = query(&mut kept, "SELECT count(*) FROM done").await.unwrap();
     assert_eq!(rows, [cells(&["2"])]);
-    kept.drop_table("half").await.unwrap();
-    kept.drop_table("half").await.unwrap();
+    kept.drop_table(&WorkspaceTable::in_main("half"))
+        .await
+        .unwrap();
+    kept.drop_table(&WorkspaceTable::in_main("half"))
+        .await
+        .unwrap();
     assert!(query(&mut kept, "SELECT * FROM half").await.is_err());
-    let mut again = kept.loader("half", &text(&["n"])).await.unwrap();
+    let mut again = kept
+        .loader(&WorkspaceTable::in_main("half"), &text(&["n"]))
+        .await
+        .unwrap();
     again.append(vec![cells(&["3"])]).await.unwrap();
     let rows = query(&mut kept, "SELECT count(*) FROM half").await.unwrap();
     assert_eq!(rows, [cells(&["1"])]);
@@ -776,7 +813,10 @@ async fn appends_an_engines_batch_as_it_is() {
         name: name.to_owned(),
         known,
     });
-    let mut loader = workspace.loader("t", &columns).await.unwrap();
+    let mut loader = workspace
+        .loader(&WorkspaceTable::in_main("t"), &columns)
+        .await
+        .unwrap();
     let arrays: Vec<ArrayRef> = vec![
         Arc::new(Int32Array::from(vec![Some(1), None])),
         Arc::new(UInt64Array::from(vec![u64::MAX, 0])),
@@ -847,7 +887,10 @@ async fn refuses_a_batch_of_other_columns() {
     let workspace = Workspace::open(&on_file(folder.path()), &roomy(folder.path()))
         .await
         .unwrap();
-    let mut loader = workspace.loader("t", &text(&["a", "b"])).await.unwrap();
+    let mut loader = workspace
+        .loader(&WorkspaceTable::in_main("t"), &text(&["a", "b"]))
+        .await
+        .unwrap();
     let array: ArrayRef = Arc::new(Int64Array::from(vec![1]));
     let batch = RecordBatch::try_from_iter([("a", array)]).unwrap();
     let error = loader.append_batch(batch).await.unwrap_err();
@@ -856,4 +899,115 @@ async fn refuses_a_batch_of_other_columns() {
         "{}",
         describe_error(&error)
     );
+}
+
+/// RS9c, DuckDB 1.5.6: a report used as a source loads its tables into a schema of its own,
+/// and its combine runs after the lock, with `search_path` naming that schema. Both facts are
+/// DuckDB's, read by name, so they are pinned here: `lock_configuration` freezes the global
+/// settings, which `memory_limit` is one of, and leaves the local ones, which `search_path` is
+/// one of.
+#[tokio::test]
+async fn sets_the_search_path_after_the_lock() {
+    let folder = tempfile::tempdir().unwrap();
+    let mut workspace = Workspace::open(&on_file(folder.path()), &roomy(folder.path()))
+        .await
+        .unwrap();
+    // A table of the outer report, and one of a report used as a source, both named `tx`.
+    for (table, rows) in [
+        (WorkspaceTable::in_main("tx"), "SELECT 1 AS n"),
+        (WorkspaceTable::in_schema("valued", "tx"), "SELECT 2 AS n"),
+    ] {
+        workspace.create_schema(table.schema()).await.unwrap();
+        let sql = format!("CREATE TABLE {} AS {rows}", table.qualified());
+        query(&mut workspace, &sql).await.unwrap();
+    }
+    workspace.lock(&Allowed::default()).await.unwrap();
+
+    // Locked, the global settings are frozen, as `once_locked_reads_no_file…` pins; the local
+    // `search_path` is not, so the inner combine can still name its own schema.
+    assert!(
+        query(&mut workspace, "SET memory_limit = '64GiB'")
+            .await
+            .is_err(),
+        "a global setting is frozen"
+    );
+    workspace.set_search_path(Some("valued")).await.unwrap();
+    assert_eq!(
+        query(&mut workspace, "SELECT n FROM tx").await.unwrap(),
+        vec![cells(&["2"])],
+        "the inner report's own tx, not main's"
+    );
+    // The inner combine writes its result where the report that reads it looks for it.
+    query(
+        &mut workspace,
+        &format!(
+            "CREATE TABLE {} AS SELECT n FROM tx",
+            WorkspaceTable::in_main("valued").qualified()
+        ),
+    )
+    .await
+    .unwrap();
+    workspace.set_search_path(None).await.unwrap();
+    assert_eq!(
+        query(&mut workspace, "SELECT n FROM tx").await.unwrap(),
+        vec![cells(&["1"])],
+        "the outer report's own tx again"
+    );
+    assert_eq!(
+        query(&mut workspace, "SELECT n FROM valued").await.unwrap(),
+        vec![cells(&["2"])],
+        "the inner report's result, in main"
+    );
+    workspace.close().await;
+}
+
+/// RS9c: a locked workspace still makes tables, which is how an inner combine's result gets
+/// into the database, and still reaches no file, which is what the lock is for.
+#[tokio::test]
+async fn makes_a_table_once_locked_but_reads_no_file() {
+    let folder = tempfile::tempdir().unwrap();
+    let outside = folder.path().join("outside.csv");
+    std::fs::write(&outside, "a\n1\n").unwrap();
+    let mut workspace = Workspace::open(&on_file(folder.path()), &roomy(folder.path()))
+        .await
+        .unwrap();
+    query(&mut workspace, "CREATE TABLE main.tx AS SELECT 3 AS n")
+        .await
+        .unwrap();
+    workspace.lock(&Allowed::default()).await.unwrap();
+    query(
+        &mut workspace,
+        "CREATE TABLE main.result AS SELECT sum(n) AS total FROM tx",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        query(&mut workspace, "SELECT total FROM main.result")
+            .await
+            .unwrap(),
+        vec![cells(&["3"])]
+    );
+    let refused = query(
+        &mut workspace,
+        &format!(
+            "CREATE TABLE main.outside AS SELECT * FROM read_csv('{}')",
+            outside.display()
+        ),
+    )
+    .await;
+    assert!(refused.is_err(), "a locked workspace reads no file");
+    workspace.close().await;
+}
+
+/// RS9c: a schema is made once, so two reports of one run that name the same inner report
+/// don't fail on the second.
+#[tokio::test]
+async fn makes_a_schema_once() {
+    let folder = tempfile::tempdir().unwrap();
+    let workspace = Workspace::open(&on_file(folder.path()), &roomy(folder.path()))
+        .await
+        .unwrap();
+    workspace.create_schema("valued").await.unwrap();
+    workspace.create_schema("valued").await.unwrap();
+    workspace.close().await;
 }

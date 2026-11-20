@@ -12,7 +12,7 @@ use dbrover_core::{LakeFormat, LakePath, ObjectStorage, Password, describe_error
 
 use crate::bucket_tests::test_bucket;
 use crate::workspace_tests::{on_file, query, roomy};
-use crate::{Allowed, BucketSignIn, LakeView, Workspace};
+use crate::{Allowed, BucketSignIn, LakeView, Workspace, WorkspaceTable};
 
 /// A workspace signed in to MinIO's bucket, before the lock.
 struct Lake {
@@ -47,7 +47,14 @@ async fn signed_in() -> Option<Lake> {
 
 fn view(storage: &ObjectStorage, id: &str, path: &str, format: LakeFormat, hive: bool) -> LakeView {
     let lake = LakePath::new(storage, path).unwrap();
-    LakeView::new(id, storage, &lake, format, lake.url(), hive)
+    LakeView::new(
+        WorkspaceTable::in_main(id),
+        storage,
+        &lake,
+        format,
+        lake.url(),
+        hive,
+    )
 }
 
 /// What DuckDB says for a path a locked workspace may not read.
@@ -203,7 +210,7 @@ async fn an_iceberg_table_and_a_delta_table_are_read_in_place() {
     .unwrap();
     let newest = newest[0][0].clone().expect("a metadata file");
     let orders = LakeView::new(
-        "orders",
+        WorkspaceTable::in_main("orders"),
         &lake.storage,
         &orders_path,
         LakeFormat::Iceberg,

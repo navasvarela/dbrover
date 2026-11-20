@@ -686,7 +686,7 @@ async fn says_each_second_what_a_source_waits_on_before_its_first_row() {
 }
 
 /// Explains each source as its statement, with nothing to plan it with.
-struct EchoExplainer;
+pub(crate) struct EchoExplainer;
 
 impl SourceExplainer for EchoExplainer {
     async fn explain(&self, statement: &SourceStatement<'_>) -> SourceExplained {
