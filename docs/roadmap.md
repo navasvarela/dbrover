@@ -2775,31 +2775,79 @@ measurement.
   kept work folder. Checked against the SQLite shop on macOS with a real settings folder, and
   against a stand-in worker in the tests; not against a live warehouse, where a source's
   estimate comes from the engine's own cost guard, and not on Windows or Linux beyond CI.
-- **RS9 — Composing reports:** a report used as another's source, by name, with its
-  parameters bound, run in the same worker and DuckDB; only its result is visible to the outer
-  report. `reuse = "24h"` takes a recent result instead of running the inner report again.
-  Independent of the scale work, so it can come right after RP5. Planned against the code as of
-  0.36.0 in [RS9 against today's code](reports-at-scale.md#rs9-against-todays-code), which
-  found three things the design had wrong: DuckDB 1.5.6's lock doesn't freeze `search_path`, so
-  an inner combine needs no connection of its own; RS5h's result cache was never built, so
-  RS9f carries one of its own; and what the example reports repeat is a whole result, which a
-  report source removes, rather than an expression a shared SQL macro would, so RS9e stays
-  out. In layers, one PR each:
-  - **RS9a — Plan:** that section, the layers here, and this line. Docs only.
-  - **RS9b — The report file:** `report` and `params` on a `[[source]]`, read and planned, with
-    the graph of the reports a run uses, its cycles and a depth past 4 refused, and every
-    problem naming both reports.
-  - **RS9c — Running a report source:** each inner report's sources in a schema of their own,
-    the lock, then each inner combine as `CREATE TABLE main.<id> AS …` innermost first.
-  - **RS9d — The tab and the profile:** **Used by**, a report source's **Edit file**, the inner
-    steps nested in the timeline, and every report file's hash kept in the run's profile.
-  - **RS9e — Shared SQL functions:** left out, for the reason above.
-  - **RS9f — `reuse`:** a result kept as Parquet under `report-cache/results/`, keyed by the
-    inner file's hash and its parameters, with the sweeping and the clearing of its own.
-  - **RS9g — Manual, demo note and the exit test.**
+- **RS9 — Composing reports:** built on 2026-11-20, in layers RS9a to RS9g, RS9e left out. A
+  `[[source]]` can name another report in the folder instead of a data source, and reads that
+  report's result — its `[combine]`'s rows, or its one source's rows where it has no combine —
+  as the table its id names, with that report's parameters bound to the outer report's or to
+  values of their own. A report written once is then used by several reports instead of being
+  copied from file to file and drifting, and its result is its contract: the report that reads
+  it cannot name its sources, so it can change how it gets its rows without breaking the
+  reports built on it. Everything runs in one worker and one DuckDB, each report's sources in a
+  schema of their own, the inner combines innermost first once the database is locked.
+  `reuse = "24h"` takes a recent result instead of running the report again. Planned against the
+  code in [RS9 against today's code](reports-at-scale.md#rs9-against-todays-code), which found
+  three things the design had wrong:
+  - **DuckDB 1.5.6's lock doesn't freeze `search_path`.** The design has each inner combine on
+    a connection of its own, its `search_path` set before the lock froze the settings;
+    `lock_configuration` freezes the global settings only, so the combines run one after
+    another on the workspace's own connection. Pinned in the workspace's tests, with
+    `CREATE TABLE` after the lock and a locked clone still reaching no file.
+  - **RS5's result cache was never built.** RS5h is RS5's one unbuilt layer, and its cache
+    holds something else, so RS9f carries its own under `report-cache/results/`, swept on the
+    same two bounds as a kept work folder.
+  - **The examples repeat a result, not an expression.** `battery-cycles`' `metered` common
+    table expression is `battery-flows`' whole combine query, which a report source removes;
+    what repeats as an expression is one multiplication, in two files. RS9e, shared SQL
+    functions, stays out and waits for a third.
+
+  In layers, one PR each:
+  - **RS9a — Plan:** built; that section, the layers, and this line. Docs only.
+  - **RS9b — The report file:** built; `report` and `params` on a `[[source]]`, read and
+    planned, the inner report read and planned in its turn so a problem in it is a problem in
+    every report that uses it, and cycles, a depth past four, an inner `[report] partition` and
+    two reports attaching different files under one id all refused, naming both reports.
+  - **RS9c — Running a report source:** built; each report's sources in a schema named by its
+    path, the lock, then each inner combine as `CREATE TABLE … AS` innermost first. Explaining
+    a composed report walks the same reports, each making its result over empty tables.
+  - **RS9d — The tab and the profile:** built; **Reads** and **Used by** in the tab, each a
+    button that opens that report, the inner steps indented in the timeline, and every report
+    file's blob id kept in the run's profile.
+  - **RS9e — Shared SQL functions:** not built, for the reason above.
+  - **RS9f — `reuse`:** built; a result kept as Parquet under `report-cache/results/`, keyed by
+    the report's file and its parameters, taken when it is younger than the age, and swept,
+    cleared by **Clear history** and ignored by **Run from scratch**.
+  - **RS9g — Manual, demo note and the exit test:** built; the manual's
+    [A report as a source](../book/src/reports.md#a-report-as-a-source), the example
+    `net-by-category.toml`, a demo note, and the exit test below.
 
   **Exit:** a report built on an example report writes rows that equal a sum over that report's
-  own CSV file, and a cycle of two reports is a problem in both files.
+  own CSV file, and a cycle of two reports is a problem in both files. Met on 2026-11-20:
+  `crates/dbrover-engine/tests/report_composed.rs` runs `sales-by-category` on the SQLite shop,
+  then `net-by-category`, whose only source is that report's result; each category's net —
+  2,606.32, 54,319.98, 8,387.90 and 3,121.56 — equals the subtotal in
+  `sales-by-category-2026-10.csv` beside it, and their sum the file's own total of 68,435.76.
+  Two reports that read each other are refused in both files, each problem naming both. It runs
+  in CI, with no test server.
+
+  **RS9 demo note:** copy `examples/reports/sales-by-category.toml` and `net-by-category.toml`
+  into the reports folder with the SQLite **shop** of `shop.sql`, as the manual's "Your first
+  report" says, and **Reload**. `net-by-category`'s tab shows **Reads** — *sales is
+  sales-by-category* — and no data source of its own; `sales-by-category`'s tab shows **Used
+  by**, with *Net sales by category* beside it. **Run** it over October 2026: the tab's steps
+  are **Source sales › lines**, **Source sales** and **Combine**, and **Profile** indents the
+  first under the second. Break `sales-by-category` — drop a comma from its `columns` — and the
+  problem shows in `net-by-category`'s tab too, naming the report it came from. Add
+  `reuse = "24h"` to the source and run twice: the second run's Profile marks **Source sales**
+  with how old the result it took was, and `report-cache/results/` in the data folder holds one
+  Parquet file; **Run from scratch** runs it again. Point the source at a report that reads it
+  back and both files refuse to plan. Checked on macOS with a real settings folder, and in CI
+  against the SQLite shop; not on Windows or Linux beyond CI, and not against a warehouse,
+  where `reuse` is worth the most.
+
+  **What RS9 doesn't carry** is in
+  [RS9's remaining gaps](reports-at-scale.md#rs9s-remaining-gaps): the explorer doesn't mark a
+  report that others use, shared SQL functions aren't built, and a report read as a source keeps
+  no run of its own.
 
 ## Version control track
 
