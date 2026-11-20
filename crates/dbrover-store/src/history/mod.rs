@@ -19,7 +19,7 @@ pub use redact::redact_secrets;
 pub use runs::{
     CombineCaps, CombineMetrics, DEFAULT_RUNS_KEPT, HandoffMetrics, KeptColumn, LakeMetrics,
     OutputMetrics, PartMetrics, ReportRun, RunError, RunId, RunOrigin, RunOutcome, RunProfile,
-    SourceCaps, SourceMetrics, SourcePhases, StepMetrics,
+    SourceCaps, SourceMetrics, SourcePhases, StepMetrics, UsedReport,
 };
 pub use source::{HistorySource, HistorySourceKind};
 

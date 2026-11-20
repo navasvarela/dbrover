@@ -196,6 +196,7 @@ fn finished_run(folder: &Path) -> Vec<RunEvent> {
     };
     vec![
         RunEvent::Started {
+            reports: Vec::new(),
             report: "Trial balance".to_owned(),
             sources: vec![SourceStart {
                 id: "balances".to_owned(),
@@ -385,6 +386,7 @@ fn combined_start() -> Vec<RunEvent> {
     };
     vec![
         RunEvent::Started {
+            reports: Vec::new(),
             report: "Trial balance".to_owned(),
             sources: vec![source("entries"), source("accounts")],
             combine: true,
@@ -575,6 +577,7 @@ fn says_how_fast_a_running_source_reads_and_what_it_waits_on() {
 #[test]
 fn shows_a_lookup_waiting_then_its_batches_then_done() {
     let start = RunEvent::Started {
+        reports: Vec::new(),
         report: "Trial balance".to_owned(),
         sources: vec![
             SourceStart {
@@ -821,6 +824,7 @@ fn sends_the_defaults_settings_sets_with_each_run() {
 fn cancel_stops_the_running_report() {
     let dir = tempfile::tempdir().unwrap();
     let launcher = StandIn::new(vec![RunEvent::Started {
+        reports: Vec::new(),
         report: "Trial balance".to_owned(),
         sources: vec![SourceStart {
             id: "balances".to_owned(),
@@ -863,6 +867,7 @@ fn cancel_stops_the_running_report() {
 fn pause_keeps_a_run_that_resume_carries_on_from() {
     let dir = tempfile::tempdir().unwrap();
     let launcher = StandIn::new(vec![RunEvent::Started {
+        reports: Vec::new(),
         report: "Trial balance".to_owned(),
         sources: Vec::new(),
         combine: false,

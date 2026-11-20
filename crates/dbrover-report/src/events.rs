@@ -62,6 +62,10 @@ pub enum RunEvent {
         /// For a partitioned run, how it goes through its ranges (RS4d).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         partition: Option<RunPartitionStart>,
+        /// Every report it uses as a source, outermost first, with the blob id of the text
+        /// that runs (RS9d); empty for a report that uses none.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        reports: Vec<UsedReport>,
     },
     /// What a step has returned so far, about once a second.
     Progress {
@@ -241,6 +245,18 @@ pub struct SourceStart {
     /// How it reads its ranges, for a partitioned source (RS4c).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partition: Option<PartitionStart>,
+}
+
+/// A report a run used as a source, and the version of its file that ran (RS9d). A run says
+/// which version of every report it used, so a change to a shared report shows in the runs
+/// after it; the report's own file hash stays the run's `version`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsedReport {
+    /// Its file's name, without `.toml`.
+    pub name: String,
+    /// The Git blob id of the text that ran: `git log --find-object` with it lists the commits
+    /// that had exactly that file.
+    pub version: BlobId,
 }
 
 /// The lake a source reads in place, as a run starts (RS7).

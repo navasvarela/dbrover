@@ -447,6 +447,7 @@ fn runs_a_report_and_reports_each_step() {
     assert_eq!(
         events[0],
         RunEvent::Started {
+            reports: Vec::new(),
             report: "Trial balance".to_owned(),
             sources: vec![SourceStart {
                 id: "balances".to_owned(),

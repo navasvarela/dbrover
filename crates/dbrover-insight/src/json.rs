@@ -66,6 +66,9 @@ pub fn profile(run: &ReportRun, quiet: &[HintId]) -> Value {
         "origin": origin(run),
         "params": run.params,
         "version": run.version.map(|version| version.to_string()),
+        // Every report it used as a source, each with the version of its file that ran
+        // (RS9d): a run says which version of every report it read, not only its own.
+        "reports": run.profile.reports,
         "machine": run.profile,
         "steps": run.steps,
         "bottleneck": run_profile::bottleneck(run).map(|bottleneck| bottleneck.to_string()),

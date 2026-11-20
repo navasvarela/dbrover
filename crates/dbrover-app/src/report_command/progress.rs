@@ -290,6 +290,7 @@ mod tests {
         ];
         let mut line = LiveLine::default();
         line.apply(&RunEvent::Started {
+            reports: Vec::new(),
             report: "Sales".to_owned(),
             sources: vec![SourceStart {
                 id: "lines".to_owned(),
@@ -320,6 +321,7 @@ mod tests {
     fn says_which_range_a_partitioned_run_is_on() {
         let mut line = LiveLine::default();
         line.apply(&RunEvent::Started {
+            reports: Vec::new(),
             report: "Events".to_owned(),
             sources: Vec::new(),
             combine: true,
@@ -360,6 +362,7 @@ mod tests {
     fn says_which_ranges_a_partitioned_source_reads() {
         let mut line = LiveLine::default();
         line.apply(&RunEvent::Started {
+            reports: Vec::new(),
             report: "Events".to_owned(),
             sources: vec![SourceStart {
                 id: "events".to_owned(),
