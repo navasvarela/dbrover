@@ -73,7 +73,11 @@ deletes; a fuller chart: bars lying down, a stacked area, a log scale, colours g
 series, lines computed from the points drawn through `overlay`, and **Summarise** writing the SQL
 for a column below the statement it came from; and reports read over MCP: a client can list a
 report's runs, read a run's profile and hints, compare two runs and explain a report before it
-runs, each read-only and within the project's own data sources).
+runs, each read-only and within the project's own data sources) and v0.36.0 (the last of the
+dbdesk compatibility gone: the macOS bundle no longer answers to the name the app had before
+0.13, an install from 0.12 or earlier is no longer copied and its keychain entries are no longer
+moved; and Valkey 9.2's commands classified, so a read-only data source accepts the `PH*` reads
+it had been refusing).
 R3's update notice is built, ahead of R2 (see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
