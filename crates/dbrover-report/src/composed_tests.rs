@@ -631,6 +631,7 @@ async fn run_into(
     let staging = folder.join(".run");
     let work = staging.with_extension("work");
     let folders = RunFolders {
+        cache: None,
         folder,
         staging: &staging,
         work: &work,
@@ -911,5 +912,210 @@ file = "middle.csv"
             },
         ],
         "outermost first"
+    );
+}
+
+// `reuse` on a report source (RS9f): a result kept as Parquet, taken when it is young enough.
+
+/// `plan` run for October into `folder`, keeping and taking results in `cache`.
+async fn run_with_cache(
+    plan: &Plan,
+    opener: &MemoryOpener,
+    folder: &Path,
+    cache: &Path,
+    takes_kept: bool,
+) -> (Result<RunSummary, RunFailure>, Vec<RunEvent>) {
+    let values = plan
+        .values(
+            &[("since", "2026-10-01"), ("until", "2026-11-01")]
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value.to_owned()))
+                .collect(),
+        )
+        .expect("the values");
+    let staging = folder.join(".run");
+    let work = staging.with_extension("work");
+    let folders = RunFolders {
+        folder,
+        staging: &staging,
+        work: &work,
+        cache: Some(ResultCache {
+            folder: cache,
+            takes_kept,
+        }),
+    };
+    let mut events = Vec::new();
+    let outcome = run(plan, &values, opener, folders, &mut |event| {
+        events.push(event);
+    })
+    .await;
+    (outcome, events)
+}
+
+/// How old the result each step took was, by step.
+fn reused(events: &[RunEvent]) -> Vec<(String, Option<u64>)> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::SourceDone { id, reused_ms, .. } => Some((id.clone(), *reused_ms)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn takes_a_kept_result_instead_of_running_the_report_again() {
+    let folder = tempfile::tempdir().unwrap();
+    let cache = folder.path().join("report-cache");
+    let outer = OUTER.replace("report = \"sales\"", "report = \"sales\"\nreuse = \"24h\"");
+    let plan = plan(&outer, &[("sales", INNER)]).unwrap();
+
+    // The first run has no result to take, so the inner report runs and keeps one.
+    let first = folder.path().join("first");
+    std::fs::create_dir_all(&first).unwrap();
+    let opener = MemoryOpener::of(vec![("lines", lines())]);
+    let (outcome, events) = run_with_cache(&plan, &opener, &first, &cache, true).await;
+    outcome.expect("the first run");
+    assert_eq!(
+        reused(&events)
+            .iter()
+            .filter(|(_, age)| age.is_some())
+            .count(),
+        0,
+        "nothing was kept yet"
+    );
+    let written = std::fs::read_to_string(first.join("by-category.csv")).unwrap();
+
+    // The second has: the inner report sends no statement at all, and the files are the same.
+    let second = folder.path().join("second");
+    std::fs::create_dir_all(&second).unwrap();
+    let empty = MemoryOpener::of(Vec::new());
+    let (outcome, events) = run_with_cache(&plan, &empty, &second, &cache, true).await;
+    outcome.expect("the second run");
+    assert!(
+        empty.sent.borrow().is_empty(),
+        "the inner report didn't run: {:?}",
+        empty.sent.borrow()
+    );
+    let again = std::fs::read_to_string(second.join("by-category.csv")).unwrap();
+    assert_eq!(again, written, "the same rows as the run that made them");
+    let taken = reused(&events);
+    let (step, age) = taken
+        .iter()
+        .find(|(_, age)| age.is_some())
+        .unwrap_or_else(|| panic!("a reused step: {taken:?}"));
+    assert_eq!(step, "sales", "the report source's own step");
+    assert!(age.is_some(), "how old the result was");
+}
+
+#[tokio::test]
+async fn a_run_from_scratch_runs_the_report_again_and_keeps_what_it_makes() {
+    let folder = tempfile::tempdir().unwrap();
+    let cache = folder.path().join("report-cache");
+    let outer = OUTER.replace("report = \"sales\"", "report = \"sales\"\nreuse = \"24h\"");
+    let plan = plan(&outer, &[("sales", INNER)]).unwrap();
+    let first = folder.path().join("first");
+    std::fs::create_dir_all(&first).unwrap();
+    let opener = MemoryOpener::of(vec![("lines", lines())]);
+    run_with_cache(&plan, &opener, &first, &cache, true)
+        .await
+        .0
+        .expect("the first run");
+
+    let scratch = folder.path().join("scratch");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let again = MemoryOpener::of(vec![("lines", lines())]);
+    let (outcome, events) = run_with_cache(&plan, &again, &scratch, &cache, false).await;
+    outcome.expect("the run from scratch");
+    assert_eq!(
+        again.sent.borrow().len(),
+        1,
+        "the inner report ran again: {:?}",
+        again.sent.borrow()
+    );
+    assert!(
+        reused(&events).iter().all(|(_, age)| age.is_none()),
+        "nothing was taken"
+    );
+}
+
+#[tokio::test]
+async fn keeps_a_result_under_the_reports_version_and_its_parameters() {
+    let folder = tempfile::tempdir().unwrap();
+    let cache = folder.path().join("report-cache");
+    let outer = OUTER.replace("report = \"sales\"", "report = \"sales\"\nreuse = \"24h\"");
+    let plan = plan(&outer, &[("sales", INNER)]).unwrap();
+    let out = folder.path().join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    let opener = MemoryOpener::of(vec![("lines", lines())]);
+    run_with_cache(&plan, &opener, &out, &cache, true)
+        .await
+        .0
+        .expect("the run");
+    let [PlannedSource::Report(source)] = plan.sources() else {
+        panic!("{:?}", plan.sources());
+    };
+    let values = plan
+        .values(
+            &[("since", "2026-10-01"), ("until", "2026-11-01")]
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value.to_owned()))
+                .collect(),
+        )
+        .unwrap();
+    let kept = source.kept_result(&cache, &values).expect("a file");
+    assert!(kept.is_file(), "{} wasn't written", kept.display());
+    assert!(
+        kept.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with(&source.version.to_string())),
+        "the inner report's version names it: {}",
+        kept.display()
+    );
+    // Another period is another key, so it isn't taken.
+    let other = plan
+        .values(
+            &[("since", "2026-09-01"), ("until", "2026-10-01")]
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value.to_owned()))
+                .collect(),
+        )
+        .unwrap();
+    let elsewhere = source.kept_result(&cache, &other).expect("a file");
+    assert_ne!(elsewhere, kept);
+    assert!(!elsewhere.exists());
+}
+
+#[tokio::test]
+async fn a_report_source_without_reuse_keeps_nothing() {
+    let folder = tempfile::tempdir().unwrap();
+    let cache = folder.path().join("report-cache");
+    let plan = plan(OUTER, &[("sales", INNER)]).unwrap();
+    let out = folder.path().join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    let opener = MemoryOpener::of(vec![("lines", lines())]);
+    run_with_cache(&plan, &opener, &out, &cache, true)
+        .await
+        .0
+        .expect("the run");
+    let kept = std::fs::read_dir(&cache)
+        .map(|entries| entries.count())
+        .unwrap_or(0);
+    assert_eq!(kept, 0, "nothing is kept without reuse");
+}
+
+#[test]
+fn reuse_is_only_for_a_report_source() {
+    let text = INNER.replace(
+        "data_source = \"shop\"",
+        "data_source = \"shop\"\nreuse = \"24h\"",
+    );
+    let problems = read_problems(&text);
+    assert!(
+        says(
+            &problems,
+            "reuse takes a recent result of the report a source reads"
+        ),
+        "{problems:?}"
     );
 }

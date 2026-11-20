@@ -195,6 +195,7 @@ async fn run_plan(
         &values,
         opener,
         RunFolders {
+            cache: None,
             folder,
             staging: &staging,
             work: &work,

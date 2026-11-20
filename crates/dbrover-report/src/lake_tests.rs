@@ -161,6 +161,7 @@ async fn run_lake(
         &plan.values(&BTreeMap::new()).unwrap(),
         &opener,
         RunFolders {
+            cache: None,
             folder,
             staging: &staging,
             work: &work,
@@ -249,6 +250,7 @@ async fn reads_an_iceberg_lake_from_its_newest_metadata_file() {
         &plan.values(&BTreeMap::new()).unwrap(),
         &opener,
         RunFolders {
+            cache: None,
             folder: folder.path(),
             staging: &staging,
             work: &work,
@@ -305,6 +307,7 @@ async fn the_profile_says_what_the_lakes_scan_read_from_the_bucket() {
             &plan.values(&BTreeMap::new()).unwrap(),
             &opener,
             RunFolders {
+                cache: None,
                 folder,
                 staging: &staging,
                 work: &work,
@@ -386,6 +389,7 @@ async fn the_cost_guard_refuses_a_lake_that_holds_more_than_its_limit() {
             &plan.values(&BTreeMap::new()).unwrap(),
             &opener,
             RunFolders {
+                cache: None,
                 folder,
                 staging: &staging,
                 work: &work,

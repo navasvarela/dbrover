@@ -157,6 +157,7 @@ async fn writes_a_trial_balance_from_sqlite_with_its_dates_bound() {
     let staging = out.join(".run");
     let work = staging.with_extension("work");
     let folders = RunFolders {
+        cache: None,
         folder: &out,
         staging: &staging,
         work: &work,
@@ -211,6 +212,7 @@ async fn reads_a_sqlite_ledger_a_week_at_a_time_with_each_range_bound() {
     let staging = out.join(".run");
     let work = out.join(".work");
     let folders = RunFolders {
+        cache: None,
         folder: &out,
         staging: &staging,
         work: &work,
@@ -278,6 +280,7 @@ async fn runs_a_sqlite_ledger_a_week_at_a_time_into_a_file_a_week() {
     let staging = out.join(".run");
     let work = out.join(".work");
     let folders = RunFolders {
+        cache: None,
         folder: &out,
         staging: &staging,
         work: &work,
@@ -391,6 +394,7 @@ async fn stops_a_slow_postgres_source_at_its_timeout() {
     let staging = folder.path().join(".run");
     let work = staging.with_extension("work");
     let folders = RunFolders {
+        cache: None,
         folder: folder.path(),
         staging: &staging,
         work: &work,

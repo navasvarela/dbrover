@@ -154,8 +154,9 @@ pub async fn explain(
         Logic::Combine(combined) => {
             // The report, and every report it uses as a source, whose own sources are
             // explained under it (RS9c).
-            let reports = match composed(plan, values, combined) {
-                Ok(reports) => reports,
+            // An explanation takes no kept result: it plans every report the run would run.
+            let reports = match composed(plan, values, combined, None) {
+                Ok((reports, _)) => reports,
                 Err(failure) => {
                     return Explanation {
                         sources: Vec::new(),

@@ -50,6 +50,7 @@ fn source(id: &str, rows: u64, elapsed_ms: u64, server_ms: u64) -> SourceMetrics
         scanned_bytes: None,
         parts: Vec::new(),
         handed_over: None,
+        reused_ms: None,
     }
 }
 

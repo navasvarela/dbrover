@@ -237,6 +237,7 @@ async fn joins_a_postgresql_source_with_a_partitioned_parquet_lake() {
         &plan.values(&BTreeMap::new()).unwrap(),
         &access,
         RunFolders {
+            cache: None,
             folder: folder.path(),
             staging: &staging,
             work: &work,

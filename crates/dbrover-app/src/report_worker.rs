@@ -17,8 +17,9 @@ use dbrover_core::{BlobId, DataSource, describe_error};
 use dbrover_engine::{PasswordCommands, ProcessRunner, SourceAccess, Tunnels};
 use dbrover_export::CustomFormat;
 use dbrover_report::{
-    ExplainRequest, Explanation, LimitDefaults, Machine, Manifest, NamedReport, Plan, RunEvent,
-    RunFailure, RunFolders, RunIdentity, RunRequest, RunValues, Step, TimedEvent, read_report,
+    ExplainRequest, Explanation, LimitDefaults, Machine, Manifest, NamedReport, Plan, ResultCache,
+    RunEvent, RunFailure, RunFolders, RunIdentity, RunRequest, RunValues, Step, TimedEvent,
+    read_report,
 };
 use dbrover_store::{AppPaths, CustomFile, CustomFileKind, DataSourceFile, os_keychain};
 
@@ -59,6 +60,12 @@ pub fn run(config_dir: Option<&Path>) -> i32 {
                 folder: &request.folder,
                 staging: &request.staging,
                 work: &request.work,
+                cache: request.results.as_deref().map(|folder| ResultCache {
+                    folder,
+                    // A run from scratch runs every report again and keeps what each makes in
+                    // place of what was kept (RS9f).
+                    takes_kept: !request.from_scratch,
+                }),
             };
             // Made before the run's identity names it, so it names it as a run resuming it,
             // which finds it made, does.

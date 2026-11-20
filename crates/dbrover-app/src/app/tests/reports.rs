@@ -141,6 +141,7 @@ fn start_with_reports(dir: &Path, report: &str, launcher: StandIn) -> Harness<'s
     std::fs::create_dir_all(files.dir()).unwrap();
     std::fs::write(files.dir().join("trial-balance.toml"), report).unwrap();
     let setup = ReportsSetup {
+        results_root: std::path::PathBuf::new(),
         files,
         launcher: Box::new(launcher),
         default_folder: dir.join("out"),
@@ -230,6 +231,7 @@ fn finished_run(folder: &Path) -> Vec<RunEvent> {
             phases: None,
             scanned_bytes: None,
             handed_over: None,
+            reused_ms: None,
         },
         RunEvent::Preview(Preview {
             columns: vec!["account".to_owned(), "balance".to_owned()],
@@ -383,6 +385,7 @@ fn combined_start() -> Vec<RunEvent> {
         phases: None,
         scanned_bytes: None,
         handed_over: None,
+        reused_ms: None,
     };
     vec![
         RunEvent::Started {
@@ -633,6 +636,7 @@ fn shows_a_lookup_waiting_then_its_batches_then_done() {
         phases: None,
         scanned_bytes: None,
         handed_over: None,
+        reused_ms: None,
     };
 
     let dir = tempfile::tempdir().unwrap();
@@ -681,6 +685,7 @@ fn shows_a_lookup_waiting_then_its_batches_then_done() {
             phases: None,
             scanned_bytes: None,
             handed_over: None,
+            reused_ms: None,
         },
         RunEvent::CombineDone {
             rows: 3,

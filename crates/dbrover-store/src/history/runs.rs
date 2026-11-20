@@ -266,6 +266,11 @@ pub struct SourceMetrics {
     /// (RS7f); `None` for a source whose rows were paged, and for a run kept before it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handed_over: Option<HandoffMetrics>,
+    /// How old the kept result it took was, for a report source with `reuse` whose report
+    /// didn't run (RS9f); `None` for every step that did its own work, and for a run kept
+    /// before RS9f.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reused_ms: Option<u64>,
 }
 
 /// A result an engine wrote to a bucket, which DuckDB read instead of paging its rows (RS7f).
@@ -624,6 +629,7 @@ mod tests {
                     scanned_bytes: None,
                     parts: Vec::new(),
                     handed_over: None,
+                    reused_ms: None,
                 }),
                 StepMetrics::Attached {
                     id: "prices".to_owned(),

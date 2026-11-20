@@ -1986,6 +1986,7 @@ fn report_profile(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture)
                 scanned_bytes: None,
                 parts: Vec::new(),
                 handed_over: None,
+                reused_ms: None,
             }),
             StepMetrics::Combine(CombineMetrics {
                 rows: 22,
@@ -2066,6 +2067,7 @@ fn report_problems(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture
     harness
         .state_mut()
         .use_reports(crate::reports::ReportsSetup {
+            results_root: std::path::PathBuf::new(),
             files,
             launcher: Box::new(crate::reports::ProcessLauncher {
                 executable: PathBuf::from("dbrover"),
@@ -2115,6 +2117,7 @@ fn report_page(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
             scanned_bytes: None,
             parts: Vec::new(),
             handed_over: None,
+            reused_ms: None,
         })
     };
     let finished = |day: i64, origin, combine_ms, excel_ms| ReportRun {
@@ -2190,6 +2193,7 @@ fn report_page(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
     harness
         .state_mut()
         .use_reports(crate::reports::ReportsSetup {
+            results_root: std::path::PathBuf::new(),
             files,
             launcher: Box::new(crate::reports::ProcessLauncher {
                 executable: PathBuf::from("dbrover"),

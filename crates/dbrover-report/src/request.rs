@@ -39,6 +39,14 @@ pub struct RunRequest {
     /// this run, and the run skips what it finished.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub resume: bool,
+    /// Where the results of the reports it uses as sources are kept, for a `reuse` on one
+    /// (RS9f); `None` keeps and takes none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub results: Option<PathBuf>,
+    /// Run every report again, keeping what each makes in place of what was kept: what
+    /// **Run from scratch** and `--from-scratch` ask (RS9f).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub from_scratch: bool,
 }
 
 /// What explaining a report needs beside the report: what the app's history knows of it.

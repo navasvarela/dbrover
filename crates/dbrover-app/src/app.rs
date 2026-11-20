@@ -1328,7 +1328,14 @@ impl DbRoverApp {
                 }
             }
             ReportAction::OpenPath(path) => reports::open_path(&path),
-            ReportAction::ClearRuns(name) => self.send(Command::ClearReportRuns(name)),
+            ReportAction::ClearRuns(name) => {
+                // The results kept for the reports a run used go with the runs (RS9f): what
+                // the history no longer holds, nothing on disk should still answer for.
+                if let Some(results) = self.reports.results_root() {
+                    dbrover_engine::clear_results(&results);
+                }
+                self.send(Command::ClearReportRuns(name));
+            }
             ReportAction::OpenSettings => self.open_settings_page(Page::REPORTS),
             ReportAction::Rename(name) => {
                 // The engine writes the file before it renames it: commands run in order.

@@ -96,6 +96,8 @@ impl Settings {
 
     fn request(&self, report: &Path) -> RunRequest {
         RunRequest {
+            results: None,
+            from_scratch: false,
             report: report.to_owned(),
             values: [("since", "2026-10-01"), ("until", "2026-11-01")]
                 .into_iter()

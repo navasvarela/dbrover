@@ -227,6 +227,20 @@ pub struct RunFolders<'a> {
     pub folder: &'a Path,
     pub staging: &'a Path,
     pub work: &'a Path,
+    /// Where the results of the reports it uses as sources are kept, for a `reuse` on one
+    /// (`docs/reports-at-scale.md`, RS9f); `None` keeps and takes none.
+    pub cache: Option<ResultCache<'a>>,
+}
+
+/// Where a run keeps the results of the reports it uses as sources, and whether it may take
+/// one that is already there (RS9f).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResultCache<'a> {
+    /// The folder the Parquet files go in, made when the first result is kept.
+    pub folder: &'a Path,
+    /// Whether a kept result young enough may be taken: false for a run from scratch, which
+    /// runs every report again and keeps what it makes in their place.
+    pub takes_kept: bool,
 }
 
 /// What a finished run read and wrote.
@@ -541,6 +555,7 @@ fn source_done(
         // A report with no combine step pages its rows: a handoff needs a DuckDB to read its
         // files with, so it is refused when the report is read.
         handed_over: None,
+        reused_ms: None,
     }
 }
 
