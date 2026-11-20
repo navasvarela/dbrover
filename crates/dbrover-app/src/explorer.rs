@@ -12,8 +12,9 @@ use dbrover_language::QueryLanguage;
 use dbrover_sql::{Capabilities, SchemaCreation, TableChange, UserModel};
 use dbrover_store::{ActionId, ActionTarget, ConsoleKey, CustomAction, DiagramKey, Project};
 use egui::{
-    Color32, CornerRadius, Id, Label, Rect, Response, RichText, ScrollArea, Sense, Shape, TextEdit,
-    TextStyle, Ui, WidgetInfo, WidgetType, vec2,
+    Color32, CornerRadius, DragAndDrop, Id, Label, LayerId, Order, Rangef, Rect, Response,
+    RichText, ScrollArea, Sense, Shape, Stroke, StrokeKind, TextEdit, TextStyle, Ui, WidgetInfo,
+    WidgetType, epaint::RectShape, vec2,
 };
 
 use crate::catalog_tree::{CatalogTree, Children, LevelEnd, Search};
@@ -30,6 +31,25 @@ use crate::widgets::{self, IconButton};
 const STATUS_DOT_RADIUS: f32 = 3.5;
 /// How strongly a data source's colour tints its row.
 const SOURCE_ROW_TINT: f32 = 0.16;
+/// How strongly the accent fills a project header the pointer is about to drop onto (D9).
+const DROP_TARGET_TINT: f32 = 0.22;
+/// How close to the explorer's top or bottom edge a dragged data source scrolls the list, so a
+/// project folded out of sight can still be dropped on.
+const DRAG_SCROLL_BAND: f32 = 24.0;
+/// Points scrolled per frame with the pointer at the very edge of the band; less further in.
+const DRAG_SCROLL_SPEED: f32 = 8.0;
+/// How far below and right of the cursor the dragged data source's name is drawn, so the cursor
+/// itself stays visible over the header it is aimed at.
+const GHOST_CURSOR_GAP: f32 = 8.0;
+
+/// A data source being dragged towards a project header (D9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DraggedSource {
+    id: DataSourceId,
+    /// The group it is shown in now, so dropping it there again can do nothing. A project
+    /// `projects.toml` doesn't know counts as no project, as the grouping itself does.
+    from: Option<ProjectId>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExplorerAction {
@@ -250,6 +270,7 @@ pub fn show(
                     query_folders,
                     actions,
                 );
+                auto_scroll_while_dragging(ui);
             });
         }
     }
@@ -382,6 +403,7 @@ fn group_tree(
         }
     }
     widgets::context_menu(&response.name, |ui| group_menu(ui, header, actions));
+    header_drop_target(ui, header, &response, actions);
     if expanded {
         ui.indent(Id::new(("explorer_group", group)), |ui| {
             if members.is_empty() {
@@ -395,6 +417,10 @@ fn group_tree(
 struct GroupHeaderResponse {
     name: Response,
     toggled: bool,
+    /// The row's own rect, which the drop target widens to the whole panel (D9).
+    row: Rect,
+    /// Reserved behind the row, for the fill a valid drop target gets.
+    background: egui::layers::ShapeIdx,
 }
 
 fn group_header_row(
@@ -404,6 +430,7 @@ fn group_header_row(
     expanded: bool,
 ) -> GroupHeaderResponse {
     let palette = &Palette::for_visuals(ui.visuals());
+    let background = ui.painter().add(Shape::Noop);
     let row = ui.horizontal(|ui| {
         let toggled = expander(ui, expanded, header.label()).clicked();
         let (glyph, color) = match header {
@@ -426,7 +453,91 @@ fn group_header_row(
         GroupHeader::Project(project) => name.on_hover_text(format!("Slug: {}", project.slug)),
         GroupHeader::NoProject => name,
     };
-    GroupHeaderResponse { name, toggled }
+    GroupHeaderResponse {
+        name,
+        toggled,
+        row: row.response.rect,
+        background,
+    }
+}
+
+/// A header takes a data source dragged onto it, anywhere along the row (D9).
+///
+/// Dropping a data source on the group it is already in does nothing, and shows no highlight:
+/// it is a move to where it already is, which is what **Move to project ›** says by showing the
+/// current project checked and doing nothing when it is picked. Anything that isn't a header
+/// never claims the payload, so a release over a data source, a table or another section moves
+/// nothing; egui drops the payload itself when the button comes up.
+fn header_drop_target(
+    ui: &Ui,
+    header: GroupHeader<'_>,
+    row: &GroupHeaderResponse,
+    actions: &mut Vec<ExplorerAction>,
+) {
+    let rect = Rect::from_x_y_ranges(ui.max_rect().x_range(), row.row.y_range());
+    let id = Id::new(("explorer_drop", header.group()));
+    let response = ui.interact(rect, id, Sense::hover());
+    let Some(dragged) = response.dnd_hover_payload::<DraggedSource>() else {
+        return;
+    };
+    let target = header.project();
+    if dragged.from == target {
+        return;
+    }
+    let palette = &Palette::for_visuals(ui.visuals());
+    ui.painter().set(
+        row.background,
+        RectShape::new(
+            rect.expand2(vec2(0.0, 1.0)),
+            CornerRadius::same(4),
+            palette.tint(palette.primary, DROP_TARGET_TINT),
+            Stroke::new(1.0, palette.primary),
+            StrokeKind::Inside,
+        ),
+    );
+    if response.dnd_release_payload::<DraggedSource>().is_some() {
+        actions.push(ExplorerAction::MoveToProject(dragged.id, target));
+    }
+}
+
+/// How far to scroll the explorer with a data source held at `y`, in a view spanning `view`:
+/// positive scrolls towards the top of the list, as a wheel's delta does.
+///
+/// Zero away from the edges, growing to [`DRAG_SCROLL_SPEED`] at the very edge, so the list
+/// creeps when the pointer is just inside the band and runs when it is held against the edge.
+fn drag_scroll_delta(view: Rangef, y: f32) -> f32 {
+    let from_top = y - view.min;
+    let from_bottom = view.max - y;
+    if from_top < DRAG_SCROLL_BAND {
+        (DRAG_SCROLL_BAND - from_top.max(0.0)) / DRAG_SCROLL_BAND * DRAG_SCROLL_SPEED
+    } else if from_bottom < DRAG_SCROLL_BAND {
+        -(DRAG_SCROLL_BAND - from_bottom.max(0.0)) / DRAG_SCROLL_BAND * DRAG_SCROLL_SPEED
+    } else {
+        0.0
+    }
+}
+
+/// Scrolls the explorer while a data source is dragged against its top or bottom edge.
+///
+/// Only while one is in flight, so a list that fits the panel never moves on its own. The frame
+/// asks for a repaint, so the list keeps moving while the pointer is held still.
+fn auto_scroll_while_dragging(ui: &Ui) {
+    if !DragAndDrop::has_payload_of_type::<DraggedSource>(ui.ctx()) {
+        return;
+    }
+    let view = ui.clip_rect();
+    let Some(pointer) = ui
+        .ctx()
+        .pointer_interact_pos()
+        .filter(|at| view.contains(*at))
+    else {
+        return;
+    };
+    let delta = drag_scroll_delta(view.y_range(), pointer.y);
+    if delta != 0.0 {
+        ui.scroll_with_delta(vec2(0.0, delta));
+        ui.ctx().request_repaint();
+    }
 }
 
 /// **New data source ›** creates in the group whose header this menu belongs to (D9), so the
@@ -640,11 +751,7 @@ fn data_source_tree(
             palette,
             logo_size,
         ));
-        let name = ui.add(
-            Label::new(&entry.data_source.name)
-                .selectable(false)
-                .sense(Sense::click()),
-        );
+        let name = drag_source_name(ui, entry, tree.projects);
         status_dot(ui, &entry.session, palette);
         name
     });
@@ -691,6 +798,67 @@ fn data_source_tree(
             found_on_server(ui, &tree, filter, actions);
         });
     }
+}
+
+/// A data source's name, which is also the handle that drags it onto a project header (D9).
+///
+/// The name is one widget that senses both, rather than a label inside `Ui::dnd_drag_source`:
+/// that helper lays a drag-sense widget over the body, and the row's secondary click went to it
+/// instead of the label, so every data source's context menu stopped opening. Sensing click and
+/// drag together keeps the row's click, double-click and context menu, and egui's own threshold
+/// decides which gesture a press turns into.
+///
+/// The ghost that follows the cursor is painted here for the same reason, in the tooltip layer
+/// above the panel. The row keeps its name, expander, logo and status dot while it is dragged,
+/// so a drag that is let go over nothing leaves no trace.
+fn drag_source_name(ui: &mut Ui, entry: &DataSourceEntry, projects: &[Project]) -> Response {
+    let id = entry.data_source.id;
+    let name = &entry.data_source.name;
+    let response = ui.add(
+        Label::new(name)
+            .selectable(false)
+            .sense(Sense::click_and_drag()),
+    );
+    response.dnd_set_drag_payload(DraggedSource {
+        id,
+        from: shown_project(&entry.data_source.project, projects),
+    });
+    if response.dragged() {
+        drag_ghost(ui, id, name);
+    }
+    response
+}
+
+/// The dragged data source's name at the cursor, so it is clear what is in flight.
+fn drag_ghost(ui: &Ui, id: DataSourceId, name: &str) {
+    let Some(at) = ui.ctx().pointer_interact_pos() else {
+        return;
+    };
+    let palette = &Palette::for_visuals(ui.visuals());
+    let layer = LayerId::new(Order::Tooltip, Id::new(("explorer_drag_ghost", id)));
+    let painter = ui.ctx().layer_painter(layer);
+    let galley = painter.layout_no_wrap(
+        name.to_owned(),
+        TextStyle::Body.resolve(ui.style()),
+        palette.text,
+    );
+    let margin = vec2(6.0, 3.0);
+    let top_left = at + vec2(GHOST_CURSOR_GAP, GHOST_CURSOR_GAP);
+    let rect = Rect::from_min_size(top_left, galley.size() + margin * 2.0);
+    painter.add(RectShape::new(
+        rect,
+        CornerRadius::same(4),
+        palette.tint(palette.primary, DROP_TARGET_TINT),
+        Stroke::new(1.0, palette.primary),
+        StrokeKind::Inside,
+    ));
+    painter.galley(top_left + margin, galley, palette.text);
+}
+
+/// The project a data source is grouped under: its own, unless `projects.toml` doesn't know it,
+/// which puts it under **No project**. Mirrors what [`groups`] does.
+fn shown_project(project: &Option<ProjectId>, projects: &[Project]) -> Option<ProjectId> {
+    project.filter(|id| projects.iter().any(|project| project.id == *id))
 }
 
 /// What the object helpers may write for `entry`: its dialect's DDL, unless it writes none
@@ -1670,7 +1838,180 @@ fn tooltip(entry: &DataSourceEntry) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+
+    use dbrover_core::{ConnectionConfig, SafetyLevel, SqliteConfig};
+    use dbrover_engine::SessionState;
+    use dbrover_store::ProjectSlug;
+    use egui_kittest::kittest::Queryable;
+
     use super::*;
+    use crate::test_support::ui_harness;
+
+    fn project(name: &str) -> Project {
+        Project::new(
+            ProjectId::generate(),
+            name.to_owned(),
+            ProjectSlug::from_name(name),
+        )
+    }
+
+    fn entry(name: &str, project: Option<ProjectId>) -> DataSourceEntry {
+        DataSourceEntry {
+            data_source: dbrover_core::DataSource {
+                id: DataSourceId::generate(),
+                name: name.to_owned(),
+                color: None,
+                safety: SafetyLevel::Normal,
+                project,
+                mcp_login: None,
+                config: ConnectionConfig::Sqlite(SqliteConfig {
+                    path: format!("{name}.db").into(),
+                    read_only: false,
+                }),
+            },
+            session: SessionState::Disconnected,
+            catalog: CatalogTree::default(),
+        }
+    }
+
+    /// Shows the explorer with `projects` and `entries` and nothing else, drives it with
+    /// `drive`, and returns what `drive` returned along with everything the explorer asked for.
+    fn explorer<R>(
+        projects: &[Project],
+        entries: Vec<DataSourceEntry>,
+        options: &RefCell<ExplorerOptions>,
+        drive: impl FnOnce(&mut egui_kittest::Harness<'_>) -> R,
+    ) -> (R, Vec<ExplorerAction>) {
+        let data_sources = DataSources::Loaded(entries);
+        let saved_consoles = SavedConsoles::default();
+        let saved_diagrams = SavedDiagrams::default();
+        let reports = Reports::default();
+        let query_folders = QueryFolders::default();
+        let asked = RefCell::new(Vec::new());
+        let mut harness = ui_harness(|ui| {
+            let view = ExplorerView {
+                data_sources: &data_sources,
+                projects,
+                saved_consoles: &saved_consoles,
+                saved_diagrams: &saved_diagrams,
+                actions: &[],
+                reports: &reports,
+                query_folders: &query_folders,
+            };
+            let mut pushed = Vec::new();
+            show(ui, &view, &mut options.borrow_mut(), &mut pushed);
+            asked.borrow_mut().extend(pushed);
+        });
+        let driven = drive(&mut harness);
+        let pushed = asked.borrow().clone();
+        (driven, pushed)
+    }
+
+    /// Drags the row labelled `source` onto the row labelled `target` and returns the moves the
+    /// explorer asked for.
+    ///
+    /// egui_kittest's pointer helpers push events and step no frames of their own, so this steps
+    /// between them: a press and a release at one position is a click, and egui starts a drag
+    /// only once the pointer has moved a few points from the press, hence the halfway move.
+    fn drag_onto(
+        projects: &[Project],
+        entries: Vec<DataSourceEntry>,
+        source: &str,
+        target: &str,
+    ) -> Vec<ExplorerAction> {
+        let options = RefCell::new(ExplorerOptions::default());
+        let (_, asked) = explorer(projects, entries, &options, |harness| {
+            let from = harness.get_by_label(source).rect().center();
+            let to = harness.get_by_label(target).rect().center();
+            harness.hover_at(from);
+            harness.step();
+            harness.drag_at(from);
+            harness.step();
+            harness.hover_at(from.lerp(to, 0.5));
+            harness.step();
+            harness.hover_at(to);
+            harness.step();
+            harness.drop_at(to);
+            harness.run();
+        });
+        asked
+            .into_iter()
+            .filter(|action| matches!(action, ExplorerAction::MoveToProject(..)))
+            .collect()
+    }
+
+    /// Dropping a data source on a project header moves it there, and on **No project** takes it
+    /// out of its project. Dropping it on the group it is already in, or on anything that isn't
+    /// a header, moves nothing: those targets never claim the payload, and egui drops it when
+    /// the button comes up.
+    #[test]
+    fn dragging_a_data_source_onto_a_header_moves_it_into_that_group() {
+        let analytics = project("Analytics");
+        let projects = [analytics.clone()];
+        let loose = entry("scratch", None);
+        let member = entry("warehouse", Some(analytics.id));
+
+        let moved = drag_onto(
+            &projects,
+            vec![member.clone(), loose.clone()],
+            "scratch",
+            "Analytics",
+        );
+        assert_eq!(
+            moved,
+            [ExplorerAction::MoveToProject(
+                loose.data_source.id,
+                Some(analytics.id)
+            )]
+        );
+
+        let out = drag_onto(
+            &projects,
+            vec![member.clone(), loose.clone()],
+            "warehouse",
+            "No project",
+        );
+        assert_eq!(
+            out,
+            [ExplorerAction::MoveToProject(member.data_source.id, None)],
+            "No project takes it out of its project"
+        );
+
+        let same = drag_onto(
+            &projects,
+            vec![member.clone(), loose.clone()],
+            "warehouse",
+            "Analytics",
+        );
+        assert_eq!(same, [], "it is already in Analytics");
+
+        let onto_source = drag_onto(
+            &projects,
+            vec![member.clone(), loose.clone()],
+            "scratch",
+            "warehouse",
+        );
+        assert_eq!(onto_source, [], "a data source's row is not a drop target");
+    }
+
+    /// The drop target covers the whole header row, including the expander that folds the group.
+    /// It only senses hover, so the expander must still get its clicks.
+    #[test]
+    fn a_header_s_expander_still_folds_the_group_under_the_drop_target() {
+        let analytics = project("Web shop");
+        let group = Group::Project(analytics.id);
+        let options = RefCell::new(ExplorerOptions::default());
+        let entries = vec![entry("scratch", None)];
+        explorer(&[analytics], entries, &options, |harness| {
+            harness.get_by_label("Collapse Web shop").click();
+            harness.run();
+        });
+        assert!(
+            options.borrow().collapsed_groups.contains(&group),
+            "clicking the expander folded the project"
+        );
+    }
 
     fn node(parent: &CatalogPath, name: &str, system: bool) -> CatalogNode {
         CatalogNode {
@@ -1680,6 +2021,32 @@ mod tests {
             has_children: true,
             has_definition: false,
             system,
+        }
+    }
+
+    /// The band only reaches [`DRAG_SCROLL_BAND`] into the view from each edge, scrolls towards
+    /// the top above and the bottom below, and is strongest at the edge. A pointer past the edge
+    /// scrolls no faster than one on it, so a drag that leaves the panel doesn't bolt.
+    #[test]
+    fn drag_scrolls_only_near_the_explorer_s_edges() {
+        let view = Rangef::new(100.0, 400.0);
+        let cases = [
+            (100.0, DRAG_SCROLL_SPEED),
+            (90.0, DRAG_SCROLL_SPEED),
+            (112.0, DRAG_SCROLL_SPEED / 2.0),
+            (124.0, 0.0),
+            (250.0, 0.0),
+            (376.0, 0.0),
+            (388.0, -DRAG_SCROLL_SPEED / 2.0),
+            (400.0, -DRAG_SCROLL_SPEED),
+            (410.0, -DRAG_SCROLL_SPEED),
+        ];
+        for (y, expected) in cases {
+            let delta = drag_scroll_delta(view, y);
+            assert!(
+                (delta - expected).abs() < f32::EPSILON,
+                "at {y}: expected {expected}, got {delta}"
+            );
         }
     }
 
