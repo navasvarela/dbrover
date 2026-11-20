@@ -215,8 +215,13 @@ impl RunEvent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceStart {
     pub id: String,
-    /// Its data source's name.
-    pub data_source: String,
+    /// Its data source's name; `None` for a report source, which reads a report (RS9).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_source: Option<String>,
+    /// The report it reads, for a report source (RS9); `None` for every other source, and
+    /// from a worker older than RS9c.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report: Option<String>,
     pub attached: bool,
     /// The lake it reads in place, for a source with `lake` (RS7); `None` for every other
     /// source, and from a worker older than RS7c.

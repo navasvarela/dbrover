@@ -326,7 +326,7 @@ file = "r.csv"
 
     fn problems(text: &str, runs: &[ReportRun]) -> Vec<(String, Severity, String)> {
         let shop = [sqlite("shop")];
-        let planned = plan_text(text, &shop, &[], &LimitDefaults::default());
+        let planned = plan_text(text, &shop, &[], &[], &LimitDefaults::default());
         let inputs = ProblemInputs {
             data_sources: &shop,
             lint: &LintOptions::default(),

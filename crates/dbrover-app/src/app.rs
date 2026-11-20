@@ -1409,10 +1409,12 @@ impl DbRoverApp {
             .map(|entry| entry.data_source.clone())
             .collect();
         let settings = reports::RunSettings::of(&self.settings.settings().reports);
+        let named = self.reports.named();
         let plan = self.reports.find(name).map(|listed| {
             listed.plan(
                 &data_sources,
                 self.custom_files.exports(),
+                &named,
                 &settings.defaults,
             )
         });

@@ -167,6 +167,7 @@ fn plan(text: &str) -> Plan {
         read_report(text).unwrap(),
         &data_sources(),
         &[],
+        &[],
         &LimitDefaults::default(),
     )
     .unwrap()

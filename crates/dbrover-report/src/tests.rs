@@ -225,7 +225,7 @@ fn reads_the_trial_balance() {
         panic!("{:?}", report.sources);
     };
     assert_eq!(source.id, "balances");
-    assert_eq!(source.data_source, "ledger");
+    assert_eq!(source.data_source.as_deref(), Some("ledger"));
     let SourceRead::Query { limits, .. } = &source.read else {
         panic!("{:?}", source.read);
     };
@@ -527,6 +527,7 @@ fn plans_the_trial_balance_with_its_preset_and_the_same_columns() {
         read_report(TRIAL_BALANCE).unwrap(),
         &[sqlite("other"), ledger.clone()],
         &presets(),
+        &[],
         &LimitDefaults::default(),
     )
     .unwrap();
@@ -559,7 +560,7 @@ fn finds_the_data_source_by_name_or_by_id() {
             "format = \"csv\"\nfile = \"x.csv\"",
         ))
         .map(|mut report| {
-            report.sources[0].data_source = data_source.to_owned();
+            report.sources[0].data_source = Some(data_source.to_owned());
             report
         })
         .unwrap()
@@ -569,6 +570,7 @@ fn finds_the_data_source_by_name_or_by_id() {
         report(&twins[1].id.to_string()),
         &twins,
         &[],
+        &[],
         &LimitDefaults::default(),
     )
     .unwrap();
@@ -577,8 +579,14 @@ fn finds_the_data_source_by_name_or_by_id() {
     };
     assert_eq!(source.data_source.id, twins[1].id);
 
-    let ambiguous =
-        Plan::new(report("ledger"), &twins, &[], &LimitDefaults::default()).unwrap_err();
+    let ambiguous = Plan::new(
+        report("ledger"),
+        &twins,
+        &[],
+        &[],
+        &LimitDefaults::default(),
+    )
+    .unwrap_err();
     assert!(
         ambiguous[0].starts_with(
             "source \"s\": 2 data sources are named \"ledger\"; name one by its id instead: "
@@ -588,6 +596,7 @@ fn finds_the_data_source_by_name_or_by_id() {
     let missing = Plan::new(
         report("books"),
         &[sqlite("ledger"), sqlite("audit")],
+        &[],
         &[],
         &LimitDefaults::default(),
     )
@@ -599,6 +608,7 @@ fn finds_the_data_source_by_name_or_by_id() {
     let documents = Plan::new(
         report("cache"),
         &[redis("cache")],
+        &[],
         &[],
         &LimitDefaults::default(),
     )
@@ -617,6 +627,7 @@ fn checks_presets_against_exports_toml() {
         report("preset = \"tabs\"\nfile = \"x.csv\""),
         &ledger,
         &presets(),
+        &[],
         &LimitDefaults::default(),
     )
     .unwrap_err();
@@ -626,6 +637,7 @@ fn checks_presets_against_exports_toml() {
         report("preset = \"notes\"\nfile = \"x.md\""),
         &ledger,
         &markdown,
+        &[],
         &LimitDefaults::default(),
     )
     .unwrap_err();
@@ -639,6 +651,7 @@ fn checks_presets_against_exports_toml() {
         report("preset = \"semicolon-csv\"\nfile = \"x.csv\"\ncontinue_on_new_sheet = true"),
         &ledger,
         &presets(),
+        &[],
         &LimitDefaults::default(),
     )
     .unwrap_err();
@@ -656,7 +669,14 @@ fn orders_parameters_as_the_query_uses_them_and_refuses_undeclared_ones() {
         "format = \"csv\"\nfile = \"{account}.csv\"",
     ))
     .unwrap();
-    let plan = Plan::new(report, &[sqlite("ledger")], &[], &LimitDefaults::default()).unwrap();
+    let plan = Plan::new(
+        report,
+        &[sqlite("ledger")],
+        &[],
+        &[],
+        &LimitDefaults::default(),
+    )
+    .unwrap();
     assert_eq!(
         plan.params
             .iter()
@@ -676,6 +696,7 @@ fn orders_parameters_as_the_query_uses_them_and_refuses_undeclared_ones() {
             undeclared,
             &[sqlite("ledger")],
             &[],
+            &[],
             &LimitDefaults::default()
         )
         .unwrap_err(),
@@ -692,6 +713,7 @@ fn checks_values_and_names_the_files() {
         read_report(TRIAL_BALANCE).unwrap(),
         &[sqlite("ledger")],
         &presets(),
+        &[],
         &LimitDefaults::default(),
     )
     .unwrap();
@@ -727,7 +749,14 @@ fn refuses_values_that_make_two_outputs_one_file() {
         "format = \"csv\"\nfile = \"{a}.csv\"\n[[output]]\nformat = \"csv\"\nfile = \"{b}.csv\"",
     ))
     .unwrap();
-    let plan = Plan::new(report, &[sqlite("ledger")], &[], &LimitDefaults::default()).unwrap();
+    let plan = Plan::new(
+        report,
+        &[sqlite("ledger")],
+        &[],
+        &[],
+        &LimitDefaults::default(),
+    )
+    .unwrap();
     let same: TypedValues = [("a", "x"), ("b", "x")]
         .into_iter()
         .map(|(name, value)| (name.to_owned(), value.to_owned()))
@@ -768,7 +797,14 @@ fn reads_and_plans_the_valuation() {
         }
     );
 
-    let plan = Plan::new(report, &valuation_sources(), &[], &LimitDefaults::default()).unwrap();
+    let plan = Plan::new(
+        report,
+        &valuation_sources(),
+        &[],
+        &[],
+        &LimitDefaults::default(),
+    )
+    .unwrap();
     let Logic::Combine(combined) = &plan.logic else {
         panic!("{:?}", plan.logic);
     };
@@ -793,7 +829,8 @@ fn reads_and_plans_the_valuation() {
         [
             SourceStart {
                 id: "tx".to_owned(),
-                data_source: "ledger-postgres".to_owned(),
+                data_source: Some("ledger-postgres".to_owned()),
+                report: None,
                 attached: false,
                 lake: None,
                 waits_for: None,
@@ -803,7 +840,8 @@ fn reads_and_plans_the_valuation() {
             },
             SourceStart {
                 id: "prices".to_owned(),
-                data_source: "prices-duckdb".to_owned(),
+                data_source: Some("prices-duckdb".to_owned()),
+                report: None,
                 attached: true,
                 lake: None,
                 waits_for: None,
@@ -899,7 +937,7 @@ fn takes_the_limits_a_file_leaves_out_from_the_defaults() {
         resumable_above: ByteSize(5 << 20),
     };
     let report = read_report(VALUATION).unwrap();
-    let plan = Plan::new(report, &valuation_sources(), &[], &defaults).unwrap();
+    let plan = Plan::new(report, &valuation_sources(), &[], &[], &defaults).unwrap();
     assert_eq!(plan.timeout, Duration::from_secs(90));
     assert_eq!(plan.resumable_above, ByteSize(5 << 20));
     let Logic::Combine(combined) = &plan.logic else {
@@ -1030,6 +1068,7 @@ fn plans_attached_sources_only_on_duckdb_files_and_a_combine_that_only_reads() {
         report(),
         &[ledger.clone(), postgres("prices-duckdb")],
         &[],
+        &[],
         &LimitDefaults::default(),
     )
     .unwrap_err();
@@ -1046,6 +1085,7 @@ fn plans_attached_sources_only_on_duckdb_files_and_a_combine_that_only_reads() {
             ledger.clone(),
             duckdb("prices-duckdb", DuckDbDatabase::InMemory),
         ],
+        &[],
         &[],
         &LimitDefaults::default(),
     )
@@ -1066,6 +1106,7 @@ fn plans_attached_sources_only_on_duckdb_files_and_a_combine_that_only_reads() {
         read_report(&writes).unwrap(),
         &valuation_sources(),
         &[],
+        &[],
         &LimitDefaults::default(),
     )
     .unwrap_err();
@@ -1078,6 +1119,7 @@ fn plans_attached_sources_only_on_duckdb_files_and_a_combine_that_only_reads() {
         read_report(&two).unwrap(),
         &valuation_sources(),
         &[],
+        &[],
         &LimitDefaults::default(),
     )
     .unwrap_err();
@@ -1089,6 +1131,7 @@ fn plans_attached_sources_only_on_duckdb_files_and_a_combine_that_only_reads() {
     let refused = Plan::new(
         read_report(&unparsed).unwrap(),
         &valuation_sources(),
+        &[],
         &[],
         &LimitDefaults::default(),
     )
@@ -1115,6 +1158,7 @@ fn orders_parameters_across_the_sources_and_the_combine_step() {
         read_report(&text).unwrap(),
         &valuation_sources(),
         &[],
+        &[],
         &LimitDefaults::default(),
     )
     .unwrap();
@@ -1134,6 +1178,7 @@ fn orders_parameters_across_the_sources_and_the_combine_step() {
         read_report(&undeclared).unwrap(),
         &valuation_sources(),
         &[],
+        &[],
         &LimitDefaults::default(),
     )
     .unwrap_err();
@@ -1152,6 +1197,7 @@ fn says_whether_the_file_or_settings_set_a_limit() {
         read_report(TRIAL_BALANCE).unwrap(),
         &[sqlite("ledger")],
         &presets(),
+        &[],
         &LimitDefaults::default(),
     )
     .unwrap();
@@ -1202,6 +1248,7 @@ fn underlined(text: &str) -> Vec<(String, String)> {
         text,
         &[sqlite("ledger")],
         &presets(),
+        &[],
         &LimitDefaults::default(),
     )
     .expect_err(text);
@@ -1315,6 +1362,7 @@ fn plans_parquet_only_from_a_combine_step_and_with_its_columns() {
         Plan::new(
             read_report(text).unwrap(),
             &[sqlite("ledger")],
+            &[],
             &[],
             &LimitDefaults::default(),
         )

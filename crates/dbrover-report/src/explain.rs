@@ -338,7 +338,9 @@ async fn plan_combine(
                 let view = explain_lake(workspace, lake, explainer).await?;
                 lakes.push(view);
             }
-            PlannedSource::Query(_) => {}
+            // A report source's table is made by its own combine, which an explanation
+            // doesn't run: its columns come from the history, as a loaded source's do.
+            PlannedSource::Query(_) | PlannedSource::Report(_) => {}
         }
     }
     for (id, columns) in tables {

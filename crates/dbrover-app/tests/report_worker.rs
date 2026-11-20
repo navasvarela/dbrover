@@ -450,7 +450,8 @@ fn runs_a_report_and_reports_each_step() {
             report: "Trial balance".to_owned(),
             sources: vec![SourceStart {
                 id: "balances".to_owned(),
-                data_source: "ledger".to_owned(),
+                data_source: Some("ledger".to_owned()),
+                report: None,
                 attached: false,
                 lake: None,
                 waits_for: None,

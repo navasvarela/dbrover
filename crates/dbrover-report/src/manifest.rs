@@ -150,12 +150,23 @@ fn data_sources(plan: &Plan) -> Vec<DataSourceIdentity> {
         Logic::Combine(combined) => combined
             .sources
             .iter()
-            .map(|source| match source {
-                PlannedSource::Query(query) => identity(&query.id, &query.data_source),
-                PlannedSource::Attached(attached) => identity(&attached.id, &attached.data_source),
+            .flat_map(|source| match source {
+                PlannedSource::Query(query) => vec![identity(&query.id, &query.data_source)],
+                PlannedSource::Attached(attached) => {
+                    vec![identity(&attached.id, &attached.data_source)]
+                }
                 // A lake's path is in the report's file, whose hash the manifest keeps; the
                 // bucket it is in is in the data source's own `target`.
-                PlannedSource::Lake(lake) => identity(&lake.id, &lake.data_source),
+                PlannedSource::Lake(lake) => vec![identity(&lake.id, &lake.data_source)],
+                // A report source reads no data source of its own: what it reads is the data
+                // sources of the report it names, under the source's id (RS9).
+                PlannedSource::Report(report) => data_sources(&report.plan)
+                    .into_iter()
+                    .map(|inner| DataSourceIdentity {
+                        source: format!("{}.{}", report.id, inner.source),
+                        ..inner
+                    })
+                    .collect(),
             })
             .collect(),
     }

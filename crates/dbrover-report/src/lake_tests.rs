@@ -133,7 +133,13 @@ fn plan_of(lake: &str, lake_keys: &str, sources: &[DataSource]) -> Result<Plan, 
     let text = SALES
         .replace("{lake}", lake)
         .replace("{lake_keys}", lake_keys);
-    Plan::new(read_report(&text)?, sources, &[], &LimitDefaults::default())
+    Plan::new(
+        read_report(&text)?,
+        sources,
+        &[],
+        &[],
+        &LimitDefaults::default(),
+    )
 }
 
 async fn run_lake(
@@ -226,6 +232,7 @@ async fn reads_an_iceberg_lake_from_its_newest_metadata_file() {
         read_report(&text).unwrap(),
         &[ledger(), lake_source],
         &[],
+        &[],
         &LimitDefaults::default(),
     )
     .unwrap();
@@ -281,6 +288,7 @@ async fn the_profile_says_what_the_lakes_scan_read_from_the_bucket() {
         let plan = Plan::new(
             read_report(&text).unwrap(),
             &[ledger(), lake_source.clone()],
+            &[],
             &[],
             &LimitDefaults::default(),
         )
@@ -552,6 +560,7 @@ fn a_lake_needs_a_data_source_with_a_bucket() {
         let problems = Plan::new(
             read_report(&text).unwrap(),
             &[named],
+            &[],
             &[],
             &LimitDefaults::default(),
         )

@@ -218,9 +218,11 @@ fn see(
         Some(Ok(runs)) => runs.clone(),
         Some(Err(_)) | None => Vec::new(),
     };
+    let named = reports.named();
     let inputs = CheckInputs {
         data_sources: view.data_sources,
         presets: view.presets,
+        reports: &named,
         defaults: view.defaults,
         lint: view.lint,
         runs: &runs,
