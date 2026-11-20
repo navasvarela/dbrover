@@ -32,9 +32,9 @@ use dbrover_export::CustomFormat;
 use dbrover_insight::explanation;
 use dbrover_report::{
     Batch, Busy, CombineCaps, CombineLimits, ExplainRequest, Explanation, LimitDefaults,
-    LoadedColumn, OutputLimits, PartDone, Parts, Plan, Preview, Report, RunEvent, RunFailure,
-    RunPartitionStart, RunRequest, SourceCaps, SourceLimits, SourcePhases, SourceStart, Step,
-    TimedEvent, TypedValues, WrittenFile, read_report,
+    LoadedColumn, NamedReport, OutputLimits, PartDone, Parts, Plan, Preview, Report, RunEvent,
+    RunFailure, RunPartitionStart, RunRequest, SourceCaps, SourceLimits, SourcePhases, SourceStart,
+    Step, TimedEvent, TypedValues, WrittenFile, read_report,
 };
 use dbrover_sql::FormatOptions;
 use dbrover_store::{
@@ -303,10 +303,11 @@ impl Listed {
         &self,
         data_sources: &[DataSource],
         presets: &[CustomFormat],
+        reports: &[NamedReport],
         defaults: &LimitDefaults,
     ) -> Result<Plan, Vec<String>> {
         let report = self.read.as_ref().map_err(Clone::clone)?;
-        Plan::new(report.clone(), data_sources, presets, defaults)
+        Plan::new(report.clone(), data_sources, presets, reports, defaults)
     }
 }
 
@@ -1138,7 +1139,7 @@ impl StepRecord {
             unit: source.partition.map(|partition| partition.unit),
             ..Self::new(
                 Step::Source { id: source.id },
-                Some(source.data_source),
+                source.data_source.or(source.report),
                 source.attached,
             )
         }
@@ -1416,6 +1417,21 @@ impl Reports {
 
     pub fn find(&self, name: &ReportName) -> Option<&Listed> {
         self.listed().iter().find(|listed| &listed.name == name)
+    }
+
+    /// Every report file the folder holds, with its text, for a `[[source]]` that names one
+    /// (`docs/reports-at-scale.md`, RS9b). A file that couldn't be read is left out, which
+    /// planning reports as a report there isn't.
+    pub fn named(&self) -> Vec<NamedReport> {
+        self.listed()
+            .iter()
+            .filter_map(|listed| {
+                Some(NamedReport {
+                    name: listed.name.to_string(),
+                    text: listed.text.as_ref()?.0.clone(),
+                })
+            })
+            .collect()
     }
 
     pub fn state_mut(&mut self, name: &ReportName) -> &mut ReportState {
@@ -1843,7 +1859,8 @@ mod tests {
                     report: "Trial balance".to_owned(),
                     sources: vec![SourceStart {
                         id: "balances".to_owned(),
-                        data_source: "ledger".to_owned(),
+                        data_source: Some("ledger".to_owned()),
+                        report: None,
                         attached: false,
                         lake: None,
                         waits_for: None,
@@ -1963,7 +1980,8 @@ mod tests {
                     report: "Valuation".to_owned(),
                     sources: vec![SourceStart {
                         id: "tx".to_owned(),
-                        data_source: "ledger".to_owned(),
+                        data_source: Some("ledger".to_owned()),
+                        report: None,
                         attached: false,
                         lake: None,
                         waits_for: None,
@@ -2110,7 +2128,8 @@ mod tests {
                 report: "Events".to_owned(),
                 sources: vec![SourceStart {
                     id: "events".to_owned(),
-                    data_source: "warehouse".to_owned(),
+                    data_source: Some("warehouse".to_owned()),
+                    report: None,
                     attached: false,
                     lake: None,
                     waits_for: None,
@@ -2201,7 +2220,8 @@ mod tests {
                 report: "Events".to_owned(),
                 sources: vec![SourceStart {
                     id: "events".to_owned(),
-                    data_source: "warehouse".to_owned(),
+                    data_source: Some("warehouse".to_owned()),
+                    report: None,
                     attached: false,
                     lake: None,
                     waits_for: None,
@@ -2318,7 +2338,8 @@ mod tests {
     fn follows_each_step_of_a_combined_run() {
         let source = |id: &str, attached| SourceStart {
             id: id.to_owned(),
-            data_source: "ledger".to_owned(),
+            data_source: Some("ledger".to_owned()),
+            report: None,
             attached,
             lake: None,
             waits_for: None,

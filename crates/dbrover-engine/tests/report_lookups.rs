@@ -75,6 +75,7 @@ async fn run_report(
         read_report(text).unwrap(),
         data_sources,
         &[],
+        &[],
         &LimitDefaults::default(),
     )
     .unwrap();

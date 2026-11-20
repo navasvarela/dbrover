@@ -293,7 +293,8 @@ mod tests {
             report: "Sales".to_owned(),
             sources: vec![SourceStart {
                 id: "lines".to_owned(),
-                data_source: "shop".to_owned(),
+                data_source: Some("shop".to_owned()),
+                report: None,
                 attached: false,
                 lake: None,
                 waits_for: None,
@@ -362,7 +363,8 @@ mod tests {
             report: "Events".to_owned(),
             sources: vec![SourceStart {
                 id: "events".to_owned(),
-                data_source: "warehouse".to_owned(),
+                data_source: Some("warehouse".to_owned()),
+                report: None,
                 attached: false,
                 lake: None,
                 waits_for: None,

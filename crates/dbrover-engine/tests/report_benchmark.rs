@@ -250,6 +250,7 @@ async fn run_once(engine: &Engine, columns: Columns, folder: &std::path::Path) -
         read_report(&text).unwrap(),
         std::slice::from_ref(&engine.data_source),
         &[],
+        &[],
         &LimitDefaults::default(),
     )
     .unwrap();

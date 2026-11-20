@@ -8,7 +8,7 @@ use dbrover_export::CustomFormat;
 use crate::plan::find_data_source;
 use crate::problem::{Place, ReportProblem, Table};
 use crate::read::read_with_places;
-use crate::{LimitDefaults, Plan};
+use crate::{LimitDefaults, NamedReport, Plan};
 
 /// Reads and plans `text` against the data sources, presets and limits' defaults.
 ///
@@ -21,10 +21,11 @@ pub fn plan_text(
     text: &str,
     data_sources: &[DataSource],
     presets: &[CustomFormat],
+    reports: &[NamedReport],
     defaults: &LimitDefaults,
 ) -> Result<Plan, Vec<ReportProblem>> {
     match read_with_places(text) {
-        Ok(report) => Plan::with_places(report, data_sources, presets, defaults),
+        Ok(report) => Plan::with_places(report, data_sources, presets, reports, defaults),
         Err(mut problems) => {
             let found = data_source_problems(text, data_sources, &problems);
             problems.extend(found);

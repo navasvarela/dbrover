@@ -49,14 +49,16 @@ pub struct Param {
     pub param_type: ColumnType,
 }
 
-/// What a report reads from one data source.
+/// What a report reads from one data source, or from another report (RS9).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Source {
     /// What the run's progress and errors call it, and the name of its table, or of its
     /// attached database, in the combine step.
     pub id: String,
-    /// A data source's name, or its id when two share the name.
-    pub data_source: String,
+    /// A data source's name, or its id when two share the name; `None` for a report source,
+    /// which reads another report's result rather than a data source
+    /// (`docs/reports-at-scale.md`, RS9).
+    pub data_source: Option<String>,
     pub read: SourceRead,
 }
 
@@ -84,6 +86,48 @@ pub enum SourceRead {
     /// A lake in the data source's bucket, read in place by the combine step
     /// (`docs/reports-at-scale.md`, RS7).
     Lake(LakeRead),
+    /// Another report's result, as the table this source's id names
+    /// (`docs/reports-at-scale.md`, RS9).
+    Report(ReportRead),
+}
+
+/// A `[[source]]` whose `report` names another report in the folder, as the file writes it:
+/// nothing is read of that report until this one is planned (RS9b).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReportRead {
+    /// `report`: the other report's file name, without `.toml`.
+    pub report: String,
+    /// `params`: each of that report's parameters, by name, bound to a value. In the file's
+    /// order, which is the TOML table's: the names are sorted.
+    pub params: Vec<BoundParam>,
+}
+
+/// One of an inner report's parameters, and where its value comes from (RS9b).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundParam {
+    /// The inner report's parameter.
+    pub name: String,
+    pub from: ParamSource,
+}
+
+/// Where a bound parameter's value comes from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParamSource {
+    /// `":since"`: one of the outer report's parameters, by name, which must be of the inner
+    /// parameter's type.
+    Param(String),
+    /// A literal, as the file wrote it, checked against the inner parameter's type when the
+    /// report is planned. A text literal can't start with a colon, which names a parameter.
+    Literal(String),
+}
+
+/// A report file the caller read, for a `[[source]]` that names it: reading the folder is the
+/// caller's, as reading the file being planned is (RS9b).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamedReport {
+    /// Its file's name, without `.toml`, as a source's `report` writes it.
+    pub name: String,
+    pub text: String,
 }
 
 /// A lake a `[[source]]` names, as the file writes it: nothing is resolved against the

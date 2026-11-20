@@ -17,8 +17,8 @@ use dbrover_core::{BlobId, DataSource, describe_error};
 use dbrover_engine::{PasswordCommands, ProcessRunner, SourceAccess, Tunnels};
 use dbrover_export::CustomFormat;
 use dbrover_report::{
-    ExplainRequest, Explanation, LimitDefaults, Machine, Manifest, Plan, RunEvent, RunFailure,
-    RunFolders, RunIdentity, RunRequest, RunValues, Step, TimedEvent, read_report,
+    ExplainRequest, Explanation, LimitDefaults, Machine, Manifest, NamedReport, Plan, RunEvent,
+    RunFailure, RunFolders, RunIdentity, RunRequest, RunValues, Step, TimedEvent, read_report,
 };
 use dbrover_store::{AppPaths, CustomFile, CustomFileKind, DataSourceFile, os_keychain};
 
@@ -224,15 +224,22 @@ pub(crate) fn plan(
     let version = BlobId::of(text.as_bytes());
     let report = read_report(&text)?;
     let named = Named::load(paths)?;
-    let plan = Plan::new(report, &named.data_sources, &named.presets, defaults)?;
+    let plan = Plan::new(
+        report,
+        &named.data_sources,
+        &named.presets,
+        &named.reports,
+        defaults,
+    )?;
     Ok((plan, version))
 }
 
-/// What a report names, as the settings folder has it: its data sources, and `exports.toml`'s
-/// presets.
+/// What a report names, as the settings folder has it: its data sources, `exports.toml`'s
+/// presets, and the other report files a `[[source]]` may name (RS9b).
 pub(crate) struct Named {
     pub(crate) data_sources: Vec<DataSource>,
     pub(crate) presets: Vec<CustomFormat>,
+    pub(crate) reports: Vec<NamedReport>,
 }
 
 impl Named {
@@ -248,8 +255,29 @@ impl Named {
         Ok(Self {
             data_sources,
             presets,
+            reports: reports_folder(paths),
         })
     }
+}
+
+/// Every report file in the settings folder's `reports/`, with its text, for a `[[source]]`
+/// that names one (RS9b). A folder that can't be read, or a file that can't, is left out:
+/// planning then reports a report there isn't, naming it, rather than failing over a file no
+/// source may even name.
+fn reports_folder(paths: &AppPaths) -> Vec<NamedReport> {
+    let files = paths.report_files();
+    let Ok(names) = files.list() else {
+        return Vec::new();
+    };
+    names
+        .into_iter()
+        .filter_map(|name| {
+            Some(NamedReport {
+                text: files.read(&name).ok()?,
+                name: name.to_string(),
+            })
+        })
+        .collect()
 }
 
 /// The runtime a run or an explanation works in: two threads, the worker's process having

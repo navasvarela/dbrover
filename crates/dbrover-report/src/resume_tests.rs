@@ -358,7 +358,7 @@ file = "totals.csv"
 /// [`TWO_SOURCES`] planned under `defaults`, on `data_sources`.
 fn two_sources(defaults: &crate::LimitDefaults, data_sources: &[DataSource]) -> Plan {
     let report = crate::read_report(TWO_SOURCES).unwrap();
-    Plan::new(report, data_sources, &[], defaults).unwrap()
+    Plan::new(report, data_sources, &[], &[], defaults).unwrap()
 }
 
 /// Runs `plan` with keys 0 to 2,000 in `folder`, its work folder `work`.
@@ -485,6 +485,7 @@ fn binds_as_of_to_the_runs_start_unless_the_report_names_it() {
         Plan::new(
             crate::read_report(text).unwrap(),
             &data_sources,
+            &[],
             &[],
             &crate::LimitDefaults::default(),
         )

@@ -199,7 +199,8 @@ fn finished_run(folder: &Path) -> Vec<RunEvent> {
             report: "Trial balance".to_owned(),
             sources: vec![SourceStart {
                 id: "balances".to_owned(),
-                data_source: "shop".to_owned(),
+                data_source: Some("shop".to_owned()),
+                report: None,
                 attached: false,
                 lake: None,
                 waits_for: None,
@@ -351,7 +352,8 @@ fn lists_a_reports_chart_with_its_files() {
 fn combined_start() -> Vec<RunEvent> {
     let source = |id: &str| SourceStart {
         id: id.to_owned(),
-        data_source: "shop".to_owned(),
+        data_source: Some("shop".to_owned()),
+        report: None,
         attached: false,
         lake: None,
         waits_for: None,
@@ -577,7 +579,8 @@ fn shows_a_lookup_waiting_then_its_batches_then_done() {
         sources: vec![
             SourceStart {
                 id: "entries".to_owned(),
-                data_source: "shop".to_owned(),
+                data_source: Some("shop".to_owned()),
+                report: None,
                 attached: false,
                 lake: None,
                 waits_for: None,
@@ -587,7 +590,8 @@ fn shows_a_lookup_waiting_then_its_batches_then_done() {
             },
             SourceStart {
                 id: "accounts".to_owned(),
-                data_source: "shop".to_owned(),
+                data_source: Some("shop".to_owned()),
+                report: None,
                 attached: false,
                 lake: None,
                 waits_for: Some("entries".to_owned()),
@@ -820,7 +824,8 @@ fn cancel_stops_the_running_report() {
         report: "Trial balance".to_owned(),
         sources: vec![SourceStart {
             id: "balances".to_owned(),
-            data_source: "shop".to_owned(),
+            data_source: Some("shop".to_owned()),
+            report: None,
             attached: false,
             lake: None,
             waits_for: None,

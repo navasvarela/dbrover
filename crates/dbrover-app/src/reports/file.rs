@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime};
 use dbrover_core::DataSource;
 use dbrover_engine::{Command, ReportSaveFailure, WatchedFile};
 use dbrover_export::CustomFormat;
-use dbrover_report::{LimitDefaults, Plan, ReportProblem, format_report, plan_text};
+use dbrover_report::{LimitDefaults, NamedReport, Plan, ReportProblem, format_report, plan_text};
 use dbrover_sql::FormatOptions;
 use dbrover_store::{ReportFiles, ReportName, ReportRun, SqlFileContents};
 
@@ -88,6 +88,8 @@ pub enum Saved {
 pub struct CheckInputs<'a> {
     pub data_sources: &'a [DataSource],
     pub presets: &'a [CustomFormat],
+    /// Every report file in the folder, for a `[[source]]` that names one (RS9b).
+    pub reports: &'a [NamedReport],
     pub defaults: &'a LimitDefaults,
     pub lint: &'a LintOptions,
     /// The report's newest runs, newest first, which the hints come from.
@@ -330,7 +332,13 @@ impl ReportFile {
 
 /// The text's plan and problems.
 fn found(text: &str, inputs: &CheckInputs<'_>) -> Checked {
-    let plan = plan_text(text, inputs.data_sources, inputs.presets, inputs.defaults);
+    let plan = plan_text(
+        text,
+        inputs.data_sources,
+        inputs.presets,
+        inputs.reports,
+        inputs.defaults,
+    );
     let problems = text_problems(
         text,
         &plan,
@@ -344,7 +352,8 @@ fn found(text: &str, inputs: &CheckInputs<'_>) -> Checked {
 }
 
 /// A hash of what the check depends on: the text, the names, ids and kinds of the data
-/// sources and presets it may name, the limits' defaults, the lint rules, and the newest run.
+/// sources and presets it may name, the other report files it may read, the limits'
+/// defaults, the lint rules, and the newest run.
 fn fingerprint(text: &str, inputs: &CheckInputs<'_>) -> u64 {
     let mut hasher = DefaultHasher::new();
     text.hash(&mut hasher);
@@ -355,6 +364,11 @@ fn fingerprint(text: &str, inputs: &CheckInputs<'_>) -> u64 {
     }
     for preset in inputs.presets {
         format!("{preset:?}").hash(&mut hasher);
+    }
+    // A report source reads another file, so editing that file changes what this one plans to.
+    for report in inputs.reports {
+        report.name.hash(&mut hasher);
+        report.text.hash(&mut hasher);
     }
     format!("{:?}", inputs.defaults).hash(&mut hasher);
     format!("{:?}", inputs.lint).hash(&mut hasher);
@@ -500,6 +514,7 @@ mod tests {
         let inputs = CheckInputs {
             data_sources: &[],
             presets: &[],
+            reports: &[],
             defaults: &defaults,
             lint: &lint,
             runs: &[],
