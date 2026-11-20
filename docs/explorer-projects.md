@@ -63,6 +63,17 @@ untouched so that saving an edit keeps the data source in its project; `DataSour
 sets it from the action, `to_data_source` writes it out as it already does, and the engine saves
 the new data source into the project without a new command.
 
+The dialog itself says nothing about the project, and gets no field for it. The user just
+right-clicked the project, the data source appears under that header the moment it is saved, and
+**Move to project ›** is there if it was the wrong one — a field in the dialog would be a second
+place to change a data source's project, and the one place that could disagree with the header
+the menu was opened on.
+
+The item reads **New data source ›**, but its accessible name is "New data source in
+*&lt;group&gt;*". The toolbar's `+` and the Welcome tab's card are both called **New data
+source**, so the group is what tells the three apart for a screen reader — and for a UI test,
+which otherwise cannot say which of them it clicked.
+
 ### The `+` menu stays as it is
 
 The toolbar's `+` does **not** grow a project picker. The menu is already two levels deep for

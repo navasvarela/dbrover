@@ -33,9 +33,17 @@ const SOURCE_ROW_TINT: f32 = 0.16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExplorerAction {
-    New(DriverKind),
-    /// A new data source of a managed service, its preset filled in (C1f).
-    NewService(ManagedService),
+    /// A new data source, in `project` when a project header's menu asked for it (D9).
+    New {
+        driver: DriverKind,
+        project: Option<ProjectId>,
+    },
+    /// A new data source of a managed service, its preset filled in (C1f), in `project` as
+    /// [`Self::New`] is.
+    NewService {
+        service: ManagedService,
+        project: Option<ProjectId>,
+    },
     Edit(DataSourceId),
     Delete(DataSourceId),
     Connect(DataSourceId),
@@ -317,6 +325,15 @@ impl GroupHeader<'_> {
             Self::NoProject => "No project",
         }
     }
+
+    /// The project a data source joins by landing in this group: `None` under **No project**,
+    /// which is also what a data source in no project has.
+    fn project(self) -> Option<ProjectId> {
+        match self {
+            Self::Project(project) => Some(project.id),
+            Self::NoProject => None,
+        }
+    }
 }
 
 /// A foldable project header with its data sources under it. While filtering, a project
@@ -412,7 +429,11 @@ fn group_header_row(
     GroupHeaderResponse { name, toggled }
 }
 
+/// **New data source ›** creates in the group whose header this menu belongs to (D9), so the
+/// project needs no picking; the rest of the menu is about the project itself.
 fn group_menu(ui: &mut Ui, header: GroupHeader<'_>, actions: &mut Vec<ExplorerAction>) {
+    new_data_source_item(ui, header, actions);
+    ui.separator();
     if let GroupHeader::Project(project) = header {
         if widgets::menu_item(ui, icons::PENCIL_SIMPLE, "Rename…").clicked() {
             actions.push(ExplorerAction::RenameProject(project.id));
@@ -432,6 +453,20 @@ fn group_menu(ui: &mut Ui, header: GroupHeader<'_>, actions: &mut Vec<ExplorerAc
         ui.separator();
     }
     new_project_item(ui, None, actions);
+}
+
+/// The submenu that creates a data source in the group whose menu this is.
+///
+/// It reads **New data source ›**, but its accessible name says which group it creates in: the
+/// toolbar's `+` and the Welcome tab's card are called **New data source** too, and the group is
+/// what tells them apart for a screen reader, and for the UI tests.
+fn new_data_source_item(ui: &mut Ui, header: GroupHeader<'_>, actions: &mut Vec<ExplorerAction>) {
+    let label = widgets::icon_text(ui, icons::PLUS, Color32::PLACEHOLDER, "New data source");
+    let menu = widgets::menu_button(ui, label, |ui| {
+        new_data_source_menu(ui, header.project(), actions);
+    });
+    let name = format!("New data source in {}", header.label());
+    widgets::name(menu.response, WidgetType::Button, &name, true);
 }
 
 fn new_project_item(
@@ -468,7 +503,7 @@ fn toolbar(ui: &mut Ui, options: &mut ExplorerOptions, actions: &mut Vec<Explore
     let palette = &Palette::for_visuals(ui.visuals());
     widgets::toolbar(ui, |ui| {
         let new = widgets::menu_button(ui, widgets::glyph(icons::PLUS).size(15.0), |ui| {
-            new_data_source_menu(ui, actions);
+            new_data_source_menu(ui, None, actions);
             ui.separator();
             new_project_item(ui, None, actions);
         });
@@ -504,20 +539,27 @@ fn toolbar(ui: &mut Ui, options: &mut ExplorerOptions, actions: &mut Vec<Explore
 /// with the engines only that cloud runs (DynamoDB, Athena, BigQuery) and its managed services.
 /// Also used by the Welcome tab.
 ///
+/// `project` is the project the new data source is created in: the one whose header's menu this
+/// is (D9), and `None` from the toolbar's `+` and the Welcome tab, where no project is in sight.
+///
 /// A cloud's own engines are in its submenu alone: listed in both places, the menu grew past
 /// what a 900-point window shows with the Azure submenu open beside it (C4c).
-pub fn new_data_source_menu(ui: &mut Ui, actions: &mut Vec<ExplorerAction>) {
+pub fn new_data_source_menu(
+    ui: &mut Ui,
+    project: Option<ProjectId>,
+    actions: &mut Vec<ExplorerAction>,
+) {
     let logo_size = ui.text_style_height(&TextStyle::Button);
     let run_by_anyone = DriverKind::ALL
         .into_iter()
         .filter(|driver| ServiceVendor::running_only(*driver).is_none());
     for driver in run_by_anyone {
-        new_driver_item(ui, driver, logo_size, actions);
+        new_driver_item(ui, driver, project, logo_size, actions);
     }
     ui.separator();
     for vendor in ServiceVendor::ALL {
         widgets::menu_button(ui, vendor.display_name(), |ui| {
-            cloud_service_items(ui, vendor, actions);
+            cloud_service_items(ui, vendor, project, actions);
         });
     }
 }
@@ -526,6 +568,7 @@ pub fn new_data_source_menu(ui: &mut Ui, actions: &mut Vec<ExplorerAction>) {
 fn new_driver_item(
     ui: &mut Ui,
     driver: DriverKind,
+    project: Option<ProjectId>,
     logo_size: f32,
     actions: &mut Vec<ExplorerAction>,
 ) {
@@ -538,7 +581,7 @@ fn new_driver_item(
         true,
     );
     if response.clicked() {
-        actions.push(ExplorerAction::New(driver));
+        actions.push(ExplorerAction::New { driver, project });
     }
 }
 
@@ -546,12 +589,17 @@ fn new_driver_item(
 /// the engines only that cloud runs (DynamoDB, Athena). A submenu per cloud rather than one
 /// for them all: fifteen services and their headings made a submenu taller than a laptop's
 /// window.
-fn cloud_service_items(ui: &mut Ui, vendor: ServiceVendor, actions: &mut Vec<ExplorerAction>) {
+fn cloud_service_items(
+    ui: &mut Ui,
+    vendor: ServiceVendor,
+    project: Option<ProjectId>,
+    actions: &mut Vec<ExplorerAction>,
+) {
     let palette = &Palette::for_visuals(ui.visuals());
     let logo_size = ui.text_style_height(&TextStyle::Button);
     if !vendor.engines().is_empty() {
         for &driver in vendor.engines() {
-            new_driver_item(ui, driver, logo_size, actions);
+            new_driver_item(ui, driver, project, logo_size, actions);
         }
         ui.separator();
     }
@@ -564,7 +612,7 @@ fn cloud_service_items(ui: &mut Ui, vendor: ServiceVendor, actions: &mut Vec<Exp
             true,
         );
         if response.clicked() {
-            actions.push(ExplorerAction::NewService(service));
+            actions.push(ExplorerAction::NewService { service, project });
         }
     }
 }

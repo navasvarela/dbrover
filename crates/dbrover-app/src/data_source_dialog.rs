@@ -4,8 +4,9 @@ use std::path::Path;
 
 use dbrover_core::{
     AthenaConfig, AwsSignInKind, AzureTool, CloudProvider, DataSource, DataSourceId, DriverKind,
-    DuckDbConfig, ElasticsearchAuth, ManagedService, MongoConfig, SafetyLevel, ScanGuard,
-    ServerInfo, SourceColor, StorageProvider, TrinoProtocol, expand, expand_path, has_placeholder,
+    DuckDbConfig, ElasticsearchAuth, ManagedService, MongoConfig, ProjectId, SafetyLevel,
+    ScanGuard, ServerInfo, SourceColor, StorageProvider, TrinoProtocol, expand, expand_path,
+    has_placeholder,
 };
 use dbrover_engine::read_only::{self, Guard};
 use dbrover_engine::{DatabaseFile, Event, PasswordUpdate, ProcessEnvironment};
@@ -71,20 +72,28 @@ enum Status {
 }
 
 impl DataSourceDialog {
-    pub fn create(driver: DriverKind) -> Self {
+    /// `project` is the project the data source is saved into: the one whose header asked for
+    /// it (D9), and `None` from the toolbar's `+` and the Welcome tab.
+    pub fn create(driver: DriverKind, project: Option<ProjectId>) -> Self {
         Self {
             id: DataSourceId::generate(),
             is_new: true,
-            form: DataSourceForm::new(driver),
+            form: DataSourceForm {
+                project,
+                ..DataSourceForm::new(driver)
+            },
             status: Status::Editing,
         }
     }
 
     /// A new data source of a managed service (C1f), its preset filled in.
-    pub fn create_for_service(service: ManagedService) -> Self {
+    pub fn create_for_service(service: ManagedService, project: Option<ProjectId>) -> Self {
         Self {
-            form: DataSourceForm::for_service(service),
-            ..Self::create(service.driver())
+            form: DataSourceForm {
+                project,
+                ..DataSourceForm::for_service(service)
+            },
+            ..Self::create(service.driver(), project)
         }
     }
 
