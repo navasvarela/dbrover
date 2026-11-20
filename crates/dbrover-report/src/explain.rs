@@ -19,18 +19,19 @@ use std::time::Instant;
 use dbrover_core::{DataSource, LakeFormat, Password, describe_error};
 use dbrover_driver_duckdb::{
     Allowed, BucketSignIn, DuckDbType, LakeView, LoadColumn, Workspace, WorkspaceLimits,
-    WorkspaceStore,
+    WorkspaceStore, WorkspaceTable,
 };
 use dbrover_language::Literal;
 use dbrover_sql::Dialect;
 use serde::{Deserialize, Serialize};
 
+use crate::composed::{Composed, composed};
 use crate::events::LoadedColumn;
 use crate::statement::Statements;
 use crate::typing::declared_column_type;
 use crate::{
-    Combined, CostCheck, LakeSource, Logic, Plan, PlannedSource, PlannedSplit, QuerySource,
-    RunValues, SourceStatement,
+    CostCheck, LakeSource, Logic, Plan, PlannedSource, PlannedSplit, QuerySource, RunValues,
+    SourceStatement,
 };
 
 /// What explaining a report found.
@@ -147,17 +148,41 @@ pub async fn explain(
 ) -> Explanation {
     match &plan.logic {
         Logic::Direct(source) => Explanation {
-            sources: vec![explain_source(plan, values, explainer, source).await],
+            sources: vec![explain_source(plan, values, explainer, source, &source.id).await],
             combine: None,
         },
         Logic::Combine(combined) => {
+            // The report, and every report it uses as a source, whose own sources are
+            // explained under it (RS9c).
+            let reports = match composed(plan, values, combined) {
+                Ok(reports) => reports,
+                Err(failure) => {
+                    return Explanation {
+                        sources: Vec::new(),
+                        combine: Some(CombineExplanation::Failed {
+                            message: failure.message,
+                        }),
+                    };
+                }
+            };
             let mut sources = Vec::new();
-            for source in &combined.sources {
-                if let PlannedSource::Query(source) = source {
-                    sources.push(explain_source(plan, values, explainer, source).await);
+            for report in &reports {
+                for source in &report.combined.sources {
+                    if let PlannedSource::Query(source) = source {
+                        sources.push(
+                            explain_source(
+                                report.plan,
+                                &report.values,
+                                explainer,
+                                source,
+                                &report.step_id(&source.id),
+                            )
+                            .await,
+                        );
+                    }
                 }
             }
-            let combine = explain_combine(combined, values, explainer, known, spill).await;
+            let combine = explain_combine(&reports, values, explainer, known, spill).await;
             Explanation {
                 sources,
                 combine: Some(combine),
@@ -171,6 +196,7 @@ async fn explain_source(
     values: &RunValues,
     explainer: &impl SourceExplainer,
     source: &QuerySource,
+    id: &str,
 ) -> SourceExplanation {
     let statements = Statements::new(plan, values, source);
     let now = Instant::now();
@@ -205,7 +231,7 @@ async fn explain_source(
         ),
     };
     SourceExplanation {
-        id: source.id.clone(),
+        id: id.to_owned(),
         data_source: source.data_source.name.clone(),
         explained: explainer.explain(&statement).await,
         notes,
@@ -218,6 +244,7 @@ async fn explain_lake(
     workspace: &Workspace,
     lake: &LakeSource,
     explainer: &impl SourceExplainer,
+    into: WorkspaceTable,
 ) -> Result<LakeView, String> {
     let failed = |problem: String| format!("the lake {:?}: {problem}", lake.id);
     let password = if lake.storage.uses_password() {
@@ -244,7 +271,7 @@ async fn explain_lake(
         }
     };
     let view = LakeView::new(
-        &lake.id,
+        into,
         &lake.storage,
         &lake.path,
         lake.format,
@@ -258,33 +285,42 @@ async fn explain_lake(
     Ok(view)
 }
 
-/// The combine query planned over empty tables of every source's columns.
+/// The combine query planned over empty tables of every source's columns, the reports used as
+/// sources making their results from theirs first (RS9c).
 async fn explain_combine(
-    combined: &Combined,
+    reports: &[Composed<'_>],
     values: &RunValues,
     explainer: &impl SourceExplainer,
     known: &[KnownTable],
     spill: &Path,
 ) -> CombineExplanation {
     let mut tables = Vec::new();
-    for source in &combined.sources {
-        let PlannedSource::Query(source) = source else {
-            continue;
-        };
-        match table_of(source, known) {
-            Some(columns) => tables.push((source.id.as_str(), columns)),
-            None => {
-                return CombineExplanation::Unknown {
-                    reason: format!(
-                        "Source {} declares no columns and hasn't been loaded by a finished run \
-                         yet: run the report once, or declare its columns, to explain the \
-                         combine step.",
-                        source.id
-                    ),
-                };
+    for report in reports {
+        for source in &report.combined.sources {
+            let PlannedSource::Query(source) = source else {
+                continue;
+            };
+            let id = report.step_id(&source.id);
+            match table_of(source, &id, known) {
+                Some(columns) => tables.push((report.table(&source.id), columns)),
+                None => {
+                    return CombineExplanation::Unknown {
+                        reason: format!(
+                            "Source {id} declares no columns and hasn't been loaded by a \
+                             finished run yet: run the report once, or declare its columns, to \
+                             explain the combine step."
+                        ),
+                    };
+                }
             }
         }
     }
+    let Some(outer) = reports.first() else {
+        return CombineExplanation::Failed {
+            message: "the report has no combine step".to_owned(),
+        };
+    };
+    let combined = outer.combined;
     let limits = &combined.combine.limits;
     // Its tables are empty, so the database stays in memory.
     let opened = Workspace::open(
@@ -305,7 +341,7 @@ async fn explain_combine(
             };
         }
     };
-    let planned = plan_combine(&mut workspace, combined, values, explainer, &tables).await;
+    let planned = plan_combine(&mut workspace, reports, values, explainer, &tables).await;
     workspace.close().await;
     match planned {
         Ok(text) => CombineExplanation::Planned { text },
@@ -317,33 +353,41 @@ async fn explain_combine(
 /// the query.
 async fn plan_combine(
     workspace: &mut Workspace,
-    combined: &Combined,
+    reports: &[Composed<'_>],
     values: &RunValues,
     explainer: &impl SourceExplainer,
-    tables: &[(&str, Vec<(String, DuckDbType)>)],
+    tables: &[(WorkspaceTable, Vec<(String, DuckDbType)>)],
 ) -> Result<String, String> {
     let mut lakes = Vec::new();
-    for source in &combined.sources {
-        match source {
-            PlannedSource::Attached(attached) => {
-                workspace
-                    .attach(&attached.id, &attached.path)
-                    .await
-                    .map_err(|error| describe_error(&error))?;
+    for report in reports {
+        if let Some(schema) = report.schema() {
+            workspace
+                .create_schema(&schema)
+                .await
+                .map_err(|error| describe_error(&error))?;
+        }
+        for source in &report.combined.sources {
+            match source {
+                PlannedSource::Attached(attached) => {
+                    workspace
+                        .attach(&attached.id, &attached.path)
+                        .await
+                        .map_err(|error| describe_error(&error))?;
+                }
+                // A lake is read as a run reads it, so the plan shows the lake's own scan,
+                // with its columns and the filters pushed into it; it reads the files'
+                // schemas and nothing else.
+                PlannedSource::Lake(lake) => {
+                    let view =
+                        explain_lake(workspace, lake, explainer, report.table(&lake.id)).await?;
+                    lakes.push(view);
+                }
+                // A report source's table is made by that report's own combine, below.
+                PlannedSource::Query(_) | PlannedSource::Report(_) => {}
             }
-            // A lake is read as a run reads it, so the plan shows the lake's own scan, with
-            // its columns and the filters pushed into it; it reads the files' schemas and
-            // nothing else.
-            PlannedSource::Lake(lake) => {
-                let view = explain_lake(workspace, lake, explainer).await?;
-                lakes.push(view);
-            }
-            // A report source's table is made by its own combine, which an explanation
-            // doesn't run: its columns come from the history, as a loaded source's do.
-            PlannedSource::Query(_) | PlannedSource::Report(_) => {}
         }
     }
-    for (id, columns) in tables {
+    for (table, columns) in tables {
         let columns: Vec<LoadColumn> = columns
             .iter()
             .map(|(name, column_type)| LoadColumn {
@@ -352,9 +396,27 @@ async fn plan_combine(
             })
             .collect();
         workspace
-            .loader(id, &columns)
+            .loader(table, &columns)
             .await
             .map_err(|error| describe_error(&error))?;
+    }
+    // Each report used as a source makes its result, innermost first, so the report that
+    // reads it has a table of the right columns to plan against, as a run gives it.
+    for report in reports.iter().rev() {
+        let Some(into) = &report.into else {
+            continue;
+        };
+        let schema = report.schema();
+        workspace
+            .set_search_path(schema.as_deref())
+            .await
+            .map_err(|error| describe_error(&error))?;
+        let made = make_empty_result(workspace, report, into).await;
+        workspace
+            .set_search_path(None)
+            .await
+            .map_err(|error| describe_error(&error))?;
+        made?;
     }
     workspace
         .plan_without_statistics()
@@ -368,8 +430,11 @@ async fn plan_combine(
         })
         .await
         .map_err(|error| describe_error(&error))?;
+    let outer = reports
+        .first()
+        .ok_or_else(|| "the report has no combine step".to_owned())?;
     let prepared = dbrover_sql::bind(
-        combined.combine.query.sql(),
+        outer.combined.combine.query.sql(),
         Dialect::DuckDb,
         &values.parameters,
     )
@@ -382,7 +447,11 @@ async fn plan_combine(
 
 /// The columns of `source`'s table: declared in the file, else as the last run loaded them;
 /// `None` when neither says.
-fn table_of(source: &QuerySource, known: &[KnownTable]) -> Option<Vec<(String, DuckDbType)>> {
+fn table_of(
+    source: &QuerySource,
+    id: &str,
+    known: &[KnownTable],
+) -> Option<Vec<(String, DuckDbType)>> {
     if let Some(declared) = &source.columns {
         return Some(
             declared
@@ -398,7 +467,7 @@ fn table_of(source: &QuerySource, known: &[KnownTable]) -> Option<Vec<(String, D
     }
     let table = known
         .iter()
-        .find(|table| table.id.eq_ignore_ascii_case(&source.id))?;
+        .find(|table| table.id.eq_ignore_ascii_case(id))?;
     table
         .columns
         .iter()
@@ -407,4 +476,24 @@ fn table_of(source: &QuerySource, known: &[KnownTable]) -> Option<Vec<(String, D
             Some((column.name.clone(), column_type))
         })
         .collect()
+}
+
+/// Makes the table a report used as a source leaves behind, from its own combine query over
+/// its empty tables, so the report that reads it plans against the right columns (RS9c). The
+/// tables are empty, so the statement reads nothing.
+async fn make_empty_result(
+    workspace: &mut Workspace,
+    report: &Composed<'_>,
+    into: &WorkspaceTable,
+) -> Result<(), String> {
+    let prepared = dbrover_sql::bind(
+        report.combined.combine.query.sql(),
+        Dialect::DuckDb,
+        &report.values.parameters,
+    )
+    .map_err(|missing| missing.to_string())?;
+    workspace
+        .create_table_as(into, &prepared.sql, &prepared.values)
+        .await
+        .map_err(|error| describe_error(&error))
 }
