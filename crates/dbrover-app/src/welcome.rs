@@ -117,7 +117,7 @@ fn cards(
                     Card::NewDataSource => {
                         egui::Popup::menu(&response)
                             .style(theme::menu_style)
-                            .show(|ui| explorer::new_data_source_menu(ui, actions));
+                            .show(|ui| explorer::new_data_source_menu(ui, None, actions));
                     }
                     Card::NewConsole => {
                         egui::Popup::menu(&response)

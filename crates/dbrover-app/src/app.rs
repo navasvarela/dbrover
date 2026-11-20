@@ -1508,11 +1508,12 @@ impl DbRoverApp {
 
     fn handle_explorer_action(&mut self, action: ExplorerAction, ctx: &egui::Context) {
         match action {
-            ExplorerAction::New(driver) => {
-                self.data_source_dialog = Some(DataSourceDialog::create(driver));
+            ExplorerAction::New { driver, project } => {
+                self.data_source_dialog = Some(DataSourceDialog::create(driver, project));
             }
-            ExplorerAction::NewService(service) => {
-                self.data_source_dialog = Some(DataSourceDialog::create_for_service(service));
+            ExplorerAction::NewService { service, project } => {
+                self.data_source_dialog =
+                    Some(DataSourceDialog::create_for_service(service, project));
             }
             ExplorerAction::Edit(id) => {
                 if let Some(entry) = self.state.data_source(id) {
@@ -3324,6 +3325,7 @@ mod tests {
     mod parameters;
     mod password_commands;
     mod plans;
+    mod projects;
     mod query_folders;
     mod reports;
     mod schema_compare;
