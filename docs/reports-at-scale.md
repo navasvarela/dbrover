@@ -832,8 +832,8 @@ runs the small cases.
   - RS9c — Running a report source: inner sources in their schema, inner combines locked and
     innermost first, the result as the outer source's table.
   - RS9d — The tab and the profile: **Used by**, nested lanes, and file hashes kept.
-  - RS9e — Shared SQL functions, if reports repeat expressions by then.
-  - RS9f — `reuse`, once RS5's cache exists.
+  - RS9e — Shared SQL functions, if reports repeat expressions by then. Not built.
+  - RS9f — `reuse`, once RS5's cache exists; it carries its own.
   - RS9g — Manual and demo note.
   **Exit:** a report built on an example report writes rows that equal a sum over that
   report's own CSV file; a cycle of two reports is a problem in both files. The design wrote
@@ -1398,54 +1398,56 @@ is a decision for the reviewer to confirm.
 
 ### RS9's layers
 
-- **RS9a — Plan:** this section, the layers below, and the roadmap's item line. Docs only.
-- **RS9b — The report file:** `report` and `params` on a `[[source]]`, read and planned, with
-  the graph of the reports a run uses, its cycles and a depth past 4 refused, and every problem
-  naming both reports. The planner takes the other report files' texts beside the data sources.
+- **RS9a — Plan:** built. This section, the layers below, and the roadmap's item line. Docs only.
+- **RS9b — The report file:** built. `report` and `params` on a `[[source]]`, read and
+  planned, with the graph of the reports a run uses, its cycles and a depth past 4 refused, and
+  every problem naming both reports. The planner takes the other report files' texts beside
+  the data sources.
   *Exit:* a report whose source reads another report plans, with the inner report's own sources
   and combine inside it; a cycle of two reports is a problem in both files; and a parameter of
   the inner report left out, of another type, or unknown to it is a problem naming both.
-- **RS9c — Running a report source:** each inner report's sources loaded into a schema named
-  after the outer source's id, the lock, then each inner combine as
+- **RS9c — Running a report source:** built. Each inner report's sources loaded into a schema
+  named after the outer source's id, the lock, then each inner combine as
   `CREATE TABLE main.<id> AS …` innermost first, then the outer combine. The two facts the step
   rests on — `search_path` a local setting the lock doesn't freeze, and `CREATE TABLE` allowed
   after it — pinned in `dbrover-driver-duckdb`'s workspace tests against DuckDB 1.5.6.
   *Exit:* a report built on another writes the rows the inner report's own result sums to, and
   the outer combine cannot name the inner report's sources.
-- **RS9d — The tab and the profile:** **Used by** in a report's tab, a report source's
+- **RS9d — The tab and the profile:** built. **Used by** in a report's tab, a report source's
   **Edit file** opening the inner report, the inner steps nested under the outer source's lane
   in the timeline, and the blob id of every report file a run used kept in its profile.
   *Exit:* the tab of a report two others read lists both, and a composed run's profile names
   each report it used with the hash of the text that ran.
-- **RS9e — Shared SQL functions:** left out. The repetition the examples hold is a repeated
-  result, which RS9b and RS9c remove; see the row above and
+- **RS9e — Shared SQL functions:** left out, and not built. The repetition the examples hold is
+  a repeated result, which RS9b and RS9c remove; see the row above and
   [RS9's remaining gaps](#rs9s-remaining-gaps).
-- **RS9f — `reuse`:** `reuse = "<age>"` on a report source, over a cache of its own, since
-  RS5h's never arrived: a result kept as Parquet under `report-cache/results/`, keyed by the
-  inner file's blob id and its parameters, taken when it is younger than the age, swept by age
-  and total, and ignored by **Run from scratch**. *Exit:* a second run of the outer report
-  inside the age runs no inner statement and writes the same files; `--from-scratch` runs the
-  inner report again.
-- **RS9g — Manual, demo note and the exit test:** the manual's chapter on a report as a
-  source, a demo note, RS9's status and its gaps in the roadmap, and the exit test below.
+- **RS9f — `reuse`:** built. `reuse = "<age>"` on a report source, over a cache of its own,
+  since RS5h's never arrived: a result kept as Parquet under `report-cache/results/`, keyed by
+  the inner file's blob id and its parameters, taken when it is younger than the age, swept by
+  age and total, cleared by **Clear history**, and ignored by **Run from scratch**. *Exit met:*
+  a second run of the outer report inside the age runs no inner statement and writes the same
+  file; `--from-scratch` runs the inner report again.
+- **RS9g — Manual, demo note and the exit test:** built. The manual's
+  [A report as a source](../book/src/reports.md#a-report-as-a-source), the example
+  `net-by-category.toml`, a demo note, RS9's status and its gaps in the roadmap, and the exit
+  test below.
 
 ### RS9's exit test
 
 `crates/dbrover-engine/tests/report_composed.rs`, on the SQLite **shop** of
-`examples/reports/shop.sql`, which needs no server and runs in CI:
+`examples/reports/shop.sql`, which needs no server and runs in CI. Met on 2026-11-20:
 
-1. `sales-by-category.toml` runs on its own and writes its CSV.
-2. A report whose one `[[source]]` is `report = "sales-by-category"`, with its period bound to
-   the outer report's, groups that result by category and writes it.
-3. The composed report's numbers equal a sum over the first report's own CSV file, column by
-   column, so the inner report's result reached the outer combine unchanged.
-4. The outer combine naming one of the inner report's sources fails, so only the result is
-   visible.
-5. Two reports that read each other are a problem in both files, each naming both reports.
+1. `sales-by-category.toml` runs on its own and writes `sales-by-category-2026-10.csv`.
+2. `net-by-category.toml`, whose one `[[source]]` is `report = "sales-by-category"` with its
+   period bound to the outer report's, adds that result's product rows up per category.
+3. Each category's net — 2,606.32, 54,319.98, 8,387.90 and 3,121.56 — equals the
+   `Total <category>` row of the first report's own CSV file, and their sum that file's own
+   total of 68,435.76. The result reached the outer combine unchanged.
+4. Two reports that read each other are refused in both files, each problem naming both.
+5. With `reuse = "24h"` on the source, a second run takes the kept result, writes the same
+   file, and leaves one Parquet file in the cache.
 
 ### RS9's remaining gaps
-
-Known before the first layer, and added to as RS9 is built (RS9g):
 
 - **The explorer doesn't mark a report that others use.** **Used by** is in the tab, where the
   reports are already read; the tree draws its names from the folder's `ReportName`s and would
@@ -1453,9 +1455,20 @@ Known before the first layer, and added to as RS9 is built (RS9g):
 - **Shared SQL functions are not built (RS9e).** The row above says why: what the examples
   repeat is a result, not an expression, and the one repeated expression —
   `flows.amount * batteries.unit` — is in two files. The layer waits for a third.
-- **An inner report's own history doesn't change,** as the design says, because it writes no
-  files: there is no record anywhere that a report ran inside another, only the outer run's
-  profile naming the reports it used.
+- **A report read as a source keeps no run of its own,** as the design says, because it writes
+  no files: there is no record that it ran inside another, only the outer run's profile naming
+  the reports it used with their versions.
+- **`reuse` is untested against a warehouse,** where it is worth the most: a result that costs
+  minutes and money kept for a day. What was checked end to end is the SQLite shop, where the
+  report it saves costs milliseconds, and the tests' stand-in sources.
+- **RS5h's cache is still not built,** and when it comes its own folder goes beside RS9f's
+  under `report-cache/`. The two share the sweep's bounds — a week, and **Kept runs may hold**
+  — but not a setting of their own: a cache of results and a cache of a source's rows count
+  against the same total as a kept work folder, which is the bound the manual names.
+- **A reused result is not compared with what the report would make now.** `reuse` trusts the
+  key: the report's file, its version and its parameters. A source of the report that changed
+  under it inside the age gives the kept rows, which is what asking for a result up to a day
+  old means, and **Run from scratch** is the way past it.
 
 ## Benchmark
 

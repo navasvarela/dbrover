@@ -1,0 +1,46 @@
+# Net sales by category: the result of sales-by-category.toml, read as a source, with its
+# product rows added up per category. Nothing here names the shop: what this report reads is
+# the other report's result, and that report's own file says where its rows come from
+# (docs/reports-at-scale.md, "Composing reports").
+#
+# Add reuse = "24h" to the source and a run inside that day takes the result the last one kept,
+# instead of reading the shop again.
+
+[report]
+name = "Net sales by category"
+description = "Each category's net sales, from the result of Sales by category."
+# The period, which is passed on to the report this one reads.
+params = { since = "date", until = "date" }
+
+# The rows of the report "sales-by-category" in reports/, run with this report's period: its
+# [combine]'s columns, which are label, sku, product, units, sold, returned and net.
+[[source]]
+id = "sales"
+report = "sales-by-category"
+params = { since = ":since", until = ":until" }
+
+# That result mixes a row per product with the subtotals its GROUPING SETS add, so the product
+# rows are the ones with an sku; added up per category, they come to the subtotals beside them.
+[combine]
+query = """
+SELECT label AS category,
+       SUM(units) AS units,
+       SUM(sold) AS sold,
+       SUM(returned) AS returned,
+       SUM(net) AS net
+FROM sales
+WHERE sku IS NOT NULL
+GROUP BY label
+ORDER BY label
+"""
+
+[[output]]
+format = "csv"
+file = "net-by-category-{since:%Y-%m}.csv"
+columns = [
+  { name = "Category", from = "category" },
+  { name = "Units",    from = "units",    type = "integer" },
+  { name = "Sold",     from = "sold",     type = "decimal(18,2)" },
+  { name = "Returned", from = "returned", type = "decimal(18,2)" },
+  { name = "Net",      from = "net",      type = "decimal(18,2)" },
+]
