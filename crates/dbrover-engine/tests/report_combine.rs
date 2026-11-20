@@ -135,6 +135,7 @@ async fn run_valuation(
         read_report(&text).unwrap(),
         data_sources,
         &[],
+        &[],
         &LimitDefaults::default(),
     )
     .unwrap();
@@ -312,6 +313,7 @@ file = "btc.csv"
     let plan = Plan::new(
         read_report(text).unwrap(),
         &[data_source],
+        &[],
         &[],
         &LimitDefaults::default(),
     )

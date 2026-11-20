@@ -154,6 +154,19 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
                     });
                     lakes.push(read);
                 }
+                // RS9c runs a report source; RS9b reads and plans one.
+                PlannedSource::Report(report) => {
+                    return Err(RunFailure::new(
+                        Step::Source {
+                            id: report.id.clone(),
+                        },
+                        format!(
+                            "this DbRover plans a report that reads the report {:?} but doesn't \
+                             run one yet",
+                            report.report
+                        ),
+                    ));
+                }
                 PlannedSource::Query(_) => {}
             }
         }
@@ -386,7 +399,9 @@ impl<'a, O: SourceOpener> Combining<'a, '_, O> {
             .filter_map(|source| match source {
                 PlannedSource::Query(source) => checkpoints.source(&source.id),
                 // Neither loads rows, so neither is a checkpoint a resumed run skips.
-                PlannedSource::Attached(_) | PlannedSource::Lake(_) => None,
+                PlannedSource::Attached(_) | PlannedSource::Lake(_) | PlannedSource::Report(_) => {
+                    None
+                }
             })
             .collect();
         let tables: Vec<LoadedTable> = kept.iter().map(LoadedTable::from_kept).collect();

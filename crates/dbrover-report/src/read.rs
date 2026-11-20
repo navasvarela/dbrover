@@ -15,10 +15,11 @@ use dbrover_driver_duckdb::DuckDbType;
 use crate::partition::read_partition;
 use crate::problem::{Place, ReportProblem, Table, messages, syntax_problems};
 use crate::{
-    ByteSize, Chart, ChartPicture, Combine, CombineLimitsSet, CombineQuery, FileName, HandoffRead,
-    HintId, LakeRead, Lookup, Output, OutputColumns, OutputLimitsSet, OutputWriter, PART_FROM,
-    PART_TO, Param, Partition, PlannedPartition, Report, Source, SourceColumn, SourceLimitsSet,
-    SourcePartition, SourceRead, SourceRows, SourceSplit, grouped,
+    BoundParam, ByteSize, Chart, ChartPicture, Combine, CombineLimitsSet, CombineQuery, FileName,
+    HandoffRead, HintId, LakeRead, Lookup, Output, OutputColumns, OutputLimitsSet, OutputWriter,
+    PART_FROM, PART_TO, Param, ParamSource, Partition, PlannedPartition, Report, ReportRead,
+    Source, SourceColumn, SourceLimitsSet, SourcePartition, SourceRead, SourceRows, SourceSplit,
+    grouped,
 };
 
 /// Keys a file may put in the wrong table, and where each goes, so it says so rather than
@@ -464,6 +465,20 @@ fn check_shape(
                 "handoff",
             ),
         )),
+        // A report source's rows are in the run's DuckDB, which only a combine step reads.
+        [one] if !combined && matches!(one.read, SourceRead::Report(_)) => {
+            Some(ReportProblem::new(
+                format!(
+                    "source {:?}: a report source's rows are read by a [combine] query, which \
+                     this report has none of; add one over the report's result",
+                    one.id
+                ),
+                Place::key(
+                    Table::Source(positions.first().copied().unwrap_or(0)),
+                    "report",
+                ),
+            ))
+        }
         [one] if !combined && one.read == SourceRead::Attach => Some(ReportProblem::new(
             format!(
                 "source {:?}: an attached source is read in place by a [combine] query; add \
@@ -607,6 +622,52 @@ fn read_source(
             .map(|()| id)
             .map_err(|problem| Found::at("id", problem))
     });
+    // A source reads a data source or another report, never both, so `report` decides which
+    // keys the rest of the table may have (RS9b).
+    let (data_source, read) = match fields.string("report") {
+        Ok(None) => read_from_data_source(&mut fields, &mut found),
+        Ok(Some(report)) if !report.trim().is_empty() => {
+            read_from_report(report.trim().to_owned(), &mut fields, &mut found)
+        }
+        Ok(Some(_)) => {
+            found.push(Found::at("report", NEEDS_A_REPORT));
+            (Ok(None), Err(Vec::new()))
+        }
+        Err(problem) => {
+            found.push(problem);
+            (Ok(None), Err(Vec::new()))
+        }
+    };
+    let source = match (id, data_source, read) {
+        (Ok(id), Ok(data_source), Ok(read)) => Some(Source {
+            id,
+            data_source,
+            read,
+        }),
+        (id, data_source, read) => {
+            found.extend(id.err());
+            found.extend(data_source.err());
+            found.extend(read.err().into_iter().flatten());
+            None
+        }
+    };
+    let source = source.filter(|_| found.is_empty());
+    problems.extend(placed(Table::Source(position), Some(&label), found));
+    source
+}
+
+/// What `report` says when it names no report.
+const NEEDS_A_REPORT: &str =
+    "needs the report it reads, by its file's name: report = \"valuation\"";
+
+/// A `[[source]]` that reads a data source: its data source, and how its rows are read.
+fn read_from_data_source(
+    fields: &mut Fields,
+    found: &mut Vec<Found>,
+) -> (
+    Result<Option<String>, Found>,
+    Result<SourceRead, Vec<Found>>,
+) {
     let data_source = fields.string("data_source").and_then(|name| {
         name.filter(|name| !name.trim().is_empty()).ok_or_else(|| {
             Found::at(
@@ -615,6 +676,7 @@ fn read_source(
             )
         })
     });
+    let data_source = data_source.map(Some);
     let attach = fields.boolean("attach");
     let lake = fields.string("lake");
     let format = fields.string("format");
@@ -623,7 +685,7 @@ fn read_source(
     let max_rows = fields.count("max_rows");
     let max_bytes = fields.byte_size("max_bytes");
     let timeout = fields.duration("timeout");
-    let split = read_split(&mut fields);
+    let split = read_split(fields);
     let columns = fields.take("columns").map(read_source_columns).transpose();
     let columnar = fields.boolean("columnar");
     let handoff = fields
@@ -726,7 +788,7 @@ fn read_source(
                     }
                     Ok(SourceRead::Attach)
                 }
-                InPlace::Lake(path) => read_lake(path, format, hive_partitioning, &mut found),
+                InPlace::Lake(path) => read_lake(path, format, hive_partitioning, found),
             }
         }
         (
@@ -801,22 +863,129 @@ fn read_source(
             Err(errors)
         }
     };
-    let source = match (id, data_source, read) {
-        (Ok(id), Ok(data_source), Ok(read)) => Some(Source {
-            id,
-            data_source,
-            read,
-        }),
-        (id, data_source, read) => {
-            found.extend(id.err());
-            found.extend(data_source.err());
-            found.extend(read.err().into_iter().flatten());
-            None
+    (data_source, read)
+}
+
+/// A `[[source]]` whose `report` names another report in the folder (RS9b): the report and
+/// the parameters it binds. Every key that belongs to a data source is a problem beside it,
+/// so the file says what a report source is instead of calling the key unknown.
+fn read_from_report(
+    report: String,
+    fields: &mut Fields,
+    found: &mut Vec<Found>,
+) -> (
+    Result<Option<String>, Found>,
+    Result<SourceRead, Vec<Found>>,
+) {
+    for (key, what) in OF_A_DATA_SOURCE {
+        if fields.take(key).is_some() {
+            found.push(Found::at(
+                key,
+                format!(
+                    "{key} {what}, and this source reads the report {report:?}, whose own file \
+                     says how it is read"
+                ),
+            ));
+        }
+    }
+    let params = fields
+        .take("params")
+        .map(read_bound_params)
+        .transpose()
+        .map_err(|problems| {
+            problems
+                .into_iter()
+                .map(|problem| Found::at("params", problem))
+                .collect::<Vec<_>>()
+        });
+    found.extend(fields.unknown("a report source", "id, report and params"));
+    let read = match params {
+        Ok(params) => Ok(SourceRead::Report(ReportRead {
+            report,
+            params: params.unwrap_or_default(),
+        })),
+        Err(problems) => Err(problems),
+    };
+    (Ok(None), read)
+}
+
+/// The keys a source reads a data source with, and what each does, for a report source that
+/// has one (RS9b).
+const OF_A_DATA_SOURCE: [(&str, &str); 12] = [
+    ("data_source", "names the data source a source reads"),
+    ("query", "is the query a data source answers"),
+    ("attach", "attaches a DuckDB file"),
+    ("lake", "reads a bucket's files in place"),
+    ("format", "says how a lake's files are read"),
+    ("hive_partitioning", "says how a lake's folders are read"),
+    ("handoff", "is where an engine writes its result as files"),
+    ("lookup", "binds a parameter to an earlier source's values"),
+    ("partition", "reads a source's query a range at a time"),
+    (
+        "max_rows_per_part",
+        "bounds a range of a partitioned source",
+    ),
+    ("columns", "declares the columns of a query's result"),
+    ("columnar", "says how a query's rows reach the combine step"),
+];
+
+/// A report source's `params`: the inner report's parameters bound to the outer report's
+/// (`":since"`) or to literals (RS9b). The names come out sorted, as TOML tables are.
+fn read_bound_params(value: toml::Value) -> Result<Vec<BoundParam>, Vec<String>> {
+    let toml::Value::Table(table) = value else {
+        return Err(vec![
+            "params is a table of the report's parameters, as params = { since = \":since\" }"
+                .to_owned(),
+        ]);
+    };
+    let mut params = Vec::new();
+    let mut problems = Vec::new();
+    for (name, value) in table {
+        if !is_param_name(&name) {
+            problems.push(format!(
+                "params: {name:?} can't be a parameter's name, which is letters, digits and _, \
+                 starting with a letter"
+            ));
+            continue;
+        }
+        match bound_param(value) {
+            Ok(from) => params.push(BoundParam { name, from }),
+            Err(problem) => problems.push(format!("params: {name}: {problem}")),
+        }
+    }
+    if problems.is_empty() {
+        Ok(params)
+    } else {
+        Err(problems)
+    }
+}
+
+/// One bound parameter's value: `":name"` for one of the outer report's parameters, or a
+/// literal of the inner parameter's type, which is checked when the report is planned.
+fn bound_param(value: toml::Value) -> Result<ParamSource, String> {
+    let literal = match value {
+        toml::Value::String(text) => match text.strip_prefix(':') {
+            Some(name) if is_param_name(name) => return Ok(ParamSource::Param(name.to_owned())),
+            Some(name) => {
+                return Err(format!(
+                    ":{name} isn't a parameter's name, which is letters, digits and _, starting \
+                     with a letter; a text value can't start with a colon"
+                ));
+            }
+            None => text,
+        },
+        toml::Value::Integer(number) => number.to_string(),
+        toml::Value::Float(number) => number.to_string(),
+        toml::Value::Boolean(yes) => yes.to_string(),
+        toml::Value::Datetime(when) => when.to_string(),
+        toml::Value::Array(_) | toml::Value::Table(_) => {
+            return Err(
+                "is one of this report's parameters, as \":since\", or a value of its own type"
+                    .to_owned(),
+            );
         }
     };
-    let source = source.filter(|_| found.is_empty());
-    problems.extend(placed(Table::Source(position), Some(&label), found));
-    source
+    Ok(ParamSource::Literal(literal))
 }
 
 /// A `[[source]]` whose `handoff` names the bucket its engine writes the result in, and the

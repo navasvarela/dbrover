@@ -56,7 +56,7 @@ pub(crate) fn events_report(partition: &str, more: &str) -> String {
 
 pub(crate) fn plan(text: &str) -> Result<Plan, Vec<String>> {
     let report = read_report(text)?;
-    Plan::new(report, &data_sources(), &[], &LimitDefaults::default())
+    Plan::new(report, &data_sources(), &[], &[], &LimitDefaults::default())
 }
 
 fn by_key(more: &str) -> Plan {

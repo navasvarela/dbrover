@@ -84,9 +84,9 @@ pub use plan::{
 pub use problem::{Locator, Place, ReportProblem, Table};
 pub use read::{read_report, read_with_places};
 pub use report::{
-    Chart, ChartPicture, Combine, CombineQuery, HandoffRead, LakeRead, Lookup, Output,
-    OutputColumns, OutputWriter, Param, Report, Source, SourceColumn, SourcePartition, SourceRead,
-    SourceRows, SourceSplit,
+    BoundParam, Chart, ChartPicture, Combine, CombineQuery, HandoffRead, LakeRead, Lookup,
+    NamedReport, Output, OutputColumns, OutputWriter, Param, ParamSource, Report, ReportRead,
+    Source, SourceColumn, SourcePartition, SourceRead, SourceRows, SourceSplit,
 };
 pub use request::{ExplainRequest, RunRequest};
 pub use run::{
@@ -101,6 +101,8 @@ mod batch_tests;
 mod chart_tests;
 #[cfg(test)]
 mod combine_tests;
+#[cfg(test)]
+mod composed_tests;
 #[cfg(test)]
 mod handoff_tests;
 #[cfg(test)]

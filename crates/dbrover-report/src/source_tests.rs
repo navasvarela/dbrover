@@ -144,6 +144,7 @@ fn plan(text: &str) -> Result<Plan, Vec<String>> {
         read_report(text)?,
         &data_sources(),
         &[],
+        &[],
         &LimitDefaults::default(),
     )
 }
