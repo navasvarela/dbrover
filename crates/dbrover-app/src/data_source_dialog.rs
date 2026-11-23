@@ -19,8 +19,9 @@ use crate::data_source_form::{
     ATHENA_LIMIT_LABEL, AthenaFields, BIGQUERY_LIMIT_LABEL, BigQueryFields, BigQuerySignIn,
     BucketFields, BucketSignIn, CassandraFields, CloudFields, DataSourceForm, DatabaseField,
     DriverFields, DuckDbFields, DuckDbLocation, DynamoDbFields, ElasticsearchFields, FormError,
-    LAKE_LIMIT_LABEL, McpLoginFields, McpPasswordChange, MongoFields, MongoTarget, ServerFields,
-    SnowflakeFields, SnowflakeSignInChoice, SshFields, SshLoginChoice, TlsChoice, TrinoFields,
+    LAKE_LIMIT_LABEL, McpLoginFields, McpPasswordChange, MongoFields, MongoTarget,
+    SNOWFLAKE_LIMIT_LABEL, ServerFields, SnowflakeFields, SnowflakeSignInChoice, SshFields,
+    SshLoginChoice, TlsChoice, TrinoFields,
 };
 use crate::dialog::{self, DialogSize};
 use crate::file_picker::{self, FileEngine};
@@ -200,7 +201,7 @@ impl DataSourceDialog {
             let driver = self.form.driver();
             match read_only::guard(driver, self.form.storage()) {
                 Guard::Session(_) => mcp_login_rows(ui, &mut self.form.mcp_login, false),
-                Guard::Login if !driver.uses_password() => {
+                Guard::Login if !driver.mcp_login_has_password() => {
                     mcp_profile_row(ui, &mut self.form.mcp_login, driver);
                 }
                 Guard::Login => mcp_login_rows(ui, &mut self.form.mcp_login, true),
@@ -827,6 +828,18 @@ fn snowflake_rows(ui: &mut Ui, fields: &mut SnowflakeFields) {
     ui.label("");
     ui.weak("As Snowflake shows them, usually in capitals: it reads them case-sensitively.");
     ui.end_row();
+    text_row(
+        ui,
+        SNOWFLAKE_LIMIT_LABEL,
+        &mut fields.limit_minutes,
+        "no limit",
+    );
+    ui.label("");
+    ui.weak(
+        "In minutes. Snowflake stops a statement that runs longer and bills its warehouse \
+         until then; a warehouse's own lower limit still wins.",
+    );
+    ui.end_row();
 }
 
 /// The passphrase of an encrypted key, or the token, kept in the keychain; an OAuth token may
@@ -1085,6 +1098,7 @@ fn ssh_rows(ui: &mut Ui, fields: &mut SshFields, secret_hint: &str) {
 fn mcp_profile_row(ui: &mut Ui, fields: &mut McpLoginFields, driver: DriverKind) {
     let (label, other) = match driver {
         DriverKind::BigQuery => ("MCP credentials file", "Another credentials file"),
+        DriverKind::Snowflake => ("MCP role", "A role of the data source's user"),
         _ => ("MCP profile", "Another AWS profile"),
     };
     let label = ui.label(label).on_hover_text(format!(

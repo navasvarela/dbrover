@@ -1378,7 +1378,7 @@ account.
   DATABASES LIMIT 1`. A statement Snowflake stops without a limit of DbRover's says it was
   Snowflake's own `STATEMENT_TIMEOUT_IN_SECONDS`. The 408's code and message are a guess in the
   exchanges, for the live check.
-- **C5g — Snowflake in the data source dialog:** **New data source › Other cloud services ›
+- **C5g — Snowflake in the data source dialog** (built): **New data source › Other cloud services ›
   Snowflake**, with **Account**, **User**, **Sign in with** (key pair, programmatic access
   token, or OAuth token from a command), **Private key file** and its passphrase,
   **Warehouse**, **Role**, **Database**, **Schema** and **Stop statements after** (10 minutes
@@ -1387,6 +1387,12 @@ account.
   role, so Snowflake's grants are what limit an MCP client).
   **Exit:** a kittest adds a Snowflake data source from the menu and it saves as typed, with
   its 10-minute limit; a key-pair data source without a key file is refused when saving.
+  **As built:** what was left after C5d: **Stop statements after**, in minutes (`0.5` is thirty
+  seconds, seven days at most), 10 for a new data source; and the **MCP role**, which
+  `ConnectionConfig::with_user` puts in the data source's `role`. An MCP connection signs in as
+  the data source's own user with its own key or token
+  (`DriverKind::mcp_login_has_password` is false for Snowflake), so no second secret is kept,
+  and Snowflake's grants to the role are what limit an MCP client.
 - **C5h — The handoff:** `execute_as_files` as `COPY INTO '<folder>' FROM (<query>)` with the
   data source's **Storage integration**, `FILE_FORMAT = (TYPE = PARQUET)` and `HEADER = TRUE`,
   into the folder the run owns (S3, Google Cloud Storage as `gcs://`, Azure as `azure://`).

@@ -152,8 +152,8 @@ pub fn read_only_login(driver: DriverKind) -> &'static str {
              User roles"
         }
         DriverKind::Snowflake => {
-            "a user whose role is granted only SELECT on the tables and views, and USAGE on \
-             their databases, schemas and the warehouse"
+            "a role granted only SELECT on the tables and views, and USAGE on their databases, \
+             schemas and the warehouse"
         }
         DriverKind::Postgres
         | DriverKind::Sqlite

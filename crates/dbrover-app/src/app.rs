@@ -3764,6 +3764,86 @@ mod tests {
         );
     }
 
+    /// Snowflake from **New data source › Other cloud services** (C5): refused without its key
+    /// file, then saved as typed, with the 10-minute limit a new one starts with.
+    #[test]
+    fn adds_a_snowflake_data_source_from_the_other_cloud_services_menu() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "No data sources yet.");
+
+        harness
+            .get_all_by_label("New data source")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness
+            .get_by_label_contains("Other cloud services")
+            .hover();
+        step_until_visible(&mut harness, "Snowflake");
+        // The submenu opens below the window's edge and is moved up to fit on the next frame:
+        // click it where it settles.
+        harness.run();
+        harness.get_by_label("Snowflake").click();
+        harness.run();
+        harness.get_by_label_contains("New Snowflake data source");
+        for (field, text) in [
+            ("Account", "myorg-analytics"),
+            ("User", "JANE"),
+            ("Warehouse", "ANALYTICS_WH"),
+        ] {
+            harness
+                .get_by_role_and_label(Role::TextInput, field)
+                .focus();
+            harness.run();
+            harness
+                .get_by_role_and_label(Role::TextInput, field)
+                .type_text(text);
+            harness.run();
+        }
+        harness.get_by_label("Save").click();
+        harness.run();
+        step_until_visible(
+            &mut harness,
+            "Private key file is required to sign in with a key pair.",
+        );
+        harness
+            .get_by_role_and_label(Role::TextInput, "Private key file")
+            .focus();
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::TextInput, "Private key file")
+            .type_text("/keys/rsa_key.p8");
+        harness.run();
+        harness.get_by_label("Save").click();
+
+        step_until_visible(&mut harness, "Expand myorg-analytics");
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        let [saved] = saved.as_slice() else {
+            panic!("expected one data source, got {saved:?}");
+        };
+        assert_eq!(
+            saved.config,
+            dbrover_core::ConnectionConfig::Snowflake(dbrover_core::SnowflakeConfig {
+                account: "myorg-analytics".to_owned(),
+                user: "JANE".to_owned(),
+                sign_in: dbrover_core::SnowflakeSignIn::KeyPair {
+                    private_key_file: "/keys/rsa_key.p8".into(),
+                },
+                warehouse: "ANALYTICS_WH".to_owned(),
+                cost_guard: dbrover_core::CostGuard {
+                    stop_after: dbrover_core::TimeLimit::from_seconds(600),
+                    ..dbrover_core::CostGuard::default()
+                },
+                ..dbrover_core::SnowflakeConfig::default()
+            })
+        );
+    }
+
     /// Starburst Galaxy from **New data source › Other cloud services** (C3): Trino's dialog on
     /// HTTPS's port with `verify-full`, the host naming the service.
     #[test]
