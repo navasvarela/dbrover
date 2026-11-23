@@ -110,12 +110,16 @@ jobs:
     # `check (macos-latest)` name, which branch protection requires, whatever it runs on. An empty
     # CODE (a broken `changes`) still gets the real runner.
     runs-on: ${{ needs.changes.outputs.code == 'false' && 'ubuntu-latest' || matrix.os }}
-    # 30 minutes leaves room for a cold Rust cache and still fails a hung runner fast: a Linux job
-    # once sat in `apt-get update` for 80 minutes, and without a limit GitHub waits 6 hours.
+    # A limit still fails a hung runner fast: a Linux job once sat in `apt-get update` for 80
+    # minutes, and without a limit GitHub waits 6 hours. macOS keeps 30, which leaves room for its
+    # cold Rust cache.
     # Windows gets 45: since the reports' worker tests its tests alone take about 24 minutes, so at
     # 30 main's cache save was cut off every time, no Windows cache was ever saved, and every pull
     # request then compiled cold and timed out (#397).
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 45 || 30 }}
+    # Linux gets 45 for the same reason: after C5 added new dependencies, main's first Linux run
+    # restored a stale cache, compiled most of the workspace, finished its tests at 29.6 minutes,
+    # and lost the cache save to the limit, leaving every later run as cold as that one.
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 30 || 45 }}
     env:
       CODE: ${{ needs.changes.outputs.code }}
     # Every step runs unless `changes` said documentation only.
