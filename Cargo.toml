@@ -150,6 +150,10 @@ nix = { version = "0.31.3", default-features = false, features = ["resource"] }
 # Signs Google service accounts' token requests (RS256) in dbrover-cloud: the version rustls
 # already builds as its crypto provider, so nothing new is compiled.
 ring = "0.17.14"
+# Decrypts a Snowflake user's private key when it is encrypted with a passphrase (PKCS #8's
+# PBES2: AES with PBKDF2 or scrypt; docs/cloud-data.md, C5c). The version and feature russh
+# already builds for SSH keys, so nothing new is compiled.
+pkcs8 = { version = "0.11.0", default-features = false, features = ["encryption"] }
 # HMAC-SHA1, which OpenSSH hashes host names in known_hosts with. The versions russh uses.
 # hmac also checks SCRAM verifiers in dbrover-sql's tests, with sha2 and base64, at the
 # versions postgres-protocol uses.

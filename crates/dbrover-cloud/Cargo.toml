@@ -30,6 +30,8 @@ hyper-rustls.workspace = true
 hyper-util.workspace = true
 # Reads the expiry the Azure CLIs print (C0c).
 jiff.workspace = true
+# Snowflake's encrypted private keys (C5c).
+pkcs8.workspace = true
 ring.workspace = true
 # Reads the XML a bucket's listing answers with (C2).
 roxmltree.workspace = true
