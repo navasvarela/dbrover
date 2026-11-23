@@ -11,6 +11,7 @@ mod api;
 mod catalog;
 mod context;
 mod errors;
+mod handoff;
 mod results;
 mod statements;
 #[cfg(test)]
@@ -22,10 +23,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use dbrover_cloud::snowflake::{self as sign_in, KeyPair, KeyPairSignIn, TokenType};
 use dbrover_core::{
-    CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, ChildrenPage,
-    ChildrenQuery, ColumnInfo, Connection, DriverError, Jobs, Password, ProgressHandle, Rejection,
-    RelationName, ResultCursor, Row, ServerInfo, SnowflakeConfig, SnowflakeSignIn,
-    TableConstraints, TableDescription, TableName, TransactionStatus,
+    CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, Cell, ChildrenPage,
+    ChildrenQuery, ColumnInfo, Connection, DriverError, HandedOver, Handoff, Jobs, LakeFormat,
+    Password, ProgressHandle, Rejection, RelationName, ResultCursor, Row, ServerInfo,
+    SnowflakeConfig, SnowflakeSignIn, TableConstraints, TableDescription, TableName,
+    TransactionStatus,
 };
 
 use crate::api::Api;
@@ -98,6 +100,7 @@ pub async fn connect(
     let mut connection = SnowflakeConnection {
         server_info: ServerInfo::new(PRODUCT, describe_place(config)),
         probe: Probe::of(config),
+        storage_integration: config.storage_integration.trim().to_owned(),
         statements,
         jobs,
     };
@@ -161,6 +164,8 @@ fn describe_place(config: &SnowflakeConfig) -> String {
 pub struct SnowflakeConnection {
     server_info: ServerInfo,
     probe: Probe,
+    /// The storage integration a handoff unloads through; empty for none.
+    storage_integration: String,
     /// The statements' own service, whose context a `USE` changes; `jobs` runs them.
     statements: Arc<SnowflakeJobs>,
     jobs: Arc<Jobs>,
@@ -234,6 +239,43 @@ impl Connection for SnowflakeConnection {
             return Ok(Box::new(Said::new(change.to_string())));
         }
         self.jobs.execute(sql).await
+    }
+
+    /// The result unloaded to S3 as Parquet with `COPY INTO`, through the data source's storage
+    /// integration, for a report to read with DuckDB instead of paging partitions (C5h).
+    ///
+    /// Snowflake's statements take no bound values here (its parameters are written in as
+    /// literals), so the statement goes as it is, inside `COPY INTO`.
+    async fn execute_as_files(
+        &mut self,
+        sql: &str,
+        values: &[Cell],
+        handoff: &Handoff,
+    ) -> Result<Option<HandedOver>, DriverError> {
+        let refused = |reason: &str| DriverError::Statement {
+            source: reason.to_owned().into(),
+            position: None,
+            sqlstate: None,
+        };
+        if !values.is_empty() {
+            return Err(refused("Snowflake's statements take no bound values"));
+        }
+        if self.storage_integration.is_empty() {
+            return Err(refused(
+                "Snowflake writes to a bucket only through a storage integration: name the one \
+                 an administrator made for the report's bucket in the data source's settings, \
+                 under Storage integration",
+            ));
+        }
+        let Some(statement) = handoff::statement(sql, handoff, &self.storage_integration) else {
+            return Err(refused(
+                "Snowflake writes no result file of its own, so its handoff needs a folder to \
+                 unload into: give it a prefix",
+            ));
+        };
+        self.jobs
+            .execute_as_files(&statement, handoff, LakeFormat::Parquet)
+            .await
     }
 
     /// `None`: Snowflake's keys are informational and not enforced, so nothing tells a table's

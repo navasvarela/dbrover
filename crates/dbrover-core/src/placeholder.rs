@@ -71,6 +71,7 @@ pub enum Setting {
     PrivateKeyFile,
     Warehouse,
     Role,
+    StorageIntegration,
 }
 
 impl fmt::Display for Setting {
@@ -108,6 +109,7 @@ impl fmt::Display for Setting {
             Self::PrivateKeyFile => "the private key file",
             Self::Warehouse => "the warehouse",
             Self::Role => "the role",
+            Self::StorageIntegration => "the storage integration",
         })
     }
 }

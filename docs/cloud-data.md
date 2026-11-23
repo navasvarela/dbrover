@@ -1393,12 +1393,18 @@ account.
   the data source's own user with its own key or token
   (`DriverKind::mcp_login_has_password` is false for Snowflake), so no second secret is kept,
   and Snowflake's grants to the role are what limit an MCP client.
-- **C5h — The handoff:** `execute_as_files` as `COPY INTO '<folder>' FROM (<query>)` with the
+- **C5h — The handoff** (built): `execute_as_files` as `COPY INTO '<folder>' FROM (<query>)` with the
   data source's **Storage integration**, `FILE_FORMAT = (TYPE = PARQUET)` and `HEADER = TRUE`,
   into the folder the run owns (S3, Google Cloud Storage as `gcs://`, Azure as `azure://`).
   **Exit:** replayed, a report source with a handoff sends the `COPY INTO` with the
   integration and the folder, and its files are found by listing the folder; a data source
   without an integration is an error that says to set one.
+  **As built:** S3 only: `HandoffSupport` names one provider an engine writes to, and S3 is
+  the providers' first; Google Cloud Storage and Azure, which `COPY INTO` also writes to, wait
+  for a report that needs them. The files are `data_0_0_0.snappy.parquet` and so on, which the
+  run finds by listing the folder. The integration is the data source's **Storage
+  integration** (`storage_integration`), always double-quoted. The planning check (a handoff to
+  a bucket on S3, with a prefix) is RS7's, unchanged.
 - **C5i — Manual, demo note and the exit:** a page in the manual's Data sources part,
   **Snowflake**, the C5 demo note in the roadmap with the live checks, and the exit test.
 

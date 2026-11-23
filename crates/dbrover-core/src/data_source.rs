@@ -1415,6 +1415,10 @@ pub struct SnowflakeConfig {
     /// or a test server.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub endpoint: String,
+    /// The storage integration a report's handoff unloads through (C5h): an account object an
+    /// administrator creates, holding Snowflake's own access to the bucket. Empty for none.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub storage_integration: String,
     /// Written only where it differs from the default (C0e).
     #[serde(flatten)]
     pub cost_guard: CostGuard,
@@ -1435,6 +1439,10 @@ impl SnowflakeConfig {
             database: expand_setting(&self.database, Setting::Database)?,
             schema: expand_setting(&self.schema, Setting::Schema)?,
             endpoint: expand_setting(&self.endpoint, Setting::Endpoint)?,
+            storage_integration: expand_setting(
+                &self.storage_integration,
+                Setting::StorageIntegration,
+            )?,
             cost_guard: self.cost_guard,
         })
     }

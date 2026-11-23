@@ -1275,8 +1275,9 @@ report while a folder that isn't a run's is left alone.
 
 What the whole of RS7 doesn't carry, after both halves:
 
-- **Snowflake and Databricks have no handoff.** `COPY INTO @stage` lands with C5 and external
-  links with C6, each as its own driver's layer on the seam this stack built.
+- **Databricks has no handoff.** Its external links land with C6, as its driver's layer on the
+  seam this stack built. Snowflake's landed with C5h, as `COPY INTO` an S3 folder through a
+  storage integration; Google Cloud Storage and Azure wait for a report that needs them.
 - **Trino has none at all,** and won't: see
   [the handoff against today's code](#the-handoff-against-todays-code). What it could gain is a
   faster transport of the rows it already answers with, which belongs to its driver.
