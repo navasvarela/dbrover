@@ -3160,6 +3160,7 @@ flowchart LR
     D4 --> D6[D6 Front page refresh]
     D2 --> D7[D7 Roomier buttons and menus]
     D7 --> D8[D8 Dialogs and tabs]
+    D8 --> D9[D9 Data sources into projects]
 ```
 
 ### D1 — Logo and brand palette
@@ -3450,3 +3451,31 @@ the history and definitions are dock tabs, the cell viewer is a panel, no export
 and no config file's problems open a window.
 
 **Demo note:** built; the design page's demo note says what to try.
+
+### D9 — Data sources into projects in one step
+
+P0 groups data sources into projects, but only from the data source's side: a new one is created
+from the toolbar's `+`, lands in **No project**, and is moved afterwards, and an existing one is
+moved by opening its menu and picking a project by name — while the project header it belongs
+under is a few points away on screen. Both are two steps for something the user was already
+pointing at. D9 adds the two gestures that start from the project instead, and changes nothing
+underneath: `projects.toml`, the `project` id on each data source and `MoveToProject` stay as P0
+left them. The design is in [Data sources into projects](explorer-projects.md). In layers, one
+PR each:
+
+- **D9a — Plan:** this section and the design page.
+- **D9b — New data source in a project:** a **New data source ›** submenu at the top of a project
+  header's menu, and of **No project**'s, opening the dialog with the project already set; the
+  `New` and `NewService` actions carry an `Option<ProjectId>`, so the Welcome tab's copy of the
+  same menu has to say it creates in none.
+- **D9c — Drag a data source onto a header,** including onto **No project** to take it out of a
+  project: the accent highlight on a valid target, silence over its own group and over anything
+  that isn't a project, and auto-scroll in the panel's top and bottom edge bands. Writes
+  DbRover's first kittest drag test.
+- **D9d — Manual,** pictures and text.
+
+**Exit:** a data source can be created into a project from that project's own menu, and moved
+between projects, and out of one, by dragging its row onto a header; the toolbar's `+`, the
+Welcome tab and **Move to project ›** keep working as they did.
+
+**Demo note:** written once D9 is built.
