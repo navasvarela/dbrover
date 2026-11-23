@@ -120,7 +120,7 @@ a columnar format that reads into Arrow without text:
 | --- | --- | --- |
 | DuckDB | Arrow, natively (`query_arrow`) | Already attached in place (RP2); a DuckDB source with a query could be read as Arrow. |
 | ClickHouse | `FORMAT ArrowStream` over its HTTP interface | The driver's existing HTTP path; needs `arrow-ipc`. |
-| Snowflake | Arrow result chunks from the SQL API | C5. |
+| Snowflake | None through the SQL API, which answers in JSON; Arrow chunks only through its connectors' private protocol | C5 delivers text rows, and large results through RS7's handoff (`COPY INTO` a bucket as Parquet) ([C5's note](cloud-data.md#rows-and-columnar-batches-in-c5)). |
 | Databricks SQL | `ARROW_STREAM` results, inline or as external links | C6. |
 | BigQuery | Arrow from the Storage Read API (gRPC), billed apart from the query | Not in C4, which reads `getQueryResults`' JSON as text ([C4's note](cloud-data.md#rows-and-columnar-batches-in-c4)); later, for large results, if gRPC is accepted (below). |
 | Trino and Athena | None in their APIs (text rows). Athena's result files in S3 (CSV, or Parquet through `UNLOAD`) are files; Trino's spooled segments are its own JSON row pages at opaque addresses, not files in a bucket the report names | C3 delivers text rows; Athena's files are RS7's handoff, through C2's object storage. Trino's spooling is a transport of the same rows, left to its driver ([the handoff against today's code](#the-handoff-against-todays-code)). |
