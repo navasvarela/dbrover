@@ -47,6 +47,7 @@ Each example shows a kind of report of its own:
 | [`order-history.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/order-history.toml) | SQLite and MongoDB | Every order line of a period with its customer, read from MongoDB by the ids the lines name, and each customer's running total with a window function. Past an Excel sheet's million rows, it goes on in a new sheet. |
 | [`battery-flows.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/battery-flows.toml) | PostgreSQL, DynamoDB and DuckDB | Three sources joined: each battery's charges and discharges priced at the hour's energy price with `ASOF JOIN`, keeping every digit. |
 | [`battery-cycles.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/battery-cycles.toml) | PostgreSQL, DynamoDB and DuckDB | State carried across rows: each discharge matched against the charges it drew from, first in, first out, with the price at each end. |
+| [`net-by-category.toml`](https://github.com/navasvarela/dbrover/blob/main/examples/reports/net-by-category.toml) | `sales-by-category` | A report built on another report's result, which names no data source of its own. See [A report as a source](#a-report-as-a-source). |
 
 Their data comes from scripts beside them, each run in the console of the data source the
 report names:
@@ -393,7 +394,10 @@ and `T` works in place of the space).
 | Key | What it is |
 | --- | --- |
 | `id` | What the run's progress and errors call it, and the name of its table in `[combine]`: letters, digits and `_`, starting with a letter. Needed. |
-| `data_source` | The data source it reads, by its name in the explorer. When two share a name, use the data source's id instead (in `data_sources.toml`). Needed. |
+| `data_source` | The data source it reads, by its name in the explorer. When two share a name, use the data source's id instead (in `data_sources.toml`). Needed, unless the source reads a report. |
+| `report` | Another report in the reports folder, by its file's name without `.toml`, whose result this source reads. Instead of `data_source`. See [A report as a source](#a-report-as-a-source). |
+| `params` | For a report source: each parameter of that report, bound to one of this report's (`":since"`) or to a value of its own. |
+| `reuse` | For a report source: how old a kept result of that report may be and still be taken instead of running it again, as `"24h"`. Runs it every time unless you say. |
 | `query` | One statement that only reads, in the data source's own SQL. Needed, unless `attach = true`. |
 | `attach` | `true` for a DuckDB file that `[combine]` reads in place, without a query. See [Several sources](#several-sources). |
 | `lake` | A path in the data source's bucket that `[combine]` reads in place, without a query, as `"sales/year=*/*.parquet"`. See [Lakes in the combine](#lakes-in-the-combine). |
@@ -1088,6 +1092,92 @@ A value that doesn't fit its type stops the run with the source, the item and th
 A source on a SQL database may declare its columns too, to fix their types rather than let
 DuckDB's typing guess from the values: the examples declare SQLite's amounts `decimal(18,2)`, so
 each is rounded to the cent as it loads, and PostgreSQL's raw amounts `decimal(38,0)`.
+
+## A report as a source
+
+A `[[source]]` can read another report in the folder instead of a data source. What it reads is
+that report's **result** — its `[combine]`'s rows, or its one source's rows where it has no
+combine — as the table the source's id names:
+
+```toml
+[report]
+name = "Net sales by category"
+params = { since = "date", until = "date" }
+
+# The rows of the report "sales-by-category" in reports/, run with this report's period.
+[[source]]
+id = "sales"
+report = "sales-by-category"
+params = { since = ":since", until = ":until" }
+
+[combine]
+query = """
+SELECT label AS category, SUM(net) AS net
+FROM sales
+WHERE sku IS NOT NULL
+GROUP BY label
+"""
+```
+
+That is `examples/reports/net-by-category.toml`: copy it beside `sales-by-category.toml`,
+**Reload**, and run it for October 2026. It reads no data source of its own — only
+`sales-by-category` does — and each category's net comes to that report's own subtotal.
+
+A report written once this way is used by several reports instead of being copied from file to
+file and drifting. Its **result is its contract**: the report that reads it can't name its
+sources, so it can change how it gets its rows without breaking the reports built on it. Its
+outputs aren't written and their schemas aren't applied either: an output's rounding and formats
+are for files, and the outer report's outputs do their own.
+
+- **`params`** gives each of that report's parameters a value: one of this report's, written
+  `":since"`, which must be of the same type, or a value of its own type. Leave one out, name
+  one it hasn't, or bind a date to a text and the file says so, naming both reports. A text
+  value can't start with a colon, which names a parameter.
+- **Where it runs:** in the same worker and the same DuckDB. Its sources load with this
+  report's, under their own limits, into a schema of their own, so two reports' sources never
+  clash under one id. Once everything is loaded, each report's combine makes its result,
+  innermost first, and then this report's combine runs over them.
+- **Nesting:** a report you read may read reports itself, four deep at most. Two reports that
+  read each other are a problem in both files, which names them.
+- **Limits:** each source keeps its own `max_rows`, `max_bytes` and `timeout`, and this
+  report's `[combine]` limits bound the one DuckDB they share. The limits in the other report's
+  `[combine]`, and its `[report] timeout`, aren't read, and a report that partitions its own
+  run (see [Partitions](#partitions)) can't be read as a source: a partitioned run is the
+  outer report's to declare.
+- **Attached sources** (`attach = true`) are catalogs rather than tables, so their ids are the
+  whole run's: two reports of one run that attach different files under one id are a problem
+  naming both, and the same file under one id is attached once.
+- **In the tab:** **Reads** lists each report source beside the report it names, and **Used by**
+  the reports that read this one; either opens that report's tab. A problem in a report shows as
+  a problem in every report that reads it. In the **Profile**, each report's steps are indented
+  under the source that named them, as `sales › lines`.
+- **In the history:** each run keeps the version of every report it used, so a change to a
+  shared report shows in the runs after it. The report you read keeps no run of its own, since
+  it wrote no file.
+
+### Taking a recent result instead of running it again
+
+A report that costs minutes, or real money, needn't run once for every report that reads it:
+
+```toml
+[[source]]
+id = "daily"
+report = "events-by-customer-day"
+params = { since = ":since", until = ":until" }
+reuse = "24h"
+```
+
+With `reuse`, a run keeps that report's result as a Parquet file in the data folder's
+`report-cache/results/`, under a name made of the report's own file and the values its
+parameters took. A later run of any report that reads it the same way takes that result when it
+is younger than the age given, and the report doesn't run at all — nor does any report under it.
+The **Profile** marks the step with how old the result it took was.
+
+A kept result expires after a week, and the oldest go once they hold more than **Kept runs may
+hold** together (Settings › Reports). **Clear history** removes them all, and **Run from
+scratch** — `--from-scratch` from the command line — runs every report again and keeps what each
+makes in place of what was there. Without `reuse`, a report runs every time and nothing is kept
+for it.
 
 ## Limits
 
