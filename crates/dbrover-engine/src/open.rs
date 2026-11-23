@@ -303,8 +303,9 @@ pub async fn open_data_source_for_mcp(
         commands,
         prompting: Prompting::Never,
     };
-    // A DynamoDB MCP login is an AWS profile, which needs no password of DbRover's.
-    if !config.driver().uses_password() {
+    // A DynamoDB MCP login is an AWS profile, which needs no password of DbRover's, and a
+    // Snowflake one a role, which signs in with the data source's own key or token.
+    if !config.driver().mcp_login_has_password() {
         let as_mcp = DataSource {
             config,
             ..data_source.clone()

@@ -34,7 +34,7 @@ pub use mongo::{MongoFields, MongoTarget};
 pub use server::{
     CloudFields, DatabaseField, ServerDefaults, ServerFields, TlsChoice, TlsOffer, UserField,
 };
-pub use snowflake::{SnowflakeFields, SnowflakeSignInChoice};
+pub use snowflake::{LIMIT_LABEL as SNOWFLAKE_LIMIT_LABEL, SnowflakeFields, SnowflakeSignInChoice};
 pub use ssh::{SshFields, SshLoginChoice};
 pub use trino::TrinoFields;
 
@@ -154,6 +154,8 @@ pub enum FormError {
     AccountMissing,
     #[error("Private key file is required to sign in with a key pair.")]
     PrivateKeyFileMissing,
+    #[error("{0} must be a number of minutes, such as 10 or 0.5, up to seven days.")]
+    InvalidTimeLimit(&'static str),
     #[error("{1} doesn't sign in with {0}.")]
     BucketSignInNotOffered(&'static str, StorageProvider),
     #[error(

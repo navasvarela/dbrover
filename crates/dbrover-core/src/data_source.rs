@@ -245,6 +245,12 @@ impl ConnectionConfig {
             };
             return Some(config);
         }
+        // A Snowflake data source's MCP login is a role, its user and secret staying its own:
+        // Snowflake's grants to that role are what limit an MCP client (C5g).
+        if let Self::Snowflake(snowflake) = &mut config {
+            user.clone_into(&mut snowflake.role);
+            return Some(config);
+        }
         let server = config.server_mut()?;
         user.clone_into(&mut server.user);
         Some(config)
@@ -552,6 +558,14 @@ impl DriverKind {
     /// without a read-only mode is served to MCP clients through an MCP login.
     pub fn has_logins(self) -> bool {
         self.uses_password() || matches!(self, Self::DynamoDb | Self::Athena | Self::BigQuery)
+    }
+
+    /// Whether an MCP login brings a password of its own, kept as the MCP login's secret: a
+    /// user's, on the engines that sign in with one. Not on Snowflake, whose MCP login is a
+    /// role the data source's own user takes, nor on the engines whose login is a profile or a
+    /// credentials file.
+    pub fn mcp_login_has_password(self) -> bool {
+        self.uses_password() && self != Self::Snowflake
     }
 
     /// Whether connections authenticate with a password, so the keychain is worth asking.
@@ -2279,6 +2293,20 @@ mod tests {
             read_only: false,
         });
         assert_eq!(sqlite.with_user("assistant"), None);
+        let snowflake = ConnectionConfig::Snowflake(SnowflakeConfig {
+            user: "JANE".to_owned(),
+            role: "ANALYST".to_owned(),
+            ..SnowflakeConfig::default()
+        });
+        let Some(ConnectionConfig::Snowflake(as_mcp)) = snowflake.with_user("MCP_READER") else {
+            panic!("expected a Snowflake configuration");
+        };
+        assert_eq!(
+            (as_mcp.user.as_str(), as_mcp.role.as_str()),
+            ("JANE", "MCP_READER")
+        );
+        assert!(!DriverKind::Snowflake.mcp_login_has_password());
+        assert!(DriverKind::Mysql.mcp_login_has_password());
     }
 
     #[test]
