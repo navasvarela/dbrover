@@ -16,8 +16,9 @@ use dbrover_core::{
     DriverError, LakeFormat, LakePath, ObjectStorage, Password, StorageProvider, TableFormat,
 };
 
+use crate::WorkspaceTable;
 use crate::bucket::{Bucket, BucketError, SecretStatement};
-use crate::workspace::{MAIN_SCHEMA, identifier, string_literal};
+use crate::workspace::string_literal;
 
 /// An extension DuckDB downloads on first use, which a lake needs loaded before the lock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -64,8 +65,9 @@ impl DuckDbExtension {
 /// extensions that reader needs, and the prefix the lock allows for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LakeView {
-    /// The view's name in the workspace's `main` schema: the source's id.
-    id: String,
+    /// The view the combine query reads as a table: the source's id, in the schema of the
+    /// report that named it (RS9c).
+    table: WorkspaceTable,
     /// The `FROM` clause: `read_parquet('s3://…')`, `delta_scan('s3://…')`.
     from: String,
     prefix: String,
@@ -79,7 +81,7 @@ impl LakeView {
     /// but Iceberg, whose newest metadata file [`LakeTable::newest_metadata`] finds; it must be
     /// under `path`'s prefix, which is what the lock allows.
     pub fn new(
-        id: &str,
+        table: WorkspaceTable,
         storage: &ObjectStorage,
         path: &LakePath,
         format: LakeFormat,
@@ -104,7 +106,7 @@ impl LakeView {
             LakeFormat::Delta => format!("delta_scan({address})"),
         };
         Self {
-            id: id.to_owned(),
+            table,
             from,
             prefix: path.prefix(format),
             extensions: DuckDbExtension::of(storage, format),
@@ -114,8 +116,8 @@ impl LakeView {
     /// The statement making the view, which the combine query then reads as a table.
     pub(crate) fn statement(&self) -> String {
         format!(
-            "CREATE OR REPLACE VIEW {MAIN_SCHEMA}.{} AS SELECT * FROM {}",
-            identifier(&self.id),
+            "CREATE OR REPLACE VIEW {} AS SELECT * FROM {}",
+            self.table.qualified(),
             self.from
         )
     }
@@ -263,7 +265,14 @@ mod tests {
     fn view(path: &str, format: LakeFormat, hive: bool) -> LakeView {
         let storage = s3();
         let lake = LakePath::new(&storage, path).unwrap();
-        LakeView::new("sales", &storage, &lake, format, lake.url(), hive)
+        LakeView::new(
+            WorkspaceTable::in_main("sales"),
+            &storage,
+            &lake,
+            format,
+            lake.url(),
+            hive,
+        )
     }
 
     #[test]
@@ -308,7 +317,7 @@ mod tests {
         let newest = "s3://lake/warehouse/shop/orders/metadata/00002-a.metadata.json";
 
         let view = LakeView::new(
-            "orders",
+            WorkspaceTable::in_main("orders"),
             &storage,
             &lake,
             LakeFormat::Iceberg,
@@ -339,7 +348,7 @@ mod tests {
         let of = |storage: &ObjectStorage| {
             let lake = LakePath::new(storage, "sales/*.parquet").unwrap();
             LakeView::new(
-                "sales",
+                WorkspaceTable::in_main("sales"),
                 storage,
                 &lake,
                 LakeFormat::Parquet,
@@ -365,7 +374,7 @@ mod tests {
         let storage = s3();
         let lake = LakePath::new(&storage, "sales/o'brien/*.parquet").unwrap();
         let odd = LakeView::new(
-            "the \"sales\" lake",
+            WorkspaceTable::in_main("the \"sales\" lake"),
             &storage,
             &lake,
             LakeFormat::Parquet,
@@ -375,7 +384,7 @@ mod tests {
 
         assert_eq!(
             odd.statement(),
-            "CREATE OR REPLACE VIEW main.\"the \"\"sales\"\" lake\" AS SELECT * FROM \
+            "CREATE OR REPLACE VIEW \"main\".\"the \"\"sales\"\" lake\" AS SELECT * FROM \
              read_parquet('s3://lake/sales/o''brien/*.parquet')"
         );
     }

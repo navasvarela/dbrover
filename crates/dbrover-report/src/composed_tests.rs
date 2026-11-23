@@ -536,3 +536,317 @@ fn a_report_source_takes_no_parameter_of_its_own_type() {
         "the outer report's parameters are its own"
     );
 }
+
+// Running a report source (RS9c): the inner report's sources load into a schema of their own,
+// its combine makes the table the outer report reads, and only that result is visible.
+
+use std::collections::VecDeque;
+use std::path::Path;
+
+use dbrover_core::Row;
+
+use crate::run_tests::{MemoryOpener, MemoryReader, column};
+
+fn rows(columns: &[&str], rows: &[&[Option<&str>]]) -> MemoryReader {
+    let rows: Vec<Row> = rows
+        .iter()
+        .map(|row| row.iter().map(|value| value.map(str::to_owned)).collect())
+        .collect();
+    MemoryReader {
+        columns: columns.iter().map(|name| column(name)).collect(),
+        pages: VecDeque::from([rows]),
+        then: None,
+        scanned: None,
+    }
+}
+
+/// The order lines the inner report reads, three categories over two days.
+fn lines() -> MemoryReader {
+    rows(
+        &["category", "amount"],
+        &[
+            &[Some("Tools"), Some("10.00")],
+            &[Some("Tools"), Some("2.50")],
+            &[Some("Seeds"), Some("7.25")],
+        ],
+    )
+}
+
+/// The inner report, as the run reads it: one source and a combine that groups it.
+const INNER: &str = r#"
+[report]
+name = "Sales"
+params = { since = "date", until = "date" }
+
+[[source]]
+id = "lines"
+data_source = "shop"
+query = "SELECT category, amount FROM lines WHERE ordered_on >= :since AND ordered_on < :until"
+columns = [
+  { name = "category", type = "text" },
+  { name = "amount",   type = "decimal(18,2)" },
+]
+
+[combine]
+query = "SELECT category, sum(amount) AS amount FROM lines GROUP BY category"
+
+[[output]]
+format = "csv"
+file = "sales.csv"
+"#;
+
+/// The outer report, reading the inner report's result as the table `sales`.
+const OUTER: &str = r#"
+[report]
+name = "By category"
+params = { since = "date", until = "date" }
+
+[[source]]
+id = "sales"
+report = "sales"
+params = { since = ":since", until = ":until" }
+
+[combine]
+query = "SELECT category, amount FROM sales ORDER BY category"
+
+[[output]]
+format = "csv"
+file = "by-category.csv"
+"#;
+
+/// Runs `plan` over `opener` into `folder` for October.
+async fn run_into(
+    plan: &Plan,
+    opener: &MemoryOpener,
+    folder: &Path,
+) -> (Result<RunSummary, RunFailure>, Vec<RunEvent>) {
+    let values = plan
+        .values(
+            &[("since", "2026-10-01"), ("until", "2026-11-01")]
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value.to_owned()))
+                .collect(),
+        )
+        .expect("the values");
+    let staging = folder.join(".run");
+    let work = staging.with_extension("work");
+    let folders = RunFolders {
+        folder,
+        staging: &staging,
+        work: &work,
+    };
+    let mut events = Vec::new();
+    let outcome = run(plan, &values, opener, folders, &mut |event| {
+        events.push(event);
+    })
+    .await;
+    (outcome, events)
+}
+
+#[tokio::test]
+async fn a_report_source_runs_the_report_it_names_and_reads_its_result() {
+    let folder = tempfile::tempdir().unwrap();
+    let plan = plan(OUTER, &[("sales", INNER)]).unwrap();
+    let opener = MemoryOpener::of(vec![("lines", lines())]);
+    let (outcome, events) = run_into(&plan, &opener, folder.path()).await;
+    let summary = outcome.expect("the run");
+    assert_eq!(summary.rows, 2, "one row a category");
+    let written = std::fs::read_to_string(folder.path().join("by-category.csv")).unwrap();
+    assert_eq!(written, "category,amount\r\nSeeds,7.25\r\nTools,12.50\r\n");
+    assert!(
+        !folder.path().join("sales.csv").exists(),
+        "the inner report writes no file"
+    );
+    // Its source's step is named by its path, under the outer source's lane.
+    let steps: Vec<String> = events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::SourceDone { id, .. } => Some(id.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(steps.contains(&"sales › lines".to_owned()), "{steps:?}");
+    assert!(steps.contains(&"sales".to_owned()), "{steps:?}");
+    // The inner report's statement was sent its period.
+    let sent = opener.sent.borrow();
+    let [(id, query)] = sent.as_slice() else {
+        panic!("{sent:?}");
+    };
+    assert_eq!(id, "lines");
+    assert!(query.contains("ordered_on"), "{query}");
+}
+
+#[tokio::test]
+async fn the_outer_combine_cannot_name_the_inner_reports_sources() {
+    let folder = tempfile::tempdir().unwrap();
+    let text = OUTER.replace(
+        "SELECT category, amount FROM sales ORDER BY category",
+        "SELECT category, amount FROM lines",
+    );
+    let plan = plan(&text, &[("sales", INNER)]).unwrap();
+    let opener = MemoryOpener::of(vec![("lines", lines())]);
+    let (outcome, _) = run_into(&plan, &opener, folder.path()).await;
+    let failure = outcome.expect_err("the inner report's sources are its own");
+    let said = failure.to_string();
+    assert!(said.contains("lines"), "{said}");
+}
+
+#[tokio::test]
+async fn an_inner_report_without_a_combine_gives_its_one_sources_rows() {
+    let folder = tempfile::tempdir().unwrap();
+    let inner = r#"
+[report]
+name = "Lines"
+params = { since = "date", until = "date" }
+
+[[source]]
+id = "lines"
+data_source = "shop"
+query = "SELECT category, amount FROM lines WHERE ordered_on >= :since AND ordered_on < :until"
+columns = [
+  { name = "category", type = "text" },
+  { name = "amount",   type = "decimal(18,2)" },
+]
+
+[[output]]
+format = "csv"
+file = "lines.csv"
+"#;
+    let outer = OUTER.replace(
+        "SELECT category, amount FROM sales ORDER BY category",
+        "SELECT category, count(*) AS lines FROM sales GROUP BY category ORDER BY category",
+    );
+    let plan = plan(&outer, &[("sales", inner)]).unwrap();
+    let opener = MemoryOpener::of(vec![("lines", lines())]);
+    let (outcome, _) = run_into(&plan, &opener, folder.path()).await;
+    assert_eq!(outcome.expect("the run").rows, 2);
+    let written = std::fs::read_to_string(folder.path().join("by-category.csv")).unwrap();
+    assert_eq!(written, "category,lines\r\nSeeds,1\r\nTools,2\r\n");
+}
+
+#[tokio::test]
+async fn two_reports_of_one_run_keep_their_sources_apart_under_one_id() {
+    let folder = tempfile::tempdir().unwrap();
+    // Both reports have a source called `lines`; the outer one's is its own.
+    let outer = r#"
+[report]
+name = "Both"
+params = { since = "date", until = "date" }
+
+[[source]]
+id = "lines"
+data_source = "shop"
+query = "SELECT category, amount FROM other WHERE ordered_on >= :since AND ordered_on < :until"
+columns = [
+  { name = "category", type = "text" },
+  { name = "amount",   type = "decimal(18,2)" },
+]
+
+[[source]]
+id = "sales"
+report = "sales"
+params = { since = ":since", until = ":until" }
+
+[combine]
+query = """
+SELECT (SELECT count(*) FROM lines) AS mine, (SELECT count(*) FROM sales) AS theirs
+"""
+
+[[output]]
+format = "csv"
+file = "both.csv"
+"#;
+    let plan = plan(outer, &[("sales", INNER)]).unwrap();
+    let mine = rows(&["category", "amount"], &[&[Some("Pots"), Some("1.00")]]);
+    let opener = MemoryOpener::of(vec![("lines", mine), ("lines", lines())]);
+    let (outcome, _) = run_into(&plan, &opener, folder.path()).await;
+    outcome.expect("the run");
+    let written = std::fs::read_to_string(folder.path().join("both.csv")).unwrap();
+    assert_eq!(
+        written, "mine,theirs\r\n1,2\r\n",
+        "the outer report's one row, and the inner report's two categories"
+    );
+}
+
+#[tokio::test]
+async fn a_report_three_deep_runs_innermost_first() {
+    let folder = tempfile::tempdir().unwrap();
+    let middle = r#"
+[report]
+name = "Middle"
+params = { since = "date", until = "date" }
+
+[[source]]
+id = "sales"
+report = "sales"
+params = { since = ":since", until = ":until" }
+
+[combine]
+query = "SELECT category, amount * 2 AS amount FROM sales"
+
+[[output]]
+format = "csv"
+file = "middle.csv"
+"#;
+    let outer = OUTER.replace("report = \"sales\"", "report = \"middle\"");
+    let plan = plan(&outer, &[("middle", middle), ("sales", INNER)]).unwrap();
+    let opener = MemoryOpener::of(vec![("lines", lines())]);
+    let (outcome, events) = run_into(&plan, &opener, folder.path()).await;
+    outcome.expect("the run");
+    let written = std::fs::read_to_string(folder.path().join("by-category.csv")).unwrap();
+    assert_eq!(
+        written, "category,amount\r\nSeeds,14.50\r\nTools,25.00\r\n",
+        "each category's sum, doubled by the middle report"
+    );
+    let steps: Vec<String> = events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::SourceDone { id, .. } => Some(id.clone()),
+            _ => None,
+        })
+        .collect();
+    let at = |id: &str| steps.iter().position(|step| step == id);
+    assert!(
+        at("sales › sales") < at("sales"),
+        "the innermost combine first: {steps:?}"
+    );
+}
+
+/// RS9c: explaining a composed report explains each report's sources under its own path, and
+/// plans the outer combine over the table the inner report's own combine leaves behind.
+#[tokio::test]
+async fn explains_every_reports_sources_and_plans_the_outer_combine() {
+    let folder = tempfile::tempdir().unwrap();
+    let plan = plan(OUTER, &[("sales", INNER)]).unwrap();
+    let values = plan
+        .values(
+            &[("since", "2026-10-01"), ("until", "2026-11-01")]
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value.to_owned()))
+                .collect(),
+        )
+        .unwrap();
+    let explanation = crate::explain(
+        &plan,
+        &values,
+        &crate::combine_tests::EchoExplainer,
+        &[],
+        &folder.path().join("spill"),
+    )
+    .await;
+    let ids: Vec<&str> = explanation
+        .sources
+        .iter()
+        .map(|source| source.id.as_str())
+        .collect();
+    assert_eq!(ids, ["sales › lines"], "the inner report's own source");
+    let Some(CombineExplanation::Planned { text }) = &explanation.combine else {
+        panic!("{:?}", explanation.combine);
+    };
+    let combine = dbrover_plan::PlanFormat::DuckDbJson.parse(text).unwrap();
+    let reads = combine.table_reads();
+    assert!(
+        reads.iter().any(|read| read.table == "sales"),
+        "the outer combine reads the inner report's result: {text}"
+    );
+}

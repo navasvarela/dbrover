@@ -282,6 +282,46 @@ impl<'a> Allowed<'a> {
     }
 }
 
+/// Where a table of a run's DuckDB is: the `main` schema for the report being run, and a
+/// schema of its own for each report used as a source, so two reports' sources never clash
+/// under one id (`docs/reports-at-scale.md`, RS9c).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceTable {
+    schema: String,
+    name: String,
+}
+
+impl WorkspaceTable {
+    /// A table of the report being run, in `main`.
+    pub fn in_main(name: impl Into<String>) -> Self {
+        Self {
+            schema: MAIN_SCHEMA.to_owned(),
+            name: name.into(),
+        }
+    }
+
+    /// A table of a report used as a source, in the schema that report's path names.
+    pub fn in_schema(schema: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            schema: schema.into(),
+            name: name.into(),
+        }
+    }
+
+    pub fn schema(&self) -> &str {
+        &self.schema
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// As a statement names it, both parts quoted.
+    pub fn qualified(&self) -> String {
+        format!("{}.{}", identifier(&self.schema), identifier(&self.name))
+    }
+}
+
 /// A DuckDB database for one run.
 pub struct Workspace {
     connection: DuckDbConnection,
@@ -391,7 +431,7 @@ impl Workspace {
     /// [`DriverError`] if the table can't be made, as with two columns of one name.
     pub async fn loader(
         &self,
-        table: &str,
+        table: &WorkspaceTable,
         columns: &[LoadColumn],
     ) -> Result<TableLoader, DriverError> {
         let types: Vec<DuckDbType> = columns
@@ -404,8 +444,8 @@ impl Workspace {
             .map(|(column, column_type)| format!("{} {column_type}", identifier(&column.name)))
             .collect();
         let sql = format!(
-            "CREATE TABLE {MAIN_SCHEMA}.{} ({})",
-            identifier(table),
+            "CREATE TABLE {} ({})",
+            table.qualified(),
             definitions.join(", ")
         );
         let own = self
@@ -423,7 +463,7 @@ impl Workspace {
             .collect();
         Ok(TableLoader {
             connection: Arc::new(Mutex::new(own)),
-            table: table.to_owned(),
+            table: table.clone(),
             columns: columns.iter().map(|column| column.name.clone()).collect(),
             types,
             text: Arc::new(Schema::new(fields)),
@@ -448,13 +488,13 @@ impl Workspace {
     /// shard the engine wrote half of — or when they hold no columns.
     pub async fn load_handoff(
         &self,
-        table: &str,
+        table: &WorkspaceTable,
         files: &[String],
         format: LakeFormat,
     ) -> Result<HandoffLoaded, DriverError> {
         let from = crate::handoff::files_clause(files, format)
             .map_err(|problem| connection_error(format!("the handoff can't be read: {problem}")))?;
-        let name = format!("{MAIN_SCHEMA}.{}", identifier(table));
+        let name = table.qualified();
         let sql = format!("CREATE OR REPLACE TABLE {name} AS SELECT * FROM {from}");
         let count = format!("SELECT count(*) FROM {name}");
         let describe = format!("DESCRIBE {name}");
@@ -489,8 +529,8 @@ impl Workspace {
     /// # Errors
     ///
     /// [`DriverError`] if DuckDB refuses.
-    pub async fn drop_table(&self, table: &str) -> Result<(), DriverError> {
-        let sql = format!("DROP TABLE IF EXISTS {MAIN_SCHEMA}.{}", identifier(table));
+    pub async fn drop_table(&self, table: &WorkspaceTable) -> Result<(), DriverError> {
+        let sql = format!("DROP TABLE IF EXISTS {}", table.qualified());
         self.connection
             .run_blocking(move |connection| {
                 connection
@@ -508,14 +548,14 @@ impl Workspace {
     /// [`DriverError`] if the table or the column doesn't exist, or DuckDB runs out of memory.
     pub async fn distinct_values(
         &self,
-        table: &str,
+        table: &WorkspaceTable,
         column: &str,
     ) -> Result<Vec<String>, DriverError> {
         let column = identifier(column);
         let sql = format!(
-            "SELECT CAST({column} AS VARCHAR) FROM (SELECT DISTINCT {column} FROM main.{} \
+            "SELECT CAST({column} AS VARCHAR) FROM (SELECT DISTINCT {column} FROM {} \
              WHERE {column} IS NOT NULL) ORDER BY {column}",
-            identifier(table)
+            table.qualified()
         );
         self.connection
             .run_blocking(move |connection| {
@@ -739,6 +779,50 @@ impl Workspace {
         Ok(())
     }
 
+    /// Makes the schema a report used as a source loads its tables into, if it isn't there
+    /// already (RS9c).
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError`] if DuckDB refuses the name.
+    pub async fn create_schema(&self, schema: &str) -> Result<(), DriverError> {
+        let sql = format!("CREATE SCHEMA IF NOT EXISTS {}", identifier(schema));
+        self.connection
+            .run_blocking(move |connection| {
+                connection
+                    .execute_batch(&sql)
+                    .map_err(|error| statement_error(error, &sql))
+            })
+            .await
+    }
+
+    /// Names `schema` as the one an unqualified table in the next statement is looked for in,
+    /// so a report used as a source runs its own combine query over its own tables, written as
+    /// its file writes them (RS9c); `None` puts it back to the database's default, which finds
+    /// `main`.
+    ///
+    /// `search_path` is a *local* setting, which [`Workspace::lock`] doesn't freeze: unlike
+    /// `memory_limit`, it can still be set once the database is locked down, which is what the
+    /// inner combines need, since they run after the lock. Pinned by
+    /// `sets_the_search_path_after_the_lock`.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError`] if DuckDB refuses the name, or a later DuckDB locks the setting.
+    pub async fn set_search_path(&self, schema: Option<&str>) -> Result<(), DriverError> {
+        let sql = match schema {
+            Some(schema) => format!("SET search_path = {}", string_literal(schema)),
+            None => "RESET search_path".to_owned(),
+        };
+        self.connection
+            .run_blocking(move |connection| {
+                connection
+                    .execute_batch(&sql)
+                    .map_err(|error| statement_error(error, &sql))
+            })
+            .await
+    }
+
     /// Cuts the database off from everything outside it, files and extensions included, and
     /// freezes its settings, so the query that runs next reads only what was loaded,
     /// attached and `allowed`, within the limits it was opened with.
@@ -789,6 +873,24 @@ impl Workspace {
                 })
             })
             .await
+    }
+
+    /// Makes `table` from `sql` with `values` bound: the result a report used as a source
+    /// leaves behind (RS9c). Set [`Workspace::set_search_path`] first where `sql` names the
+    /// tables of a schema of its own.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError`] if the statement fails, as when it names a table the database hasn't.
+    pub async fn create_table_as(
+        &mut self,
+        table: &WorkspaceTable,
+        sql: &str,
+        values: &[Cell],
+    ) -> Result<(), DriverError> {
+        let statement = format!("CREATE TABLE {} AS {sql}", table.qualified());
+        let cursor = self.connection.execute_bound(&statement, values).await?;
+        cursor.finish().await.map(drop)
     }
 
     /// How DuckDB would run `sql` with `values` bound, without running it: its plan as
@@ -849,7 +951,7 @@ impl LoadColumn {
 /// A table being loaded, on a connection of its own, so tables load at the same time.
 pub struct TableLoader {
     connection: Arc<Mutex<duckdb::Connection>>,
-    table: String,
+    table: WorkspaceTable,
     columns: Vec<String>,
     /// Each column's type in the table now.
     types: Vec<DuckDbType>,
@@ -875,7 +977,7 @@ impl TableLoader {
         tokio::task::spawn_blocking(move || {
             let connection = connection.lock().map_err(|_| poisoned())?;
             let mut appender = connection
-                .appender_to_db(&table, MAIN_SCHEMA)
+                .appender_to_db(table.name(), table.schema())
                 .map_err(connection_error)?;
             match appender.append_record_batch(batch) {
                 Ok(()) => appender.flush().map_err(connection_error),
@@ -916,7 +1018,7 @@ impl TableLoader {
         tokio::task::spawn_blocking(move || {
             let connection = connection.lock().map_err(|_| poisoned())?;
             let mut appender = connection
-                .appender_to_db(&table, MAIN_SCHEMA)
+                .appender_to_db(table.name(), table.schema())
                 .map_err(connection_error)?;
             appender
                 .append_record_batch(batch)
@@ -941,10 +1043,10 @@ impl TableLoader {
                 "{} types for the {} columns of {}",
                 types.len(),
                 self.columns.len(),
-                self.table
+                self.table.qualified()
             )));
         }
-        let table = format!("{MAIN_SCHEMA}.{}", identifier(&self.table));
+        let table = self.table.qualified();
         let changes: Vec<String> = self
             .columns
             .iter()
@@ -974,11 +1076,11 @@ impl TableLoader {
 /// cast to its column's type.
 fn append_rows(
     connection: &duckdb::Connection,
-    table: &str,
+    table: &WorkspaceTable,
     rows: &[Row],
 ) -> Result<(), DriverError> {
     let mut appender = connection
-        .appender_to_db(table, MAIN_SCHEMA)
+        .appender_to_db(table.name(), table.schema())
         .map_err(connection_error)?;
     for row in rows {
         appender
