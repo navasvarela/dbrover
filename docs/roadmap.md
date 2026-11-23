@@ -738,7 +738,45 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
       **BigQuery Job User**, served to an MCP client, which can query but not change a table.
     - Any answer that differs from the replayed exchanges goes into
       `crates/dbrover-driver-bigquery/src/tests/exchanges/`.
-- **C5 — Snowflake**, over its SQL API.
+- **C5 — Snowflake** (started 2026-11-23, after RS9 and C4): Snowflake over its SQL API, signed
+  in with a key pair, a programmatic access token or an OAuth token, its dialect, databases,
+  schemas and objects in the explorer through `SHOW` commands that need no warehouse, a
+  warehouse and role per console, a time limit Snowflake keeps as C0's time budget, and RS7's
+  handoff through `COPY INTO`. Planned in [Cloud and big data](cloud-data.md#c5--snowflake).
+  The SQL API answers in JSON, not Arrow, so rows come as text through today's cursors and
+  RS6's batches aren't used (see
+  [Rows and columnar batches in C5](cloud-data.md#rows-and-columnar-batches-in-c5)). In layers,
+  one PR each:
+  - **C5a — Plan:** C5's layers, decisions, risks and open questions, and this entry.
+  - **C5b — The Snowflake dialect:** quoting and upper-case folding, `$$` strings, `//`
+    comments, functions, `EXPLAIN` and the writing verbs, with a corpus of its statements.
+  - **C5c — Snowflake's sign-in:** a JWT signed with the user's RSA key (encrypted or not),
+    and programmatic access and OAuth tokens, in `dbrover-cloud`.
+  - **C5d — Snowflake: settings and statements as jobs:** a data source with an account, user,
+    sign-in, warehouse, role, database and schema, run through C0's `JobService` over the SQL
+    API, with each connection's context changed by `USE`; tested against exchanges replayed on
+    this machine.
+  - **C5e — Databases, schemas and objects in the explorer:** each level from a `SHOW` a page at
+    a time, columns, **Show definition**, **Found on the server**, none of it resuming a
+    warehouse.
+  - **C5f — The time limit and the warehouse:** C0's time budget sent as each statement's
+    `timeout`, and the warehouse's size and state in Test connection.
+  - **C5g — Snowflake in the data source dialog:** **Snowflake** under **Other cloud
+    services**, its logo, a 10-minute limit by default, and the MCP server's read-only mode
+    with an MCP role.
+  - **C5h — The handoff:** a large result unloaded as Parquet with `COPY INTO` through a
+    storage integration, for reports.
+  - **C5i — Manual:** a page on Snowflake, the demo note and the exit test.
+
+  Nothing is tried against a real Snowflake account while building C5: Snowflake is tested
+  against exchanges written from its SQL API reference and replayed on this machine (every
+  pull request); there is no emulator of the SQL API. The live checks are listed in the demo
+  note, with a test the user runs by hand.
+
+  **Exit:** Snowflake tested with replayed exchanges in CI, through one test of the whole of C5,
+  and tried live by the user: a key-pair data source browses without resuming its warehouse,
+  pages a query's partitions, moves one console to another warehouse with `USE`, and has a
+  statement past its time limit stopped by Snowflake.
 - **C6 — Databricks SQL**, over the Statement Execution API and Unity Catalog.
 
 ## NoSQL track

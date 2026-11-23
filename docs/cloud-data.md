@@ -4,7 +4,8 @@ Status: **C0 built** (2026-11-02); **C1 built** (2026-11-03), tried only against
 stand-ins; **C2 built** (2026-11-04), tried only against local stand-ins; **C3 built**
 (2026-11-05), Athena tried only against exchanges written from its documentation and Trino
 against its container; **C4 built** (2026-11-08), BigQuery tried only against exchanges
-written from its documentation and the community emulator; C5 and C6 planned, not scheduled. Proposed on
+written from its documentation and the community emulator; **C5 started** (2026-11-23), planned
+in layers against Snowflake's documentation; C6 planned, not scheduled. Proposed on
 2026-10-27; the order and the decisions below are confirmed as each milestone starts. The
 providers' priority was set on 2026-10-28: AWS, then Google Cloud, then Azure. On 2026-11-01
 DynamoDB was moved ahead of the track, as the NoSQL track's [N5](nosql.md#n5--dynamodb), with
@@ -69,8 +70,9 @@ ranked by it.
 4. **BigQuery.** Google's warehouse, with a REST jobs API, GoogleSQL, and a dry run that says
    how many bytes a query will scan before it runs.
 5. **Snowflake.** The most used cloud warehouse among the tools DbRover is compared with, and
-   available on all three clouds. Its SQL API is HTTPS with JSON or Arrow results, which fits the
-   ClickHouse driver's shape.
+   available on all three clouds. Its SQL API is HTTPS with JSON results (Arrow is only in its
+   connectors' private protocol; see [C5](#rows-and-columnar-batches-in-c5)), which fits the
+   BigQuery driver's shape.
 6. **Databricks SQL.** A SQL warehouse over Unity Catalog's three-level names, through the
    Statement Execution API (HTTPS, like Snowflake's), also on all three clouds.
 
@@ -655,7 +657,8 @@ fills later is the cursor itself: RS6 adds `next_batch` beside `next_page`, answ
 default, so C3's cursors need no change, and RS7's handoff can read an Athena job's result file
 from the output location its `GetQueryExecution` names. RS6's entry now says it comes before
 C5 and C6, whose services do answer in Arrow (Snowflake's result chunks, Databricks's
-`ARROW_STREAM`). C4 didn't choose BigQuery's Storage Read API (see
+`ARROW_STREAM`); C5 found that only Snowflake's connectors' private protocol does, and its SQL
+API answers in JSON (see [C5's note](#rows-and-columnar-batches-in-c5)). C4 didn't choose BigQuery's Storage Read API (see
 [C4's note](#rows-and-columnar-batches-in-c4)), so it doesn't need RS6 either.
 
 #### Bytes scanned and the cost limit
@@ -1082,10 +1085,287 @@ billed.
 
 ### C5 — Snowflake
 
-- A driver over Snowflake's SQL API: key-pair (JWT) and OAuth sign-in, asynchronous statements,
-  partitioned results, cancel.
-- The Snowflake dialect, catalog (databases, schemas, tables, views, stages), and the warehouse
-  and role per console.
+Started on 2026-11-23, after the reports track's RS9 and C4. Snowflake's own warehouse, on all
+three clouds and tied to none of their sign-ins: a driver over its SQL API, signed in with a
+key pair (a JWT DbRover signs) or a token Snowflake issued, speaking Snowflake's SQL. Snowflake
+bills the time a warehouse runs, not the bytes a statement reads, so C5 is where C0's cost
+guard gains the time budget C0 left for it.
+
+#### What Snowflake does, from its documentation
+
+Read from Snowflake's SQL API pages (`developer-guide/sql-api`: authenticating, submitting
+requests, handling responses and errors, cancelling, multiple statements, transactions, the
+reference), its key-pair, account-identifier and programmatic-access-token pages, the `SHOW`
+and `EXPLAIN` references, the parameters reference and its pages on warehouses and compute
+costs, on 2026-11-23. Nothing below has been tried against Snowflake itself, which needs an
+account; there is no emulator of the SQL API to try it against either (see
+[Testing without an account](#testing-c5-without-an-account)).
+
+| Question | Snowflake's SQL API |
+| --- | --- |
+| Where it answers | `https://<account>.snowflakecomputing.com/api/v2/statements` (`.cn` in China), where `<account>` is the account identifier: `myorg-myaccount` (the preferred form, an organisation and an account name), or a locator with its region (`xy12345.us-east-2.aws`; none for US West). Private connectivity has its own host names. |
+| Running a statement | `POST /api/v2/statements` with `statement`, `timeout` (seconds; `0` is the maximum, 604,800), `warehouse`, `role`, `database`, `schema` (each case-sensitive, each the user's default when left out) and `parameters` (only these: `query_tag`, `multi_statement_count`, `timezone`, `rows_per_resultset`, `use_cached_result`, `client_result_chunk_size` and the output formats of binary values, dates, times and timestamps). Query parameters: `requestId` (a UUID), `retry=true` to resubmit it ("Snowflake does not execute the statement again if the statement has already been executed successfully"), and `async=true` to answer at once. Without `async`, the request waits up to 45 seconds and answers with the result, or with a status after that. `Accept`, `Content-Type` and a `User-Agent` of the form `name/version` are required. |
+| Where a statement is | `GET /api/v2/statements/{statementHandle}`: 202 (or 429) with a status (`code` `333334`, *Asynchronous execution in progress*) while it runs, 200 with its result once done, 422 with `code`, `message`, `sqlState` and the handle when it failed, 408 when it ran past its `timeout` and Snowflake cancelled it. |
+| Cancelling | `POST /api/v2/statements/{statementHandle}/cancel`: 200 with `code` `000604`, `sqlState` `57014`, *SQL execution canceled*; 422 with `000709` when the handle is unknown. |
+| Results | A result set: `resultSetMetaData` (`numRows`, `format` `jsonv2`, `rowType` with each column's `name`, `type`, `precision`, `scale`, `length`, `nullable`, and `partitionInfo`, each partition's `rowCount` and sizes) and `data`, an array of rows, each value a JSON string "regardless of the Snowflake data type", `null` for `NULL`. Partition 0 comes with the answer; partition *n* is `GET …/{statementHandle}?partition=n`, which answers with `data` alone, gzip-compressed (`Content-Encoding: gzip`). `stats` holds `numRowsInserted`, `numRowsUpdated`, `numRowsDeleted` and `numDuplicateRowsUpdated` after DML. |
+| Values as text | `NUMBER` in decimal, every digit kept; `FLOAT` as a number; `BOOLEAN` `true`/`false`; `BINARY` in hexadecimal; `DATE` as days since 1970-01-01 (`18262`); `TIME`, `TIMESTAMP_NTZ` and `TIMESTAMP_LTZ` as seconds since the epoch with nine decimals; `TIMESTAMP_TZ` the same, a space, and the offset in minutes plus 1,440 (`1616173619.000000000 1500`). `VARIANT`, `OBJECT`, `ARRAY`, `GEOGRAPHY` and `VECTOR` aren't described; they are JSON text in Snowflake's other clients. |
+| Arrow | **None through the SQL API.** Its `format` is `jsonv2` and a request's own `format` is ignored. Arrow result chunks are what Snowflake's own connectors read, over their private protocol (`/session/v1/login-request`, `/queries/v1/query-request`, chunks fetched from the cloud's storage), which Snowflake doesn't document. |
+| Sessions and transactions | None between requests: each carries its own warehouse, role, database and schema. `USE`, `ALTER SESSION`, session variables, temporary tables and `BEGIN`/`COMMIT`/`ROLLBACK` work only inside one request of several statements (`multi_statement_count`), which takes no bound values. `PUT` and `GET` aren't supported at all. |
+| Errors | `code` (Snowflake's own, as text), `sqlState` and `message`; a statement Snowflake couldn't read says where: `SQL compilation error: error line 1 at position 7\ninvalid identifier 'AFAF'`. 429, 503 and 504 are to be retried with a growing, jittered pause; 500 and 502 by resubmitting with the same `requestId` and `retry=true`. |
+| Sign-in | A bearer token in `Authorization`, with `X-Snowflake-Authorization-Token-Type` saying which (optional; Snowflake guesses otherwise): `KEYPAIR_JWT`, a JWT signed with RS256 by the user's RSA key (2,048 bits at least), whose `iss` is `ACCOUNT.USER.SHA256:<fingerprint>` (the SHA-256 of the public key's DER `SubjectPublicKeyInfo`, in base64), `sub` `ACCOUNT.USER`, upper case, the account without its region, and which expires within an hour of `iat`; `OAUTH`, an OAuth access token (Snowflake OAuth or an external identity provider's); `PROGRAMMATIC_ACCESS_TOKEN`, a token the user or an administrator generated in Snowflake (15 days by default, a year at most; a network policy is required unless an authentication policy says otherwise). Private keys may be encrypted with a passphrase, which Snowflake recommends, with AES-256 rather than DES3. |
+| What runs without a warehouse | `SHOW DATABASES`, `SCHEMAS`, `OBJECTS`, `TABLES`, `VIEWS`, `STAGES`, `COLUMNS` and `WAREHOUSES`: each "doesn't require a running warehouse to execute", and "no charges apply". `EXPLAIN` "does not require a running warehouse", though compiling consumes cloud services credits. Queries and DML need one, which resumes on its own (`AUTO_RESUME`, on by default) when a statement needs it. |
+| What a statement costs | The warehouse's time while it runs, in credits by its size (X-Small 1 credit an hour, Small 2, doubling to 6X-Large's 512), billed by the second with a minute at least each time the warehouse starts or resumes; it suspends after its `AUTO_SUSPEND` idle time. Several statements on one warehouse share its time. Cloud services (compiling, `SHOW`) are billed only past 10 % of the day's warehouse credits. A credit's price depends on the edition and region. |
+| Time limits | `STATEMENT_TIMEOUT_IN_SECONDS`, two days by default and seven at most, on the account, user, session or warehouse; set on both a session and its warehouse, the lowest non-zero one wins. A request's `timeout` replaces the default; how it meets a warehouse's own limit isn't documented. `STATEMENT_QUEUED_TIMEOUT_IN_SECONDS` limits waiting in the warehouse's queue (none by default). |
+| Catalog | `SHOW` commands, free: databases, then schemas, then `OBJECTS` (tables and views, with `kind`, rows and bytes), `VIEWS` (with the view's `text`), `STAGES` and `COLUMNS` (each column's type as JSON: `{"type":"FIXED","precision":38,"scale":0,"nullable":true}`). Each pages with `LIMIT n FROM 'name'`, in name order, at most 10,000 rows at once (`SHOW STAGES` and `SHOW COLUMNS` take no `LIMIT` and answer 10,000 at most). |
+| A local server | None of Snowflake's. `fakesnow` (Apache-2.0) runs a server, but for the connectors' private protocol only: its routes are `/session/v1/login-request` and `/queries/v1/query-request`, answering with Arrow, and none of `/api/v2/`. |
+
+#### How the pieces fit
+
+- **Snowflake runs on C0's jobs.** `POST …/statements?async=true`, `GET …/{handle}`, a
+  partition's `GET` and `…/cancel` are `JobService`'s submit, poll, page and cancel, so `Jobs`
+  polls with C0f's growing pause and gives the cursor, cancel and progress handles. A
+  statement that finishes inside 45 seconds could come back without polling, but the request
+  would wait on the server and leave nothing to cancel meanwhile, as BigQuery's `jobs.query`
+  would; `async=true` it is. Each request's `requestId` is DbRover's own UUID, so a submit that
+  lost its answer is sent again with `retry=true` and never runs twice. The poll that finds
+  the statement done keeps its first partition and its columns, so the cursor's first page
+  needs no further request; later pages are the partitions, by their index, decompressed.
+- **Its own HTTP client,** `dbrover-cloud`'s, as BigQuery's: hyper and rustls with ring, no
+  Snowflake SDK (there is none in Rust) and no ODBC or JDBC. `Https` gains a request with
+  headers of the caller's choosing, for the token type and the `User-Agent`
+  (`DbRover/<version>`). A token goes only over HTTPS or to this machine, as for every
+  provider.
+- **Sign-in in `dbrover-cloud`,** a `snowflake` module beside `google` and `entra`:
+  - *Key pair:* the data source names a private key file (PKCS #8 PEM, as Snowflake's guide
+    writes it, or a PKCS #1 `RSA PRIVATE KEY`); an encrypted key's passphrase is a secret in
+    the keychain, kept as the data source's password is. The key is read when connecting, the
+    fingerprint taken from its public half, and each JWT signed by ring (as C0b's service
+    accounts are) for an hour, and replaced through C0b's `TokenCache` five minutes before it
+    expires. Encrypted keys are decrypted by `pkcs8`'s PBES2 (AES with PBKDF2 or scrypt),
+    which russh already builds; a DES3 key is refused with the command that re-encrypts it.
+  - *Programmatic access token:* a secret in the keychain, or W9's password command, sent as
+    it is.
+  - *OAuth:* an access token printed by W9's password command (an identity provider's CLI, a
+    script), fetched on every connection as C0d fetches cloud tokens. A browser sign-in
+    (Snowflake OAuth's authorization code with PKCE on a loopback redirect) isn't in C5.
+- **One dialect.** `Dialect::Snowflake` in `dbrover-sql`: double-quoted names, unquoted ones
+  folded to upper case (so quoting for Snowflake leaves `ORDERS` bare and quotes `orders`),
+  `$$…$$` strings, `//` comments beside `--` and `/* */`, `sqlparser`'s own
+  `SnowflakeDialect` for the syntax check, Snowflake's functions for completion, `EXPLAIN` for
+  ⌥⌘E (no warehouse needed), `INFORMATION_SCHEMA` hidden unless **System** is ticked, and the
+  verbs that write (DML, DDL, `MERGE`, `COPY INTO`, `PUT`, `GET`, `REMOVE`, `UNDROP`,
+  `GRANT`, `REVOKE`, `CALL`, `EXECUTE IMMEDIATE`) and administration (`USE`, `ALTER SESSION`,
+  `ALTER WAREHOUSE`).
+- **A console's context is DbRover's to keep.** The SQL API keeps no session, so a
+  connection holds the warehouse, role, database and schema it sends with every statement,
+  starting from the data source's. A console's `USE WAREHOUSE`, `USE ROLE`, `USE DATABASE`,
+  `USE SCHEMA` and `USE db.schema` change that connection's context without a request, and
+  answer with what the console's later statements will use: this is the warehouse and role per
+  console the sketch asked for, each console its own, as Trino's session headers are. A name in
+  a `USE` is folded as Snowflake folds it; a name that doesn't exist fails on the next
+  statement with Snowflake's own error. `BEGIN`, `COMMIT`, `ROLLBACK`, `ALTER SESSION`,
+  `SET` and `CREATE TEMPORARY TABLE` are sent as they are and fail with Snowflake's error, to
+  which DbRover adds what it means: the SQL API keeps nothing between statements.
+- **Databases on top.** The explorer starts with the databases `SHOW DATABASES` lists (shares
+  and applications among them, marked by `kind`), then schemas, then tables (marked transient,
+  dynamic, Iceberg or external where `SHOW OBJECTS` says so), views and materialized views,
+  then stages, then columns with their types. Every level is a `SHOW`, a thousand at a time
+  with `LIMIT 1000 FROM '<last name>'`, the filter sent as `LIKE`. **Found on the server** is
+  `SHOW OBJECTS LIKE … IN ACCOUNT LIMIT 100`. None of it needs a warehouse.
+- **Rows as text, as today.** The SQL API answers only in JSON, so rows go through
+  `ResultCursor::next_page` as text, as BigQuery's do: `NUMBER` keeps every digit, a `DATE`,
+  `TIME` or timestamp is written as Snowflake's console writes it (`2026-01-02 03:04:05.000`,
+  with the column's scale), a `TIMESTAMP_TZ` with its offset, a `TIMESTAMP_LTZ` in UTC (the
+  session's time zone is Snowflake's to apply and the API keeps none), `BINARY` in hexadecimal,
+  and `VARIANT`, `OBJECT` and `ARRAY` as their JSON. See
+  [Rows and columnar batches in C5](#rows-and-columnar-batches-in-c5).
+
+#### Rows and columnar batches in C5
+
+RS6 was placed before C5 and C6 because "their services answer in Arrow", and RS6's plan,
+ADR 0007 and [Reports at scale](reports-at-scale.md)'s table named Snowflake's Arrow result
+chunks. Snowflake's documentation says otherwise for the API C5 uses: the SQL API answers in
+JSON, "encoded in JSON expressed as strings, regardless of the Snowflake data type", and
+ignores a request for another format. Its Arrow chunks belong to the connectors' private
+protocol, which the track's decision on protocols (their documented HTTPS APIs) rules out, and
+which could change under DbRover without notice. So:
+
+- C5's cursor answers `next_page` only; RS6's `batches` stays `None` for Snowflake, and a
+  report loads Snowflake's rows as text, as it does BigQuery's and Athena's.
+- A large result reaches a report through RS7's handoff instead: Snowflake unloads it as
+  Parquet with `COPY INTO '<bucket folder>' FROM (<query>)`, which DuckDB reads in parallel
+  with C2's sign-in, as BigQuery's `EXPORT DATA` and Athena's `UNLOAD` do. Snowflake can only
+  write to a bucket through a storage integration (an account object an administrator creates,
+  holding Snowflake's own access to it), so the data source names one. This is the
+  `COPY INTO` [RS7's remaining gaps](reports-at-scale.md#rs7s-remaining-gaps) left to C5.
+- If a user needs Arrow from Snowflake without a bucket, the private protocol is the only way,
+  and is reopened as a decision of its own rather than built in C5.
+
+#### Warehouse time and the time limit
+
+C0 left a time budget for Snowflake and Databricks, which bill by time and "have their own
+statement timeouts to set". C5 settles what the cost guard means on Snowflake:
+
+- **The limit is time, and Snowflake keeps it.** A Snowflake data source has **Stop
+  statements after** (`stop_after_seconds` in `data_sources.toml`, in the cost guard beside
+  `ask_above_bytes`), sent with every statement as the request's `timeout`. Snowflake cancels
+  a statement past it and answers 408; DbRover says which limit stopped it, that the warehouse
+  was billed until then, and where to raise it. A warehouse's own lower
+  `STATEMENT_TIMEOUT_IN_SECONDS` still wins, as Snowflake's rule for sessions and warehouses
+  says; whether a request's `timeout` can go past a warehouse's is to be seen live. A new
+  Snowflake data source starts at 10 minutes, which bounds a forgotten statement at a sixth of
+  an hour of its warehouse (a sixth of a credit on an X-Small, 21 on a 4X-Large). Cleared, it
+  sends no `timeout`, and Snowflake's own limit applies (two days unless an administrator set
+  less).
+- **Nothing asks before a statement runs.** Snowflake can't say how long a statement will run.
+  `EXPLAIN`'s `bytesAssigned` bounds what it may read, without a warehouse, but bytes aren't
+  what Snowflake bills, and each `EXPLAIN` is a compile billed as cloud services past the
+  day's 10 %; a question built on it would ask about the wrong number at a price. So
+  `estimate_cost` answers `None`, **Ask above** has no field for Snowflake, and the byte limit
+  a data source file might hold is ignored on it. For the same reason a statement isn't checked
+  with `EXPLAIN` as it is typed: `validate` answers `None` and the syntax check alone runs, as
+  on Athena. Both are [open questions](#c5s-open-questions).
+- **What DbRover runs by itself needs no warehouse.** The explorer, **Show definition**,
+  **Found on the server** and Test connection are `SHOW` commands, which Snowflake doesn't
+  bill: browsing never resumes a suspended warehouse. **Show definition** of a view is its
+  `text` from `SHOW VIEWS`; of a table, a `CREATE TABLE` DbRover writes from `SHOW COLUMNS`
+  (columns, types, `NOT NULL`, defaults, and `CLUSTER BY` from `SHOW OBJECTS`), rather than
+  `GET_DDL`, a function in a `SELECT` whose page doesn't say whether it needs a warehouse.
+  **Open data** runs `SELECT * FROM "DB"."SCHEMA"."T" LIMIT 1000`, which resumes the warehouse
+  as Snowflake's own preview does, and is billed its minute; the manual says so.
+- **The warehouse in sight.** Test connection runs `SHOW WAREHOUSES LIKE '<warehouse>'` and
+  names the warehouse, its size and whether it is suspended (*warehouse ANALYTICS_WH, X-Small,
+  suspended*), and its own statement limit when it has one, as Athena's names its
+  workgroup's. Every statement carries `query_tag` `DbRover`, so an administrator finds
+  DbRover's in `QUERY_HISTORY`.
+- **After it runs, what it took.** The result line shows the elapsed time as for every engine;
+  Snowflake's SQL API reports no bytes or credits for a statement, so nothing is added to it.
+
+#### Testing C5 without an account
+
+- **Exchanges written from the SQL API's reference, replayed on `127.0.0.1`.** As for
+  BigQuery: a test server answers the driver's requests from files of exchanges (method, path,
+  query parameters, the parts of the JSON body that matter, the status and the answer), in
+  order, checks the headers that matter (the token type and the `User-Agent`), stands in a
+  remembered `requestId` and statement handle for `{request}` and `{handle}`, and gzips an
+  answer marked so, as Snowflake's later partitions come. The data source points at it as its
+  endpoint and signs in with a key the tests hold (`dbrover-cloud`'s test key), whose JWT the
+  server checks against the public half. The files are written from Snowflake's reference,
+  since there is no account to record from; what it doesn't show (a timeout's `code` and
+  message, `VARIANT`'s and `GEOGRAPHY`'s text, how `timeout` meets a warehouse's limit, the
+  exact text of a refused token) is listed in the README beside them for the live check.
+  These run on every pull request.
+- **No emulator, nightly or otherwise.** `fakesnow` serves the connectors' private protocol
+  and none of the SQL API, so it can't stand in for it (its routes read on 2026-11-23); no
+  other emulator exists. Nothing joins `docker-compose.yml` or the nightly job.
+- **A live test the user runs.** An `#[ignore]`d test runs the replayed scenarios' checks
+  against Snowflake when `DBROVER_TEST_SNOWFLAKE_LIVE` names an account, a user, a key file and
+  a warehouse, over `SNOWFLAKE_SAMPLE_DATA` (shared with every account) and an X-Small
+  warehouse, so it costs a few credit-minutes; CI never sets it. A trial account (30 days,
+  with credits) is enough.
+- **Sign-in:** keys the tests write or hold, never `~/.snowflake` or a key file of the
+  machine's.
+
+#### Layers
+
+Each layer is one pull request in a stack, useful and tested on its own, with no Snowflake
+account.
+
+- **C5a — Plan:** this section, C5's rows in [Decisions](#decisions) and [Risks](#risks), and
+  the roadmap's entry in layers.
+- **C5b — The Snowflake dialect:** `Dialect::Snowflake` in `dbrover-sql`: double-quoted names
+  and upper-case folding, `$$` strings, `//` comments, `sqlparser`'s `SnowflakeDialect` for the
+  syntax check, Snowflake's functions for completion, `EXPLAIN`, `INFORMATION_SCHEMA` hidden,
+  the verbs that write and administration's, with a corpus of Snowflake's statements and the
+  gaps `sqlparser` rejects wrongly, and a classify corpus for read-only mode.
+  **Exit:** the corpus passes or names its gaps; a script with `$$` bodies, `//` comments and
+  quoted and unquoted names splits and formats as Snowflake reads it; read-only mode classifies
+  the classify corpus.
+- **C5c — Snowflake's sign-in:** the `snowflake` module in `dbrover-cloud`: a key (PKCS #8,
+  encrypted or not, or PKCS #1) read and its fingerprint taken, a JWT signed with RS256 and
+  kept in a `TokenCache`, and the three kinds of token with their token-type header.
+  **Exit:** a JWT for a fixed key, account, user and time verifies against the key's public
+  half and carries the documented claims (account without its region, upper case, an hour's
+  lifetime); the fingerprint is the one `openssl` gives for the test key; an encrypted key
+  signs with its passphrase; a wrong passphrase, a DES3 key, a key that isn't RSA and a file
+  that isn't a key are errors that say what to do; a JWT is reused until five minutes before it
+  expires; no type that holds a key or token prints it.
+- **C5d — Snowflake: settings and statements as jobs:** `ConnectionConfig::Snowflake` and
+  `DriverKind::Snowflake` with the account, user, sign-in, warehouse, role, database, schema,
+  an endpoint for the replay server, and C0's cost guard; a `dbrover-driver-snowflake` crate
+  implementing `JobService` over `dbrover-cloud`'s client: `async=true` with DbRover's
+  `requestId`, the poll's statuses, partitions decompressed, cancel, retries, values as text,
+  DML's row counts, the connection's context and `USE`; the engine's connect arm and the app's
+  arms the compiler asks for; the replay server.
+  **Exit:** replayed, a statement is submitted with the context, `query_tag` and DbRover's
+  `requestId`, polled through 202 to 200, and paged over three partitions, the last two
+  gzipped; `NULL` and empty text stay apart; a `NUMBER(38,0)` beyond 2⁶³, a `DATE`, a `TIME`,
+  each timestamp, `BINARY` and a `VARIANT` read as Snowflake's console shows them; an `UPDATE`
+  says how many rows it changed; a 422's message reaches the console at its line and position;
+  cancel posts to the handle; `USE WAREHOUSE` changes what the next statement sends and not
+  another connection's; a 429 is retried; the settings round-trip through `data_sources.toml`.
+- **C5e — Databases, schemas and objects in the explorer:** the levels above from `SHOW`,
+  paged with `LIMIT … FROM`, the filter as `LIKE`; columns with their types; **Show
+  definition**; **Found on the server**; **Open data**.
+  **Exit:** replayed, the conformance walk visits two databases, a schema with a table, a
+  transient table, a view, a materialized view and a stage; a level of schemas pages in three
+  requests; every statement the explorer sends is a `SHOW`, and none names a warehouse it
+  would resume; **Show definition** of a table writes its `CREATE TABLE` and of a view its
+  text.
+- **C5f — The time limit and the warehouse:** `CostGuard` gains the time budget
+  (`stop_after_seconds`), sent as `timeout`; a 408 explained; Test connection's warehouse,
+  size, state and own limit.
+  **Exit:** replayed, a statement on a data source with a 10-minute limit is sent with
+  `timeout` 600, and one without a limit with none; a 408 fails naming the limit and the
+  warehouse; Test connection says *warehouse ANALYTICS_WH, X-Small, suspended*; the limit
+  round-trips as `stop_after_seconds`, and a file without it reads as no limit.
+- **C5g — Snowflake in the data source dialog:** **New data source › Other cloud services ›
+  Snowflake**, with **Account**, **User**, **Sign in with** (key pair, programmatic access
+  token, or OAuth token from a command), **Private key file** and its passphrase,
+  **Warehouse**, **Role**, **Database**, **Schema** and **Stop statements after** (10 minutes
+  for a new one), each taking `${NAME}` placeholders; Snowflake's logo; the MCP server's
+  read-only mode (statements classified, an **MCP role** sent in place of the data source's
+  role, so Snowflake's grants are what limit an MCP client).
+  **Exit:** a kittest adds a Snowflake data source from the menu and it saves as typed, with
+  its 10-minute limit; a key-pair data source without a key file is refused when saving.
+- **C5h — The handoff:** `execute_as_files` as `COPY INTO '<folder>' FROM (<query>)` with the
+  data source's **Storage integration**, `FILE_FORMAT = (TYPE = PARQUET)` and `HEADER = TRUE`,
+  into the folder the run owns (S3, Google Cloud Storage as `gcs://`, Azure as `azure://`).
+  **Exit:** replayed, a report source with a handoff sends the `COPY INTO` with the
+  integration and the folder, and its files are found by listing the folder; a data source
+  without an integration is an error that says to set one.
+- **C5i — Manual, demo note and the exit:** a page in the manual's Data sources part,
+  **Snowflake**, the C5 demo note in the roadmap with the live checks, and the exit test.
+
+**Exit:** Snowflake tested with exchanges replayed in CI, in one test that goes through the
+whole of C5 (`crates/dbrover-driver-snowflake/tests/exit.rs`): a key-pair data source connects
+and names its warehouse; the explorer reaches a column with nothing but `SHOW`; a query is paged
+over gzipped partitions with its values as Snowflake shows them; `USE WAREHOUSE` moves one
+console; a statement past the time limit is stopped and says so; cancel stops one by its handle.
+Tried live by the user: the demo note's list, and the ignored live test.
+
+#### C5's open questions
+
+Settled above where the documentation was enough; these are the user's to decide, or need an
+account to see:
+
+1. **Checking and estimating with `EXPLAIN`.** It needs no warehouse and would underline errors
+   as they are typed and say how many bytes a statement may read, but each is a compile billed
+   as cloud services past 10 % of the day's warehouse credits, and bytes aren't what Snowflake
+   bills. C5 leaves it out; it is a small layer if the user wants it, on every pause in typing
+   or only before running.
+2. **The default limit,** 10 minutes for a new data source. Shorter guards more; longer suits
+   reports on large warehouses, which can raise their own.
+3. **A browser sign-in.** C5 takes OAuth tokens from a command; Snowflake OAuth in the browser
+   (a security integration the administrator creates, then an authorization code with PKCE on
+   a loopback address) is a layer of its own, as Entra ID's browser sign-in is, if users need
+   it more than a key pair or a programmatic access token.
+4. **Arrow through the private protocol.** Settled as no for C5 (above); recorded so a user
+   with large results and no bucket can reopen it.
+5. **Seen only live:** a timeout's code and message, the text of `VARIANT`, `GEOGRAPHY` and
+   `VECTOR`, whether a request's `timeout` can exceed a warehouse's limit, whether a
+   `NUMBER` with a scale keeps its trailing zeros, and how names in the request's context
+   fold (the reference calls them case-sensitive).
 
 ### C6 — Databricks SQL
 
@@ -1175,6 +1455,20 @@ C4's own decisions, taken on 2026-11-08 when it started; each can be overturned 
 | Which projects show | **The data source's project, then the projects it names to show, then `projects.list`.** | Public datasets (`bigquery-public-data`) can be browsed by naming their project, since `projects.list` never lists them. |
 | Testing | **Exchanges written from the REST reference, replayed on `127.0.0.1` on every pull request; the emulator nightly for the catalog and paging; an ignored live test for the user.** The emulator isn't the conformance suite's proof: it runs dry runs, ignores the byte limit, finishes jobs at once and words errors its own way. | Pull requests stay as fast as they are and need no account. The nightly job adds about 10 seconds and a small crate's build. What only BigQuery shows waits for the live run, which the demo note lists. |
 
+C5's own decisions, taken on 2026-11-23 when it started; each can be overturned in review.
+
+| Question | Chosen | Consequence |
+| --- | --- | --- |
+| Snowflake's API | **The SQL API (`/api/v2/statements`), over DbRover's own hyper and rustls client,** not the connectors' private protocol, ODBC or JDBC. | Documented, stable, pure Rust. Results come as JSON text: no Arrow, so RS6's batches aren't used for Snowflake, and large results go through RS7's handoff. |
+| Snowflake on jobs | **`JobService`, always `async=true`, with DbRover's `requestId`** and `retry=true` when a submit is sent again. | Cancel and progress come with `Jobs`; a short statement takes a poll more than the 45-second wait would; a retried submit never runs twice. |
+| Sign-in | **A key pair (DbRover signs the JWT), a programmatic access token, or an OAuth token from a command.** Encrypted PKCS #8 keys with AES; DES3 refused. No browser sign-in in C5. | No password sign-in, which the SQL API doesn't take. Users of SSO through a browser use a key pair or a token until a browser layer comes. |
+| Sessions | **None in Snowflake; the context (warehouse, role, database, schema) kept by each connection,** changed by a console's `USE`, sent with every statement. | Each console has its own warehouse and role. Transactions, `ALTER SESSION`, variables and temporary tables don't last past their statement, and fail with Snowflake's error and DbRover's explanation. |
+| The cost guard | **A time limit, `stop_after_seconds`, sent as each statement's `timeout`,** 10 minutes for a new data source; no estimate before running, no byte limit. | Snowflake stops a runaway statement itself and bills its warehouse until then. Nothing asks before a statement, since nothing says how long one will take. |
+| What runs without asking | **Only `SHOW` commands:** the explorer, **Show definition** (a view's text, a table's `CREATE TABLE` written from its columns), **Found on the server** and Test connection. | Browsing never resumes a suspended warehouse or costs a credit. **Open data** is a `SELECT … LIMIT 1000`, which resumes it and bills its minute. |
+| Checking statements as they are typed | **The syntax check only;** no `EXPLAIN`. | No cloud services compile per pause in typing; Snowflake's own errors show when the statement runs. An open question for the user. |
+| Large results for reports | **RS7's handoff as `COPY INTO '<folder>' … FILE_FORMAT = (TYPE = PARQUET)`, through a storage integration the data source names.** | Reports read Snowflake's large results as Parquet, in parallel; an administrator must create the integration, which DbRover never does. |
+| Testing | **Exchanges written from the SQL API's reference, replayed on `127.0.0.1` on every pull request, and an ignored live test for the user.** No emulator: `fakesnow` serves only the connectors' protocol. | CI needs no account; what only Snowflake shows waits for the live run, which the demo note lists. |
+
 ## Risks
 
 - **Surprise bills.** A missed automatic query on a large table costs the user money. Every
@@ -1242,3 +1536,15 @@ C4's own decisions, taken on 2026-11-08 when it started; each can be overturned 
 - **A free preview that isn't the query.** **Open data** on a table answers a `SELECT … LIMIT`
   from `tabledata.list`. Only that exact shape on a table is answered so, and the dry run of it
   says 0 bytes, so the console and the bill agree; any edit makes it a query.
+- **Snowflake's answers written from its documentation.** The replayed exchanges show DbRover's
+  requests are well formed and that it reads Snowflake's documented answers; a timeout's code,
+  the text of semi-structured and geospatial values, and how a request's `timeout` meets a
+  warehouse's limit are unknown until the live run, and there is no emulator to narrow them.
+  The live test and the demo note's list are how the user finds out.
+- **A minute billed for a preview.** **Open data** on a suspended warehouse resumes it, billed
+  a minute at least. Everything else DbRover runs by itself is a `SHOW`, and the manual says
+  which actions resume the warehouse.
+- **A context that only looks like a session.** A console's `USE` is kept by DbRover, not by
+  Snowflake, so a name that doesn't exist fails on the next statement rather than on the `USE`,
+  and `ALTER SESSION` or a transaction doesn't last past its statement. The manual says so, and
+  DbRover's message on such a failure explains it.
