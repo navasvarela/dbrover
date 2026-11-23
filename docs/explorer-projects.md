@@ -1,6 +1,6 @@
 # Data sources into projects
 
-Status: **planned** (2026-11-20). This is the design of D9 in the
+Status: **built** (2026-11-20). This is the design of D9 in the
 [roadmap](roadmap.md#d9--data-sources-into-projects-in-one-step).
 
 P0 gave the explorer projects: data sources grouped under foldable headers, with everything else
@@ -203,4 +203,21 @@ tests are in three places, each where its outcome is visible:
 
 ## Demo note
 
-Written once D9 is built.
+Built. In the explorer, right-click a project header → **New data source ›** → **SQLite**, give
+it a file and save: the data source appears under that header, with no move afterwards. The same
+item is on **No project**'s header, where it creates in none, and the toolbar's `+` and the
+Welcome tab are unchanged.
+
+Then pick a data source up by its name and drag it onto another project's header: the header is
+tinted and outlined while it will take it, and the name follows the cursor. Drop it and it moves.
+Drop it on **No project** and it leaves its project; drop it on the header it already sits under,
+or on another data source, a table or the **Reports** section, and nothing happens. With more
+data sources than the panel shows, drag one against the top or bottom edge and the list scrolls
+while you hold it there. Expanded or collapsed makes no difference, and the row keeps its click,
+double-click and context menu.
+
+Covered by explorer tests of what each kind of target does (the two moves, and silence over its
+own group and over another data source), an app test that drags a data source onto a header and
+waits for `data_sources.toml` to show it in that project, an app test of the whole create-in-a-
+project flow from the header's menu to the saved file, a test that the header's expander still
+folds the group under the drop target, and a table test of the edge-band scrolling.
