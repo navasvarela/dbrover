@@ -4,8 +4,9 @@ Status: **C0 built** (2026-11-02); **C1 built** (2026-11-03), tried only against
 stand-ins; **C2 built** (2026-11-04), tried only against local stand-ins; **C3 built**
 (2026-11-05), Athena tried only against exchanges written from its documentation and Trino
 against its container; **C4 built** (2026-11-08), BigQuery tried only against exchanges
-written from its documentation and the community emulator; **C5 started** (2026-11-23), planned
-in layers against Snowflake's documentation; C6 planned, not scheduled. Proposed on
+written from its documentation and the community emulator; **C5 built** (2026-11-23),
+Snowflake tried only against exchanges written from its documentation; C6 planned, not
+scheduled. Proposed on
 2026-10-27; the order and the decisions below are confirmed as each milestone starts. The
 providers' priority was set on 2026-10-28: AWS, then Google Cloud, then Azure. On 2026-11-01
 DynamoDB was moved ahead of the track, as the NoSQL track's [N5](nosql.md#n5--dynamodb), with
@@ -1405,15 +1406,24 @@ account.
   run finds by listing the folder. The integration is the data source's **Storage
   integration** (`storage_integration`), always double-quoted. The planning check (a handoff to
   a bucket on S3, with a prefix) is RS7's, unchanged.
-- **C5i — Manual, demo note and the exit:** a page in the manual's Data sources part,
+- **C5i — Manual, demo note and the exit** (built): a page in the manual's Data sources part,
   **Snowflake**, the C5 demo note in the roadmap with the live checks, and the exit test.
 
 **Exit:** Snowflake tested with exchanges replayed in CI, in one test that goes through the
-whole of C5 (`crates/dbrover-driver-snowflake/tests/exit.rs`): a key-pair data source connects
+whole of C5 (`c5_exit_a_key_pair_data_source_through_the_whole_of_c5`, in
+`crates/dbrover-driver-snowflake/src/tests/exit.rs`, beside the replay server it needs): a key-pair data source connects
 and names its warehouse; the explorer reaches a column with nothing but `SHOW`; a query is paged
 over gzipped partitions with its values as Snowflake shows them; `USE WAREHOUSE` moves one
 console; a statement past the time limit is stopped and says so; cancel stops one by its handle.
 Tried live by the user: the demo note's list, and the ignored live test.
+
+**Met** in CI, against `exchanges/exit.json`: Test connection says *warehouse ANALYTICS_WH
+(X-Small, suspended)*; the explorer reaches `SHOP › PUBLIC › tables › ORDERS › PLACED`
+(`TIMESTAMP_NTZ(3)`) with four `SHOW`s; a query is read over three partitions, two gzipped,
+its timestamps as Snowflake writes them, `NULL` among them; after `USE WAREHOUSE big_wh` the
+next statement goes to `BIG_WH` and is stopped at the 10-minute limit, saying so; cancel stops
+another by its handle; and a second console starts on `ANALYTICS_WH`. Not yet tried against
+Snowflake itself.
 
 #### C5's open questions
 

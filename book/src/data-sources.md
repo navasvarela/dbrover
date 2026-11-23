@@ -12,7 +12,9 @@ Click **+** at the top of the explorer (or **New data source** on the Welcome ta
 **Trino / Presto**. The engines only a cloud runs are in that cloud's menu below them: **DynamoDB**
 and **Amazon Athena** under **Amazon Web Services**, **BigQuery** under **Google Cloud**. They
 sign in with your cloud account rather than a password: see [DynamoDB](dynamodb.md),
-[Athena and Trino](athena-trino.md) and [BigQuery](bigquery.md).
+[Athena and Trino](athena-trino.md) and [BigQuery](bigquery.md). **Snowflake**, which runs on
+every cloud, is under **Other cloud services**, signing in with a key pair or a token: see
+[Snowflake](snowflake.md).
 
 A data source added this way is in no project. To put it straight into one, use **New data
 source ›** on that project's header instead; see [Projects](explorer.md#projects).

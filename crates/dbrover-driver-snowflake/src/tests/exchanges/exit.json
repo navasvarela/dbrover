@@ -1,0 +1,920 @@
+{
+ "doc": "C5's exit: a key-pair data source with a warehouse and a 10-minute limit, through every layer of C5, replayed in one file.",
+ "exchanges": [
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "headers": {
+    "X-Snowflake-Authorization-Token-Type": "KEYPAIR_JWT"
+   },
+   "request": {
+    "statement": "SHOW WAREHOUSES LIKE 'ANALYTICS\\\\_WH'",
+    "timeout": 600,
+    "warehouse": "ANALYTICS_WH",
+    "role": "ANALYST",
+    "parameters": {
+     "query_tag": "DbRover"
+    }
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0001"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000e0001",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0001",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "name",
+       "type": "text"
+      },
+      {
+       "name": "state",
+       "type": "text"
+      },
+      {
+       "name": "type",
+       "type": "text"
+      },
+      {
+       "name": "size",
+       "type": "text"
+      },
+      {
+       "name": "running",
+       "type": "text"
+      },
+      {
+       "name": "queued",
+       "type": "text"
+      },
+      {
+       "name": "is_default",
+       "type": "text"
+      },
+      {
+       "name": "is_current",
+       "type": "text"
+      },
+      {
+       "name": "auto_suspend",
+       "type": "text"
+      },
+      {
+       "name": "auto_resume",
+       "type": "text"
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "ANALYTICS_WH",
+      "SUSPENDED",
+      "STANDARD",
+      "X-Small",
+      "0",
+      "0",
+      "N",
+      "N",
+      "60",
+      "true"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "headers": {
+    "X-Snowflake-Authorization-Token-Type": "KEYPAIR_JWT"
+   },
+   "request": {
+    "statement": "SHOW PARAMETERS LIKE 'STATEMENT_TIMEOUT_IN_SECONDS' IN WAREHOUSE \"ANALYTICS_WH\"",
+    "timeout": 600,
+    "warehouse": "ANALYTICS_WH",
+    "role": "ANALYST",
+    "parameters": {
+     "query_tag": "DbRover"
+    }
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0002"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000e0002",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0002",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "key",
+       "type": "text"
+      },
+      {
+       "name": "value",
+       "type": "text"
+      },
+      {
+       "name": "default",
+       "type": "text"
+      },
+      {
+       "name": "level",
+       "type": "text"
+      },
+      {
+       "name": "description",
+       "type": "text"
+      },
+      {
+       "name": "type",
+       "type": "text"
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "STATEMENT_TIMEOUT_IN_SECONDS",
+      "172800",
+      "172800",
+      "",
+      "Timeout in seconds for statements.",
+      "NUMBER"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "headers": {
+    "X-Snowflake-Authorization-Token-Type": "KEYPAIR_JWT"
+   },
+   "request": {
+    "statement": "SHOW DATABASES LIMIT 1000",
+    "timeout": 600,
+    "warehouse": "ANALYTICS_WH",
+    "role": "ANALYST",
+    "parameters": {
+     "query_tag": "DbRover"
+    }
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0003"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000e0003",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0003",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text"
+      },
+      {
+       "name": "name",
+       "type": "text"
+      },
+      {
+       "name": "kind",
+       "type": "text"
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "0",
+      "SHOP",
+      "STANDARD"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "headers": {
+    "X-Snowflake-Authorization-Token-Type": "KEYPAIR_JWT"
+   },
+   "request": {
+    "statement": "SHOW SCHEMAS IN DATABASE \"SHOP\" LIMIT 1000",
+    "timeout": 600,
+    "warehouse": "ANALYTICS_WH",
+    "role": "ANALYST",
+    "parameters": {
+     "query_tag": "DbRover"
+    }
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0004"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000e0004",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0004",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text"
+      },
+      {
+       "name": "name",
+       "type": "text"
+      },
+      {
+       "name": "database_name",
+       "type": "text"
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "0",
+      "PUBLIC",
+      "SHOP"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "headers": {
+    "X-Snowflake-Authorization-Token-Type": "KEYPAIR_JWT"
+   },
+   "request": {
+    "statement": "SHOW TABLES IN SCHEMA \"SHOP\".\"PUBLIC\" LIMIT 1000",
+    "timeout": 600,
+    "warehouse": "ANALYTICS_WH",
+    "role": "ANALYST",
+    "parameters": {
+     "query_tag": "DbRover"
+    }
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0005"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000e0005",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0005",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text"
+      },
+      {
+       "name": "name",
+       "type": "text"
+      },
+      {
+       "name": "database_name",
+       "type": "text"
+      },
+      {
+       "name": "schema_name",
+       "type": "text"
+      },
+      {
+       "name": "kind",
+       "type": "text"
+      },
+      {
+       "name": "cluster_by",
+       "type": "text"
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "0",
+      "ORDERS",
+      "SHOP",
+      "PUBLIC",
+      "TABLE",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "headers": {
+    "X-Snowflake-Authorization-Token-Type": "KEYPAIR_JWT"
+   },
+   "request": {
+    "statement": "SHOW COLUMNS IN TABLE \"SHOP\".\"PUBLIC\".\"ORDERS\"",
+    "timeout": 600,
+    "warehouse": "ANALYTICS_WH",
+    "role": "ANALYST",
+    "parameters": {
+     "query_tag": "DbRover"
+    }
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0006"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000e0006",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0006",
+    "resultSetMetaData": {
+     "numRows": 2,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "table_name",
+       "type": "text"
+      },
+      {
+       "name": "schema_name",
+       "type": "text"
+      },
+      {
+       "name": "column_name",
+       "type": "text"
+      },
+      {
+       "name": "data_type",
+       "type": "text"
+      },
+      {
+       "name": "null?",
+       "type": "text"
+      },
+      {
+       "name": "default",
+       "type": "text"
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 2
+      }
+     ]
+    },
+    "data": [
+     [
+      "ORDERS",
+      "PUBLIC",
+      "ID",
+      "{\"type\": \"FIXED\", \"precision\": 38, \"scale\": 0, \"nullable\": false}",
+      "false",
+      ""
+     ],
+     [
+      "ORDERS",
+      "PUBLIC",
+      "PLACED",
+      "{\"type\": \"TIMESTAMP_NTZ\", \"precision\": 0, \"scale\": 3, \"nullable\": true}",
+      "true",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "headers": {
+    "X-Snowflake-Authorization-Token-Type": "KEYPAIR_JWT"
+   },
+   "request": {
+    "statement": "SELECT id, placed FROM orders ORDER BY id",
+    "timeout": 600,
+    "warehouse": "ANALYTICS_WH",
+    "role": "ANALYST",
+    "parameters": {
+     "query_tag": "DbRover"
+    }
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0007"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000e0007",
+   "status": 202,
+   "response": {
+    "code": "333334",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0007"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000e0007",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0007",
+    "resultSetMetaData": {
+     "numRows": 2,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "ID",
+       "type": "fixed",
+       "precision": 38,
+       "scale": 0
+      },
+      {
+       "name": "PLACED",
+       "type": "timestamp_ntz",
+       "scale": 3
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 2
+      },
+      {
+       "rowCount": 2
+      },
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "1",
+      "1767323045.123"
+     ],
+     [
+      "2",
+      null
+     ]
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000e0007",
+   "query": {
+    "partition": "1"
+   },
+   "gzip": true,
+   "response": {
+    "data": [
+     [
+      "3",
+      "0.000"
+     ],
+     [
+      "4",
+      "-1.500"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000e0007",
+   "query": {
+    "partition": "2"
+   },
+   "gzip": true,
+   "response": {
+    "data": [
+     [
+      "5",
+      "1767323045.000"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "headers": {
+    "X-Snowflake-Authorization-Token-Type": "KEYPAIR_JWT"
+   },
+   "request": {
+    "statement": "SELECT COUNT(*) FROM big.events",
+    "timeout": 600,
+    "warehouse": "BIG_WH",
+    "role": "ANALYST",
+    "parameters": {
+     "query_tag": "DbRover"
+    }
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0008"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000e0008",
+   "status": 408,
+   "response": {
+    "code": "000630",
+    "sqlState": "57014",
+    "message": "Statement reached its statement or warehouse timeout of 600 second(s) and was canceled.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0008"
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "headers": {
+    "X-Snowflake-Authorization-Token-Type": "KEYPAIR_JWT"
+   },
+   "request": {
+    "statement": "SELECT * FROM big.events ORDER BY ts",
+    "timeout": 600,
+    "warehouse": "BIG_WH",
+    "role": "ANALYST",
+    "parameters": {
+     "query_tag": "DbRover"
+    }
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0009"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000e0009",
+   "status": 202,
+   "repeat": true,
+   "response": {
+    "code": "333334",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0009"
+   }
+  },
+  {
+   "method": "POST",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000e0009/cancel",
+   "response": {
+    "code": "000604",
+    "sqlState": "57014",
+    "message": "SQL execution canceled",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0009"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000e0009",
+   "status": 422,
+   "response": {
+    "code": "000604",
+    "sqlState": "57014",
+    "message": "SQL execution canceled",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0009"
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "headers": {
+    "X-Snowflake-Authorization-Token-Type": "KEYPAIR_JWT"
+   },
+   "request": {
+    "statement": "SHOW WAREHOUSES LIKE 'ANALYTICS\\\\_WH'",
+    "timeout": 600,
+    "warehouse": "ANALYTICS_WH",
+    "role": "ANALYST",
+    "parameters": {
+     "query_tag": "DbRover"
+    }
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0010"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000e0010",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0010",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "name",
+       "type": "text"
+      },
+      {
+       "name": "state",
+       "type": "text"
+      },
+      {
+       "name": "type",
+       "type": "text"
+      },
+      {
+       "name": "size",
+       "type": "text"
+      },
+      {
+       "name": "running",
+       "type": "text"
+      },
+      {
+       "name": "queued",
+       "type": "text"
+      },
+      {
+       "name": "is_default",
+       "type": "text"
+      },
+      {
+       "name": "is_current",
+       "type": "text"
+      },
+      {
+       "name": "auto_suspend",
+       "type": "text"
+      },
+      {
+       "name": "auto_resume",
+       "type": "text"
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "ANALYTICS_WH",
+      "SUSPENDED",
+      "STANDARD",
+      "X-Small",
+      "0",
+      "0",
+      "N",
+      "N",
+      "60",
+      "true"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "headers": {
+    "X-Snowflake-Authorization-Token-Type": "KEYPAIR_JWT"
+   },
+   "request": {
+    "statement": "SHOW PARAMETERS LIKE 'STATEMENT_TIMEOUT_IN_SECONDS' IN WAREHOUSE \"ANALYTICS_WH\"",
+    "timeout": 600,
+    "warehouse": "ANALYTICS_WH",
+    "role": "ANALYST",
+    "parameters": {
+     "query_tag": "DbRover"
+    }
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0011"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000e0011",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0011",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "key",
+       "type": "text"
+      },
+      {
+       "name": "value",
+       "type": "text"
+      },
+      {
+       "name": "default",
+       "type": "text"
+      },
+      {
+       "name": "level",
+       "type": "text"
+      },
+      {
+       "name": "description",
+       "type": "text"
+      },
+      {
+       "name": "type",
+       "type": "text"
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "STATEMENT_TIMEOUT_IN_SECONDS",
+      "172800",
+      "172800",
+      "",
+      "Timeout in seconds for statements.",
+      "NUMBER"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "headers": {
+    "X-Snowflake-Authorization-Token-Type": "KEYPAIR_JWT"
+   },
+   "request": {
+    "statement": "SELECT 1",
+    "timeout": 600,
+    "warehouse": "ANALYTICS_WH",
+    "role": "ANALYST",
+    "parameters": {
+     "query_tag": "DbRover"
+    }
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0012"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000e0012",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000e0012",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "1",
+       "type": "fixed",
+       "precision": 1,
+       "scale": 0
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "1"
+     ]
+    ]
+   }
+  }
+ ]
+}

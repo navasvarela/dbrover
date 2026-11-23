@@ -738,7 +738,7 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
       **BigQuery Job User**, served to an MCP client, which can query but not change a table.
     - Any answer that differs from the replayed exchanges goes into
       `crates/dbrover-driver-bigquery/src/tests/exchanges/`.
-- **C5 — Snowflake** (started 2026-11-23, after RS9 and C4): Snowflake over its SQL API, signed
+- **C5 — Snowflake** (built, in nine layers, 2026-11-23, after RS9 and C4): Snowflake over its SQL API, signed
   in with a key pair, a programmatic access token or an OAuth token, its dialect, databases,
   schemas and objects in the explorer through `SHOW` commands that need no warehouse, a
   warehouse and role per console, a time limit Snowflake keeps as C0's time budget, and RS7's
@@ -777,6 +777,42 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
   and tried live by the user: a key-pair data source browses without resuming its warehouse,
   pages a query's partitions, moves one console to another warehouse with `USE`, and has a
   statement past its time limit stopped by Snowflake.
+
+  **C5 demo note:** there is no emulator of Snowflake's SQL API, so what needs no account is the
+  dialog and the replayed tests.
+  - *The dialog:* **New data source › Other cloud services › Snowflake** opens a dialog with
+    **Account**, **User**, **Sign in with** (Key pair, Access token, OAuth), **Private key
+    file**, **Passphrase**, **Warehouse**, **Role**, **Database**, **Schema**, **Storage
+    integration** and **Stop statements after** at `10`. Saving without a key file says
+    *Private key file is required to sign in with a key pair.*; `0` or `ten` in the limit is
+    refused, `0.5` saves as `stop_after_seconds = 30`. **OAuth** offers **Token from a
+    command**. The read-only level's MCP row is **MCP role**.
+  - *The replayed exit:* `cargo test -p dbrover-driver-snowflake c5_exit` runs one data source
+    through every layer, against `crates/dbrover-driver-snowflake/src/tests/exchanges/exit.json`.
+  - *By hand, with a Snowflake account* (not tried while building C5; a trial account is
+    enough), as the manual's page lists:
+    - Make a key pair and set it on your user (the manual's commands), then
+      `DBROVER_TEST_SNOWFLAKE_LIVE=myorg-myaccount,JANE,/path/rsa_key.p8,COMPUTE_WH cargo test
+      -p dbrover-driver-snowflake live_snowflake -- --ignored` (with
+      `DBROVER_TEST_SNOWFLAKE_PASSPHRASE` for an encrypted key): `NULL` and empty text, a
+      `NUMBER(10,2)`, a `DATE`, timestamps, a `VARIANT`, 200,000 rows of
+      `SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.CUSTOMER` over several partitions, and an error's place.
+    - In the app, with the warehouse suspended: Test connection says *suspended*, and
+      browsing `SNOWFLAKE_SAMPLE_DATA` down to a column, **Show definition** of a table and
+      of a view, and **Found on the server** leave it suspended (Snowsight's warehouse page or
+      `SHOW WAREHOUSES` says so). **Open data** resumes it.
+    - With **Stop statements after** at `0.5`, run `SELECT COUNT(*) FROM
+      SNOWFLAKE_SAMPLE_DATA.TPCH_SF1000.LINEITEM l1, SNOWFLAKE_SAMPLE_DATA.TPCH_SF1000.LINEITEM
+      l2`: Snowflake stops it after 30 s, and DbRover says which limit stopped it. Note the 408's
+      code and message; set a warehouse's `STATEMENT_TIMEOUT_IN_SECONDS` lower and higher than
+      the data source's and see which wins.
+    - `USE WAREHOUSE` and `USE ROLE` in one console (try a name in lower case), and see that
+      another console still runs on the data source's.
+    - Sign in with a programmatic access token, and with an OAuth token from a command.
+    - A report with `handoff = { data_source = "lake", prefix = "dbrover-tmp/" }` on a storage
+      integration for that S3 bucket.
+    - Any answer that differs from the replayed exchanges goes into
+      `crates/dbrover-driver-snowflake/src/tests/exchanges/`.
 - **C6 — Databricks SQL**, over the Statement Execution API and Unity Catalog.
 
 ## NoSQL track

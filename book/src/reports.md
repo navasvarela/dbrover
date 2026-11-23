@@ -408,7 +408,7 @@ and `T` works in place of the space).
 | `max_rows_per_part` | The most rows each range of a partitioned source may return. No limit unless you say. |
 | `columns` | The columns it makes, each with a type. Needed for a document database. See [Declared columns](#declared-columns). |
 | `columnar` | `false` loads the source's rows as text, even from DuckDB or ClickHouse, which otherwise hand them to the combine step as they are. See [Columnar sources](#columnar-sources). |
-| `handoff` | Has the engine write the result to a bucket as files, which the run reads instead of paging its rows, as `{ data_source = "lake", prefix = "dbrover-tmp/" }`. Athena and BigQuery. See [Handing a large result over through a bucket](#handing-a-large-result-over-through-a-bucket). |
+| `handoff` | Has the engine write the result to a bucket as files, which the run reads instead of paging its rows, as `{ data_source = "lake", prefix = "dbrover-tmp/" }`. Athena, BigQuery and Snowflake. See [Handing a large result over through a bucket](#handing-a-large-result-over-through-a-bucket). |
 | `max_rows` | The most rows it may return, all its lookup's batches or ranges together. 1,000,000 unless you say. |
 | `max_bytes` | The most data it may return, as `"500 MB"` or `"4 GiB"`. 1 GiB unless you say. |
 | `timeout` | How long the query may run, all its batches together, or each range on its own, as `"30s"` or `"10m"`. 10 minutes unless you say. |
@@ -790,7 +790,7 @@ a bucket's egress is billed and a mistyped path would be expensive.
 ### Handing a large result over through a bucket
 
 A warehouse that answers a thousand rows at a time is slow to read a result of many gigabytes
-from. Athena and BigQuery can write the result to a bucket instead, as files, and the run then
+from. Athena, BigQuery and Snowflake can write the result to a bucket instead, as files, and the run then
 reads them with DuckDB in parallel. A `[[source]]` asks for that with `handoff`:
 
 ```toml
@@ -816,11 +816,14 @@ files.
 | Athena, with a `prefix` | `UNLOAD (<your query>) TO '<prefix>/…' WITH (format = 'parquet')` | the Parquet files it wrote |
 | Athena, without a `prefix` | your query as it is | the result file Athena writes for every query, as the CSV it is |
 | BigQuery | `EXPORT DATA OPTIONS (uri = '<prefix>/…/part-*.parquet', format = 'PARQUET') AS <your query>` | the Parquet shards it wrote |
+| Snowflake | `COPY INTO '<prefix>/…/data' FROM (<your query>) STORAGE_INTEGRATION = "<integration>" FILE_FORMAT = (TYPE = PARQUET) HEADER = TRUE` | the Parquet files it wrote |
 
 Athena writes every result to S3 anyway, so `handoff = { data_source = "lake" }` without a
 prefix reads that file where it already is — which asks the warehouse for nothing new, and
 needs the bucket data source to be the one the workgroup's output location is in. BigQuery has
-no result file of its own to read, so its handoff needs a `prefix`.
+no result file of its own to read, so its handoff needs a `prefix`, and so does Snowflake's,
+which writes to S3 only through the storage integration its data source names (see
+[Snowflake](snowflake.md#reports)).
 
 **What a handoff takes, and what it doesn't.** The files carry their own columns and types, so
 a handoff takes none of the keys that count or shape rows on the way in: no `max_rows`,

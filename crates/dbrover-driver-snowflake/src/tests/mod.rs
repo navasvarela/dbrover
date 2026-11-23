@@ -1,6 +1,7 @@
 //! The driver against Snowflake's exchanges, replayed by a server on this machine (`replay`),
 //! and against Snowflake only when the user asks for it by hand (`live_snowflake`).
 
+mod exit;
 mod replay;
 
 use std::path::PathBuf;
