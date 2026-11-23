@@ -91,6 +91,10 @@ pub struct Segment {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Lane {
     pub step: StepKey,
+    /// How deep the step is under a report used as a source (RS9d): 0 for a step of the
+    /// report that ran, 1 for a source of a report it uses, and so on. A step's name holds
+    /// its path, `valued › tx`, and this is how far the timeline indents it.
+    pub depth: usize,
     /// A source's engine.
     pub engine: Option<String>,
     pub segments: Vec<Segment>,
@@ -169,6 +173,7 @@ fn lane(run: &ReportRun, step: &StepMetrics) -> Option<Lane> {
                 source_segments(run, source, start)
             };
             Some(Lane {
+                depth: depth(&key),
                 step: key,
                 engine: source.engine.clone(),
                 segments,
@@ -192,6 +197,7 @@ fn lane(run: &ReportRun, step: &StepMetrics) -> Option<Lane> {
                 combine_segments(combine, start, outputs)
             };
             Some(Lane {
+                depth: depth(&key),
                 step: key,
                 engine: None,
                 segments,
@@ -200,6 +206,7 @@ fn lane(run: &ReportRun, step: &StepMetrics) -> Option<Lane> {
             })
         }
         StepMetrics::Output(output) => Some(Lane {
+            depth: depth(&key),
             step: key,
             engine: None,
             segments: output_segments(output)?,
@@ -209,6 +216,18 @@ fn lane(run: &ReportRun, step: &StepMetrics) -> Option<Lane> {
         StepMetrics::Attached { .. } => None,
     }
 }
+
+/// How deep a step is under a report used as a source: the parts of its name's path, less
+/// the step itself (RS9d). A step of the report that ran has none.
+fn depth(step: &StepKey) -> usize {
+    match step {
+        StepKey::Source(id) => id.matches(STEP_PATH).count(),
+        StepKey::Combine | StepKey::Output(_) => 0,
+    }
+}
+
+/// What a step's name puts between the reports it is under and the step itself.
+pub const STEP_PATH: &str = " › ";
 
 /// Where each of `parts` ran, for those that say when they started.
 fn ranges(parts: &[PartMetrics]) -> Vec<RangeSpan> {
@@ -887,5 +906,23 @@ mod tests {
                 end_ms: 5,
             }]
         );
+    }
+
+    /// RS9d: a step of a report used as a source nests under that report's lane, as deep as
+    /// its name's path says.
+    #[test]
+    fn nests_the_steps_of_a_report_used_as_a_source() {
+        let run = run(
+            1_000,
+            vec![
+                StepMetrics::Source(source("tx", 0, 100, None)),
+                StepMetrics::Source(source("valued › tx", 100, 200, None)),
+                StepMetrics::Source(source("valued › inner › tx", 300, 100, None)),
+                StepMetrics::Combine(combine(400, 300)),
+            ],
+        );
+        let timeline = timeline(&run).expect("the timeline");
+        let depths: Vec<usize> = timeline.lanes.iter().map(|lane| lane.depth).collect();
+        assert_eq!(depths, [0, 1, 2, 0]);
     }
 }

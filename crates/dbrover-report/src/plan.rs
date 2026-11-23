@@ -28,7 +28,7 @@ use crate::{
     HandoffRead, LakeRead, LimitDefaults, LimitSetIn, Lookup, NamedReport, Output, OutputColumns,
     OutputLimits, OutputLimitsSet, OutputWriter, PART_FROM, PART_TO, Param, ParamSource, PartRange,
     PlannedPartition, Report, ReportRead, Source, SourceColumn, SourceLimits, SourceLimitsSet,
-    SourcePartition, SourceRead, SourceRows, SourceSplit, SourceStart, Step,
+    SourcePartition, SourceRead, SourceRows, SourceSplit, SourceStart, Step, UsedReport,
 };
 
 /// A report ready to run.
@@ -873,6 +873,14 @@ impl Plan {
                     ranges: ranges.ranges.len() as u64,
                 },
             ),
+            reports: self
+                .reports_used()
+                .into_iter()
+                .map(|used| UsedReport {
+                    name: used.report.clone(),
+                    version: used.version,
+                })
+                .collect(),
         }
     }
 

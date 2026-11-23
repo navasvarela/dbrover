@@ -102,6 +102,7 @@ fn run(
         origin: RunOrigin::Command,
         version: Some(BlobId::of(file.as_bytes())),
         profile: RunProfile {
+            reports: Vec::new(),
             peak_memory: Some(300 << 20),
             cores: Some(8),
             dbrover: Some("0.34.0".to_owned()),

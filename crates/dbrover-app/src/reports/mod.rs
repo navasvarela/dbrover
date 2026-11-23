@@ -33,8 +33,8 @@ use dbrover_insight::explanation;
 use dbrover_report::{
     Batch, Busy, CombineCaps, CombineLimits, ExplainRequest, Explanation, LimitDefaults,
     LoadedColumn, NamedReport, OutputLimits, PartDone, Parts, Plan, Preview, Report, RunEvent,
-    RunFailure, RunPartitionStart, RunRequest, SourceCaps, SourceLimits, SourcePhases, SourceStart,
-    Step, TimedEvent, TypedValues, WrittenFile, read_report,
+    RunFailure, RunPartitionStart, RunRequest, SourceCaps, SourceLimits, SourcePhases, SourceRead,
+    SourceStart, Step, TimedEvent, TypedValues, WrittenFile, read_report,
 };
 use dbrover_sql::FormatOptions;
 use dbrover_store::{
@@ -288,6 +288,22 @@ impl Listed {
     fn written(&mut self, text: String, modified: Option<SystemTime>) {
         self.read = read_report(&text);
         self.text = Some((text, modified));
+    }
+
+    /// Each of its report sources: the source's id and the report it names (RS9d), in the
+    /// file's order; empty for a report that reads none.
+    pub fn reads(&self) -> Vec<(String, String)> {
+        let Ok(report) = &self.read else {
+            return Vec::new();
+        };
+        report
+            .sources
+            .iter()
+            .filter_map(|source| match &source.read {
+                SourceRead::Report(read) => Some((source.id.clone(), read.report.clone())),
+                SourceRead::Query { .. } | SourceRead::Attach | SourceRead::Lake(_) => None,
+            })
+            .collect()
     }
 
     /// The name in `[report]`, or the file's when it can't be read.
@@ -854,9 +870,17 @@ impl RunRecord {
                 combine,
                 combine_sql,
                 version,
+                reports,
                 ..
             } => {
                 self.version = version;
+                self.profile.reports = reports
+                    .into_iter()
+                    .map(|used| dbrover_store::UsedReport {
+                        name: used.name,
+                        version: used.version,
+                    })
+                    .collect();
                 self.steps = sources.into_iter().map(StepRecord::source).collect();
                 if combine {
                     self.steps.push(StepRecord {
@@ -1419,6 +1443,29 @@ impl Reports {
         self.listed().iter().find(|listed| &listed.name == name)
     }
 
+    /// The reports whose `[[source]]` names `name`, by file name, each with its title (RS9d):
+    /// changing a report changes every report built on it, and its tab says which.
+    ///
+    /// Read from the files as the folder was last listed, with no planning: a source's
+    /// `report` is a file's name, which reading the file is enough to know.
+    pub fn used_by(&self, name: &ReportName) -> Vec<(ReportName, String)> {
+        self.listed()
+            .iter()
+            .filter(|listed| &listed.name != name)
+            .filter(|listed| {
+                listed.read.as_ref().is_ok_and(|report| {
+                    report.sources.iter().any(|source| match &source.read {
+                        SourceRead::Report(read) => read.report.eq_ignore_ascii_case(name.as_str()),
+                        SourceRead::Query { .. } | SourceRead::Attach | SourceRead::Lake(_) => {
+                            false
+                        }
+                    })
+                })
+            })
+            .map(|listed| (listed.name.clone(), listed.title().to_owned()))
+            .collect()
+    }
+
     /// Every report file the folder holds, with its text, for a `[[source]]` that names one
     /// (`docs/reports-at-scale.md`, RS9b). A file that couldn't be read is left out, which
     /// planning reports as a report there isn't.
@@ -1815,6 +1862,65 @@ mod tests {
         record.apply(event.at(Duration::ZERO));
     }
 
+    /// The reports folder as the engine listed it, each file with its text.
+    fn listed(files: &[(&str, &str)]) -> Reports {
+        let found: Vec<ReportText> = files
+            .iter()
+            .map(|(name, text)| ReportText {
+                name: ReportName::new(name).expect("a name"),
+                path: PathBuf::from(format!("/tmp/reports/{name}.toml")),
+                text: Ok((*text).to_owned()),
+                modified: None,
+            })
+            .collect();
+        let mut reports = Reports::default();
+        reports.apply(&Event::ReportsListed(Ok(found)));
+        reports
+    }
+
+    /// RS9d: a report's tab says which reports read it, and which it reads.
+    #[test]
+    fn says_which_reports_read_a_report_and_which_it_reads() {
+        let inner = "[report]\nname = \"Sales\"\n\n[[source]]\nid = \"lines\"\n\
+                     data_source = \"shop\"\nquery = \"SELECT 1 AS n\"\n\n[[output]]\n\
+                     format = \"csv\"\nfile = \"s.csv\"\n";
+        let reading = |name: &str| {
+            format!(
+                "[report]\nname = \"{name}\"\n\n[[source]]\nid = \"sales\"\n\
+                 report = \"sales\"\nparams = {{ }}\n\n[combine]\nquery = \"SELECT * FROM \
+                 sales\"\n\n[[output]]\nformat = \"csv\"\nfile = \"o.csv\"\n"
+            )
+        };
+        let first = reading("First");
+        let second = reading("Second");
+        let reports = listed(&[
+            ("sales", inner),
+            ("first", first.as_str()),
+            ("second", second.as_str()),
+        ]);
+        let sales = ReportName::new("sales").expect("a name");
+        let used_by: Vec<String> = reports
+            .used_by(&sales)
+            .into_iter()
+            .map(|(_, title)| title)
+            .collect();
+        assert_eq!(used_by, ["First", "Second"]);
+        assert!(
+            reports
+                .used_by(&ReportName::new("first").expect("a name"))
+                .is_empty()
+        );
+        let reads = reports
+            .find(&ReportName::new("first").expect("a name"))
+            .expect("the report")
+            .reads();
+        assert_eq!(reads, [("sales".to_owned(), "sales".to_owned())]);
+        assert!(
+            reports.find(&sales).expect("the report").reads().is_empty(),
+            "a report that reads a data source reads no report"
+        );
+    }
+
     #[test]
     fn opens_a_path_with_the_platforms_opener() {
         let command = opener(Path::new("/Users/ada/My Reports/sales.xlsx"));
@@ -1856,6 +1962,7 @@ mod tests {
             untimed(
                 &mut record,
                 RunEvent::Started {
+                    reports: Vec::new(),
                     report: "Trial balance".to_owned(),
                     sources: vec![SourceStart {
                         id: "balances".to_owned(),
@@ -1977,6 +2084,7 @@ mod tests {
             (
                 0,
                 RunEvent::Started {
+                    reports: Vec::new(),
                     report: "Valuation".to_owned(),
                     sources: vec![SourceStart {
                         id: "tx".to_owned(),
@@ -2081,6 +2189,7 @@ mod tests {
         assert_eq!(
             run.profile,
             RunProfile {
+                reports: Vec::new(),
                 peak_memory: Some(90 << 20),
                 timeout_ms: Some(1_800_000),
                 cores: Some(10),
@@ -2098,6 +2207,7 @@ mod tests {
         untimed(
             &mut record,
             RunEvent::Started {
+                reports: Vec::new(),
                 report: "Values".to_owned(),
                 sources: Vec::new(),
                 combine: false,
@@ -2125,6 +2235,7 @@ mod tests {
         untimed(
             &mut record,
             RunEvent::Started {
+                reports: Vec::new(),
                 report: "Events".to_owned(),
                 sources: vec![SourceStart {
                     id: "events".to_owned(),
@@ -2217,6 +2328,7 @@ mod tests {
         let mut record = RunRecord::new(TypedValues::new());
         record.apply(
             RunEvent::Started {
+                reports: Vec::new(),
                 report: "Events".to_owned(),
                 sources: vec![SourceStart {
                     id: "events".to_owned(),
@@ -2351,6 +2463,7 @@ mod tests {
         untimed(
             &mut record,
             RunEvent::Started {
+                reports: Vec::new(),
                 report: "Valuation".to_owned(),
                 sources: vec![source("tx", false), source("prices", true)],
                 combine: true,

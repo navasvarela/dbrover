@@ -52,8 +52,8 @@ pub use embedded::{Embedded, PrqlToken, StepLanguage, embedded_code, prql_tokens
 pub use events::{
     Batch, Busy, CombineCaps, HandedOverFiles, LakeStart, LimitHit, LimitSetIn, LoadedColumn,
     Machine, PartDone, PartitionStart, Parts, Preview, Resumed, RunEvent, RunFailure,
-    RunPartitionStart, SourceCaps, SourcePhases, SourceStart, Step, TimedEvent, WrittenFile,
-    counted,
+    RunPartitionStart, SourceCaps, SourcePhases, SourceStart, Step, TimedEvent, UsedReport,
+    WrittenFile, counted,
 };
 pub use explain::{
     CombineExplanation, Estimate, ExplainedPlan, Explanation, KnownTable, SourceExplained,

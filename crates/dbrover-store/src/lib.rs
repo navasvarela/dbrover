@@ -50,7 +50,7 @@ pub use history::{
     HistoryError, HistoryExportError, HistoryFile, HistoryOutcome, HistoryQuery, HistorySource,
     HistorySourceKind, KeptColumn, LakeMetrics, NamedCell, OutputMetrics, PartMetrics,
     ReplacedCell, ReportRun, RowChange, RowChangeKind, RunError, RunId, RunOrigin, RunOutcome,
-    RunProfile, SourceCaps, SourceMetrics, SourcePhases, StepMetrics, redact_secrets,
+    RunProfile, SourceCaps, SourceMetrics, SourcePhases, StepMetrics, UsedReport, redact_secrets,
 };
 pub use in_place::InPlaceError;
 pub use keymap::{KeymapBindings, KeymapError, KeymapFile};

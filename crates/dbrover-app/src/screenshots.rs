@@ -2006,6 +2006,7 @@ fn report_profile(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture)
         origin: RunOrigin::App,
         version: None,
         profile: RunProfile {
+            reports: Vec::new(),
             peak_memory: Some(84_000_000),
             timeout_ms: Some(1_800_000),
             cores: Some(10),
