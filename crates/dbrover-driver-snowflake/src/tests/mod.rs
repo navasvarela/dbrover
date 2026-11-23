@@ -74,7 +74,8 @@ async fn connects_with_a_jwt_and_its_context_and_pings_without_a_warehouse() {
     assert_eq!(connection.server_info().product, "Snowflake");
     assert_eq!(
         connection.server_info().version,
-        "account myorg-analytics as jane"
+        "account myorg-analytics as jane, warehouse ANALYTICS_WH (X-Small, suspended; stops \
+         statements after 1 h)"
     );
     conformance::check_lifecycle(Box::new(connection)).await;
 
@@ -99,7 +100,7 @@ async fn connects_with_a_jwt_and_its_context_and_pings_without_a_warehouse() {
     }));
     assert_eq!(
         replay.request_ids().len(),
-        3,
+        4,
         "a requestId for each statement"
     );
     replay.finish();
@@ -467,6 +468,29 @@ async fn found_on_the_server_searches_the_whole_account() {
         ]
     );
     assert!(!found.more);
+    replay.finish();
+}
+
+#[tokio::test]
+async fn a_statement_past_the_time_limit_is_stopped_by_snowflake_and_says_so() {
+    let replay = Replay::start(include_str!("exchanges/limit.json")).await;
+    let config = SnowflakeConfig {
+        cost_guard: dbrover_core::CostGuard {
+            stop_after: dbrover_core::TimeLimit::from_seconds(600),
+            ..dbrover_core::CostGuard::default()
+        },
+        ..config(&replay)
+    };
+    let mut connection = connected(&config).await;
+    let Err(error) = connection.execute("SELECT COUNT(*) FROM big.events").await else {
+        panic!("the statement ran past its limit");
+    };
+    let said = describe_error(&error);
+    assert!(
+        said.contains("Snowflake stopped it after 10 min, this data source's limit"),
+        "{said}"
+    );
+    assert!(said.contains("Raise Stop statements after"), "{said}");
     replay.finish();
 }
 

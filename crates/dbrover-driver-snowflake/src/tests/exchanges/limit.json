@@ -1,0 +1,71 @@
+{
+ "doc": "A data source with a 10-minute limit sends timeout 600 with every statement; one Snowflake stops at it answers 408, whose code and message are a guess to check live.",
+ "exchanges": [
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW DATABASES LIMIT 1",
+    "timeout": 600
+   },
+   "response": {
+    "code": "333334",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000c0"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000000c0",
+   "response": {
+    "code": "090001",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000c0",
+    "resultSetMetaData": {
+     "numRows": 0,
+     "rowType": [
+      {
+       "name": "name",
+       "type": "text"
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 0
+      }
+     ]
+    },
+    "data": []
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SELECT COUNT(*) FROM big.events",
+    "timeout": 600
+   },
+   "response": {
+    "code": "333334",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000c1"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000000c1",
+   "status": 408,
+   "response": {
+    "code": "000630",
+    "sqlState": "57014",
+    "message": "Statement reached its statement or warehouse timeout of 600 second(s) and was canceled.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000c1"
+   }
+  }
+ ]
+}

@@ -15,6 +15,7 @@ mod results;
 mod statements;
 #[cfg(test)]
 mod tests;
+mod warehouse;
 
 use std::sync::Arc;
 
@@ -36,8 +37,26 @@ use crate::statements::SnowflakeJobs;
 const PRODUCT: &str = "Snowflake";
 
 /// The cheapest statement that needs the data source's sign-in, account and role, and no
-/// warehouse: `SHOW` commands are answered without one, and Snowflake doesn't bill them.
+/// warehouse, for a data source that names none: `SHOW` commands are answered without one, and
+/// Snowflake doesn't bill them.
 const PROBE: &str = "SHOW DATABASES LIMIT 1";
+
+/// What connecting and each ping run: the data source's warehouse as `SHOW WAREHOUSES` lists
+/// it, which says its size and whether it is suspended without resuming it, or [`PROBE`].
+#[derive(Debug, Clone)]
+enum Probe {
+    Warehouse(String),
+    Account,
+}
+
+impl Probe {
+    fn of(config: &SnowflakeConfig) -> Self {
+        match config.warehouse.trim() {
+            "" => Self::Account,
+            warehouse => Self::Warehouse(warehouse.to_owned()),
+        }
+    }
+}
 
 /// Signs in as `config` says, with `secret` (an encrypted key's passphrase, or the token
 /// itself), and runs a `SHOW` that proves the account answers and accepts the sign-in.
@@ -70,19 +89,35 @@ pub async fn connect(
         database: config.database.clone(),
         schema: config.schema.clone(),
     };
-    let statements = Arc::new(SnowflakeJobs::new(api, context));
+    let statements = Arc::new(SnowflakeJobs::new(
+        api,
+        context,
+        config.cost_guard.stop_after,
+    ));
     let jobs = Jobs::new(Arc::clone(&statements) as Arc<dyn dbrover_core::JobService>);
     let mut connection = SnowflakeConnection {
         server_info: ServerInfo::new(PRODUCT, describe_place(config)),
+        probe: Probe::of(config),
         statements,
         jobs,
     };
-    connection.probe().await.map_err(|error| match error {
+    let warehouse = connection.probe().await.map_err(|error| match error {
         DriverError::Statement { source, .. } | DriverError::Connection(source) => {
             DriverError::Connect(source)
         }
         other => other,
     })?;
+    if let Some(warehouse) = warehouse {
+        let limit = warehouse::own_limit(&connection.jobs, &warehouse.name).await?;
+        connection.server_info.version =
+            format!("{}, {}", describe_place(config), warehouse.describe(limit));
+    } else if !config.warehouse.is_empty() {
+        connection.server_info.version = format!(
+            "{}, warehouse {} (not shown to this role)",
+            describe_place(config),
+            config.warehouse
+        );
+    }
     Ok(connection)
 }
 
@@ -125,6 +160,7 @@ fn describe_place(config: &SnowflakeConfig) -> String {
 /// A console's or the explorer's connection to one Snowflake account.
 pub struct SnowflakeConnection {
     server_info: ServerInfo,
+    probe: Probe,
     /// The statements' own service, whose context a `USE` changes; `jobs` runs them.
     statements: Arc<SnowflakeJobs>,
     jobs: Arc<Jobs>,
@@ -135,9 +171,16 @@ impl SnowflakeConnection {
         Lister { jobs: &self.jobs }
     }
 
-    async fn probe(&mut self) -> Result<(), DriverError> {
-        let cursor = self.jobs.execute(PROBE).await?;
-        cursor.finish().await.map(drop)
+    /// Runs the probe: the data source's warehouse, where it names one and the role can see
+    /// it.
+    async fn probe(&mut self) -> Result<Option<warehouse::Warehouse>, DriverError> {
+        match &self.probe {
+            Probe::Warehouse(name) => warehouse::find(&self.jobs, name).await,
+            Probe::Account => {
+                let cursor = self.jobs.execute(PROBE).await?;
+                cursor.finish().await.map(|_| None)
+            }
+        }
     }
 }
 
@@ -148,7 +191,7 @@ impl Connection for SnowflakeConnection {
     }
 
     async fn ping(&mut self) -> Result<(), DriverError> {
-        self.probe().await
+        self.probe().await.map(drop)
     }
 
     /// The level's first thousand nodes: the explorer pages through the rest with

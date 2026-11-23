@@ -47,6 +47,7 @@ pub use command_template::{CommandTemplate, DataSourceFields};
 pub use connection::{Connection, Rejection, RejectionKind, ServerInfo};
 pub use cost::{
     ByteCount, CostEstimate, CostGuard, FullScan, Precision, ReadPace, ScanEstimate, ScanGuard,
+    TimeLimit,
 };
 pub use data_source::{
     AthenaConfig, AwsSignInKind, BigQueryConfig, CassandraConfig, ClickHouseConfig,

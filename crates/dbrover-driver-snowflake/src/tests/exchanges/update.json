@@ -77,7 +77,8 @@
     "parameters": {
      "query_tag": "DbRover"
     },
-    "statement": "UPDATE orders SET total = 0 WHERE id < 4"
+    "statement": "UPDATE orders SET total = 0 WHERE id < 4",
+    "timeout": "absent"
    },
    "status": 202,
    "response": {

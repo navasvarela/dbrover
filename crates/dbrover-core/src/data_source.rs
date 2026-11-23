@@ -1832,6 +1832,7 @@ mod tests {
             cost_guard: CostGuard {
                 whole_table: ScanGuard::AskBeforeScans,
                 ask_above_bytes: Some(ByteCount(1_000_000_000)),
+                stop_after: None,
             },
             ..BigQueryConfig::default()
         };
@@ -1907,6 +1908,10 @@ mod tests {
             },
             warehouse: "${WAREHOUSE}".to_owned(),
             role: "ANALYST".to_owned(),
+            cost_guard: CostGuard {
+                stop_after: crate::TimeLimit::from_seconds(600),
+                ..CostGuard::default()
+            },
             ..SnowflakeConfig::default()
         };
         let oauth = SnowflakeConfig {
@@ -1920,7 +1925,7 @@ mod tests {
             (
                 key_pair,
                 "driver = \"snowflake\"\naccount = \"myorg-analytics\"\nuser = \"JANE\"\n\
-                 warehouse = \"${WAREHOUSE}\"\nrole = \"ANALYST\"\n\n\
+                 warehouse = \"${WAREHOUSE}\"\nrole = \"ANALYST\"\nstop_after_seconds = 600\n\n\
                  [data_source.sign_in]\nwith = \"key-pair\"\n\
                  private_key_file = \"${KEYS}/rsa_key.p8\"",
                 "Snowflake myorg-analytics as JANE, warehouse ${WAREHOUSE}",
@@ -2018,6 +2023,7 @@ mod tests {
             cost_guard: CostGuard {
                 whole_table: ScanGuard::AskBeforeScans,
                 ask_above_bytes: Some(ByteCount(1_000_000_000)),
+                stop_after: None,
             },
             ..AthenaConfig::default()
         };
@@ -2099,6 +2105,7 @@ mod tests {
             cost_guard: CostGuard {
                 whole_table: ScanGuard::Off,
                 ask_above_bytes: None,
+                stop_after: None,
             },
             ..DynamoDbConfig::default()
         };
@@ -2109,6 +2116,7 @@ mod tests {
             cost_guard: CostGuard {
                 whole_table: ScanGuard::AskBeforeScans,
                 ask_above_bytes: Some(ByteCount(10_000_000_000)),
+                stop_after: None,
             },
             ..DynamoDbConfig::default()
         };

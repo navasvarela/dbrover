@@ -1361,13 +1361,23 @@ account.
   columns' types, `NOT NULL`, defaults and `CLUSTER BY` from `SHOW TABLES` and `SHOW
   COLUMNS`. **Open data** reads `SELECT * FROM DB.SCHEMA.T LIMIT 1000`, quoting only the names
   Snowflake's folding would change.
-- **C5f — The time limit and the warehouse:** `CostGuard` gains the time budget
+- **C5f — The time limit and the warehouse** (built): `CostGuard` gains the time budget
   (`stop_after_seconds`), sent as `timeout`; a 408 explained; Test connection's warehouse,
   size, state and own limit.
   **Exit:** replayed, a statement on a data source with a 10-minute limit is sent with
   `timeout` 600, and one without a limit with none; a 408 fails naming the limit and the
   warehouse; Test connection says *warehouse ANALYTICS_WH, X-Small, suspended*; the limit
   round-trips as `stop_after_seconds`, and a file without it reads as no limit.
+  **As built:** the limit is `CostGuard::stop_after`, a `TimeLimit` of whole seconds that can't
+  be zero (Snowflake reads `0` as its longest, seven days), written as `stop_after_seconds`; it
+  holds nothing back, so `CostGuard::is_on` is unchanged. A data source with a warehouse
+  connects and pings with `SHOW WAREHOUSES LIKE`, and reads the warehouse's own
+  `STATEMENT_TIMEOUT_IN_SECONDS` with `SHOW PARAMETERS … IN WAREHOUSE` when connecting; Test
+  connection says *warehouse ANALYTICS_WH (X-Small, suspended; stops statements after 1 h)*, or
+  that the role sees no warehouse of that name. One without a warehouse still probes with `SHOW
+  DATABASES LIMIT 1`. A statement Snowflake stops without a limit of DbRover's says it was
+  Snowflake's own `STATEMENT_TIMEOUT_IN_SECONDS`. The 408's code and message are a guess in the
+  exchanges, for the live check.
 - **C5g — Snowflake in the data source dialog:** **New data source › Other cloud services ›
   Snowflake**, with **Account**, **User**, **Sign in with** (key pair, programmatic access
   token, or OAuth token from a command), **Private key file** and its passphrase,
