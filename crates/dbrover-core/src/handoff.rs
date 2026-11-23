@@ -137,7 +137,8 @@ impl HandoffSupport {
             | DriverKind::Elasticsearch
             | DriverKind::Cassandra
             | DriverKind::DynamoDb
-            | DriverKind::Trino => None,
+            | DriverKind::Trino
+            | DriverKind::Snowflake => None,
         }
     }
 }

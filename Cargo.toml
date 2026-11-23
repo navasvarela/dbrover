@@ -28,6 +28,7 @@ dbrover-driver-postgres = { path = "crates/dbrover-driver-postgres" }
 dbrover-driver-redis = { path = "crates/dbrover-driver-redis" }
 dbrover-driver-sqlite = { path = "crates/dbrover-driver-sqlite" }
 dbrover-driver-sqlserver = { path = "crates/dbrover-driver-sqlserver" }
+dbrover-driver-snowflake = { path = "crates/dbrover-driver-snowflake" }
 dbrover-driver-trino = { path = "crates/dbrover-driver-trino" }
 dbrover-document = { path = "crates/dbrover-document" }
 dbrover-engine = { path = "crates/dbrover-engine" }
@@ -161,6 +162,9 @@ hmac = "0.13.0"
 sha1 = "0.11.0"
 sha2 = "0.11.1"
 base64 = "0.22.1"
+# Snowflake's SQL API sends a result's later partitions gzipped (C5d): the version, with its
+# default Rust backend, mysql_async and the updater already build.
+flate2 = "1.1.10"
 jiff = "0.2.38"
 keyring = "4.2.0"
 # Templates in exports.toml (W8c, docs/exports.md): Jinja's syntax, with no dependencies of its

@@ -66,6 +66,11 @@ pub enum Setting {
     Project,
     Dataset,
     Location,
+    /// A Snowflake account, its user's private key file, warehouse and role (C5).
+    Account,
+    PrivateKeyFile,
+    Warehouse,
+    Role,
 }
 
 impl fmt::Display for Setting {
@@ -99,6 +104,10 @@ impl fmt::Display for Setting {
             Self::Project => "the project",
             Self::Dataset => "the dataset",
             Self::Location => "the location",
+            Self::Account => "the account",
+            Self::PrivateKeyFile => "the private key file",
+            Self::Warehouse => "the warehouse",
+            Self::Role => "the role",
         })
     }
 }

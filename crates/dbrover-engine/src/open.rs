@@ -7,7 +7,8 @@ use std::time::Duration;
 
 use dbrover_core::{
     Connection, ConnectionConfig, DataSource, DataSourceId, DriverError, Password, PasswordCommand,
-    PlaceholderError, Route, ServerConfig, ServerInfo, SshConfig, SshLogin, describe_error,
+    PlaceholderError, Route, ServerConfig, ServerInfo, SnowflakeConfig, SnowflakeSignIn, SshConfig,
+    SshLogin, describe_error,
 };
 use dbrover_ssh::{HostKey, SshError, Tunnel, TunnelRequest};
 use dbrover_store::{Secret, SecretError, SecretStore};
@@ -157,8 +158,11 @@ async fn database_password(
     typed: &TypedSecrets,
     connector: Connector<'_>,
 ) -> Result<Option<Password>, OpenError> {
+    if no_passphrase_needed(config) {
+        return Ok(None);
+    }
     let server = config.server();
-    let command = server.and_then(|server| server.password_command.as_ref());
+    let command = config.password_command();
     let cloud = server.and_then(|server| Some((server, server.cloud_sign_in.as_ref()?)));
     match (cloud, command, &typed.password) {
         (Some(_), Some(_), _) => Err(CloudSignInError::Both.into()),
@@ -178,6 +182,19 @@ async fn database_password(
             )
             .await
         }
+    }
+}
+
+/// Whether the data source signs in to Snowflake with a key that isn't encrypted, so its
+/// password, the passphrase, is never asked for: the keychain is left alone, as an SSH key
+/// file's passphrase is until the key turns out to need one.
+fn no_passphrase_needed(config: &ConnectionConfig) -> bool {
+    match config {
+        ConnectionConfig::Snowflake(SnowflakeConfig {
+            sign_in: SnowflakeSignIn::KeyPair { private_key_file },
+            ..
+        }) => !dbrover_cloud::snowflake::is_encrypted(private_key_file),
+        _ => false,
     }
 }
 
@@ -363,6 +380,10 @@ async fn connect(
         // BigQuery's REST API is Google's, reached directly over HTTPS, as AWS's are.
         ConnectionConfig::BigQuery(config) => {
             Box::new(dbrover_driver_bigquery::connect(config).await?)
+        }
+        // So is Snowflake's SQL API: over HTTPS to the account's own host.
+        ConnectionConfig::Snowflake(config) => {
+            Box::new(dbrover_driver_snowflake::connect(config, password).await?)
         }
     })
 }

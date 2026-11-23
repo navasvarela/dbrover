@@ -97,7 +97,8 @@ pub fn mode(driver: DriverKind, storage: Storage) -> Option<ReadOnlyMode> {
             | DriverKind::DynamoDb
             | DriverKind::Athena
             | DriverKind::Trino
-            | DriverKind::BigQuery,
+            | DriverKind::BigQuery
+            | DriverKind::Snowflake,
             _,
         ) => None,
     }
@@ -149,6 +150,10 @@ pub fn read_only_login(driver: DriverKind) -> &'static str {
         DriverKind::BigQuery => {
             "a credentials file whose account has only the BigQuery Data Viewer and BigQuery Job \
              User roles"
+        }
+        DriverKind::Snowflake => {
+            "a user whose role is granted only SELECT on the tables and views, and USAGE on \
+             their databases, schemas and the warehouse"
         }
         DriverKind::Postgres
         | DriverKind::Sqlite
@@ -398,7 +403,8 @@ mod tests {
                 | DriverKind::DynamoDb
                 | DriverKind::Athena
                 | DriverKind::Trino
-                | DriverKind::BigQuery => guard == Guard::Login,
+                | DriverKind::BigQuery
+                | DriverKind::Snowflake => guard == Guard::Login,
             };
             assert!(expected, "{driver:?}: {guard:?}");
         }

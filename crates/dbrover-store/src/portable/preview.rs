@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 
 use dbrover_core::{
     ConnectionConfig, DataSource, DataSourceId, DuckDbDatabase, GcsBucket, GoogleCloudSignIn,
-    ObjectStorage, ProjectId, ServerConfig, SshLogin, TlsMode, Variables, expand_path,
+    ObjectStorage, ProjectId, ServerConfig, SnowflakeSignIn, SshLogin, TlsMode, Variables,
+    expand_path,
 };
 
 use super::Incoming;
@@ -525,6 +526,29 @@ fn data_source_settings(data_source: &DataSource, names: &ProjectNames) -> Setti
             }
             settings.push(("Endpoint", or_default(&config.endpoint, "Google's own")));
         }
+        ConnectionConfig::Snowflake(config) => {
+            settings.push(("Account", config.account.clone()));
+            settings.push(("User", config.user.clone()));
+            let signs_in = match &config.sign_in {
+                SnowflakeSignIn::KeyPair { private_key_file } => {
+                    format!("key pair {}", private_key_file.display())
+                }
+                SnowflakeSignIn::ProgrammaticAccessToken => {
+                    "a programmatic access token".to_owned()
+                }
+                SnowflakeSignIn::OAuth => "an OAuth token".to_owned(),
+            };
+            settings.push(("Signs in with", signs_in));
+            for (name, value) in [
+                ("Warehouse", &config.warehouse),
+                ("Role", &config.role),
+                ("Database", &config.database),
+                ("Schema", &config.schema),
+            ] {
+                settings.push((name, or_default(value, "the user's default")));
+            }
+            settings.push(("Endpoint", or_default(&config.endpoint, "Snowflake's own")));
+        }
         ConnectionConfig::Sqlite(config) => {
             settings.push(("File", config.path.display().to_string()));
             settings.push(("Read-only", yes_no(config.read_only)));
@@ -621,6 +645,14 @@ fn paths(config: &ConnectionConfig) -> Vec<(&'static str, &Path)> {
     let server = match config {
         ConnectionConfig::Sqlite(config) => return vec![("File", &config.path)],
         ConnectionConfig::DynamoDb(_) | ConnectionConfig::Athena(_) => return Vec::new(),
+        ConnectionConfig::Snowflake(config) => {
+            return match &config.sign_in {
+                SnowflakeSignIn::KeyPair { private_key_file } => {
+                    vec![("Private key file", private_key_file.as_path())]
+                }
+                SnowflakeSignIn::ProgrammaticAccessToken | SnowflakeSignIn::OAuth => Vec::new(),
+            };
+        }
         ConnectionConfig::BigQuery(config) => {
             return match &config.sign_in {
                 GoogleCloudSignIn::CredentialsFile { credentials_file } => {

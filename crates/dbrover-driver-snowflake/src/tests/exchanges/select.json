@@ -1,0 +1,295 @@
+{
+ "doc": "A query submitted with the data source's context, polled through a 202 while it runs to the 200 that ends it, and paged over three partitions: the first with the result, the other two fetched by their index and gzipped.",
+ "exchanges": [
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "parameters": {
+     "query_tag": "DbRover"
+    },
+    "statement": "SHOW DATABASES LIMIT 1"
+   },
+   "status": 202,
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress. Use provided query id to perform query monitoring and management.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000aa",
+    "statementStatusUrl": "/api/v2/statements/01b0e8a3-0000-4c2b-0000-0000000000aa"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000000aa",
+   "status": 200,
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000aa",
+    "createdOn": 1767323045000,
+    "statementStatusUrl": "/api/v2/statements/01b0e8a3-0000-4c2b-0000-0000000000aa",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "timestamp_ltz",
+       "scale": 3,
+       "precision": 0,
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "length": 16777216,
+       "nullable": false
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1,
+       "uncompressedSize": 100
+      }
+     ]
+    },
+    "data": [
+     [
+      "1767323045.000",
+      "SHOP"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "parameters": {
+     "query_tag": "DbRover"
+    },
+    "statement": "SELECT id, name, placed, day, at, when_tz, total, payload, photo, paid FROM orders ORDER BY id",
+    "warehouse": "ANALYTICS_WH"
+   },
+   "status": 202,
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress. Use provided query id to perform query monitoring and management.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000002",
+    "statementStatusUrl": "/api/v2/statements/01b0e8a3-0000-4c2b-0000-000000000002"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000002",
+   "status": 202,
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000002",
+    "statementStatusUrl": "/api/v2/statements/01b0e8a3-0000-4c2b-0000-000000000002"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000002",
+   "status": 200,
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000002",
+    "createdOn": 1767323045000,
+    "statementStatusUrl": "/api/v2/statements/01b0e8a3-0000-4c2b-0000-000000000002",
+    "resultSetMetaData": {
+     "numRows": 3,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "ID",
+       "type": "fixed",
+       "precision": 38,
+       "scale": 0,
+       "nullable": false
+      },
+      {
+       "name": "NAME",
+       "type": "text",
+       "length": 100,
+       "nullable": true
+      },
+      {
+       "name": "PLACED",
+       "type": "timestamp_ntz",
+       "precision": 0,
+       "scale": 3,
+       "nullable": true
+      },
+      {
+       "name": "DAY",
+       "type": "date",
+       "nullable": true
+      },
+      {
+       "name": "AT",
+       "type": "time",
+       "scale": 0,
+       "nullable": true
+      },
+      {
+       "name": "WHEN_TZ",
+       "type": "timestamp_tz",
+       "scale": 3,
+       "nullable": true
+      },
+      {
+       "name": "TOTAL",
+       "type": "fixed",
+       "precision": 10,
+       "scale": 2,
+       "nullable": true
+      },
+      {
+       "name": "PAYLOAD",
+       "type": "variant",
+       "nullable": true
+      },
+      {
+       "name": "PHOTO",
+       "type": "binary",
+       "nullable": true
+      },
+      {
+       "name": "PAID",
+       "type": "boolean",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 3,
+       "uncompressedSize": 400
+      },
+      {
+       "rowCount": 2,
+       "uncompressedSize": 200,
+       "compressedSize": 120
+      },
+      {
+       "rowCount": 1,
+       "uncompressedSize": 100,
+       "compressedSize": 80
+      }
+     ]
+    },
+    "data": [
+     [
+      "99999999999999999999",
+      "Ada",
+      "1767323045.123",
+      "20455",
+      "49530.000000000",
+      "1616173619.000000000 1500",
+      "1.50",
+      "{\n  \"tags\": [\n    \"new\"\n  ]\n}",
+      "DBF00D",
+      "true"
+     ],
+     [
+      "2",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     [
+      "3",
+      "",
+      "-1.500",
+      "-1",
+      "0.000000000",
+      "0.000000000 1440",
+      "0.00",
+      "[]",
+      "",
+      "false"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000002",
+   "query": {
+    "partition": "1"
+   },
+   "gzip": true,
+   "response": {
+    "data": [
+     [
+      "4",
+      "Grace",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     [
+      "5",
+      "Edsger",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000002",
+   "query": {
+    "partition": "2"
+   },
+   "gzip": true,
+   "response": {
+    "data": [
+     [
+      "6",
+      "Barbara",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    ]
+   }
+  }
+ ]
+}

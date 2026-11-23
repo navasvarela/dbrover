@@ -1,0 +1,143 @@
+{
+ "doc": "A submission Snowflake answers with 429 is sent again with the same requestId and retry=true.",
+ "exchanges": [
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "parameters": {
+     "query_tag": "DbRover"
+    },
+    "statement": "SHOW DATABASES LIMIT 1"
+   },
+   "status": 202,
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress. Use provided query id to perform query monitoring and management.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000aa",
+    "statementStatusUrl": "/api/v2/statements/01b0e8a3-0000-4c2b-0000-0000000000aa"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000000aa",
+   "status": 200,
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000aa",
+    "createdOn": 1767323045000,
+    "statementStatusUrl": "/api/v2/statements/01b0e8a3-0000-4c2b-0000-0000000000aa",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "timestamp_ltz",
+       "scale": 3,
+       "precision": 0,
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "length": 16777216,
+       "nullable": false
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1,
+       "uncompressedSize": 100
+      }
+     ]
+    },
+    "data": [
+     [
+      "1767323045.000",
+      "SHOP"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "parameters": {
+     "query_tag": "DbRover"
+    },
+    "statement": "SELECT 1"
+   },
+   "status": 429,
+   "response": {
+    "code": "390505",
+    "message": "Too many requests."
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{request}",
+    "retry": "true",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SELECT 1"
+   },
+   "status": 202,
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000006"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000006",
+   "status": 200,
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000006",
+    "createdOn": 1767323045000,
+    "statementStatusUrl": "/api/v2/statements/01b0e8a3-0000-4c2b-0000-000000000006",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "N",
+       "type": "fixed",
+       "precision": 1,
+       "scale": 0
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1,
+       "uncompressedSize": 100
+      }
+     ]
+    },
+    "data": [
+     [
+      "1"
+     ]
+    ]
+   }
+  }
+ ]
+}

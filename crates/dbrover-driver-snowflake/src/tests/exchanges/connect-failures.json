@@ -1,0 +1,24 @@
+{
+ "doc": "A JWT Snowflake refuses fails connecting with Snowflake's message.",
+ "exchanges": [
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "parameters": {
+     "query_tag": "DbRover"
+    },
+    "statement": "SHOW DATABASES LIMIT 1"
+   },
+   "status": 401,
+   "response": {
+    "code": "390144",
+    "message": "JWT token is invalid. [d2c6e4b0-8f2a-4b6c-9a1e-0c3f5d7e9b21]"
+   }
+  }
+ ]
+}

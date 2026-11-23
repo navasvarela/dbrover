@@ -67,6 +67,9 @@ fn explaining(
         DriverKind::BigQuery => {
             Explaining::Unexplained("BigQuery has no EXPLAIN; its dry run's estimate is below.")
         }
+        DriverKind::Snowflake => Explaining::Unexplained(
+            "Snowflake compiles an EXPLAIN as cloud services, which it may bill, so it isn't run.",
+        ),
         DriverKind::Postgres
         | DriverKind::Mysql
         | DriverKind::SqlServer

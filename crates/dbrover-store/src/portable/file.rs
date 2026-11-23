@@ -15,8 +15,8 @@ use dbrover_core::{
     CostGuard, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase, DynamoDbConfig,
     ElasticsearchAuth, ElasticsearchConfig, GcsBucket, GoogleCloudSignIn, McpLogin, MongoConfig,
     MysqlConfig, ObjectStorage, PasswordCommand, Port, PostgresConfig, ProjectId, RedisConfig,
-    SafetyLevel, ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin,
-    TlsMode, TrinoConfig, TrinoProtocol,
+    SafetyLevel, ServerConfig, SnowflakeConfig, SnowflakeSignIn, SourceColor, SqlServerConfig,
+    SqliteConfig, SshConfig, SshLogin, TlsMode, TrinoConfig, TrinoProtocol,
 };
 use serde::{Deserialize, Serialize};
 
@@ -178,6 +178,9 @@ enum PortableConfig {
     /// As written, its credentials file, if it names one, moved as every other path is.
     #[serde(rename = "bigquery")]
     BigQuery(BigQueryConfig),
+    /// As written, its private key file, if it signs in with one, moved as every other path
+    /// is. The passphrase or token is the password, which never travels.
+    Snowflake(SnowflakeConfig),
 }
 
 impl PortableConfig {
@@ -231,6 +234,10 @@ impl PortableConfig {
             ConnectionConfig::Athena(config) => Self::Athena(config.clone()),
             ConnectionConfig::BigQuery(config) => Self::BigQuery(BigQueryConfig {
                 sign_in: portable_google_sign_in(&config.sign_in, path),
+                ..config.clone()
+            }),
+            ConnectionConfig::Snowflake(config) => Self::Snowflake(SnowflakeConfig {
+                sign_in: portable_snowflake_sign_in(&config.sign_in, path),
                 ..config.clone()
             }),
             ConnectionConfig::Trino(TrinoConfig {
@@ -324,6 +331,10 @@ impl PortableConfig {
             Self::Athena(config) => ConnectionConfig::Athena(config),
             Self::BigQuery(config) => ConnectionConfig::BigQuery(BigQueryConfig {
                 sign_in: portable_google_sign_in(&config.sign_in, path),
+                ..config
+            }),
+            Self::Snowflake(config) => ConnectionConfig::Snowflake(SnowflakeConfig {
+                sign_in: portable_snowflake_sign_in(&config.sign_in, path),
                 ..config
             }),
             Self::Trino(PortableTrino {
@@ -664,6 +675,18 @@ fn portable_google_sign_in(
                 credentials_file: path(credentials_file),
             }
         }
+        other => other.clone(),
+    }
+}
+
+fn portable_snowflake_sign_in(
+    sign_in: &SnowflakeSignIn,
+    path: &impl Fn(&Path) -> PathBuf,
+) -> SnowflakeSignIn {
+    match sign_in {
+        SnowflakeSignIn::KeyPair { private_key_file } => SnowflakeSignIn::KeyPair {
+            private_key_file: path(private_key_file),
+        },
         other => other.clone(),
     }
 }

@@ -2648,6 +2648,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "dbrover-driver-snowflake"
+version = "0.36.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "dbrover-cloud",
+ "dbrover-core",
+ "flate2",
+ "jiff",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "dbrover-driver-sqlite"
 version = "0.36.0"
 dependencies = [
@@ -2718,6 +2736,7 @@ dependencies = [
  "dbrover-driver-mysql",
  "dbrover-driver-postgres",
  "dbrover-driver-redis",
+ "dbrover-driver-snowflake",
  "dbrover-driver-sqlite",
  "dbrover-driver-sqlserver",
  "dbrover-driver-trino",
