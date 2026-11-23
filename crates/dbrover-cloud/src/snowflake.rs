@@ -141,6 +141,14 @@ impl KeyPair {
     }
 }
 
+/// Whether the key file at `path` is encrypted, so that reading it needs its passphrase: the
+/// engine asks the keychain for one only then. A file that can't be read says no, and reading
+/// it says why.
+pub fn is_encrypted(path: &Path) -> bool {
+    std::fs::read_to_string(path)
+        .is_ok_and(|pem| Pem::parse(&pem).is_ok_and(|block| block.label == "ENCRYPTED PRIVATE KEY"))
+}
+
 /// Why a key's text couldn't be used, before the file's name is added.
 #[derive(Debug)]
 enum KeyFailure {
@@ -488,6 +496,14 @@ mod tests {
         assert!(ec.contains("it isn't an RSA key"), "{ec}");
         let text = message("not a key", None);
         assert!(text.ends_with("it isn't a PEM file"), "{text}");
+    }
+
+    #[test]
+    fn only_an_encrypted_key_needs_its_passphrase() {
+        let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/snowflake");
+        assert!(is_encrypted(&folder.join("key-aes.p8")));
+        assert!(!is_encrypted(&folder.join("key.p8")));
+        assert!(!is_encrypted(&folder.join("missing.p8")));
     }
 
     #[test]

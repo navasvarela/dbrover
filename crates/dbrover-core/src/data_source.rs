@@ -221,6 +221,8 @@ pub enum ConnectionConfig {
     /// Google BigQuery, over its REST API (C4).
     #[serde(rename = "bigquery")]
     BigQuery(BigQueryConfig),
+    /// Snowflake, over its SQL API (C5).
+    Snowflake(SnowflakeConfig),
 }
 
 impl ConnectionConfig {
@@ -254,6 +256,8 @@ impl ConnectionConfig {
             Self::DynamoDb(config) => Some(config.cost_guard),
             Self::Athena(config) => Some(config.cost_guard),
             Self::BigQuery(config) => Some(config.cost_guard),
+            // Its time limit (C5f); Snowflake bills time, so nothing estimates bytes on it.
+            Self::Snowflake(config) => Some(config.cost_guard),
             // Only a lake in its bucket is judged by it (RS7); its own statements read what
             // they name, on this machine or in a database file.
             Self::DuckDb(config) => Some(config.cost_guard),
@@ -288,6 +292,15 @@ impl ConnectionConfig {
         }
     }
 
+    /// The program run for the password on every connection, where the data source has one:
+    /// a server's (W9), or the one that prints a Snowflake data source's token (C5).
+    pub fn password_command(&self) -> Option<&PasswordCommand> {
+        match self {
+            Self::Snowflake(config) => config.password_command.as_ref(),
+            other => other.server()?.password_command.as_ref(),
+        }
+    }
+
     /// Where the server is, for engines that connect over the network.
     pub fn server(&self) -> Option<&ServerConfig> {
         match self {
@@ -304,7 +317,8 @@ impl ConnectionConfig {
             | Self::DuckDb(_)
             | Self::DynamoDb(_)
             | Self::Athena(_)
-            | Self::BigQuery(_) => None,
+            | Self::BigQuery(_)
+            | Self::Snowflake(_) => None,
         }
     }
 
@@ -323,7 +337,8 @@ impl ConnectionConfig {
             | Self::DuckDb(_)
             | Self::DynamoDb(_)
             | Self::Athena(_)
-            | Self::BigQuery(_) => None,
+            | Self::BigQuery(_)
+            | Self::Snowflake(_) => None,
         }
     }
 
@@ -343,6 +358,7 @@ impl ConnectionConfig {
             Self::Athena(_) => DriverKind::Athena,
             Self::BigQuery(_) => DriverKind::BigQuery,
             Self::Trino(_) => DriverKind::Trino,
+            Self::Snowflake(_) => DriverKind::Snowflake,
         }
     }
 
@@ -367,6 +383,9 @@ impl ConnectionConfig {
             // Trino's catalogs are its top level, listed whole, as Athena's are.
             // BigQuery's projects are its top level, as Trino's catalogs are.
             Self::DynamoDb(_) | Self::Athena(_) | Self::Trino(_) | Self::BigQuery(_) => None,
+            // The explorer lists every database the role can see, as Trino's catalogs; the
+            // data source's own is the one its statements start in.
+            Self::Snowflake(_) => None,
         }
     }
 
@@ -399,6 +418,8 @@ impl ConnectionConfig {
             Self::BigQuery(config) => &config.dataset,
             // The schema a console starts in, in the catalog its server settings name.
             Self::Trino(config) => &config.schema,
+            // The schema a console starts in, which `USE` changes (C5d).
+            Self::Snowflake(config) => &config.schema,
         }
     }
 
@@ -454,6 +475,7 @@ impl ConnectionConfig {
             Self::DynamoDb(config) => Self::DynamoDb(config.resolve(variables)?),
             Self::Athena(config) => Self::Athena(config.resolve(variables)?),
             Self::BigQuery(config) => Self::BigQuery(config.resolve(variables)?),
+            Self::Snowflake(config) => Self::Snowflake(config.resolve(variables)?),
             Self::Trino(config) => Self::Trino(TrinoConfig {
                 server: config.server.resolve(variables)?,
                 schema: expand(&config.schema, variables)
@@ -509,6 +531,7 @@ impl ConnectionConfig {
             Self::DynamoDb(config) => config.default_name(),
             Self::Athena(config) => config.default_name(),
             Self::BigQuery(config) => config.project.clone(),
+            Self::Snowflake(config) => config.default_name(),
             // `catalog@host`, or the host alone when no catalog is chosen.
             Self::Trino(config) if config.server.database.is_empty() => config.server.host.clone(),
             Self::Trino(config) => config.server.default_name(),
@@ -544,6 +567,8 @@ impl DriverKind {
             | Self::Elasticsearch
             | Self::Cassandra
             | Self::Trino => true,
+            // An encrypted key's passphrase, or a programmatic access or OAuth token (C5).
+            Self::Snowflake => true,
             // AWS's SDK signs DynamoDB's and Athena's requests with what the profile names.
             // Google's token is BigQuery's, from C0b's sign-in.
             Self::Sqlite | Self::DuckDb | Self::DynamoDb | Self::Athena | Self::BigQuery => false,
@@ -569,6 +594,7 @@ impl fmt::Display for ConnectionConfig {
             Self::DynamoDb(config) => config.fmt(f),
             Self::Athena(config) => config.fmt(f),
             Self::BigQuery(config) => config.fmt(f),
+            Self::Snowflake(config) => config.fmt(f),
             Self::Trino(config) => config.server.fmt(f),
             Self::Sqlite(config) if config.read_only => {
                 write!(f, "{} (read-only)", config.path.display())
@@ -1346,6 +1372,118 @@ impl fmt::Display for BigQueryConfig {
     }
 }
 
+/// Snowflake, over its SQL API (`docs/cloud-data.md`, C5). The secret, when there is one, is the
+/// data source's password, in the keychain or printed by its password command: an encrypted
+/// key's passphrase, or a programmatic access or OAuth token. Nothing in this is secret.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnowflakeConfig {
+    /// The account identifier in Snowflake's host name: `myorg-myaccount`, or a locator with
+    /// its region (`xy12345.us-east-2.aws`).
+    pub account: String,
+    pub user: String,
+    pub sign_in: SnowflakeSignIn,
+    /// A program to run for the token on every connection, in place of the keychain's: an
+    /// identity provider's CLI for an OAuth token. Written only when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_command: Option<PasswordCommand>,
+    /// The warehouse, role, database and schema each statement is sent with until a console's
+    /// `USE` changes them; empty for the user's defaults. Snowflake reads them case-sensitively,
+    /// so they are sent as typed.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub warehouse: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub role: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub database: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub schema: String,
+    /// An address instead of `https://<account>.snowflakecomputing.com`: a private endpoint,
+    /// or a test server.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub endpoint: String,
+    /// Written only where it differs from the default (C0e).
+    #[serde(flatten)]
+    pub cost_guard: CostGuard,
+}
+
+impl SnowflakeConfig {
+    fn resolve(&self, variables: &dyn Variables) -> Result<Self, PlaceholderError> {
+        let expand_setting = |text: &str, setting| {
+            expand(text, variables).map_err(PlaceholderError::in_setting(setting))
+        };
+        Ok(Self {
+            account: expand_setting(&self.account, Setting::Account)?,
+            user: expand_setting(&self.user, Setting::User)?,
+            sign_in: self.sign_in.resolve(variables)?,
+            password_command: self.password_command.clone(),
+            warehouse: expand_setting(&self.warehouse, Setting::Warehouse)?,
+            role: expand_setting(&self.role, Setting::Role)?,
+            database: expand_setting(&self.database, Setting::Database)?,
+            schema: expand_setting(&self.schema, Setting::Schema)?,
+            endpoint: expand_setting(&self.endpoint, Setting::Endpoint)?,
+            cost_guard: self.cost_guard,
+        })
+    }
+
+    /// `ANALYTICS@myorg-myaccount`, or the account alone without a database.
+    fn default_name(&self) -> String {
+        match self.database.as_str() {
+            "" => self.account.clone(),
+            database => format!("{database}@{}", self.account),
+        }
+    }
+}
+
+/// `Snowflake myorg-myaccount as JANE, warehouse ANALYTICS_WH`, or what of it is set.
+impl fmt::Display for SnowflakeConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Snowflake {}", self.account)?;
+        if !self.endpoint.is_empty() {
+            write!(f, " at {}", self.endpoint)?;
+        }
+        write!(f, " as {}", self.user)?;
+        if !self.warehouse.is_empty() {
+            write!(f, ", warehouse {}", self.warehouse)?;
+        }
+        Ok(())
+    }
+}
+
+/// How a Snowflake data source signs in to the SQL API, which takes no password.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "with", rename_all = "kebab-case")]
+pub enum SnowflakeSignIn {
+    /// A JWT DbRover signs with the user's private key, whose public half is registered on the
+    /// user; an encrypted key's passphrase is the data source's password.
+    KeyPair { private_key_file: PathBuf },
+    /// A programmatic access token, kept as the data source's password.
+    ProgrammaticAccessToken,
+    /// An OAuth access token, kept as the data source's password or printed by its password
+    /// command.
+    #[serde(rename = "oauth")]
+    OAuth,
+}
+
+impl Default for SnowflakeSignIn {
+    fn default() -> Self {
+        Self::KeyPair {
+            private_key_file: PathBuf::new(),
+        }
+    }
+}
+
+impl SnowflakeSignIn {
+    fn resolve(&self, variables: &dyn Variables) -> Result<Self, PlaceholderError> {
+        Ok(match self {
+            Self::KeyPair { private_key_file } => Self::KeyPair {
+                private_key_file: expand_path(private_key_file, variables)
+                    .map_err(PlaceholderError::in_setting(Setting::PrivateKeyFile))?,
+            },
+            other => other.clone(),
+        })
+    }
+}
+
 /// Whom a data source on an AWS service (DynamoDB, Athena) signs in as.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -1486,10 +1624,11 @@ pub enum DriverKind {
     Athena,
     Trino,
     BigQuery,
+    Snowflake,
 }
 
 impl DriverKind {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::Postgres,
         Self::Sqlite,
         Self::Mysql,
@@ -1504,6 +1643,7 @@ impl DriverKind {
         Self::Athena,
         Self::Trino,
         Self::BigQuery,
+        Self::Snowflake,
     ];
 
     pub fn display_name(self) -> &'static str {
@@ -1522,6 +1662,7 @@ impl DriverKind {
             Self::Athena => "Amazon Athena",
             Self::Trino => "Trino / Presto",
             Self::BigQuery => "BigQuery",
+            Self::Snowflake => "Snowflake",
         }
     }
 }
@@ -1752,6 +1893,81 @@ mod tests {
             as_reader.sign_in,
             GoogleCloudSignIn::CredentialsFile {
                 credentials_file: "/keys/reader.json".into()
+            }
+        );
+    }
+
+    #[test]
+    fn a_snowflake_data_source_round_trips_and_resolves() {
+        let key_pair = SnowflakeConfig {
+            account: "myorg-analytics".to_owned(),
+            user: "JANE".to_owned(),
+            sign_in: SnowflakeSignIn::KeyPair {
+                private_key_file: "${KEYS}/rsa_key.p8".into(),
+            },
+            warehouse: "${WAREHOUSE}".to_owned(),
+            role: "ANALYST".to_owned(),
+            ..SnowflakeConfig::default()
+        };
+        let oauth = SnowflakeConfig {
+            account: "xy12345.us-east-2.aws".to_owned(),
+            user: "jane@example.com".to_owned(),
+            sign_in: SnowflakeSignIn::OAuth,
+            database: "SHOP".to_owned(),
+            ..SnowflakeConfig::default()
+        };
+        for (config, written, shown, named) in [
+            (
+                key_pair,
+                "driver = \"snowflake\"\naccount = \"myorg-analytics\"\nuser = \"JANE\"\n\
+                 warehouse = \"${WAREHOUSE}\"\nrole = \"ANALYST\"\n\n\
+                 [data_source.sign_in]\nwith = \"key-pair\"\n\
+                 private_key_file = \"${KEYS}/rsa_key.p8\"",
+                "Snowflake myorg-analytics as JANE, warehouse ${WAREHOUSE}",
+                "myorg-analytics",
+            ),
+            (
+                oauth,
+                "[data_source.sign_in]\nwith = \"oauth\"",
+                "Snowflake xy12345.us-east-2.aws as jane@example.com",
+                "SHOP@xy12345.us-east-2.aws",
+            ),
+        ] {
+            let file = File {
+                data_source: vec![DataSource {
+                    id: DataSourceId::generate(),
+                    name: "warehouse".to_owned(),
+                    color: None,
+                    safety: SafetyLevel::Normal,
+                    project: None,
+                    mcp_login: None,
+                    config: ConnectionConfig::Snowflake(config),
+                }],
+            };
+            let text = toml::to_string(&file).unwrap();
+            assert!(text.contains(written), "{text}");
+            assert_eq!(toml::from_str::<File>(&text).unwrap(), file);
+            let config = &file.data_source[0].config;
+            assert_eq!(config.to_string(), shown);
+            assert_eq!(config.default_name(), named);
+            assert_eq!(config.driver(), DriverKind::Snowflake);
+        }
+        let config = ConnectionConfig::Snowflake(SnowflakeConfig {
+            sign_in: SnowflakeSignIn::KeyPair {
+                private_key_file: "${KEYS}/rsa_key.p8".into(),
+            },
+            warehouse: "${WAREHOUSE}".to_owned(),
+            ..SnowflakeConfig::default()
+        });
+        let variables = Fixed::new(&[("WAREHOUSE", "BIG_WH"), ("KEYS", "/keys")]);
+        let ConnectionConfig::Snowflake(resolved) = config.resolve(&variables).unwrap() else {
+            panic!("not Snowflake");
+        };
+        assert_eq!(resolved.warehouse, "BIG_WH");
+        assert_eq!(
+            resolved.sign_in,
+            SnowflakeSignIn::KeyPair {
+                private_key_file: "/keys/rsa_key.p8".into()
             }
         );
     }

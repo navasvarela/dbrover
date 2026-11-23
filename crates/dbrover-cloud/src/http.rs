@@ -192,6 +192,24 @@ impl Https {
         token: Option<&Password>,
         body: Option<String>,
     ) -> Result<Answer, HttpError> {
+        self.json_with_headers(address, token, &[], body).await
+    }
+
+    /// As [`Https::json_with_token`], with `headers` of the API's own besides: Snowflake's
+    /// asks for a `User-Agent` and the kind of token in `X-Snowflake-Authorization-Token-Type`
+    /// (`docs/cloud-data.md`, C5d).
+    ///
+    /// # Errors
+    ///
+    /// As [`Https::json_with_token`], and [`HttpError::BadAddress`] for a header that can't be
+    /// sent.
+    pub async fn json_with_headers(
+        &self,
+        address: &str,
+        token: Option<&Password>,
+        headers: &[(&str, &str)],
+        body: Option<String>,
+    ) -> Result<Answer, HttpError> {
         let uri = match token {
             Some(_) => sendable(address)?,
             None => address
@@ -206,13 +224,20 @@ impl Https {
         let mut request = Request::new(Full::new(Bytes::from(body.unwrap_or_default())));
         *request.method_mut() = method;
         *request.uri_mut() = uri;
-        let headers = request.headers_mut();
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        let sent = request.headers_mut();
+        sent.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        for (name, value) in headers {
+            let name = HeaderName::from_bytes(name.as_bytes())
+                .map_err(|_| HttpError::BadAddress(address.to_owned()))?;
+            let value = HeaderValue::from_str(value)
+                .map_err(|_| HttpError::BadAddress(address.to_owned()))?;
+            sent.insert(name, value);
+        }
         if let Some(token) = token {
             let mut value = HeaderValue::from_str(&format!("Bearer {}", token.expose()))
                 .map_err(|_| HttpError::BadAddress(address.to_owned()))?;
             value.set_sensitive(true);
-            headers.insert(AUTHORIZATION, value);
+            sent.insert(AUTHORIZATION, value);
         }
         self.send(request).await
     }

@@ -1317,7 +1317,7 @@ account.
   `TokenCache`, and `SnowflakeSignIn` hands out the bearer token and its `TokenType` for the
   header. The test keys, and the `openssl` commands that made them and their fingerprint, are
   in `crates/dbrover-cloud/testdata/snowflake/`.
-- **C5d — Snowflake: settings and statements as jobs:** `ConnectionConfig::Snowflake` and
+- **C5d — Snowflake: settings and statements as jobs** (built): `ConnectionConfig::Snowflake` and
   `DriverKind::Snowflake` with the account, user, sign-in, warehouse, role, database, schema,
   an endpoint for the replay server, and C0's cost guard; a `dbrover-driver-snowflake` crate
   implementing `JobService` over `dbrover-cloud`'s client: `async=true` with DbRover's
@@ -1331,6 +1331,17 @@ account.
   says how many rows it changed; a 422's message reaches the console at its line and position;
   cancel posts to the handle; `USE WAREHOUSE` changes what the next statement sends and not
   another connection's; a 429 is retried; the settings round-trip through `data_sources.toml`.
+  **As built:** the settings are a data source's `account`, `user`, `sign_in` (`with =
+  "key-pair"` and its `private_key_file`, `"programmatic-access-token"` or `"oauth"`), a
+  `password_command` for an OAuth token, `warehouse`, `role`, `database`, `schema` and
+  `endpoint`; the passphrase or token is the data source's password, and the engine looks for
+  a passphrase only once the key file turns out to be encrypted, as for an SSH key.
+  Connecting runs `SHOW DATABASES LIMIT 1`, which needs no warehouse. A `NUMBER` keeps its
+  digits, a `TIMESTAMP_TZ` shows its offset as `+01:00`, and a `TIMESTAMP_LTZ` is written in UTC
+  with a `Z`. A `USE` answers with one row saying what later statements use. The dialog's rows,
+  Snowflake's logo (Simple Icons') and its place under **Other cloud services** came forward
+  from C5g, as the compiler asked for them; the time limit, the MCP role and the kittest stay
+  there. The explorer lists nothing until C5e.
 - **C5e — Databases, schemas and objects in the explorer:** the levels above from `SHOW`,
   paged with `LIMIT … FROM`, the filter as `LIKE`; columns with their types; **Show
   definition**; **Found on the server**; **Open data**.

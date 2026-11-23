@@ -156,6 +156,22 @@ Each driver crate runs the suite against its own backend:
   `walk_catalog`, `check_invalid_path` and a query read over three pages. It ignores
   `maxResults` on listings and the byte limit, runs dry runs and finishes jobs at once, so the
   rest stays with the replayed exchanges.
+- **Snowflake**: no account, and no emulator of its SQL API (`fakesnow` serves only the
+  connectors' protocol). As for BigQuery, each test starts a server on `127.0.0.1` that
+  answers the driver from a file of exchanges in
+  `crates/dbrover-driver-snowflake/src/tests/exchanges/`, in their order, written from the SQL
+  API's reference (their README says what that can't show); a file names Snowflake's statement
+  handles, `{new}` asks for a `requestId` not sent before and `{request}` for the last one, and
+  `"gzip": true` sends the answer gzipped, as Snowflake sends a result's later partitions. The
+  data source signs in with `dbrover-cloud`'s test key, whose JWT a test reads back; no file
+  under `~/.snowflake` is read. The tests run `check_lifecycle`; besides: the context and tag
+  every statement carries, a programmatic access token's header, a refused JWT, a `SELECT`
+  polled through 202 and read over three partitions with its values as Snowflake shows them,
+  `NULL` beside empty text, an `UPDATE`'s row count, a failure's position from `error line L
+  at position P`, cancel by the handle, a 429 resubmitted with `retry=true`, and a `USE` that
+  moves one connection only. `live_snowflake`, ignored, runs against Snowflake when
+  `DBROVER_TEST_SNOWFLAKE_LIVE` names `account,user,key file,warehouse` (and
+  `DBROVER_TEST_SNOWFLAKE_PASSPHRASE` an encrypted key's passphrase); CI never sets it.
 - **Trino**: the `trino` container (Trino 484, port 58080, with only the `memory` and `tpch`
   catalogs of `docker/trino/`), only under the compose file's `nightly` profile, which
   `.github/workflows/nightly.yml` starts once a day: its image is 1.04 GB to download and the

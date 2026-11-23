@@ -52,8 +52,9 @@ pub use data_source::{
     AthenaConfig, AwsSignInKind, BigQueryConfig, CassandraConfig, ClickHouseConfig,
     ConnectionConfig, DataSource, DataSourceId, DriverKind, DuckDbConfig, DuckDbDatabase,
     DynamoDbConfig, ElasticsearchAuth, ElasticsearchConfig, McpLogin, MongoConfig, MysqlConfig,
-    Port, PostgresConfig, ProjectId, RedisConfig, Route, SafetyLevel, ServerConfig, SourceColor,
-    SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode, TrinoConfig, TrinoProtocol,
+    Port, PostgresConfig, ProjectId, RedisConfig, Route, SafetyLevel, ServerConfig,
+    SnowflakeConfig, SnowflakeSignIn, SourceColor, SqlServerConfig, SqliteConfig, SshConfig,
+    SshLogin, TlsMode, TrinoConfig, TrinoProtocol,
 };
 pub use error::{BoxError, DriverError, describe_error, position_at};
 pub use execution::{

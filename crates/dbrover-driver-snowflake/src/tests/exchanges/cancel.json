@@ -1,0 +1,190 @@
+{
+ "doc": "A long statement polled while it runs, cancelled by its handle; its next poll says it was cancelled, and the connection still answers.",
+ "exchanges": [
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "parameters": {
+     "query_tag": "DbRover"
+    },
+    "statement": "SHOW DATABASES LIMIT 1"
+   },
+   "status": 202,
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress. Use provided query id to perform query monitoring and management.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000aa",
+    "statementStatusUrl": "/api/v2/statements/01b0e8a3-0000-4c2b-0000-0000000000aa"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000000aa",
+   "status": 200,
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000aa",
+    "createdOn": 1767323045000,
+    "statementStatusUrl": "/api/v2/statements/01b0e8a3-0000-4c2b-0000-0000000000aa",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "timestamp_ltz",
+       "scale": 3,
+       "precision": 0,
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "length": 16777216,
+       "nullable": false
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1,
+       "uncompressedSize": 100
+      }
+     ]
+    },
+    "data": [
+     [
+      "1767323045.000",
+      "SHOP"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "parameters": {
+     "query_tag": "DbRover"
+    },
+    "statement": "SELECT COUNT(*) FROM big.events"
+   },
+   "status": 202,
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress. Use provided query id to perform query monitoring and management.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000005",
+    "statementStatusUrl": "/api/v2/statements/01b0e8a3-0000-4c2b-0000-000000000005"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000005",
+   "status": 202,
+   "repeat": true,
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000005",
+    "statementStatusUrl": "/api/v2/statements/01b0e8a3-0000-4c2b-0000-000000000005"
+   }
+  },
+  {
+   "method": "POST",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000005/cancel",
+   "response": {
+    "code": "000604",
+    "sqlState": "57014",
+    "message": "SQL execution canceled",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000005",
+    "statementStatusUrl": "/api/v2/statements/01b0e8a3-0000-4c2b-0000-000000000005"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000005",
+   "status": 422,
+   "response": {
+    "code": "000604",
+    "sqlState": "57014",
+    "message": "SQL execution canceled",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000005"
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "parameters": {
+     "query_tag": "DbRover"
+    },
+    "statement": "SHOW DATABASES LIMIT 1"
+   },
+   "status": 202,
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress. Use provided query id to perform query monitoring and management.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000aa",
+    "statementStatusUrl": "/api/v2/statements/01b0e8a3-0000-4c2b-0000-0000000000aa"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000000aa",
+   "status": 200,
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000aa",
+    "createdOn": 1767323045000,
+    "statementStatusUrl": "/api/v2/statements/01b0e8a3-0000-4c2b-0000-0000000000aa",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "timestamp_ltz",
+       "scale": 3,
+       "precision": 0,
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "length": 16777216,
+       "nullable": false
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1,
+       "uncompressedSize": 100
+      }
+     ]
+    },
+    "data": [
+     [
+      "1767323045.000",
+      "SHOP"
+     ]
+    ]
+   }
+  }
+ ]
+}

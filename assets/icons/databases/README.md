@@ -19,6 +19,7 @@ the New data source menu and in the data source dialog.
 | `trino.svg` | Trino (also shown for Starburst and Presto, which the same driver serves; its magenta is darkened on the light theme) | `#DD00A1` |
 | `athena.svg` | A database glyph with a magnifying glass for Amazon Athena, drawn for DbRover (see below) | `#8C4FFF` |
 | `googlebigquery.svg` | Google BigQuery (its blue is darkened on the light theme) | `#669DF6` |
+| `snowflake.svg` | Snowflake (its blue is darkened on the light theme) | `#29B5E8` |
 
 ## Source and licence
 

@@ -125,5 +125,12 @@ pub fn of(driver: DriverKind) -> DatabaseBrand {
             light: Color32::from_rgb(0x1A, 0x5F, 0xD0),
             dark: Color32::from_rgb(0x66, 0x9D, 0xF6),
         },
+        // Snowflake's blue, darkened on the light theme to read on white.
+        DriverKind::Snowflake => DatabaseBrand {
+            logo_uri: "bytes://logos/snowflake.svg",
+            logo_svg: include_bytes!("../../../assets/icons/databases/snowflake.svg"),
+            light: Color32::from_rgb(0x11, 0x7F, 0xB0),
+            dark: Color32::from_rgb(0x29, 0xB5, 0xE8),
+        },
     }
 }

@@ -696,8 +696,9 @@ fn new_driver_item(
     }
 }
 
-/// The managed services that run in `vendor`'s cloud (C1f), each with its engine's icon, then
-/// the engines only that cloud runs (DynamoDB, Athena). A submenu per cloud rather than one
+/// The engines the vendor's submenu offers (DynamoDB and Athena under AWS, BigQuery under
+/// Google Cloud, Snowflake under the other cloud services), then the managed services that run
+/// in `vendor`'s cloud (C1f), each with its engine's icon. A submenu per cloud rather than one
 /// for them all: fifteen services and their headings made a submenu taller than a laptop's
 /// window.
 fn cloud_service_items(

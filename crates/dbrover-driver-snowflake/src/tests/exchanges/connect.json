@@ -1,0 +1,224 @@
+{
+ "doc": "Connecting runs SHOW DATABASES, which needs no warehouse, signed with a key-pair JWT and sent with the data source's context; each ping runs it again.",
+ "exchanges": [
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "parameters": {
+     "query_tag": "DbRover"
+    },
+    "statement": "SHOW DATABASES LIMIT 1",
+    "warehouse": "ANALYTICS_WH",
+    "role": "ANALYST",
+    "database": "SHOP",
+    "schema": "PUBLIC"
+   },
+   "status": 202,
+   "headers": {
+    "X-Snowflake-Authorization-Token-Type": "KEYPAIR_JWT",
+    "Accept": "application/json"
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress. Use provided query id to perform query monitoring and management.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000aa",
+    "statementStatusUrl": "/api/v2/statements/01b0e8a3-0000-4c2b-0000-0000000000aa"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000000aa",
+   "status": 200,
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000aa",
+    "createdOn": 1767323045000,
+    "statementStatusUrl": "/api/v2/statements/01b0e8a3-0000-4c2b-0000-0000000000aa",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "timestamp_ltz",
+       "scale": 3,
+       "precision": 0,
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "length": 16777216,
+       "nullable": false
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1,
+       "uncompressedSize": 100
+      }
+     ]
+    },
+    "data": [
+     [
+      "1767323045.000",
+      "SHOP"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "parameters": {
+     "query_tag": "DbRover"
+    },
+    "statement": "SHOW DATABASES LIMIT 1",
+    "warehouse": "ANALYTICS_WH",
+    "role": "ANALYST",
+    "database": "SHOP",
+    "schema": "PUBLIC"
+   },
+   "status": 202,
+   "headers": {
+    "X-Snowflake-Authorization-Token-Type": "KEYPAIR_JWT",
+    "Accept": "application/json"
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress. Use provided query id to perform query monitoring and management.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000aa",
+    "statementStatusUrl": "/api/v2/statements/01b0e8a3-0000-4c2b-0000-0000000000aa"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000000aa",
+   "status": 200,
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000aa",
+    "createdOn": 1767323045000,
+    "statementStatusUrl": "/api/v2/statements/01b0e8a3-0000-4c2b-0000-0000000000aa",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "timestamp_ltz",
+       "scale": 3,
+       "precision": 0,
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "length": 16777216,
+       "nullable": false
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1,
+       "uncompressedSize": 100
+      }
+     ]
+    },
+    "data": [
+     [
+      "1767323045.000",
+      "SHOP"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "parameters": {
+     "query_tag": "DbRover"
+    },
+    "statement": "SHOW DATABASES LIMIT 1",
+    "warehouse": "ANALYTICS_WH",
+    "role": "ANALYST",
+    "database": "SHOP",
+    "schema": "PUBLIC"
+   },
+   "status": 202,
+   "headers": {
+    "X-Snowflake-Authorization-Token-Type": "KEYPAIR_JWT",
+    "Accept": "application/json"
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress. Use provided query id to perform query monitoring and management.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000aa",
+    "statementStatusUrl": "/api/v2/statements/01b0e8a3-0000-4c2b-0000-0000000000aa"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000000aa",
+   "status": 200,
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000aa",
+    "createdOn": 1767323045000,
+    "statementStatusUrl": "/api/v2/statements/01b0e8a3-0000-4c2b-0000-0000000000aa",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "timestamp_ltz",
+       "scale": 3,
+       "precision": 0,
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "length": 16777216,
+       "nullable": false
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1,
+       "uncompressedSize": 100
+      }
+     ]
+    },
+    "data": [
+     [
+      "1767323045.000",
+      "SHOP"
+     ]
+    ]
+   }
+  }
+ ]
+}

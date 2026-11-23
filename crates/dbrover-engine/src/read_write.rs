@@ -47,9 +47,11 @@ pub fn mode(driver: DriverKind) -> Option<WriteMode> {
         | DriverKind::Mongo
         | DriverKind::Elasticsearch
         | DriverKind::Cassandra => None,
-        DriverKind::DynamoDb | DriverKind::Athena | DriverKind::Trino | DriverKind::BigQuery => {
-            None
-        }
+        DriverKind::DynamoDb
+        | DriverKind::Athena
+        | DriverKind::Trino
+        | DriverKind::BigQuery
+        | DriverKind::Snowflake => None,
     }
 }
 

@@ -11,6 +11,7 @@ mod elasticsearch;
 mod mongo;
 mod server;
 mod service;
+mod snowflake;
 mod ssh;
 mod trino;
 
@@ -33,6 +34,7 @@ pub use mongo::{MongoFields, MongoTarget};
 pub use server::{
     CloudFields, DatabaseField, ServerDefaults, ServerFields, TlsChoice, TlsOffer, UserField,
 };
+pub use snowflake::{SnowflakeFields, SnowflakeSignInChoice};
 pub use ssh::{SshFields, SshLoginChoice};
 pub use trino::TrinoFields;
 
@@ -148,6 +150,10 @@ pub enum FormError {
     ProjectMissing,
     #[error("Credentials file is required to sign in with one.")]
     CredentialsFileMissing,
+    #[error("Account is required: the account identifier in Snowflake's address.")]
+    AccountMissing,
+    #[error("Private key file is required to sign in with a key pair.")]
+    PrivateKeyFileMissing,
     #[error("{1} doesn't sign in with {0}.")]
     BucketSignInNotOffered(&'static str, StorageProvider),
     #[error(
@@ -209,6 +215,7 @@ pub enum DriverFields {
     Athena(AthenaFields),
     BigQuery(BigQueryFields),
     Trino(TrinoFields),
+    Snowflake(SnowflakeFields),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -306,6 +313,7 @@ impl DriverFields {
             DriverKind::Athena => Self::Athena(AthenaFields::default()),
             DriverKind::BigQuery => Self::BigQuery(BigQueryFields::default()),
             DriverKind::Trino => Self::Trino(TrinoFields::new()),
+            DriverKind::Snowflake => Self::Snowflake(SnowflakeFields::default()),
         }
     }
 
@@ -376,6 +384,9 @@ impl DriverFields {
                 Self::BigQuery(BigQueryFields::from_config(config))
             }
             ConnectionConfig::Trino(config) => Self::Trino(TrinoFields::from_config(config)),
+            ConnectionConfig::Snowflake(config) => {
+                Self::Snowflake(SnowflakeFields::from_config(config))
+            }
         }
     }
 
@@ -395,6 +406,7 @@ impl DriverFields {
             Self::Athena(_) => DriverKind::Athena,
             Self::BigQuery(_) => DriverKind::BigQuery,
             Self::Trino(_) => DriverKind::Trino,
+            Self::Snowflake(_) => DriverKind::Snowflake,
         }
     }
 
@@ -414,7 +426,8 @@ impl DriverFields {
             | Self::DuckDb(_)
             | Self::DynamoDb(_)
             | Self::Athena(_)
-            | Self::BigQuery(_) => None,
+            | Self::BigQuery(_)
+            | Self::Snowflake(_) => None,
         }
     }
 
@@ -446,6 +459,7 @@ impl DriverFields {
             Self::Athena(fields) => ConnectionConfig::Athena(fields.to_config()?),
             Self::BigQuery(fields) => ConnectionConfig::BigQuery(fields.to_config()?),
             Self::Trino(fields) => ConnectionConfig::Trino(fields.to_config()?),
+            Self::Snowflake(fields) => ConnectionConfig::Snowflake(fields.to_config()?),
         })
     }
 }
@@ -545,6 +559,7 @@ impl DataSourceForm {
             DriverFields::DuckDb(fields) => {
                 Some(fields.secret.as_str()).filter(|secret| !secret.is_empty())
             }
+            DriverFields::Snowflake(fields) => fields.typed_secret(),
             _ => self.fields.server().and_then(ServerFields::typed_password),
         };
         match typed {

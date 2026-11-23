@@ -439,17 +439,21 @@ impl ServiceVendor {
             .filter(move |service| service.vendor() == self)
     }
 
-    /// The engines of DbRover's own that only this cloud runs, such as DynamoDB and Athena
-    /// on AWS and BigQuery on Google Cloud, which its menu offers beside the managed services.
+    /// The engines of DbRover's own that the menu offers in this vendor's submenu, beside its
+    /// managed services, rather than at its top: those only this cloud runs, such as DynamoDB
+    /// and Athena on AWS and BigQuery on Google Cloud, and Snowflake among the services tied to
+    /// no provider, since it runs on all three (C5).
     pub fn engines(self) -> &'static [DriverKind] {
         match self {
             Self::Aws => &[DriverKind::DynamoDb, DriverKind::Athena],
             Self::GoogleCloud => &[DriverKind::BigQuery],
-            Self::Azure | Self::Independent => &[],
+            Self::Independent => &[DriverKind::Snowflake],
+            Self::Azure => &[],
         }
     }
 
-    /// The cloud that alone runs `driver`, if one does.
+    /// The vendor whose submenu offers `driver`, if one does: the cloud that alone runs it, or
+    /// the services tied to no provider for Snowflake.
     pub fn running_only(driver: DriverKind) -> Option<Self> {
         Self::ALL
             .into_iter()

@@ -20,7 +20,7 @@ use crate::data_source_form::{
     BucketFields, BucketSignIn, CassandraFields, CloudFields, DataSourceForm, DatabaseField,
     DriverFields, DuckDbFields, DuckDbLocation, DynamoDbFields, ElasticsearchFields, FormError,
     LAKE_LIMIT_LABEL, McpLoginFields, McpPasswordChange, MongoFields, MongoTarget, ServerFields,
-    SshFields, SshLoginChoice, TlsChoice, TrinoFields,
+    SnowflakeFields, SnowflakeSignInChoice, SshFields, SshLoginChoice, TlsChoice, TrinoFields,
 };
 use crate::dialog::{self, DialogSize};
 use crate::file_picker::{self, FileEngine};
@@ -239,6 +239,10 @@ impl DataSourceDialog {
             }
             DriverFields::BigQuery(fields) => {
                 bigquery_rows(ui, fields);
+                None
+            }
+            DriverFields::Snowflake(fields) => {
+                snowflake_rows(ui, fields);
                 None
             }
             DriverFields::Sqlite(fields) => {
@@ -772,6 +776,89 @@ fn bigquery_rows(ui: &mut Ui, fields: &mut BigQueryFields) {
          and none bills more without asking.",
     );
     ui.end_row();
+}
+
+/// Snowflake's account, how its user signs in, and the context statements start in (C5).
+fn snowflake_rows(ui: &mut Ui, fields: &mut SnowflakeFields) {
+    setting_row(
+        ui,
+        "Account",
+        &mut fields.account,
+        "myorg-myaccount",
+        Resolve::Text,
+    );
+    ui.label("");
+    ui.weak("The account identifier in its address: <account>.snowflakecomputing.com.");
+    ui.end_row();
+    setting_row(ui, "User", &mut fields.user, "JANE", Resolve::Text);
+    ui.label("Sign in with");
+    ui.horizontal(|ui| {
+        ui.radio_value(
+            &mut fields.sign_in,
+            SnowflakeSignInChoice::KeyPair,
+            "Key pair",
+        );
+        ui.radio_value(
+            &mut fields.sign_in,
+            SnowflakeSignInChoice::ProgrammaticAccessToken,
+            "Access token",
+        );
+        ui.radio_value(&mut fields.sign_in, SnowflakeSignInChoice::OAuth, "OAuth");
+    });
+    ui.end_row();
+    if fields.sign_in == SnowflakeSignInChoice::KeyPair {
+        setting_row(
+            ui,
+            "Private key file",
+            &mut fields.private_key_file,
+            "rsa_key.p8",
+            Resolve::Path,
+        );
+    }
+    snowflake_secret_rows(ui, fields);
+    for (label, value, hint) in [
+        ("Warehouse", &mut fields.warehouse, "the user's default"),
+        ("Role", &mut fields.role, "the user's default"),
+        ("Database", &mut fields.database, "the user's default"),
+        ("Schema", &mut fields.schema, "the user's default"),
+    ] {
+        setting_row(ui, label, value, hint, Resolve::Text);
+    }
+    ui.label("");
+    ui.weak("As Snowflake shows them, usually in capitals: it reads them case-sensitively.");
+    ui.end_row();
+}
+
+/// The passphrase of an encrypted key, or the token, kept in the keychain; an OAuth token may
+/// come from a command run on every connection instead.
+fn snowflake_secret_rows(ui: &mut Ui, fields: &mut SnowflakeFields) {
+    let oauth = fields.sign_in == SnowflakeSignInChoice::OAuth;
+    if oauth && fields.token_from_command {
+        password_command_row(ui, &mut fields.token_command);
+    } else {
+        let hint = match fields.sign_in {
+            SnowflakeSignInChoice::KeyPair => "only for an encrypted key",
+            _ => "kept in the keychain",
+        };
+        let label = ui.label(fields.sign_in.secret_label());
+        ui.add(
+            TextEdit::singleline(&mut fields.secret)
+                .password(true)
+                .hint_text(hint)
+                .desired_width(FIELD_WIDTH),
+        )
+        .labelled_by(label.id);
+        ui.end_row();
+    }
+    if oauth {
+        ui.label("");
+        ui.checkbox(&mut fields.token_from_command, "Token from a command")
+            .on_hover_text(
+                "For an identity provider's CLI: DbRover runs the command on every connection, \
+                 and what it prints is the OAuth token",
+            );
+        ui.end_row();
+    }
 }
 
 /// The password to save in the keychain, or the command that prints one on every connection,
