@@ -1273,7 +1273,7 @@ account.
 
 - **C5a — Plan:** this section, C5's rows in [Decisions](#decisions) and [Risks](#risks), and
   the roadmap's entry in layers.
-- **C5b — The Snowflake dialect:** `Dialect::Snowflake` in `dbrover-sql`: double-quoted names
+- **C5b — The Snowflake dialect** (built): `Dialect::Snowflake` in `dbrover-sql`: double-quoted names
   and upper-case folding, `$$` strings, `//` comments, `sqlparser`'s `SnowflakeDialect` for the
   syntax check, Snowflake's functions for completion, `EXPLAIN`, `INFORMATION_SCHEMA` hidden,
   the verbs that write and administration's, with a corpus of Snowflake's statements and the
@@ -1281,6 +1281,26 @@ account.
   **Exit:** the corpus passes or names its gaps; a script with `$$` bodies, `//` comments and
   quoted and unquoted names splits and formats as Snowflake reads it; read-only mode classifies
   the classify corpus.
+  **As built:** 351 functions for completion. `sqlparser` 0.63's `SnowflakeDialect` reads
+  almost every query and change in the corpus (`QUALIFY`, `LATERAL FLATTEN`, paths and `[]` on
+  `VARIANT`, `::`, `SAMPLE`, `AT(…)`, `CHANGES`, `MATCH_RECOGNIZE`, `PIVOT` with `ANY`,
+  `ASOF JOIN`, `CONNECT BY`, lambdas, multi-table `INSERT`); its gaps in the statements DbRover
+  checks, each named in the corpus: an anonymous procedure (`WITH p AS PROCEDURE … CALL p()`),
+  an object of a row's columns (`{*}`, `{t.*}`), and `DIRECTED` joins. Among the statements
+  the check leaves alone, it can't read `CREATE STREAM`, `TASK`, `PIPE`, `SEQUENCE`,
+  `FUNCTION` and `PROCEDURE`, `ALTER WAREHOUSE` and `ALTER TASK`, `UNDROP`, `GET`, `PUT` with
+  an unquoted `file://` path, `UNSET`, `BEGIN NAME`, `DESCRIBE FILE FORMAT`, `MERGE … UPDATE
+  ALL BY NAME`, and Snowflake Scripting's blocks once they hold `LET`, `IF`, `FOR` or a
+  `DECLARE` section; read-only mode refuses each as a statement it can't classify, which the
+  classify corpus names. Differences from the plan: `Quoting` (in `dbrover-core`) gains
+  `bare_names`, so that a name is left bare on Snowflake only when it is uppercase and not
+  one of Snowflake's reserved words; the classifier keeps its own classes, so `GRANT`,
+  `REVOKE`, `CALL`, `EXECUTE IMMEDIATE`, `EXECUTE TASK`, `PUT`, `REMOVE` and `COPY INTO
+  @stage` are administration, `COPY INTO <table>` a write and `LIST` a read; `DESCRIBE VIEW`,
+  `STAGE`, `WAREHOUSE` and the other one-word kinds, and `EXPLAIN USING JSON`, are read as
+  `DESCRIBE TABLE` and `EXPLAIN` to be classified; a `//` straight after `:` is a URL's, not a
+  comment (`PUT file:///tmp/a.csv @stage`); and the object helpers write no Snowflake DDL in
+  C5, as for BigQuery.
 - **C5c — Snowflake's sign-in:** the `snowflake` module in `dbrover-cloud`: a key (PKCS #8,
   encrypted or not, or PKCS #1) read and its fingerprint taken, a JWT signed with RS256 and
   kept in a `TokenCache`, and the three kinds of token with their token-type header.

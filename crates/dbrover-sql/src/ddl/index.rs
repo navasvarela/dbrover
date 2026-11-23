@@ -64,7 +64,8 @@ pub(super) fn create(spec: &IndexSpec, dialect: Dialect) -> Result<String, DdlEr
         | Dialect::ClickHouse
         | Dialect::Cassandra
         | Dialect::Trino
-        | Dialect::BigQuery => format!(
+        | Dialect::BigQuery
+        | Dialect::Snowflake => format!(
             "CREATE {unique}INDEX {} ON {table} {columns}",
             quote_name(dialect, &spec.name)
         ),
@@ -87,7 +88,8 @@ pub(super) fn drop(table: &ObjectName, index: &str, dialect: Dialect) -> Result<
         | Dialect::ClickHouse
         | Dialect::Cassandra
         | Dialect::Trino
-        | Dialect::BigQuery => {
+        | Dialect::BigQuery
+        | Dialect::Snowflake => {
             format!("DROP INDEX {}", table.sibling(index).to_sql(dialect))
         }
     })

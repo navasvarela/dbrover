@@ -17,6 +17,22 @@ pub struct Quoting {
     /// Written before a string literal's opening quote: `N` on SQL Server, where a plain
     /// `'…'` is read in the database's code page and loses the characters it lacks.
     pub string_prefix: &'static str,
+    /// Which names read the same without quotes, which [`Self::identifier_if_needed`] leaves
+    /// bare.
+    pub bare_names: BareNames,
+}
+
+/// Which names a dialect reads the same quoted or not, so that text a person reads may leave
+/// them bare: that depends on how the dialect folds the case of an unquoted name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BareNames {
+    /// Plain lowercase names, which read the same in every dialect that folds unquoted names
+    /// to lowercase (PostgreSQL) or matches them whatever their case.
+    Lowercase,
+    /// Plain uppercase names, which may hold `$` after their first character, and aren't one
+    /// of `reserved` (uppercase): Snowflake folds unquoted names to uppercase, as the SQL
+    /// standard does, so `ORDERS` is the table created as `orders`, and `"orders"` another.
+    Uppercase { reserved: &'static [&'static str] },
 }
 
 impl Quoting {
@@ -26,6 +42,7 @@ impl Quoting {
         identifier_close: '"',
         backslash_escapes: false,
         string_prefix: "",
+        bare_names: BareNames::Lowercase,
     };
 
     /// Quotes `name` even where it needs no quoting, as generated statements must not depend
@@ -36,16 +53,10 @@ impl Quoting {
         format!("{open}{}{close}", name.replace(close, &doubled))
     }
 
-    /// Quotes `name` unless it is a plain lowercase identifier, which reads the same quoted or
-    /// not in every dialect (PostgreSQL folds unquoted names to lowercase). For text a person
-    /// reads and edits, such as completions.
+    /// Quotes `name` unless it reads the same without quotes (see [`BareNames`]). For text a
+    /// person reads and edits, such as completions.
     pub fn identifier_if_needed(self, name: &str) -> String {
-        let mut chars = name.chars();
-        let plain = chars
-            .next()
-            .is_some_and(|first| first.is_ascii_lowercase() || first == '_')
-            && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
-        if plain {
+        if self.bare_names.reads_bare(name) {
             name.to_owned()
         } else {
             self.identifier(name)
@@ -63,6 +74,29 @@ impl Quoting {
     }
 }
 
+impl BareNames {
+    fn reads_bare(self, name: &str) -> bool {
+        let mut chars = name.chars();
+        match self {
+            Self::Lowercase => {
+                chars
+                    .next()
+                    .is_some_and(|first| first.is_ascii_lowercase() || first == '_')
+                    && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+            }
+            Self::Uppercase { reserved } => {
+                chars
+                    .next()
+                    .is_some_and(|first| first.is_ascii_uppercase() || first == '_')
+                    && chars.all(|c| {
+                        c.is_ascii_uppercase() || c.is_ascii_digit() || matches!(c, '_' | '$')
+                    })
+                    && !reserved.contains(&name)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -72,6 +106,7 @@ mod tests {
         identifier_close: '`',
         backslash_escapes: true,
         string_prefix: "",
+        bare_names: BareNames::Lowercase,
     };
 
     const BRACKETS: Quoting = Quoting {
@@ -79,6 +114,14 @@ mod tests {
         identifier_close: ']',
         backslash_escapes: false,
         string_prefix: "N",
+        bare_names: BareNames::Lowercase,
+    };
+
+    const UPPERCASE: Quoting = Quoting {
+        bare_names: BareNames::Uppercase {
+            reserved: &["ORDER", "TABLE"],
+        },
+        ..Quoting::STANDARD
     };
 
     #[test]
@@ -96,6 +139,15 @@ mod tests {
             (BACKTICKS, "users_2", "`users_2`", "users_2"),
             (BRACKETS, "a]b[c", "[a]]b[c]", "[a]]b[c]"),
             (BRACKETS, "order", "[order]", "order"),
+            (UPPERCASE, "ORDERS", "\"ORDERS\"", "ORDERS"),
+            (UPPERCASE, "MY$TABLE_2", "\"MY$TABLE_2\"", "MY$TABLE_2"),
+            (UPPERCASE, "_X", "\"_X\"", "_X"),
+            (UPPERCASE, "orders", "\"orders\"", "\"orders\""),
+            (UPPERCASE, "Orders", "\"Orders\"", "\"Orders\""),
+            (UPPERCASE, "ORDER", "\"ORDER\"", "\"ORDER\""),
+            (UPPERCASE, "$X", "\"$X\"", "\"$X\""),
+            (UPPERCASE, "2X", "\"2X\"", "\"2X\""),
+            (Quoting::STANDARD, "MY$T", "\"MY$T\"", "\"MY$T\""),
         ];
         for (quoting, name, always, if_needed) in cases {
             assert_eq!(quoting.identifier(name), always, "{name}");

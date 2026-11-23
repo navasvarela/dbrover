@@ -175,6 +175,38 @@ create temp function js_upper(x string) returns string language js as r"""
 export data options (uri = 'gs://bucket/out/*.csv', format = 'CSV') as select * from sales.orders;
 "##;
 
+/// A Snowflake script as its console holds one: `//` comments, quoted and unquoted names,
+/// `VARIANT` paths and `::` casts, `QUALIFY`, `$$` bodies holding semicolons, a stage's files,
+/// and Snowflake Scripting's blocks, a `DECLARE` section's included.
+const SNOWFLAKE_CORPUS: &str = r#"
+// The newest status of each order.
+use warehouse analytics_wh;
+select o.id, "Order Note", src:customer.name::string as customer, f.value:sku::varchar from sales.public.orders as o, lateral flatten(input => o.src:items) f where o.placed_at >= dateadd(day, -7, current_date()) qualify row_number() over (partition by o.id order by o.updated_at desc) = 1;
+select iff(total > 100, 'big', 'small'), 'it's', $$a; dollar 'string'$$ from "My DB"."public"."orders" -- the raw orders
+where id = 1;
+merge into orders t using staging s on t.id = s.id when matched then update set t.total = s.total when not matched then insert (id, total) values (s.id, s.total);
+copy into orders from @my_stage/path/ file_format = (type = csv skip_header = 1);
+put file:///tmp/data/orders.csv @my_stage;
+create or replace procedure sales.public.p(x number) returns varchar language sql as $$
+begin
+  return 'x is ' || x;
+end;
+$$;
+declare
+  total number default 0;
+  c1 cursor for select total from orders;
+begin
+  for rec in c1 do
+    total := total + rec.total;
+  end for;
+  return total;
+exception
+  when other then
+    return sqlerrm;
+end;
+execute immediate $$ select 1; select 2; $$;
+"#;
+
 fn format_all(text: &str, dialect: Dialect, options: &FormatOptions) -> String {
     let ranges = split_statements(text, dialect);
     format_ranges(text, &ranges, dialect, options)
@@ -197,6 +229,7 @@ fn formatting_the_corpus_never_changes_a_token_and_is_stable() {
         (CLICKHOUSE_CORPUS, Dialect::ClickHouse),
         (TRINO_CORPUS, Dialect::Trino),
         (BIGQUERY_CORPUS, Dialect::BigQuery),
+        (SNOWFLAKE_CORPUS, Dialect::Snowflake),
     ] {
         for case in [
             KeywordCase::Upper,
@@ -230,6 +263,7 @@ fn formatting_keeps_every_statement_boundary() {
         (CLICKHOUSE_CORPUS, Dialect::ClickHouse),
         (TRINO_CORPUS, Dialect::Trino),
         (BIGQUERY_CORPUS, Dialect::BigQuery),
+        (SNOWFLAKE_CORPUS, Dialect::Snowflake),
     ] {
         let formatted = format_all(corpus, dialect, &FormatOptions::default());
         let before = split_statements(corpus, dialect);
@@ -293,6 +327,34 @@ fn formats_googlesql_as_bigquery_reads_it() {
     );
 }
 
+/// Snowflake's `//` comments, `$$` bodies and quoted names stay as they were, a `file:///`
+/// path isn't a comment, and a `DECLARE … BEGIN … END` block is one statement, before and
+/// after formatting.
+#[test]
+fn formats_snowflake_as_snowflake_reads_it() {
+    let script = "select \"Order Id\", v:a::string from orders // newest\n\
+                  where x = $$a; b$$; put file:///tmp/a.csv @s; \
+                  declare n int; begin n := 1; return n; end";
+    let formatted = format_all(script, Dialect::Snowflake, &FormatOptions::default());
+    assert_eq!(
+        formatted,
+        "SELECT\n    \"Order Id\",\n    v:a::string\nFROM orders // newest\nWHERE x = $$a; b$$; \
+         put file:///tmp/a.csv @s; DECLARE n int; BEGIN n := 1; return n; END"
+    );
+    let statements: Vec<&str> = split_statements(&formatted, Dialect::Snowflake)
+        .into_iter()
+        .map(|range| &formatted[range])
+        .collect();
+    assert_eq!(
+        statements,
+        [
+            "SELECT\n    \"Order Id\",\n    v:a::string\nFROM orders // newest\nWHERE x = $$a; b$$",
+            "put file:///tmp/a.csv @s",
+            "DECLARE n int; BEGIN n := 1; return n; END",
+        ]
+    );
+}
+
 #[test]
 fn every_statement_formats_on_its_own_too() {
     for (corpus, dialect) in [
@@ -304,6 +366,7 @@ fn every_statement_formats_on_its_own_too() {
         (CLICKHOUSE_CORPUS, Dialect::ClickHouse),
         (TRINO_CORPUS, Dialect::Trino),
         (BIGQUERY_CORPUS, Dialect::BigQuery),
+        (SNOWFLAKE_CORPUS, Dialect::Snowflake),
     ] {
         for range in split_statements(corpus, dialect) {
             let statement = &corpus[range];

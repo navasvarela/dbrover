@@ -656,6 +656,47 @@ const BIGQUERY: Capabilities = Capabilities {
     schema_compare: false,
 };
 
+/// Snowflake: nothing is offered in C5, which has no Snowflake server to try the helpers' DDL
+/// against; [`Dialect::writes_ddl`] keeps the helpers away. The types are Snowflake's.
+const SNOWFLAKE: Capabilities = Capabilities {
+    transactional_ddl: false,
+    drop_cascade: false,
+    unique_keys: false,
+    foreign_keys: false,
+    referential_actions: &[],
+    indexes: false,
+    index_methods: &[],
+    table_changes: &[],
+    rebuilds_tables: false,
+    foreign_key_switch: None,
+    converts_with_using: false,
+    restricted_add_column: false,
+    rebuilds_table_ddl: false,
+    common_types: &[
+        "NUMBER(38, 0)",
+        "NUMBER(18, 4)",
+        "FLOAT",
+        "BOOLEAN",
+        "VARCHAR",
+        "BINARY",
+        "DATE",
+        "TIME",
+        "TIMESTAMP_NTZ",
+        "TIMESTAMP_TZ",
+        "VARIANT",
+        "OBJECT",
+        "ARRAY",
+    ],
+    materialized_views: false,
+    view_replacement: ViewReplacement::OrReplace,
+    renames_views: false,
+    schema_creation: SchemaCreation::Unsupported,
+    schema_owner: false,
+    drop_schema_cascade: false,
+    users: UserModel::Unsupported,
+    schema_compare: false,
+};
+
 impl Dialect {
     /// What the dialect's DDL can do.
     pub fn capabilities(self) -> &'static Capabilities {
@@ -669,6 +710,7 @@ impl Dialect {
             Self::Cassandra => &CQL,
             Self::Trino => &TRINO,
             Self::BigQuery => &BIGQUERY,
+            Self::Snowflake => &SNOWFLAKE,
         }
     }
 
@@ -677,9 +719,14 @@ impl Dialect {
     /// a keyspace's replication is chosen per cluster, none of which the helpers' forms ask.
     /// Nor Trino's: what a table can be is each catalog's connector's to say, and Athena's
     /// tables are Hive's, over files in S3 whose format and location the forms don't ask. Nor
-    /// BigQuery's, whose tables are made by their partitioning, clustering and options.
+    /// BigQuery's, whose tables are made by their partitioning, clustering and options. Nor
+    /// Snowflake's in C5, which has no Snowflake server to try what the helpers would write
+    /// against.
     pub fn writes_ddl(self) -> bool {
-        !matches!(self, Self::Cassandra | Self::Trino | Self::BigQuery)
+        !matches!(
+            self,
+            Self::Cassandra | Self::Trino | Self::BigQuery | Self::Snowflake
+        )
     }
 
     /// What the object helpers may write on a server of this dialect that said it is

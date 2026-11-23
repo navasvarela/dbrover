@@ -75,3 +75,8 @@ fn trino() {
 fn bigquery() {
     check_corpus(Dialect::BigQuery, include_str!("classify/bigquery.sql"));
 }
+
+#[test]
+fn snowflake() {
+    check_corpus(Dialect::Snowflake, include_str!("classify/snowflake.sql"));
+}
