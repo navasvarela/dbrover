@@ -1,0 +1,436 @@
+{
+ "doc": "Show definition of a table, from SHOW TABLES and SHOW COLUMNS, and of a view, from SHOW VIEWS.",
+ "exchanges": [
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW DATABASES LIMIT 1"
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000100"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000100",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000100",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "1767323045.000",
+      "SALES"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW TABLES LIKE 'ORDERS' IN SCHEMA \"SHOP\".\"PUBLIC\""
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000110"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000110",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000110",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "cluster_by",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "rows",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "bytes",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "owner",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "retention_time",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_dynamic",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_iceberg",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_external",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "0",
+      "ORDERS",
+      "SHOP",
+      "PUBLIC",
+      "TABLE",
+      "",
+      "LINEAR(REGION, PLACED)",
+      "10",
+      "2048",
+      "SYSADMIN",
+      "1",
+      "N",
+      "N",
+      "N"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW COLUMNS IN TABLE \"SHOP\".\"PUBLIC\".\"ORDERS\""
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000111"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000111",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000111",
+    "resultSetMetaData": {
+     "numRows": 4,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "table_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "column_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "data_type",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "null?",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "default",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "expression",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "autoincrement",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 4
+      }
+     ]
+    },
+    "data": [
+     [
+      "ORDERS",
+      "PUBLIC",
+      "ID",
+      "{\"type\": \"FIXED\", \"precision\": 38, \"scale\": 0, \"nullable\": false}",
+      "false",
+      "",
+      "COLUMN",
+      "",
+      "",
+      "SHOP",
+      ""
+     ],
+     [
+      "ORDERS",
+      "PUBLIC",
+      "REGION",
+      "{\"type\": \"TEXT\", \"length\": 100, \"byteLength\": 400, \"nullable\": true}",
+      "true",
+      "'EU'",
+      "COLUMN",
+      "",
+      "",
+      "SHOP",
+      ""
+     ],
+     [
+      "ORDERS",
+      "PUBLIC",
+      "PLACED",
+      "{\"type\": \"TIMESTAMP_NTZ\", \"precision\": 0, \"scale\": 9, \"nullable\": true}",
+      "true",
+      "",
+      "COLUMN",
+      "",
+      "",
+      "SHOP",
+      ""
+     ],
+     [
+      "ORDERS",
+      "PUBLIC",
+      "TOTAL",
+      "{\"type\": \"FIXED\", \"precision\": 10, \"scale\": 2, \"nullable\": true}",
+      "true",
+      "",
+      "COLUMN",
+      "",
+      "",
+      "SHOP",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW VIEWS LIKE 'ORDER\\\\_TOTALS' IN SCHEMA \"SHOP\".\"PUBLIC\""
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000117"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000117",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000117",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "reserved",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "owner",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "text",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_secure",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_materialized",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "0",
+      "ORDER_TOTALS",
+      "",
+      "VIEW",
+      "SHOP",
+      "PUBLIC",
+      "SYSADMIN",
+      "",
+      "create view ORDER_TOTALS as select region, sum(total) as total from orders group by region;",
+      "false",
+      "false"
+     ]
+    ]
+   }
+  }
+ ]
+}

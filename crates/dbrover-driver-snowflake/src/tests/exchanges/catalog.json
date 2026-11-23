@@ -1,0 +1,2991 @@
+{
+ "doc": "The conformance walk over two databases, each listed with SHOW commands only: schemas (INFORMATION_SCHEMA among them, a system schema the walk leaves), a schema's tables, views and stages in folders, each table's and view's definition from SHOW TABLES or SHOW VIEWS and SHOW COLUMNS, then their columns.",
+ "exchanges": [
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW DATABASES LIMIT 1"
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000100"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000100",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000100",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "1767323045.000",
+      "SALES"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW DATABASES LIMIT 1000"
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000101"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000101",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000101",
+    "resultSetMetaData": {
+     "numRows": 2,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_default",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_current",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "origin",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "owner",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "options",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "retention_time",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 2
+      }
+     ]
+    },
+    "data": [
+     [
+      "0",
+      "SALES",
+      "N",
+      "N",
+      "",
+      "SYSADMIN",
+      "",
+      "",
+      "1",
+      "STANDARD"
+     ],
+     [
+      "0",
+      "SHOP",
+      "N",
+      "N",
+      "",
+      "SYSADMIN",
+      "",
+      "",
+      "1",
+      "STANDARD"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW SCHEMAS IN DATABASE \"SALES\" LIMIT 1000"
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000102"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000102",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000102",
+    "resultSetMetaData": {
+     "numRows": 2,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_default",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_current",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "owner",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "options",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "retention_time",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 2
+      }
+     ]
+    },
+    "data": [
+     [
+      "0",
+      "INFORMATION_SCHEMA",
+      "N",
+      "N",
+      "SALES",
+      "SYSADMIN",
+      "",
+      "",
+      "1"
+     ],
+     [
+      "0",
+      "EU",
+      "N",
+      "N",
+      "SALES",
+      "SYSADMIN",
+      "",
+      "",
+      "1"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW SCHEMAS IN DATABASE \"SHOP\" LIMIT 1000"
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000103"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000103",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000103",
+    "resultSetMetaData": {
+     "numRows": 2,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_default",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_current",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "owner",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "options",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "retention_time",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 2
+      }
+     ]
+    },
+    "data": [
+     [
+      "0",
+      "INFORMATION_SCHEMA",
+      "N",
+      "N",
+      "SHOP",
+      "SYSADMIN",
+      "",
+      "",
+      "1"
+     ],
+     [
+      "0",
+      "PUBLIC",
+      "N",
+      "N",
+      "SHOP",
+      "SYSADMIN",
+      "",
+      "",
+      "1"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW TABLES IN SCHEMA \"SALES\".\"EU\" LIMIT 1000"
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000104"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000104",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000104",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "cluster_by",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "rows",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "bytes",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "owner",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "retention_time",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_dynamic",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_iceberg",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_external",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "0",
+      "ORDERS_EU",
+      "SALES",
+      "EU",
+      "TABLE",
+      "",
+      "",
+      "10",
+      "2048",
+      "SYSADMIN",
+      "1",
+      "N",
+      "N",
+      "N"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW TABLES LIKE 'ORDERS\\\\_EU' IN SCHEMA \"SALES\".\"EU\""
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000105"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000105",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000105",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "cluster_by",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "rows",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "bytes",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "owner",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "retention_time",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_dynamic",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_iceberg",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_external",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "0",
+      "ORDERS_EU",
+      "SALES",
+      "EU",
+      "TABLE",
+      "",
+      "",
+      "10",
+      "2048",
+      "SYSADMIN",
+      "1",
+      "N",
+      "N",
+      "N"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW COLUMNS IN TABLE \"SALES\".\"EU\".\"ORDERS_EU\""
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000106"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000106",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000106",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "table_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "column_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "data_type",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "null?",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "default",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "expression",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "autoincrement",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "ORDERS_EU",
+      "EU",
+      "ID",
+      "{\"type\": \"FIXED\", \"precision\": 38, \"scale\": 0, \"nullable\": false}",
+      "false",
+      "",
+      "COLUMN",
+      "",
+      "",
+      "SALES",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW VIEWS IN SCHEMA \"SALES\".\"EU\" LIMIT 1000"
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000107"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000107",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000107",
+    "resultSetMetaData": {
+     "numRows": 0,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "reserved",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "owner",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "text",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_secure",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_materialized",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 0
+      }
+     ]
+    },
+    "data": []
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW STAGES IN SCHEMA \"SALES\".\"EU\""
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000108"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000108",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000108",
+    "resultSetMetaData": {
+     "numRows": 0,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "url",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "has_credentials",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "has_encryption_key",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "owner",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "region",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "type",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "cloud",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 0
+      }
+     ]
+    },
+    "data": []
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW TABLES IN SCHEMA \"SHOP\".\"PUBLIC\" LIMIT 1000"
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000109"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000109",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000109",
+    "resultSetMetaData": {
+     "numRows": 3,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "cluster_by",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "rows",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "bytes",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "owner",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "retention_time",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_dynamic",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_iceberg",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_external",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 3
+      }
+     ]
+    },
+    "data": [
+     [
+      "0",
+      "ORDERS",
+      "SHOP",
+      "PUBLIC",
+      "TABLE",
+      "",
+      "LINEAR(REGION, PLACED)",
+      "10",
+      "2048",
+      "SYSADMIN",
+      "1",
+      "N",
+      "N",
+      "N"
+     ],
+     [
+      "0",
+      "STAGING",
+      "SHOP",
+      "PUBLIC",
+      "TRANSIENT",
+      "",
+      "",
+      "10",
+      "2048",
+      "SYSADMIN",
+      "1",
+      "N",
+      "N",
+      "N"
+     ],
+     [
+      "0",
+      "TOTALS_LIVE",
+      "SHOP",
+      "PUBLIC",
+      "TABLE",
+      "",
+      "",
+      "10",
+      "2048",
+      "SYSADMIN",
+      "1",
+      "Y",
+      "N",
+      "N"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW TABLES LIKE 'ORDERS' IN SCHEMA \"SHOP\".\"PUBLIC\""
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000110"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000110",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000110",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "cluster_by",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "rows",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "bytes",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "owner",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "retention_time",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_dynamic",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_iceberg",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_external",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "0",
+      "ORDERS",
+      "SHOP",
+      "PUBLIC",
+      "TABLE",
+      "",
+      "LINEAR(REGION, PLACED)",
+      "10",
+      "2048",
+      "SYSADMIN",
+      "1",
+      "N",
+      "N",
+      "N"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW COLUMNS IN TABLE \"SHOP\".\"PUBLIC\".\"ORDERS\""
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000111"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000111",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000111",
+    "resultSetMetaData": {
+     "numRows": 4,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "table_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "column_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "data_type",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "null?",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "default",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "expression",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "autoincrement",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 4
+      }
+     ]
+    },
+    "data": [
+     [
+      "ORDERS",
+      "PUBLIC",
+      "ID",
+      "{\"type\": \"FIXED\", \"precision\": 38, \"scale\": 0, \"nullable\": false}",
+      "false",
+      "",
+      "COLUMN",
+      "",
+      "",
+      "SHOP",
+      ""
+     ],
+     [
+      "ORDERS",
+      "PUBLIC",
+      "REGION",
+      "{\"type\": \"TEXT\", \"length\": 100, \"byteLength\": 400, \"nullable\": true}",
+      "true",
+      "'EU'",
+      "COLUMN",
+      "",
+      "",
+      "SHOP",
+      ""
+     ],
+     [
+      "ORDERS",
+      "PUBLIC",
+      "PLACED",
+      "{\"type\": \"TIMESTAMP_NTZ\", \"precision\": 0, \"scale\": 9, \"nullable\": true}",
+      "true",
+      "",
+      "COLUMN",
+      "",
+      "",
+      "SHOP",
+      ""
+     ],
+     [
+      "ORDERS",
+      "PUBLIC",
+      "TOTAL",
+      "{\"type\": \"FIXED\", \"precision\": 10, \"scale\": 2, \"nullable\": true}",
+      "true",
+      "",
+      "COLUMN",
+      "",
+      "",
+      "SHOP",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW TABLES LIKE 'STAGING' IN SCHEMA \"SHOP\".\"PUBLIC\""
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000112"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000112",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000112",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "cluster_by",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "rows",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "bytes",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "owner",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "retention_time",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_dynamic",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_iceberg",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_external",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "0",
+      "STAGING",
+      "SHOP",
+      "PUBLIC",
+      "TRANSIENT",
+      "",
+      "",
+      "10",
+      "2048",
+      "SYSADMIN",
+      "1",
+      "N",
+      "N",
+      "N"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW COLUMNS IN TABLE \"SHOP\".\"PUBLIC\".\"STAGING\""
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000113"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000113",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000113",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "table_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "column_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "data_type",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "null?",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "default",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "expression",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "autoincrement",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "STAGING",
+      "PUBLIC",
+      "PAYLOAD",
+      "{\"type\": \"VARIANT\", \"nullable\": true}",
+      "true",
+      "",
+      "COLUMN",
+      "",
+      "",
+      "SHOP",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW TABLES LIKE 'TOTALS\\\\_LIVE' IN SCHEMA \"SHOP\".\"PUBLIC\""
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000114"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000114",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000114",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "cluster_by",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "rows",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "bytes",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "owner",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "retention_time",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_dynamic",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_iceberg",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_external",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "0",
+      "TOTALS_LIVE",
+      "SHOP",
+      "PUBLIC",
+      "TABLE",
+      "",
+      "",
+      "10",
+      "2048",
+      "SYSADMIN",
+      "1",
+      "Y",
+      "N",
+      "N"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW COLUMNS IN TABLE \"SHOP\".\"PUBLIC\".\"TOTALS_LIVE\""
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000115"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000115",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000115",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "table_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "column_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "data_type",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "null?",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "default",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "expression",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "autoincrement",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "TOTALS_LIVE",
+      "PUBLIC",
+      "REGION",
+      "{\"type\": \"TEXT\", \"length\": 100, \"byteLength\": 400, \"nullable\": true}",
+      "true",
+      "",
+      "COLUMN",
+      "",
+      "",
+      "SHOP",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW VIEWS IN SCHEMA \"SHOP\".\"PUBLIC\" LIMIT 1000"
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000116"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000116",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000116",
+    "resultSetMetaData": {
+     "numRows": 2,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "reserved",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "owner",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "text",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_secure",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_materialized",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 2
+      }
+     ]
+    },
+    "data": [
+     [
+      "0",
+      "ORDER_TOTALS",
+      "",
+      "VIEW",
+      "SHOP",
+      "PUBLIC",
+      "SYSADMIN",
+      "",
+      "create view ORDER_TOTALS as select region, sum(total) as total from orders group by region;",
+      "false",
+      "false"
+     ],
+     [
+      "0",
+      "DAILY",
+      "",
+      "MATERIALIZED_VIEW",
+      "SHOP",
+      "PUBLIC",
+      "SYSADMIN",
+      "",
+      "create materialized view DAILY as select placed::date as day, count(*) as n from orders group by 1;",
+      "false",
+      "true"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW VIEWS LIKE 'ORDER\\\\_TOTALS' IN SCHEMA \"SHOP\".\"PUBLIC\""
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000117"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000117",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000117",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "reserved",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "owner",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "text",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_secure",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_materialized",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "0",
+      "ORDER_TOTALS",
+      "",
+      "VIEW",
+      "SHOP",
+      "PUBLIC",
+      "SYSADMIN",
+      "",
+      "create view ORDER_TOTALS as select region, sum(total) as total from orders group by region;",
+      "false",
+      "false"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW VIEWS LIKE 'DAILY' IN SCHEMA \"SHOP\".\"PUBLIC\""
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000118"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000118",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000118",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "reserved",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "owner",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "text",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_secure",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_materialized",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "0",
+      "DAILY",
+      "",
+      "MATERIALIZED_VIEW",
+      "SHOP",
+      "PUBLIC",
+      "SYSADMIN",
+      "",
+      "create materialized view DAILY as select placed::date as day, count(*) as n from orders group by 1;",
+      "false",
+      "true"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW STAGES IN SCHEMA \"SHOP\".\"PUBLIC\""
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000119"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000119",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000119",
+    "resultSetMetaData": {
+     "numRows": 2,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "url",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "has_credentials",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "has_encryption_key",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "owner",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "region",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "type",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "cloud",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 2
+      }
+     ]
+    },
+    "data": [
+     [
+      "0",
+      "LANDING",
+      "SHOP",
+      "PUBLIC",
+      "",
+      "N",
+      "N",
+      "SYSADMIN",
+      "",
+      "",
+      "INTERNAL",
+      ""
+     ],
+     [
+      "0",
+      "LAKE",
+      "SHOP",
+      "PUBLIC",
+      "s3://acme-lake/orders/",
+      "N",
+      "N",
+      "SYSADMIN",
+      "",
+      "",
+      "EXTERNAL",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW COLUMNS IN TABLE \"SALES\".\"EU\".\"ORDERS_EU\""
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000120"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000120",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000120",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "table_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "column_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "data_type",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "null?",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "default",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "expression",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "autoincrement",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "ORDERS_EU",
+      "EU",
+      "ID",
+      "{\"type\": \"FIXED\", \"precision\": 38, \"scale\": 0, \"nullable\": false}",
+      "false",
+      "",
+      "COLUMN",
+      "",
+      "",
+      "SALES",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW COLUMNS IN TABLE \"SHOP\".\"PUBLIC\".\"ORDERS\""
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000121"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000121",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000121",
+    "resultSetMetaData": {
+     "numRows": 4,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "table_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "column_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "data_type",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "null?",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "default",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "expression",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "autoincrement",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 4
+      }
+     ]
+    },
+    "data": [
+     [
+      "ORDERS",
+      "PUBLIC",
+      "ID",
+      "{\"type\": \"FIXED\", \"precision\": 38, \"scale\": 0, \"nullable\": false}",
+      "false",
+      "",
+      "COLUMN",
+      "",
+      "",
+      "SHOP",
+      ""
+     ],
+     [
+      "ORDERS",
+      "PUBLIC",
+      "REGION",
+      "{\"type\": \"TEXT\", \"length\": 100, \"byteLength\": 400, \"nullable\": true}",
+      "true",
+      "'EU'",
+      "COLUMN",
+      "",
+      "",
+      "SHOP",
+      ""
+     ],
+     [
+      "ORDERS",
+      "PUBLIC",
+      "PLACED",
+      "{\"type\": \"TIMESTAMP_NTZ\", \"precision\": 0, \"scale\": 9, \"nullable\": true}",
+      "true",
+      "",
+      "COLUMN",
+      "",
+      "",
+      "SHOP",
+      ""
+     ],
+     [
+      "ORDERS",
+      "PUBLIC",
+      "TOTAL",
+      "{\"type\": \"FIXED\", \"precision\": 10, \"scale\": 2, \"nullable\": true}",
+      "true",
+      "",
+      "COLUMN",
+      "",
+      "",
+      "SHOP",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW COLUMNS IN TABLE \"SHOP\".\"PUBLIC\".\"STAGING\""
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000122"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000122",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000122",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "table_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "column_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "data_type",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "null?",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "default",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "expression",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "autoincrement",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "STAGING",
+      "PUBLIC",
+      "PAYLOAD",
+      "{\"type\": \"VARIANT\", \"nullable\": true}",
+      "true",
+      "",
+      "COLUMN",
+      "",
+      "",
+      "SHOP",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW COLUMNS IN TABLE \"SHOP\".\"PUBLIC\".\"TOTALS_LIVE\""
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000123"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000123",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000123",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "table_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "column_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "data_type",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "null?",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "default",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "expression",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "autoincrement",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "TOTALS_LIVE",
+      "PUBLIC",
+      "REGION",
+      "{\"type\": \"TEXT\", \"length\": 100, \"byteLength\": 400, \"nullable\": true}",
+      "true",
+      "",
+      "COLUMN",
+      "",
+      "",
+      "SHOP",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW COLUMNS IN VIEW \"SHOP\".\"PUBLIC\".\"ORDER_TOTALS\""
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000124"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000124",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000124",
+    "resultSetMetaData": {
+     "numRows": 2,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "table_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "column_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "data_type",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "null?",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "default",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "expression",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "autoincrement",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 2
+      }
+     ]
+    },
+    "data": [
+     [
+      "ORDER_TOTALS",
+      "PUBLIC",
+      "REGION",
+      "{\"type\": \"TEXT\", \"length\": 100, \"byteLength\": 400, \"nullable\": true}",
+      "true",
+      "",
+      "COLUMN",
+      "",
+      "",
+      "SHOP",
+      ""
+     ],
+     [
+      "ORDER_TOTALS",
+      "PUBLIC",
+      "TOTAL",
+      "{\"type\": \"FIXED\", \"precision\": 10, \"scale\": 2, \"nullable\": true}",
+      "true",
+      "",
+      "COLUMN",
+      "",
+      "",
+      "SHOP",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW COLUMNS IN VIEW \"SHOP\".\"PUBLIC\".\"DAILY\""
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000125"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000125",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000125",
+    "resultSetMetaData": {
+     "numRows": 2,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "table_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "column_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "data_type",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "null?",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "default",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "expression",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "autoincrement",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 2
+      }
+     ]
+    },
+    "data": [
+     [
+      "DAILY",
+      "PUBLIC",
+      "DAY",
+      "{\"type\": \"DATE\", \"nullable\": true}",
+      "true",
+      "",
+      "COLUMN",
+      "",
+      "",
+      "SHOP",
+      ""
+     ],
+     [
+      "DAILY",
+      "PUBLIC",
+      "N",
+      "{\"type\": \"FIXED\", \"precision\": 38, \"scale\": 0, \"nullable\": false}",
+      "true",
+      "",
+      "COLUMN",
+      "",
+      "",
+      "SHOP",
+      ""
+     ]
+    ]
+   }
+  }
+ ]
+}

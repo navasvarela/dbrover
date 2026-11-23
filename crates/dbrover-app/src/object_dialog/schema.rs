@@ -175,6 +175,7 @@ fn singular(folder: FolderKind) -> &'static str {
         FolderKind::IndexTemplates => "index template",
         FolderKind::Types => "type",
         FolderKind::Aggregates => "aggregate",
+        FolderKind::Stages => "stage",
     }
 }
 

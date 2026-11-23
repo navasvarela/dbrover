@@ -1,0 +1,387 @@
+{
+ "doc": "A level of schemas paged two at a time: LIMIT, then LIMIT one more FROM the last name, whose repeat (if FROM is inclusive) is dropped.",
+ "exchanges": [
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW DATABASES LIMIT 1"
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000100"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000100",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000100",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "1767323045.000",
+      "SALES"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW SCHEMAS IN DATABASE \"SHOP\" LIMIT 2"
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000126"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000126",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000126",
+    "resultSetMetaData": {
+     "numRows": 2,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_default",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_current",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "owner",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "options",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "retention_time",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 2
+      }
+     ]
+    },
+    "data": [
+     [
+      "0",
+      "A_EU",
+      "N",
+      "N",
+      "SHOP",
+      "SYSADMIN",
+      "",
+      "",
+      "1"
+     ],
+     [
+      "0",
+      "B_US",
+      "N",
+      "N",
+      "SHOP",
+      "SYSADMIN",
+      "",
+      "",
+      "1"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW SCHEMAS IN DATABASE \"SHOP\" LIMIT 3 FROM 'B_US'"
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000127"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000127",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000127",
+    "resultSetMetaData": {
+     "numRows": 3,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_default",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_current",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "owner",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "options",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "retention_time",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 3
+      }
+     ]
+    },
+    "data": [
+     [
+      "0",
+      "B_US",
+      "N",
+      "N",
+      "SHOP",
+      "SYSADMIN",
+      "",
+      "",
+      "1"
+     ],
+     [
+      "0",
+      "C_APAC",
+      "N",
+      "N",
+      "SHOP",
+      "SYSADMIN",
+      "",
+      "",
+      "1"
+     ],
+     [
+      "0",
+      "D_LATAM",
+      "N",
+      "N",
+      "SHOP",
+      "SYSADMIN",
+      "",
+      "",
+      "1"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW SCHEMAS IN DATABASE \"SHOP\" LIMIT 3 FROM 'D_LATAM'"
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000128"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000128",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000128",
+    "resultSetMetaData": {
+     "numRows": 2,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_default",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "is_current",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "owner",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "options",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "retention_time",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 2
+      }
+     ]
+    },
+    "data": [
+     [
+      "0",
+      "D_LATAM",
+      "N",
+      "N",
+      "SHOP",
+      "SYSADMIN",
+      "",
+      "",
+      "1"
+     ],
+     [
+      "0",
+      "E_AFRICA",
+      "N",
+      "N",
+      "SHOP",
+      "SYSADMIN",
+      "",
+      "",
+      "1"
+     ]
+    ]
+   }
+  }
+ ]
+}

@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use dbrover_core::{
-    ColumnInfo, Connection, DriverError, Password, SnowflakeConfig, SnowflakeSignIn, conformance,
-    describe_error,
+    CatalogNode, CatalogPath, CatalogSearch, ChildrenQuery, ColumnInfo, Connection, DriverError,
+    FolderKind, NodeKind, Password, SnowflakeConfig, SnowflakeSignIn, conformance, describe_error,
 };
 
 use self::replay::Replay;
@@ -307,6 +307,167 @@ async fn use_moves_only_this_connections_later_statements() {
     second.ping().await.expect("first ping");
     second.ping().await.expect("second ping");
     other.finish();
+}
+
+#[tokio::test]
+async fn the_explorer_walks_two_databases_with_show_commands_only() {
+    let replay = Replay::start(include_str!("exchanges/catalog.json")).await;
+    let config = SnowflakeConfig {
+        warehouse: "ANALYTICS_WH".to_owned(),
+        ..config(&replay)
+    };
+    let mut connection = connected(&config).await;
+    let visited = conformance::walk_catalog(&mut connection, 5).await;
+    let shown: Vec<(String, Option<String>)> = visited
+        .iter()
+        .filter(|node| node.path.segments().len() >= 4)
+        .filter(|node| node.path.name_of(NodeKind::Database) == Some("SHOP"))
+        .filter(|node| node.kind() != Some(NodeKind::Column))
+        .map(|node| (node.path.to_string(), node.detail.clone()))
+        .collect();
+    let detail = |text: &str| Some(text.to_owned());
+    assert_eq!(
+        shown
+            .iter()
+            .map(|(_, detail)| detail.clone())
+            .collect::<Vec<_>>(),
+        [
+            None,
+            detail("transient"),
+            detail("dynamic"),
+            None,
+            None,
+            detail("internal"),
+            detail("s3://acme-lake/orders/"),
+        ],
+        "{shown:#?}"
+    );
+    let kinds: Vec<Option<NodeKind>> = visited
+        .iter()
+        .filter(|node| node.path.segments().len() == 4)
+        .map(CatalogNode::kind)
+        .collect();
+    assert!(kinds.contains(&Some(NodeKind::MaterializedView)));
+    assert!(kinds.contains(&Some(NodeKind::Stage)));
+    let information_schema = visited
+        .iter()
+        .find(|node| node.label == "INFORMATION_SCHEMA")
+        .expect("listed");
+    assert!(information_schema.system, "hidden unless System is ticked");
+    let orders = CatalogPath::root()
+        .child(NodeKind::Database, "SHOP")
+        .child(NodeKind::Schema, "PUBLIC")
+        .child(NodeKind::Folder(FolderKind::Tables), "tables")
+        .child(NodeKind::Table, "ORDERS");
+    let columns: Vec<(String, Option<String>)> = visited
+        .iter()
+        .filter(|node| node.path.parent().as_ref() == Some(&orders))
+        .map(|node| (node.label.clone(), node.detail.clone()))
+        .collect();
+    assert_eq!(
+        columns,
+        [
+            ("ID".to_owned(), detail("NUMBER(38,0)")),
+            ("REGION".to_owned(), detail("VARCHAR(100)")),
+            ("PLACED".to_owned(), detail("TIMESTAMP_NTZ(9)")),
+            ("TOTAL".to_owned(), detail("NUMBER(10,2)")),
+        ]
+    );
+    replay.finish();
+}
+
+#[tokio::test]
+async fn show_definition_writes_a_tables_create_table_and_a_views_text() {
+    let replay = Replay::start(include_str!("exchanges/definitions.json")).await;
+    let mut connection = connected(&config(&replay)).await;
+    let public = CatalogPath::root()
+        .child(NodeKind::Database, "SHOP")
+        .child(NodeKind::Schema, "PUBLIC");
+    let table = public
+        .child(NodeKind::Folder(FolderKind::Tables), "tables")
+        .child(NodeKind::Table, "ORDERS");
+    assert_eq!(
+        connection.definition(&table).await.expect("a definition"),
+        "CREATE TABLE \"SHOP\".\"PUBLIC\".\"ORDERS\" (\n  \"ID\" NUMBER(38,0) NOT NULL,\n  \
+         \"REGION\" VARCHAR(100) DEFAULT 'EU',\n  \"PLACED\" TIMESTAMP_NTZ(9),\n  \
+         \"TOTAL\" NUMBER(10,2)\n)\nCLUSTER BY (REGION, PLACED);"
+    );
+    let view = public
+        .child(NodeKind::Folder(FolderKind::Views), "views")
+        .child(NodeKind::View, "ORDER_TOTALS");
+    assert!(
+        connection
+            .definition(&view)
+            .await
+            .expect("a definition")
+            .starts_with("create view ORDER_TOTALS as select region")
+    );
+    replay.finish();
+}
+
+#[tokio::test]
+async fn a_level_of_schemas_pages_with_limit_and_from() {
+    let replay = Replay::start(include_str!("exchanges/schemas-paged.json")).await;
+    let mut connection = connected(&config(&replay)).await;
+    let shop = CatalogPath::root().child(NodeKind::Database, "SHOP");
+    let first = ChildrenQuery {
+        filter: None,
+        after: None,
+        limit: Some(2),
+    };
+    let mut labels = Vec::new();
+    let mut page = connection
+        .children_page(&shop, &first)
+        .await
+        .expect("a page");
+    loop {
+        labels.extend(page.nodes.iter().map(|node| node.label.clone()));
+        let Some(next) = page.next else { break };
+        page = connection
+            .children_page(&shop, &first.after(next))
+            .await
+            .expect("a page");
+    }
+    assert_eq!(labels, ["A_EU", "B_US", "C_APAC", "D_LATAM", "E_AFRICA"]);
+    replay.finish();
+}
+
+#[tokio::test]
+async fn found_on_the_server_searches_the_whole_account() {
+    let replay = Replay::start(include_str!("exchanges/search.json")).await;
+    let mut connection = connected(&config(&replay)).await;
+    let found = connection
+        .search_catalog(&CatalogSearch::new("order"))
+        .await
+        .expect("a search")
+        .expect("Snowflake searches");
+    let places: Vec<(String, Option<NodeKind>, Option<String>)> = found
+        .nodes
+        .iter()
+        .map(|node| (node.label.clone(), node.kind(), node.detail.clone()))
+        .collect();
+    assert_eq!(
+        places,
+        [
+            (
+                "ORDERS".to_owned(),
+                Some(NodeKind::Table),
+                Some("SHOP.PUBLIC".to_owned())
+            ),
+            (
+                "ORDER_TOTALS".to_owned(),
+                Some(NodeKind::View),
+                Some("SHOP.PUBLIC".to_owned())
+            ),
+            (
+                "ORDERS_EU".to_owned(),
+                Some(NodeKind::Table),
+                Some("SALES.EU".to_owned())
+            ),
+        ]
+    );
+    assert!(!found.more);
+    replay.finish();
 }
 
 /// The checks above, against Snowflake itself: run by hand with
