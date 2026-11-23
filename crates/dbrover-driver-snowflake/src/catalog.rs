@@ -81,7 +81,7 @@ pub(crate) fn quoted(name: &str) -> String {
 }
 
 /// `text` as a string literal.
-fn literal(text: &str) -> String {
+pub(crate) fn literal(text: &str) -> String {
     format!("'{}'", text.replace('\\', "\\\\").replace('\'', "''"))
 }
 
@@ -378,7 +378,7 @@ impl Lister<'_> {
 }
 
 /// A `LIKE` pattern that matches `name` alone: its `%`, `_` and `\` escaped.
-fn like_exactly(name: &str) -> String {
+pub(crate) fn like_exactly(name: &str) -> String {
     name.replace('\\', "\\\\")
         .replace('%', "\\%")
         .replace('_', "\\_")

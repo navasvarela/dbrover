@@ -9,35 +9,62 @@
     "async": "true"
    },
    "request": {
-    "statement": "SHOW DATABASES LIMIT 1"
+    "statement": "SHOW WAREHOUSES LIKE 'ANALYTICS\\\\_WH'"
    },
    "response": {
     "code": "333334",
     "message": "Asynchronous execution in progress.",
-    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000100"
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000b1"
    }
   },
   {
    "method": "GET",
-   "path": "/01b0e8a3-0000-4c2b-0000-000000000100",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000000b1",
    "response": {
     "code": "090001",
-    "sqlState": "00000",
-    "message": "Statement executed successfully.",
-    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000100",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000b1",
     "resultSetMetaData": {
      "numRows": 1,
-     "format": "jsonv2",
      "rowType": [
       {
-       "name": "created_on",
-       "type": "text",
-       "nullable": true
+       "name": "name",
+       "type": "text"
       },
       {
-       "name": "name",
-       "type": "text",
-       "nullable": true
+       "name": "state",
+       "type": "text"
+      },
+      {
+       "name": "type",
+       "type": "text"
+      },
+      {
+       "name": "size",
+       "type": "text"
+      },
+      {
+       "name": "running",
+       "type": "text"
+      },
+      {
+       "name": "queued",
+       "type": "text"
+      },
+      {
+       "name": "is_default",
+       "type": "text"
+      },
+      {
+       "name": "is_current",
+       "type": "text"
+      },
+      {
+       "name": "auto_suspend",
+       "type": "text"
+      },
+      {
+       "name": "auto_resume",
+       "type": "text"
       }
      ],
      "partitionInfo": [
@@ -48,8 +75,84 @@
     },
     "data": [
      [
-      "1767323045.000",
-      "SALES"
+      "ANALYTICS_WH",
+      "SUSPENDED",
+      "STANDARD",
+      "X-Small",
+      "0",
+      "0",
+      "N",
+      "N",
+      "60",
+      "true"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW PARAMETERS LIKE 'STATEMENT_TIMEOUT_IN_SECONDS' IN WAREHOUSE \"ANALYTICS_WH\""
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000b2"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000000b2",
+   "response": {
+    "code": "090001",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000b2",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "rowType": [
+      {
+       "name": "key",
+       "type": "text"
+      },
+      {
+       "name": "value",
+       "type": "text"
+      },
+      {
+       "name": "default",
+       "type": "text"
+      },
+      {
+       "name": "level",
+       "type": "text"
+      },
+      {
+       "name": "description",
+       "type": "text"
+      },
+      {
+       "name": "type",
+       "type": "text"
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "STATEMENT_TIMEOUT_IN_SECONDS",
+      "172800",
+      "172800",
+      "",
+      "Timeout in seconds for statements.",
+      "NUMBER"
      ]
     ]
    }

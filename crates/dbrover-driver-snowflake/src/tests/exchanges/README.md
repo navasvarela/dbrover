@@ -9,7 +9,8 @@ that it reads Snowflake's documented answers, not that Snowflake answers exactly
 
 What the documentation doesn't show, for the live check (`live_snowflake`, and C5's demo note):
 
-- the code and message of a statement stopped by its `timeout` (HTTP 408), and whether a
+- the code and message of a statement stopped by its `timeout` (HTTP 408; `limit.json` guesses
+  `000630`), and whether a
   request's `timeout` can go past a warehouse's own `STATEMENT_TIMEOUT_IN_SECONDS`;
 - the text of `VARIANT`, `OBJECT`, `ARRAY`, `GEOGRAPHY`, `GEOMETRY` and `VECTOR` values (written
   here as Snowflake's other clients show them: JSON);

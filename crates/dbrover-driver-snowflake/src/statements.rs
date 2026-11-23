@@ -7,6 +7,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use async_trait::async_trait;
 use dbrover_core::{
     DriverError, JobFailure, JobId, JobPage, JobProgress, JobService, JobState, PageToken,
+    TimeLimit,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -38,6 +39,8 @@ struct Finished {
 pub(crate) struct SnowflakeJobs {
     api: Api,
     context: Mutex<Context>,
+    /// The data source's time limit, sent as each statement's `timeout` (C5f).
+    limit: Option<TimeLimit>,
     started: Mutex<HashMap<JobId, Started>>,
 }
 
@@ -72,10 +75,11 @@ impl Stats {
 }
 
 impl SnowflakeJobs {
-    pub(crate) fn new(api: Api, context: Context) -> Self {
+    pub(crate) fn new(api: Api, context: Context, limit: Option<TimeLimit>) -> Self {
         Self {
             api,
             context: Mutex::new(context),
+            limit,
             started: Mutex::new(HashMap::new()),
         }
     }
@@ -100,6 +104,11 @@ impl SnowflakeJobs {
             .unwrap_or_else(PoisonError::into_inner)
             .fields();
         body.insert("statement".to_owned(), Value::from(statement));
+        // Without a limit of DbRover's, none is sent: `0` would ask for Snowflake's longest,
+        // seven days, rather than its own default.
+        if let Some(limit) = self.limit {
+            body.insert("timeout".to_owned(), Value::from(limit.seconds()));
+        }
         body.insert("parameters".to_owned(), json!({ "query_tag": QUERY_TAG }));
         Value::Object(body)
     }
@@ -126,15 +135,40 @@ impl SnowflakeJobs {
         }
     }
 
-    /// Why a statement failed, pointing into it where Snowflake's message does.
+    /// Why a statement failed, pointing into it where Snowflake's message does, with what a
+    /// statement stopped at its timeout (HTTP 408) means in DbRover.
     fn failure(&self, job: &JobId, reply: &Reply) -> JobFailure {
-        let message = reply.refusal().to_string();
+        let mut message = reply.refusal().to_string();
+        if reply.status == TIMED_OUT {
+            message = self.timed_out(&message);
+        }
         let statement = self.started().remove(job).map(|started| started.statement);
         JobFailure {
             position: statement
                 .as_deref()
                 .and_then(|statement| errors::position_in(statement, &message)),
             message,
+        }
+    }
+}
+
+/// The status Snowflake answers a statement it cancelled at its timeout with.
+const TIMED_OUT: u16 = 408;
+
+impl SnowflakeJobs {
+    /// Snowflake's `message` for a statement it stopped at its timeout, saying which limit that
+    /// was and what it cost.
+    fn timed_out(&self, message: &str) -> String {
+        match self.limit {
+            Some(limit) => format!(
+                "{message} Snowflake stopped it after {limit}, this data source's limit, and \
+                 billed its warehouse until then. Raise Stop statements after in the data \
+                 source's settings to let it run longer."
+            ),
+            None => format!(
+                "{message} Snowflake stopped it at its own statement timeout \
+                 (STATEMENT_TIMEOUT_IN_SECONDS, set on the account, the user or the warehouse)."
+            ),
         }
     }
 }

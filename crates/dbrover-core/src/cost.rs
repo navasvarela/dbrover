@@ -152,9 +152,9 @@ impl fmt::Display for ByteCount {
 }
 
 /// What a data source on an engine that bills each read asks about before a statement runs,
-/// kept in the engine's own settings (`ConnectionConfig::cost_guard`). Its keys are written
-/// only when they differ from the default: `cost_guard = "off"`, as N5 wrote it, and
-/// `ask_above_bytes`.
+/// and how long one may run on an engine that bills time, kept in the engine's own settings
+/// (`ConnectionConfig::cost_guard`). Its keys are written only when they differ from the
+/// default: `cost_guard = "off"`, as N5 wrote it, `ask_above_bytes` and `stop_after_seconds`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CostGuard {
     #[serde(
@@ -166,6 +166,49 @@ pub struct CostGuard {
     /// Asks before a statement the driver estimates will scan more than this many bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ask_above_bytes: Option<ByteCount>,
+    /// How long a statement may run before the engine stops it, on an engine that bills the
+    /// time a warehouse runs and keeps such a limit itself (Snowflake's `timeout`, C5f). It
+    /// holds nothing back: nothing says beforehand how long a statement will take.
+    #[serde(
+        rename = "stop_after_seconds",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub stop_after: Option<TimeLimit>,
+}
+
+/// A statement's longest run, in whole seconds, never zero: a limit of nothing would stop
+/// every statement, and an engine may read zero as no limit at all (Snowflake reads it as its
+/// longest, seven days).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct TimeLimit(std::num::NonZeroU32);
+
+impl TimeLimit {
+    /// `seconds` as a limit; `None` for zero.
+    pub fn from_seconds(seconds: u32) -> Option<Self> {
+        std::num::NonZeroU32::new(seconds).map(Self)
+    }
+
+    pub fn seconds(self) -> u32 {
+        self.0.get()
+    }
+}
+
+impl fmt::Display for TimeLimit {
+    /// `45 s`, `10 min`, `1 h 30 min`: what the limit's messages say.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let seconds = self.seconds();
+        let (hours, minutes, rest) = (seconds / 3600, seconds % 3600 / 60, seconds % 60);
+        match (hours, minutes, rest) {
+            (0, 0, rest) => write!(f, "{rest} s"),
+            (0, minutes, 0) => write!(f, "{minutes} min"),
+            (hours, 0, 0) => write!(f, "{hours} h"),
+            (hours, minutes, 0) => write!(f, "{hours} h {minutes} min"),
+            (0, minutes, rest) => write!(f, "{minutes} min {rest} s"),
+            (hours, minutes, rest) => write!(f, "{hours} h {minutes} min {rest} s"),
+        }
+    }
 }
 
 /// Whether a statement that would read a whole table is asked about first.
@@ -200,6 +243,7 @@ impl CostGuard {
     pub const OFF: Self = Self {
         whole_table: ScanGuard::Off,
         ask_above_bytes: None,
+        stop_after: None,
     };
 
     /// Whether the driver is worth asking for an estimate: something would be held.
@@ -257,6 +301,7 @@ mod tests {
             let guard = CostGuard {
                 whole_table,
                 ask_above_bytes,
+                stop_after: None,
             };
             assert_eq!(
                 guard.holds(&estimate, pace),
@@ -267,10 +312,29 @@ mod tests {
         assert!(
             !CostGuard {
                 whole_table: off,
-                ask_above_bytes: None
+                ask_above_bytes: None,
+                stop_after: TimeLimit::from_seconds(600),
             }
-            .is_on()
+            .is_on(),
+            "a time limit holds nothing back"
         );
+    }
+
+    #[test]
+    fn time_limits_say_their_length_and_are_never_zero() {
+        assert_eq!(TimeLimit::from_seconds(0), None);
+        for (seconds, shown) in [
+            (45, "45 s"),
+            (600, "10 min"),
+            (3600, "1 h"),
+            (5400, "1 h 30 min"),
+            (90, "1 min 30 s"),
+            (3661, "1 h 1 min 1 s"),
+        ] {
+            let limit = TimeLimit::from_seconds(seconds).expect("not zero");
+            assert_eq!(limit.to_string(), shown);
+            assert_eq!(limit.seconds(), seconds);
+        }
     }
 
     #[test]

@@ -9,59 +9,150 @@
     "async": "true"
    },
    "request": {
-    "parameters": {
-     "query_tag": "DbRover"
-    },
-    "statement": "SHOW DATABASES LIMIT 1"
+    "statement": "SHOW WAREHOUSES LIKE 'ANALYTICS\\\\_WH'"
    },
-   "status": 202,
    "response": {
     "code": "333334",
-    "message": "Asynchronous execution in progress. Use provided query id to perform query monitoring and management.",
-    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000aa",
-    "statementStatusUrl": "/api/v2/statements/01b0e8a3-0000-4c2b-0000-0000000000aa"
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000b1"
    }
   },
   {
    "method": "GET",
-   "path": "/01b0e8a3-0000-4c2b-0000-0000000000aa",
-   "status": 200,
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000000b1",
    "response": {
     "code": "090001",
-    "sqlState": "00000",
-    "message": "Statement executed successfully.",
-    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000aa",
-    "createdOn": 1767323045000,
-    "statementStatusUrl": "/api/v2/statements/01b0e8a3-0000-4c2b-0000-0000000000aa",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000b1",
     "resultSetMetaData": {
      "numRows": 1,
-     "format": "jsonv2",
      "rowType": [
       {
-       "name": "created_on",
-       "type": "timestamp_ltz",
-       "scale": 3,
-       "precision": 0,
-       "nullable": true
+       "name": "name",
+       "type": "text"
       },
       {
-       "name": "name",
-       "type": "text",
-       "length": 16777216,
-       "nullable": false
+       "name": "state",
+       "type": "text"
+      },
+      {
+       "name": "type",
+       "type": "text"
+      },
+      {
+       "name": "size",
+       "type": "text"
+      },
+      {
+       "name": "running",
+       "type": "text"
+      },
+      {
+       "name": "queued",
+       "type": "text"
+      },
+      {
+       "name": "is_default",
+       "type": "text"
+      },
+      {
+       "name": "is_current",
+       "type": "text"
+      },
+      {
+       "name": "auto_suspend",
+       "type": "text"
+      },
+      {
+       "name": "auto_resume",
+       "type": "text"
       }
      ],
      "partitionInfo": [
       {
-       "rowCount": 1,
-       "uncompressedSize": 100
+       "rowCount": 1
       }
      ]
     },
     "data": [
      [
-      "1767323045.000",
-      "SHOP"
+      "ANALYTICS_WH",
+      "SUSPENDED",
+      "STANDARD",
+      "X-Small",
+      "0",
+      "0",
+      "N",
+      "N",
+      "60",
+      "true"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW PARAMETERS LIKE 'STATEMENT_TIMEOUT_IN_SECONDS' IN WAREHOUSE \"ANALYTICS_WH\""
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000b2"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000000b2",
+   "response": {
+    "code": "090001",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000b2",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "rowType": [
+      {
+       "name": "key",
+       "type": "text"
+      },
+      {
+       "name": "value",
+       "type": "text"
+      },
+      {
+       "name": "default",
+       "type": "text"
+      },
+      {
+       "name": "level",
+       "type": "text"
+      },
+      {
+       "name": "description",
+       "type": "text"
+      },
+      {
+       "name": "type",
+       "type": "text"
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "STATEMENT_TIMEOUT_IN_SECONDS",
+      "172800",
+      "172800",
+      "",
+      "Timeout in seconds for statements.",
+      "NUMBER"
      ]
     ]
    }
