@@ -2777,8 +2777,29 @@ measurement.
   estimate comes from the engine's own cost guard, and not on Windows or Linux beyond CI.
 - **RS9 — Composing reports:** a report used as another's source, by name, with its
   parameters bound, run in the same worker and DuckDB; only its result is visible to the outer
-  report. Later, `reuse = "24h"` takes a recent result from RS5's cache. Independent of the
-  scale work, so it can come right after RP5.
+  report. `reuse = "24h"` takes a recent result instead of running the inner report again.
+  Independent of the scale work, so it can come right after RP5. Planned against the code as of
+  0.36.0 in [RS9 against today's code](reports-at-scale.md#rs9-against-todays-code), which
+  found three things the design had wrong: DuckDB 1.5.6's lock doesn't freeze `search_path`, so
+  an inner combine needs no connection of its own; RS5h's result cache was never built, so
+  RS9f carries one of its own; and what the example reports repeat is a whole result, which a
+  report source removes, rather than an expression a shared SQL macro would, so RS9e stays
+  out. In layers, one PR each:
+  - **RS9a — Plan:** that section, the layers here, and this line. Docs only.
+  - **RS9b — The report file:** `report` and `params` on a `[[source]]`, read and planned, with
+    the graph of the reports a run uses, its cycles and a depth past 4 refused, and every
+    problem naming both reports.
+  - **RS9c — Running a report source:** each inner report's sources in a schema of their own,
+    the lock, then each inner combine as `CREATE TABLE main.<id> AS …` innermost first.
+  - **RS9d — The tab and the profile:** **Used by**, a report source's **Edit file**, the inner
+    steps nested in the timeline, and every report file's hash kept in the run's profile.
+  - **RS9e — Shared SQL functions:** left out, for the reason above.
+  - **RS9f — `reuse`:** a result kept as Parquet under `report-cache/results/`, keyed by the
+    inner file's hash and its parameters, with the sweeping and the clearing of its own.
+  - **RS9g — Manual, demo note and the exit test.**
+
+  **Exit:** a report built on an example report writes rows that equal a sum over that report's
+  own CSV file, and a cycle of two reports is a problem in both files.
 
 ## Version control track
 

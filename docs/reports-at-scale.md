@@ -822,7 +822,10 @@ runs the small cases.
   change, and plans the report without running it; running it stays off unless the project
   allows it.
 - **RS9 — Composing reports:** independent of RS1 to RS8 except `reuse`, so it can be
-  scheduled at any point after RP5.
+  scheduled at any point after RP5. Its layers, their exits and its own exit test are in
+  [RS9 against today's code](#rs9-against-todays-code), which also finds that RS5's result
+  cache was never built, so RS9f carries one, and that the repetition the examples hold is a
+  repeated result rather than a repeated expression, so RS9e stays out.
   - RS9a — Plan.
   - RS9b — The report file: `report` and its `params` on a source, read and planned, with the
     graph of reports, cycles and depth refused, and every problem naming both reports.
@@ -832,8 +835,11 @@ runs the small cases.
   - RS9e — Shared SQL functions, if reports repeat expressions by then.
   - RS9f — `reuse`, once RS5's cache exists.
   - RS9g — Manual and demo note.
-  **Exit:** a report built on the valuation example writes gains by wallet that equal a sum
-  over the valuation's own CSV file; a cycle of two reports is a problem in both files.
+  **Exit:** a report built on an example report writes rows that equal a sum over that
+  report's own CSV file; a cycle of two reports is a problem in both files. The design wrote
+  this as the valuation example, which `examples/reports/` never gained — it needs PostgreSQL
+  and DynamoDB — so the shop's `sales-by-category` stands in, and the test runs in CI
+  ([RS9's exit test](#rs9s-exit-test)).
 
 ## RS1 against today's code
 
@@ -1364,6 +1370,92 @@ Known before the first layer, and added to as RS8 is built (RS8f):
   belong to the history rather than to either writer: a kept run has an `id` and a run written
   as it finishes has none, and the history keeps `started_at` to the millisecond while a live
   run's has microseconds. Everything else is the same document, written by the same function.
+
+## RS9 against today's code
+
+Settled on 2026-11-20, when RS9 started, by reading [Composing reports](#composing-reports)
+against the code as of 0.36.0's release (`aab80c4c`): the report file in
+`crates/dbrover-report/src/read.rs`, planning in `plan.rs`, the run's DuckDB in `combine.rs`
+and `crates/dbrover-driver-duckdb/src/workspace.rs`, the run history in
+`crates/dbrover-store/src/history/runs.rs`, and the tab in `crates/dbrover-app/src/reports/`.
+DuckDB 1.5.6, the one in the build, was tried for the three things the design rests on. Where
+the code changes the plan, the plan above still says what it said; this section wins. Each row
+is a decision for the reviewer to confirm.
+
+| The plan said | Today's code | RS9 does |
+| --- | --- | --- |
+| Each inner combine runs on a connection whose `search_path` names its schema, **set before the lock**, since the lock freezes the settings. | **The lock doesn't freeze `search_path`.** `Workspace::lock` sets `enable_external_access = false` and `lock_configuration = true`, which freeze the global settings — `SET memory_limit` after it is refused, as `once_locked_reads_no_file_and_keeps_its_limits` pins. `search_path` is a *local* setting, so `SET search_path` still works after the lock, on the workspace's own connection. Tried on DuckDB 1.5.6: a connection cloned before the lock keeps its own `search_path` (one clone reads `valued.tx`, another `other.tx`, the main connection `main.tx`), and `enable_external_access` is global, so a clone made before the lock is cut off from files just the same — `read_csv`, `COPY` to a file and `ATTACH` are all refused on it. | **One connection, `search_path` set before each inner combine and cleared after,** rather than a connection per inner report: the inner combines run one after another, so there is nothing for a second connection to do. `CREATE TABLE main.<id> AS …` works after the lock on that connection, which is what the step needs. Both facts are pinned in `dbrover-driver-duckdb`'s workspace tests (RS9c), so a DuckDB that starts locking `search_path`, or stops allowing `CREATE TABLE` after the lock, shows as a failing test rather than as a run that reads the wrong schema. |
+| A source names its data source: `data_source` is what a `[[source]]` reads from. | `Source` has `data_source: String`, read as a required key; `PlannedSource` has three variants, matched in seven places in `dbrover-report` (loading, the manifest, the handoffs, explaining and the tests); `SourceStart.data_source` is a plain `String`, which the tab's step already takes as an `Option`. | **A report source names no data source,** so `report` and `data_source` refuse each other, as `attach` and `lake` already do. `Source.data_source` becomes `Option<String>`, `None` only for a report source, which four readers take as it comes: `plan_source`, `dbrover report list`'s data sources, the tab's list and the file's own tests. `PlannedSource` gains a fourth variant, `Report`, so each of those seven matches is a place the compiler asks what a composed run does there. `SourceStart` gains `report`, the inner report's name, and `data_source` becomes an `Option`: a lane says which report it runs, not which engine it reads.
+| `params` gives each of the inner report's parameters a value, either one of the outer's (`":since"`) or a literal of its type; a text literal can't start with a colon. | Nothing reads a `params` on a source. `Lookup` is the only thing that binds a parameter from elsewhere, and it binds it from a loaded column, not from the file. A report's own `params` are read by `read_params` as `{ since = "timestamp" }`, names to types. | **As planned.** A source's `params` is a table of the inner report's parameter names to either `":name"`, one of the outer report's parameters, which must be of the same type, or a literal, checked against the inner parameter's type with `ColumnType::plain_form`, the same check `Plan::values` makes of a run's own values. A parameter of the inner report left out, named twice, or unknown to it is a problem in the outer file naming both reports. |
+| **Nesting:** up to a depth of 4. A cycle is a problem when the files are read, naming the reports in it. | `read_report` reads one text and knows nothing of a folder; `Plan::new` takes the data sources and the presets, and the crate's own contract is that "reading a file and connecting to a data source are left to the store, the engine and the worker, which hand this crate what they read". | **The caller hands the planner the other report files' texts,** as it already hands it the data sources: `Plan::new` and `plan_text` take a fourth slice, `&[NamedReport]` (a name and its text). Reading stays one file at a time, so the graph, its cycles and its depth are planning's, not reading's — the plan above says "when the files are read", and one file's text cannot show a cycle. `read_report` grows nothing but the keys. The worker reads the folder once before it plans; the app already holds every report's text in `Reports::Loaded`. |
+| The inner report's result is "its `[combine]`'s rows …, or its one source's rows without a combine, as the table `valued`". | `Logic::Direct` streams one source's rows with no DuckDB at all, and `Logic::Combine` loads every source into `main`. A single source with no `[combine]` plans as `Direct`. | **An inner report with no `[combine]` loads its one source straight into `main.<id>`,** with no schema and no inner combine: its rows are its result. An inner report with a `[combine]` gets a schema. **An outer report whose only source is a report source needs a `[combine]`,** which `check_shape` refuses the lack of, as it already refuses an attached source or a handoff without one: a report source's rows are in DuckDB, and only a combine step reads them. |
+| An inner report's `[report] partition` (RS4) is a problem; its `[combine]` limits and `[report] timeout` aren't read. | `Plan` holds `timeout`, `max_disk`, `stall_timeout`, `resumable_above`, `partition` and the combine's `CombineLimits`, and `FileLimits` records which the file set so a run stopped at a limit can say who set it. | **As planned,** and the inner plan's outputs and charts are dropped once it is planned, rather than never checked: the inner file is read and planned in full, so a problem in it is a problem in every report that uses it, and then nothing of it is written. `limit_set_in` keeps answering for the outer file alone, which is the file that set the limits the run stopped at. |
+| **Attached sources** keep their ids as aliases across the run; two reports attaching different files under one id is a problem naming both. | `attach` happens before the lock, on the workspace's one connection, and `ATTACH` is refused after it. An alias is a catalog, which no schema can hold. | **As planned.** The ids of the attached sources of every report in the run are checked against each other when the outer report is planned, and the same file under one id is attached once. A lake's view is a table in `main`, not a catalog, so a lake belongs to its report's schema like any loaded table. |
+| **The profile and the history:** an inner report's steps nest under the outer source's lane, hints name them by path (`valued › tx`), and the run is recorded with the file hash of every report it used. | `Step::Source { id }` carries one string, which is both what the step is called and the name of the source's table. `ReportRun.version` is the outer file's blob id; `RunProfile` is a serde struct with `#[serde(default)]` on every field, so a new one needs no migration. | **The step's id becomes the path and the table's name stays the id.** A step of an inner source is `Step::Source { id: "valued › tx" }`, which the timeline nests by its first part and the hints name as the design writes it, while the table it loads is `valued.tx`. `RunProfile` gains `reports`, each report the run used with its name and its text's blob id — the outer file's hash stays in `ReportRun.version`, where `git log --find-object` finds it. |
+| **In the app:** the explorer marks a report that others use; its tab lists them under **Used by**; **Edit file** on a report source opens the inner report. | The tab draws the file, the problems, the runs and the profile; `Reports::Loaded` holds every report file read, so which reports name a given one is already in hand with no new read. | **As planned, except the explorer's mark.** **Used by** goes in the tab, where the list is, and a report source's **Edit file** opens the inner report's tab. A mark in the explorer's tree is left out and recorded in [RS9's remaining gaps](#rs9s-remaining-gaps): the tree draws names from `ReportName`s alone and would have to plan every report on every frame to know. |
+| **Shared SQL functions:** "later, small, and a natural layer of the same milestone if reports start repeating expressions." | **Reports repeat data, not expressions.** `examples/reports/battery-cycles.toml`'s `metered` common table expression is `battery-flows.toml`'s whole combine query — the flows joined to their batteries and `ASOF`-joined to the hour's price. What repeats as an *expression* is one multiplication, `flows.amount * batteries.unit`, in two files. | **RS9e is left out,** and the examples say why: the repetition that exists is a repeated result, which a report source removes — `battery-cycles` can read `battery-flows` as a source. A `reports/macros.sql` loaded into every run would also be the thing this design rejected `include =` for, a part that changes every report silently, without the contract a report source gives. It is recorded in [RS9's remaining gaps](#rs9s-remaining-gaps) for the third repeated expression. |
+| **`reuse = "<age>"`** takes a recent result "with RS5's cache", keyed by the inner file's hash and its parameters, kept as Parquet in the data folder's `report-cache/`. | **There is no cache.** RS5h, the layer that was to build `report-cache/`, is the one layer of RS5 that was not built ("not built; `incremental` and the cache in `report-cache/` wait for a report that needs them"). Nothing in the code names the folder; `AppPaths` has `report_runs_dir()` and no cache. RS5h's cache is also a different cache: rows of one source, merged by key, under `report-cache/<report>/<source>/`, against a whole report's result keyed by a file hash and its parameters. | **RS9f carries its own cache,** since the one it was to sit on never arrived and would not have fitted it anyway: `report-cache/results/<blob id>/<parameters' hash>.parquet` in the data folder, written by `COPY` from the run's DuckDB as a Parquet output is (RS3d), read back before the lock so no prefix has to be allowed, and swept by age and by a total as kept work folders are. Its housekeeping is RS9f's: **Clear history**, **Run from scratch** and `--from-scratch` clear it. When RS5h comes, its own cache goes beside this one under `report-cache/sources/`. |
+
+### RS9's layers
+
+- **RS9a — Plan:** this section, the layers below, and the roadmap's item line. Docs only.
+- **RS9b — The report file:** `report` and `params` on a `[[source]]`, read and planned, with
+  the graph of the reports a run uses, its cycles and a depth past 4 refused, and every problem
+  naming both reports. The planner takes the other report files' texts beside the data sources.
+  *Exit:* a report whose source reads another report plans, with the inner report's own sources
+  and combine inside it; a cycle of two reports is a problem in both files; and a parameter of
+  the inner report left out, of another type, or unknown to it is a problem naming both.
+- **RS9c — Running a report source:** each inner report's sources loaded into a schema named
+  after the outer source's id, the lock, then each inner combine as
+  `CREATE TABLE main.<id> AS …` innermost first, then the outer combine. The two facts the step
+  rests on — `search_path` a local setting the lock doesn't freeze, and `CREATE TABLE` allowed
+  after it — pinned in `dbrover-driver-duckdb`'s workspace tests against DuckDB 1.5.6.
+  *Exit:* a report built on another writes the rows the inner report's own result sums to, and
+  the outer combine cannot name the inner report's sources.
+- **RS9d — The tab and the profile:** **Used by** in a report's tab, a report source's
+  **Edit file** opening the inner report, the inner steps nested under the outer source's lane
+  in the timeline, and the blob id of every report file a run used kept in its profile.
+  *Exit:* the tab of a report two others read lists both, and a composed run's profile names
+  each report it used with the hash of the text that ran.
+- **RS9e — Shared SQL functions:** left out. The repetition the examples hold is a repeated
+  result, which RS9b and RS9c remove; see the row above and
+  [RS9's remaining gaps](#rs9s-remaining-gaps).
+- **RS9f — `reuse`:** `reuse = "<age>"` on a report source, over a cache of its own, since
+  RS5h's never arrived: a result kept as Parquet under `report-cache/results/`, keyed by the
+  inner file's blob id and its parameters, taken when it is younger than the age, swept by age
+  and total, and ignored by **Run from scratch**. *Exit:* a second run of the outer report
+  inside the age runs no inner statement and writes the same files; `--from-scratch` runs the
+  inner report again.
+- **RS9g — Manual, demo note and the exit test:** the manual's chapter on a report as a
+  source, a demo note, RS9's status and its gaps in the roadmap, and the exit test below.
+
+### RS9's exit test
+
+`crates/dbrover-engine/tests/report_composed.rs`, on the SQLite **shop** of
+`examples/reports/shop.sql`, which needs no server and runs in CI:
+
+1. `sales-by-category.toml` runs on its own and writes its CSV.
+2. A report whose one `[[source]]` is `report = "sales-by-category"`, with its period bound to
+   the outer report's, groups that result by category and writes it.
+3. The composed report's numbers equal a sum over the first report's own CSV file, column by
+   column, so the inner report's result reached the outer combine unchanged.
+4. The outer combine naming one of the inner report's sources fails, so only the result is
+   visible.
+5. Two reports that read each other are a problem in both files, each naming both reports.
+
+### RS9's remaining gaps
+
+Known before the first layer, and added to as RS9 is built (RS9g):
+
+- **The explorer doesn't mark a report that others use.** **Used by** is in the tab, where the
+  reports are already read; the tree draws its names from the folder's `ReportName`s and would
+  have to read and plan every report on every frame to know.
+- **Shared SQL functions are not built (RS9e).** The row above says why: what the examples
+  repeat is a result, not an expression, and the one repeated expression —
+  `flows.amount * batteries.unit` — is in two files. The layer waits for a third.
+- **An inner report's own history doesn't change,** as the design says, because it writes no
+  files: there is no record anywhere that a report ran inside another, only the outer run's
+  profile naming the reports it used.
 
 ## Benchmark
 
