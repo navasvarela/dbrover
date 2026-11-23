@@ -77,7 +77,12 @@ runs, each read-only and within the project's own data sources) and v0.36.0 (the
 dbdesk compatibility gone: the macOS bundle no longer answers to the name the app had before
 0.13, an install from 0.12 or earlier is no longer copied and its keychain entries are no longer
 moved; and Valkey 9.2's commands classified, so a read-only data source accepts the `PH*` reads
-it had been refusing).
+it had been refusing) and v0.37.0 (reports built on other reports: a source reads another
+report's result with `report` and binds its `params`, a cycle of reports is a problem in each
+file, a report's tab lists the reports that read it under **Used by**, and `reuse` takes a kept
+result younger than an age instead of running the report again; and data sources put into
+projects in one step: **New data source** on a project's menu creates one there, and a data
+source dragged onto a project header moves into it).
 R3's update notice is built, ahead of R2 (see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
