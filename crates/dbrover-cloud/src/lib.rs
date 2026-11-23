@@ -4,13 +4,15 @@
 //! AWS came first, for DynamoDB (`docs/nosql.md`, N5), through AWS's own SDK. Google Cloud
 //! signs in with Application Default Credentials over a small HTTPS client of DbRover's own,
 //! and Microsoft Entra ID through the Azure CLIs' sign-in. Both hand out [`AccessToken`]s,
-//! which a [`TokenCache`] keeps until they are about to expire.
+//! which a [`TokenCache`] keeps until they are about to expire. Snowflake's key pair makes its
+//! tokens on the machine, as JWTs signed with the user's key, and keeps them the same way.
 
 pub mod aws;
 pub mod entra;
 pub mod google;
 mod http;
 pub mod rds;
+pub mod snowflake;
 pub mod storage;
 pub mod token;
 

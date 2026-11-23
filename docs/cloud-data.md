@@ -1301,7 +1301,7 @@ account.
   `DESCRIBE TABLE` and `EXPLAIN` to be classified; a `//` straight after `:` is a URL's, not a
   comment (`PUT file:///tmp/a.csv @stage`); and the object helpers write no Snowflake DDL in
   C5, as for BigQuery.
-- **C5c — Snowflake's sign-in:** the `snowflake` module in `dbrover-cloud`: a key (PKCS #8,
+- **C5c — Snowflake's sign-in** (built): the `snowflake` module in `dbrover-cloud`: a key (PKCS #8,
   encrypted or not, or PKCS #1) read and its fingerprint taken, a JWT signed with RS256 and
   kept in a `TokenCache`, and the three kinds of token with their token-type header.
   **Exit:** a JWT for a fixed key, account, user and time verifies against the key's public
@@ -1310,6 +1310,13 @@ account.
   signs with its passphrase; a wrong passphrase, a DES3 key, a key that isn't RSA and a file
   that isn't a key are errors that say what to do; a JWT is reused until five minutes before it
   expires; no type that holds a key or token prints it.
+  **As built:** `KeyPair` reads PKCS #8 (plain, or encrypted with AES under PBKDF2 or scrypt)
+  and PKCS #1, refusing OpenSSL's traditional encryption and DES3 with the command that
+  re-encrypts the key; ring gives the public half as PKCS #1, so DbRover wraps it in the
+  `SubjectPublicKeyInfo` Snowflake fingerprints. `KeyPairSignIn` keeps its JWTs in a
+  `TokenCache`, and `SnowflakeSignIn` hands out the bearer token and its `TokenType` for the
+  header. The test keys, and the `openssl` commands that made them and their fingerprint, are
+  in `crates/dbrover-cloud/testdata/snowflake/`.
 - **C5d — Snowflake: settings and statements as jobs:** `ConnectionConfig::Snowflake` and
   `DriverKind::Snowflake` with the account, user, sign-in, warehouse, role, database, schema,
   an endpoint for the replay server, and C0's cost guard; a `dbrover-driver-snowflake` crate
