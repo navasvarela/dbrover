@@ -85,6 +85,7 @@ fn plan(text: &str, data_source: &DataSource) -> Plan {
         read_report(text).unwrap(),
         std::slice::from_ref(data_source),
         &[],
+        &[],
         &LimitDefaults::default(),
     )
     .unwrap()

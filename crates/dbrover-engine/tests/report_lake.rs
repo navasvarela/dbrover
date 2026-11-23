@@ -217,6 +217,7 @@ async fn joins_a_postgresql_source_with_a_partitioned_parquet_lake() {
         read_report(&text).unwrap(),
         &[items, lake_source],
         &[],
+        &[],
         &LimitDefaults::default(),
     )
     .unwrap();

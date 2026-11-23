@@ -21,8 +21,8 @@ pub struct ListedReport {
     pub title: String,
     pub description: Option<String>,
     pub path: PathBuf,
-    /// The data sources its sources name, by name or id as the file writes them; `None` when
-    /// the file can't be read.
+    /// The data sources its sources name, by name or id as the file writes them, leaving out
+    /// a report source, which names a report (RS9); `None` when the file can't be read.
     pub data_sources: Option<Vec<String>>,
     /// In the order the report asks for them.
     pub params: Vec<ListedParam>,
@@ -74,7 +74,7 @@ fn describe(
             report
                 .sources
                 .iter()
-                .map(|source| source.data_source.clone())
+                .filter_map(|source| source.data_source.clone())
                 .collect()
         }),
         params,
@@ -104,6 +104,7 @@ fn describe(
         report.clone(),
         &named.data_sources,
         &named.presets,
+        &named.reports,
         defaults,
     ) {
         Ok(plan) => listed(plan.name, Some(&report), params(&plan.params), Vec::new()),

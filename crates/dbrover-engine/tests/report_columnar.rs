@@ -67,6 +67,7 @@ async fn run_report(
         read_report(&text).unwrap(),
         std::slice::from_ref(data_source),
         &[],
+        &[],
         &LimitDefaults::default(),
     )
     .unwrap();

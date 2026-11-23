@@ -174,7 +174,7 @@ fn names_each_charts_file_with_the_runs_values() {
         "[[chart]]\nfile = \"net-{since:%Y-%m}.svg\"\n[[chart]]\nfile = \"net.png\"",
     ))
     .unwrap();
-    let plan = Plan::new(report, &[shop()], &[], &LimitDefaults::default()).unwrap();
+    let plan = Plan::new(report, &[shop()], &[], &[], &LimitDefaults::default()).unwrap();
     let typed: TypedValues = [("since".to_owned(), "2026-10-01".to_owned())].into();
 
     let values = plan.values(&typed).unwrap();
@@ -190,7 +190,14 @@ fn refuses_values_that_make_a_chart_an_outputs_file() {
             .replace("since = \"date\"", "since = \"date\", name = \"text\"")
             .replace("net-{since:%Y-%m}.csv", "{since}.svg"),
     );
-    let plan = Plan::new(report.unwrap(), &[shop()], &[], &LimitDefaults::default()).unwrap();
+    let plan = Plan::new(
+        report.unwrap(),
+        &[shop()],
+        &[],
+        &[],
+        &LimitDefaults::default(),
+    )
+    .unwrap();
     let typed: TypedValues = [
         ("since".to_owned(), "2026-10-01".to_owned()),
         ("name".to_owned(), "2026-10-01".to_owned()),
@@ -225,6 +232,7 @@ async fn run_charts(
     let plan = Plan::new(
         read_report(&with_charts(charts)).unwrap(),
         &[shop()],
+        &[],
         &[],
         &LimitDefaults::default(),
     )
@@ -604,6 +612,7 @@ fn a_charts_own_query_needs_a_combine_step_and_reads_only() {
             read_report(&combined(charts)).unwrap(),
             &[shop()],
             &[],
+            &[],
             &LimitDefaults::default(),
         )
     };
@@ -642,6 +651,7 @@ async fn draws_a_charts_own_query_after_the_combine_step() {
         ))
         .unwrap(),
         &[shop()],
+        &[],
         &[],
         &LimitDefaults::default(),
     )
@@ -688,6 +698,7 @@ async fn a_charts_failing_query_fails_its_step_and_leaves_no_file() {
         ))
         .unwrap(),
         &[shop()],
+        &[],
         &[],
         &LimitDefaults::default(),
     )

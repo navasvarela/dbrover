@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use dbrover_core::{
@@ -21,13 +21,14 @@ use crate::events::{
     CombineCaps, LakeStart, Machine, PartitionStart, RunEvent, RunPartitionStart, SourceCaps,
 };
 use crate::problem::{Place, ReportProblem, Table, messages};
+use crate::read::read_with_places;
 use crate::run::millis;
 use crate::{
-    AS_OF, ByteSize, Chart, CombineLimits, CombineLimitsSet, CombineQuery, FileName, HandoffRead,
-    LakeRead, LimitDefaults, LimitSetIn, Lookup, Output, OutputColumns, OutputLimits,
-    OutputLimitsSet, OutputWriter, PART_FROM, PART_TO, Param, PartRange, PlannedPartition, Report,
-    Source, SourceColumn, SourceLimits, SourceLimitsSet, SourcePartition, SourceRead, SourceRows,
-    SourceSplit, SourceStart, Step,
+    AS_OF, BoundParam, ByteSize, Chart, CombineLimits, CombineLimitsSet, CombineQuery, FileName,
+    HandoffRead, LakeRead, LimitDefaults, LimitSetIn, Lookup, NamedReport, Output, OutputColumns,
+    OutputLimits, OutputLimitsSet, OutputWriter, PART_FROM, PART_TO, Param, ParamSource, PartRange,
+    PlannedPartition, Report, ReportRead, Source, SourceColumn, SourceLimits, SourceLimitsSet,
+    SourcePartition, SourceRead, SourceRows, SourceSplit, SourceStart, Step,
 };
 
 /// A report ready to run.
@@ -82,7 +83,7 @@ impl FileLimits {
                 .iter()
                 .filter_map(|source| match &source.read {
                     SourceRead::Query { limits, .. } => Some((source.id.clone(), *limits)),
-                    SourceRead::Attach | SourceRead::Lake(_) => None,
+                    SourceRead::Attach | SourceRead::Lake(_) | SourceRead::Report(_) => None,
                 })
                 .collect(),
             combine: report
@@ -181,7 +182,8 @@ impl SourceStart {
     fn query(source: &QuerySource) -> Self {
         Self {
             id: source.id.clone(),
-            data_source: source.data_source.name.clone(),
+            data_source: Some(source.data_source.name.clone()),
+            report: None,
             attached: false,
             lake: None,
             waits_for: source.split.lookup().map(|lookup| lookup.from.clone()),
@@ -220,13 +222,15 @@ impl From<&CombineLimits> for CombineCaps {
     }
 }
 
-/// A source with its data source found.
+/// A source with its data source found, or the report it reads planned.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlannedSource {
     Query(QuerySource),
     Attached(AttachedSource),
     /// A lake in a bucket, read in place by the combine step (RS7).
     Lake(LakeSource),
+    /// Another report, planned, whose result is this source's table (RS9).
+    Report(ReportSource),
 }
 
 impl PlannedSource {
@@ -235,15 +239,95 @@ impl PlannedSource {
             Self::Query(source) => &source.id,
             Self::Attached(source) => &source.id,
             Self::Lake(source) => &source.id,
+            Self::Report(source) => &source.id,
         }
     }
 
-    pub fn data_source(&self) -> &DataSource {
+    /// The data source it reads; `None` for a report source, which reads a report.
+    pub fn data_source(&self) -> Option<&DataSource> {
         match self {
-            Self::Query(source) => &source.data_source,
-            Self::Attached(source) => &source.data_source,
-            Self::Lake(source) => &source.data_source,
+            Self::Query(source) => Some(&source.data_source),
+            Self::Attached(source) => Some(&source.data_source),
+            Self::Lake(source) => Some(&source.data_source),
+            Self::Report(_) => None,
         }
+    }
+
+    /// The report it reads, planned; `None` for every source that reads a data source.
+    pub fn report(&self) -> Option<&ReportSource> {
+        match self {
+            Self::Report(source) => Some(source),
+            Self::Query(_) | Self::Attached(_) | Self::Lake(_) => None,
+        }
+    }
+}
+
+/// A report used as another report's source (RS9): its result, run in the same worker and the
+/// same DuckDB, as the table its id names. Only that result is visible to the outer report.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReportSource {
+    /// The outer source's id: the schema the inner report's sources load into, and the name
+    /// of the table its result becomes in `main`.
+    pub id: String,
+    /// The report file it names, without `.toml`.
+    pub report: String,
+    /// The Git blob id of the text that was planned, which the run's profile keeps so a run
+    /// says which version of every report it used (RS9d).
+    pub version: BlobId,
+    /// The inner report, planned, with the outputs and charts it won't write dropped: its
+    /// result is its contract, and the outer report's outputs do their own rounding and
+    /// formats. Boxed, since a plan holds plans.
+    pub plan: Box<Plan>,
+    /// Each of the inner report's parameters, in the order it asks for them, and where its
+    /// value comes from.
+    pub params: Vec<BoundParam>,
+}
+
+impl ReportSource {
+    /// Every report the source reads, itself first and the reports its own sources read after
+    /// it, innermost last.
+    pub fn nested(&self) -> Vec<&Self> {
+        let mut found = vec![self];
+        found.extend(
+            self.plan
+                .sources()
+                .iter()
+                .filter_map(|source| source.report())
+                .flat_map(Self::nested),
+        );
+        found
+    }
+
+    /// The inner report's values for a run of the outer report: each parameter bound from
+    /// `values`, the outer run's, or to its literal, and `:as_of` the outer run's, so every
+    /// report in a run reads the data as of one moment (RS5g).
+    ///
+    /// # Errors
+    ///
+    /// One sentence per parameter whose value is missing or isn't of its type, which planning
+    /// the outer report has already refused: a run reaching one is a bug.
+    pub fn values(&self, values: &RunValues) -> Result<RunValues, Vec<String>> {
+        let typed: TypedValues = self
+            .params
+            .iter()
+            .map(|param| {
+                let value = match &param.from {
+                    ParamSource::Param(name) => values
+                        .parameters
+                        .get(name)
+                        .cloned()
+                        .flatten()
+                        .unwrap_or_default(),
+                    ParamSource::Literal(literal) => literal.clone(),
+                };
+                (param.name.clone(), value)
+            })
+            .collect();
+        let mut inner = self.plan.values(&typed)?;
+        if let Some(as_of) = values.parameters.get(AS_OF) {
+            inner.parameters.set(AS_OF, as_of.clone());
+        }
+        Ok(inner)
     }
 }
 
@@ -512,9 +596,10 @@ impl Plan {
         report: Report,
         data_sources: &[DataSource],
         presets: &[CustomFormat],
+        reports: &[NamedReport],
         defaults: &LimitDefaults,
     ) -> Result<Self, Vec<String>> {
-        Self::with_places(report, data_sources, presets, defaults).map_err(messages)
+        Self::with_places(report, data_sources, presets, reports, defaults).map_err(messages)
     }
 
     /// Plans `report` as [`Plan::new`] does.
@@ -528,120 +613,179 @@ impl Plan {
         report: Report,
         data_sources: &[DataSource],
         presets: &[CustomFormat],
+        reports: &[NamedReport],
         defaults: &LimitDefaults,
     ) -> Result<Self, Vec<ReportProblem>> {
-        let mut problems = Vec::new();
-        let file_limits = FileLimits::of(&report);
-        let param_types: BTreeMap<&str, ColumnType> = report
-            .params
+        let planning = Planning {
+            data_sources,
+            presets,
+            reports,
+            defaults,
+            chain: Vec::new(),
+        };
+        plan_report(report, &planning)
+    }
+
+    /// The sources its combine step reads; none for a report of one source without a combine,
+    /// whose rows go straight to the outputs.
+    pub fn sources(&self) -> &[PlannedSource] {
+        match &self.logic {
+            Logic::Combine(combined) => &combined.sources,
+            Logic::Direct(_) => &[],
+        }
+    }
+
+    /// Every report this one reads, outermost first, with the reports they read after each
+    /// (RS9): empty for a report with no report source.
+    pub fn reports_used(&self) -> Vec<&ReportSource> {
+        self.sources()
             .iter()
-            .map(|param| (param.name.as_str(), param.param_type))
-            .collect();
-        let sources: Vec<PlannedSource> = report
-            .sources
-            .iter()
-            .enumerate()
-            .filter_map(|(index, source)| {
-                plan_source(source, data_sources, defaults.source, &param_types)
-                    .map_err(|(key, problem)| {
-                        problems.push(ReportProblem::new(
+            .filter_map(PlannedSource::report)
+            .flat_map(ReportSource::nested)
+            .collect()
+    }
+}
+
+/// What planning a report looks up beyond its own file: its data sources, `exports.toml`'s
+/// presets, and the other report files a `[[source]]` may name (RS9b). The caller reads them,
+/// as it reads the file being planned.
+struct Planning<'a> {
+    data_sources: &'a [DataSource],
+    presets: &'a [CustomFormat],
+    reports: &'a [NamedReport],
+    defaults: &'a LimitDefaults,
+    /// The reports being planned, outermost first: a source naming one of them is a cycle,
+    /// and a source below [`REPORTS_DEEP`] of them is refused.
+    chain: Vec<String>,
+}
+
+/// How many reports a report may read below it (RS9): the outer report, and four reports
+/// nested under it. A run of five DuckDB schemas is deep enough to be hard to follow, and the
+/// bound is what keeps a mistake in a folder of reports from planning for ever.
+const REPORTS_DEEP: usize = 4;
+
+/// Plans `report` against what `planning` holds. Called again for each report a `[[source]]`
+/// names, with that report added to the chain.
+fn plan_report(report: Report, planning: &Planning<'_>) -> Result<Plan, Vec<ReportProblem>> {
+    let Planning {
+        presets, defaults, ..
+    } = planning;
+    let mut problems = Vec::new();
+    let file_limits = FileLimits::of(&report);
+    let param_types: BTreeMap<&str, ColumnType> = report
+        .params
+        .iter()
+        .map(|param| (param.name.as_str(), param.param_type))
+        .collect();
+    let sources: Vec<PlannedSource> = report
+        .sources
+        .iter()
+        .enumerate()
+        .filter_map(|(index, source)| {
+            plan_source(source, planning, &param_types)
+                .map_err(|found| {
+                    problems.extend(found.into_iter().map(|(key, problem)| {
+                        ReportProblem::new(
                             format!("source {:?}: {problem}", source.id),
                             Place::Key {
                                 table: Table::Source(index),
                                 key: key.map(str::to_owned),
                             },
-                        ));
-                    })
-                    .ok()
-            })
-            .collect();
-        let partition = report.partition.and_then(|partition| {
-            PlannedPartition::plan(partition, &param_types)
-                .map_err(|problem| {
-                    problems.push(ReportProblem::new(
-                        format!("[report]: partition: {problem}"),
-                        Place::key(Table::Report, "partition"),
-                    ));
+                        )
+                    }));
                 })
                 .ok()
-        });
-        let combine = report.combine.map(|combine| {
-            if let Err(problem) = check_combine(combine.query.sql()) {
-                problems.push(ReportProblem::new(
-                    format!("[combine]: {problem}"),
-                    Place::key(Table::Combine, combine_key(&combine.query)),
-                ));
-            }
-            PlannedCombine {
-                query: combine.query,
-                limits: combine.limits.or(defaults.combine),
-            }
-        });
-        let outputs = plan_outputs(
-            &report.outputs,
-            presets,
-            defaults.output,
-            combine.is_some(),
-            &mut problems,
-        );
-        for (index, chart) in report.charts.iter().enumerate() {
-            let Some(query) = &chart.query else {
-                continue;
-            };
-            if let Err(problem) = check_reads(query, "a chart's query") {
-                problems.push(ReportProblem::new(
-                    format!("chart {}: {problem}", index + 1),
-                    Place::key(Table::Chart(index), "query"),
-                ));
-            }
-        }
-        let params = if sources.len() == report.sources.len() {
-            let as_of = !report.params.iter().any(|param| param.name == AS_OF);
-            let sent = queries(
-                &sources,
-                combine.as_ref(),
-                &report.charts,
-                Bound {
-                    ranges: partition.is_some(),
-                    as_of,
-                },
-            );
-            if partition.is_some() {
-                check_reads_ranges(&sent, &mut problems);
-            }
-            ordered_params(&report.params, &sent, &mut problems)
-        } else {
-            report.params.clone()
-        };
-        let logic = match (combine, <[PlannedSource; 1]>::try_from(sources)) {
-            (Some(combine), sources) => Logic::Combine(Combined {
-                sources: sources.map_or_else(|sources| sources, Vec::from),
-                combine,
-            }),
-            (None, Ok([PlannedSource::Query(source)])) => Logic::Direct(Box::new(source)),
-            // Reading the file found what makes these two cases, a source left unplanned
-            // above, or an attached source without [combine], and listed it.
-            (None, _) => return Err(problems),
-        };
-        if !problems.is_empty() {
-            return Err(problems);
-        }
-        Ok(Self {
-            name: report.name,
-            description: report.description,
-            params,
-            timeout: report.timeout.unwrap_or(defaults.run_timeout),
-            max_disk: report.max_disk.unwrap_or(defaults.max_disk),
-            stall_timeout: report.stall_timeout.unwrap_or(defaults.stall_timeout),
-            resumable_above: report.resumable_above.unwrap_or(defaults.resumable_above),
-            partition,
-            logic,
-            outputs,
-            charts: report.charts,
-            file_limits,
         })
+        .collect();
+    problems.extend(attached_twice(&sources));
+    let partition = report.partition.and_then(|partition| {
+        PlannedPartition::plan(partition, &param_types)
+            .map_err(|problem| {
+                problems.push(ReportProblem::new(
+                    format!("[report]: partition: {problem}"),
+                    Place::key(Table::Report, "partition"),
+                ));
+            })
+            .ok()
+    });
+    let combine = report.combine.map(|combine| {
+        if let Err(problem) = check_combine(combine.query.sql()) {
+            problems.push(ReportProblem::new(
+                format!("[combine]: {problem}"),
+                Place::key(Table::Combine, combine_key(&combine.query)),
+            ));
+        }
+        PlannedCombine {
+            query: combine.query,
+            limits: combine.limits.or(defaults.combine),
+        }
+    });
+    let outputs = plan_outputs(
+        &report.outputs,
+        presets,
+        defaults.output,
+        combine.is_some(),
+        &mut problems,
+    );
+    for (index, chart) in report.charts.iter().enumerate() {
+        let Some(query) = &chart.query else {
+            continue;
+        };
+        if let Err(problem) = check_reads(query, "a chart's query") {
+            problems.push(ReportProblem::new(
+                format!("chart {}: {problem}", index + 1),
+                Place::key(Table::Chart(index), "query"),
+            ));
+        }
     }
+    let params = if sources.len() == report.sources.len() {
+        let as_of = !report.params.iter().any(|param| param.name == AS_OF);
+        let sent = queries(
+            &sources,
+            combine.as_ref(),
+            &report.charts,
+            Bound {
+                ranges: partition.is_some(),
+                as_of,
+            },
+        );
+        if partition.is_some() {
+            check_reads_ranges(&sent, &mut problems);
+        }
+        ordered_params(&report.params, &sent, &mut problems)
+    } else {
+        report.params.clone()
+    };
+    let logic = match (combine, <[PlannedSource; 1]>::try_from(sources)) {
+        (Some(combine), sources) => Logic::Combine(Combined {
+            sources: sources.map_or_else(|sources| sources, Vec::from),
+            combine,
+        }),
+        (None, Ok([PlannedSource::Query(source)])) => Logic::Direct(Box::new(source)),
+        // Reading the file found what makes these two cases, a source left unplanned
+        // above, or an attached source without [combine], and listed it.
+        (None, _) => return Err(problems),
+    };
+    if !problems.is_empty() {
+        return Err(problems);
+    }
+    Ok(Plan {
+        name: report.name,
+        description: report.description,
+        params,
+        timeout: report.timeout.unwrap_or(defaults.run_timeout),
+        max_disk: report.max_disk.unwrap_or(defaults.max_disk),
+        stall_timeout: report.stall_timeout.unwrap_or(defaults.stall_timeout),
+        resumable_above: report.resumable_above.unwrap_or(defaults.resumable_above),
+        partition,
+        logic,
+        outputs,
+        charts: report.charts,
+        file_limits,
+    })
+}
 
+impl Plan {
     /// Who set the limit `key` a run stopped at in `step`: the report's file, or Settings ›
     /// Reports' default where the file leaves it out; `None` for a limit no default holds.
     pub fn limit_set_in(&self, step: &Step, key: &str) -> Option<LimitSetIn> {
@@ -743,7 +887,8 @@ impl Plan {
                     PlannedSource::Query(source) => SourceStart::query(source),
                     PlannedSource::Attached(attached) => SourceStart {
                         id: attached.id.clone(),
-                        data_source: attached.data_source.name.clone(),
+                        data_source: Some(attached.data_source.name.clone()),
+                        report: None,
                         attached: true,
                         lake: None,
                         waits_for: None,
@@ -751,9 +896,21 @@ impl Plan {
                         limits: None,
                         partition: None,
                     },
+                    PlannedSource::Report(source) => SourceStart {
+                        id: source.id.clone(),
+                        data_source: None,
+                        report: Some(source.report.clone()),
+                        attached: false,
+                        lake: None,
+                        waits_for: None,
+                        engine: None,
+                        limits: None,
+                        partition: None,
+                    },
                     PlannedSource::Lake(lake) => SourceStart {
                         id: lake.id.clone(),
-                        data_source: lake.data_source.name.clone(),
+                        data_source: Some(lake.data_source.name.clone()),
+                        report: None,
                         attached: true,
                         lake: Some(LakeStart {
                             url: lake.path.url().to_owned(),
@@ -979,7 +1136,9 @@ impl Plan {
                 .iter()
                 .filter_map(|source| match source {
                     PlannedSource::Query(source) => Some(source),
-                    PlannedSource::Attached(_) | PlannedSource::Lake(_) => None,
+                    PlannedSource::Attached(_)
+                    | PlannedSource::Lake(_)
+                    | PlannedSource::Report(_) => None,
                 })
                 .collect(),
         }
@@ -1028,12 +1187,18 @@ fn combine_key(query: &CombineQuery) -> &'static str {
 
 fn plan_source(
     source: &Source,
-    data_sources: &[DataSource],
-    defaults: SourceLimits,
+    planning: &Planning<'_>,
     params: &BTreeMap<&str, ColumnType>,
-) -> Result<PlannedSource, KeyedProblem> {
-    let data_source = find_data_source(&source.data_source, data_sources)
-        .map_err(|problem| (Some("data_source"), problem))?;
+) -> Result<PlannedSource, Vec<KeyedProblem>> {
+    let data_sources = planning.data_sources;
+    let defaults = planning.defaults.source;
+    if let SourceRead::Report(read) = &source.read {
+        return plan_report_source(&source.id, read, planning, params);
+    }
+    let one = |problem: KeyedProblem| vec![problem];
+    let name = source.data_source.as_deref().unwrap_or_default();
+    let data_source = find_data_source(name, data_sources)
+        .map_err(|problem| one((Some("data_source"), problem)))?;
     match &source.read {
         SourceRead::Query {
             query,
@@ -1056,14 +1221,255 @@ fn plan_source(
             data_sources,
             params,
         )
-        .map(PlannedSource::Query),
+        .map(PlannedSource::Query)
+        .map_err(one),
         SourceRead::Attach => attach(&source.id, data_source)
             .map(PlannedSource::Attached)
-            .map_err(|problem| (Some("attach"), problem)),
+            .map_err(|problem| one((Some("attach"), problem))),
         SourceRead::Lake(lake) => plan_lake(&source.id, data_source, lake)
             .map(PlannedSource::Lake)
-            .map_err(|(key, problem)| (Some(key), problem)),
+            .map_err(|(key, problem)| one((Some(key), problem))),
+        // Answered above, before a data source is looked for: a report source names none.
+        SourceRead::Report(_) => Err(one((
+            Some("report"),
+            "a report source reads a report, not a data source".to_owned(),
+        ))),
     }
+}
+
+/// The report a `[[source]]` names, read from the folder the caller handed the planner, and
+/// planned in its turn, with its parameters bound to the outer report's (RS9b).
+///
+/// # Errors
+///
+/// Every problem the inner report has, each naming it, and a problem for a cycle, for a depth
+/// past [`REPORTS_DEEP`], for a report the folder doesn't hold, for an inner report that
+/// partitions its own run, and for each parameter bound wrongly or not at all.
+fn plan_report_source(
+    id: &str,
+    read: &ReportRead,
+    planning: &Planning<'_>,
+    params: &BTreeMap<&str, ColumnType>,
+) -> Result<PlannedSource, Vec<KeyedProblem>> {
+    let one = |problem: String| vec![(Some("report"), problem)];
+    let name = &read.report;
+    if let Some(at) = planning
+        .chain
+        .iter()
+        .position(|planned| planned.eq_ignore_ascii_case(name))
+    {
+        let cycle: Vec<&str> = planning.chain[at..]
+            .iter()
+            .map(String::as_str)
+            .chain([name.as_str()])
+            .collect();
+        return Err(one(if cycle.len() == 2 {
+            format!("the report {name:?} reads itself; a report can't be its own source")
+        } else {
+            format!(
+                "the reports {} read each other in a circle, which no run can untangle",
+                cycle.join(" → ")
+            )
+        }));
+    }
+    if planning.chain.len() >= REPORTS_DEEP {
+        return Err(one(format!(
+            "{} reads {name:?}, which is {} reports deep; a report reads at most \
+             {REPORTS_DEEP} reports below it",
+            planning.chain.join(" → "),
+            planning.chain.len() + 1
+        )));
+    }
+    let Some(named) = planning
+        .reports
+        .iter()
+        .find(|named| named.name.eq_ignore_ascii_case(name))
+    else {
+        return Err(one(format!(
+            "there is no report {name:?} in the reports folder; report takes a report \
+             file's name, without .toml"
+        )));
+    };
+    let version = BlobId::of(named.text.as_bytes());
+    let label = |problem: &ReportProblem| (Some("report"), format!("report {name:?}: {problem}"));
+    let file = read_with_places(&named.text)
+        .map_err(|found| found.iter().map(label).collect::<Vec<_>>())?;
+    let mut chain = planning.chain.clone();
+    chain.push(named.name.clone());
+    let below = Planning {
+        data_sources: planning.data_sources,
+        presets: planning.presets,
+        reports: planning.reports,
+        defaults: planning.defaults,
+        chain,
+    };
+    let mut plan =
+        plan_report(file, &below).map_err(|found| found.iter().map(label).collect::<Vec<_>>())?;
+    let mut problems = Vec::new();
+    if plan.partition.is_some() {
+        problems.push((
+            Some("report"),
+            format!(
+                "the report {name:?} partitions its own run, and a partitioned run is the \
+                 outer report's to declare; read a report that doesn't, or partition \
+                 this one"
+            ),
+        ));
+    }
+    // Its outputs and charts aren't written: an output's rounding and formats are for files,
+    // and the outer report's outputs do their own. Its result is what this source reads.
+    plan.outputs.clear();
+    plan.charts.clear();
+    let bound = bind_params(name, &plan.params, &read.params, params);
+    match bound {
+        Ok(bound) if problems.is_empty() => Ok(PlannedSource::Report(ReportSource {
+            id: id.to_owned(),
+            report: named.name.clone(),
+            version,
+            plan: Box::new(plan),
+            params: bound,
+        })),
+        bound => {
+            problems.extend(bound.err().into_iter().flatten());
+            Err(problems)
+        }
+    }
+}
+
+/// Each of the inner report's parameters bound to one of the outer report's, of the same type,
+/// or to a literal of its own type, in the order the inner report asks for them (RS9b).
+///
+/// # Errors
+///
+/// A sentence for each of the inner report's parameters `bound` leaves out, each name in
+/// `bound` the inner report doesn't have, each parameter of the outer report a binding names
+/// that `params` doesn't declare, each pair of types that don't match, and each literal that
+/// isn't of its parameter's type.
+fn bind_params(
+    report: &str,
+    inner: &[Param],
+    bound: &[BoundParam],
+    params: &BTreeMap<&str, ColumnType>,
+) -> Result<Vec<BoundParam>, Vec<KeyedProblem>> {
+    let mut problems: Vec<KeyedProblem> = Vec::new();
+    let problem = |message: String| (Some("params"), message);
+    for given in bound {
+        if !inner.iter().any(|param| param.name == given.name) {
+            problems.push(problem(format!(
+                "params: the report {report:?} has no parameter {:?}; it takes {}",
+                given.name,
+                param_names(inner)
+            )));
+        }
+    }
+    let mut ordered = Vec::new();
+    for param in inner {
+        let given: Vec<&BoundParam> = bound
+            .iter()
+            .filter(|given| given.name == param.name)
+            .collect();
+        let [given] = given.as_slice() else {
+            problems.push(problem(format!(
+                "params: the report {report:?} takes {}, which nothing here gives it; add \
+                 {} = \":{}\" to bind one of this report's parameters, or a value of \
+                 its own",
+                param.name, param.name, param.name
+            )));
+            continue;
+        };
+        match &given.from {
+            ParamSource::Param(outer) => match params.get(outer.as_str()) {
+                Some(outer_type) if *outer_type == param.param_type => {}
+                Some(outer_type) => problems.push(problem(format!(
+                    "params: {} is {} in the report {report:?} and :{outer} is {outer_type} \
+                     here; bind a parameter of the same type, or a value",
+                    param.name, param.param_type
+                ))),
+                None => problems.push(problem(format!(
+                    "params: {} is bound to :{outer}, which [report] params doesn't declare; \
+                     add {outer} = \"{}\" to params, or give {} a value",
+                    param.name, param.param_type, param.name
+                ))),
+            },
+            ParamSource::Literal(literal) => {
+                if let Err(reason) = param.param_type.plain_form(literal.trim()) {
+                    problems.push(problem(format!(
+                        "params: {}: {literal:?} {reason}, and the report {report:?} takes {} \
+                         as {}",
+                        param.name, param.name, param.param_type
+                    )));
+                }
+            }
+        }
+        ordered.push((*given).clone());
+    }
+    if problems.is_empty() {
+        Ok(ordered)
+    } else {
+        Err(problems)
+    }
+}
+
+/// The parameters a report takes, for a problem that names one it hasn't.
+fn param_names(params: &[Param]) -> String {
+    if params.is_empty() {
+        return "none".to_owned();
+    }
+    params
+        .iter()
+        .map(|param| format!("{} ({})", param.name, param.param_type))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// A problem for each id two reports of one run attach a different DuckDB file under: an
+/// attached file is a catalog, which keeps its id across the whole run, so no schema can hold
+/// two of them apart (RS9b). The same file under one id is attached once.
+fn attached_twice(sources: &[PlannedSource]) -> Vec<ReportProblem> {
+    /// Which report attached a file, for a problem that names both.
+    fn whose(report: Option<&str>) -> String {
+        match report {
+            Some(report) => format!("the report {report:?}"),
+            None => "this report".to_owned(),
+        }
+    }
+    let mut attached: Vec<(&str, &Path, Option<&str>)> = Vec::new();
+    let mut problems = Vec::new();
+    let mut walk: Vec<(&PlannedSource, Option<&str>)> =
+        sources.iter().map(|source| (source, None)).collect();
+    while let Some((source, report)) = walk.pop() {
+        if let PlannedSource::Report(inner) = source {
+            walk.extend(
+                inner
+                    .plan
+                    .sources()
+                    .iter()
+                    .map(|source| (source, Some(inner.report.as_str()))),
+            );
+        }
+        let PlannedSource::Attached(file) = source else {
+            continue;
+        };
+        let clash = attached.iter().find(|(id, path, _)| {
+            id.eq_ignore_ascii_case(&file.id) && *path != file.path.as_path()
+        });
+        if let Some((id, path, other)) = clash {
+            problems.push(ReportProblem::new(
+                format!(
+                    "source {id:?}: {} attaches {} under this id and {} attaches {}; an \
+                     attached file keeps its id across the whole run, so two reports of one \
+                     run can't attach different files under one",
+                    whose(*other),
+                    path.display(),
+                    whose(report),
+                    file.path.display()
+                ),
+                Place::table(Table::File),
+            ));
+        }
+        attached.push((file.id.as_str(), file.path.as_path(), report));
+    }
+    problems
 }
 
 /// The lake a source reads, in the bucket of its data source.
@@ -1450,7 +1856,7 @@ fn queries<'a>(
                 language: source.language,
                 bound: [source.split.bound(), range_bound()].concat(),
             }),
-            PlannedSource::Attached(_) | PlannedSource::Lake(_) => None,
+            PlannedSource::Attached(_) | PlannedSource::Lake(_) | PlannedSource::Report(_) => None,
         });
     let combine = combine.map(|combine| Sent {
         label: "[combine]".to_owned(),

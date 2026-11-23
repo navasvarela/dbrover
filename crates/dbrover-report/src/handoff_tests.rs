@@ -96,7 +96,7 @@ fn gcs_bucket(name: &str) -> DataSource {
 fn plan_of(handoff: &str, keys: &str, sources: &[DataSource]) -> Result<Plan, Vec<String>> {
     let text = ORDERS.replace("{handoff}", handoff).replace("{keys}", keys);
     let report = read_report(&text)?;
-    Plan::new(report, sources, &[], &LimitDefaults::default())
+    Plan::new(report, sources, &[], &[], &LimitDefaults::default())
 }
 
 /// The handoff of the planned source, which is what a run reads the files with.
@@ -110,7 +110,7 @@ fn planned(handoff: &str, sources: &[DataSource]) -> PlannedHandoff {
         .iter()
         .find_map(|source| match source {
             PlannedSource::Query(source) => source.handoff.as_deref().cloned(),
-            PlannedSource::Attached(_) | PlannedSource::Lake(_) => None,
+            PlannedSource::Attached(_) | PlannedSource::Lake(_) | PlannedSource::Report(_) => None,
         })
         .expect("the source has a handoff")
 }

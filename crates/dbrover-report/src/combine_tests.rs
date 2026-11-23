@@ -172,6 +172,7 @@ fn report(tx_limits: &str, query: &str, combine_limits: &str) -> Plan {
         read_report(&text).unwrap(),
         &[ledger()],
         &[],
+        &[],
         &LimitDefaults::default(),
     )
     .unwrap()
@@ -230,6 +231,7 @@ async fn a_prql_combine_writes_what_its_sql_twin_writes() {
             Plan::new(
                 read_report(&text).unwrap(),
                 &[ledger()],
+                &[],
                 &[],
                 &LimitDefaults::default(),
             )
@@ -340,6 +342,7 @@ async fn reads_an_attached_duckdb_file_in_place() {
     let plan = Plan::new(
         read_report(&text).unwrap(),
         &[ledger(), prices_file(&path)],
+        &[],
         &[],
         &LimitDefaults::default(),
     )
@@ -854,6 +857,7 @@ fn report_writing(outputs: &str) -> Plan {
     Plan::new(
         read_report(&format!("{head}{outputs}")).unwrap(),
         &[ledger()],
+        &[],
         &[],
         &LimitDefaults::default(),
     )

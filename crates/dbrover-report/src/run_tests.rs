@@ -125,7 +125,7 @@ fn plan(source_limits: &str, outputs: &str) -> Plan {
             read_only: false,
         }),
     };
-    Plan::new(report, &[ledger], &[], &LimitDefaults::default()).unwrap()
+    Plan::new(report, &[ledger], &[], &[], &LimitDefaults::default()).unwrap()
 }
 
 const BOTH: &str = r##"
@@ -367,7 +367,8 @@ fn events_are_json_lines_the_app_reads_back() {
             report: "Trial balance".to_owned(),
             sources: vec![SourceStart {
                 id: "balances".to_owned(),
-                data_source: "ledger".to_owned(),
+                data_source: Some("ledger".to_owned()),
+                report: None,
                 attached: false,
                 lake: None,
                 waits_for: Some("tx".to_owned()),

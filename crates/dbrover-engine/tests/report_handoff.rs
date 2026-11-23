@@ -182,6 +182,7 @@ async fn run_report(
         read_report(text).unwrap(),
         sources,
         &[],
+        &[],
         &LimitDefaults::default(),
     )
     .unwrap_or_else(|problems| panic!("{problems:#?}"));

@@ -138,7 +138,7 @@ fn written_in(plan: &Plan) -> Vec<&PlannedHandoff> {
         .iter()
         .filter_map(|source| match source {
             PlannedSource::Query(source) => source.handoff.as_ref(),
-            PlannedSource::Attached(_) | PlannedSource::Lake(_) => None,
+            PlannedSource::Attached(_) | PlannedSource::Lake(_) | PlannedSource::Report(_) => None,
         })
         .filter(|handoff| handoff.prefix.is_some())
         .filter(|handoff| seen.insert((handoff.data_source.id, handoff.prefix.clone())))
