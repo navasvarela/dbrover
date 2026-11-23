@@ -369,6 +369,7 @@ impl QueryLanguage {
             Self::Sql(Dialect::DuckDb) => read_object(path),
             Self::Sql(Dialect::Trino) => read_catalog_table(path),
             Self::Sql(Dialect::BigQuery) => read_bigquery_table(path),
+            Self::Sql(Dialect::Snowflake) => read_snowflake_table(path),
             Self::Sql(_) | Self::Redis | Self::Mongo | Self::Search => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
@@ -546,9 +547,32 @@ fn read_bigquery_table(path: &CatalogPath) -> Option<String> {
     Some(format!("SELECT * FROM `{quoted}` LIMIT {OPEN_DATA_LIMIT};"))
 }
 
+/// `SELECT *` of the table, view or materialized view at `path` by its database, schema and
+/// name, each quoted where Snowflake's upper-case folding would change it, with
+/// [`OPEN_DATA_LIMIT`]. It runs on the warehouse, which it resumes if it is suspended, as
+/// Snowflake's own preview does (`docs/cloud-data.md`, C5).
+fn read_snowflake_table(path: &CatalogPath) -> Option<String> {
+    let object = path.last()?;
+    if !matches!(
+        object.kind,
+        NodeKind::Table | NodeKind::View | NodeKind::MaterializedView
+    ) {
+        return None;
+    }
+    let quoting = Dialect::Snowflake.quoting();
+    let name = [
+        path.name_of(NodeKind::Database)?,
+        path.name_of(NodeKind::Schema)?,
+        &object.name,
+    ]
+    .map(|name| quoting.identifier_if_needed(name))
+    .join(".");
+    Some(format!("SELECT * FROM {name} LIMIT {OPEN_DATA_LIMIT};"))
+}
+
 #[cfg(test)]
 mod tests {
-    use dbrover_core::{ObjectKind, TableFormat};
+    use dbrover_core::{FolderKind, ObjectKind, TableFormat};
 
     use super::*;
 
@@ -599,6 +623,29 @@ mod tests {
         ];
         for (path, expected) in cases {
             assert_eq!(bigquery.read_all(&path).as_deref(), expected, "{path}");
+        }
+    }
+
+    #[test]
+    fn snowflake_opens_a_table_by_its_database_schema_and_name() {
+        let schema = CatalogPath::root()
+            .child(NodeKind::Database, "SHOP")
+            .child(NodeKind::Schema, "Sales EU");
+        let tables = schema.child(NodeKind::Folder(FolderKind::Tables), "tables");
+        let snowflake = QueryLanguage::Sql(Dialect::Snowflake);
+        for (path, expected) in [
+            (
+                tables.child(NodeKind::Table, "ORDERS"),
+                Some("SELECT * FROM SHOP.\"Sales EU\".ORDERS LIMIT 1000;"),
+            ),
+            (
+                tables.child(NodeKind::MaterializedView, "daily"),
+                Some("SELECT * FROM SHOP.\"Sales EU\".\"daily\" LIMIT 1000;"),
+            ),
+            (schema.child(NodeKind::Stage, "LANDING"), None),
+            (schema.clone(), None),
+        ] {
+            assert_eq!(snowflake.read_all(&path).as_deref(), expected, "{path}");
         }
     }
 

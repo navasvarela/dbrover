@@ -8,6 +8,7 @@
 //! pair or token.
 
 mod api;
+mod catalog;
 mod context;
 mod errors;
 mod results;
@@ -20,12 +21,14 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use dbrover_cloud::snowflake::{self as sign_in, KeyPair, KeyPairSignIn, TokenType};
 use dbrover_core::{
-    CancelHandle, CatalogNode, CatalogPath, ColumnInfo, Connection, DriverError, Jobs, Password,
-    ProgressHandle, Rejection, RelationName, ResultCursor, Row, ServerInfo, SnowflakeConfig,
-    SnowflakeSignIn, TableConstraints, TableDescription, TableName, TransactionStatus,
+    CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, ChildrenPage,
+    ChildrenQuery, ColumnInfo, Connection, DriverError, Jobs, Password, ProgressHandle, Rejection,
+    RelationName, ResultCursor, Row, ServerInfo, SnowflakeConfig, SnowflakeSignIn,
+    TableConstraints, TableDescription, TableName, TransactionStatus,
 };
 
 use crate::api::Api;
+use crate::catalog::Lister;
 use crate::context::{Context, Use};
 use crate::statements::SnowflakeJobs;
 
@@ -128,6 +131,10 @@ pub struct SnowflakeConnection {
 }
 
 impl SnowflakeConnection {
+    fn lister(&self) -> Lister<'_> {
+        Lister { jobs: &self.jobs }
+    }
+
     async fn probe(&mut self) -> Result<(), DriverError> {
         let cursor = self.jobs.execute(PROBE).await?;
         cursor.finish().await.map(drop)
@@ -144,15 +151,36 @@ impl Connection for SnowflakeConnection {
         self.probe().await
     }
 
-    /// Nothing yet: the explorer's levels come from `SHOW` commands in C5e.
-    async fn children(&mut self, _path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError> {
-        Ok(Vec::new())
+    /// The level's first thousand nodes: the explorer pages through the rest with
+    /// [`Connection::children_page`].
+    async fn children(&mut self, path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError> {
+        let page = self
+            .children_page(path, &ChildrenQuery::first_page(None))
+            .await?;
+        Ok(page.nodes)
     }
 
-    async fn definition(&mut self, _path: &CatalogPath) -> Result<String, DriverError> {
-        Err(DriverError::Unsupported(
-            "Snowflake's definitions come with its explorer (C5e)",
-        ))
+    /// From a `SHOW`, which needs no warehouse.
+    async fn children_page(
+        &mut self,
+        path: &CatalogPath,
+        query: &ChildrenQuery,
+    ) -> Result<ChildrenPage, DriverError> {
+        self.lister().page(path, query).await
+    }
+
+    /// `SHOW OBJECTS … IN ACCOUNT`, which needs no warehouse.
+    async fn search_catalog(
+        &mut self,
+        search: &CatalogSearch,
+    ) -> Result<Option<CatalogMatches>, DriverError> {
+        self.lister().search(search).await.map(Some)
+    }
+
+    /// A view's text, or a table's `CREATE TABLE` written from its columns, from `SHOW`
+    /// commands: no warehouse runs to show a definition.
+    async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError> {
+        self.lister().definition(path).await
     }
 
     /// A statement, but for a `USE`, which changes what this connection's later statements

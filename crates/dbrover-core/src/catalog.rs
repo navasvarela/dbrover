@@ -65,6 +65,9 @@ pub enum NodeKind {
     /// A bucket in object storage, a folder of its keys, or a file in it (C2), beside a DuckDB
     /// database's own objects. See [`crate::object_url`].
     Object(ObjectKind),
+    /// A Snowflake stage (C5): a named place files are loaded from and unloaded to, Snowflake's
+    /// own or a bucket's, which `COPY INTO` and `LIST` name as `@stage`.
+    Stage,
 }
 
 /// What a node in a bucket is.
@@ -171,6 +174,8 @@ pub enum FolderKind {
     /// Cassandra's user-defined types.
     Types,
     Aggregates,
+    /// Snowflake's stages (C5).
+    Stages,
 }
 
 impl FolderKind {
@@ -196,6 +201,7 @@ impl FolderKind {
             Self::IndexTemplates => "index templates",
             Self::Types => "types",
             Self::Aggregates => "aggregates",
+            Self::Stages => "stages",
         }
     }
 }
@@ -319,12 +325,14 @@ impl CatalogPath {
             | NodeKind::Collection
             | NodeKind::SearchIndex
             | NodeKind::IndexTemplate => Some(object.name.clone()),
-            // An object in a bucket is read by its address, which isn't a name SQL quotes.
+            // An object in a bucket is read by its address, which isn't a name SQL quotes, and
+            // a stage by `@` and its name, which isn't one either.
             NodeKind::Database
             | NodeKind::Schema
             | NodeKind::Folder(_)
             | NodeKind::KeyPrefix
-            | NodeKind::Object(_) => None,
+            | NodeKind::Object(_)
+            | NodeKind::Stage => None,
         }
     }
 

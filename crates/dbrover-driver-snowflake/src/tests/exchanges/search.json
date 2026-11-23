@@ -1,0 +1,183 @@
+{
+ "doc": "Found on the server: SHOW OBJECTS across the account, a table and a view with their places.",
+ "exchanges": [
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW DATABASES LIMIT 1"
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000100"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000100",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000100",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "1767323045.000",
+      "SALES"
+     ]
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW OBJECTS LIKE '%order%' IN ACCOUNT LIMIT 101"
+   },
+   "response": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000129"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-000000000129",
+   "response": {
+    "code": "090001",
+    "sqlState": "00000",
+    "message": "Statement executed successfully.",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-000000000129",
+    "resultSetMetaData": {
+     "numRows": 3,
+     "format": "jsonv2",
+     "rowType": [
+      {
+       "name": "created_on",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "database_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "schema_name",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "kind",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "comment",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "cluster_by",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "rows",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "bytes",
+       "type": "text",
+       "nullable": true
+      },
+      {
+       "name": "owner",
+       "type": "text",
+       "nullable": true
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 3
+      }
+     ]
+    },
+    "data": [
+     [
+      "0",
+      "ORDERS",
+      "SHOP",
+      "PUBLIC",
+      "TABLE",
+      "",
+      "",
+      "10",
+      "2048",
+      "SYSADMIN"
+     ],
+     [
+      "0",
+      "ORDER_TOTALS",
+      "SHOP",
+      "PUBLIC",
+      "VIEW",
+      "",
+      "",
+      "",
+      "",
+      "SYSADMIN"
+     ],
+     [
+      "0",
+      "ORDERS_EU",
+      "SALES",
+      "EU",
+      "TABLE",
+      "",
+      "",
+      "1",
+      "512",
+      "SYSADMIN"
+     ]
+    ]
+   }
+  }
+ ]
+}

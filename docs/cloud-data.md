@@ -1342,7 +1342,7 @@ account.
   Snowflake's logo (Simple Icons') and its place under **Other cloud services** came forward
   from C5g, as the compiler asked for them; the time limit, the MCP role and the kittest stay
   there. The explorer lists nothing until C5e.
-- **C5e — Databases, schemas and objects in the explorer:** the levels above from `SHOW`,
+- **C5e — Databases, schemas and objects in the explorer** (built): the levels above from `SHOW`,
   paged with `LIMIT … FROM`, the filter as `LIKE`; columns with their types; **Show
   definition**; **Found on the server**; **Open data**.
   **Exit:** replayed, the conformance walk visits two databases, a schema with a table, a
@@ -1350,6 +1350,17 @@ account.
   requests; every statement the explorer sends is a `SHOW`, and none names a warehouse it
   would resume; **Show definition** of a table writes its `CREATE TABLE` and of a view its
   text.
+  **As built:** a schema's children are three folders, **tables**, **views** (materialized ones
+  among them) and **stages**, each its own `SHOW`; a stage is a node kind of its own
+  (`NodeKind::Stage`, with `FolderKind::Stages`), shown with its bucket's address or as
+  internal, and has no children yet. Tables are marked transient, temporary, dynamic, Iceberg
+  or external, views secure. Whether `LIMIT … FROM 'name'` starts at the name or after it isn't
+  documented, so a page after another asks for one row more and drops a repeat; `SHOW STAGES`
+  and `SHOW COLUMNS` take no `LIMIT` and are read whole. Names in the statements are always
+  double-quoted, which Snowflake reads exactly. **Show definition** of a table writes its
+  columns' types, `NOT NULL`, defaults and `CLUSTER BY` from `SHOW TABLES` and `SHOW
+  COLUMNS`. **Open data** reads `SELECT * FROM DB.SCHEMA.T LIMIT 1000`, quoting only the names
+  Snowflake's folding would change.
 - **C5f — The time limit and the warehouse:** `CostGuard` gains the time budget
   (`stop_after_seconds`), sent as `timeout`; a 408 explained; Test connection's warehouse,
   size, state and own limit.
