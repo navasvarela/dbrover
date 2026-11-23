@@ -242,6 +242,7 @@ async fn run_charts(
     let staging = folder.join(".run");
     let work = staging.with_extension("work");
     let folders = RunFolders {
+        cache: None,
         folder,
         staging: &staging,
         work: &work,
@@ -662,6 +663,7 @@ async fn draws_a_charts_own_query_after_the_combine_step() {
     let staging = folder.path().join(".run");
     let work = staging.with_extension("work");
     let folders = RunFolders {
+        cache: None,
         folder: folder.path(),
         staging: &staging,
         work: &work,
@@ -709,6 +711,7 @@ async fn a_charts_failing_query_fails_its_step_and_leaves_no_file() {
     let staging = folder.path().join(".run");
     let work = staging.with_extension("work");
     let folders = RunFolders {
+        cache: None,
         folder: folder.path(),
         staging: &staging,
         work: &work,

@@ -80,7 +80,7 @@ pub use partition::{
 pub use plan::{
     AttachedSource, Combined, LakeSource, Logic, OutputFormat, Plan, PlannedCombine,
     PlannedHandoff, PlannedLookup, PlannedOutput, PlannedSource, PlannedSourcePartition,
-    PlannedSplit, QuerySource, RunValues, SourceRanges, TypedValues,
+    PlannedSplit, QuerySource, ReportSource, RunValues, SourceRanges, TypedValues,
 };
 pub use problem::{Locator, Place, ReportProblem, Table};
 pub use read::{read_report, read_with_places};
@@ -91,8 +91,8 @@ pub use report::{
 };
 pub use request::{ExplainRequest, RunRequest};
 pub use run::{
-    CostCheck, Opening, PREVIEW_ROWS, RunFolders, RunSummary, SourceError, SourceOpener,
-    SourcePart, SourceReader, SourceStatement, WholePeriod, grouped, run,
+    CostCheck, Opening, PREVIEW_ROWS, ResultCache, RunFolders, RunSummary, SourceError,
+    SourceOpener, SourcePart, SourceReader, SourceStatement, WholePeriod, grouped, run,
 };
 pub use text::plan_text;
 

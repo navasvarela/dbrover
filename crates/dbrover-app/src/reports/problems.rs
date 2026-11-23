@@ -294,6 +294,7 @@ file = "r.csv"
                     scanned_bytes: None,
                     parts: Vec::new(),
                     handed_over: None,
+                    reused_ms: None,
                 }),
                 StepMetrics::Combine(CombineMetrics {
                     rows: 10,

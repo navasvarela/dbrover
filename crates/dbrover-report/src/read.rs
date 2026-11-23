@@ -692,6 +692,17 @@ fn read_from_data_source(
         .take("handoff")
         .map(|value| read_handoff(value).map(Box::new))
         .transpose();
+    for (key, what) in OF_A_REPORT_SOURCE {
+        if fields.take(key).is_some() {
+            found.push(Found::at(
+                key,
+                format!(
+                    "{key} {what}, and this source reads a data source; name a report \
+                         with report = \"valuation\" instead"
+                ),
+            ));
+        }
+    }
     found.extend(fields.unknown(
         "a source",
         "id, data_source, query, lookup, partition, max_rows_per_part, columns, columnar, \
@@ -898,13 +909,19 @@ fn read_from_report(
                 .map(|problem| Found::at("params", problem))
                 .collect::<Vec<_>>()
         });
-    found.extend(fields.unknown("a report source", "id, report and params"));
-    let read = match params {
-        Ok(params) => Ok(SourceRead::Report(ReportRead {
+    let reuse = fields.duration("reuse");
+    found.extend(fields.unknown("a report source", "id, report, params and reuse"));
+    let read = match (params, reuse) {
+        (Ok(params), Ok(reuse)) => Ok(SourceRead::Report(ReportRead {
             report,
             params: params.unwrap_or_default(),
+            reuse,
         })),
-        Err(problems) => Err(problems),
+        (params, reuse) => {
+            let mut problems = params.err().unwrap_or_default();
+            problems.extend(reuse.err());
+            Err(problems)
+        }
     };
     (Ok(None), read)
 }
@@ -927,6 +944,18 @@ const OF_A_DATA_SOURCE: [(&str, &str); 12] = [
     ),
     ("columns", "declares the columns of a query's result"),
     ("columnar", "says how a query's rows reach the combine step"),
+];
+
+/// The keys only a report source has, for a source that reads a data source and has one.
+const OF_A_REPORT_SOURCE: [(&str, &str); 2] = [
+    (
+        "params",
+        "binds the parameters of the report a source reads",
+    ),
+    (
+        "reuse",
+        "takes a recent result of the report a source reads",
+    ),
 ];
 
 /// A report source's `params`: the inner report's parameters bound to the outer report's

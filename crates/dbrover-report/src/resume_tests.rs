@@ -51,6 +51,7 @@ async fn run_with_manifest(plan: &Plan, opener: &Ranged, folder: &Path, work: &P
         &values,
         opener,
         RunFolders {
+            cache: None,
             folder,
             staging: &staging,
             work,
@@ -220,6 +221,7 @@ async fn a_resumed_run_reads_the_unfinished_ranges_only_and_writes_what_an_unint
         &values,
         &opener,
         RunFolders {
+            cache: None,
             folder: folder.path(),
             staging: &staging,
             work: &work,
@@ -383,6 +385,7 @@ async fn run_two(plan: &Plan, opener: &Ranged, folder: &Path, work: &Path, resum
         &plan.values(&typed(&values)).unwrap(),
         opener,
         RunFolders {
+            cache: None,
             folder,
             staging: &staging,
             work,

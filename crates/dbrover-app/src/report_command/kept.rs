@@ -343,6 +343,7 @@ mod tests {
                 scanned_bytes: None,
                 parts: Vec::new(),
                 handed_over: None,
+                reused_ms: None,
             })],
             origin: RunOrigin::Command,
             version: Some(BlobId::of(b"[report]\n")),

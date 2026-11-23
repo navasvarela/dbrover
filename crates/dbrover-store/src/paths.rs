@@ -140,6 +140,13 @@ impl AppPaths {
         self.folders.data.join("report-runs")
     }
 
+    /// Where the results of the reports a run used as sources are kept, for a `reuse` on one
+    /// (`docs/reports-at-scale.md`, RS9f). Under `report-cache/`, where RS5h's cache of a
+    /// source's rows will go beside it. Not guaranteed to exist yet.
+    pub fn report_results_dir(&self) -> PathBuf {
+        self.folders.data.join("report-cache").join("results")
+    }
+
     /// Saved data sources. Not guaranteed to exist yet.
     pub fn data_sources_file(&self) -> PathBuf {
         self.folders.settings.join(DATA_SOURCES_FILE_NAME)
