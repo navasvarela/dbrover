@@ -322,6 +322,190 @@ begin transaction;
 commit transaction;
 "##;
 
+/// Snowflake statements, as Snowflake's documentation writes each construct: queries and DML,
+/// which are checked, then the DDL, files, sessions and scripting a Snowflake console holds,
+/// which aren't.
+const VALID_SNOWFLAKE: &str = r#"
+select * from sales.public.orders where order_date >= '2026-01-01'::date limit 10;
+select o_orderkey, o_totalprice from snowflake_sample_data.tpch_sf1.orders sample (10 rows);
+select * from orders tablesample bernoulli (20.3);
+select * from orders sample system (1) seed (42);
+select "Order Id", "lower", ORDERS.ID from "My DB"."public"."orders" as orders;
+select src:customer.name::string, src:items[0].sku, src['vehicle'][0]:make, value:price::number(10, 2) from car_sales, lateral flatten(input => src:items);
+select f.value:name::varchar from t, table(flatten(input => t.v, path => 'contacts', outer => true)) f;
+select iff(x > 0, 'pos', 'neg'), nvl(a, 0), nvl2(a, 1, 2), zeroifnull(b), nullifzero(c), decode(d, 1, 'one', 'other'), equal_null(a, b) from t;
+select user_id, row_number() over (partition by country order by ts desc) as rn from events qualify rn = 1;
+select * from events qualify row_number() over (partition by user_id order by ts desc) = 1;
+select * from t at(timestamp => '2026-01-01 00:00:00'::timestamp_ltz);
+select * from t at(offset => -60 * 5);
+select * from t before(statement => '8e5d0ca9-005e-44e6-b858-a8f5b37c5726');
+select * from t changes(information => default) at(timestamp => dateadd(hour, -1, current_timestamp()));
+select * from stock_price_history match_recognize (partition by company order by price_date measures match_number() as match_number, first(price_date) as start_date, last(price_date) as end_date one row per match after match skip to last row_with_price_increase pattern (row_before_decrease row_with_price_decrease+ row_with_price_increase+) define row_with_price_decrease as price < lag(price), row_with_price_increase as price > lag(price));
+select * from monthly_sales pivot (sum(amount) for month in ('JAN', 'FEB', 'MAR')) as p order by empid;
+select * from monthly_sales pivot (sum(amount) for month in (any order by month)) as p;
+select * from monthly_sales unpivot (sales for month in (jan, feb, mar)) order by empid;
+select * exclude (secret), * rename (a as b), * replace (upper(name) as name) from users;
+select * ilike '%id%' from users;
+select object_construct('a', 1, 'b', 'x'), array_construct(1, 2, 3), parse_json('{"a": 1}'), get_path(v, 'a.b'), to_variant(1), array_agg(distinct x) within group (order by x) from t;
+select {'a': 1, 'b': 2}, [1, 2, 3] from t;
+select listagg(name, ', ') within group (order by name), approx_count_distinct(id), median(x), mode(y), count_if(z > 0) from t;
+select current_warehouse(), current_role(), current_database(), current_schema(), current_account(), current_region(), current_user(), last_query_id();
+select dateadd(day, 7, current_date()), datediff('month', a, b), date_trunc('week', ts), to_timestamp_ntz('2026-01-02 03:04:05'), convert_timezone('UTC', 'Europe/Madrid', ts), extract(epoch_second from ts), ts::date from t;
+select 'it\'s', 'it''s', $$dollar 'quoted'; body$$, 'C:\\temp', x'1F' from t;
+select 1 // a slash comment
+-- a dash comment
+/* a block comment */ from t;
+select $1, $2:a::string, metadata$filename from @my_stage/path/ (file_format => 'my_csv', pattern => '.*[.]csv');
+select * from table(result_scan(last_query_id()));
+select seq4(), uniform(1, 10, random()) from table(generator(rowcount => 10));
+select * from t1 minus select * from t2;
+select a from t where b ilike any ('a%', 'B%') and c rlike '[0-9]+' and d regexp 'x';
+select * from t where id in (select id from u) order by 1 nulls last limit 10 offset 5;
+select a, sum(b) from t group by all;
+select employee_id, manager_id, sys_connect_by_path(title, ' -> ') from employees start with title = 'President' connect by prior employee_id = manager_id;
+select * from t1 asof join t2 match_condition (t1.ts >= t2.ts) on t1.id = t2.id;
+select $myvar, identifier('my_table') from identifier($table_name);
+select :x from t where id = :id;
+select a, b, from t;
+select {*}, {t.*}, {* exclude secret} from t;
+select {'a': x, 'b': y} from t;
+select filter(arr, a -> a > 1), transform(arr, a int -> a + 1), reduce(arr, 0, (acc, x) -> acc + x) from t;
+select * from t1, t2 where t1.a = t2.a(+);
+select * from t1 inner directed join t2 on t1.id = t2.id left directed join t3 on t1.id = t3.id;
+select * from directory(@my_stage);
+select v:"Key With Space", v:a.b[0]:c, t.v['a'] from t;
+select top 10 * from t order by a offset 5 rows fetch next 10 rows only;
+select column1 from values (1, 2), (3, 4);
+select * from t1 union all by name select * from t2;
+with p as procedure (x number) returns number language sql as $$ begin return x + 1; end; $$ call p(1);
+with recursive r (n) as (select 1 union all select n + 1 from r where n < 10) select * from r;
+values (1, 'a'), (2, 'b');
+insert into orders (id, total) values (1, 10.5), (2, 20);
+insert into orders select * from staging;
+insert overwrite into orders select * from staging;
+insert all into t1 into t2 (a) values (x) select x from src;
+insert first when x > 10 then into t1 else into t2 select x from src;
+insert into t (v) select parse_json('{"a": 1}');
+update orders set status = 'shipped' where id = 1;
+update t set x = u.x from u where t.id = u.id;
+delete from t where id = 1;
+delete from t using u where t.id = u.id;
+merge into target t using source s on t.id = s.id when matched and s.deleted then delete when matched then update set t.total = s.total when not matched then insert (id, total) values (s.id, s.total);
+truncate table if exists orders;
+create or replace table orders (id number(38, 0) not null primary key, total number(10, 2), placed_at timestamp_ntz, v variant) cluster by (placed_at) data_retention_time_in_days = 1 comment = 'orders';
+create or replace transient table staging (id int, v variant);
+create temporary table t (id int);
+create table t clone source_t at(offset => -3600);
+create table t as select * from u;
+create or replace view v as select * from orders;
+create or replace secure view v comment = 'x' as select 1 as a;
+create materialized view mv as select x, count(*) as n from t group by x;
+create or replace dynamic table dt target_lag = '1 minute' warehouse = wh as select * from t;
+create database sales;
+create schema sales.staging;
+create or replace stage my_stage url = 's3://bucket/path/' storage_integration = my_int file_format = (type = csv field_delimiter = ',' skip_header = 1);
+create or replace file format my_csv type = csv field_delimiter = ',' skip_header = 1;
+create or replace stream s on table orders;
+create or replace task t warehouse = wh schedule = '5 minute' when system$stream_has_data('s') as insert into log select * from s;
+create or replace pipe p auto_ingest = true as copy into orders from @my_stage file_format = (type = 'json');
+create or replace sequence seq start = 1 increment = 1;
+create or replace function add_one(x number) returns number as 'x + 1';
+create or replace procedure p(x number) returns varchar language sql as $$
+begin
+  return 'x is ' || x;
+end;
+$$;
+create or replace procedure q() returns table (a int) language sql as
+declare
+  res resultset default (select 1 as a);
+begin
+  return table(res);
+end;
+alter table orders add column note varchar;
+alter table orders rename to orders_old;
+alter table orders cluster by (placed_at);
+alter session set query_tag = 'DbRover';
+alter session unset query_tag;
+alter warehouse wh suspend;
+alter warehouse wh set warehouse_size = 'XSMALL' auto_suspend = 60;
+alter task t resume;
+drop table if exists orders;
+undrop table orders;
+copy into orders from @my_stage/path/ file_format = (type = csv skip_header = 1) on_error = 'continue';
+copy into orders (id, total) from (select $1, $2 from @my_stage) pattern = '.*[.]csv';
+copy into @my_stage/out/ from orders file_format = (type = parquet) header = true overwrite = true;
+copy into 's3://bucket/out/' from (select * from orders) storage_integration = my_int file_format = (type = parquet);
+put file:///tmp/data/orders.csv @my_stage auto_compress = true;
+put 'file:///tmp/data/orders.csv' @%orders;
+get @my_stage/out/ file:///tmp/out/;
+list @my_stage pattern = '.*[.]csv';
+ls @~;
+remove @my_stage/path/ pattern = '.*[.]csv';
+rm @%orders;
+use warehouse analytics_wh;
+use role analyst;
+use database sales;
+use schema sales.public;
+use sales.public;
+show databases;
+show schemas in database sales;
+show tables like 'ORD%' in schema sales.public;
+show terse objects in schema sales.public limit 10 from 'A';
+show columns in table orders;
+show warehouses like 'ANALYTICS_WH';
+show grants to role analyst;
+show views;
+describe table orders;
+desc table orders;
+describe view v;
+describe stage my_stage;
+explain select * from orders;
+explain using json select * from orders;
+set myvar = 10;
+set (a, b) = (1, 2);
+unset myvar;
+grant select on table orders to role analyst;
+grant usage on warehouse wh to role analyst;
+revoke select on table orders from role analyst;
+call p(1);
+execute immediate 'select 1';
+execute immediate $$
+declare
+  n int default 3;
+begin
+  return n;
+end;
+$$;
+execute task t;
+begin
+  let n := 1;
+  if (n > 0) then
+    return 'positive';
+  end if;
+end;
+declare
+  total number default 0;
+  c1 cursor for select price from orders;
+begin
+  for rec in c1 do
+    total := total + rec.price;
+  end for;
+  while (total > 100) do
+    total := total - 1;
+  end while;
+  return total;
+exception
+  when other then
+    return sqlerrm;
+end;
+begin transaction;
+begin work;
+begin name t1;
+start transaction;
+commit;
+rollback;
+"#;
+
 fn syntax_errors(corpus: &str, dialect: Dialect) -> Vec<(String, Problem)> {
     split_statements(corpus, dialect)
         .into_iter()
@@ -345,6 +529,7 @@ fn valid_statements_get_no_syntax_error() {
     assert_eq!(syntax_errors(VALID_CLICKHOUSE, Dialect::ClickHouse), []);
     assert_eq!(syntax_errors(VALID_TRINO, Dialect::Trino), []);
     assert_eq!(syntax_errors(VALID_BIGQUERY, Dialect::BigQuery), []);
+    assert_eq!(syntax_errors(VALID_SNOWFLAKE, Dialect::Snowflake), []);
 }
 
 #[test]
@@ -503,6 +688,7 @@ fn still_reports_syntax_errors_around_the_dialects_gaps() {
             (sql, Dialect::ClickHouse),
             (sql, Dialect::Trino),
             (sql, Dialect::BigQuery),
+            (sql, Dialect::Snowflake),
         ]
     });
     // DuckDB accepts a trailing comma in a select list, `select a, from t`. `**` is its power
@@ -519,15 +705,27 @@ fn still_reports_syntax_errors_around_the_dialects_gaps() {
         ("select safe.x from t where", Dialect::BigQuery),
         ("select f(table) from t where", Dialect::BigQuery),
         ("select a from t left join u on", Dialect::BigQuery),
+        // Snowflake's gaps leave an object constant, a join and a common table expression
+        // checked.
+        ("select {'a': 1 from t", Dialect::Snowflake),
+        ("select a from t inner join u on", Dialect::Snowflake),
+        (
+            "with p as (select 1) select * from p where",
+            Dialect::Snowflake,
+        ),
     ];
     for (sql, dialect) in everywhere
         .filter(|&(sql, dialect)| {
-            // DuckDB, ClickHouse and BigQuery accept a trailing comma in a select list. Trino
-            // doesn't, but `sqlparser`'s generic dialect does, so Trino's own error says so on
-            // running.
+            // DuckDB, ClickHouse, BigQuery and Snowflake accept a trailing comma in a select
+            // list. Trino doesn't, but `sqlparser`'s generic dialect does, so Trino's own error
+            // says so on running.
             !(matches!(
                 dialect,
-                Dialect::DuckDb | Dialect::ClickHouse | Dialect::Trino | Dialect::BigQuery
+                Dialect::DuckDb
+                    | Dialect::ClickHouse
+                    | Dialect::Trino
+                    | Dialect::BigQuery
+                    | Dialect::Snowflake
             ) && sql == "select a, from t")
         })
         .chain(duckdb)

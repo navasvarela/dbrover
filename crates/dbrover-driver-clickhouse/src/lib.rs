@@ -19,9 +19,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use clickhouse::Client;
 use dbrover_core::{
-    BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, ClickHouseConfig, Connection,
-    DriverError, Password, ProgressHandle, Quoting, Rejection, RelationName, ResultCursor, Route,
-    ServerInfo, TableConstraints, TableDescription, TableName, TlsMode, TransactionStatus,
+    BareNames, BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, ClickHouseConfig,
+    Connection, DriverError, Password, ProgressHandle, Quoting, Rejection, RelationName,
+    ResultCursor, Route, ServerInfo, TableConstraints, TableDescription, TableName, TlsMode,
+    TransactionStatus,
 };
 pub use dbrover_tls::TlsSetupError;
 use hyper_rustls::FixedServerNameResolver;
@@ -41,6 +42,7 @@ pub(crate) const CLICKHOUSE_QUOTING: Quoting = Quoting {
     identifier_close: '`',
     backslash_escapes: true,
     string_prefix: "",
+    bare_names: BareNames::Lowercase,
 };
 
 /// Settings every request carries:

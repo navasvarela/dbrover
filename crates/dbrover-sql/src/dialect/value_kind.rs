@@ -19,6 +19,7 @@ impl Dialect {
             Self::Cassandra => cql_kind(&name),
             Self::Trino => trino_kind(&name),
             Self::BigQuery => bigquery_kind(&name),
+            Self::Snowflake => snowflake_kind(&name),
             Self::Postgres | Self::Mysql | Self::SqlServer | Self::DuckDb => {
                 named_kind(&name, self)
             }
@@ -81,6 +82,35 @@ fn bigquery_kind(name: &str) -> ValueKind {
         "date" => ValueKind::Date,
         "datetime" => ValueKind::Timestamp,
         "timestamp" => ValueKind::TimestampWithZone,
+        _ => ValueKind::Text,
+    }
+}
+
+/// Snowflake's types and their synonyms. `INT` and its kin are `NUMBER(38, 0)`, which is what
+/// Snowflake reports for them, so a `NUMBER` without a scale, or with a scale of 0, holds
+/// integers. `TIMESTAMP` and `DATETIME` are `TIMESTAMP_NTZ`, as Snowflake maps them unless an
+/// account changes `TIMESTAMP_TYPE_MAPPING`.
+fn snowflake_kind(name: &str) -> ValueKind {
+    let (base, parameters) = match name.split_once('(') {
+        Some((base, parameters)) => (base.trim(), Some(parameters)),
+        None => (name, None),
+    };
+    match base {
+        "number" | "decimal" | "numeric" | "fixed" => {
+            let scale = parameters
+                .and_then(|parameters| parameters.split_once(','))
+                .map(|(_, scale)| scale.trim_end_matches(')').trim());
+            match scale {
+                None | Some("0") => ValueKind::Integer,
+                Some(_) => ValueKind::Decimal,
+            }
+        }
+        "int" | "integer" | "bigint" | "smallint" | "tinyint" | "byteint" => ValueKind::Integer,
+        "float" | "float4" | "float8" | "double" | "double precision" | "real" => ValueKind::Float,
+        "boolean" => ValueKind::Boolean,
+        "date" => ValueKind::Date,
+        "timestamp" | "datetime" | "timestamp_ntz" => ValueKind::Timestamp,
+        "timestamp_ltz" | "timestamp_tz" => ValueKind::TimestampWithZone,
         _ => ValueKind::Text,
     }
 }
@@ -293,6 +323,37 @@ mod tests {
                     ("STRUCT<a INT64, b STRING>", Text),
                     ("RECORD", Text),
                     ("RANGE<DATE>", Text),
+                ],
+            ),
+            (
+                Dialect::Snowflake,
+                &[
+                    ("NUMBER", Integer),
+                    ("NUMBER(38,0)", Integer),
+                    ("NUMBER(38, 0)", Integer),
+                    ("NUMBER(10)", Integer),
+                    ("NUMBER(10,2)", Decimal),
+                    ("DECIMAL(18, 4)", Decimal),
+                    ("INT", Integer),
+                    ("BYTEINT", Integer),
+                    ("FLOAT", Float),
+                    ("DOUBLE PRECISION", Float),
+                    ("REAL", Float),
+                    ("BOOLEAN", Boolean),
+                    ("DATE", Date),
+                    ("TIMESTAMP", Timestamp),
+                    ("TIMESTAMP_NTZ(9)", Timestamp),
+                    ("DATETIME", Timestamp),
+                    ("TIMESTAMP_LTZ(3)", TimestampWithZone),
+                    ("TIMESTAMP_TZ", TimestampWithZone),
+                    ("TIME(9)", Text),
+                    ("VARCHAR(16777216)", Text),
+                    ("BINARY", Text),
+                    ("VARIANT", Text),
+                    ("OBJECT", Text),
+                    ("ARRAY", Text),
+                    ("GEOGRAPHY", Text),
+                    ("VECTOR(FLOAT, 256)", Text),
                 ],
             ),
         ];

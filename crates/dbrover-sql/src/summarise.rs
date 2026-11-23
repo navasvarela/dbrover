@@ -214,7 +214,9 @@ fn percentiles_of(dialect: Dialect) -> Option<Percentiles> {
         })
     };
     match dialect {
-        Dialect::Postgres => aggregate("percentile_cont({share}) WITHIN GROUP (ORDER BY {column})"),
+        Dialect::Postgres | Dialect::Snowflake => {
+            aggregate("percentile_cont({share}) WITHIN GROUP (ORDER BY {column})")
+        }
         Dialect::DuckDb => aggregate("quantile_cont({column}, {share})"),
         Dialect::ClickHouse => aggregate("quantile({share})({column})"),
         Dialect::Trino => aggregate("approx_percentile({column}, {share})"),
@@ -241,6 +243,7 @@ fn engine_name(dialect: Dialect) -> &'static str {
         Dialect::Cassandra => "Cassandra",
         Dialect::Trino => "Trino",
         Dialect::BigQuery => "BigQuery",
+        Dialect::Snowflake => "Snowflake",
     }
 }
 
@@ -392,6 +395,24 @@ ORDER BY bucket"
         }
     }
 
+    /// Snowflake folds unquoted names to upper case, so its result's `PRICE` is written bare
+    /// and a column called `price` quoted, which a bare `price` wouldn't name.
+    #[test]
+    fn snowflake_names_its_column_as_snowflake_folds_it() {
+        let of = |column| {
+            Summary::Percentiles
+                .sql(Dialect::Snowflake, QUERY, column)
+                .unwrap()
+                .sql
+        };
+        assert!(
+            of("PRICE").contains("percentile_cont(0.50) WITHIN GROUP (ORDER BY PRICE)"),
+            "{}",
+            of("PRICE")
+        );
+        assert!(of("price").contains("MAX(\"price\")"), "{}", of("price"));
+    }
+
     #[test]
     fn an_engine_without_percentiles_says_so_rather_than_writing_a_statement_that_fails() {
         for dialect in [Dialect::Sqlite, Dialect::Mysql, Dialect::Cassandra] {
@@ -424,6 +445,7 @@ ORDER BY bucket"
             Dialect::ClickHouse,
             Dialect::Trino,
             Dialect::BigQuery,
+            Dialect::Snowflake,
         ] {
             assert!(
                 Summary::Distribution { buckets: 10 }

@@ -208,6 +208,14 @@ impl<'a> Tokens<'a> {
                         Some("union" | "intersect" | "except")
                     )
             }
+            ParserGap::ObjectWildcard => {
+                let names_a_table = self.tokens.get(index + 1).is_some_and(|name| {
+                    matches!(name.kind, TokenKind::Word | TokenKind::QuotedIdentifier)
+                }) && self.text(index + 2) == Some(".")
+                    && self.text(index + 3) == Some("*");
+                self.text(index) == Some("{")
+                    && (self.text(index + 1) == Some("*") || names_a_table)
+            }
             ParserGap::IsAnyExpression => {
                 current.as_deref() == Some("is") && {
                     let next = if self.word(index + 1).as_deref() == Some("not") {

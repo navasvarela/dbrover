@@ -32,6 +32,10 @@ use crate::lexer::{Token, TokenKind, tokenize};
 /// END`, `IF … END IF`, `LOOP`, `WHILE`, `REPEAT` and `FOR … END …`, and a `CASE` statement's
 /// `END CASE`, each opened where a statement starts; `BEGIN` alone or `BEGIN TRANSACTION`
 /// starts a transaction instead.
+///
+/// Snowflake Scripting's blocks are read the same way, and a `DECLARE` section before a
+/// block's `BEGIN` belongs to the block, semicolons and all: `DECLARE … BEGIN … END` is one
+/// statement. `BEGIN WORK` and `BEGIN NAME t` start a transaction there too.
 pub fn split_statements(sql: &str, dialect: Dialect) -> Vec<Range<usize>> {
     let tokens: Vec<Token> = tokenize(sql, dialect)
         .into_iter()
@@ -76,7 +80,7 @@ struct Splitter<'a> {
     /// Words read so far in the current statement.
     words_seen: usize,
     block_depth: usize,
-    /// GoogleSQL's open blocks, innermost last.
+    /// GoogleSQL's or Snowflake Scripting's open blocks, innermost last.
     procedural_blocks: Vec<ProceduralBlock>,
     /// Whether the current statement is a Transact-SQL routine, whose body ends only with
     /// its batch.
@@ -85,7 +89,8 @@ struct Splitter<'a> {
     delimiter: Option<String>,
 }
 
-/// What opened one of GoogleSQL's blocks, which decides what follows its `THEN` and `ELSE`.
+/// What opened one of GoogleSQL's or Snowflake Scripting's blocks, which decides what follows
+/// its `THEN` and `ELSE`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProceduralBlock {
     /// A statement, such as `IF … THEN`, `WHILE … DO` or a `CASE` statement, whose clauses
@@ -94,21 +99,29 @@ enum ProceduralBlock {
     /// A `CASE` expression, whose `THEN` and `ELSE` hold values: `THEN IF(a, b, c)` there is a
     /// function call, not an `IF` statement.
     CaseExpression,
+    /// Snowflake Scripting's `DECLARE` section, which the block's `BEGIN` follows: one `END`
+    /// closes both.
+    Declarations,
 }
 
-/// In a GoogleSQL block of statements, the words after which a statement starts: `IF … THEN`,
-/// `ELSE`, `WHILE … DO`, `FOR … DO`, `BEGIN`, `LOOP`, `REPEAT`, and `EXCEPTION WHEN ERROR THEN`.
+/// In a block of statements, the words after which a statement starts: `IF … THEN`, `ELSE`,
+/// `WHILE … DO`, `FOR … DO`, `BEGIN`, `LOOP` (Snowflake's `WHILE … LOOP` too), `REPEAT`, and
+/// `EXCEPTION WHEN ERROR THEN` (Snowflake's `WHEN OTHER THEN`).
 const BEFORE_PROCEDURAL_STATEMENTS: &[&str] = &["begin", "do", "else", "loop", "repeat", "then"];
 
-/// GoogleSQL's statements that open a block, with `BEGIN` and `CASE`, where a statement
-/// starts. Elsewhere they are other things: `IF(…)` and `REPEAT(…)` are functions, and `FOR
-/// SYSTEM_TIME AS OF` reads a table as it was.
+/// The statements of GoogleSQL and Snowflake Scripting that open a block, with `BEGIN` and
+/// `CASE`, where a statement starts. Elsewhere they are other things: `IF(…)` and `REPEAT(…)`
+/// are functions, and `FOR SYSTEM_TIME AS OF` reads a table as it was.
 const PROCEDURAL_BLOCK_STATEMENTS: &[&str] = &["for", "if", "loop", "repeat", "while"];
 
 /// After `END`, these close a block that didn't open with `BEGIN` or `CASE`, so they mustn't
 /// close one that did: `END IF` inside a MySQL procedure's `BEGIN … END`. Not in
 /// Transact-SQL, where `END IF @x = 1 …` closes a block and starts the next statement.
 const END_OF_CONTROL_FLOW: &[&str] = &["if", "loop", "repeat", "while"];
+
+/// After GoogleSQL's or Snowflake's `BEGIN`, these make it a transaction rather than a block:
+/// `BEGIN TRANSACTION`, and Snowflake's `BEGIN WORK` and `BEGIN NAME t`.
+const BEGIN_TRANSACTION: &[&str] = &["transaction", "work", "name"];
 
 /// After Transact-SQL's `BEGIN`, these make it a statement rather than a block: `BEGIN TRAN`,
 /// `BEGIN DISTRIBUTED TRANSACTION`, `BEGIN DIALOG CONVERSATION`.
@@ -265,10 +278,10 @@ impl Splitter<'_> {
         self.first_word.get_or_insert(word);
     }
 
-    /// Opens or closes a GoogleSQL block at the word at `index`, `word` lowercased. Read from
-    /// the words alone, without GoogleSQL's grammar: `END` closes the innermost block whatever
-    /// follows it (`END IF`, `END LOOP`, a label), and a block left open runs to the end of
-    /// the text, as BigQuery would read it.
+    /// Opens or closes a block of GoogleSQL or Snowflake Scripting at the word at `index`,
+    /// `word` lowercased. Read from the words alone, without either grammar: `END` closes the
+    /// innermost block whatever follows it (`END IF`, `END LOOP`, a label), and a block left
+    /// open runs to the end of the text, as BigQuery and Snowflake would read it.
     fn track_procedural_blocks(&mut self, index: usize, word: &str) {
         // The `CASE` of `END CASE` opens nothing.
         if index
@@ -277,16 +290,24 @@ impl Splitter<'_> {
         {
             return;
         }
+        if word == "begin"
+            && let Some(block @ ProceduralBlock::Declarations) = self.procedural_blocks.last_mut()
+        {
+            *block = ProceduralBlock::Statements;
+            return;
+        }
         let starts_statement = self.starts_procedural_statement(index);
+        // A procedure's body follows its `CREATE PROCEDURE … ()` in GoogleSQL, and its `AS`
+        // in Snowflake when it isn't written in `$$`.
+        let starts_body = starts_statement || self.first_word.as_deref() == Some("create");
         let opens = match word {
             "case" if starts_statement => Some(ProceduralBlock::Statements),
             "case" => Some(ProceduralBlock::CaseExpression),
-            // A procedure's body follows its `CREATE PROCEDURE … ()`.
-            "begin"
-                if (starts_statement || self.first_word.as_deref() == Some("create"))
-                    && !self.begins_transaction(index) =>
-            {
+            "begin" if starts_body && !self.begins_transaction(index) => {
                 Some(ProceduralBlock::Statements)
+            }
+            "declare" if starts_body && self.rules.declare_sections => {
+                Some(ProceduralBlock::Declarations)
             }
             _ if starts_statement && PROCEDURAL_BLOCK_STATEMENTS.contains(&word) => {
                 Some(ProceduralBlock::Statements)
@@ -300,7 +321,7 @@ impl Splitter<'_> {
         }
     }
 
-    /// Whether the word at `index` starts a GoogleSQL statement: the script's first word, one
+    /// Whether the word at `index` starts a statement of a script: its first word, one
     /// after a `;` or a label's `:`, or one after the words that lead into a block's
     /// statements.
     fn starts_procedural_statement(&self, index: usize) -> bool {
@@ -325,7 +346,9 @@ impl Splitter<'_> {
         self.tokens
             .get(index + 1)
             .is_none_or(|next| next.kind == TokenKind::Semicolon)
-            || self.word(index + 1).as_deref() == Some("transaction")
+            || self
+                .word(index + 1)
+                .is_some_and(|next| BEGIN_TRANSACTION.contains(&next.as_str()))
     }
 
     fn extend(&mut self, range: Range<usize>) {
@@ -561,6 +584,51 @@ mod tests {
                 "BEGIN",
                 "COMMIT TRANSACTION",
                 "SELECT 1",
+            ]
+        );
+    }
+
+    /// Snowflake Scripting's blocks are one statement each, with a `DECLARE` section before
+    /// one, nested ones, and a procedure's body without `$$`; `$$` bodies, `//` comments and
+    /// a `file:///` path hold semicolons or look like comments without splitting; `BEGIN`
+    /// alone, `BEGIN WORK` and `BEGIN NAME t` are transactions.
+    #[test]
+    fn keeps_snowflake_scripting_blocks_whole() {
+        let anonymous = "DECLARE\n  total NUMBER DEFAULT 0;\n  c1 CURSOR FOR SELECT price FROM \
+                         orders;\n  res RESULTSET DEFAULT (SELECT CASE WHEN 1 = 1 THEN 1 END);\n\
+                         BEGIN\n  FOR rec IN c1 DO\n    total := total + rec.price;\n  END FOR;\n  \
+                         WHILE (total > 100) LOOP\n    total := total - 1;\n  END LOOP;\n  \
+                         IF (total > 0) THEN\n    LET x := IFF(total > 1, 'many', 'one');\n  \
+                         ELSE\n    BEGIN\n      DECLARE y INT; BEGIN y := 1; END;\n    END;\n  \
+                         END IF;\n  CASE (total) WHEN 1 THEN RETURN 'one'; ELSE RETURN 'other'; \
+                         END CASE;\nEXCEPTION\n  WHEN OTHER THEN\n    RETURN SQLERRM;\nEND";
+        let block = "BEGIN\n  CREATE TABLE t (a INT);\n  INSERT INTO t VALUES (1);\nEND";
+        let procedure = "CREATE OR REPLACE PROCEDURE p() RETURNS INT LANGUAGE SQL AS\n\
+                         DECLARE n INT DEFAULT 1;\nBEGIN\n  RETURN n;\nEND";
+        let dollar_procedure = "CREATE PROCEDURE q() RETURNS VARCHAR LANGUAGE SQL AS $$\n\
+                                BEGIN\n  RETURN 'a;b';\nEND;\n$$";
+        let immediate = "EXECUTE IMMEDIATE $$ SELECT 1; SELECT 2; $$";
+        let put = "PUT file:///tmp/a.csv @my_stage";
+        let commented = "SELECT 1 // a comment; not the end\nFROM t";
+        let script = format!(
+            "{anonymous};\n{block};\n{procedure};\n{dollar_procedure};\n{immediate};\n{put};\n\
+             {commented};\nBEGIN;\nBEGIN WORK;\nBEGIN NAME t1;\nBEGIN TRANSACTION;\nCOMMIT"
+        );
+        assert_eq!(
+            statements(&script, Dialect::Snowflake),
+            [
+                anonymous,
+                block,
+                procedure,
+                dollar_procedure,
+                immediate,
+                put,
+                commented,
+                "BEGIN",
+                "BEGIN WORK",
+                "BEGIN NAME t1",
+                "BEGIN TRANSACTION",
+                "COMMIT",
             ]
         );
     }

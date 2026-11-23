@@ -11,10 +11,11 @@ mod names;
 mod tests;
 
 use std::borrow::Cow;
-use std::ops::ControlFlow;
+use std::ops::{ControlFlow, Range};
 
 use sqlparser::ast::{
-    Expr, ObjectName, ObjectType, Query, SetExpr, Statement, TableFactor, Visit, Visitor,
+    CopyIntoSnowflakeKind, Expr, ObjectName, ObjectType, Query, SetExpr, Statement, TableFactor,
+    Visit, Visitor,
 };
 use sqlparser::parser::Parser;
 
@@ -118,23 +119,23 @@ pub fn analyze(sql: &str, dialect: Dialect) -> Result<Analysis, Unclassified> {
     })
 }
 
-/// The text to parse for `sql`. MariaDB's `ANALYZE` before a statement runs the statement and
-/// explains it, as MySQL's `EXPLAIN ANALYZE` does, but `sqlparser` only reads `ANALYZE TABLE`;
-/// so such a statement is read as the `EXPLAIN ANALYZE` it is, which classifies it by the
-/// statement it runs. `ANALYZE TABLE`, and its `LOCAL` and `NO_WRITE_TO_BINLOG` forms, are
-/// left as they are.
+/// The text to parse for `sql`: the statement itself, or, for a few that `sqlparser` can't
+/// read, one it can that does the same.
 fn as_parsed(sql: &str, dialect: Dialect) -> Cow<'_, str> {
-    if dialect != Dialect::Mysql {
-        return Cow::Borrowed(sql);
+    match dialect {
+        Dialect::Mysql => mysql_as_parsed(sql),
+        Dialect::Snowflake => snowflake_as_parsed(sql),
+        _ => Cow::Borrowed(sql),
     }
-    let words: Vec<String> = tokenize(sql, dialect)
-        .into_iter()
-        .filter(|token| !token.kind.is_trivia())
-        .take(2)
-        .map(|token| sql[token.range].to_ascii_lowercase())
-        .collect();
-    match words.as_slice() {
-        [first, second]
+}
+
+/// MariaDB's `ANALYZE` before a statement runs the statement and explains it, as MySQL's
+/// `EXPLAIN ANALYZE` does, but `sqlparser` only reads `ANALYZE TABLE`; so such a statement is
+/// read as the `EXPLAIN ANALYZE` it is, which classifies it by the statement it runs. `ANALYZE
+/// TABLE`, and its `LOCAL` and `NO_WRITE_TO_BINLOG` forms, are left as they are.
+fn mysql_as_parsed(sql: &str) -> Cow<'_, str> {
+    match leading_words(sql, Dialect::Mysql, 2).as_slice() {
+        [(first, _), (second, _)]
             if first == "analyze"
                 && !matches!(second.as_str(), "table" | "local" | "no_write_to_binlog") =>
         {
@@ -142,6 +143,66 @@ fn as_parsed(sql: &str, dialect: Dialect) -> Cow<'_, str> {
         }
         _ => Cow::Borrowed(sql),
     }
+}
+
+/// The kinds of object, besides a table, that Snowflake's `DESCRIBE` takes in one word.
+const SNOWFLAKE_DESCRIBED_KINDS: &[&str] = &[
+    "alert",
+    "database",
+    "function",
+    "integration",
+    "pipe",
+    "procedure",
+    "schema",
+    "sequence",
+    "share",
+    "stage",
+    "stream",
+    "task",
+    "user",
+    "view",
+    "warehouse",
+];
+
+/// `sqlparser` reads Snowflake's `DESCRIBE TABLE t` but not `DESCRIBE VIEW v`, `DESCRIBE
+/// STAGE s` or `DESCRIBE WAREHOUSE w`, which read as much as it does: every `DESCRIBE` only
+/// reads, so those kinds are read as `TABLE`. A kind of two words (`DESCRIBE FILE FORMAT f`),
+/// or what doesn't parse as a table's name (`DESCRIBE FUNCTION f(NUMBER)`), stays unknown.
+/// Nor does it read `EXPLAIN USING JSON …`, whose format changes nothing about the statement
+/// it explains, so the format is left out.
+fn snowflake_as_parsed(sql: &str) -> Cow<'_, str> {
+    let words = leading_words(sql, Dialect::Snowflake, 3);
+    let replace = |range: &Range<usize>, with: &str| {
+        Cow::Owned(format!(
+            "{}{with}{}",
+            &sql[..range.start],
+            &sql[range.end..]
+        ))
+    };
+    match words.as_slice() {
+        [(first, _), (kind, kind_range), ..]
+            if matches!(first.as_str(), "describe" | "desc")
+                && SNOWFLAKE_DESCRIBED_KINDS.contains(&kind.as_str()) =>
+        {
+            replace(kind_range, "TABLE")
+        }
+        [(first, _), (using, using_range), (_, format_range)]
+            if first == "explain" && using == "using" =>
+        {
+            replace(&(using_range.start..format_range.end), "")
+        }
+        _ => Cow::Borrowed(sql),
+    }
+}
+
+/// The first `count` meaningful tokens of `sql`, lowercased, with where each is.
+fn leading_words(sql: &str, dialect: Dialect, count: usize) -> Vec<(String, Range<usize>)> {
+    tokenize(sql, dialect)
+        .into_iter()
+        .filter(|token| !token.kind.is_trivia())
+        .take(count)
+        .map(|token| (sql[token.range.clone()].to_ascii_lowercase(), token.range))
+        .collect()
 }
 
 /// Walks every statement, query, expression and table in the tree, nested ones included,
@@ -298,7 +359,9 @@ fn statement_kind(statement: &Statement) -> StatementKind {
         | Statement::ShowObjects(_)
         | Statement::ShowTables { .. }
         | Statement::ShowViews { .. }
-        | Statement::ShowCollation { .. } => Read,
+        | Statement::ShowCollation { .. }
+        // Snowflake's `LIST @stage`, which lists a stage's files.
+        | Statement::List(_) => Read,
 
         Statement::Insert(_)
         | Statement::Update(_)
@@ -307,7 +370,14 @@ fn statement_kind(statement: &Statement) -> StatementKind {
         | Statement::Truncate(_)
         | Statement::Lock(_)
         | Statement::LockTables { .. }
-        | Statement::UnlockTables => Write,
+        | Statement::UnlockTables
+        // Snowflake's `COPY INTO t` loads a stage's files into a table, as an `INSERT` would.
+        // `COPY INTO @stage` writes files instead, as `COPY` does elsewhere, and falls through
+        // to administration.
+        | Statement::CopyIntoSnowflake {
+            kind: CopyIntoSnowflakeKind::Table,
+            ..
+        } => Write,
 
         // Dropping a database, a role or a user is administration, like creating one (which
         // falls through to the last arm).
@@ -357,10 +427,10 @@ fn statement_kind(statement: &Statement) -> StatementKind {
         | Statement::Comment { .. }
         | Statement::RenameTable(_) => Schema,
 
-        // GoogleSQL's `BEGIN … END` block, which `sqlparser` reads as a `BEGIN` holding
-        // statements: no transaction, but a script, which is administration like the rest of
-        // GoogleSQL's procedural language (`IF`, `DECLARE`, `SET`, `CALL`). Its statements are
-        // visited too.
+        // GoogleSQL's and Snowflake Scripting's `BEGIN … END` block, which `sqlparser` reads as
+        // a `BEGIN` holding statements: no transaction, but a script, which is administration
+        // like the rest of their procedural languages (`IF`, `DECLARE`, `SET`, `CALL`). Its
+        // statements are visited too.
         Statement::StartTransaction {
             has_end_keyword: true,
             ..

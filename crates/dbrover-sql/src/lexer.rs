@@ -107,7 +107,9 @@ impl Lexer<'_> {
             }
             ('-', Some('-')) if self.dashes_start_comment() => self.line_comment(),
             ('#', _) if self.rules.hash_comments => self.line_comment(),
-            ('/', Some('/')) if self.rules.slash_comments => self.line_comment(),
+            ('/', Some('/')) if self.rules.slash_comments && !self.follows_colon() => {
+                self.line_comment()
+            }
             ('/', Some('*')) => self.block_comment(),
             ('\'', _) => self.string('\''),
             (c, _) if is_word_start(c) && self.string_prefix_length().is_some() => {
@@ -153,6 +155,15 @@ impl Lexer<'_> {
                 .chars()
                 .next()
                 .is_none_or(char::is_whitespace)
+    }
+
+    /// Whether the text so far ends in `:` and any slashes. Then a `//` is a URL's, as in
+    /// Snowflake's `PUT file:///tmp/a.csv @stage`, which Snowflake's clients read so, rather
+    /// than a comment that would swallow the statement's `;`.
+    fn follows_colon(&self) -> bool {
+        self.sql[..self.position]
+            .trim_end_matches('/')
+            .ends_with(':')
     }
 
     fn word(&mut self) -> TokenKind {
@@ -382,7 +393,7 @@ mod tests {
     #[test]
     fn recognises_dialect_specific_quoting() {
         use TokenKind::*;
-        let cases: [Case; 16] = [
+        let cases: [Case; 17] = [
             (
                 "$fn$ a; $x$ b $fn$ ;",
                 Dialect::Postgres,
@@ -564,6 +575,49 @@ mod tests {
                     (String, "bR\"x\""),
                     (Word, "rb"),
                     (String, "br'"),
+                ],
+            ),
+            // Snowflake: `"…"` names, `'…'` strings with backslash escapes, `$$` bodies, `$`
+            // inside names, `//` comments (but not a URL's `//`), and `$1` and `$name` as a
+            // sign before a word or number.
+            (
+                "select \"a\"\"b\", 'it\\'s', $$ x; y $$, system$typeof(v), $1, $var // note\n\
+                 put file:///tmp/a.csv @s; /* c */",
+                Dialect::Snowflake,
+                vec![
+                    (Word, "select"),
+                    (QuotedIdentifier, "\"a\"\"b\""),
+                    (Punctuation, ","),
+                    (String, "'it\\'s'"),
+                    (Punctuation, ","),
+                    (String, "$$ x; y $$"),
+                    (Punctuation, ","),
+                    (Word, "system$typeof"),
+                    (Punctuation, "("),
+                    (Word, "v"),
+                    (Punctuation, ")"),
+                    (Punctuation, ","),
+                    (Punctuation, "$"),
+                    (Number, "1"),
+                    (Punctuation, ","),
+                    (Punctuation, "$"),
+                    (Word, "var"),
+                    (LineComment, "// note"),
+                    (Word, "put"),
+                    (Word, "file"),
+                    (Punctuation, ":"),
+                    (Punctuation, "/"),
+                    (Punctuation, "/"),
+                    (Punctuation, "/"),
+                    (Word, "tmp"),
+                    (Punctuation, "/"),
+                    (Word, "a"),
+                    (Punctuation, "."),
+                    (Word, "csv"),
+                    (Punctuation, "@"),
+                    (Word, "s"),
+                    (Semicolon, ";"),
+                    (BlockComment, "/* c */"),
                 ],
             ),
             // Only Transact-SQL has `@` names; elsewhere `@p` is a parameter marker's sign.
