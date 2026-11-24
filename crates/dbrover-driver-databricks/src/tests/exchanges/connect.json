@@ -1,0 +1,56 @@
+{
+ "doc": "Connecting reads the data source's warehouse, which starts nothing, and so does each ping; every request carries the token and DbRover's User-Agent.",
+ "exchanges": [
+  {
+   "method": "GET",
+   "path": "/api/2.0/sql/warehouses/abc123def456",
+   "headers": {
+    "authorization": "Bearer dapi-test-token"
+   },
+   "response": {
+    "id": "abc123def456",
+    "name": "Shared",
+    "cluster_size": "Small",
+    "state": "STOPPED",
+    "enable_serverless_compute": true,
+    "warehouse_type": "PRO",
+    "auto_stop_mins": 10,
+    "num_clusters": 0
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.0/sql/warehouses/abc123def456",
+   "headers": {
+    "authorization": "Bearer dapi-test-token"
+   },
+   "response": {
+    "id": "abc123def456",
+    "name": "Shared",
+    "cluster_size": "Small",
+    "state": "STOPPED",
+    "enable_serverless_compute": true,
+    "warehouse_type": "PRO",
+    "auto_stop_mins": 10,
+    "num_clusters": 0
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.0/sql/warehouses/abc123def456",
+   "headers": {
+    "authorization": "Bearer dapi-test-token"
+   },
+   "response": {
+    "id": "abc123def456",
+    "name": "Shared",
+    "cluster_size": "Small",
+    "state": "STOPPED",
+    "enable_serverless_compute": true,
+    "warehouse_type": "PRO",
+    "auto_stop_mins": 10,
+    "num_clusters": 0
+   }
+  }
+ ]
+}

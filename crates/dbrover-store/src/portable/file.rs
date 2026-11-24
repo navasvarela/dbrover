@@ -12,11 +12,11 @@ use std::path::{Path, PathBuf};
 
 use dbrover_core::{
     AthenaConfig, BigQueryConfig, CassandraConfig, ClickHouseConfig, CloudSignIn, ConnectionConfig,
-    CostGuard, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase, DynamoDbConfig,
-    ElasticsearchAuth, ElasticsearchConfig, GcsBucket, GoogleCloudSignIn, McpLogin, MongoConfig,
-    MysqlConfig, ObjectStorage, PasswordCommand, Port, PostgresConfig, ProjectId, RedisConfig,
-    SafetyLevel, ServerConfig, SnowflakeConfig, SnowflakeSignIn, SourceColor, SqlServerConfig,
-    SqliteConfig, SshConfig, SshLogin, TlsMode, TrinoConfig, TrinoProtocol,
+    CostGuard, DataSource, DataSourceId, DatabricksConfig, DuckDbConfig, DuckDbDatabase,
+    DynamoDbConfig, ElasticsearchAuth, ElasticsearchConfig, GcsBucket, GoogleCloudSignIn, McpLogin,
+    MongoConfig, MysqlConfig, ObjectStorage, PasswordCommand, Port, PostgresConfig, ProjectId,
+    RedisConfig, SafetyLevel, ServerConfig, SnowflakeConfig, SnowflakeSignIn, SourceColor,
+    SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode, TrinoConfig, TrinoProtocol,
 };
 use serde::{Deserialize, Serialize};
 
@@ -181,6 +181,9 @@ enum PortableConfig {
     /// As written, its private key file, if it signs in with one, moved as every other path
     /// is. The passphrase or token is the password, which never travels.
     Snowflake(SnowflakeConfig),
+    /// As written: it names no file, and its token or secret is the password, which never
+    /// travels.
+    Databricks(DatabricksConfig),
 }
 
 impl PortableConfig {
@@ -240,6 +243,7 @@ impl PortableConfig {
                 sign_in: portable_snowflake_sign_in(&config.sign_in, path),
                 ..config.clone()
             }),
+            ConnectionConfig::Databricks(config) => Self::Databricks(config.clone()),
             ConnectionConfig::Trino(TrinoConfig {
                 server,
                 schema,
@@ -337,6 +341,7 @@ impl PortableConfig {
                 sign_in: portable_snowflake_sign_in(&config.sign_in, path),
                 ..config
             }),
+            Self::Databricks(config) => ConnectionConfig::Databricks(config),
             Self::Trino(PortableTrino {
                 server,
                 schema,

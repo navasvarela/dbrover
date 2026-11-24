@@ -21,6 +21,7 @@ dbrover-driver-cassandra = { path = "crates/dbrover-driver-cassandra" }
 dbrover-driver-mongodb = { path = "crates/dbrover-driver-mongodb" }
 dbrover-driver-mysql = { path = "crates/dbrover-driver-mysql" }
 dbrover-driver-clickhouse = { path = "crates/dbrover-driver-clickhouse" }
+dbrover-driver-databricks = { path = "crates/dbrover-driver-databricks" }
 dbrover-driver-duckdb = { path = "crates/dbrover-driver-duckdb" }
 dbrover-driver-dynamodb = { path = "crates/dbrover-driver-dynamodb" }
 dbrover-driver-elasticsearch = { path = "crates/dbrover-driver-elasticsearch" }

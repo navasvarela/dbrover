@@ -75,7 +75,8 @@ impl DriverFields {
             | Self::DynamoDb(_)
             | Self::Athena(_)
             | Self::BigQuery(_)
-            | Self::Snowflake(_) => None,
+            | Self::Snowflake(_)
+            | Self::Databricks(_) => None,
         }
     }
 }

@@ -110,7 +110,9 @@ pub struct HandoffSupport {
 impl HandoffSupport {
     /// What `driver`'s handoff takes, or `None` for an engine that has none.
     ///
-    /// Databricks's external links land with C6. Trino has none to give: it has no `UNLOAD`, and its spooled protocol answers with
+    /// Databricks has none: its external links hand a result over as Arrow files in its
+    /// own storage, read as RS6's batches (C6h), with no bucket of the report's. Trino has none
+    /// to give: it has no `UNLOAD`, and its spooled protocol answers with
     /// segments of the same rows in the server's own location, not files in a prefix a report
     /// names (`docs/reports-at-scale.md`, "The handoff against today's code").
     pub fn of(driver: DriverKind) -> Option<Self> {
@@ -143,7 +145,8 @@ impl HandoffSupport {
             | DriverKind::Elasticsearch
             | DriverKind::Cassandra
             | DriverKind::DynamoDb
-            | DriverKind::Trino => None,
+            | DriverKind::Trino
+            | DriverKind::Databricks => None,
         }
     }
 }

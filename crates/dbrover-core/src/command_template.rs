@@ -54,7 +54,8 @@ impl From<&ConnectionConfig> for DataSourceFields {
             ConnectionConfig::DynamoDb(_)
             | ConnectionConfig::Athena(_)
             | ConnectionConfig::BigQuery(_)
-            | ConnectionConfig::Snowflake(_) => None,
+            | ConnectionConfig::Snowflake(_)
+            | ConnectionConfig::Databricks(_) => None,
         };
         let server = config.server();
         Self {

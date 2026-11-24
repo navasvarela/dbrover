@@ -98,7 +98,8 @@ pub fn mode(driver: DriverKind, storage: Storage) -> Option<ReadOnlyMode> {
             | DriverKind::Athena
             | DriverKind::Trino
             | DriverKind::BigQuery
-            | DriverKind::Snowflake,
+            | DriverKind::Snowflake
+            | DriverKind::Databricks,
             _,
         ) => None,
     }
@@ -154,6 +155,10 @@ pub fn read_only_login(driver: DriverKind) -> &'static str {
         DriverKind::Snowflake => {
             "a role granted only SELECT on the tables and views, and USAGE on their databases, \
              schemas and the warehouse"
+        }
+        DriverKind::Databricks => {
+            "a token of a service principal granted only SELECT on the tables and views, USE \
+             CATALOG and USE SCHEMA on their catalogs and schemas, and CAN USE on the warehouse"
         }
         DriverKind::Postgres
         | DriverKind::Sqlite
@@ -404,7 +409,8 @@ mod tests {
                 | DriverKind::Athena
                 | DriverKind::Trino
                 | DriverKind::BigQuery
-                | DriverKind::Snowflake => guard == Guard::Login,
+                | DriverKind::Snowflake
+                | DriverKind::Databricks => guard == Guard::Login,
             };
             assert!(expected, "{driver:?}: {guard:?}");
         }

@@ -70,6 +70,11 @@ fn explaining(
         DriverKind::Snowflake => Explaining::Unexplained(
             "Snowflake compiles an EXPLAIN as cloud services, which it may bill, so it isn't run.",
         ),
+        // `EXPLAIN COST` and its estimate arrive with C6h; an EXPLAIN starts a stopped
+        // warehouse, which explaining a report says beforehand.
+        DriverKind::Databricks => Explaining::Unexplained(
+            "Databricks's sources aren't explained yet: an EXPLAIN would start the warehouse.",
+        ),
         DriverKind::Postgres
         | DriverKind::Mysql
         | DriverKind::SqlServer

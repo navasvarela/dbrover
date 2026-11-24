@@ -223,6 +223,8 @@ pub enum ConnectionConfig {
     BigQuery(BigQueryConfig),
     /// Snowflake, over its SQL API (C5).
     Snowflake(SnowflakeConfig),
+    /// Databricks SQL, over its Statement Execution API (C6).
+    Databricks(DatabricksConfig),
 }
 
 impl ConnectionConfig {
@@ -251,6 +253,19 @@ impl ConnectionConfig {
             user.clone_into(&mut snowflake.role);
             return Some(config);
         }
+        // A Databricks data source's MCP login is a token of its own, the MCP login's secret:
+        // a service principal's client secret when the login names its client ID, else a
+        // personal access token, each granted only what reading needs (C6g).
+        if let Self::Databricks(databricks) = &mut config {
+            databricks.sign_in = match user.trim() {
+                "" => DatabricksSignIn::PersonalAccessToken,
+                client_id => DatabricksSignIn::ServicePrincipal {
+                    client_id: client_id.to_owned(),
+                },
+            };
+            databricks.password_command = None;
+            return Some(config);
+        }
         let server = config.server_mut()?;
         user.clone_into(&mut server.user);
         Some(config)
@@ -264,6 +279,8 @@ impl ConnectionConfig {
             Self::BigQuery(config) => Some(config.cost_guard),
             // Its time limit (C5f); Snowflake bills time, so nothing estimates bytes on it.
             Self::Snowflake(config) => Some(config.cost_guard),
+            // Its time limit, kept by cancelling at the poll past it (C6f).
+            Self::Databricks(config) => Some(config.cost_guard),
             // Only a lake in its bucket is judged by it (RS7); its own statements read what
             // they name, on this machine or in a database file.
             Self::DuckDb(config) => Some(config.cost_guard),
@@ -294,6 +311,9 @@ impl ConnectionConfig {
                         .as_ref()
                         .is_some_and(ObjectStorage::uses_password)
             }
+            // A personal access token, or a service principal's client secret; the CLIs'
+            // sign-ins need none of DbRover's.
+            Self::Databricks(config) => config.sign_in.uses_password(),
             _ => self.driver().uses_password(),
         }
     }
@@ -303,6 +323,7 @@ impl ConnectionConfig {
     pub fn password_command(&self) -> Option<&PasswordCommand> {
         match self {
             Self::Snowflake(config) => config.password_command.as_ref(),
+            Self::Databricks(config) => config.password_command.as_ref(),
             other => other.server()?.password_command.as_ref(),
         }
     }
@@ -324,7 +345,8 @@ impl ConnectionConfig {
             | Self::DynamoDb(_)
             | Self::Athena(_)
             | Self::BigQuery(_)
-            | Self::Snowflake(_) => None,
+            | Self::Snowflake(_)
+            | Self::Databricks(_) => None,
         }
     }
 
@@ -344,7 +366,8 @@ impl ConnectionConfig {
             | Self::DynamoDb(_)
             | Self::Athena(_)
             | Self::BigQuery(_)
-            | Self::Snowflake(_) => None,
+            | Self::Snowflake(_)
+            | Self::Databricks(_) => None,
         }
     }
 
@@ -365,6 +388,7 @@ impl ConnectionConfig {
             Self::BigQuery(_) => DriverKind::BigQuery,
             Self::Trino(_) => DriverKind::Trino,
             Self::Snowflake(_) => DriverKind::Snowflake,
+            Self::Databricks(_) => DriverKind::Databricks,
         }
     }
 
@@ -390,8 +414,9 @@ impl ConnectionConfig {
             // BigQuery's projects are its top level, as Trino's catalogs are.
             Self::DynamoDb(_) | Self::Athena(_) | Self::Trino(_) | Self::BigQuery(_) => None,
             // The explorer lists every database the role can see, as Trino's catalogs; the
-            // data source's own is the one its statements start in.
-            Self::Snowflake(_) => None,
+            // data source's own is the one its statements start in. So are Databricks's
+            // catalogs.
+            Self::Snowflake(_) | Self::Databricks(_) => None,
         }
     }
 
@@ -426,6 +451,8 @@ impl ConnectionConfig {
             Self::Trino(config) => &config.schema,
             // The schema a console starts in, which `USE` changes (C5d).
             Self::Snowflake(config) => &config.schema,
+            // The schema a console starts in, which `USE` changes (C6d).
+            Self::Databricks(config) => &config.schema,
         }
     }
 
@@ -482,6 +509,7 @@ impl ConnectionConfig {
             Self::Athena(config) => Self::Athena(config.resolve(variables)?),
             Self::BigQuery(config) => Self::BigQuery(config.resolve(variables)?),
             Self::Snowflake(config) => Self::Snowflake(config.resolve(variables)?),
+            Self::Databricks(config) => Self::Databricks(config.resolve(variables)?),
             Self::Trino(config) => Self::Trino(TrinoConfig {
                 server: config.server.resolve(variables)?,
                 schema: expand(&config.schema, variables)
@@ -538,6 +566,7 @@ impl ConnectionConfig {
             Self::Athena(config) => config.default_name(),
             Self::BigQuery(config) => config.project.clone(),
             Self::Snowflake(config) => config.default_name(),
+            Self::Databricks(config) => config.default_name(),
             // `catalog@host`, or the host alone when no catalog is chosen.
             Self::Trino(config) if config.server.database.is_empty() => config.server.host.clone(),
             Self::Trino(config) => config.server.default_name(),
@@ -583,6 +612,9 @@ impl DriverKind {
             | Self::Trino => true,
             // An encrypted key's passphrase, or a programmatic access or OAuth token (C5).
             Self::Snowflake => true,
+            // A personal access token or a service principal's secret (C6); a data source
+            // that signs in through a CLI says so itself (`ConnectionConfig::uses_password`).
+            Self::Databricks => true,
             // AWS's SDK signs DynamoDB's and Athena's requests with what the profile names.
             // Google's token is BigQuery's, from C0b's sign-in.
             Self::Sqlite | Self::DuckDb | Self::DynamoDb | Self::Athena | Self::BigQuery => false,
@@ -609,6 +641,7 @@ impl fmt::Display for ConnectionConfig {
             Self::Athena(config) => config.fmt(f),
             Self::BigQuery(config) => config.fmt(f),
             Self::Snowflake(config) => config.fmt(f),
+            Self::Databricks(config) => config.fmt(f),
             Self::Trino(config) => config.server.fmt(f),
             Self::Sqlite(config) if config.read_only => {
                 write!(f, "{} (read-only)", config.path.display())
@@ -1506,6 +1539,141 @@ impl SnowflakeSignIn {
     }
 }
 
+/// Databricks SQL, over its Statement Execution API (`docs/cloud-data.md`, C6). The secret, when
+/// there is one, is the data source's password, in the keychain or printed by its password
+/// command: a personal access token, or a service principal's client secret. Nothing in this is
+/// secret.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DatabricksConfig {
+    /// The workspace's host, `dbc-a1b2c3d4-e5f6.cloud.databricks.com` or
+    /// `adb-1234567890123456.7.azuredatabricks.net`, or a whole address (`https://…`), such as
+    /// a private link's or a test server's.
+    pub host: String,
+    pub sign_in: DatabricksSignIn,
+    /// A program to run for the token on every connection, in place of the keychain's. Written
+    /// only when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_command: Option<PasswordCommand>,
+    /// The SQL warehouse every statement runs on, by its id.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub warehouse: String,
+    /// The catalog and schema each statement starts in, until a console's `USE` changes them;
+    /// empty for the workspace's defaults.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub catalog: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub schema: String,
+    /// Written only where it differs from the default (C0e).
+    #[serde(flatten)]
+    pub cost_guard: CostGuard,
+}
+
+impl DatabricksConfig {
+    /// The workspace's address: `https://` and the host, or the host as it is when it is a
+    /// whole address already.
+    pub fn address(&self) -> String {
+        let host = self.host.trim().trim_end_matches('/');
+        if host.contains("://") {
+            host.to_owned()
+        } else {
+            format!("https://{host}")
+        }
+    }
+
+    fn resolve(&self, variables: &dyn Variables) -> Result<Self, PlaceholderError> {
+        let expand_setting = |text: &str, setting| {
+            expand(text, variables).map_err(PlaceholderError::in_setting(setting))
+        };
+        Ok(Self {
+            host: expand_setting(&self.host, Setting::Host)?,
+            sign_in: self.sign_in.resolve(variables)?,
+            password_command: self.password_command.clone(),
+            warehouse: expand_setting(&self.warehouse, Setting::Warehouse)?,
+            catalog: expand_setting(&self.catalog, Setting::Catalog)?,
+            schema: expand_setting(&self.schema, Setting::Schema)?,
+            cost_guard: self.cost_guard,
+        })
+    }
+
+    /// The host's first label, as the workspace is known by: `dbc-a1b2c3d4-e5f6`, or
+    /// `main@dbc-a1b2c3d4-e5f6` with a catalog.
+    fn default_name(&self) -> String {
+        let address = self.address();
+        let host = address
+            .split_once("://")
+            .map_or(address.as_str(), |(_, rest)| rest);
+        let workspace = host
+            .split(['.', ':', '/'])
+            .next()
+            .unwrap_or(host)
+            .to_owned();
+        match self.catalog.as_str() {
+            "" => workspace,
+            catalog => format!("{catalog}@{workspace}"),
+        }
+    }
+}
+
+/// `Databricks dbc-a1b2c3d4-e5f6.cloud.databricks.com, warehouse 1234abcd`, or what of it is
+/// set.
+impl fmt::Display for DatabricksConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Databricks {}", self.host)?;
+        if !self.warehouse.is_empty() {
+            write!(f, ", warehouse {}", self.warehouse)?;
+        }
+        Ok(())
+    }
+}
+
+/// How a Databricks data source signs in: each sends a bearer token.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "with", rename_all = "kebab-case")]
+pub enum DatabricksSignIn {
+    /// A personal access token, a user's or a service principal's, kept as the data source's
+    /// password or printed by its password command.
+    #[default]
+    PersonalAccessToken,
+    /// A service principal's OAuth client, whose secret is the data source's password.
+    ServicePrincipal { client_id: String },
+    /// The token the Databricks CLI prints after the user's own `databricks auth login`.
+    DatabricksCli,
+    /// An Entra ID token for Azure Databricks from the Azure CLI's sign-in, in the CLI's
+    /// default directory or the one named.
+    AzureCli {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tenant: Option<String>,
+    },
+}
+
+impl DatabricksSignIn {
+    /// Whether the data source keeps a secret of its own for this sign-in.
+    pub fn uses_password(&self) -> bool {
+        matches!(
+            self,
+            Self::PersonalAccessToken | Self::ServicePrincipal { .. }
+        )
+    }
+
+    fn resolve(&self, variables: &dyn Variables) -> Result<Self, PlaceholderError> {
+        Ok(match self {
+            Self::ServicePrincipal { client_id } => Self::ServicePrincipal {
+                client_id: expand(client_id, variables)
+                    .map_err(PlaceholderError::in_setting(Setting::ClientId))?,
+            },
+            Self::AzureCli {
+                tenant: Some(tenant),
+            } => Self::AzureCli {
+                tenant: Some(
+                    expand(tenant, variables)
+                        .map_err(PlaceholderError::in_setting(Setting::Tenant))?,
+                ),
+            },
+            other => other.clone(),
+        })
+    }
+}
+
 /// Whom a data source on an AWS service (DynamoDB, Athena) signs in as.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -1647,10 +1815,11 @@ pub enum DriverKind {
     Trino,
     BigQuery,
     Snowflake,
+    Databricks,
 }
 
 impl DriverKind {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::Postgres,
         Self::Sqlite,
         Self::Mysql,
@@ -1666,6 +1835,7 @@ impl DriverKind {
         Self::Trino,
         Self::BigQuery,
         Self::Snowflake,
+        Self::Databricks,
     ];
 
     pub fn display_name(self) -> &'static str {
@@ -1685,6 +1855,7 @@ impl DriverKind {
             Self::Trino => "Trino / Presto",
             Self::BigQuery => "BigQuery",
             Self::Snowflake => "Snowflake",
+            Self::Databricks => "Databricks",
         }
     }
 }
@@ -1918,6 +2089,98 @@ mod tests {
                 credentials_file: "/keys/reader.json".into()
             }
         );
+    }
+
+    #[test]
+    fn a_databricks_data_source_round_trips_and_resolves() {
+        let principal = DatabricksConfig {
+            host: "dbc-a1b2c3d4-e5f6.cloud.databricks.com".to_owned(),
+            sign_in: DatabricksSignIn::ServicePrincipal {
+                client_id: "${CLIENT}".to_owned(),
+            },
+            warehouse: "abc123def456".to_owned(),
+            catalog: "main".to_owned(),
+            ..DatabricksConfig::default()
+        };
+        let azure = DatabricksConfig {
+            host: "https://adb-1234567890123456.7.azuredatabricks.net".to_owned(),
+            sign_in: DatabricksSignIn::AzureCli {
+                tenant: Some("contoso.onmicrosoft.com".to_owned()),
+            },
+            warehouse: "w1".to_owned(),
+            ..DatabricksConfig::default()
+        };
+        for (config, written, shown, named, address) in [
+            (
+                principal,
+                "driver = \"databricks\"\nhost = \"dbc-a1b2c3d4-e5f6.cloud.databricks.com\"\n\
+                 warehouse = \"abc123def456\"\ncatalog = \"main\"\n\n\
+                 [data_source.sign_in]\nwith = \"service-principal\"\nclient_id = \"${CLIENT}\"",
+                "Databricks dbc-a1b2c3d4-e5f6.cloud.databricks.com, warehouse abc123def456",
+                "main@dbc-a1b2c3d4-e5f6",
+                "https://dbc-a1b2c3d4-e5f6.cloud.databricks.com",
+            ),
+            (
+                azure,
+                "[data_source.sign_in]\nwith = \"azure-cli\"\ntenant = \"contoso.onmicrosoft.com\"",
+                "Databricks https://adb-1234567890123456.7.azuredatabricks.net, warehouse w1",
+                "adb-1234567890123456",
+                "https://adb-1234567890123456.7.azuredatabricks.net",
+            ),
+        ] {
+            let file = File {
+                data_source: vec![DataSource {
+                    id: DataSourceId::generate(),
+                    name: "lakehouse".to_owned(),
+                    color: None,
+                    safety: SafetyLevel::Normal,
+                    project: None,
+                    mcp_login: None,
+                    config: ConnectionConfig::Databricks(config),
+                }],
+            };
+            let text = toml::to_string(&file).unwrap();
+            assert!(text.contains(written), "{text}");
+            assert_eq!(toml::from_str::<File>(&text).unwrap(), file);
+            let config = &file.data_source[0].config;
+            assert_eq!(config.to_string(), shown);
+            assert_eq!(config.default_name(), named);
+            assert_eq!(config.driver(), DriverKind::Databricks);
+            let ConnectionConfig::Databricks(databricks) = config else {
+                panic!("not Databricks");
+            };
+            assert_eq!(databricks.address(), address);
+        }
+        let config = ConnectionConfig::Databricks(DatabricksConfig {
+            sign_in: DatabricksSignIn::ServicePrincipal {
+                client_id: "${CLIENT}".to_owned(),
+            },
+            warehouse: "${WAREHOUSE}".to_owned(),
+            ..DatabricksConfig::default()
+        });
+        let variables = Fixed::new(&[("WAREHOUSE", "w2"), ("CLIENT", "a1b2")]);
+        let ConnectionConfig::Databricks(resolved) = config.resolve(&variables).unwrap() else {
+            panic!("not Databricks");
+        };
+        assert_eq!(resolved.warehouse, "w2");
+        assert_eq!(
+            resolved.sign_in,
+            DatabricksSignIn::ServicePrincipal {
+                client_id: "a1b2".to_owned()
+            }
+        );
+        // A personal access token or a client secret is the password; a CLI's sign-in needs
+        // none of DbRover's.
+        let with = |sign_in| {
+            ConnectionConfig::Databricks(DatabricksConfig {
+                sign_in,
+                ..DatabricksConfig::default()
+            })
+            .uses_password()
+        };
+        assert!(with(DatabricksSignIn::PersonalAccessToken));
+        assert!(!with(DatabricksSignIn::DatabricksCli));
+        assert!(!with(DatabricksSignIn::AzureCli { tenant: None }));
     }
 
     #[test]

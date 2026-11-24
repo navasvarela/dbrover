@@ -386,6 +386,10 @@ async fn connect(
         ConnectionConfig::Snowflake(config) => {
             Box::new(dbrover_driver_snowflake::connect(config, password).await?)
         }
+        // And Databricks's Statement Execution API, over HTTPS to the workspace's host.
+        ConnectionConfig::Databricks(config) => {
+            Box::new(dbrover_driver_databricks::connect(config, password).await?)
+        }
     })
 }
 

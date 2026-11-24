@@ -18,6 +18,7 @@ dbrover-core.workspace = true
 dbrover-picture.workspace = true
 dbrover-driver-athena.workspace = true
 dbrover-driver-bigquery.workspace = true
+dbrover-driver-databricks.workspace = true
 dbrover-driver-snowflake.workspace = true
 dbrover-driver-cassandra.workspace = true
 dbrover-driver-clickhouse.workspace = true

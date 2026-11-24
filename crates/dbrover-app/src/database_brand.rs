@@ -132,5 +132,13 @@ pub fn of(driver: DriverKind) -> DatabaseBrand {
             light: Color32::from_rgb(0x11, 0x7F, 0xB0),
             dark: Color32::from_rgb(0x29, 0xB5, 0xE8),
         },
+        // A glyph of stacked layers drawn for DbRover, in Databricks's red: darker on the light
+        // theme to read on white, lighter on the dark one.
+        DriverKind::Databricks => DatabaseBrand {
+            logo_uri: "bytes://logos/databricks.svg",
+            logo_svg: include_bytes!("../../../assets/icons/databases/databricks.svg"),
+            light: Color32::from_rgb(0xC8, 0x2A, 0x12),
+            dark: Color32::from_rgb(0xFF, 0x6B, 0x55),
+        },
     }
 }
