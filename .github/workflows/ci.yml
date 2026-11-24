@@ -161,6 +161,8 @@ jobs:
       # server tests skip; the SQLite ones still run. A server that fails to start prints the
       # end of every container's log, which is otherwise lost with the runner.
       - if: env.CODE != 'false' && runner.os == 'Linux'
+        uses: ./.github/actions/reserve-test-ports
+      - if: env.CODE != 'false' && runner.os == 'Linux'
         name: Start the database servers
         # MongoDB 8 won't start on the runners' kernel; see the mongo service in
         # docker-compose.yml.

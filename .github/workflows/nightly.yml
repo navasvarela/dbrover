@@ -41,6 +41,7 @@ jobs:
         run: |
           packaging/duckdb/fetch.sh "$(rustc -vV | sed -n 's/^host: //p')" "$RUNNER_TEMP/duckdb" \
             | tee -a "$GITHUB_ENV"
+      - uses: ./.github/actions/reserve-test-ports
       - name: Start Cassandra
         run: |
           docker compose --profile nightly up -d --wait cassandra \
@@ -70,6 +71,7 @@ jobs:
         run: |
           packaging/duckdb/fetch.sh "$(rustc -vV | sed -n 's/^host: //p')" "$RUNNER_TEMP/duckdb" \
             | tee -a "$GITHUB_ENV"
+      - uses: ./.github/actions/reserve-test-ports
       - name: Start Trino
         run: |
           docker compose --profile nightly up -d --wait trino \

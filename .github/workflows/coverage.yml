@@ -55,6 +55,7 @@ jobs:
       - run: |
           sudo apt-get update
           sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
+      - uses: ./.github/actions/reserve-test-ports
       - name: Start the database servers
         env:
           DBROVER_MONGO_TAG: "7.0"

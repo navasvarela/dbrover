@@ -1,0 +1,24 @@
+name: Reserve the test servers' ports
+description: >-
+  Keeps Linux from handing the host ports that docker-compose.yml publishes to outgoing
+  connections, so `docker compose up` can always bind them. Run it before the servers start.
+runs:
+  using: composite
+  steps:
+    # Every port docker-compose.yml publishes, 51433 to 59201, falls inside Linux's range for
+    # outgoing connections (32768–60999 by default). While `docker compose up` pulls its images,
+    # one of those connections now and then got a test server's port, and that server failed to
+    # start with "address already in use": MinIO and MongoDB on #679, the SSH server on main after
+    # C5. Reserved ports are never chosen for outgoing connections and can still be bound. The
+    # list comes from the compose file, nightly profile included, so a new server is covered
+    # without touching this action.
+    - shell: bash
+      run: |
+        ports=$(docker compose --profile nightly config --format json \
+          | jq -r '[.services[].ports[]?.published | select(. != null) | tonumber]
+                   | unique | map(tostring) | join(",")')
+        if [[ -z "$ports" ]]; then
+          echo "::error::docker-compose.yml publishes no ports; reading its config failed?"
+          exit 1
+        fi
+        sudo sysctl -w net.ipv4.ip_local_reserved_ports="$ports"
