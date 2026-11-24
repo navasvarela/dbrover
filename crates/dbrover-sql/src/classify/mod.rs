@@ -125,6 +125,7 @@ fn as_parsed(sql: &str, dialect: Dialect) -> Cow<'_, str> {
     match dialect {
         Dialect::Mysql => mysql_as_parsed(sql),
         Dialect::Snowflake => snowflake_as_parsed(sql),
+        Dialect::Databricks => databricks_as_parsed(sql),
         _ => Cow::Borrowed(sql),
     }
 }
@@ -190,6 +191,49 @@ fn snowflake_as_parsed(sql: &str) -> Cow<'_, str> {
             if first == "explain" && using == "using" =>
         {
             replace(&(using_range.start..format_range.end), "")
+        }
+        _ => Cow::Borrowed(sql),
+    }
+}
+
+/// The words after Databricks's `DESCRIBE` that say what to describe, or how much: every
+/// `DESCRIBE` only reads.
+const DATABRICKS_DESCRIBED: &[&str] = &[
+    "catalog",
+    "database",
+    "detail",
+    "extended",
+    "formatted",
+    "function",
+    "history",
+    "schema",
+    "table",
+    "volume",
+];
+
+/// The modes Databricks's `EXPLAIN` takes before the statement it explains.
+const DATABRICKS_EXPLAIN_MODES: &[&str] = &["codegen", "cost", "extended", "formatted"];
+
+/// `sqlparser` reads Databricks's `DESCRIBE orders` but not `DESCRIBE TABLE orders`, `DESCRIBE
+/// HISTORY orders` or `DESCRIBE DETAIL orders`, and reads `EXPLAIN EXTENDED` but not `EXPLAIN
+/// COST`: the word is left out, since it changes nothing about what the statement reads. A
+/// `DESCRIBE` of something that doesn't parse as a table's name (`DESCRIBE FUNCTION f(INT)`)
+/// stays unknown.
+fn databricks_as_parsed(sql: &str) -> Cow<'_, str> {
+    let words = leading_words(sql, Dialect::Databricks, 2);
+    let without =
+        |range: &Range<usize>| Cow::Owned(format!("{}{}", &sql[..range.start], &sql[range.end..]));
+    match words.as_slice() {
+        [(first, _), (kind, kind_range)]
+            if matches!(first.as_str(), "describe" | "desc")
+                && DATABRICKS_DESCRIBED.contains(&kind.as_str()) =>
+        {
+            without(kind_range)
+        }
+        [(first, _), (mode, mode_range)]
+            if first == "explain" && DATABRICKS_EXPLAIN_MODES.contains(&mode.as_str()) =>
+        {
+            without(mode_range)
         }
         _ => Cow::Borrowed(sql),
     }

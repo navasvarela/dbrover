@@ -322,6 +322,164 @@ begin transaction;
 commit transaction;
 "##;
 
+/// Databricks SQL statements, as Databricks's SQL reference writes each construct (read on
+/// 2026-11-24): queries and DML, which are checked, then the DDL, Delta's maintenance, sessions
+/// and grants a Databricks console holds, which aren't.
+const VALID_DATABRICKS: &str = r#"
+select * from main.sales.orders where order_date >= date'2026-01-01' limit 10;
+select `Order Id`, `weird``name`, o.id from `my catalog`.sales.`orders` as o;
+select * from samples.nyctaxi.trips tablesample (10 percent);
+select * from orders tablesample (100 rows) repeatable (42);
+select * from orders version as of 3;
+select * from orders timestamp as of '2026-01-01 00:00:00';
+select * from orders@v3;
+select o.id, explode(o.items) as item from orders o;
+select o.id, i.* from orders o lateral view explode(o.items) t as i;
+select id, posexplode_outer(tags) from orders;
+select * from orders, lateral (select max(total) as m from orders o2 where o2.customer = orders.customer);
+select items[0].sku, attrs['color'], payload:customer.name, payload:items[0].price::decimal(10, 2) from orders;
+select cast(total as decimal(10, 2)), total::double, try_cast(code as int) from orders;
+select if(total > 0, 'pos', 'neg'), nvl(a, 0), nvl2(a, 1, 2), coalesce(a, b), ifnull(a, b), nullif(a, b), decode(d, 1, 'one', 'other'), equal_null(a, b) from t;
+select customer, row_number() over (partition by customer order by placed desc) as rn from orders qualify rn = 1;
+select * from orders qualify row_number() over (partition by customer order by placed desc) = 1;
+select customer, sum(total) filter (where status = 'paid') from orders group by customer having count(*) > 1;
+select a, b, sum(c) from t group by all;
+select a, b, sum(c) from t group by grouping sets ((a, b), (a), ());
+select a, b, sum(c) from t group by rollup (a, b);
+select a, b, sum(c) from t group by cube (a, b);
+select * except (secret) from users;
+select * from t pivot (sum(amount) for month in ('JAN' as jan, 'FEB' as feb));
+select * from t unpivot (sales for month in (jan, feb, mar));
+select filter(arr, x -> x > 1), transform(arr, (x, i) -> x + i), aggregate(arr, 0, (acc, x) -> acc + x), exists(arr, x -> x is null) from t;
+select array(1, 2, 3), map('a', 1), named_struct('a', 1, 'b', 'x'), struct(1 as a, 'x' as b) from t;
+select date_add(current_date(), 7), datediff(day, a, b), date_trunc('WEEK', ts), to_timestamp('2026-01-02 03:04:05'), from_utc_timestamp(ts, 'Europe/Madrid'), extract(year from ts), ts::date from t;
+select 'it\'s', "double quoted", r'C:\temp', x'1F', 'a' || 'b' from t;
+select 1 -- a dash comment
+/* a block /* nested */ comment */ from t;
+select * from t where name ilike 'a%' and code rlike '[0-9]+' and kind regexp 'x' and tag like any ('a%', 'b%');
+select * from t where id in (select id from u) order by 1 nulls last limit 10 offset 5;
+select * from t where exists (select 1 from u where u.id = t.id);
+select * from t1 left anti join t2 on t1.id = t2.id;
+select * from t1 left semi join t2 on t1.id = t2.id;
+select * from t1 natural join t2;
+select * from t1 cross join t2;
+select * from t1 full outer join t2 using (id);
+select * from range(10);
+select * from read_files('/Volumes/main/raw/files/', format => 'csv', header => true);
+select * from t1 union all select * from t2 except select * from t3 intersect select * from t4;
+select * from t1 minus select * from t2;
+select current_catalog(), current_schema(), current_user(), current_version(), current_timezone();
+select :since, :customer from t where placed >= :since;
+select percentile_cont(0.5) within group (order by total), percentile_approx(total, 0.9), approx_count_distinct(id), median(total), mode(status), count_if(total > 0), collect_list(id), max_by(id, total) from orders;
+select interval 1 day, interval '1-2' year to month, ts + interval 3 hours from t;
+select struct_col.field, map_col['k'], arr_col[0] from t;
+select * from values (1, 'a'), (2, 'b') as t(id, name);
+with recursive r (n) as (select 1 union all select n + 1 from r where n < 10) select * from r;
+with a as (select 1 as x), b as (select x + 1 as y from a) select * from b;
+from orders select id, total where total > 0;
+values (1, 'a'), (2, 'b');
+insert into orders (id, total) values (1, 10.5), (2, 20);
+insert into orders select * from staging;
+insert overwrite orders select * from staging;
+insert into orders by name select total, id from staging;
+insert into orders replace where placed >= '2026-01-01' select * from staging;
+update orders set status = 'shipped' where id = 1;
+delete from orders where id = 1;
+merge into target t using source s on t.id = s.id when matched and s.deleted then delete when matched then update set t.total = s.total when not matched then insert (id, total) values (s.id, s.total) when not matched by source then delete;
+merge into target t using source s on t.id = s.id when matched then update set * when not matched then insert *;
+merge with schema evolution into target t using source s on t.id = s.id when not matched then insert *;
+truncate table orders;
+copy into orders from '/Volumes/main/raw/files/' fileformat = csv format_options ('header' = 'true') copy_options ('mergeSchema' = 'true');
+create or replace table main.sales.orders (id bigint not null, total decimal(10, 2), placed timestamp, tags array<string>, attrs map<string, string>, payload variant, constraint orders_pk primary key (id)) using delta partitioned by (placed) comment 'orders' tblproperties ('delta.enableChangeDataFeed' = 'true');
+create table t (id bigint generated always as identity, a int default 1) cluster by (id);
+create table t cluster by auto as select * from u;
+create table if not exists t like u;
+create table t shallow clone u;
+create table t deep clone u version as of 3;
+create table t using iceberg as select * from u;
+create table ext (id int) using parquet location 's3://bucket/path/';
+create or replace view v (id comment 'the id', total) as select id, total from orders;
+create or replace temporary view tv as select 1;
+create materialized view mv as select customer, sum(total) from orders group by customer;
+create streaming table st as select * from stream read_files('/Volumes/main/raw/events/', format => 'json');
+create or replace function to_cents(x decimal(10, 2)) returns bigint return cast(x * 100 as bigint);
+create function py_upper(s string) returns string language python as $$ return s.upper() $$;
+create schema if not exists main.sales managed location 's3://bucket/sales/';
+create catalog if not exists dev;
+create volume main.raw.files;
+create external volume main.raw.ext location 's3://bucket/ext/';
+alter table orders add column note string after total;
+alter table orders alter column total set not null;
+alter table orders rename column note to remark;
+alter table orders drop column remark;
+alter table orders set tblproperties ('delta.logRetentionDuration' = 'interval 30 days');
+alter table orders cluster by (customer);
+alter table orders rename to orders_old;
+alter view v as select 1;
+drop table if exists orders;
+drop view if exists v;
+drop schema if exists main.sales cascade;
+undrop table main.sales.orders;
+comment on table orders is 'orders';
+optimize orders where placed >= '2026-01-01' zorder by (customer);
+vacuum orders retain 168 hours;
+vacuum orders dry run;
+restore table orders to version as of 3;
+restore table orders to timestamp as of '2026-01-01';
+refresh table orders;
+refresh materialized view mv;
+analyze table orders compute statistics for all columns;
+describe history orders;
+describe detail orders;
+describe extended orders;
+describe table orders;
+desc orders;
+describe catalog main;
+describe schema main.sales;
+describe function to_cents;
+describe volume main.raw.files;
+show catalogs;
+show schemas in main;
+show tables in main.sales like 'ord*';
+show views in main.sales;
+show columns in orders;
+show create table orders;
+show tblproperties orders;
+show partitions orders;
+show functions like 'to_*';
+show volumes in main.raw;
+show grants on table orders;
+show grants `analyst@example.com` on schema main.sales;
+explain select * from orders;
+explain cost select * from orders;
+explain extended select * from orders;
+explain formatted select * from orders;
+use catalog main;
+use schema sales;
+use main.sales;
+use sales;
+set catalog main;
+set schema sales;
+set ansi_mode = true;
+set statement_timeout = 600;
+set time zone 'Europe/Madrid';
+set var x = 1;
+set;
+reset ansi_mode;
+declare variable n int default 1;
+grant select on table orders to `analysts`;
+grant use catalog on catalog main to `analysts`;
+revoke select on table orders from `analysts`;
+cache select * from orders;
+uncache table orders;
+clear cache;
+fsck repair table orders;
+msck repair table orders;
+begin transaction;
+commit;
+rollback;
+"#;
+
 /// Snowflake statements, as Snowflake's documentation writes each construct: queries and DML,
 /// which are checked, then the DDL, files, sessions and scripting a Snowflake console holds,
 /// which aren't.
@@ -530,6 +688,7 @@ fn valid_statements_get_no_syntax_error() {
     assert_eq!(syntax_errors(VALID_TRINO, Dialect::Trino), []);
     assert_eq!(syntax_errors(VALID_BIGQUERY, Dialect::BigQuery), []);
     assert_eq!(syntax_errors(VALID_SNOWFLAKE, Dialect::Snowflake), []);
+    assert_eq!(syntax_errors(VALID_DATABRICKS, Dialect::Databricks), []);
 }
 
 #[test]
@@ -689,6 +848,7 @@ fn still_reports_syntax_errors_around_the_dialects_gaps() {
             (sql, Dialect::Trino),
             (sql, Dialect::BigQuery),
             (sql, Dialect::Snowflake),
+            (sql, Dialect::Databricks),
         ]
     });
     // DuckDB accepts a trailing comma in a select list, `select a, from t`. `**` is its power
@@ -713,6 +873,11 @@ fn still_reports_syntax_errors_around_the_dialects_gaps() {
             "with p as (select 1) select * from p where",
             Dialect::Snowflake,
         ),
+        // Databricks's gaps leave an `ORDER BY name`, a `WHERE` and a time-travelled table's
+        // own mistakes checked.
+        ("select name from t order by name,", Dialect::Databricks),
+        ("delete from t where", Dialect::Databricks),
+        ("select * from t version as of", Dialect::Databricks),
     ];
     for (sql, dialect) in everywhere
         .filter(|&(sql, dialect)| {

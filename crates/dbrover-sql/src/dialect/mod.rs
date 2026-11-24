@@ -14,11 +14,11 @@ pub use capabilities::{
     Capabilities, ForeignKeySwitch, SchemaCreation, TableChange, UserModel, ViewReplacement,
 };
 
-use dbrover_core::{BareNames, Quoting, ServerInfo};
+use dbrover_core::{BareNames, QuoteEscape, Quoting, ServerInfo};
 use dbrover_plan::PlanFormat;
 use sqlparser::dialect::{
-    BigQueryDialect, ClickHouseDialect, DuckDbDialect, GenericDialect, MsSqlDialect, MySqlDialect,
-    PostgreSqlDialect, SQLiteDialect, SnowflakeDialect,
+    BigQueryDialect, ClickHouseDialect, DatabricksDialect, DuckDbDialect, GenericDialect,
+    MsSqlDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect, SnowflakeDialect,
 };
 
 use crate::ParameterBinding;
@@ -53,6 +53,11 @@ pub enum Dialect {
     /// folded to upper case, `$$` strings that hold procedures' bodies, `//` comments, and
     /// Snowflake Scripting's blocks of `DECLARE … BEGIN … END`.
     Snowflake,
+    /// Databricks SQL, Spark SQL as Databricks's SQL warehouses speak it (`docs/cloud-data.md`,
+    /// C6): names in backquotes, matched whatever their case and kept in lower case by Unity
+    /// Catalog, strings in either quote with backslash escapes, and Delta Lake's statements
+    /// (`MERGE`, `OPTIMIZE`, `VACUUM`, `RESTORE`).
+    Databricks,
 }
 
 /// The lexical rules that differ between dialects. Strings in `'…'`, `--` line comments and
@@ -206,7 +211,7 @@ pub(crate) enum ParserGap {
 }
 
 impl Dialect {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Postgres,
         Self::Sqlite,
         Self::Mysql,
@@ -217,6 +222,7 @@ impl Dialect {
         Self::Trino,
         Self::BigQuery,
         Self::Snowflake,
+        Self::Databricks,
     ];
 
     /// The dialect's name in messages.
@@ -232,6 +238,7 @@ impl Dialect {
             Self::Trino => "Trino",
             Self::BigQuery => "BigQuery",
             Self::Snowflake => "Snowflake",
+            Self::Databricks => "Databricks",
         }
     }
 
@@ -425,6 +432,28 @@ impl Dialect {
                 triple_quoted_strings: false,
                 string_prefixes: false,
             },
+            // Databricks's SQL reference ("String type", "Identifiers", read on 2026-11-24):
+            // strings in `'…'` or `"…"` with backslash escapes, `r'…'` raw strings, names in
+            // backquotes with a backquote doubled inside, `--` comments and block comments,
+            // which nest as Spark's do.
+            Self::Databricks => LexicalRules {
+                escape_strings: false,
+                backslash_escapes: true,
+                double_quoted_strings: true,
+                dollar_quoting: false,
+                dollar_in_identifiers: false,
+                nested_block_comments: true,
+                hash_comments: false,
+                slash_comments: false,
+                dash_comments_need_space: false,
+                backtick_identifiers: true,
+                bracket_identifiers: false,
+                national_strings: false,
+                sigil_identifiers: false,
+                backslash_escapes_in_identifiers: false,
+                triple_quoted_strings: false,
+                string_prefixes: true,
+            },
         }
     }
 
@@ -433,16 +462,19 @@ impl Dialect {
     /// `GO`, as SQL Server Management Studio and `sqlcmd` do.
     pub(crate) fn script_rules(self) -> ScriptRules {
         match self {
-            Self::Postgres | Self::Sqlite | Self::DuckDb | Self::ClickHouse | Self::Trino => {
-                ScriptRules {
-                    delimiter_command: false,
-                    go_batches: false,
-                    blocks_anywhere: false,
-                    batches: false,
-                    procedural_blocks: false,
-                    declare_sections: false,
-                }
-            }
+            Self::Postgres
+            | Self::Sqlite
+            | Self::DuckDb
+            | Self::ClickHouse
+            | Self::Trino
+            | Self::Databricks => ScriptRules {
+                delimiter_command: false,
+                go_batches: false,
+                blocks_anywhere: false,
+                batches: false,
+                procedural_blocks: false,
+                declare_sections: false,
+            },
             Self::Mysql => ScriptRules {
                 delimiter_command: true,
                 go_batches: false,
@@ -501,6 +533,7 @@ impl Dialect {
             Self::Trino => &GenericDialect {},
             Self::BigQuery => &BigQueryDialect {},
             Self::Snowflake => &SnowflakeDialect {},
+            Self::Databricks => &DatabricksDialect {},
             Self::Cassandra => return None,
         })
     }
@@ -562,6 +595,7 @@ impl Dialect {
             Self::Trino => TRINO_PARSER_GAPS,
             Self::BigQuery => BIGQUERY_PARSER_GAPS,
             Self::Snowflake => SNOWFLAKE_PARSER_GAPS,
+            Self::Databricks => DATABRICKS_PARSER_GAPS,
         }
     }
 
@@ -576,7 +610,8 @@ impl Dialect {
             | Self::Cassandra
             | Self::Trino
             | Self::BigQuery
-            | Self::Snowflake => &["insert"],
+            | Self::Snowflake
+            | Self::Databricks => &["insert"],
             Self::Sqlite | Self::Mysql => &["insert", "replace"],
         }
     }
@@ -596,7 +631,8 @@ impl Dialect {
             | Self::Cassandra
             | Self::Trino
             | Self::BigQuery
-            | Self::Snowflake => &[],
+            | Self::Snowflake
+            | Self::Databricks => &[],
             Self::Mysql => &[
                 "alter", "create", "drop", "grant", "rename", "revoke", "truncate",
             ],
@@ -612,9 +648,12 @@ impl Dialect {
     /// [`explain_setting`](Self::explain_setting).
     pub fn explain_prefix(self, server: Option<&ServerInfo>) -> &'static str {
         match self {
-            Self::Postgres | Self::DuckDb | Self::ClickHouse | Self::Trino | Self::Snowflake => {
-                "EXPLAIN "
-            }
+            Self::Postgres
+            | Self::DuckDb
+            | Self::ClickHouse
+            | Self::Trino
+            | Self::Snowflake
+            | Self::Databricks => "EXPLAIN ",
             Self::Sqlite => "EXPLAIN QUERY PLAN ",
             Self::Mysql if server.is_some_and(has_tree_explain) => "EXPLAIN FORMAT=TREE ",
             Self::Mysql => "EXPLAIN ",
@@ -624,7 +663,8 @@ impl Dialect {
 
     /// Whether the database can describe how it would run a statement. CQL has no `EXPLAIN`:
     /// a query's partitions are its plan. Nor has BigQuery: a job's plan is in its statistics,
-    /// once it has run. Snowflake's `EXPLAIN` compiles the statement without a warehouse.
+    /// once it has run. Snowflake's `EXPLAIN` compiles the statement without a warehouse;
+    /// Databricks's runs on the warehouse, which it starts if it is stopped.
     pub fn explains(self) -> bool {
         !matches!(self, Self::Cassandra | Self::BigQuery)
     }
@@ -665,7 +705,8 @@ impl Dialect {
                 | Self::Cassandra
                 | Self::Trino
                 | Self::BigQuery
-                | Self::Snowflake,
+                | Self::Snowflake
+                | Self::Databricks,
                 _,
             ) => return None,
         };
@@ -684,11 +725,16 @@ impl Dialect {
     /// depend on each catalog's connector, most of which write outside them. BigQuery's last
     /// only as long as one script or session, and each statement DbRover sends is a job of
     /// its own. Snowflake's last only as long as one request to its SQL API, which keeps no
-    /// session between statements.
+    /// session between statements, and so do Databricks's through its Statement Execution API.
     pub fn has_transactions(self) -> bool {
         !matches!(
             self,
-            Self::ClickHouse | Self::Cassandra | Self::Trino | Self::BigQuery | Self::Snowflake
+            Self::ClickHouse
+                | Self::Cassandra
+                | Self::Trino
+                | Self::BigQuery
+                | Self::Snowflake
+                | Self::Databricks
         )
     }
 
@@ -700,7 +746,8 @@ impl Dialect {
             | Self::ClickHouse
             | Self::Cassandra
             | Self::BigQuery
-            | Self::Snowflake => "BEGIN TRANSACTION",
+            | Self::Snowflake
+            | Self::Databricks => "BEGIN TRANSACTION",
             Self::Trino => "START TRANSACTION",
         }
     }
@@ -727,6 +774,8 @@ impl Dialect {
             // `TO_VARCHAR` writes any value as text, a `VARIANT` as its JSON, where a `CAST`
             // refuses an `OBJECT` or an `ARRAY`.
             Self::Snowflake => format!("contains(lower(to_varchar({value})), {needle})"),
+            // `CAST(… AS STRING)` writes an array, a map or a struct as text too.
+            Self::Databricks => format!("contains(lower(CAST({value} AS STRING)), {needle})"),
             // Never asked for: CQL can't select from a query, so its rows are never arranged
             // in the database (`arrange::can_arrange`). `LIKE` is the nearest it has, and only
             // on a column with a SASI or vector index.
@@ -756,6 +805,10 @@ impl Dialect {
                 "Snowflake keeps no transaction from one statement to the next here, so an \
                  import that failed halfway couldn't be undone",
             ),
+            Self::Databricks => Some(
+                "Databricks keeps no transaction from one statement to the next here, so an \
+                 import that failed halfway couldn't be undone",
+            ),
             Self::Postgres | Self::Sqlite | Self::Mysql | Self::SqlServer | Self::DuckDb => None,
         }
     }
@@ -769,9 +822,9 @@ impl Dialect {
             Self::Postgres | Self::Sqlite | Self::SqlServer | Self::DuckDb => "DEFAULT VALUES",
             // CQL has neither, and its grid inserts name every key column (N4·5).
             Self::Mysql | Self::ClickHouse | Self::Cassandra => "() VALUES ()",
-            // Trino, BigQuery and Snowflake have neither; never asked for, since the grid
-            // doesn't insert there (see `read_only_results`).
-            Self::Trino | Self::BigQuery | Self::Snowflake => "DEFAULT VALUES",
+            // Trino, BigQuery, Snowflake and Databricks have neither; never asked for, since
+            // the grid doesn't insert there (see `read_only_results`).
+            Self::Trino | Self::BigQuery | Self::Snowflake | Self::Databricks => "DEFAULT VALUES",
         }
     }
 
@@ -795,6 +848,10 @@ impl Dialect {
             // tools to read, and their values may repeat.
             Self::Snowflake => Some(
                 "Snowflake tables have no enforced key that tells their rows apart, so rows can't be edited here",
+            ),
+            // Databricks's primary keys are informational, `NOT ENFORCED` like BigQuery's.
+            Self::Databricks => Some(
+                "Databricks tables have no enforced key that tells their rows apart, so rows can't be edited here",
             ),
             Self::Postgres
             | Self::Sqlite
@@ -822,7 +879,8 @@ impl Dialect {
             | Self::Cassandra
             | Self::Trino
             | Self::BigQuery
-            | Self::Snowflake => return None,
+            | Self::Snowflake
+            | Self::Databricks => return None,
             Self::Postgres | Self::Sqlite | Self::Mysql => Savepoint {
                 open: "SAVEPOINT dbrover_edits",
                 keep: &["RELEASE SAVEPOINT dbrover_edits"],
@@ -883,7 +941,8 @@ impl Dialect {
                 | Self::Cassandra
                 | Self::Trino
                 | Self::BigQuery
-                | Self::Snowflake,
+                | Self::Snowflake
+                | Self::Databricks,
                 _,
             ) => None,
         }
@@ -905,6 +964,7 @@ impl Dialect {
             Self::Trino => functions::TRINO,
             Self::BigQuery => functions::BIGQUERY,
             Self::Snowflake => functions::SNOWFLAKE,
+            Self::Databricks => functions::DATABRICKS,
         }
     }
 
@@ -937,6 +997,7 @@ impl Dialect {
                 backslash_escapes: true,
                 string_prefix: "",
                 bare_names: BareNames::Lowercase,
+                quote_escape: QuoteEscape::Doubled,
             },
             Self::SqlServer => Quoting {
                 identifier_open: '[',
@@ -944,6 +1005,7 @@ impl Dialect {
                 backslash_escapes: false,
                 string_prefix: "N",
                 bare_names: BareNames::Lowercase,
+                quote_escape: QuoteEscape::Doubled,
             },
             // A backslash escapes in Snowflake's strings as in MySQL's, and `''` too.
             Self::Snowflake => Quoting {
@@ -952,6 +1014,16 @@ impl Dialect {
                     reserved: SNOWFLAKE_RESERVED_WORDS,
                 },
                 ..Quoting::STANDARD
+            },
+            // Spark reads `'it''s'` as two strings side by side, joined: `its`. A quote is
+            // escaped with a backslash instead, and so is a backslash.
+            Self::Databricks => Quoting {
+                identifier_open: '`',
+                identifier_close: '`',
+                backslash_escapes: true,
+                string_prefix: "",
+                bare_names: BareNames::Lowercase,
+                quote_escape: QuoteEscape::Backslash,
             },
         }
     }
@@ -969,6 +1041,8 @@ impl Dialect {
     /// `PREPARE` and an `EXECUTE … USING` for every run, and Athena's an API call of their own.
     /// Snowflake's SQL API takes bound values, but not in a request of several statements,
     /// which a console's `USE` and scripts need, so its driver sends statements as text.
+    /// Databricks's takes named ones, but each as a string with a type of its own to name, and
+    /// no arrays, maps or structs; its driver sends statements as text too.
     pub fn parameter_binding(self) -> ParameterBinding {
         match self {
             Self::Sqlite => ParameterBinding::Numbered("?"),
@@ -980,7 +1054,8 @@ impl Dialect {
             | Self::Cassandra
             | Self::Trino
             | Self::BigQuery
-            | Self::Snowflake => ParameterBinding::Literal,
+            | Self::Snowflake
+            | Self::Databricks => ParameterBinding::Literal,
         }
     }
 
@@ -990,7 +1065,8 @@ impl Dialect {
     /// databases, SQL Server's and DuckDB's catalog schemas, ClickHouse's `system` database,
     /// the keyspaces Cassandra and ScyllaDB keep for themselves, each Trino catalog's
     /// `information_schema` (Trino's own `system` catalog is hidden by its driver), and
-    /// BigQuery's and each Snowflake database's `INFORMATION_SCHEMA` views. Names are compared
+    /// BigQuery's, each Snowflake database's and each Databricks catalog's `INFORMATION_SCHEMA`
+    /// views. Names are compared
     /// case-insensitively.
     pub fn is_system_name(self, schema: Option<&str>, table: &str) -> bool {
         let (table_prefixes, schemas): (&[&str], &[&str]) = match self {
@@ -1004,7 +1080,9 @@ impl Dialect {
             Self::DuckDb => (&[], &["information_schema", "pg_catalog"]),
             Self::ClickHouse => (&[], &["system", "information_schema"]),
             Self::Cassandra => (&[], CQL_SYSTEM_KEYSPACES),
-            Self::Trino | Self::BigQuery | Self::Snowflake => (&[], &["information_schema"]),
+            Self::Trino | Self::BigQuery | Self::Snowflake | Self::Databricks => {
+                (&[], &["information_schema"])
+            }
         };
         let table = table.to_ascii_lowercase();
         table_prefixes
@@ -1062,6 +1140,21 @@ const SNOWFLAKE_PARSER_GAPS: &[ParserGap] = &[
     ParserGap::ObjectWildcard,
     // `t1 INNER DIRECTED JOIN t2`, `LEFT DIRECTED JOIN`: a join whose order is kept.
     ParserGap::Words(&["directed", "join"]),
+];
+
+/// What `sqlparser` 0.63's Databricks dialect rejects in valid Databricks statements, from the
+/// corpus in `check::tests` (the statements Databricks's SQL reference gives for each construct;
+/// nothing here was run against Databricks itself).
+const DATABRICKS_PARSER_GAPS: &[ParserGap] = &[
+    // Delta's version or time of a table after its name: `FROM orders@v3`,
+    // `orders@20260101000000000`. Databricks has no other `@`.
+    ParserGap::Operator("@"),
+    // `INSERT INTO t BY NAME SELECT …`, which matches columns by name; with `select` after it,
+    // so that `ORDER BY name` is still checked.
+    ParserGap::Words(&["by", "name", "select"]),
+    // `INSERT INTO t REPLACE WHERE <condition> SELECT …`, which replaces the rows the
+    // condition picks.
+    ParserGap::Words(&["replace", "where"]),
 ];
 
 /// The words Snowflake reserves ("Reserved & limited keywords", read on 2026-11-23), which
@@ -1328,6 +1421,7 @@ mod tests {
             Dialect::ClickHouse,
             Dialect::BigQuery,
             Dialect::Snowflake,
+            Dialect::Databricks,
         ] {
             for depth in [ExplainDepth::Estimated, ExplainDepth::Analysed] {
                 assert_eq!(dialect.plan_request(depth, None), None, "{dialect:?}");
@@ -1367,6 +1461,39 @@ mod tests {
         assert!(Dialect::Snowflake.import_refusal().is_some());
         assert_eq!(Dialect::Snowflake.edits_savepoint(), None);
         assert!(!Dialect::Snowflake.writes_ddl());
+    }
+
+    /// Databricks explains as rows, and has no transaction a console could keep open, for the
+    /// Statement Execution API keeps no session.
+    #[test]
+    fn databricks_explains_as_rows_and_keeps_no_transaction() {
+        assert!(Dialect::Databricks.explains());
+        assert_eq!(Dialect::Databricks.explain_prefix(None), "EXPLAIN ");
+        assert!(!Dialect::Databricks.has_transactions());
+        assert!(Dialect::Databricks.read_only_results().is_some());
+        assert!(Dialect::Databricks.import_refusal().is_some());
+        assert_eq!(Dialect::Databricks.edits_savepoint(), None);
+        assert!(!Dialect::Databricks.writes_ddl());
+        assert!(Dialect::Databricks.is_system_name(Some("information_schema"), "tables"));
+    }
+
+    /// Databricks matches names whatever their case and Unity Catalog keeps them in lower case,
+    /// so a plain lowercase name is left bare and any other backquoted; a quote in a string is
+    /// escaped with a backslash, since Spark joins `'it''s'` into `its`.
+    #[test]
+    fn quotes_names_and_strings_as_databricks_reads_them() {
+        let quoting = Dialect::Databricks.quoting();
+        let cases = [
+            ("orders", "orders"),
+            ("order_items_2", "order_items_2"),
+            ("Orders", "`Orders`"),
+            ("my catalog", "`my catalog`"),
+            ("a`b", "`a``b`"),
+        ];
+        for (name, written) in cases {
+            assert_eq!(quoting.identifier_if_needed(name), written, "{name}");
+        }
+        assert_eq!(quoting.string_literal(r"it's C:\temp"), r"'it\'s C:\\temp'");
     }
 
     /// Snowflake folds unquoted names to upper case: what DbRover writes leaves an uppercase

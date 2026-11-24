@@ -214,7 +214,7 @@ fn percentiles_of(dialect: Dialect) -> Option<Percentiles> {
         })
     };
     match dialect {
-        Dialect::Postgres | Dialect::Snowflake => {
+        Dialect::Postgres | Dialect::Snowflake | Dialect::Databricks => {
             aggregate("percentile_cont({share}) WITHIN GROUP (ORDER BY {column})")
         }
         Dialect::DuckDb => aggregate("quantile_cont({column}, {share})"),
@@ -244,6 +244,7 @@ fn engine_name(dialect: Dialect) -> &'static str {
         Dialect::Trino => "Trino",
         Dialect::BigQuery => "BigQuery",
         Dialect::Snowflake => "Snowflake",
+        Dialect::Databricks => "Databricks",
     }
 }
 

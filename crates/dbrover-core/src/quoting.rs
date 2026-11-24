@@ -20,6 +20,18 @@ pub struct Quoting {
     /// Which names read the same without quotes, which [`Self::identifier_if_needed`] leaves
     /// bare.
     pub bare_names: BareNames,
+    /// How a quote inside a string literal is written.
+    pub quote_escape: QuoteEscape,
+}
+
+/// How a dialect writes a quote inside a string literal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuoteEscape {
+    /// Doubled, as the SQL standard writes it: `'it''s'`.
+    Doubled,
+    /// After a backslash: `'it\'s'`. Databricks reads `'it''s'` as two strings side by side,
+    /// which Spark joins into `its`.
+    Backslash,
 }
 
 /// Which names a dialect reads the same quoted or not, so that text a person reads may leave
@@ -43,6 +55,7 @@ impl Quoting {
         backslash_escapes: false,
         string_prefix: "",
         bare_names: BareNames::Lowercase,
+        quote_escape: QuoteEscape::Doubled,
     };
 
     /// Quotes `name` even where it needs no quoting, as generated statements must not depend
@@ -70,7 +83,11 @@ impl Quoting {
         } else {
             text.to_owned()
         };
-        format!("{}'{}'", self.string_prefix, escaped.replace('\'', "''"))
+        let quote = match self.quote_escape {
+            QuoteEscape::Doubled => "''",
+            QuoteEscape::Backslash => "\\'",
+        };
+        format!("{}'{}'", self.string_prefix, escaped.replace('\'', quote))
     }
 }
 
@@ -107,6 +124,7 @@ mod tests {
         backslash_escapes: true,
         string_prefix: "",
         bare_names: BareNames::Lowercase,
+        quote_escape: QuoteEscape::Doubled,
     };
 
     const BRACKETS: Quoting = Quoting {
@@ -115,6 +133,7 @@ mod tests {
         backslash_escapes: false,
         string_prefix: "N",
         bare_names: BareNames::Lowercase,
+        quote_escape: QuoteEscape::Doubled,
     };
 
     const UPPERCASE: Quoting = Quoting {

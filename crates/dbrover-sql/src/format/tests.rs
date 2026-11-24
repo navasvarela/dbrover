@@ -175,6 +175,22 @@ create temp function js_upper(x string) returns string language js as r"""
 export data options (uri = 'gs://bucket/out/*.csv', format = 'CSV') as select * from sales.orders;
 "##;
 
+/// A Databricks script as its console holds one: backquoted and plain names, strings in either
+/// quote with backslash escapes, `:` paths into a `VARIANT`, nested comments, Delta's
+/// maintenance, and a SQL function whose Python body sits in `$$`-free quotes.
+const DATABRICKS_CORPUS: &str = r#"
+-- The newest status of each order.
+use catalog main;
+select o.id, `Order Note`, payload:customer.name::string as customer, items[0].sku from sales.orders as o where o.placed >= date_add(current_date(), -7) qualify row_number() over (partition by o.id order by o.updated desc) = 1;
+select if(total > 100, "big", 'small'), 'it\'s', r'C:\temp' from `my catalog`.sales.orders /* a /* nested */ comment */
+where id = 1;
+merge into orders t using staging s on t.id = s.id when matched then update set * when not matched then insert *;
+optimize orders zorder by (customer);
+vacuum orders retain 168 hours;
+create or replace function sales.to_cents(x decimal(10, 2)) returns bigint return cast(x * 100 as bigint);
+select * from orders version as of 3;
+"#;
+
 /// A Snowflake script as its console holds one: `//` comments, quoted and unquoted names,
 /// `VARIANT` paths and `::` casts, `QUALIFY`, `$$` bodies holding semicolons, a stage's files,
 /// and Snowflake Scripting's blocks, a `DECLARE` section's included.
@@ -230,6 +246,7 @@ fn formatting_the_corpus_never_changes_a_token_and_is_stable() {
         (TRINO_CORPUS, Dialect::Trino),
         (BIGQUERY_CORPUS, Dialect::BigQuery),
         (SNOWFLAKE_CORPUS, Dialect::Snowflake),
+        (DATABRICKS_CORPUS, Dialect::Databricks),
     ] {
         for case in [
             KeywordCase::Upper,
@@ -264,6 +281,7 @@ fn formatting_keeps_every_statement_boundary() {
         (TRINO_CORPUS, Dialect::Trino),
         (BIGQUERY_CORPUS, Dialect::BigQuery),
         (SNOWFLAKE_CORPUS, Dialect::Snowflake),
+        (DATABRICKS_CORPUS, Dialect::Databricks),
     ] {
         let formatted = format_all(corpus, dialect, &FormatOptions::default());
         let before = split_statements(corpus, dialect);
@@ -367,6 +385,7 @@ fn every_statement_formats_on_its_own_too() {
         (TRINO_CORPUS, Dialect::Trino),
         (BIGQUERY_CORPUS, Dialect::BigQuery),
         (SNOWFLAKE_CORPUS, Dialect::Snowflake),
+        (DATABRICKS_CORPUS, Dialect::Databricks),
     ] {
         for range in split_statements(corpus, dialect) {
             let statement = &corpus[range];

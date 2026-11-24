@@ -20,6 +20,7 @@ impl Dialect {
             Self::Trino => trino_kind(&name),
             Self::BigQuery => bigquery_kind(&name),
             Self::Snowflake => snowflake_kind(&name),
+            Self::Databricks => databricks_kind(&name),
             Self::Postgres | Self::Mysql | Self::SqlServer | Self::DuckDb => {
                 named_kind(&name, self)
             }
@@ -111,6 +112,36 @@ fn snowflake_kind(name: &str) -> ValueKind {
         "date" => ValueKind::Date,
         "timestamp" | "datetime" | "timestamp_ntz" => ValueKind::Timestamp,
         "timestamp_ltz" | "timestamp_tz" => ValueKind::TimestampWithZone,
+        _ => ValueKind::Text,
+    }
+}
+
+/// Databricks SQL's types and their synonyms, as `type_text` writes them (`decimal(10,2)`,
+/// `timestamp_ntz`, `array<string>`). A `DECIMAL` without a scale has a scale of 0, as
+/// `DECIMAL(10)` does. `TIMESTAMP` is an instant, shown in the session's time zone.
+fn databricks_kind(name: &str) -> ValueKind {
+    let (base, parameters) = match name.split_once('(') {
+        Some((base, parameters)) => (base.trim(), Some(parameters)),
+        None => (name, None),
+    };
+    match base {
+        "decimal" | "dec" | "numeric" => {
+            let scale = parameters
+                .and_then(|parameters| parameters.split_once(','))
+                .map(|(_, scale)| scale.trim_end_matches(')').trim());
+            match scale {
+                None | Some("0") => ValueKind::Integer,
+                Some(_) => ValueKind::Decimal,
+            }
+        }
+        "tinyint" | "byte" | "smallint" | "short" | "int" | "integer" | "bigint" | "long" => {
+            ValueKind::Integer
+        }
+        "float" | "real" | "double" => ValueKind::Float,
+        "boolean" => ValueKind::Boolean,
+        "date" => ValueKind::Date,
+        "timestamp_ntz" => ValueKind::Timestamp,
+        "timestamp" | "timestamp_ltz" => ValueKind::TimestampWithZone,
         _ => ValueKind::Text,
     }
 }
@@ -354,6 +385,31 @@ mod tests {
                     ("ARRAY", Text),
                     ("GEOGRAPHY", Text),
                     ("VECTOR(FLOAT, 256)", Text),
+                ],
+            ),
+            (
+                Dialect::Databricks,
+                &[
+                    ("bigint", Integer),
+                    ("INT", Integer),
+                    ("tinyint", Integer),
+                    ("decimal(10,2)", Decimal),
+                    ("DECIMAL(18, 4)", Decimal),
+                    ("decimal(38,0)", Integer),
+                    ("decimal", Integer),
+                    ("double", Float),
+                    ("float", Float),
+                    ("boolean", Boolean),
+                    ("date", Date),
+                    ("timestamp", TimestampWithZone),
+                    ("timestamp_ntz", Timestamp),
+                    ("string", Text),
+                    ("binary", Text),
+                    ("array<string>", Text),
+                    ("map<string,int>", Text),
+                    ("struct<a:int>", Text),
+                    ("variant", Text),
+                    ("interval day to second", Text),
                 ],
             ),
         ];

@@ -633,6 +633,19 @@ mod tests {
         );
     }
 
+    /// Databricks's strings in either quote and its nested comments hold semicolons without
+    /// splitting; a backslash keeps a quote from ending its string.
+    #[test]
+    fn keeps_databricks_strings_and_nested_comments_whole() {
+        let strings = "SELECT 'a;\\'b', \"c;\\\"d\", r'e;f' FROM t";
+        let comment = "SELECT 1 /* a; /* b; */ c; */ FROM t";
+        let script = format!("{strings};\n{comment};\nOPTIMIZE t ZORDER BY (a)");
+        assert_eq!(
+            statements(&script, Dialect::Databricks),
+            [strings, comment, "OPTIMIZE t ZORDER BY (a)"]
+        );
+    }
+
     #[test]
     fn picks_the_statement_under_or_before_the_cursor() {
         let sql = "  select 1;\n\nselect 2;  ";

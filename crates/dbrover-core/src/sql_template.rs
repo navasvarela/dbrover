@@ -381,7 +381,7 @@ fn literal(cell: &Cell, quoting: Quoting) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::BareNames;
+    use crate::{BareNames, QuoteEscape};
 
     const BACKTICKS: Quoting = Quoting {
         identifier_open: '`',
@@ -389,6 +389,7 @@ mod tests {
         backslash_escapes: true,
         string_prefix: "",
         bare_names: BareNames::Lowercase,
+        quote_escape: QuoteEscape::Doubled,
     };
 
     const BRACKETS: Quoting = Quoting {
@@ -397,6 +398,7 @@ mod tests {
         backslash_escapes: false,
         string_prefix: "N",
         bare_names: BareNames::Lowercase,
+        quote_escape: QuoteEscape::Doubled,
     };
 
     fn render(sql: &str, values: &TemplateValues, quoting: Quoting) -> String {
