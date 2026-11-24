@@ -246,6 +246,25 @@ impl Jobs {
         }))
     }
 
+    /// Waits for `job`, which the driver submitted itself, as [`Jobs::execute`] waits for its
+    /// own, as the connection's running job meanwhile, so the cancel and progress handles act
+    /// on it: for a driver that reads a finished job's result in a form of its own, such as
+    /// Databricks's Arrow chunks (C6h).
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError::Statement`] with the service's message when the job fails or is
+    /// cancelled, and the service's own errors.
+    pub async fn wait_for(self: &Arc<Self>, job: &JobId) -> Result<JobProgress, DriverError> {
+        self.set_running(Some(Running {
+            job: job.clone(),
+            progress: JobProgress::default(),
+        }));
+        let ended = self.wait(job).await;
+        self.set_running(None);
+        ended.map(|(progress, _)| progress)
+    }
+
     /// Polls `job` until it ends: what it did and the rows it changed, or why it failed.
     async fn wait(&self, job: &JobId) -> Result<(JobProgress, Option<u64>), DriverError> {
         let mut pause = FIRST_POLL_PAUSE;

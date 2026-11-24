@@ -13,6 +13,9 @@ use serde_json::Value;
 pub(crate) struct Manifest {
     #[serde(default)]
     pub schema: Schema,
+    /// How many chunks the result has, which an Arrow cursor fetches ahead.
+    #[serde(default)]
+    pub total_chunk_count: u64,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -32,6 +35,11 @@ pub(crate) struct Column {
     /// The type's name alone, which `type_text` says better; for a manifest without the text.
     #[serde(default)]
     pub type_name: Option<String>,
+    /// A `DECIMAL`'s digits and the digits after its point.
+    #[serde(default)]
+    pub type_precision: Option<u8>,
+    #[serde(default)]
+    pub type_scale: Option<i8>,
 }
 
 impl Column {

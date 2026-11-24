@@ -1,0 +1,95 @@
+{
+ "doc": "A report's source submitted with ARROW_STREAM through external links and polled to its end; its three chunks (whose own requests and links the test serves in any order, since they are fetched in parallel) are Arrow IPC streams the test writes.",
+ "exchanges": [
+  {
+   "method": "GET",
+   "path": "/api/2.0/sql/warehouses/abc123def456",
+   "response": {
+    "id": "abc123def456",
+    "name": "Shared"
+   }
+  },
+  {
+   "method": "POST",
+   "path": "/api/2.0/sql/statements",
+   "request": {
+    "statement": "SELECT id, total, day, placed, tags FROM main.sales.orders",
+    "warehouse_id": "abc123def456",
+    "wait_timeout": "0s",
+    "disposition": "EXTERNAL_LINKS",
+    "format": "ARROW_STREAM"
+   },
+   "response": {
+    "statement_id": "01f0c3a2-6d2f-1b9e-9a3c-4f5e6a7b8c08",
+    "status": {
+     "state": "PENDING"
+    }
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.0/sql/statements/01f0c3a2-6d2f-1b9e-9a3c-4f5e6a7b8c08",
+   "response": {
+    "statement_id": "01f0c3a2-6d2f-1b9e-9a3c-4f5e6a7b8c08",
+    "status": {
+     "state": "SUCCEEDED"
+    },
+    "manifest": {
+     "format": "ARROW_STREAM",
+     "schema": {
+      "column_count": 5,
+      "columns": [
+       {
+        "name": "id",
+        "type_text": "BIGINT",
+        "type_name": "LONG",
+        "position": 0
+       },
+       {
+        "name": "total",
+        "type_text": "DECIMAL(38,2)",
+        "type_name": "DECIMAL",
+        "type_precision": 38,
+        "type_scale": 2,
+        "position": 1
+       },
+       {
+        "name": "day",
+        "type_text": "DATE",
+        "type_name": "DATE",
+        "position": 2
+       },
+       {
+        "name": "placed",
+        "type_text": "TIMESTAMP",
+        "type_name": "TIMESTAMP",
+        "position": 3
+       },
+       {
+        "name": "tags",
+        "type_text": "ARRAY<STRING>",
+        "type_name": "ARRAY",
+        "position": 4
+       }
+      ]
+     },
+     "total_chunk_count": 3,
+     "total_row_count": 5
+    },
+    "result": {
+     "chunk_index": 0,
+     "row_offset": 0,
+     "row_count": 2,
+     "external_links": [
+      {
+       "chunk_index": 0,
+       "external_link": "{endpoint}/links/arrow-0",
+       "expiration": "2026-11-24T16:15:00.000Z"
+      }
+     ],
+     "next_chunk_index": 1
+    }
+   }
+  }
+ ]
+}

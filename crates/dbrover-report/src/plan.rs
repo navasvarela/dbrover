@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use dbrover_core::{
-    BlobId, ConnectionConfig, DataSource, DuckDbDatabase, HandoffSupport, LakeFormat, LakePath,
-    ObjectStorage,
+    BlobId, ConnectionConfig, DataSource, DriverKind, DuckDbDatabase, HandoffSupport, LakeFormat,
+    LakePath, ObjectStorage,
 };
 use dbrover_export::{
     CellTarget, ColumnType, CsvOptions, CustomFormat, CustomFormatKind, ExportFormat, ExportSpec,
@@ -1644,13 +1644,21 @@ fn plan_handoff(
     data_sources: &[DataSource],
 ) -> Result<PlannedHandoff, String> {
     let driver = engine.config.driver();
-    let support = HandoffSupport::of(driver).ok_or_else(|| {
-        format!(
+    let support = HandoffSupport::of(driver).ok_or_else(|| match driver {
+        // Its results already come as files, Arrow ones in Databricks's own storage, which the
+        // source reads in parallel through their links (C6h).
+        DriverKind::Databricks => format!(
+            "{:?} is a Databricks data source, which hands its result over by itself: the \
+             source reads it as Arrow files through Databricks's external links, with no \
+             bucket of the report's. Drop handoff",
+            engine.name
+        ),
+        _ => format!(
             "{:?} is a {} data source, which has no handoff: it answers with rows, so the \
              source reads them. Drop handoff, or reduce the result in its own query",
             engine.name,
             driver.display_name()
-        )
+        ),
     })?;
     let data_source = find_data_source(&handoff.data_source, data_sources)?;
     let storage = match &data_source.config {

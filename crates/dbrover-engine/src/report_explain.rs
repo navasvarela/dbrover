@@ -11,7 +11,7 @@
 
 use dbrover_core::{
     Connection, CostEstimate, CostGuard, DataSource, DriverKind, Password, ReadPace, Row,
-    describe_error,
+    ScanEstimate, describe_error,
 };
 use dbrover_plan::PlanFormat;
 use dbrover_report::{Estimate, ExplainedPlan, SourceExplained, SourceExplainer, SourceStatement};
@@ -36,6 +36,13 @@ enum Explaining {
     },
     /// A prefix whose answer is rows of text.
     Text { prefix: &'static str },
+    /// A prefix whose answer is rows of text that also say what the statement reads, which
+    /// `read` makes the estimate of, where the engine estimates nothing else: Databricks's
+    /// `EXPLAIN COST`.
+    TextWithCost {
+        prefix: &'static str,
+        read: fn(&str) -> Option<ScanEstimate>,
+    },
     /// Not explained, and why.
     Unexplained(&'static str),
 }
@@ -70,11 +77,12 @@ fn explaining(
         DriverKind::Snowflake => Explaining::Unexplained(
             "Snowflake compiles an EXPLAIN as cloud services, which it may bill, so it isn't run.",
         ),
-        // `EXPLAIN COST` and its estimate arrive with C6h; an EXPLAIN starts a stopped
-        // warehouse, which explaining a report says beforehand.
-        DriverKind::Databricks => Explaining::Unexplained(
-            "Databricks's sources aren't explained yet: an EXPLAIN would start the warehouse.",
-        ),
+        // Explaining is something the user asks for, so the `EXPLAIN` it runs may start a
+        // stopped warehouse, as the manual says (`docs/cloud-data.md`, C6).
+        DriverKind::Databricks => Explaining::TextWithCost {
+            prefix: dbrover_driver_databricks::explain::EXPLAIN_COST,
+            read: dbrover_driver_databricks::explain::estimate,
+        },
         DriverKind::Postgres
         | DriverKind::Mysql
         | DriverKind::SqlServer
@@ -178,8 +186,17 @@ impl SourceExplainer for SourceAccess<'_> {
                 source.language.dialect(),
                 connection.server_info(),
             );
+            let read_cost = match &how {
+                Explaining::TextWithCost { read, .. } => Some(*read),
+                _ => None,
+            };
             let plan = plan(connection.as_mut(), how, &checked).await;
-            let estimate = estimate(connection.as_mut(), config.cost_guard(), &checked).await;
+            let mut estimate = estimate(connection.as_mut(), config.cost_guard(), &checked).await;
+            if let (None, Some(read), ExplainedPlan::Text { text }) = (&estimate, read_cost, &plan)
+            {
+                estimate =
+                    read(text).map(|scan| judged(&CostEstimate::Bytes(scan), config.cost_guard()));
+            }
             Ok::<_, String>((plan, estimate))
         }
         .await;
@@ -217,12 +234,14 @@ async fn plan(connection: &mut dyn Connection, how: Explaining, sql: &str) -> Ex
         Explaining::Unexplained(reason) => ExplainedPlan::Unexplained {
             reason: reason.to_owned(),
         },
-        Explaining::Text { prefix } => match rows(connection, &format!("{prefix}{sql}")).await {
-            Ok((_, rows)) => ExplainedPlan::Text {
-                text: plan_text(&rows),
-            },
-            Err(error) => failed(error),
-        },
+        Explaining::Text { prefix } | Explaining::TextWithCost { prefix, .. } => {
+            match rows(connection, &format!("{prefix}{sql}")).await {
+                Ok((_, rows)) => ExplainedPlan::Text {
+                    text: plan_text(&rows),
+                },
+                Err(error) => failed(error),
+            }
+        }
         Explaining::Drawn {
             prefix,
             format,
@@ -268,28 +287,32 @@ async fn estimate(
     guard: Option<CostGuard>,
     sql: &str,
 ) -> Option<Estimate> {
-    let estimated = match connection.estimate_cost(sql).await {
-        Ok(estimated) => estimated?,
+    match connection.estimate_cost(sql).await {
+        Ok(estimated) => estimated.map(|estimated| judged(&estimated, guard)),
         Err(error) => {
             tracing::debug!(
                 "could not estimate the source's cost: {}",
                 describe_error(&error)
             );
-            return None;
+            None
         }
-    };
+    }
+}
+
+/// `estimated` beside the data source's limit, and whether a run would refuse it.
+fn judged(estimated: &CostEstimate, guard: Option<CostGuard>) -> Estimate {
     let guard = guard.unwrap_or(CostGuard::OFF);
-    let (bytes, at_least) = match &estimated {
+    let (bytes, at_least) = match estimated {
         CostEstimate::Bytes(scan) => (Some(scan.bytes.0), scan.may_scan_more()),
         CostEstimate::WholeTable(_) => (None, false),
     };
-    Some(Estimate {
+    Estimate {
         says: estimated.describe(),
         bytes,
         at_least,
         limit_bytes: guard.ask_above_bytes.map(|limit| limit.0),
-        refused: guard.holds(&estimated, ReadPace::Whole),
-    })
+        refused: guard.holds(estimated, ReadPace::Whole),
+    }
 }
 
 /// A plan answered as rows, as text: each row's values a line, apart by two spaces, as

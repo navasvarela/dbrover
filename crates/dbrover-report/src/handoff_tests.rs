@@ -5,8 +5,9 @@
 use std::path::PathBuf;
 
 use dbrover_core::{
-    AthenaConfig, BigQueryConfig, ConnectionConfig, DataSource, DataSourceId, DuckDbConfig,
-    DuckDbDatabase, GcsBucket, ObjectStorage, S3Bucket, S3SignIn, SafetyLevel, SqliteConfig,
+    AthenaConfig, BigQueryConfig, ConnectionConfig, DataSource, DataSourceId, DatabricksConfig,
+    DuckDbConfig, DuckDbDatabase, GcsBucket, ObjectStorage, S3Bucket, S3SignIn, SafetyLevel,
+    SqliteConfig,
 };
 
 use super::*;
@@ -50,6 +51,13 @@ fn athena() -> DataSource {
             region: "eu-west-1".to_owned(),
             ..AthenaConfig::default()
         }),
+    )
+}
+
+fn databricks() -> DataSource {
+    data_source(
+        "warehouse",
+        ConnectionConfig::Databricks(DatabricksConfig::default()),
     )
 }
 
@@ -150,7 +158,16 @@ fn names_every_problem_with_a_handoff() {
         })),
     );
     let athena_sources = [athena(), s3_bucket("lake"), gcs_bucket("gcs"), plain_duckdb];
-    let cases: [(&[DataSource], &str, &str, &str); 11] = [
+    let databricks_sources = [databricks(), s3_bucket("lake")];
+    let cases: [(&[DataSource], &str, &str, &str); 12] = [
+        (
+            &databricks_sources,
+            "handoff = { data_source = \"lake\" }",
+            "",
+            "source \"orders\": \"warehouse\" is a Databricks data source, which hands its \
+             result over by itself: the source reads it as Arrow files through Databricks's \
+             external links, with no bucket of the report's. Drop handoff",
+        ),
         (
             &athena_sources,
             "handoff = { data_source = \"nowhere\" }",

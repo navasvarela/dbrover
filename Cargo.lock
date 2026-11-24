@@ -2529,6 +2529,10 @@ dependencies = [
 name = "dbrover-driver-databricks"
 version = "0.37.0"
 dependencies = [
+ "arrow-array",
+ "arrow-cast",
+ "arrow-ipc",
+ "arrow-schema",
  "async-trait",
  "dbrover-cloud",
  "dbrover-core",

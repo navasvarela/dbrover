@@ -8,7 +8,7 @@ use dbrover_core::{
     DatabricksSignIn, DriverError, FolderKind, NodeKind, Password, conformance, describe_error,
 };
 
-use self::replay::Replay;
+use self::replay::{Replay, Unordered};
 use super::*;
 
 /// The token every replayed exchange expects, made up for the tests.
@@ -301,6 +301,128 @@ async fn a_statement_past_the_time_limit_is_cancelled_and_says_so() {
         "{said}"
     );
     assert!(said.contains("warehouse abc123def456"), "{said}");
+    replay.finish();
+}
+
+/// Chunk `index` of the Arrow test's result: its rows as Databricks's Arrow writes them, with
+/// a `TIMESTAMP` in a zone of another name than DbRover's and an `ARRAY` as Arrow's list.
+fn arrow_chunk(index: i64, rows: usize) -> Vec<u8> {
+    use arrow_array::builder::{ListBuilder, StringBuilder};
+    use arrow_array::{
+        ArrayRef, Date32Array, Decimal128Array, Int64Array, RecordBatch, TimestampMicrosecondArray,
+    };
+    use std::sync::Arc;
+    let ids: Vec<i64> = (0..rows).map(|row| index * 10 + row as i64).collect();
+    let mut tags = ListBuilder::new(StringBuilder::new());
+    for _ in 0..rows {
+        tags.values().append_value("new");
+        tags.values().append_value("vip");
+        tags.append(true);
+    }
+    let columns: Vec<ArrayRef> = vec![
+        Arc::new(Int64Array::from(ids.clone())),
+        Arc::new(
+            Decimal128Array::from(
+                ids.iter()
+                    .map(|id| i128::from(*id) * 100 + 50)
+                    .collect::<Vec<_>>(),
+            )
+            .with_precision_and_scale(38, 2)
+            .expect("a decimal"),
+        ),
+        Arc::new(Date32Array::from(vec![20_455; rows])),
+        Arc::new(
+            TimestampMicrosecondArray::from(vec![1_767_323_045_000_000; rows])
+                .with_timezone("Etc/UTC"),
+        ),
+        Arc::new(tags.finish()),
+    ];
+    let batch = RecordBatch::try_from_iter(
+        ["id", "total", "day", "placed", "tags"]
+            .into_iter()
+            .zip(columns),
+    )
+    .expect("a batch");
+    let mut written = Vec::new();
+    let mut writer =
+        arrow_ipc::writer::StreamWriter::try_new(&mut written, &batch.schema()).expect("a writer");
+    writer.write(&batch).expect("written");
+    writer.finish().expect("finished");
+    drop(writer);
+    written
+}
+
+#[tokio::test]
+async fn a_report_source_reads_arrow_chunks_through_their_links() {
+    use arrow_array::Array;
+    use arrow_schema::{DataType, TimeUnit};
+
+    let statement = "01f0c3a2-6d2f-1b9e-9a3c-4f5e6a7b8c08";
+    let chunk = |index: u64| Unordered {
+        path: format!("/api/2.0/sql/statements/{statement}/result/chunks/{index}"),
+        body: format!(
+            "{{\"chunk_index\": {index}, \"external_links\": [{{\"chunk_index\": {index}, \
+             \"external_link\": \"{{endpoint}}/links/arrow-{index}\"}}]}}"
+        )
+        .into_bytes(),
+        content_type: "application/json",
+    };
+    let link = |index: i64, rows: usize| Unordered {
+        path: format!("/links/arrow-{index}"),
+        body: arrow_chunk(index, rows),
+        content_type: "application/vnd.apache.arrow.stream",
+    };
+    let replay = Replay::start_with(
+        include_str!("exchanges/arrow.json"),
+        vec![chunk(1), chunk(2), link(0, 2), link(1, 2), link(2, 1)],
+    )
+    .await;
+    let mut connection = connected(&config(&replay)).await;
+    let mut cursor = connection
+        .execute_for_batches(
+            "SELECT id, total, day, placed, tags FROM main.sales.orders",
+            &[],
+        )
+        .await
+        .unwrap_or_else(|error| panic!("{}", describe_error(&error)));
+    let batches = cursor.batches().expect("Databricks answers in Arrow");
+    let types: Vec<DataType> = batches
+        .schema()
+        .fields()
+        .iter()
+        .map(|field| field.data_type().clone())
+        .collect();
+    assert_eq!(
+        types,
+        [
+            DataType::Int64,
+            DataType::Decimal128(38, 2),
+            DataType::Date32,
+            DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
+            DataType::Utf8,
+        ]
+    );
+    let mut ids = Vec::new();
+    let mut tags = Vec::new();
+    while let Some(batch) = batches.next_batch(1000).await.expect("a batch") {
+        let id = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow_array::Int64Array>()
+            .expect("ids");
+        ids.extend(id.values().iter().copied());
+        let tag = batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<arrow_array::StringArray>()
+            .expect("tags as text");
+        tags.extend((0..tag.len()).map(|row| tag.value(row).to_owned()));
+    }
+    assert_eq!(ids, [0, 1, 10, 11, 20], "every chunk, in order");
+    assert_eq!(tags[0], "[new, vip]");
+    let links = replay.header("/links/", "authorization");
+    assert_eq!(links.len(), 3);
+    assert!(links.iter().all(Option::is_none), "{links:?}");
     replay.finish();
 }
 
