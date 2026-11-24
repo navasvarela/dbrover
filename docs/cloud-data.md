@@ -1707,13 +1707,26 @@ workspace.
   compiler asked for them, as Snowflake's did; the time limit, the MCP token and the kittest
   stay there. The logo is a glyph of stacked layers drawn for DbRover in Databricks's red,
   rather than Databricks's own mark. The explorer lists nothing until C6e.
-- **C6e — Unity Catalog in the explorer:** catalogs, schemas, tables, views, materialized views,
+- **C6e — Unity Catalog in the explorer** (built): catalogs, schemas, tables, views, materialized views,
   streaming tables and volumes, columns with their types, a page at a time from Unity Catalog's
   REST API; **Show definition**; **Found on the server**; **Open data**.
   **Exit:** replayed, the conformance walk visits two catalogs, a schema with a Delta table, an
   Iceberg table, a view, a materialized view and a volume; a schema of 120 tables pages in three
   requests of 50; a filter goes to `table-summaries`; no request the explorer sends is a
   statement; **Show definition** of a table writes its `CREATE TABLE` and of a view its text.
+  **As built:** a schema's children are three folders, **tables** (managed, external, foreign,
+  streaming tables and clones), **views** (metric and materialized views among them) and
+  **volumes**, a node kind of its own (`NodeKind::Volume`, with `FolderKind::Volumes`), shown
+  as managed or with its bucket's address, with no children yet. Unity Catalog lists a schema's
+  tables and views together, so each folder lists them and keeps its own; a table is marked by
+  its format (Delta, Iceberg, Parquet) and its type (external, foreign, streaming, shallow
+  clone), a catalog as shared, foreign or system, and the `system` catalog and
+  `information_schema` are hidden unless **System** is ticked. A filtered folder asks
+  `table-summaries`, which says a table's type but not its format, so a filtered table's
+  detail names less. **Found on the server** skips the system catalog. **Show definition** of
+  a metric view writes its YAML in `WITH METRICS LANGUAGE YAML AS $$…$$`, and of a table adds
+  `LOCATION` for an external one and its `COMMENT`. **Open data** reads ``SELECT * FROM
+  main.`Sales EU`.orders LIMIT 1000``, backquoting only the names that need it.
 - **C6f — The time limit and the warehouse:** the time budget kept by cancelling at the poll
   past it, the warehouse's name, size, state and own limit in Test connection, and the
   warehouse's HTTP path read as its id.

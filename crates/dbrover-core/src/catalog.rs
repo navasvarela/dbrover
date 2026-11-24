@@ -68,6 +68,9 @@ pub enum NodeKind {
     /// A Snowflake stage (C5): a named place files are loaded from and unloaded to, Snowflake's
     /// own or a bucket's, which `COPY INTO` and `LIST` name as `@stage`.
     Stage,
+    /// A Unity Catalog volume (C6): files in a schema, Databricks's own storage or a bucket's,
+    /// which SQL reads by their path, `/Volumes/<catalog>/<schema>/<volume>/…`.
+    Volume,
 }
 
 /// What a node in a bucket is.
@@ -176,6 +179,8 @@ pub enum FolderKind {
     Aggregates,
     /// Snowflake's stages (C5).
     Stages,
+    /// Unity Catalog's volumes (C6).
+    Volumes,
 }
 
 impl FolderKind {
@@ -202,6 +207,7 @@ impl FolderKind {
             Self::Types => "types",
             Self::Aggregates => "aggregates",
             Self::Stages => "stages",
+            Self::Volumes => "volumes",
         }
     }
 }
@@ -325,14 +331,16 @@ impl CatalogPath {
             | NodeKind::Collection
             | NodeKind::SearchIndex
             | NodeKind::IndexTemplate => Some(object.name.clone()),
-            // An object in a bucket is read by its address, which isn't a name SQL quotes, and
-            // a stage by `@` and its name, which isn't one either.
+            // An object in a bucket is read by its address, which isn't a name SQL quotes, a
+            // stage by `@` and its name, and a volume's files by their path, which aren't
+            // either.
             NodeKind::Database
             | NodeKind::Schema
             | NodeKind::Folder(_)
             | NodeKind::KeyPrefix
             | NodeKind::Object(_)
-            | NodeKind::Stage => None,
+            | NodeKind::Stage
+            | NodeKind::Volume => None,
         }
     }
 

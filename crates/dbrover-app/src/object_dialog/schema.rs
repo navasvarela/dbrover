@@ -176,6 +176,7 @@ fn singular(folder: FolderKind) -> &'static str {
         FolderKind::Types => "type",
         FolderKind::Aggregates => "aggregate",
         FolderKind::Stages => "stage",
+        FolderKind::Volumes => "volume",
     }
 }
 

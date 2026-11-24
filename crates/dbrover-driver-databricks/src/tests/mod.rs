@@ -4,8 +4,8 @@
 mod replay;
 
 use dbrover_core::{
-    ColumnInfo, Connection, DatabricksConfig, DatabricksSignIn, DriverError, Password, conformance,
-    describe_error,
+    CatalogPath, CatalogSearch, ChildrenQuery, ColumnInfo, Connection, DatabricksConfig,
+    DatabricksSignIn, DriverError, FolderKind, NodeKind, Password, conformance, describe_error,
 };
 
 use self::replay::Replay;
@@ -274,6 +274,154 @@ async fn use_changes_what_the_next_statement_is_sent_with_and_set_is_refused() {
     );
     let (_, rows) = run(&mut connection, "SELECT 1").await;
     assert_eq!(rows, [vec![text("1")]]);
+    replay.finish();
+}
+
+/// The schema `main.sales`, as the explorer reaches it.
+fn sales() -> CatalogPath {
+    CatalogPath::root()
+        .child(NodeKind::Database, "main")
+        .child(NodeKind::Schema, "sales")
+}
+
+fn folder(kind: FolderKind) -> CatalogPath {
+    sales().child(NodeKind::Folder(kind), kind.label())
+}
+
+#[tokio::test]
+async fn the_explorer_walks_unity_catalog_without_a_statement() {
+    let replay = Replay::start(include_str!("exchanges/catalog.json")).await;
+    let mut connection = connected(&config(&replay)).await;
+    let visited = conformance::walk_catalog(&mut connection, 5).await;
+    let shown: Vec<(String, Option<String>, bool)> = visited
+        .iter()
+        .map(|node| (node.path.to_string(), node.detail.clone(), node.system))
+        .collect();
+    let catalogs: Vec<&(String, Option<String>, bool)> = shown[..3].iter().collect();
+    assert_eq!(
+        catalogs
+            .iter()
+            .map(|(_, detail, system)| (detail.as_deref(), *system))
+            .collect::<Vec<_>>(),
+        [
+            (None, false),
+            (Some("shared"), false),
+            (Some("system"), true)
+        ]
+    );
+    let details = |kind: NodeKind| -> Vec<(String, Option<String>)> {
+        visited
+            .iter()
+            .filter(|node| node.path.last().map(|segment| segment.kind) == Some(kind))
+            .map(|node| (node.label.clone(), node.detail.clone()))
+            .collect()
+    };
+    assert_eq!(
+        details(NodeKind::Table),
+        [
+            ("orders".to_owned(), Some("Delta".to_owned())),
+            ("events".to_owned(), Some("Iceberg, external".to_owned())),
+        ]
+    );
+    assert_eq!(details(NodeKind::View), [("v_orders".to_owned(), None)]);
+    assert_eq!(
+        details(NodeKind::MaterializedView),
+        [("daily".to_owned(), None)]
+    );
+    assert_eq!(
+        details(NodeKind::Volume),
+        [
+            ("landing".to_owned(), Some("managed".to_owned())),
+            ("raw".to_owned(), Some("s3://lake/raw".to_owned())),
+        ]
+    );
+    let order_columns: Vec<(String, Option<String>)> = visited
+        .iter()
+        .filter(|node| {
+            node.path
+                .parent()
+                .and_then(|parent| parent.last().cloned())
+                .is_some_and(|parent| parent.name == "orders")
+        })
+        .map(|node| (node.label.clone(), node.detail.clone()))
+        .collect();
+    assert_eq!(
+        order_columns,
+        [
+            ("id".to_owned(), Some("BIGINT".to_owned())),
+            ("total".to_owned(), Some("DECIMAL(10,2)".to_owned())),
+            ("placed".to_owned(), Some("TIMESTAMP".to_owned())),
+            ("day".to_owned(), Some("DATE".to_owned())),
+        ]
+    );
+    let orders = folder(FolderKind::Tables).child(NodeKind::Table, "orders");
+    assert_eq!(
+        connection.definition(&orders).await.expect("a definition"),
+        "CREATE TABLE `main`.`sales`.`orders` (\n  `id` BIGINT NOT NULL,\n  `total` \
+         DECIMAL(10,2),\n  `placed` TIMESTAMP,\n  `day` DATE\n)\nUSING DELTA\nPARTITIONED BY \
+         (`day`)\nCOMMENT 'one row an order';"
+    );
+    let view = folder(FolderKind::Views).child(NodeKind::View, "v_orders");
+    assert_eq!(
+        connection.definition(&view).await.expect("a definition"),
+        "CREATE VIEW `main`.`sales`.`v_orders` AS\nSELECT id, total FROM main.sales.orders \
+         WHERE total > 0;"
+    );
+    conformance::check_invalid_path(&mut connection).await;
+    // Every request went to a REST API; none was a statement, which would start the warehouse.
+    assert!(
+        replay
+            .header("/api/2.0/sql/statements", "authorization")
+            .is_empty()
+    );
+    replay.finish();
+}
+
+#[tokio::test]
+async fn a_schemas_tables_page_fifty_at_a_time() {
+    let replay = Replay::start(include_str!("exchanges/tables-paged.json")).await;
+    let mut connection = connected(&config(&replay)).await;
+    let tables = connection
+        .children(&folder(FolderKind::Tables))
+        .await
+        .unwrap_or_else(|error| panic!("{}", describe_error(&error)));
+    assert_eq!(tables.len(), 120);
+    assert_eq!(tables[119].label, "t119");
+    replay.finish();
+}
+
+#[tokio::test]
+async fn a_filter_goes_to_table_summaries_and_a_search_catalog_by_catalog() {
+    let replay = Replay::start(include_str!("exchanges/search.json")).await;
+    let mut connection = connected(&config(&replay)).await;
+    let filtered = connection
+        .children_page(
+            &folder(FolderKind::Tables),
+            &ChildrenQuery::first_page(Some("ord".to_owned())),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("{}", describe_error(&error)));
+    let labels: Vec<(&str, Option<&str>)> = filtered
+        .nodes
+        .iter()
+        .map(|node| (node.label.as_str(), node.detail.as_deref()))
+        .collect();
+    assert_eq!(
+        labels,
+        [("orders", None), ("Order_Lines", Some("streaming"))]
+    );
+    let found = connection
+        .search_catalog(&CatalogSearch::new("ord"))
+        .await
+        .unwrap_or_else(|error| panic!("{}", describe_error(&error)))
+        .expect("Databricks searches");
+    let found: Vec<(String, Option<String>)> = found
+        .nodes
+        .iter()
+        .map(|node| (node.path.to_string(), node.detail.clone()))
+        .collect();
+    assert_eq!(found.len(), 3, "{found:?}");
+    assert_eq!(found[2].1.as_deref(), Some("shared_data.retail"));
     replay.finish();
 }
 

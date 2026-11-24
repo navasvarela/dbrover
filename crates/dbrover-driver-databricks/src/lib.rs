@@ -10,6 +10,7 @@
 //! OAuth or CLI.
 
 mod api;
+mod catalog;
 mod context;
 mod errors;
 mod results;
@@ -25,14 +26,15 @@ use dbrover_cloud::databricks::{
 };
 use dbrover_cloud::entra::{EntraSignIn, EntraTool};
 use dbrover_core::{
-    CancelHandle, CatalogNode, CatalogPath, ColumnInfo, Connection, DatabricksConfig,
-    DatabricksSignIn, DriverError, Jobs, Password, ProgressHandle, Rejection, RelationName,
-    ResultCursor, Row, ServerInfo, TableConstraints, TableDescription, TableName,
-    TransactionStatus,
+    CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, ChildrenPage,
+    ChildrenQuery, ColumnInfo, Connection, DatabricksConfig, DatabricksSignIn, DriverError, Jobs,
+    Password, ProgressHandle, Rejection, RelationName, ResultCursor, Row, ServerInfo,
+    TableConstraints, TableDescription, TableName, TransactionStatus,
 };
 use serde::Deserialize;
 
 use crate::api::Api;
+use crate::catalog::Lister;
 use crate::context::{Context, NeedsSession, Use};
 use crate::statements::DatabricksJobs;
 
@@ -157,6 +159,14 @@ pub struct DatabricksConnection {
     jobs: Arc<Jobs>,
 }
 
+impl DatabricksConnection {
+    fn lister(&self) -> Lister<'_> {
+        Lister {
+            api: self.statements.api(),
+        }
+    }
+}
+
 #[async_trait]
 impl Connection for DatabricksConnection {
     fn server_info(&self) -> &ServerInfo {
@@ -173,13 +183,36 @@ impl Connection for DatabricksConnection {
             .map_err(errors::connection)
     }
 
-    /// Nothing yet: Unity Catalog's levels come in C6e.
-    async fn children(&mut self, _path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError> {
-        Ok(Vec::new())
+    /// The level's first thousand nodes: the explorer pages through the rest with
+    /// [`Connection::children_page`].
+    async fn children(&mut self, path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError> {
+        let page = self
+            .children_page(path, &ChildrenQuery::first_page(None))
+            .await?;
+        Ok(page.nodes)
     }
 
+    /// From Unity Catalog's REST API, which starts no warehouse.
+    async fn children_page(
+        &mut self,
+        path: &CatalogPath,
+        query: &ChildrenQuery,
+    ) -> Result<ChildrenPage, DriverError> {
+        self.lister().page(path, query).await
+    }
+
+    /// Unity Catalog's table summaries, catalog by catalog, which start no warehouse.
+    async fn search_catalog(
+        &mut self,
+        search: &CatalogSearch,
+    ) -> Result<Option<CatalogMatches>, DriverError> {
+        self.lister().search(search).await.map(Some)
+    }
+
+    /// A view's text, or a table's `CREATE TABLE` written from its columns, from Unity
+    /// Catalog: no warehouse runs to show a definition.
     async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError> {
-        Err(DriverError::InvalidPath(path.clone()))
+        self.lister().definition(path).await
     }
 
     /// A statement, but for a `USE`, which changes what this connection's later statements

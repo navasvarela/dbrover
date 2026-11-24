@@ -43,7 +43,7 @@ impl From<&CatalogNode> for NodeJson {
     }
 }
 
-const FOLDERS: [FolderKind; 19] = [
+const FOLDERS: [FolderKind; 20] = [
     FolderKind::Tables,
     FolderKind::Views,
     FolderKind::MaterializedViews,
@@ -63,9 +63,10 @@ const FOLDERS: [FolderKind; 19] = [
     FolderKind::Types,
     FolderKind::Aggregates,
     FolderKind::Stages,
+    FolderKind::Volumes,
 ];
 
-const KINDS: [(NodeKind, &str); 26] = [
+const KINDS: [(NodeKind, &str); 27] = [
     (NodeKind::Database, "database"),
     (NodeKind::Schema, "schema"),
     (NodeKind::Table, "table"),
@@ -87,6 +88,7 @@ const KINDS: [(NodeKind, &str); 26] = [
     (NodeKind::UserType, "type"),
     (NodeKind::Aggregate, "aggregate"),
     (NodeKind::Stage, "stage"),
+    (NodeKind::Volume, "volume"),
     (NodeKind::Object(ObjectKind::Bucket), "bucket"),
     (NodeKind::Object(ObjectKind::Folder), "object_folder"),
     (NodeKind::Object(ObjectKind::File), "object"),
