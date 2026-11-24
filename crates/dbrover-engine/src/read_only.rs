@@ -157,8 +157,9 @@ pub fn read_only_login(driver: DriverKind) -> &'static str {
              schemas and the warehouse"
         }
         DriverKind::Databricks => {
-            "a token of a service principal granted only SELECT on the tables and views, USE \
-             CATALOG and USE SCHEMA on their catalogs and schemas, and CAN USE on the warehouse"
+            "a service principal, by its client ID and secret, granted only SELECT on the tables \
+             and views, USE CATALOG and USE SCHEMA on their catalogs and schemas, and CAN USE on \
+             the warehouse"
         }
         DriverKind::Postgres
         | DriverKind::Sqlite

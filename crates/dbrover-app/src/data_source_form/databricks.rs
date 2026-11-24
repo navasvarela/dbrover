@@ -3,9 +3,20 @@
 //! personal access token or a service principal's client secret, is the data source's
 //! password, kept in the keychain.
 
-use dbrover_core::{CostGuard, DatabricksConfig, DatabricksSignIn};
+use dbrover_core::{CostGuard, DatabricksConfig, DatabricksSignIn, TimeLimit};
 
 use super::FormError;
+use super::time_limit::{Longest, NEW_LIMIT_SECONDS, minutes, parse_minutes};
+
+/// The limit's field in the dialog, which its errors name.
+pub const LIMIT_LABEL: &str = "Stop statements after";
+
+/// The longest limit offered: Databricks's own `STATEMENT_TIMEOUT` stops a statement after two
+/// days at most, 172,800 seconds, so a longer limit of DbRover's would never be reached.
+const LONGEST: Longest = Longest {
+    minutes: 2.0 * 24.0 * 60.0,
+    said: "two days",
+};
 
 /// How the data source signs in, as the dialog offers it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -28,7 +39,7 @@ impl DatabricksSignInChoice {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DatabricksFields {
     pub host: String,
     pub sign_in: DatabricksSignInChoice,
@@ -40,7 +51,23 @@ pub struct DatabricksFields {
     pub warehouse: String,
     pub catalog: String,
     pub schema: String,
+    /// In minutes; empty for no limit of DbRover's. Saved as the cost guard's
+    /// `stop_after_seconds`.
+    pub limit_minutes: String,
     pub cost_guard: CostGuard,
+}
+
+impl Default for DatabricksFields {
+    /// A new data source, which stops statements after ten minutes.
+    fn default() -> Self {
+        Self::from_config(&DatabricksConfig {
+            cost_guard: CostGuard {
+                stop_after: TimeLimit::from_seconds(NEW_LIMIT_SECONDS),
+                ..CostGuard::default()
+            },
+            ..DatabricksConfig::default()
+        })
+    }
 }
 
 impl DatabricksFields {
@@ -76,6 +103,11 @@ impl DatabricksFields {
             warehouse: config.warehouse.clone(),
             catalog: config.catalog.clone(),
             schema: config.schema.clone(),
+            limit_minutes: config
+                .cost_guard
+                .stop_after
+                .map(minutes)
+                .unwrap_or_default(),
             cost_guard: config.cost_guard,
         }
     }
@@ -89,7 +121,8 @@ impl DatabricksFields {
     /// # Errors
     ///
     /// [`FormError::HostMissing`] and [`FormError::WarehouseMissing`] without them, and
-    /// [`FormError::ClientIdMissing`] for a service principal without its client ID.
+    /// [`FormError::ClientIdMissing`] for a service principal without its client ID, and
+    /// [`FormError::InvalidTimeLimit`] for a limit that isn't a number of minutes.
     pub fn to_config(&self) -> Result<DatabricksConfig, FormError> {
         let required = |text: &str, missing| match text.trim() {
             "" => Err(missing),
@@ -105,6 +138,13 @@ impl DatabricksFields {
                 tenant: Some(self.tenant.trim().to_owned()).filter(|tenant| !tenant.is_empty()),
             },
         };
+        let stop_after = match self.limit_minutes.trim() {
+            "" => None,
+            typed => Some(
+                parse_minutes(typed, LONGEST)
+                    .ok_or(FormError::InvalidTimeLimit(LIMIT_LABEL, LONGEST.said))?,
+            ),
+        };
         Ok(DatabricksConfig {
             host: required(&self.host, FormError::HostMissing)?,
             sign_in,
@@ -112,7 +152,10 @@ impl DatabricksFields {
             warehouse: warehouse_id(&required(&self.warehouse, FormError::WarehouseMissing)?),
             catalog: self.catalog.trim().to_owned(),
             schema: self.schema.trim().to_owned(),
-            cost_guard: self.cost_guard,
+            cost_guard: CostGuard {
+                stop_after,
+                ..self.cost_guard
+            },
         })
     }
 }
@@ -165,6 +208,34 @@ mod tests {
                 DatabricksFields::from_config(&config).to_config().unwrap(),
                 config,
                 "{choice:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_new_data_source_stops_statements_after_ten_minutes_and_takes_two_days_at_most() {
+        assert_eq!(DatabricksFields::default().limit_minutes, "10");
+        let typed = |limit: &str| {
+            DatabricksFields {
+                limit_minutes: limit.into(),
+                ..fields()
+            }
+            .to_config()
+        };
+        assert_eq!(
+            typed("0.5").unwrap().cost_guard.stop_after,
+            TimeLimit::from_seconds(30)
+        );
+        assert_eq!(typed("").unwrap().cost_guard.stop_after, None);
+        assert_eq!(
+            typed("2880").unwrap().cost_guard.stop_after,
+            TimeLimit::from_seconds(172_800)
+        );
+        for refused in ["0", "ten", "2881"] {
+            assert_eq!(
+                typed(refused),
+                Err(FormError::InvalidTimeLimit(LIMIT_LABEL, "two days")),
+                "{refused}"
             );
         }
     }

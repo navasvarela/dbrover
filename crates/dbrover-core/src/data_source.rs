@@ -253,15 +253,11 @@ impl ConnectionConfig {
             user.clone_into(&mut snowflake.role);
             return Some(config);
         }
-        // A Databricks data source's MCP login is a token of its own, the MCP login's secret:
-        // a service principal's client secret when the login names its client ID, else a
-        // personal access token, each granted only what reading needs (C6g).
+        // A Databricks data source's MCP login is a service principal: its client ID, and its
+        // client secret as the MCP login's password, granted only what reading needs (C6g).
         if let Self::Databricks(databricks) = &mut config {
-            databricks.sign_in = match user.trim() {
-                "" => DatabricksSignIn::PersonalAccessToken,
-                client_id => DatabricksSignIn::ServicePrincipal {
-                    client_id: client_id.to_owned(),
-                },
+            databricks.sign_in = DatabricksSignIn::ServicePrincipal {
+                client_id: user.trim().to_owned(),
             };
             databricks.password_command = None;
             return Some(config);
@@ -2578,6 +2574,23 @@ mod tests {
         );
         assert!(!DriverKind::Snowflake.mcp_login_has_password());
         assert!(DriverKind::Mysql.mcp_login_has_password());
+        // A Databricks one is a service principal, its client secret the MCP login's password.
+        let databricks = ConnectionConfig::Databricks(DatabricksConfig {
+            host: "dbc-1.cloud.databricks.com".to_owned(),
+            sign_in: DatabricksSignIn::DatabricksCli,
+            ..DatabricksConfig::default()
+        });
+        let Some(ConnectionConfig::Databricks(as_mcp)) = databricks.with_user(" a1b2-reader ")
+        else {
+            panic!("expected a Databricks configuration");
+        };
+        assert_eq!(
+            as_mcp.sign_in,
+            DatabricksSignIn::ServicePrincipal {
+                client_id: "a1b2-reader".to_owned()
+            }
+        );
+        assert!(DriverKind::Databricks.mcp_login_has_password());
     }
 
     #[test]

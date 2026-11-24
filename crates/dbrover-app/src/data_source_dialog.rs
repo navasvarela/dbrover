@@ -17,11 +17,12 @@ use egui::{
 
 use crate::data_source_form::{
     ATHENA_LIMIT_LABEL, AthenaFields, BIGQUERY_LIMIT_LABEL, BigQueryFields, BigQuerySignIn,
-    BucketFields, BucketSignIn, CassandraFields, CloudFields, DataSourceForm, DatabaseField,
-    DatabricksFields, DatabricksSignInChoice, DriverFields, DuckDbFields, DuckDbLocation,
-    DynamoDbFields, ElasticsearchFields, FormError, LAKE_LIMIT_LABEL, McpLoginFields,
-    McpPasswordChange, MongoFields, MongoTarget, SNOWFLAKE_LIMIT_LABEL, ServerFields,
-    SnowflakeFields, SnowflakeSignInChoice, SshFields, SshLoginChoice, TlsChoice, TrinoFields,
+    BucketFields, BucketSignIn, CassandraFields, CloudFields, DATABRICKS_LIMIT_LABEL,
+    DataSourceForm, DatabaseField, DatabricksFields, DatabricksSignInChoice, DriverFields,
+    DuckDbFields, DuckDbLocation, DynamoDbFields, ElasticsearchFields, FormError, LAKE_LIMIT_LABEL,
+    McpLoginFields, McpPasswordChange, MongoFields, MongoTarget, SNOWFLAKE_LIMIT_LABEL,
+    ServerFields, SnowflakeFields, SnowflakeSignInChoice, SshFields, SshLoginChoice, TlsChoice,
+    TrinoFields,
 };
 use crate::dialog::{self, DialogSize};
 use crate::file_picker::{self, FileEngine};
@@ -200,11 +201,15 @@ impl DataSourceDialog {
             // Only where `dbrover mcp` can serve the engine; elsewhere it would never be used.
             let driver = self.form.driver();
             match read_only::guard(driver, self.form.storage()) {
-                Guard::Session(_) => mcp_login_rows(ui, &mut self.form.mcp_login, false),
+                Guard::Session(_) => {
+                    mcp_login_rows(ui, &mut self.form.mcp_login, McpLabels::of(driver), false);
+                }
                 Guard::Login if !driver.mcp_login_has_password() => {
                     mcp_profile_row(ui, &mut self.form.mcp_login, driver);
                 }
-                Guard::Login => mcp_login_rows(ui, &mut self.form.mcp_login, true),
+                Guard::Login => {
+                    mcp_login_rows(ui, &mut self.form.mcp_login, McpLabels::of(driver), true);
+                }
                 Guard::CheckOnly => {}
             }
             created
@@ -938,6 +943,18 @@ fn databricks_rows(ui: &mut Ui, fields: &mut DatabricksFields) {
     ] {
         setting_row(ui, label, value, "the workspace's default", Resolve::Text);
     }
+    text_row(
+        ui,
+        DATABRICKS_LIMIT_LABEL,
+        &mut fields.limit_minutes,
+        "no limit",
+    );
+    ui.label("");
+    ui.weak(
+        "In minutes. DbRover cancels a statement that runs longer, within about two seconds, \
+         and the warehouse is billed until then; its own statement timeout still applies.",
+    );
+    ui.end_row();
 }
 
 /// The passphrase of an encrypted key, or the token, kept in the keychain; an OAuth token may
@@ -1214,8 +1231,31 @@ fn mcp_profile_row(ui: &mut Ui, fields: &mut McpLoginFields, driver: DriverKind)
     ui.end_row();
 }
 
-fn mcp_login_rows(ui: &mut Ui, fields: &mut McpLoginFields, required: bool) {
-    let label = ui.label("MCP login").on_hover_text(if required {
+/// What the MCP login's two rows are called: a user and its password, or on Databricks a
+/// service principal's client ID and secret, which sign in with OAuth for machines (C6g).
+#[derive(Debug, Clone, Copy)]
+struct McpLabels {
+    login: &'static str,
+    secret: &'static str,
+}
+
+impl McpLabels {
+    fn of(driver: DriverKind) -> Self {
+        match driver {
+            DriverKind::Databricks => Self {
+                login: "MCP client ID",
+                secret: "MCP client secret",
+            },
+            _ => Self {
+                login: "MCP login",
+                secret: "MCP password",
+            },
+        }
+    }
+}
+
+fn mcp_login_rows(ui: &mut Ui, fields: &mut McpLoginFields, labels: McpLabels, required: bool) {
+    let label = ui.label(labels.login).on_hover_text(if required {
         "Another user for MCP clients to sign in as, used only by dbrover mcp. This engine has \
          no read-only mode, so MCP clients are served only through such a login: give it \
          nothing but reading."
@@ -1239,7 +1279,7 @@ fn mcp_login_rows(ui: &mut Ui, fields: &mut McpLoginFields, required: bool) {
     if fields.user.trim().is_empty() {
         return;
     }
-    let label = ui.label("MCP password");
+    let label = ui.label(labels.secret);
     ui.add(
         TextEdit::singleline(&mut fields.password)
             .password(true)
