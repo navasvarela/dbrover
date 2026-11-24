@@ -11,8 +11,8 @@ Under **New data source** (the explorer's **+**, or the Welcome tab), each cloud
 its services: **Amazon Web Services**, **Google Cloud**, **Microsoft Azure**, and **Other cloud
 services** for Neon, Supabase, ClickHouse Cloud and Starburst Galaxy. The engines only one cloud runs come first in
 its menu: [DynamoDB](dynamodb.md) and [Amazon Athena](athena-trino.md) under Amazon Web Services,
-[BigQuery](bigquery.md) under Google Cloud; [Snowflake](snowflake.md), on every cloud, comes first
-under Other cloud services. Choose the service. The dialog opens for the
+[BigQuery](bigquery.md) under Google Cloud; [Snowflake](snowflake.md) and
+[Databricks](databricks.md), each on every cloud, come first under Other cloud services. Choose the service. The dialog opens for the
 service's engine with its port, TLS mode and sign-in set, and the **Host** field's hint shows a
 host name of the service's form. Fill in the host, database and user from the service's console,
 then **Test connection**.

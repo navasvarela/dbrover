@@ -45,6 +45,7 @@
   --athena: #b48cff;
   --bigquery: #669df6;
   --snowflake: #29b5e8;
+  --databricks: #ff6b55;
   --trino: #ff6ed2;
   --glow-strength: 0.22;
   --shadow: 0 24px 60px rgb(0 0 0 / 0.4);
@@ -81,6 +82,7 @@
     --athena: #6b3fd1;
     --bigquery: #1a5fd6;
     --snowflake: #117fb0;
+    --databricks: #c82a12;
     --trino: #c0008c;
     --glow-strength: 0.16;
     --shadow: 0 24px 60px rgb(29 31 38 / 0.18);
@@ -391,6 +393,7 @@ h3 { margin: 0 0 8px; font-size: 1.05rem; font-weight: 600; }
 .engine-logo.athena { --logo: url("assets/databases/athena.svg"); background: var(--athena); }
 .engine-logo.bigquery { --logo: url("assets/databases/googlebigquery.svg"); background: var(--bigquery); }
 .engine-logo.snowflake { --logo: url("assets/databases/snowflake.svg"); background: var(--snowflake); }
+.engine-logo.databricks { --logo: url("assets/databases/databricks.svg"); background: var(--databricks); }
 .engine-logo.trino { --logo: url("assets/databases/trino.svg"); background: var(--trino); }
 .planned { color: var(--text-weak); margin: 16px 0 0; }
 

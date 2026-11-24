@@ -1,0 +1,452 @@
+{
+ "doc": "C6's exit: a service principal's data source connects and names its warehouse, stopped; the explorer reaches a column through Unity Catalog's API alone; a query is read over two chunks from their links; USE CATALOG moves one console and not a second; a statement past the time limit is cancelled and says so; a report's source reads an Arrow chunk with its types.",
+ "exchanges": [
+  {
+   "method": "POST",
+   "path": "/oidc/v1/token",
+   "request": "grant_type=client_credentials&scope=all-apis",
+   "response": {
+    "access_token": "eyJ-principal",
+    "token_type": "Bearer",
+    "expires_in": 3600
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.0/sql/warehouses/abc123def456",
+   "headers": {
+    "authorization": "Bearer eyJ-principal"
+   },
+   "response": {
+    "id": "abc123def456",
+    "name": "Shared",
+    "cluster_size": "Small",
+    "state": "STOPPED",
+    "enable_serverless_compute": true,
+    "warehouse_type": "PRO"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/catalogs",
+   "query": {
+    "max_results": "1000"
+   },
+   "response": {
+    "catalogs": [
+     {
+      "name": "main",
+      "catalog_type": "MANAGED_CATALOG"
+     }
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/schemas",
+   "query": {
+    "catalog_name": "main",
+    "max_results": "1000"
+   },
+   "response": {
+    "schemas": [
+     {
+      "name": "sales",
+      "catalog_name": "main"
+     }
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/tables",
+   "query": {
+    "catalog_name": "main",
+    "schema_name": "sales",
+    "max_results": "50"
+   },
+   "response": {
+    "tables": [
+     {
+      "name": "orders",
+      "table_type": "MANAGED",
+      "data_source_format": "DELTA",
+      "full_name": "main.sales.orders"
+     }
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/tables/main.sales.orders",
+   "response": {
+    "name": "orders",
+    "table_type": "MANAGED",
+    "data_source_format": "DELTA",
+    "columns": [
+     {
+      "name": "id",
+      "type_text": "bigint",
+      "type_name": "LONG",
+      "position": 0
+     },
+     {
+      "name": "placed",
+      "type_text": "timestamp",
+      "type_name": "TIMESTAMP",
+      "position": 1
+     }
+    ]
+   }
+  },
+  {
+   "method": "POST",
+   "path": "/api/2.0/sql/statements",
+   "request": {
+    "statement": "SELECT id, placed FROM main.sales.orders ORDER BY id",
+    "warehouse_id": "abc123def456",
+    "wait_timeout": "0s",
+    "disposition": "EXTERNAL_LINKS",
+    "format": "JSON_ARRAY",
+    "catalog": "main"
+   },
+   "response": {
+    "statement_id": "01f0c3a2-0000-1b9e-9a3c-0000000000e1",
+    "status": {
+     "state": "PENDING"
+    }
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.0/sql/statements/01f0c3a2-0000-1b9e-9a3c-0000000000e1",
+   "response": {
+    "statement_id": "01f0c3a2-0000-1b9e-9a3c-0000000000e1",
+    "status": {
+     "state": "SUCCEEDED"
+    },
+    "manifest": {
+     "format": "JSON_ARRAY",
+     "schema": {
+      "column_count": 2,
+      "columns": [
+       {
+        "name": "id",
+        "type_text": "BIGINT",
+        "type_name": "LONG",
+        "position": 0
+       },
+       {
+        "name": "placed",
+        "type_text": "TIMESTAMP",
+        "type_name": "TIMESTAMP",
+        "position": 1
+       }
+      ]
+     },
+     "total_chunk_count": 2
+    },
+    "result": {
+     "chunk_index": 0,
+     "external_links": [
+      {
+       "chunk_index": 0,
+       "external_link": "{endpoint}/links/e1-0",
+       "expiration": "2026-11-24T16:15:00.000Z"
+      }
+     ],
+     "next_chunk_index": 1
+    }
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/links/e1-0",
+   "response": [
+    [
+     "1",
+     "2026-01-02T03:04:05.123Z"
+    ],
+    [
+     "2",
+     null
+    ]
+   ]
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.0/sql/statements/01f0c3a2-0000-1b9e-9a3c-0000000000e1/result/chunks/1",
+   "response": {
+    "chunk_index": 1,
+    "external_links": [
+     {
+      "chunk_index": 1,
+      "external_link": "{endpoint}/links/e1-1",
+      "expiration": "2026-11-24T16:15:00.000Z"
+     }
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/links/e1-1",
+   "response": [
+    [
+     "3",
+     "2026-01-03T00:00:00Z"
+    ]
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/2.0/sql/statements",
+   "request": {
+    "statement": "SELECT current_catalog()",
+    "warehouse_id": "abc123def456",
+    "wait_timeout": "0s",
+    "disposition": "EXTERNAL_LINKS",
+    "catalog": "dev"
+   },
+   "response": {
+    "statement_id": "01f0c3a2-0000-1b9e-9a3c-0000000000e2",
+    "status": {
+     "state": "PENDING"
+    }
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.0/sql/statements/01f0c3a2-0000-1b9e-9a3c-0000000000e2",
+   "response": {
+    "statement_id": "01f0c3a2-0000-1b9e-9a3c-0000000000e2",
+    "status": {
+     "state": "SUCCEEDED"
+    },
+    "manifest": {
+     "format": "JSON_ARRAY",
+     "schema": {
+      "column_count": 1,
+      "columns": [
+       {
+        "name": "current_catalog()",
+        "type_text": "STRING",
+        "type_name": "STRING",
+        "position": 0
+       }
+      ]
+     },
+     "total_chunk_count": 1
+    },
+    "result": {
+     "chunk_index": 0,
+     "external_links": [
+      {
+       "chunk_index": 0,
+       "external_link": "{endpoint}/links/e2",
+       "expiration": "2026-11-24T16:15:00.000Z"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/links/e2",
+   "response": [
+    [
+     "dev"
+    ]
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/oidc/v1/token",
+   "request": "grant_type=client_credentials&scope=all-apis",
+   "response": {
+    "access_token": "eyJ-principal",
+    "token_type": "Bearer",
+    "expires_in": 3600
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.0/sql/warehouses/abc123def456",
+   "headers": {
+    "authorization": "Bearer eyJ-principal"
+   },
+   "response": {
+    "id": "abc123def456",
+    "name": "Shared",
+    "cluster_size": "Small",
+    "state": "STOPPED",
+    "enable_serverless_compute": true,
+    "warehouse_type": "PRO"
+   }
+  },
+  {
+   "method": "POST",
+   "path": "/api/2.0/sql/statements",
+   "request": {
+    "statement": "SELECT current_catalog()",
+    "warehouse_id": "abc123def456",
+    "wait_timeout": "0s",
+    "disposition": "EXTERNAL_LINKS",
+    "catalog": "main"
+   },
+   "response": {
+    "statement_id": "01f0c3a2-0000-1b9e-9a3c-0000000000e3",
+    "status": {
+     "state": "PENDING"
+    }
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.0/sql/statements/01f0c3a2-0000-1b9e-9a3c-0000000000e3",
+   "response": {
+    "statement_id": "01f0c3a2-0000-1b9e-9a3c-0000000000e3",
+    "status": {
+     "state": "SUCCEEDED"
+    },
+    "manifest": {
+     "format": "JSON_ARRAY",
+     "schema": {
+      "column_count": 1,
+      "columns": [
+       {
+        "name": "current_catalog()",
+        "type_text": "STRING",
+        "type_name": "STRING",
+        "position": 0
+       }
+      ]
+     },
+     "total_chunk_count": 1
+    },
+    "result": {
+     "chunk_index": 0,
+     "external_links": [
+      {
+       "chunk_index": 0,
+       "external_link": "{endpoint}/links/e3",
+       "expiration": "2026-11-24T16:15:00.000Z"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/links/e3",
+   "response": [
+    [
+     "main"
+    ]
+   ]
+  },
+  {
+   "method": "POST",
+   "path": "/api/2.0/sql/statements",
+   "request": {
+    "statement": "SELECT COUNT(*) FROM big.events",
+    "warehouse_id": "abc123def456",
+    "wait_timeout": "0s",
+    "disposition": "EXTERNAL_LINKS",
+    "catalog": "dev"
+   },
+   "response": {
+    "statement_id": "01f0c3a2-0000-1b9e-9a3c-0000000000e4",
+    "status": {
+     "state": "PENDING"
+    }
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.0/sql/statements/01f0c3a2-0000-1b9e-9a3c-0000000000e4",
+   "response": {
+    "statement_id": "01f0c3a2-0000-1b9e-9a3c-0000000000e4",
+    "status": {
+     "state": "RUNNING"
+    }
+   },
+   "repeat": true
+  },
+  {
+   "method": "POST",
+   "path": "/api/2.0/sql/statements/01f0c3a2-0000-1b9e-9a3c-0000000000e4/cancel",
+   "response": {}
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.0/sql/statements/01f0c3a2-0000-1b9e-9a3c-0000000000e4",
+   "response": {
+    "statement_id": "01f0c3a2-0000-1b9e-9a3c-0000000000e4",
+    "status": {
+     "state": "CANCELED"
+    }
+   }
+  },
+  {
+   "method": "POST",
+   "path": "/api/2.0/sql/statements",
+   "request": {
+    "statement": "SELECT id, total FROM main.sales.orders",
+    "warehouse_id": "abc123def456",
+    "wait_timeout": "0s",
+    "disposition": "EXTERNAL_LINKS",
+    "format": "ARROW_STREAM",
+    "catalog": "dev"
+   },
+   "response": {
+    "statement_id": "01f0c3a2-0000-1b9e-9a3c-0000000000e5",
+    "status": {
+     "state": "PENDING"
+    }
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.0/sql/statements/01f0c3a2-0000-1b9e-9a3c-0000000000e5",
+   "response": {
+    "statement_id": "01f0c3a2-0000-1b9e-9a3c-0000000000e5",
+    "status": {
+     "state": "SUCCEEDED"
+    },
+    "manifest": {
+     "format": "ARROW_STREAM",
+     "schema": {
+      "column_count": 2,
+      "columns": [
+       {
+        "name": "id",
+        "type_text": "BIGINT",
+        "type_name": "LONG",
+        "position": 0
+       },
+       {
+        "name": "total",
+        "type_text": "DECIMAL(18,2)",
+        "type_name": "DECIMAL",
+        "position": 1,
+        "type_precision": 18,
+        "type_scale": 2
+       }
+      ]
+     },
+     "total_chunk_count": 1
+    },
+    "result": {
+     "chunk_index": 0,
+     "external_links": [
+      {
+       "chunk_index": 0,
+       "external_link": "{endpoint}/links/e5",
+       "expiration": "2026-11-24T16:15:00.000Z"
+      }
+     ]
+    }
+   }
+  }
+ ]
+}

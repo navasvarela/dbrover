@@ -103,8 +103,10 @@ than you allowed:
   `ask_above_bytes = 10000000000`.
 - **A time limit.** Snowflake bills the time a warehouse runs rather than bytes, so its data
   sources have **Stop statements after** instead, which Snowflake keeps by stopping a statement
-  that runs longer: see [Snowflake](snowflake.md#what-a-statement-costs). It is kept as
-  `stop_after_seconds = 600`.
+  that runs longer: see [Snowflake](snowflake.md#what-a-statement-costs). Databricks has the
+  same limit, which DbRover keeps by cancelling a statement still running past it, since
+  Databricks's API takes none: see [Databricks](databricks.md#what-a-statement-costs). It is
+  kept as `stop_after_seconds = 600`.
 
 A console asks before running a held statement, with what it would read and **Scan anyway**,
 which runs it and the statements after it. **Open data** reads a page at a time, which a

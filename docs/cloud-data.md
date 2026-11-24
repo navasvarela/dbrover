@@ -5,8 +5,8 @@ stand-ins; **C2 built** (2026-11-04), tried only against local stand-ins; **C3 b
 (2026-11-05), Athena tried only against exchanges written from its documentation and Trino
 against its container; **C4 built** (2026-11-08), BigQuery tried only against exchanges
 written from its documentation and the community emulator; **C5 built** (2026-11-23),
-Snowflake tried only against exchanges written from its documentation; C6 started
-(2026-11-24). Proposed on
+Snowflake tried only against exchanges written from its documentation; **C6 built**
+(2026-11-24), Databricks tried only against exchanges written from its documentation. Proposed on
 2026-10-27; the order and the decisions below are confirmed as each milestone starts. The
 providers' priority was set on 2026-10-28: AWS, then Google Cloud, then Azure. On 2026-11-01
 DynamoDB was moved ahead of the track, as the NoSQL track's [N5](nosql.md#n5--dynamodb), with
@@ -1789,7 +1789,7 @@ workspace.
   source's limit, when the engine's own estimate (`estimate_cost`, `None` on Databricks) has
   none; the console and runs never ask for it. The replay server answers by path, in any order,
   what a test gives it, for the chunks fetched in parallel.
-- **C6i — Manual, demo note and the exit:** a page in the manual's Data sources part,
+- **C6i — Manual, demo note and the exit** (built): a page in the manual's Data sources part,
   **Databricks**, the C6 demo note in the roadmap with the live checks, and the exit test.
 
 **Exit:** Databricks tested with exchanges replayed in CI, in one test that goes through the
@@ -1798,6 +1798,18 @@ stopped; the explorer reaches a column with nothing but Unity Catalog's API; a q
 chunks from their links with its values as Databricks writes them; `USE CATALOG` moves one
 console; a statement past the time limit is cancelled and says so; a report source reads Arrow
 chunks into DuckDB. Tried live by the user: the demo note's list, and the ignored live test.
+
+**Met** in CI, against `exchanges/exit.json`, in
+`c6_exit_a_service_principals_data_source_through_the_whole_of_c6`
+(`crates/dbrover-driver-databricks/src/tests/exit.rs`): a service principal signs in with the
+workspace's token endpoint, and Test connection says *warehouse Shared (Small, serverless,
+stopped)*; the explorer reaches `main › sales › tables › orders › placed` (`TIMESTAMP`) with
+four Unity Catalog requests and no statement; a query is read over two chunks from their links,
+`NULL` among its values; after `USE CATALOG dev` the next statement goes to `dev` while a
+second console still starts in `main`; a statement past a 1-second limit is cancelled and says
+so; and a report's source reads an Arrow chunk with its `DECIMAL(18,2)` kept. The source's
+batches reach DuckDB through RS6's loader, which this test doesn't run. Not yet tried against
+Databricks itself.
 
 #### C6's open questions
 
