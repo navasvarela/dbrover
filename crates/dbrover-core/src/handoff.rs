@@ -110,8 +110,7 @@ pub struct HandoffSupport {
 impl HandoffSupport {
     /// What `driver`'s handoff takes, or `None` for an engine that has none.
     ///
-    /// Snowflake's `COPY INTO @stage` lands with C5 and Databricks's external links with C6.
-    /// Trino has none to give: it has no `UNLOAD`, and its spooled protocol answers with
+    /// Databricks's external links land with C6. Trino has none to give: it has no `UNLOAD`, and its spooled protocol answers with
     /// segments of the same rows in the server's own location, not files in a prefix a report
     /// names (`docs/reports-at-scale.md`, "The handoff against today's code").
     pub fn of(driver: DriverKind) -> Option<Self> {
@@ -126,6 +125,13 @@ impl HandoffSupport {
                 provider: StorageProvider::Gcs,
                 needs_prefix: true,
             }),
+            DriverKind::Snowflake => Some(Self {
+                // `COPY INTO` a location can write to any of the three clouds through a
+                // storage integration; C5h carries S3's, the providers' first, since a
+                // handoff names one provider.
+                provider: StorageProvider::S3,
+                needs_prefix: true,
+            }),
             DriverKind::Postgres
             | DriverKind::Sqlite
             | DriverKind::Mysql
@@ -137,8 +143,7 @@ impl HandoffSupport {
             | DriverKind::Elasticsearch
             | DriverKind::Cassandra
             | DriverKind::DynamoDb
-            | DriverKind::Trino
-            | DriverKind::Snowflake => None,
+            | DriverKind::Trino => None,
         }
     }
 }
@@ -162,17 +167,27 @@ mod tests {
     }
 
     #[test]
-    fn only_athena_and_bigquery_hand_a_result_over_today() {
+    fn athena_bigquery_and_snowflake_hand_a_result_over_today() {
         let with_handoff: Vec<DriverKind> = DriverKind::ALL
             .into_iter()
             .filter(|driver| HandoffSupport::of(*driver).is_some())
             .collect();
-        assert_eq!(with_handoff, [DriverKind::Athena, DriverKind::BigQuery]);
+        assert_eq!(
+            with_handoff,
+            [
+                DriverKind::Athena,
+                DriverKind::BigQuery,
+                DriverKind::Snowflake
+            ]
+        );
         // Athena writes every result to S3 anyway, so a report need name no prefix of its own.
         let athena = HandoffSupport::of(DriverKind::Athena).expect("Athena hands over");
         assert!(!athena.needs_prefix);
         let bigquery = HandoffSupport::of(DriverKind::BigQuery).expect("BigQuery hands over");
         assert!(bigquery.needs_prefix);
         assert_eq!(bigquery.provider, StorageProvider::Gcs);
+        let snowflake = HandoffSupport::of(DriverKind::Snowflake).expect("Snowflake hands over");
+        assert!(snowflake.needs_prefix);
+        assert_eq!(snowflake.provider, StorageProvider::S3);
     }
 }

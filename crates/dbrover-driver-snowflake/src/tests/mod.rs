@@ -494,6 +494,60 @@ async fn a_statement_past_the_time_limit_is_stopped_by_snowflake_and_says_so() {
     replay.finish();
 }
 
+fn handoff_into(key: &str) -> dbrover_core::Handoff {
+    let storage = dbrover_core::ObjectStorage::S3(dbrover_core::S3Bucket {
+        bucket: "acme-lake".to_owned(),
+        ..dbrover_core::S3Bucket::default()
+    });
+    dbrover_core::Handoff::IntoFolder(dbrover_core::HandoffFolder::new(&storage, key.to_owned()))
+}
+
+#[tokio::test]
+async fn a_handoff_unloads_parquet_through_the_storage_integration() {
+    let replay = Replay::start(include_str!("exchanges/handoff.json")).await;
+    let config = SnowflakeConfig {
+        storage_integration: "LAKE_WRITER".to_owned(),
+        ..config(&replay)
+    };
+    let mut connection = connected(&config).await;
+    let handed = connection
+        .execute_as_files(
+            "SELECT item, amount FROM orders",
+            &[],
+            &handoff_into("dbrover-tmp/shop/run-1-2/orders/"),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("{}", describe_error(&error)))
+        .expect("files handed over");
+    assert_eq!(handed.files, dbrover_core::HandoffFiles::InFolder);
+    assert_eq!(handed.format, dbrover_core::LakeFormat::Parquet);
+    replay.finish();
+}
+
+#[tokio::test]
+async fn a_handoff_without_a_storage_integration_says_to_name_one() {
+    let replay = Replay::start(include_str!("exchanges/token.json")).await;
+    let config = SnowflakeConfig {
+        sign_in: SnowflakeSignIn::ProgrammaticAccessToken,
+        ..config(&replay)
+    };
+    let mut connection = connect(&config, Some(&Password::new("pat-secret")))
+        .await
+        .unwrap_or_else(|error| panic!("{}", describe_error(&error)));
+    let Err(error) = connection
+        .execute_as_files("SELECT 1", &[], &handoff_into("dbrover-tmp/run/"))
+        .await
+    else {
+        panic!("handed over without an integration");
+    };
+    assert!(
+        describe_error(&error).contains("under Storage integration"),
+        "{}",
+        describe_error(&error)
+    );
+    replay.finish();
+}
+
 /// The checks above, against Snowflake itself: run by hand with
 /// `DBROVER_TEST_SNOWFLAKE_LIVE=account,user,key-file,warehouse cargo test -p
 /// dbrover-driver-snowflake live_snowflake -- --ignored`. It reads `SNOWFLAKE_SAMPLE_DATA`,

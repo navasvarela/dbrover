@@ -1,0 +1,101 @@
+{
+ "doc": "A report's handoff: the result unloaded as Parquet with COPY INTO the folder the run owns, through the data source's storage integration.",
+ "exchanges": [
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "SHOW DATABASES LIMIT 1"
+   },
+   "response": {
+    "code": "333334",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000d0"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000000d0",
+   "response": {
+    "code": "090001",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000d0",
+    "resultSetMetaData": {
+     "numRows": 0,
+     "rowType": [
+      {
+       "name": "name",
+       "type": "text"
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 0
+      }
+     ]
+    },
+    "data": []
+   }
+  },
+  {
+   "method": "POST",
+   "path": "",
+   "query": {
+    "requestId": "{new}",
+    "async": "true"
+   },
+   "request": {
+    "statement": "COPY INTO 's3://acme-lake/dbrover-tmp/shop/run-1-2/orders/data' FROM (SELECT item, amount FROM orders) STORAGE_INTEGRATION = \"LAKE_WRITER\" FILE_FORMAT = (TYPE = PARQUET) HEADER = TRUE"
+   },
+   "response": {
+    "code": "333334",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000d1"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/01b0e8a3-0000-4c2b-0000-0000000000d1",
+   "response": {
+    "code": "090001",
+    "statementHandle": "01b0e8a3-0000-4c2b-0000-0000000000d1",
+    "resultSetMetaData": {
+     "numRows": 1,
+     "rowType": [
+      {
+       "name": "rows_unloaded",
+       "type": "fixed",
+       "precision": 19,
+       "scale": 0
+      },
+      {
+       "name": "input_bytes",
+       "type": "fixed",
+       "precision": 19,
+       "scale": 0
+      },
+      {
+       "name": "output_bytes",
+       "type": "fixed",
+       "precision": 19,
+       "scale": 0
+      }
+     ],
+     "partitionInfo": [
+      {
+       "rowCount": 1
+      }
+     ]
+    },
+    "data": [
+     [
+      "1200",
+      "96000",
+      "24000"
+     ]
+    ]
+   }
+  }
+ ]
+}

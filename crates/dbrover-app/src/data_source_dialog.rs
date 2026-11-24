@@ -828,6 +828,16 @@ fn snowflake_rows(ui: &mut Ui, fields: &mut SnowflakeFields) {
     ui.label("");
     ui.weak("As Snowflake shows them, usually in capitals: it reads them case-sensitively.");
     ui.end_row();
+    setting_row(
+        ui,
+        "Storage integration",
+        &mut fields.storage_integration,
+        "none",
+        Resolve::Text,
+    );
+    ui.label("");
+    ui.weak("For reports that hand a large result over through an S3 bucket (COPY INTO).");
+    ui.end_row();
     text_row(
         ui,
         SNOWFLAKE_LIMIT_LABEL,

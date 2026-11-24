@@ -56,6 +56,7 @@ pub struct SnowflakeFields {
     pub database: String,
     pub schema: String,
     pub endpoint: String,
+    pub storage_integration: String,
     /// In minutes; empty for no limit of DbRover's. Saved as the cost guard's
     /// `stop_after_seconds`.
     pub limit_minutes: String,
@@ -129,6 +130,7 @@ impl SnowflakeFields {
             database: config.database.clone(),
             schema: config.schema.clone(),
             endpoint: config.endpoint.clone(),
+            storage_integration: config.storage_integration.clone(),
             limit_minutes: config
                 .cost_guard
                 .stop_after
@@ -184,6 +186,7 @@ impl SnowflakeFields {
             database: self.database.trim().to_owned(),
             schema: self.schema.trim().to_owned(),
             endpoint: self.endpoint.trim().to_owned(),
+            storage_integration: self.storage_integration.trim().to_owned(),
             cost_guard: CostGuard {
                 stop_after,
                 ..self.cost_guard

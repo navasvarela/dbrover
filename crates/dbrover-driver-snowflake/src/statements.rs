@@ -6,8 +6,8 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
 use dbrover_core::{
-    DriverError, JobFailure, JobId, JobPage, JobProgress, JobService, JobState, PageToken,
-    TimeLimit,
+    DriverError, Handoff, HandoffFiles, JobFailure, JobId, JobPage, JobProgress, JobService,
+    JobState, PageToken, TimeLimit,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -299,6 +299,17 @@ impl JobService for SnowflakeJobs {
             next: more.then(|| PageToken::new(next.to_string())),
             rows_changed: None,
         })
+    }
+
+    /// Where a finished `COPY INTO` wrote its files: the folder the statement named, which the
+    /// run lists (C5h). Snowflake names the files itself.
+    async fn result_files(
+        &self,
+        job: &JobId,
+        handoff: &Handoff,
+    ) -> Result<Option<HandoffFiles>, DriverError> {
+        let _ = job;
+        Ok(crate::handoff::files(handoff))
     }
 
     async fn cancel(&self, job: &JobId) -> Result<(), DriverError> {
