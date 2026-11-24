@@ -5,8 +5,8 @@ stand-ins; **C2 built** (2026-11-04), tried only against local stand-ins; **C3 b
 (2026-11-05), Athena tried only against exchanges written from its documentation and Trino
 against its container; **C4 built** (2026-11-08), BigQuery tried only against exchanges
 written from its documentation and the community emulator; **C5 built** (2026-11-23),
-Snowflake tried only against exchanges written from its documentation; C6 planned, not
-scheduled. Proposed on
+Snowflake tried only against exchanges written from its documentation; C6 started
+(2026-11-24). Proposed on
 2026-10-27; the order and the decisions below are confirmed as each milestone starts. The
 providers' priority was set on 2026-10-28: AWS, then Google Cloud, then Azure. On 2026-11-01
 DynamoDB was moved ahead of the track, as the NoSQL track's [N5](nosql.md#n5--dynamodb), with
@@ -75,7 +75,8 @@ ranked by it.
    connectors' private protocol; see [C5](#rows-and-columnar-batches-in-c5)), which fits the
    BigQuery driver's shape.
 6. **Databricks SQL.** A SQL warehouse over Unity Catalog's three-level names, through the
-   Statement Execution API (HTTPS, like Snowflake's), also on all three clouds.
+   Statement Execution API (HTTPS, like Snowflake's), also on all three clouds, with Arrow
+   results through its external links (see [C6](#rows-and-columnar-batches-in-c6)).
 
 Azure's warehouses don't need a milestone of their own: Synapse and Fabric answer over SQL
 Server's protocol, so they come in C1 through the SQL Server driver, with Fabric signing in only
@@ -1450,8 +1451,313 @@ account to see:
 
 ### C6 — Databricks SQL
 
-- A driver over the Statement Execution API, with Unity Catalog's catalog, schema and table
-  levels, and a personal access token or OAuth.
+Started on 2026-11-24, after C5. Databricks's SQL warehouses, on all three clouds: a driver over
+the Statement Execution API, Unity Catalog's catalogs, schemas and tables browsed through Unity
+Catalog's own REST API, signed in with a personal access token, OAuth, or Entra ID on Azure,
+speaking Databricks SQL. Databricks bills the time a warehouse runs, as Snowflake does, so C6
+reuses the time budget C5 gave C0's cost guard; unlike Snowflake's, its API answers in Arrow,
+so C6 is where RS6's columnar path meets a warehouse.
+
+#### What Databricks does, from its documentation
+
+Read from Databricks's REST reference (`docs.databricks.com/api`: the Statement Execution API,
+Unity Catalog's catalogs, schemas, tables, table summaries and volumes, SQL warehouses, query
+history), its pages on authentication (personal access tokens, OAuth for service principals and
+for users, the Databricks CLI's `auth token`), Azure Databricks's page on Entra ID tokens, the
+SQL reference's `EXPLAIN`, `STATEMENT_TIMEOUT` and identifiers pages, the warehouse types and
+pricing pages, and the official SDKs' sources (`databricks-sdk-py`'s `sql.py` and `catalog.py`,
+whose docstrings are the reference's), on 2026-11-24. Nothing below has been tried against a
+workspace; there is no official emulator to try it against (see
+[Testing C6 without an account](#testing-c6-without-an-account)). What only Databricks's own
+Python connector shows, and the public reference doesn't, is marked *undocumented*: C6 doesn't
+use it.
+
+| Question | Databricks's Statement Execution API and Unity Catalog |
+| --- | --- |
+| Where it answers | The workspace's own host: `<name>.cloud.databricks.com` on AWS, `adb-<workspace id>.<n>.azuredatabricks.net` on Azure, `<workspace id>.<n>.gcp.databricks.com` on Google Cloud. Every API below is under it. |
+| Running a statement | `POST /api/2.0/sql/statements` with `statement` (16 MiB at most), `warehouse_id` (required), `catalog` and `schema` (the defaults its names start from), `parameters` (named `:markers` only, each `{name, value, type}`, `value` a string; "positional parameters denoted by a `?` marker are not supported"), `row_limit`, `byte_limit`, `disposition` (`INLINE`, the default, or `EXTERNAL_LINKS`), `format` (`JSON_ARRAY`, the default, `ARROW_STREAM` or `CSV`; "`ARROW_STREAM` and `CSV` are supported only with `EXTERNAL_LINKS`"), `wait_timeout` (`0s`, or 5 to 50 seconds; 10 by default: how long the request waits for the statement) with `on_wait_timeout` (`CONTINUE` or `CANCEL` past it), and `query_tags` (`{key, value}`, 20 kept). `0s` answers at once with the statement's id. There is no request id of the client's: a submission whose answer was lost may have run, and Databricks's SDKs don't send a `POST` again after a read timed out. |
+| Where a statement is | `GET /api/2.0/sql/statements/{statement_id}`: `status.state` is `PENDING`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELED` or `CLOSED`; a failed statement is HTTP 200 with `status.error` (`error_code`, `message`) and `status.sql_state`; only a request Databricks refused (a bad field, a warehouse it can't find, a token it won't take, throttling) has another status. The state may lag by "up to 5 seconds". A statement not polled for 15 minutes is abandoned, a result can be read for an hour after it succeeds, and a statement is gone (404) 12 hours after it ends. Only the user who ran a statement can read it. |
+| Cancelling | `POST …/{statement_id}/cancel` answers `{}` on receipt; "cancelation might silently fail", and the next poll says whether it did. No close or delete is documented (the connector's `DELETE` is *undocumented*); a statement closes once its last chunk is fetched. |
+| Results | `manifest`: `format`, `schema.columns` (each `name`, `position`, `type_name`, `type_text` such as `DECIMAL(10,2)` or `TIMESTAMP_NTZ`, `type_precision`, `type_scale`), `total_chunk_count`, `chunks` (`chunk_index`, `row_offset`, `row_count`, `byte_count`), `total_row_count`, `truncated`. `result`: chunk 0, as `data_array` for `INLINE` or `external_links` for `EXTERNAL_LINKS`, with `next_chunk_index` and `next_chunk_internal_link`. Chunk *n* is `GET …/{statement_id}/result/chunks/{n}`, in any order, several at once. `INLINE` fails a result past 25 MiB; `EXTERNAL_LINKS` stops at 100 GiB. |
+| Values in `JSON_ARRAY` | Each a JSON string, or `null` for `NULL`. How each type is written (dates, timestamps, decimals, binary, `ARRAY`, `MAP`, `STRUCT`, `VARIANT`, intervals) isn't documented. |
+| External links | A presigned (AWS), SAS (Azure) or signed (Google Cloud) URL per chunk, valid 15 minutes at most (`expiration`); a chunk asked for again gives a fresh one. The download must carry no `Authorization` header, and must carry the link's `http_headers`, which may hold a decryption key. An `ARROW_STREAM` chunk is one Arrow IPC stream. No compression is documented (the connector's `LZ4_FRAME` is *undocumented*). An administrator can have external links turned off. |
+| Arrow | **Yes, through external links:** `ARROW_STREAM` with `EXTERNAL_LINKS`. `INLINE` answers only `JSON_ARRAY` (Arrow inline is a preview of a second API version, for real-time warehouses only). |
+| Sessions | **None documented:** the API has no session or setting field, so each statement carries its own `catalog` and `schema`. The connector opens sessions with `POST /api/2.0/sql/sessions` and sends their settings (`STATEMENT_TIMEOUT`, `TIMEZONE`, `QUERY_TAGS`), *undocumented*. |
+| Errors | A statement's: `[ERROR_CLASS] message … SQLSTATE: 42703; line 1 pos 7`, the class and SQLSTATE stable, the words not. A request's: HTTP 400, 401, 403, 404, 409, 429, 500, 503 or 504 with `{"error_code", "message"}`. The SDKs send a request again on 429 and 503, after `Retry-After` (1 s without it), then a pause growing to 10 s, for 300 s at most. |
+| Sign-in | A bearer token in `Authorization`: a personal access token (a user's or a service principal's; up to the workspace's maximum, typically two years, revoked after 90 days unused); an OAuth access token for a service principal, from `POST /oidc/v1/token` with `grant_type=client_credentials`, `scope=all-apis` and the client's id and secret, for an hour; an OAuth access token for a user, from `/oidc/v1/authorize` with PKCE and a loopback redirect, which `databricks auth login` does and `databricks auth token <host>` then prints (`{access_token, token_type, expiry}`, refreshed by the CLI); on Azure, an Entra ID token for the resource `2ff814a6-3304-4ab8-85cb-cd0e6f879c1d` (`az account get-access-token --resource …`). |
+| What a statement costs | The warehouse's time while it runs, in DBUs an hour by its size (serverless: 2X-Small 4, X-Small 6, Small 12, Medium 24, doubling to 4X-Large's 528), times a price per DBU by cloud, region and plan. A warehouse stops after `auto_stop_mins` idle (10 for a new serverless one, 1 at least; 10 at least for pro and classic) and "running a query against a stopped warehouse starts it automatically": in 2 to 6 seconds serverless, about 4 minutes pro or classic. |
+| Time limits | `STATEMENT_TIMEOUT`, two days by default and at most, set by `SET` in a session, on a warehouse (`statement_timeout`, which restarts it), or by an administrator for every warehouse; the API has no field for it, and its sessions are *undocumented*. `wait_timeout` with `on_wait_timeout=CANCEL` stops a statement after 50 seconds at most. |
+| The warehouse | `GET /api/2.0/sql/warehouses/{id}`: `name`, `state` (`STARTING`, `RUNNING`, `STOPPING`, `STOPPED`, `DELETING`, `DELETED`), `cluster_size` (`2X-Small` to `5X-Large`), `enable_serverless_compute`, `warehouse_type` (`PRO`, `CLASSIC`), `auto_stop_mins`, `num_clusters`, `statement_timeout`, `health`. A read of the warehouse isn't among what starts it. |
+| Catalog | Unity Catalog's REST API, `/api/2.1/unity-catalog/`: `catalogs`, `schemas?catalog_name=`, `tables?catalog_name=&schema_name=` (`omit_columns`, `omit_properties`), `tables/{full_name}` (its `columns`, each with `type_text`, `nullable`, `comment`, `partition_index`; `table_type` `MANAGED`, `EXTERNAL`, `VIEW`, `MATERIALIZED_VIEW`, `STREAMING_TABLE`, `FOREIGN`, `METRIC_VIEW` and clones; `data_source_format`; `view_definition`), `table-summaries` (`catalog_name`, with `schema_name_pattern` and `table_name_pattern` as `LIKE` patterns), `volumes`. Paged with `max_results` and `page_token` until no `next_page_token` comes (a page may be empty): a thousand catalogs, schemas or functions a page at most, ten thousand table summaries or volumes, but **50 tables**. None of it is a statement, so none of it needs a warehouse. `hive_metastore`, a workspace's legacy catalog, "appears as a top-level catalog"; whether these APIs list its tables isn't documented. |
+| Names | Backticks, a backtick doubled inside; names are case-insensitive and Unity Catalog stores them in lower case; Databricks "does not enforce ANSI reserved words", though join keywords as aliases need backticks. `sqlparser` 0.63 has a `DatabricksDialect`. |
+| `EXPLAIN` | Plain, `EXTENDED`, `CODEGEN`, `COST` and `FORMATTED`. `EXPLAIN COST` gives the optimized logical plan with each node's `Statistics(sizeInBytes=…, rowCount=…)` where statistics exist. It is a statement: it needs a warehouse and starts a stopped one. |
+| Query history | `query_tags` show in `system.query.history`, the Query History page and `GET /api/2.0/sql/history/queries`, whose `query_id` is the statement's id. |
+| A local server | None of Databricks's. MiniLake (MIT, not Databricks's) serves the Statement Execution API and Unity Catalog, but runs DuckDB's SQL behind them. |
+
+#### How the pieces fit
+
+- **Databricks runs on C0's jobs.** `POST …/statements` with `wait_timeout` `0s`, `GET …/{id}`,
+  a chunk's `GET` and `…/cancel` are `JobService`'s submit, poll, page and cancel, so `Jobs`
+  polls with C0f's growing pause and gives the cursor, cancel and progress handles. Waiting up
+  to 50 seconds in the request would save a poll on a short statement, but leave nothing to
+  cancel meanwhile, as for BigQuery and Snowflake; `0s` it is. A submission that Databricks
+  answers with 429 or 503 is sent again after its `Retry-After`, since it wasn't accepted; one
+  whose answer was lost isn't, since it may have run, and its error says so.
+- **Its own HTTP client,** `dbrover-cloud`'s, as BigQuery's and Snowflake's: no Databricks SDK
+  (there is none in Rust), no ODBC or JDBC, no Thrift. Every request carries `User-Agent`
+  `DbRover/<version>` and every statement the query tag `dbrover`, so an administrator finds
+  DbRover's in the query history. A token goes only over HTTPS or to this machine; an external
+  link's download never carries it.
+- **Sign-in in `dbrover-cloud`,** a `databricks` module beside `snowflake`, four ways:
+  - *Personal access token:* a secret in the keychain, or W9's password command, sent as it is.
+  - *OAuth for a service principal:* the data source names the client id and keeps the client
+    secret as its password; DbRover asks the workspace's `/oidc/v1/token` for an hour's token
+    and keeps it in C0b's `TokenCache`.
+  - *Databricks CLI:* `databricks auth token <host>`, run without a shell as C0c runs `az`,
+    after the user's own `databricks auth login`. This is OAuth for a user: the CLI did the
+    browser's part and refreshes the token, so DbRover holds no refresh token.
+  - *Azure CLI:* C0c's Entra ID sign-in, with Azure Databricks as a new resource.
+- **One dialect.** `Dialect::Databricks` in `dbrover-sql`: backticks, names left bare when they
+  are lower case and plain (Databricks reads them case-insensitively, and Unity Catalog stores
+  them so), strings in either quote with backslash escapes, `--` and `/* */` comments, `sqlparser`'s
+  `DatabricksDialect` for the syntax check, Databricks SQL's functions for completion, `EXPLAIN`
+  for ⌥⌘E, `information_schema` hidden unless **System** is ticked, and the verbs that write
+  (DML, DDL, Delta's `MERGE`, `COPY INTO`, `OPTIMIZE`, `VACUUM`, `RESTORE`, `REFRESH`, grants)
+  and administration (`USE`, `SET`).
+- **A console's context is DbRover's to keep,** as on Snowflake. A connection holds the catalog
+  and schema it sends with every statement, starting from the data source's; a console's `USE
+  CATALOG`, `SET CATALOG`, `USE SCHEMA`, `USE DATABASE` and `USE <schema>` change them without a
+  request. The warehouse is the data source's: Databricks has no `USE WAREHOUSE`. What would
+  need a session (`SET` of a setting or a variable, `RESET`, `DECLARE`, temporary views and
+  functions, `BEGIN`, `COMMIT` and `ROLLBACK`) is refused before it is sent, saying that
+  Databricks's API keeps nothing from one statement to the next: sent, a `SET` would answer as if
+  it had worked and be lost.
+- **Unity Catalog on top, without a warehouse.** The explorer starts with the catalogs Unity
+  Catalog lists (shared, foreign and system ones marked), then schemas, then each schema's
+  tables (managed, external, foreign and clones, marked by format: Delta, Iceberg, Parquet…),
+  views (metric views among them), materialized views and streaming tables, and volumes, then
+  columns with their types, every level from Unity Catalog's REST API a page at a time. A filter
+  on a schema's tables goes to `table-summaries` as a `LIKE` pattern; on catalogs and schemas it
+  is applied to what is listed. **Found on the server** is `table-summaries` with the pattern,
+  catalog by catalog, a hundred matches at most. None of it is a statement, so browsing never
+  starts a stopped warehouse.
+- **Rows as text in the console, through external links.** The console asks for `JSON_ARRAY`
+  with `EXTERNAL_LINKS`, not `INLINE`: `INLINE` fails a result past 25 MiB, which a console's
+  `SELECT *` reaches easily, and a statement can't be run again to fetch it another way, since
+  it may have written. Each chunk is fetched from its link when the console pages to it, and its
+  values are Databricks's own text, shown as they come (ADR 0004). This costs one download more
+  than `INLINE` per chunk, chunk 0 included.
+
+#### Rows and columnar batches in C6
+
+ADR 0007 and RS6 named Databricks's `ARROW_STREAM` as a columnar answer, and
+[Reports at scale](reports-at-scale.md) left Databricks's external links to C6 as its own
+handoff. Both hold, as one path:
+
+- **A report's source reads Arrow.** `Connection::execute_for_batches` submits the statement
+  with `ARROW_STREAM` and `EXTERNAL_LINKS`; the cursor's `batches` fetches each chunk's Arrow IPC
+  stream from its link (a few chunks ahead, since chunks may be read in any order), reads it with
+  `arrow-ipc` (already built for ClickHouse, RS6e), and hands its batches to the workspace's
+  appender. Bulk columns pass as they are; any other (`ARRAY`, `MAP`, `STRUCT`, `VARIANT`,
+  `BINARY`, intervals) is turned into text, as ADR 0007 asks. A link past its `expiration` is renewed by asking for its chunk again.
+- **This is C6's handoff.** The files are Databricks's, in its own storage, at addresses it signs
+  for the run, and gone with the statement: no bucket for the report to name, no storage
+  credential for an administrator to create, nothing for the run to delete. RS7's `handoff =`
+  setting is refused on a Databricks source when the report is planned, saying that its results
+  already reach DuckDB as Arrow files; `HandoffSupport` stays `None` for it.
+- **What the documented API doesn't give:** compressed chunks (the connector's `LZ4_FRAME` is
+  *undocumented*), so a chunk is downloaded whole; and Arrow inline, so even a small report
+  source takes a download per chunk.
+
+#### Warehouse time and the time limit
+
+C5 gave C0's cost guard a time budget, **Stop statements after** (`stop_after_seconds`).
+Databricks bills a warehouse's time as Snowflake does, so a Databricks data source has the
+same limit; what differs is who keeps it:
+
+- **DbRover keeps the limit.** The Statement Execution API has no timeout field, and the
+  sessions that would carry `STATEMENT_TIMEOUT` aren't documented. So the poll that finds a
+  statement still running past the limit cancels it and fails it, saying which limit stopped it,
+  that the warehouse was billed until then, and where to raise it, as Athena's byte limit stops a
+  query at a poll (C3). The poll's pause is two seconds at most, so a statement stops within
+  about two seconds of its limit, and the next poll confirms the cancel. A warehouse's or the
+  workspace's own `STATEMENT_TIMEOUT` still applies, and Test connection names the warehouse's. A
+  new Databricks data source starts at 10 minutes, as a new Snowflake one does; cleared, only
+  Databricks's own limit applies (two days unless an administrator set less).
+- **Nothing asks before a statement runs, and nothing checks one as it is typed.** Databricks
+  can't say how long a statement will run, and an `EXPLAIN` is a statement that starts a stopped
+  warehouse: `estimate_cost` and `validate` answer `None`, as on Snowflake, and the syntax check
+  alone runs as the user types.
+- **`EXPLAIN COST` in Explain report.** Explaining a report is something the user asks for, so
+  there a Databricks source's statement is explained with `EXPLAIN COST`, its plan shown as
+  Databricks's text, and the estimate beside it is the bytes of the plan's relations, *at most*
+  what the statement reads (Delta's file skipping reads less). It starts a stopped warehouse, and
+  the explain says so beforehand. This is the `EXPLAIN COST`
+  [Reports at scale](reports-at-scale.md#each-sources-plan-and-estimated-cost) planned.
+- **What DbRover runs by itself needs no warehouse.** The explorer, **Show definition**,
+  **Found on the server** and Test connection read Unity Catalog's and the warehouses' REST APIs.
+  **Show definition** of a view, materialized view or streaming table is its `view_definition`;
+  of a table, a `CREATE TABLE` DbRover writes from its columns (types, `NOT NULL`, comments,
+  `USING` its format, `PARTITIONED BY` its partition columns). **Open data** runs ``SELECT * FROM
+  `catalog`.`schema`.`t` LIMIT 1000``, which starts the warehouse, as Databricks's own sample
+  data does; the manual says so.
+- **The warehouse in sight.** Connecting and Test connection read the warehouse, which doesn't
+  start it, and name it, its size, whether it is serverless, its state and its own limit:
+  *warehouse Shared (Small, serverless, stopped; stops statements after 1 h)*. The data source
+  names the warehouse by its id, or by the HTTP path Databricks's connection details show
+  (`/sql/1.0/warehouses/<id>`), which DbRover reads the id from.
+- **After it runs, what it took.** The result line shows the elapsed time as for every engine;
+  the API reports no bytes or DBUs for a statement.
+
+#### Testing C6 without an account
+
+- **Exchanges written from the reference, replayed on `127.0.0.1`.** As for Snowflake: a test
+  server answers the driver's requests from files of exchanges, in order, over every API C6 uses
+  (statements, chunks, cancel, Unity Catalog, warehouses, `/oidc/v1/token`), checks the headers
+  that matter (the bearer token, the `User-Agent`, and that no download from a link carries the
+  token), and serves the external links themselves at addresses on the same server, a link's
+  body either JSON written in the file or an Arrow IPC stream the test builds from arrays. The
+  data source points at the server as its host. What the reference doesn't show (how each type
+  is written in `JSON_ARRAY`, a refused token's and an unknown warehouse's status and words, the
+  text of a cancelled statement's error) is listed in the README beside the files for the live
+  check. These run on every pull request.
+- **No emulator, nightly or otherwise.** None is Databricks's, and MiniLake answers the API with
+  DuckDB's SQL, so it would show DbRover's requests are well formed, which the replay already
+  does, and nothing of Databricks's SQL or values. Nothing joins `docker-compose.yml` or the
+  nightly job.
+- **A live test the user runs.** An `#[ignore]`d test runs the replayed scenarios' checks
+  against a workspace when `DBROVER_TEST_DATABRICKS_LIVE` names a host and a warehouse id and
+  `DBROVER_TEST_DATABRICKS_TOKEN` a token, over the `samples` catalog every workspace has. Free
+  Edition's serverless warehouse is enough; CI never sets it.
+- **Sign-in:** tokens and secrets the tests make; never `~/.databrickscfg`, the Databricks CLI's
+  token cache, or the Azure CLI's.
+
+#### Layers
+
+Each layer is one pull request in a stack, useful and tested on its own, with no Databricks
+workspace.
+
+- **C6a — Plan:** this section, C6's rows in [Decisions](#decisions) and [Risks](#risks), and
+  the roadmap's entry in layers.
+- **C6b — The Databricks dialect:** `Dialect::Databricks` in `dbrover-sql`: backticks and
+  lower-case bare names, strings in either quote with backslash escapes, `sqlparser`'s
+  `DatabricksDialect` for the syntax check, Databricks SQL's functions for completion, `EXPLAIN`,
+  `information_schema` hidden, the verbs that write (Delta's among them) and administration's,
+  with a corpus of Databricks's statements and the gaps `sqlparser` rejects wrongly, and a
+  classify corpus for read-only mode.
+  **Exit:** the corpus passes or names its gaps; a script with backticked names, `"…"` strings,
+  backslash escapes and comments splits and formats as Databricks reads it; read-only mode
+  classifies the classify corpus (`OPTIMIZE`, `VACUUM`, `RESTORE`, `MERGE` and `COPY INTO` as
+  writes, `DESCRIBE HISTORY` and `SHOW` as reads).
+- **C6c — Databricks's sign-in:** the `databricks` module in `dbrover-cloud`: a personal access
+  token; a service principal's token from `/oidc/v1/token`, kept in a `TokenCache`; the
+  Databricks CLI's `auth token`; and Entra ID's Azure Databricks resource.
+  **Exit:** against a token endpoint on `127.0.0.1`, a client id and secret get a token sent as
+  the form and basic sign-in the reference shows, reused until five minutes before it expires;
+  a refused secret's message reaches the error; the CLI's JSON (`access_token`, `expiry`) is read
+  from a stand-in program, and a CLI that isn't installed or isn't signed in says which command
+  to run; the Azure resource asks `az` for `2ff814a6-…`; no type that holds a secret prints it.
+- **C6d — Databricks: settings and statements as jobs:** `ConnectionConfig::Databricks` and
+  `DriverKind::Databricks` with the host, sign-in, warehouse, catalog, schema and C0's cost
+  guard; a `dbrover-driver-databricks` crate implementing `JobService` over `dbrover-cloud`'s
+  client: `wait_timeout=0s`, the poll's states, chunks through their external links, cancel,
+  retries on 429 and 503, values as text, the connection's context and `USE`, the refusals of
+  what needs a session; the engine's connect arm and the app's arms the compiler asks for; the
+  replay server.
+  **Exit:** replayed, a statement is submitted with its catalog, schema, query tag and
+  `wait_timeout` `0s`, polled through `PENDING` and `RUNNING` to `SUCCEEDED`, and read over three
+  chunks, each downloaded from its link without the token; `NULL` and empty text stay apart; a
+  failure's message reaches the console at its line and position; cancel posts to the statement;
+  a 429 is sent again after its `Retry-After`; `USE CATALOG` changes what the next statement
+  sends and not another connection's; `SET` is refused saying why; the settings round-trip
+  through `data_sources.toml`.
+- **C6e — Unity Catalog in the explorer:** catalogs, schemas, tables, views, materialized views,
+  streaming tables and volumes, columns with their types, a page at a time from Unity Catalog's
+  REST API; **Show definition**; **Found on the server**; **Open data**.
+  **Exit:** replayed, the conformance walk visits two catalogs, a schema with a Delta table, an
+  Iceberg table, a view, a materialized view and a volume; a schema of 120 tables pages in three
+  requests of 50; a filter goes to `table-summaries`; no request the explorer sends is a
+  statement; **Show definition** of a table writes its `CREATE TABLE` and of a view its text.
+- **C6f — The time limit and the warehouse:** the time budget kept by cancelling at the poll
+  past it, the warehouse's name, size, state and own limit in Test connection, and the
+  warehouse's HTTP path read as its id.
+  **Exit:** replayed, a statement on a data source with a 2-second limit is cancelled at the
+  first poll past it and fails naming the limit and the warehouse; one without a limit runs
+  on; Test connection says *warehouse Shared (Small, serverless, stopped)*; connecting reads the
+  warehouse and sends no statement; `/sql/1.0/warehouses/abc123` saves as `abc123`.
+- **C6g — Databricks in the data source dialog:** **New data source › Other cloud services ›
+  Databricks**, with **Host**, **Sign in with** (personal access token, OAuth for a service
+  principal with its **Client ID**, Databricks CLI, Azure CLI), the token or secret, **SQL
+  warehouse**, **Catalog**, **Schema** and **Stop statements after** (10 minutes for a new
+  one), each taking `${NAME}` placeholders; Databricks's logo; the MCP server's read-only
+  mode, with an **MCP token** (a service principal's, granted only what reading needs) in place
+  of the data source's own.
+  **Exit:** a kittest adds a Databricks data source from the menu and it saves as typed, with its
+  10-minute limit; one without a host or a warehouse is refused when saving, as is a service
+  principal without its client id.
+- **C6h — Reports: Arrow through external links, and `EXPLAIN COST`:** `execute_for_batches`
+  with `ARROW_STREAM`, chunks fetched ahead from their links and read with `arrow-ipc`, columns
+  outside the bulk types sent as text, expired links renewed; `handoff =` refused on a
+  Databricks source at planning; Explain report's `EXPLAIN COST` and its estimate.
+  **Exit:** replayed, a report source reads three Arrow chunks into DuckDB with a `DECIMAL(38,2)`,
+  a `DATE`, a `TIMESTAMP` and a `BIGINT` kept as their types and an `ARRAY` as text; a link
+  answered 403 as expired is renewed and read; a source with `handoff` is refused before the run
+  says why; Explain report shows `EXPLAIN COST`'s plan and an *at most* estimate from its
+  relations.
+- **C6i — Manual, demo note and the exit:** a page in the manual's Data sources part,
+  **Databricks**, the C6 demo note in the roadmap with the live checks, and the exit test.
+
+**Exit:** Databricks tested with exchanges replayed in CI, in one test that goes through the
+whole of C6: a data source connects with a service principal's token and names its warehouse,
+stopped; the explorer reaches a column with nothing but Unity Catalog's API; a query is read over
+chunks from their links with its values as Databricks writes them; `USE CATALOG` moves one
+console; a statement past the time limit is cancelled and says so; a report source reads Arrow
+chunks into DuckDB. Tried live by the user: the demo note's list, and the ignored live test.
+
+#### C6's open questions
+
+Settled above where the documentation was enough; these are the user's to decide, or need a
+workspace to see:
+
+1. **Who keeps the time limit.** C6 cancels a statement at the poll that finds it past
+   **Stop statements after**, up to about two seconds late. The alternative is Databricks
+   keeping it, through `SET STATEMENT_TIMEOUT` in a session of the API's *undocumented* sessions
+   endpoint, which the official connector uses but the reference doesn't list. C6 keeps to the
+   documented API; is the poll good enough, or is the undocumented endpoint worth its risk? And
+   is 10 minutes the right default, as on Snowflake?
+2. **Statements that need a session.** C6 refuses `SET` of a setting or variable, `RESET`,
+   `DECLARE`, temporary views and functions, and transactions, since each would answer as if it
+   worked and be lost. Should they go to Databricks as they are instead, with a warning?
+3. **A browser sign-in of DbRover's own.** C6 signs a user in through the Databricks CLI
+   (`databricks auth login`, then `auth token`), as C0 signs in to Azure through `az`. DbRover
+   could do OAuth's authorization code with PKCE itself, on a loopback address, so that no CLI
+   is needed; it would then hold a refresh token, in the keychain. A layer of its own if users
+   need it.
+4. **`hive_metastore`.** Whether Unity Catalog's API lists a workspace's legacy Hive metastore
+   tables isn't documented. If it doesn't, C6 shows the catalog empty with a note; listing it with
+   `SHOW SCHEMAS` and `SHOW TABLES` works, but those are statements that start the warehouse.
+   Worth it for workspaces not yet on Unity Catalog?
+5. **Explain report starts the warehouse.** `EXPLAIN COST` needs a running warehouse, so
+   explaining a report with a Databricks source starts a stopped one, billed its minutes until it
+   stops again. Is that acceptable for an action the user asks for, or should Databricks's
+   sources be left unexplained, as Snowflake's are? Checking statements as they are typed, or
+   estimating before a console's run, would do the same on every pause or run, and C6 leaves both
+   out.
+6. **The console through external links.** Every console result is fetched from external links,
+   one download per chunk beyond the API call, so that a large `SELECT *` doesn't fail at
+   `INLINE`'s 25 MiB. A workspace whose administrator turned external links off then can't run
+   anything that returns rows; should C6 fall back to `INLINE` there (results past 25 MiB
+   failing), or is that workspace out of scope?
+7. **RS7's `handoff` on Databricks.** C6 refuses it, since the external links already hand the
+   result over as Arrow files without a bucket. A report that wants Databricks to write Parquet
+   to a bucket of its own (`INSERT OVERWRITE DIRECTORY`, or a `COPY INTO` an external location)
+   would need a storage credential and an external location an administrator makes; left out
+   unless someone asks.
+8. **Seen only live:** how each type is written in `JSON_ARRAY` (timestamps, decimals' trailing
+   zeros, binary, complex types, `VARIANT`); the status and words of a refused token, an unknown
+   warehouse and a cancelled statement; whether a read of a warehouse ever starts it; whether
+   Unity Catalog lists `hive_metastore`; what an expired link answers on each cloud; and whether
+   `query_tags` is taken by every warehouse type.
 
 ## Decisions
 
@@ -1550,6 +1856,21 @@ C5's own decisions, taken on 2026-11-23 when it started; each can be overturned 
 | Large results for reports | **RS7's handoff as `COPY INTO '<folder>' … FILE_FORMAT = (TYPE = PARQUET)`, through a storage integration the data source names.** | Reports read Snowflake's large results as Parquet, in parallel; an administrator must create the integration, which DbRover never does. |
 | Testing | **Exchanges written from the SQL API's reference, replayed on `127.0.0.1` on every pull request, and an ignored live test for the user.** No emulator: `fakesnow` serves only the connectors' protocol. | CI needs no account; what only Snowflake shows waits for the live run, which the demo note lists. |
 
+C6's own decisions, taken on 2026-11-24 when it started; each can be overturned in review.
+
+| Question | Chosen | Consequence |
+| --- | --- | --- |
+| Databricks's API | **The Statement Execution API (`/api/2.0/sql/statements`) and Unity Catalog's REST API, as the reference documents them,** over DbRover's own hyper and rustls client; not ODBC, JDBC, Thrift, nor the endpoints only Databricks's connector uses (sessions, `LZ4_FRAME`, `DELETE`). | Documented, pure Rust. No session: each statement carries its catalog and schema, and nothing set in one lasts to the next. |
+| Databricks on jobs | **`JobService`, with `wait_timeout` `0s`,** sent again only on 429 and 503. | Cancel and progress come with `Jobs`; a short statement takes a poll more than a waiting request would. A submission whose answer was lost isn't sent again, since the API has no request id to keep it from running twice. |
+| Sign-in | **A personal access token, a service principal's OAuth secret, the Databricks CLI's sign-in, or the Azure CLI's.** No browser sign-in of DbRover's own in C6. | A user signs in through the browser with `databricks auth login`, and DbRover holds no refresh token. |
+| Sessions | **None; the catalog and schema kept by each connection,** changed by a console's `USE`. What needs a session (`SET`, `RESET`, `DECLARE`, temporary objects, transactions) is refused before it is sent. | Each console has its own catalog and schema; nothing answers as if it worked and is then lost. An open question for the user. |
+| Results in the console | **`JSON_ARRAY` through external links,** not `INLINE`. | No result fails at 25 MiB; every chunk is one download more. Values are Databricks's own text. |
+| Results for reports | **`ARROW_STREAM` through external links,** as RS6's batches. RS7's `handoff` refused on Databricks. | Reports load Databricks's results as Arrow, in parallel, with nothing for an administrator to set up and nothing left to delete. |
+| The cost guard | **The time limit, `stop_after_seconds`, kept by DbRover cancelling at the poll past it,** 10 minutes for a new data source; no estimate before running, no byte limit. | A runaway statement stops within about two seconds of its limit, billed until then. Databricks's own `STATEMENT_TIMEOUT` still applies beside it. |
+| What runs without asking | **Only Unity Catalog's and the warehouses' REST APIs:** the explorer, **Show definition**, **Found on the server** and Test connection. | Browsing never starts a stopped warehouse. **Open data** is a `SELECT … LIMIT 1000`, which does; so does Explain report's `EXPLAIN COST`. |
+| Checking statements as they are typed | **The syntax check only;** no `EXPLAIN`. | Typing never starts a warehouse; Databricks's own errors show when the statement runs. |
+| Testing | **Exchanges written from the reference, replayed on `127.0.0.1` on every pull request, external links and Arrow chunks included, and an ignored live test for the user.** No emulator. | CI needs no workspace; what only Databricks shows waits for the live run, which the demo note lists. |
+
 ## Risks
 
 - **Surprise bills.** A missed automatic query on a large table costs the user money. Every
@@ -1629,3 +1950,18 @@ C5's own decisions, taken on 2026-11-23 when it started; each can be overturned 
   Snowflake, so a name that doesn't exist fails on the next statement rather than on the `USE`,
   and `ALTER SESSION` or a transaction doesn't last past its statement. The manual says so, and
   DbRover's message on such a failure explains it.
+- **Databricks's answers written from its documentation.** The replayed exchanges show DbRover's
+  requests are well formed and that it reads Databricks's documented answers; how values are
+  written in `JSON_ARRAY`, the words of its errors, and what an expired link answers are unknown
+  until the live run. The live test and the demo note's list are how the user finds out.
+- **A time limit that overshoots.** DbRover cancels a Databricks statement at the poll past its
+  limit, up to about two seconds late, and Databricks's cancel "might silently fail"; the next
+  poll says whether it did, and the warehouse bills until the statement stops. The manual points
+  at the warehouse's own `STATEMENT_TIMEOUT` for a limit Databricks keeps.
+- **A warehouse started by an explicit action.** **Open data** and Explain report's `EXPLAIN
+  COST` start a stopped warehouse, billed its minutes until it stops again (ten at least on pro
+  and classic warehouses). Everything else DbRover runs by itself reads REST APIs that start
+  nothing, and the manual says which actions start the warehouse.
+- **Links that carry the data.** An external link is a bearer address to the result for up to 15
+  minutes, and its `http_headers` may hold a decryption key. Neither is logged, written to the
+  history or shown in an error; the download never carries the workspace token.

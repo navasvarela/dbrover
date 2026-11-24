@@ -813,7 +813,49 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
       integration for that S3 bucket.
     - Any answer that differs from the replayed exchanges goes into
       `crates/dbrover-driver-snowflake/src/tests/exchanges/`.
-- **C6 — Databricks SQL**, over the Statement Execution API and Unity Catalog.
+- **C6 — Databricks SQL** (started 2026-11-24, after C5): Databricks's SQL warehouses over the
+  Statement Execution API, signed in with a personal access token, a service principal's OAuth
+  secret, the Databricks CLI or the Azure CLI, its dialect, Unity Catalog's catalogs, schemas and
+  tables in the explorer through Unity Catalog's REST API, which starts no warehouse, a catalog
+  and schema per console, C5's time limit kept by DbRover cancelling at the poll past it, and
+  reports reading Arrow through the API's external links. Planned in
+  [Cloud and big data](cloud-data.md#c6--databricks-sql). Unlike Snowflake's, Databricks's API
+  answers in Arrow, as `ARROW_STREAM` through external links, which is both RS6's columnar path
+  and C6's handoff (see
+  [Rows and columnar batches in C6](cloud-data.md#rows-and-columnar-batches-in-c6)). In layers,
+  one PR each:
+  - **C6a — Plan:** C6's layers, decisions, risks and open questions, and this entry.
+  - **C6b — The Databricks dialect:** backticks and lower-case names, strings in either quote,
+    functions, `EXPLAIN` and the writing verbs (Delta's `MERGE`, `OPTIMIZE`, `VACUUM`, `RESTORE`
+    among them), with a corpus of its statements.
+  - **C6c — Databricks's sign-in:** personal access tokens, a service principal's OAuth token,
+    the Databricks CLI's `auth token`, and Entra ID for Azure Databricks, in `dbrover-cloud`.
+  - **C6d — Databricks: settings and statements as jobs:** a data source with a host, sign-in,
+    warehouse, catalog and schema, run through C0's `JobService` over the Statement Execution
+    API with results read through external links, each connection's catalog and schema changed
+    by `USE`, and what needs a session refused; tested against exchanges replayed on this
+    machine.
+  - **C6e — Unity Catalog in the explorer:** catalogs, schemas, tables, views, materialized
+    views, streaming tables and volumes, a page at a time from Unity Catalog's REST API, columns,
+    **Show definition** and **Found on the server**, none of it starting a warehouse.
+  - **C6f — The time limit and the warehouse:** C5's time limit kept by cancelling at the poll
+    past it, and the warehouse's size, state and own limit in Test connection.
+  - **C6g — Databricks in the data source dialog:** **Databricks** under **Other cloud
+    services**, its logo, a 10-minute limit by default, and the MCP server's read-only mode with
+    an MCP token.
+  - **C6h — Reports through external links:** a report source read as Arrow chunks from their
+    links, `handoff` refused on Databricks, and `EXPLAIN COST` in Explain report.
+  - **C6i — Manual:** a page on Databricks, the demo note and the exit test.
+
+  Nothing is tried against a real Databricks workspace while building C6: Databricks is tested
+  against exchanges written from its REST reference and replayed on this machine (every pull
+  request), external links and Arrow chunks included; there is no emulator of its own. The live
+  checks are listed in the demo note, with a test the user runs by hand.
+
+  **Exit:** Databricks tested with replayed exchanges in CI, through one test of the whole of C6,
+  and tried live by the user: a data source browses Unity Catalog without starting its stopped
+  warehouse, reads a query's chunks from their links, moves one console to another catalog with
+  `USE`, has a statement past its time limit cancelled, and loads a report source as Arrow.
 
 ## NoSQL track
 

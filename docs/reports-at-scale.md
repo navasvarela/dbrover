@@ -121,7 +121,7 @@ a columnar format that reads into Arrow without text:
 | DuckDB | Arrow, natively (`query_arrow`) | Already attached in place (RP2); a DuckDB source with a query could be read as Arrow. |
 | ClickHouse | `FORMAT ArrowStream` over its HTTP interface | The driver's existing HTTP path; needs `arrow-ipc`. |
 | Snowflake | None through the SQL API, which answers in JSON; Arrow chunks only through its connectors' private protocol | C5 delivers text rows, and large results through RS7's handoff (`COPY INTO` a bucket as Parquet) ([C5's note](cloud-data.md#rows-and-columnar-batches-in-c5)). |
-| Databricks SQL | `ARROW_STREAM` results, inline or as external links | C6. |
+| Databricks SQL | `ARROW_STREAM` results, through external links only (`INLINE` answers JSON) | C6h, as RS6's batches: each chunk's Arrow IPC stream fetched from its link, which is also C6's handoff ([C6's note](cloud-data.md#rows-and-columnar-batches-in-c6)). |
 | BigQuery | Arrow from the Storage Read API (gRPC), billed apart from the query | Not in C4, which reads `getQueryResults`' JSON as text ([C4's note](cloud-data.md#rows-and-columnar-batches-in-c4)); later, for large results, if gRPC is accepted (below). |
 | Trino and Athena | None in their APIs (text rows). Athena's result files in S3 (CSV, or Parquet through `UNLOAD`) are files; Trino's spooled segments are its own JSON row pages at opaque addresses, not files in a bucket the report names | C3 delivers text rows; Athena's files are RS7's handoff, through C2's object storage. Trino's spooling is a transport of the same rows, left to its driver ([the handoff against today's code](#the-handoff-against-todays-code)). |
 | PostgreSQL, MySQL, SQL Server | None. PostgreSQL's `COPY (query) TO STDOUT` streams text faster than the simple protocol, inside the read-only transaction. | A later layer of this plan, if RS1 measures it worthwhile. |
@@ -1275,9 +1275,12 @@ report while a folder that isn't a run's is left alone.
 
 What the whole of RS7 doesn't carry, after both halves:
 
-- **Databricks has no handoff.** Its external links land with C6, as its driver's layer on the
-  seam this stack built. Snowflake's landed with C5h, as `COPY INTO` an S3 folder through a
-  storage integration; Google Cloud Storage and Azure wait for a report that needs them.
+- **Databricks has no handoff.** Its external links land with C6h, as RS6's batches rather than
+  on this stack's seam: they are Arrow files in Databricks's own storage, signed for the run and
+  gone with the statement, so there is no bucket to name and nothing to delete, and `handoff` is
+  refused on a Databricks source ([C6's note](cloud-data.md#rows-and-columnar-batches-in-c6)).
+  Snowflake's landed with C5h, as `COPY INTO` an S3 folder through a storage integration;
+  Google Cloud Storage and Azure wait for a report that needs them.
 - **Trino has none at all,** and won't: see
   [the handoff against today's code](#the-handoff-against-todays-code). What it could gain is a
   faster transport of the rows it already answers with, which belongs to its driver.
