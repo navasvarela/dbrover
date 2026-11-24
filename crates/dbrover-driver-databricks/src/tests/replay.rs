@@ -370,7 +370,9 @@ async fn read_request(stream: &mut TcpStream) -> Option<Request> {
         body: if body_bytes.is_empty() {
             Value::Null
         } else {
-            serde_json::from_slice(body_bytes).ok()?
+            // A form (a token request) is kept as its text.
+            serde_json::from_slice(body_bytes)
+                .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(body_bytes).into_owned()))
         },
     })
 }

@@ -813,7 +813,7 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
       integration for that S3 bucket.
     - Any answer that differs from the replayed exchanges goes into
       `crates/dbrover-driver-snowflake/src/tests/exchanges/`.
-- **C6 — Databricks SQL** (started 2026-11-24, after C5): Databricks's SQL warehouses over the
+- **C6 — Databricks SQL** (built, in nine layers, 2026-11-24, after C5): Databricks's SQL warehouses over the
   Statement Execution API, signed in with a personal access token, a service principal's OAuth
   secret, the Databricks CLI or the Azure CLI, its dialect, Unity Catalog's catalogs, schemas and
   tables in the explorer through Unity Catalog's REST API, which starts no warehouse, a catalog
@@ -856,6 +856,46 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
   and tried live by the user: a data source browses Unity Catalog without starting its stopped
   warehouse, reads a query's chunks from their links, moves one console to another catalog with
   `USE`, has a statement past its time limit cancelled, and loads a report source as Arrow.
+
+  **C6 demo note:** there is no emulator of Databricks's APIs, so what needs no workspace is the
+  dialog and the replayed tests.
+  - *The dialog:* **New data source › Other cloud services › Databricks** opens a dialog with
+    **Host**, **Sign in with** (Access token, Service principal, Databricks CLI, Azure CLI),
+    **Token** or **Client secret**, **Client ID** for a service principal, **Tenant** for the
+    Azure CLI, **SQL warehouse**, **Catalog**, **Schema** and **Stop statements after** at `10`.
+    Saving without a warehouse says *SQL warehouse is required: Databricks runs every statement
+    on one.*; a service principal without its ID, *Client ID is required to sign in as a service
+    principal.*; `0` or `ten` in the limit is refused, `0.5` saves as `stop_after_seconds = 30`,
+    and `2881` (past two days) is refused. Pasting `/sql/1.0/warehouses/abc123` saves
+    `warehouse = "abc123"`. The read-only level's MCP rows are **MCP client ID** and **MCP client
+    secret**.
+  - *The replayed exit:* `cargo test -p dbrover-driver-databricks c6_exit` runs one data source
+    through every layer, against
+    `crates/dbrover-driver-databricks/src/tests/exchanges/exit.json`.
+  - *By hand, with a Databricks workspace* (not tried while building C6; Free Edition's
+    serverless warehouse is enough), as the manual's page lists:
+    - `DBROVER_TEST_DATABRICKS_LIVE=dbc-….cloud.databricks.com,<warehouse id>
+      DBROVER_TEST_DATABRICKS_TOKEN=dapi… cargo test -p dbrover-driver-databricks
+      live_databricks -- --ignored`: `NULL` and empty text, a `DECIMAL(10,2)`, a `DATE`, a
+      `TIMESTAMP` and a `TIMESTAMP_NTZ`, binary, an array, a map, a struct and a `VARIANT` (note
+      how `JSON_ARRAY` writes each), 200,000 rows of `samples.tpch.lineitem` over several chunks,
+      and an error's place.
+    - In the app, with the warehouse stopped: Test connection says *stopped*, and browsing
+      `samples` down to a column, **Show definition** of a table and of a view, and **Found on
+      the server** leave it stopped (the warehouse's page says so). **Open data** starts it.
+      Check whether `hive_metastore` is listed, and what its tables show.
+    - With **Stop statements after** at `0.5`, run `SELECT count(*) FROM samples.tpch.lineitem
+      a, samples.tpch.lineitem b`: DbRover cancels it about 30 s in and says which limit stopped
+      it; note Databricks's own message for a cancelled statement.
+    - `USE CATALOG samples` and `USE SCHEMA tpch` in one console, and see that another still
+      starts in the data source's catalog; `SET ansi_mode = false` is refused.
+    - Sign in as a service principal (OAuth for machines), with the Databricks CLI after
+      `databricks auth login`, and on Azure Databricks with the Azure CLI after `az login`; and
+      with a token that was revoked, to see the words of the refusal.
+    - A report whose source reads `samples.tpch.orders` into `[combine]`: its `o_totalprice`
+      arrives as a `DECIMAL(18,2)`; **Explain report** shows `EXPLAIN COST` and an estimate.
+    - Any answer that differs from the replayed exchanges goes into
+      `crates/dbrover-driver-databricks/src/tests/exchanges/`.
 
 ## NoSQL track
 

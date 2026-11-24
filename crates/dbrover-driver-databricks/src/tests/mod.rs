@@ -1,6 +1,7 @@
 //! The driver against Databricks's exchanges, replayed by a server on this machine (`replay`),
 //! and against Databricks only when the user asks for it by hand (`live_databricks`).
 
+mod exit;
 mod replay;
 
 use dbrover_core::{

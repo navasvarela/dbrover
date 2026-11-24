@@ -673,9 +673,9 @@ read, a few pages ahead at most.
 
 ### Columnar sources
 
-DuckDB and ClickHouse can hand a query's rows over in Apache Arrow, the columnar form DuckDB
-reads without parsing anything, rather than as text. A source on either of them, loaded into
-`[combine]`, is read that way unless it declares its `columns`:
+DuckDB, ClickHouse and Databricks can hand a query's rows over in Apache Arrow, the columnar
+form DuckDB reads without parsing anything, rather than as text. A source on any of them,
+loaded into `[combine]`, is read that way unless it declares its `columns`:
 
 - **Numbers, booleans, dates and timestamps keep the engine's own type:** a ClickHouse
   `Decimal(18, 2)` is a `DECIMAL(18,2)` in DuckDB, an `Int32` a `BIGINT` (`UInt64` a
@@ -683,7 +683,7 @@ reads without parsing anything, rather than as text. A source on either of them,
   as text it would be text.
 - **Text, and every type without an exact equivalent, come as the engine's text,** typed by
   their values as above: ClickHouse's `DateTime`, `Date`, `Enum8`, `UUID` and arrays, DuckDB's
-  lists, structs, intervals and UUIDs. So a ClickHouse `DateTime` is still a `TIMESTAMP`, and a
+  lists, structs, intervals and UUIDs, Databricks's arrays, maps, structs and `VARIANT`. So a ClickHouse `DateTime` is still a `TIMESTAMP`, and a
   list still the text it shows in a console.
 
 The file a report writes is the same either way. `columnar = false` on the source reads it as
@@ -694,7 +694,9 @@ so is the one source of a report without `[combine]`, which goes straight to the
 
 ClickHouse is asked for the query's columns first (`DESCRIBE`, which reads no data), so it
 can send the ones without an exact Arrow type as text; a statement it can't describe, such as
-one ending in its own `FORMAT`, is read as text.
+one ending in its own `FORMAT`, is read as text. Databricks writes the result as Arrow files in
+its own storage, which the run downloads several at a time: see
+[Databricks](databricks.md#reports).
 
 ### Lakes in the combine
 
@@ -823,7 +825,9 @@ prefix reads that file where it already is — which asks the warehouse for noth
 needs the bucket data source to be the one the workgroup's output location is in. BigQuery has
 no result file of its own to read, so its handoff needs a `prefix`, and so does Snowflake's,
 which writes to S3 only through the storage integration its data source names (see
-[Snowflake](snowflake.md#reports)).
+[Snowflake](snowflake.md#reports)). Databricks hands a result over by itself, as Arrow files in
+its own storage (see [Columnar sources](#columnar-sources)), so `handoff` is refused on a
+Databricks source.
 
 **What a handoff takes, and what it doesn't.** The files carry their own columns and types, so
 a handoff takes none of the keys that count or shape rows on the way in: no `max_rows`,

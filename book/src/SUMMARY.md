@@ -22,6 +22,7 @@
 - [Athena and Trino](athena-trino.md)
 - [BigQuery](bigquery.md)
 - [Snowflake](snowflake.md)
+- [Databricks](databricks.md)
 - [Moving data sources to another machine](sharing.md)
 
 # Browsing and changing databases

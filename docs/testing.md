@@ -185,7 +185,12 @@ Each driver crate runs the suite against its own backend:
   through their links (which never carry the token), `NULL` beside empty text, a link renewed
   after the storage refuses it, a failure's position from `line L pos P`, cancel by the
   statement's id, a 429 sent again after its `Retry-After`, `USE CATALOG` and `USE SCHEMA`
-  changing what the next statement carries, and a `SET` refused. `live_databricks`, ignored,
+  changing what the next statement carries, a `SET` refused, the explorer's walk over Unity
+  Catalog (and that no request is a statement), tables paged 50 at a time, a filter and a
+  search through table summaries, a statement cancelled past its time limit, and a report's
+  source read as Arrow chunks the test writes, which the server answers by path in any order,
+  as they are fetched in parallel; `c6_exit` runs one data source through all of it.
+  `live_databricks`, ignored,
   runs against a workspace when `DBROVER_TEST_DATABRICKS_LIVE` names `host,warehouse id` and
   `DBROVER_TEST_DATABRICKS_TOKEN` a personal access token; CI never sets them.
 - **Trino**: the `trino` container (Trino 484, port 58080, with only the `memory` and `tpch`
