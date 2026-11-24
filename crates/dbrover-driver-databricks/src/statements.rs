@@ -4,10 +4,12 @@
 
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use dbrover_core::{
     DriverError, JobFailure, JobId, JobPage, JobProgress, JobService, JobState, PageToken, Row,
+    TimeLimit,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -28,6 +30,10 @@ const QUERY_TAG: &str = "dbrover";
 struct Started {
     /// Kept until it ends, to point into it from a failure's message.
     statement: String,
+    /// When DbRover submitted it, which the time limit counts from.
+    submitted: Instant,
+    /// Whether DbRover cancelled it at the data source's time limit, so its end says so.
+    stopped_at_limit: bool,
     /// Its result, once a poll found it done: the columns and chunk 0, which came with it.
     result: Option<Finished>,
 }
@@ -41,6 +47,9 @@ struct Finished {
 pub(crate) struct DatabricksJobs {
     api: Api,
     warehouse: String,
+    /// The data source's time limit, which DbRover keeps by cancelling at the poll past it:
+    /// the API has no timeout of its own to send (C6f).
+    limit: Option<TimeLimit>,
     context: Mutex<Context>,
     started: Mutex<HashMap<JobId, Started>>,
 }
@@ -86,10 +95,16 @@ struct StatusError {
 }
 
 impl DatabricksJobs {
-    pub(crate) fn new(api: Api, warehouse: String, context: Context) -> Self {
+    pub(crate) fn new(
+        api: Api,
+        warehouse: String,
+        context: Context,
+        limit: Option<TimeLimit>,
+    ) -> Self {
         Self {
             api,
             warehouse,
+            limit,
             context: Mutex::new(context),
             started: Mutex::new(HashMap::new()),
         }
@@ -133,6 +148,39 @@ impl DatabricksJobs {
         body.insert("format".to_owned(), Value::from("JSON_ARRAY"));
         body.insert("query_tags".to_owned(), json!([{ "key": QUERY_TAG }]));
         Value::Object(body)
+    }
+
+    /// Whether `job` has run past the data source's time limit, marking it so when it has.
+    fn past_limit(&self, job: &JobId) -> bool {
+        let Some(limit) = self.limit else {
+            return false;
+        };
+        let mut started = self.started();
+        let Some(started) = started.get_mut(job) else {
+            return false;
+        };
+        let past = started.submitted.elapsed() > Duration::from_secs(u64::from(limit.seconds()));
+        started.stopped_at_limit |= past;
+        past
+    }
+
+    fn stopped_at_limit(&self, job: &JobId) -> bool {
+        self.started()
+            .get(job)
+            .is_some_and(|started| started.stopped_at_limit)
+    }
+
+    /// What a statement DbRover stopped at the data source's time limit says.
+    fn timed_out(&self) -> String {
+        let limit = self
+            .limit
+            .map_or_else(|| "its time limit".to_owned(), |limit| limit.to_string());
+        format!(
+            "DbRover stopped the statement after {limit}, this data source's limit, and \
+             warehouse {} was billed until then. Raise Stop statements after in the data \
+             source's settings to let it run longer.",
+            self.warehouse
+        )
     }
 
     /// Why a statement failed, pointing into it where Databricks's message does.
@@ -270,6 +318,8 @@ impl JobService for DatabricksJobs {
             job.clone(),
             Started {
                 statement: statement.to_owned(),
+                submitted: Instant::now(),
+                stopped_at_limit: false,
                 result: None,
             },
         );
@@ -284,7 +334,18 @@ impl JobService for DatabricksJobs {
             .map_err(errors::connection)?;
         let answer = read_statement(body)?;
         match answer.status.state {
-            State::Pending | State::Running => Ok(JobState::Running(JobProgress::default())),
+            State::Pending | State::Running => {
+                if self.past_limit(job) {
+                    // Sent again at each poll until Databricks says it stopped: its cancel
+                    // "might silently fail".
+                    self.cancel(job).await?;
+                }
+                Ok(JobState::Running(JobProgress::default()))
+            }
+            State::Canceled | State::Failed | State::Closed if self.stopped_at_limit(job) => {
+                self.started().remove(job);
+                Ok(JobState::Failed(JobFailure::new(self.timed_out())))
+            }
             State::Succeeded => {
                 if let Some(started) = self.started().get_mut(job) {
                     started.statement = String::new();

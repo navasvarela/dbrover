@@ -166,9 +166,11 @@ pub struct CostGuard {
     /// Asks before a statement the driver estimates will scan more than this many bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ask_above_bytes: Option<ByteCount>,
-    /// How long a statement may run before the engine stops it, on an engine that bills the
-    /// time a warehouse runs and keeps such a limit itself (Snowflake's `timeout`, C5f). It
-    /// holds nothing back: nothing says beforehand how long a statement will take.
+    /// How long a statement may run before it is stopped, on an engine that bills the time a
+    /// warehouse runs: kept by the engine where it takes such a limit (Snowflake's `timeout`,
+    /// C5f), else by the driver cancelling the statement at the poll that finds it past the
+    /// limit (Databricks, C6f). It holds nothing back: nothing says beforehand how long a
+    /// statement will take.
     #[serde(
         rename = "stop_after_seconds",
         default,
