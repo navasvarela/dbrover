@@ -101,6 +101,10 @@ than you allowed:
   dry run, so there the console asks first, and the limit goes with every query for BigQuery to
   enforce: see [BigQuery](bigquery.md#what-a-query-costs). It is kept in `data_sources.toml` as
   `ask_above_bytes = 10000000000`.
+- **A time limit.** Snowflake bills the time a warehouse runs rather than bytes, so its data
+  sources have **Stop statements after** instead, which Snowflake keeps by stopping a statement
+  that runs longer: see [Snowflake](snowflake.md#what-a-statement-costs). It is kept as
+  `stop_after_seconds = 600`.
 
 A console asks before running a held statement, with what it would read and **Scan anyway**,
 which runs it and the statements after it. **Open data** reads a page at a time, which a

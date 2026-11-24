@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>DbRover — SQL, NoSQL and cloud databases in one native app</title>
-  <meta name="description" content="DbRover is a free, open-source desktop database tool written in Rust for PostgreSQL, MySQL and MariaDB, SQLite, SQL Server, DuckDB, ClickHouse, Redis and Valkey, MongoDB, Elasticsearch and OpenSearch, Cassandra and ScyllaDB, Amazon DynamoDB, Amazon Athena, Google BigQuery, and Trino, Starburst and Presto, and the cloud services that run them. It is native and fast, needs no account, keeps production safe with safety levels, turns queries over several databases into reports, and lets AI assistants in over MCP only as far as you allow.">
+  <meta name="description" content="DbRover is a free, open-source desktop database tool written in Rust for PostgreSQL, MySQL and MariaDB, SQLite, SQL Server, DuckDB, ClickHouse, Redis and Valkey, MongoDB, Elasticsearch and OpenSearch, Cassandra and ScyllaDB, Amazon DynamoDB, Amazon Athena, Google BigQuery, Snowflake, and Trino, Starburst and Presto, and the cloud services that run them. It is native and fast, needs no account, keeps production safe with safety levels, turns queries over several databases into reports, and lets AI assistants in over MCP only as far as you allow.">
   <meta name="color-scheme" content="dark light">
   <meta property="og:title" content="DbRover">
   <meta property="og:description" content="A free, open-source, native database tool for SQL, NoSQL and cloud databases, from PostgreSQL to BigQuery, with safety levels, reports, and safe access for AI assistants over MCP.">
@@ -31,7 +31,7 @@
 
   <main id="main">
     <section class="hero" aria-labelledby="hero-title">
-      <p class="eyebrow">PostgreSQL · MySQL and MariaDB · SQLite · SQL Server · DuckDB · ClickHouse · Redis and Valkey · MongoDB · Elasticsearch and OpenSearch · Cassandra and ScyllaDB · DynamoDB · Athena · BigQuery · Trino and Presto</p>
+      <p class="eyebrow">PostgreSQL · MySQL and MariaDB · SQLite · SQL Server · DuckDB · ClickHouse · Redis and Valkey · MongoDB · Elasticsearch and OpenSearch · Cassandra and ScyllaDB · DynamoDB · Athena · BigQuery · Snowflake · Trino and Presto</p>
       <h1 id="hero-title">SQL, NoSQL and cloud databases in one native app</h1>
       <p class="lede">
         DbRover is a native desktop database tool written in Rust: it opens in a moment and stays
@@ -312,12 +312,13 @@ db.orders.<span class="k">find</span>({status: <span class="s">"open"</span>}).<
         <div class="copy">
           <p class="eyebrow">Cloud data</p>
           <h3>Warehouses and data lakes, with the bill in view</h3>
-          <p>Athena, BigQuery and Trino are data sources like any other, and a DuckDB data
+          <p>Athena, BigQuery, Snowflake and Trino are data sources like any other, and a DuckDB data
             source reads Parquet, CSV and JSON files and Iceberg and Delta tables in Amazon S3,
             Google Cloud Storage or Azure Blob Storage, joined with its own tables.</p>
           <ul>
             <li>A cost guard: BigQuery's dry run says what a query would scan before it runs,
-              and asks above your limit; Athena stops a query that passes it.</li>
+              and asks above your limit; Athena stops a query that passes it, and Snowflake one
+              that runs past your time limit.</li>
             <li>DynamoDB asks before a statement reads a whole table.</li>
             <li>Progress as a statement runs, with the rows and bytes read so far.</li>
             <li>Buckets in the explorer beside the database, signed in with the account already
@@ -504,6 +505,7 @@ db.orders.<span class="k">find</span>({status: <span class="s">"open"</span>}).<
         <li><span class="engine-logo dynamodb" aria-hidden="true"></span>Amazon DynamoDB</li>
         <li><span class="engine-logo athena" aria-hidden="true"></span>Amazon Athena</li>
         <li><span class="engine-logo bigquery" aria-hidden="true"></span>Google BigQuery</li>
+        <li><span class="engine-logo snowflake" aria-hidden="true"></span>Snowflake</li>
         <li><span class="engine-logo trino" aria-hidden="true"></span>Trino, Starburst and Presto</li>
       </ul>
       <p class="planned">And the services that run them: Amazon RDS, Aurora and Redshift, Cloud SQL,
