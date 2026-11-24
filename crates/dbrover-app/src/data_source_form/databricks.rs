@@ -109,12 +109,22 @@ impl DatabricksFields {
             host: required(&self.host, FormError::HostMissing)?,
             sign_in,
             password_command: None,
-            warehouse: required(&self.warehouse, FormError::WarehouseMissing)?,
+            warehouse: warehouse_id(&required(&self.warehouse, FormError::WarehouseMissing)?),
             catalog: self.catalog.trim().to_owned(),
             schema: self.schema.trim().to_owned(),
             cost_guard: self.cost_guard,
         })
     }
+}
+
+/// The warehouse's id from what was typed: the id, or the HTTP path Databricks's connection
+/// details show (`/sql/1.0/warehouses/<id>`), which is what users copy.
+fn warehouse_id(typed: &str) -> String {
+    let typed = typed.trim_end_matches('/');
+    typed
+        .rsplit_once("/warehouses/")
+        .map_or(typed, |(_, id)| id)
+        .to_owned()
 }
 
 #[cfg(test)]
@@ -157,6 +167,15 @@ mod tests {
                 "{choice:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_warehouses_http_path_saves_as_its_id() {
+        let pasted = DatabricksFields {
+            warehouse: " /sql/1.0/warehouses/abc123def456 ".into(),
+            ..fields()
+        };
+        assert_eq!(pasted.to_config().unwrap().warehouse, "abc123def456");
     }
 
     #[test]

@@ -29,7 +29,7 @@ use dbrover_core::{
     CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, ChildrenPage,
     ChildrenQuery, ColumnInfo, Connection, DatabricksConfig, DatabricksSignIn, DriverError, Jobs,
     Password, ProgressHandle, Rejection, RelationName, ResultCursor, Row, ServerInfo,
-    TableConstraints, TableDescription, TableName, TransactionStatus,
+    TableConstraints, TableDescription, TableName, TimeLimit, TransactionStatus,
 };
 use serde::Deserialize;
 
@@ -45,10 +45,68 @@ const PRODUCT: &str = "Databricks";
 /// it.
 const WAREHOUSES: &str = "/api/2.0/sql/warehouses";
 
-/// What reading a warehouse answers that DbRover uses.
+/// What reading a warehouse answers that DbRover shows.
 #[derive(Debug, Deserialize)]
 struct Warehouse {
     name: String,
+    #[serde(default)]
+    cluster_size: Option<String>,
+    #[serde(default)]
+    state: Option<String>,
+    #[serde(default)]
+    enable_serverless_compute: bool,
+    #[serde(default)]
+    warehouse_type: Option<String>,
+    /// The warehouse's own `STATEMENT_TIMEOUT`, in seconds; none or 0 for the workspace's.
+    #[serde(default)]
+    statement_timeout: Option<u32>,
+}
+
+impl Warehouse {
+    /// `warehouse Shared (Small, serverless, stopped; stops statements after 1 h)`, what of it
+    /// the answer says: Test connection's line, which names what each statement runs on and
+    /// whether running one will start it.
+    fn describe(&self) -> String {
+        let kind = if self.enable_serverless_compute {
+            Some("serverless".to_owned())
+        } else {
+            self.warehouse_type
+                .as_deref()
+                .filter(|kind| !kind.is_empty() && *kind != "TYPE_UNSPECIFIED")
+                .map(str::to_lowercase)
+        };
+        let parts: Vec<String> = [
+            self.cluster_size.clone(),
+            kind,
+            self.state.as_deref().map(str::to_lowercase),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|part| !part.is_empty())
+        .collect();
+        let limit = self
+            .statement_timeout
+            .and_then(TimeLimit::from_seconds)
+            .map(|limit| format!("; stops statements after {limit}"));
+        match (parts.is_empty(), limit) {
+            (true, None) => format!("warehouse {}", self.name),
+            (_, limit) => format!(
+                "warehouse {} ({}{})",
+                self.name,
+                parts.join(", "),
+                limit.unwrap_or_default()
+            ),
+        }
+    }
+}
+
+/// The warehouse's id in what a data source names: the id itself, or the HTTP path
+/// Databricks's connection details show for it, `/sql/1.0/warehouses/<id>`.
+fn warehouse_id(named: &str) -> &str {
+    let named = named.trim().trim_end_matches('/');
+    named
+        .rsplit_once("/warehouses/")
+        .map_or(named, |(_, id)| id)
 }
 
 /// Signs in as `config` says, with `secret` (a personal access token or a service principal's
@@ -79,7 +137,7 @@ pub async fn connect(
     }
     let address = config.address();
     let api = Api::new(&address, signing_in(config, &address, secret)?).map_err(errors::connect)?;
-    let warehouse_id = config.warehouse.trim().to_owned();
+    let warehouse_id = warehouse_id(&config.warehouse).to_owned();
     let warehouse: Warehouse = api
         .get(&format!("{WAREHOUSES}/{warehouse_id}"))
         .await
@@ -92,14 +150,19 @@ pub async fn connect(
         catalog: config.catalog.trim().to_owned(),
         schema: config.schema.trim().to_owned(),
     };
-    let statements = Arc::new(DatabricksJobs::new(api, warehouse_id, context));
+    let statements = Arc::new(DatabricksJobs::new(
+        api,
+        warehouse_id.clone(),
+        context,
+        config.cost_guard.stop_after,
+    ));
     let jobs = Jobs::new(Arc::clone(&statements) as Arc<dyn dbrover_core::JobService>);
     Ok(DatabricksConnection {
         server_info: ServerInfo::new(
             PRODUCT,
-            format!("{}, warehouse {}", config.host.trim(), warehouse.name),
+            format!("{}, {}", config.host.trim(), warehouse.describe()),
         ),
-        warehouse: config.warehouse.trim().to_owned(),
+        warehouse: warehouse_id,
         statements,
         jobs,
     })
@@ -310,5 +373,45 @@ impl ResultCursor for Said {
 
     async fn finish(self: Box<Self>) -> Result<Option<u64>, DriverError> {
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod warehouse_tests {
+    use super::*;
+
+    #[test]
+    fn a_warehouse_is_named_by_its_id_or_its_http_path() {
+        for (named, id) in [
+            ("abc123def456", "abc123def456"),
+            (" /sql/1.0/warehouses/abc123def456 ", "abc123def456"),
+            ("/sql/1.0/warehouses/abc123def456/", "abc123def456"),
+        ] {
+            assert_eq!(warehouse_id(named), id, "{named}");
+        }
+    }
+
+    #[test]
+    fn test_connection_says_what_statements_run_on() {
+        let read = |json: serde_json::Value| -> Warehouse {
+            serde_json::from_value(json).expect("a warehouse")
+        };
+        let cases = [
+            (
+                serde_json::json!({"name": "Shared", "cluster_size": "Small", "state": "STOPPED",
+                    "enable_serverless_compute": true, "warehouse_type": "PRO",
+                    "statement_timeout": 3600}),
+                "warehouse Shared (Small, serverless, stopped; stops statements after 1 h)",
+            ),
+            (
+                serde_json::json!({"name": "ETL", "cluster_size": "2X-Large", "state": "RUNNING",
+                    "warehouse_type": "CLASSIC", "statement_timeout": 0}),
+                "warehouse ETL (2X-Large, classic, running)",
+            ),
+            (serde_json::json!({"name": "Bare"}), "warehouse Bare"),
+        ];
+        for (json, said) in cases {
+            assert_eq!(read(json).describe(), said);
+        }
     }
 }

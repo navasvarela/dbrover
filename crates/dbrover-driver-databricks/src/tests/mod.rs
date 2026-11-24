@@ -58,7 +58,10 @@ async fn connects_by_reading_its_warehouse_and_pings_the_same_way() {
     assert_eq!(connection.server_info().product, "Databricks");
     assert_eq!(
         connection.server_info().version,
-        format!("{}, warehouse Shared", replay.endpoint)
+        format!(
+            "{}, warehouse Shared (Small, serverless, stopped)",
+            replay.endpoint
+        )
     );
     conformance::check_lifecycle(Box::new(connection)).await;
     assert!(replay.header("/api/", "user-agent").iter().all(|agent| {
@@ -274,6 +277,30 @@ async fn use_changes_what_the_next_statement_is_sent_with_and_set_is_refused() {
     );
     let (_, rows) = run(&mut connection, "SELECT 1").await;
     assert_eq!(rows, [vec![text("1")]]);
+    replay.finish();
+}
+
+#[tokio::test]
+async fn a_statement_past_the_time_limit_is_cancelled_and_says_so() {
+    let replay = Replay::start(include_str!("exchanges/limit.json")).await;
+    let config = DatabricksConfig {
+        warehouse: "/sql/1.0/warehouses/abc123def456".to_owned(),
+        cost_guard: dbrover_core::CostGuard {
+            stop_after: dbrover_core::TimeLimit::from_seconds(1),
+            ..dbrover_core::CostGuard::default()
+        },
+        ..config(&replay)
+    };
+    let mut connection = connected(&config).await;
+    let Err(error) = connection.execute("SELECT COUNT(*) FROM big.events").await else {
+        panic!("the statement ran past its limit");
+    };
+    let said = describe_error(&error);
+    assert!(
+        said.contains("after 1 s, this data source's limit"),
+        "{said}"
+    );
+    assert!(said.contains("warehouse abc123def456"), "{said}");
     replay.finish();
 }
 

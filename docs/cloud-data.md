@@ -1730,13 +1730,24 @@ workspace.
   `hive_metastore` is marked *legacy Hive metastore*; where Unity Catalog's API refuses to list
   what it holds, it shows empty rather than failing each time it is opened, as the open
   question's default settled, while any other catalog's refusal is still an error.
-- **C6f — The time limit and the warehouse:** the time budget kept by cancelling at the poll
+- **C6f — The time limit and the warehouse** (built): the time budget kept by cancelling at the poll
   past it, the warehouse's name, size, state and own limit in Test connection, and the
   warehouse's HTTP path read as its id.
   **Exit:** replayed, a statement on a data source with a 2-second limit is cancelled at the
   first poll past it and fails naming the limit and the warehouse; one without a limit runs
   on; Test connection says *warehouse Shared (Small, serverless, stopped)*; connecting reads the
   warehouse and sends no statement; `/sql/1.0/warehouses/abc123` saves as `abc123`.
+  **As built:** the poll that finds a statement `PENDING` or `RUNNING` past
+  **Stop statements after** posts its cancel, and so does every poll after it until Databricks
+  says it ended, since its cancel "might silently fail"; a statement that ends cancelled, failed
+  or closed after that fails saying *DbRover stopped the statement after 10 min, this data
+  source's limit, and warehouse abc123 was billed until then*, and one that succeeded in between
+  keeps its result. Test connection reads the warehouse's `cluster_size`,
+  `enable_serverless_compute` or `warehouse_type`, `state` and its own `statement_timeout`, as
+  *warehouse Shared (Small, serverless, stopped; stops statements after 1 h)*. Both the driver
+  and the dialog read an HTTP path as the id, so a data source file holding the path still
+  connects. `CostGuard::stop_after` is unchanged: the same `stop_after_seconds`, kept by the
+  driver here rather than the engine.
 - **C6g — Databricks in the data source dialog:** **New data source › Other cloud services ›
   Databricks**, with **Host**, **Sign in with** (personal access token, OAuth for a service
   principal with its **Client ID**, Databricks CLI, Azure CLI), the token or secret, **SQL
