@@ -26,6 +26,25 @@ pub(crate) const STATEMENTS: &str = "/api/2.0/sql/statements";
 /// in the query history.
 const QUERY_TAG: &str = "dbrover";
 
+/// How a statement's result is asked for: always through external links, which take a
+/// result of any size up to 100 GiB.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Format {
+    /// Rows as Databricks's text, for the console and everything that shows values (ADR 0004).
+    JsonArray,
+    /// Arrow IPC streams, a chunk each, for a report's source (ADR 0007, C6h).
+    ArrowStream,
+}
+
+impl Format {
+    fn name(self) -> &'static str {
+        match self {
+            Self::JsonArray => "JSON_ARRAY",
+            Self::ArrowStream => "ARROW_STREAM",
+        }
+    }
+}
+
 /// A statement DbRover started and hasn't read to its end.
 struct Started {
     /// Kept until it ends, to point into it from a failure's message.
@@ -132,7 +151,7 @@ impl DatabricksJobs {
     /// External links, not `INLINE`: an inline result fails past 25 MiB, and a statement
     /// can't be run again to fetch its rows another way, since it may have written
     /// (`docs/cloud-data.md`, C6, "Rows as text in the console, through external links").
-    fn body(&self, statement: &str) -> Value {
+    fn body(&self, statement: &str, format: Format) -> Value {
         let mut body = self
             .context
             .lock()
@@ -145,7 +164,7 @@ impl DatabricksJobs {
         );
         body.insert("wait_timeout".to_owned(), Value::from("0s"));
         body.insert("disposition".to_owned(), Value::from("EXTERNAL_LINKS"));
-        body.insert("format".to_owned(), Value::from("JSON_ARRAY"));
+        body.insert("format".to_owned(), Value::from(format.name()));
         body.insert("query_tags".to_owned(), json!([{ "key": QUERY_TAG }]));
         Value::Object(body)
     }
@@ -206,46 +225,65 @@ impl DatabricksJobs {
         }
     }
 
-    /// Chunk `index`'s rows, through its links: chunk 0's as the statement's answer gave it
-    /// (`known`), any other asked for. A link the storage refuses is renewed once by asking
-    /// for its chunk again: a link lasts 15 minutes at most, and a console may page a result
-    /// later than that.
+    /// Chunk `index`'s rows as text, from its links' JSON, or the rows written in the answer
+    /// itself where it has no links (`INLINE`, which C6 doesn't ask for but reads).
     async fn rows_of(
         &self,
         job: &JobId,
         index: u64,
         known: Option<Chunk>,
     ) -> Result<(Vec<Row>, Option<u64>), DriverError> {
+        let inline = known.as_ref().and_then(|chunk| chunk.data_array.clone());
+        let (downloads, next) = self.chunk_bytes(job, index, known).await?;
+        let mut rows = Vec::new();
+        for bytes in downloads {
+            let data: Vec<Vec<Value>> = serde_json::from_slice(&bytes).map_err(|error| {
+                errors::connection(ApiError::Unreadable(format!("a chunk's rows: {error}")))
+            })?;
+            rows.extend(results::rows(data));
+        }
+        if let Some(data) = inline {
+            rows.extend(results::rows(data));
+        }
+        Ok((rows, next))
+    }
+
+    /// What chunk `index`'s links hold, each link's bytes, and the next chunk's index: chunk
+    /// 0's links as the statement's answer gave them (`known`), any other's asked for. A link
+    /// the storage refuses is renewed once by asking for its chunk again: a link lasts 15
+    /// minutes at most, and a result may be read later than that.
+    pub(crate) async fn chunk_bytes(
+        &self,
+        job: &JobId,
+        index: u64,
+        known: Option<Chunk>,
+    ) -> Result<(Vec<Vec<u8>>, Option<u64>), DriverError> {
         let chunk = match known {
             Some(chunk) => chunk,
             None => self.chunk(job, index).await?,
         };
-        if let Some(rows) = self.chunk_rows(&chunk).await? {
-            return Ok((rows, chunk.next_chunk_index));
+        if let Some(downloads) = self.downloads(&chunk).await? {
+            return Ok((downloads, chunk.next_chunk_index));
         }
         let renewed = self.chunk(job, index).await?;
-        let rows = self.chunk_rows(&renewed).await?.ok_or_else(|| {
+        let downloads = self.downloads(&renewed).await?.ok_or_else(|| {
             errors::connection(ApiError::Unreadable(format!(
                 "chunk {index}'s link was refused, and refused again once renewed"
             )))
         })?;
-        Ok((rows, renewed.next_chunk_index))
+        Ok((downloads, renewed.next_chunk_index))
     }
 
-    /// The rows of `chunk`'s links and of its own `data_array`; `None` when the storage
-    /// refused a link.
-    async fn chunk_rows(&self, chunk: &Chunk) -> Result<Option<Vec<Row>>, DriverError> {
-        let mut rows = Vec::new();
+    /// Each of `chunk`'s links' bytes; `None` when the storage refused one.
+    async fn downloads(&self, chunk: &Chunk) -> Result<Option<Vec<Vec<u8>>>, DriverError> {
+        let mut downloads = Vec::new();
         for link in &chunk.external_links {
             match self.download(link).await? {
-                Downloaded::Rows(data) => rows.extend(results::rows(data)),
+                Downloaded::Bytes(bytes) => downloads.push(bytes),
                 Downloaded::Refused => return Ok(None),
             }
         }
-        if let Some(data) = &chunk.data_array {
-            rows.extend(results::rows(data.clone()));
-        }
-        Ok(Some(rows))
+        Ok(Some(downloads))
     }
 
     async fn chunk(&self, job: &JobId, index: u64) -> Result<Chunk, DriverError> {
@@ -258,7 +296,7 @@ impl DatabricksJobs {
             .map_err(|error| errors::connection(ApiError::Unreadable(error.to_string())))
     }
 
-    /// A link's rows, or [`Downloaded::Refused`] when the storage refuses it, as it does once
+    /// A link's bytes, or [`Downloaded::Refused`] when the storage refuses it, as it does once
     /// the link has expired; the status that says so differs between clouds.
     async fn download(&self, link: &ExternalLink) -> Result<Downloaded, DriverError> {
         let answer = self
@@ -267,11 +305,7 @@ impl DatabricksJobs {
             .await
             .map_err(errors::connection)?;
         match answer.status {
-            200 => serde_json::from_slice(&answer.body)
-                .map(Downloaded::Rows)
-                .map_err(|error| {
-                    errors::connection(ApiError::Unreadable(format!("a chunk's rows: {error}")))
-                }),
+            200 => Ok(Downloaded::Bytes(answer.body.to_vec())),
             400 | 403 | 404 | 410 => Ok(Downloaded::Refused),
             status => Err(errors::connection(ApiError::Unreadable(format!(
                 "a chunk's download answered HTTP {status}"
@@ -282,7 +316,7 @@ impl DatabricksJobs {
 
 /// What a link's download gave.
 enum Downloaded {
-    Rows(Vec<Vec<Value>>),
+    Bytes(Vec<u8>),
     /// The storage refused the link, which a fresh one may not be.
     Refused,
 }
@@ -296,12 +330,16 @@ fn read_statement(body: Value) -> Result<Statement, DriverError> {
         .map_err(|error| errors::connection(ApiError::Unreadable(error.to_string())))
 }
 
-#[async_trait]
-impl JobService for DatabricksJobs {
-    async fn submit(&self, statement: &str) -> Result<JobId, DriverError> {
+impl DatabricksJobs {
+    /// Starts running `statement`, its result asked for in `format`.
+    pub(crate) async fn submit_as(
+        &self,
+        statement: &str,
+        format: Format,
+    ) -> Result<JobId, DriverError> {
         let reply = self
             .api
-            .post(STATEMENTS, &self.body(statement))
+            .post(STATEMENTS, &self.body(statement, format))
             .await
             .map_err(|error| errors::statement(error, statement))?;
         if reply.status != 200 {
@@ -324,6 +362,20 @@ impl JobService for DatabricksJobs {
             },
         );
         Ok(job)
+    }
+
+    /// A finished statement's manifest and chunk 0, which its last poll kept, taken: what an
+    /// Arrow cursor reads its result from.
+    pub(crate) fn take_result(&self, job: &JobId) -> Option<(Manifest, Chunk)> {
+        let finished = self.started().remove(job)?.result?;
+        Some((finished.manifest, finished.first))
+    }
+}
+
+#[async_trait]
+impl JobService for DatabricksJobs {
+    async fn submit(&self, statement: &str) -> Result<JobId, DriverError> {
+        self.submit_as(statement, Format::JsonArray).await
     }
 
     async fn poll(&self, job: &JobId) -> Result<JobState, DriverError> {

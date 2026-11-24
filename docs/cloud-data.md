@@ -1765,7 +1765,7 @@ workspace.
   secret**, rather than a token: `ConnectionConfig::with_user` signs it in with OAuth for
   machines in place of the data source's own sign-in, and the read-only level's advice names
   the grants it needs. The kittest also saves a warehouse's HTTP path as its id.
-- **C6h — Reports: Arrow through external links, and `EXPLAIN COST`:** `execute_for_batches`
+- **C6h — Reports: Arrow through external links, and `EXPLAIN COST`** (built): `execute_for_batches`
   with `ARROW_STREAM`, chunks fetched ahead from their links and read with `arrow-ipc`, columns
   outside the bulk types sent as text, expired links renewed; `handoff =` refused on a
   Databricks source at planning; Explain report's `EXPLAIN COST` and its estimate.
@@ -1774,6 +1774,21 @@ workspace.
   answered 403 as expired is renewed and read; a source with `handoff` is refused before the run
   says why; Explain report shows `EXPLAIN COST`'s plan and an *at most* estimate from its
   relations.
+  **As built:** the batches' schema comes from the manifest's types, so it is known before the
+  first chunk and for a result with none: `BOOLEAN`, the integers, `FLOAT`, `DOUBLE`, `DATE`,
+  `TIMESTAMP` (in UTC), `TIMESTAMP_NTZ` and a `DECIMAL` of up to 38 digits keep their types,
+  and every other column is text, Arrow's formatting of it (`[new, vip]` for an array), which
+  can differ from the console's `JSON_ARRAY` text, as ADR 0007 allows. Each chunk's Arrow is
+  cast to that schema, which also renames a zone (`Etc/UTC` to `UTC`). Three chunks are fetched
+  at once, by their index from the manifest's `total_chunk_count`, each link's stream read whole
+  (the documented API sends none compressed); reading links, renewing a refused one included,
+  is shared with the console's JSON (`DatabricksJobs::chunk_bytes`). `Jobs` in `dbrover-core`
+  gains `wait_for`, which waits for a job a driver submitted itself, as the running job the
+  cancel and progress handles act on. Explain report's estimate adds up the `sizeInBytes` of
+  the optimized plan's `Relation` lines (Spark's binary units), *at most*, beside the data
+  source's limit, when the engine's own estimate (`estimate_cost`, `None` on Databricks) has
+  none; the console and runs never ask for it. The replay server answers by path, in any order,
+  what a test gives it, for the chunks fetched in parallel.
 - **C6i — Manual, demo note and the exit:** a page in the manual's Data sources part,
   **Databricks**, the C6 demo note in the roadmap with the live checks, and the exit test.
 

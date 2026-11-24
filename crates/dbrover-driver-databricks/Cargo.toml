@@ -9,6 +9,11 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+# A report's source reads Databricks's ARROW_STREAM chunks as batches (ADR 0007, C6h).
+arrow-array.workspace = true
+arrow-cast.workspace = true
+arrow-ipc.workspace = true
+arrow-schema.workspace = true
 async-trait.workspace = true
 dbrover-cloud.workspace = true
 dbrover-core.workspace = true
@@ -20,6 +25,8 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
+# Writes the Arrow chunks the replay server serves.
+arrow-ipc = { workspace = true }
 dbrover-core = { workspace = true, features = ["conformance"] }
 # The test server that replays Databricks's exchanges listens on the loopback address.
 tokio = { workspace = true, features = ["net", "io-util", "macros", "rt-multi-thread"] }

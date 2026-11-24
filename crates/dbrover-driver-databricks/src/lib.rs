@@ -10,9 +10,11 @@
 //! OAuth or CLI.
 
 mod api;
+mod batches;
 mod catalog;
 mod context;
 mod errors;
+pub mod explain;
 mod results;
 mod statements;
 #[cfg(test)]
@@ -26,7 +28,7 @@ use dbrover_cloud::databricks::{
 };
 use dbrover_cloud::entra::{EntraSignIn, EntraTool};
 use dbrover_core::{
-    CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, ChildrenPage,
+    CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, Cell, ChildrenPage,
     ChildrenQuery, ColumnInfo, Connection, DatabricksConfig, DatabricksSignIn, DriverError, Jobs,
     Password, ProgressHandle, Rejection, RelationName, ResultCursor, Row, ServerInfo,
     TableConstraints, TableDescription, TableName, TimeLimit, TransactionStatus,
@@ -276,6 +278,26 @@ impl Connection for DatabricksConnection {
     /// Catalog: no warehouse runs to show a definition.
     async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError> {
         self.lister().definition(path).await
+    }
+
+    /// The statement's rows as Arrow batches through its external links, for a report's
+    /// source: `ARROW_STREAM` rather than the console's text (ADR 0007, C6h).
+    ///
+    /// Databricks's statements take no bound values here (a report's parameters are written in
+    /// as literals), so the statement goes as it is.
+    async fn execute_for_batches(
+        &mut self,
+        sql: &str,
+        values: &[Cell],
+    ) -> Result<Box<dyn ResultCursor>, DriverError> {
+        if !values.is_empty() {
+            return Err(DriverError::Statement {
+                source: "Databricks's statements take no bound values here".into(),
+                position: None,
+                sqlstate: None,
+            });
+        }
+        batches::execute(&self.statements, &self.jobs, sql).await
     }
 
     /// A statement, but for a `USE`, which changes what this connection's later statements

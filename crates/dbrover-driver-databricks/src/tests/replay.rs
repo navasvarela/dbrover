@@ -8,7 +8,9 @@
 //! JSON body to answer with. The server serves the external links too, at paths of their own
 //! (`/links/…`), so `{endpoint}` in an answer stands for the server's own address. An exchange
 //! marked `"repeat": true` answers every request it matches until one matches the exchange after
-//! it, for polls whose number depends on timing; `"retry_after"` sends that header.
+//! it, for polls whose number depends on timing; `"retry_after"` sends that header. Answers a
+//! test gives by path ([`Unordered`]) are sent whenever their path is asked for, in any order,
+//! for the chunks an Arrow cursor fetches in parallel.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -140,6 +142,7 @@ impl Request {
 #[derive(Default)]
 struct State {
     remaining: VecDeque<Exchange>,
+    unordered: Vec<Unordered>,
     /// Every request's path and headers, in order.
     requests: Vec<(String, Vec<(String, String)>)>,
     /// Requests that didn't match the file, which fail the test in [`Replay::finish`].
@@ -185,6 +188,13 @@ impl State {
     }
 }
 
+/// An answer sent whenever its path is asked for: its body as bytes, and their content type.
+pub(crate) struct Unordered {
+    pub path: String,
+    pub body: Vec<u8>,
+    pub content_type: &'static str,
+}
+
 /// A running replay: where it listens, and what is left of its file.
 pub(crate) struct Replay {
     /// `http://127.0.0.1:<port>`, the data source's endpoint.
@@ -195,6 +205,11 @@ pub(crate) struct Replay {
 impl Replay {
     /// Starts answering with the exchanges of `file`, a file's JSON text.
     pub async fn start(file: &str) -> Self {
+        Self::start_with(file, Vec::new()).await
+    }
+
+    /// Starts answering with the exchanges of `file`, and with `unordered` by their paths.
+    pub async fn start_with(file: &str, unordered: Vec<Unordered>) -> Self {
         let file: Value = serde_json::from_str(file).expect("an exchanges file is JSON");
         let remaining = file["exchanges"]
             .as_array()
@@ -204,6 +219,7 @@ impl Replay {
             .collect();
         let state = Arc::new(Mutex::new(State {
             remaining,
+            unordered,
             ..State::default()
         }));
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("a port");
@@ -255,17 +271,42 @@ impl Replay {
 /// Answers the requests of one connection, which the client keeps open between them.
 async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>, endpoint: String) {
     while let Some(request) = read_request(&mut stream).await {
-        let (status, response, retry_after) =
-            state.lock().expect("the replay's state").answer(&request);
-        let body = response
-            .to_string()
-            .replace(ENDPOINT, &endpoint)
-            .into_bytes();
+        let (status, body, content_type, retry_after) = {
+            let mut state = state.lock().expect("the replay's state");
+            let found = state
+                .unordered
+                .iter()
+                .find(|answer| answer.path == request.path)
+                .map(|answer| (answer.body.clone(), answer.content_type));
+            match found {
+                Some((body, content_type)) => {
+                    state
+                        .requests
+                        .push((request.path.clone(), request.headers.clone()));
+                    (200, body, content_type, None)
+                }
+                None => {
+                    let (status, response, retry_after) = state.answer(&request);
+                    let body = response
+                        .to_string()
+                        .replace(ENDPOINT, &endpoint)
+                        .into_bytes();
+                    (status, body, "application/json", retry_after)
+                }
+            }
+        };
+        let body = if content_type == "application/json" {
+            String::from_utf8_lossy(&body)
+                .replace(ENDPOINT, &endpoint)
+                .into_bytes()
+        } else {
+            body
+        };
         let retry_after = retry_after
             .map(|seconds| format!("retry-after: {seconds}\r\n"))
             .unwrap_or_default();
         let head = format!(
-            "HTTP/1.1 {status} Replayed\r\ncontent-type: application/json\r\n{retry_after}\
+            "HTTP/1.1 {status} Replayed\r\ncontent-type: {content_type}\r\n{retry_after}\
              content-length: {}\r\n\r\n",
             body.len()
         );
