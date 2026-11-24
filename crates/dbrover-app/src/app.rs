@@ -3844,6 +3844,93 @@ mod tests {
         );
     }
 
+    /// Databricks from **New data source › Other cloud services** (C6): refused without its
+    /// warehouse, then as a service principal without its client ID, then saved as typed, the
+    /// warehouse's HTTP path as its id, with the 10-minute limit a new one starts with.
+    #[test]
+    fn adds_a_databricks_data_source_from_the_other_cloud_services_menu() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "No data sources yet.");
+
+        harness
+            .get_all_by_label("New data source")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness
+            .get_by_label_contains("Other cloud services")
+            .hover();
+        step_until_visible(&mut harness, "Databricks");
+        // The submenu opens below the window's edge and is moved up to fit on the next frame:
+        // click it where it settles.
+        harness.run();
+        harness.get_by_label("Databricks").click();
+        harness.run();
+        harness.get_by_label_contains("New Databricks data source");
+        let type_into = |harness: &mut Harness<'_, DbRoverApp>, field: &str, text: &str| {
+            harness
+                .get_by_role_and_label(Role::TextInput, field)
+                .focus();
+            harness.run();
+            harness
+                .get_by_role_and_label(Role::TextInput, field)
+                .type_text(text);
+            harness.run();
+        };
+        type_into(
+            &mut harness,
+            "Host",
+            "dbc-a1b2c3d4-e5f6.cloud.databricks.com",
+        );
+        harness.get_by_label("Save").click();
+        harness.run();
+        step_until_visible(
+            &mut harness,
+            "SQL warehouse is required: Databricks runs every statement on one.",
+        );
+        type_into(
+            &mut harness,
+            "SQL warehouse",
+            "/sql/1.0/warehouses/abc123def456",
+        );
+        harness.get_by_label("Service principal").click();
+        harness.run();
+        harness.get_by_label("Save").click();
+        harness.run();
+        step_until_visible(
+            &mut harness,
+            "Client ID is required to sign in as a service principal.",
+        );
+        type_into(&mut harness, "Client ID", "a1b2-client");
+        harness.get_by_label("Save").click();
+
+        step_until_visible(&mut harness, "Expand dbc-a1b2c3d4-e5f6");
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        let [saved] = saved.as_slice() else {
+            panic!("expected one data source, got {saved:?}");
+        };
+        assert_eq!(
+            saved.config,
+            dbrover_core::ConnectionConfig::Databricks(dbrover_core::DatabricksConfig {
+                host: "dbc-a1b2c3d4-e5f6.cloud.databricks.com".to_owned(),
+                sign_in: dbrover_core::DatabricksSignIn::ServicePrincipal {
+                    client_id: "a1b2-client".to_owned(),
+                },
+                warehouse: "abc123def456".to_owned(),
+                cost_guard: dbrover_core::CostGuard {
+                    stop_after: dbrover_core::TimeLimit::from_seconds(600),
+                    ..dbrover_core::CostGuard::default()
+                },
+                ..dbrover_core::DatabricksConfig::default()
+            })
+        );
+    }
+
     /// Starburst Galaxy from **New data source › Other cloud services** (C3): Trino's dialog on
     /// HTTPS's port with `verify-full`, the host naming the service.
     #[test]

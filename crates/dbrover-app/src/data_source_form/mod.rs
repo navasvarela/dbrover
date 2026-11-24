@@ -14,6 +14,7 @@ mod server;
 mod service;
 mod snowflake;
 mod ssh;
+mod time_limit;
 mod trino;
 
 use dbrover_core::{
@@ -29,7 +30,9 @@ pub use athena::{AthenaFields, LIMIT_LABEL as ATHENA_LIMIT_LABEL};
 pub use bigquery::{BigQueryFields, BigQuerySignIn, LIMIT_LABEL as BIGQUERY_LIMIT_LABEL};
 pub use bucket::{BucketFields, BucketSignIn, LAKE_LIMIT_LABEL};
 pub use cassandra::CassandraFields;
-pub use databricks::{DatabricksFields, DatabricksSignInChoice};
+pub use databricks::{
+    DatabricksFields, DatabricksSignInChoice, LIMIT_LABEL as DATABRICKS_LIMIT_LABEL,
+};
 pub use dynamodb::DynamoDbFields;
 pub use elasticsearch::ElasticsearchFields;
 pub use mongo::{MongoFields, MongoTarget};
@@ -160,8 +163,9 @@ pub enum FormError {
     WarehouseMissing,
     #[error("Client ID is required to sign in as a service principal.")]
     ClientIdMissing,
-    #[error("{0} must be a number of minutes, such as 10 or 0.5, up to seven days.")]
-    InvalidTimeLimit(&'static str),
+    /// The field's label, and the longest limit the engine takes, as said.
+    #[error("{0} must be a number of minutes, such as 10 or 0.5, up to {1}.")]
+    InvalidTimeLimit(&'static str, &'static str),
     #[error("{1} doesn't sign in with {0}.")]
     BucketSignInNotOffered(&'static str, StorageProvider),
     #[error(

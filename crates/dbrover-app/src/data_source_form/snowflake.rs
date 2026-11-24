@@ -7,16 +7,16 @@ use std::path::PathBuf;
 use dbrover_core::{CostGuard, PasswordCommand, SnowflakeConfig, SnowflakeSignIn, TimeLimit};
 
 use super::FormError;
+use super::time_limit::{Longest, NEW_LIMIT_SECONDS, minutes, parse_minutes};
 
 /// The limit's field in the dialog, which its errors name.
 pub const LIMIT_LABEL: &str = "Stop statements after";
 
-/// What a new data source stops statements after: ten minutes, a sixth of an hour of its
-/// warehouse, so that a forgotten statement can't run on for Snowflake's default of two days
-/// (`docs/cloud-data.md`, C5, "Warehouse time and the time limit").
-const NEW_LIMIT_SECONDS: u32 = 600;
-
-const SECONDS_PER_MINUTE: f64 = 60.0;
+/// Snowflake's longest statement timeout: seven days, 604,800 seconds.
+const LONGEST: Longest = Longest {
+    minutes: 7.0 * 24.0 * 60.0,
+    said: "seven days",
+};
 
 /// How the data source signs in, as the dialog offers it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -73,31 +73,6 @@ impl Default for SnowflakeFields {
             ..SnowflakeConfig::default()
         })
     }
-}
-
-/// `limit` in minutes, as the field shows it: `10`, or `0.5` for thirty seconds.
-fn minutes(limit: TimeLimit) -> String {
-    let seconds = limit.seconds();
-    if seconds.is_multiple_of(60) {
-        (seconds / 60).to_string()
-    } else {
-        format!("{}", f64::from(seconds) / SECONDS_PER_MINUTE)
-    }
-}
-
-/// Minutes as typed (`10`, `0.5`) as a limit of whole seconds; `None` for text that isn't a
-/// positive number of minutes up to Snowflake's longest, seven days.
-fn parse_minutes(typed: &str) -> Option<TimeLimit> {
-    /// Snowflake's longest statement timeout: 604,800 seconds.
-    const LONGEST_MINUTES: f64 = 7.0 * 24.0 * 60.0;
-    let minutes: f64 = typed.trim().parse().ok()?;
-    if !(minutes > 0.0 && minutes <= LONGEST_MINUTES) {
-        return None;
-    }
-    // Within u32 by the bound above; rounded to the second Snowflake's timeout counts in.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let seconds = (minutes * SECONDS_PER_MINUTE).round() as u32;
-    TimeLimit::from_seconds(seconds)
 }
 
 impl SnowflakeFields {
@@ -174,7 +149,10 @@ impl SnowflakeFields {
         };
         let stop_after = match self.limit_minutes.trim() {
             "" => None,
-            typed => Some(parse_minutes(typed).ok_or(FormError::InvalidTimeLimit(LIMIT_LABEL))?),
+            typed => Some(
+                parse_minutes(typed, LONGEST)
+                    .ok_or(FormError::InvalidTimeLimit(LIMIT_LABEL, LONGEST.said))?,
+            ),
         };
         Ok(SnowflakeConfig {
             account: required(&self.account, FormError::AccountMissing)?,
@@ -247,7 +225,7 @@ mod tests {
             }
             .to_config();
             assert!(
-                matches!(refused, Err(FormError::InvalidTimeLimit(LIMIT_LABEL))),
+                matches!(refused, Err(FormError::InvalidTimeLimit(LIMIT_LABEL, _))),
                 "{typed}"
             );
         }

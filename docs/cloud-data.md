@@ -1748,7 +1748,7 @@ workspace.
   and the dialog read an HTTP path as the id, so a data source file holding the path still
   connects. `CostGuard::stop_after` is unchanged: the same `stop_after_seconds`, kept by the
   driver here rather than the engine.
-- **C6g — Databricks in the data source dialog:** **New data source › Other cloud services ›
+- **C6g — Databricks in the data source dialog** (built): **New data source › Other cloud services ›
   Databricks**, with **Host**, **Sign in with** (personal access token, OAuth for a service
   principal with its **Client ID**, Databricks CLI, Azure CLI), the token or secret, **SQL
   warehouse**, **Catalog**, **Schema** and **Stop statements after** (10 minutes for a new
@@ -1758,6 +1758,13 @@ workspace.
   **Exit:** a kittest adds a Databricks data source from the menu and it saves as typed, with its
   10-minute limit; one without a host or a warehouse is refused when saving, as is a service
   principal without its client id.
+  **As built:** what was left after C6d: **Stop statements after**, in minutes, 10 for a new
+  data source and two days at most (Databricks's own longest `STATEMENT_TIMEOUT`, past which a
+  limit of DbRover's would never be reached); the minutes' reading moved out of Snowflake's form
+  into one both share. The MCP login is a service principal, **MCP client ID** and **MCP client
+  secret**, rather than a token: `ConnectionConfig::with_user` signs it in with OAuth for
+  machines in place of the data source's own sign-in, and the read-only level's advice names
+  the grants it needs. The kittest also saves a warehouse's HTTP path as its id.
 - **C6h — Reports: Arrow through external links, and `EXPLAIN COST`:** `execute_for_batches`
   with `ARROW_STREAM`, chunks fetched ahead from their links and read with `arrow-ipc`, columns
   outside the bulk types sent as text, expired links renewed; `handoff =` refused on a
