@@ -1661,7 +1661,7 @@ workspace.
   (in `dbrover-core`) gains `quote_escape`, since Spark reads `'it''s'` as two strings side by
   side and joins them into `its`, so DbRover writes a quote in a Databricks string as `\'`; and
   the object helpers write no Databricks DDL in C6, as for Snowflake.
-- **C6c — Databricks's sign-in:** the `databricks` module in `dbrover-cloud`: a personal access
+- **C6c — Databricks's sign-in** (built): the `databricks` module in `dbrover-cloud`: a personal access
   token; a service principal's token from `/oidc/v1/token`, kept in a `TokenCache`; the
   Databricks CLI's `auth token`; and Entra ID's Azure Databricks resource.
   **Exit:** against a token endpoint on `127.0.0.1`, a client id and secret get a token sent as
@@ -1669,6 +1669,16 @@ workspace.
   a refused secret's message reaches the error; the CLI's JSON (`access_token`, `expiry`) is read
   from a stand-in program, and a CLI that isn't installed or isn't signed in says which command
   to run; the Azure resource asks `az` for `2ff814a6-…`; no type that holds a secret prints it.
+  **As built:** `DatabricksSignIn` hands out the bearer token for each of the four ways:
+  `Token` sends a personal access token as it is; `ServicePrincipalSignIn` posts
+  `grant_type=client_credentials` and `scope=all-apis` with the client's id and secret as HTTP's
+  basic scheme, and keeps the token in a `TokenCache` (an hour when the answer doesn't say);
+  `CliSignIn` runs `databricks auth token <workspace>` and reads its `access_token` and `expiry`;
+  `EntraDatabricksSignIn` asks C0c's Entra sign-in for the new `EntraResource::AzureDatabricks`,
+  `2ff814a6-3304-4ab8-85cb-cd0e6f879c1d/.default`, and caches it. Running a CLI (no shell, a
+  30-second limit, no console window on Windows, Homebrew's folders on a Mac) moved out of the
+  `entra` module into one both share, `program`. The stand-in token endpoint now hands back the
+  headers it was sent, so the test sees the basic sign-in.
 - **C6d — Databricks: settings and statements as jobs:** `ConnectionConfig::Databricks` and
   `DriverKind::Databricks` with the host, sign-in, warehouse, catalog, schema and C0's cost
   guard; a `dbrover-driver-databricks` crate implementing `JobService` over `dbrover-cloud`'s

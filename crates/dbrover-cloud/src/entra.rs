@@ -3,28 +3,13 @@
 //! token, as Azure's own libraries ask it, rather than its token cache read, which is
 //! encrypted on Windows and macOS and whose format is the CLI's own.
 
-use std::io;
-use std::process::Stdio;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use dbrover_core::Password;
 use serde::Deserialize;
 
+use crate::program::{self, Invocation, ProgramError};
 use crate::token::AccessToken;
-
-/// How long the CLI may take to answer. It refreshes its own token over the network when
-/// it needs to, which takes a few seconds at most; one that hangs holds the connection up.
-const PROGRAM_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Hides the console window Windows would otherwise open for a console program started from a
-/// GUI app (`CREATE_NO_WINDOW` in the Win32 process creation flags).
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-
-/// Where Homebrew puts `az` and `azd` on a Mac. An app started from the Finder doesn't get the
-/// terminal's `PATH`, so a program installed there isn't found by its name alone.
-#[cfg(target_os = "macos")]
-const MAC_INSTALL_FOLDERS: [&str; 2] = ["/opt/homebrew/bin", "/usr/local/bin"];
 
 /// The program whose sign-in a data source uses.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -45,6 +30,9 @@ pub enum EntraResource {
     AzureDatabase,
     /// Azure Blob Storage, for a DuckDB data source's container (C2).
     Storage,
+    /// Azure Databricks's workspaces (C6), whose first-party application Microsoft and
+    /// Databricks document by its id.
+    AzureDatabricks,
 }
 
 impl EntraResource {
@@ -54,6 +42,7 @@ impl EntraResource {
             Self::AzureSql => "https://database.windows.net/.default",
             Self::AzureDatabase => "https://ossrdbms-aad.database.windows.net/.default",
             Self::Storage => "https://storage.azure.com/.default",
+            Self::AzureDatabricks => "2ff814a6-3304-4ab8-85cb-cd0e6f879c1d/.default",
         }
     }
 }
@@ -71,36 +60,19 @@ pub struct EntraSignIn {
 pub enum EntraError {
     #[error("The tenant {0:?} isn't a tenant id or a domain")]
     BadTenant(String),
-    #[error("{program} was not found in DbRover's PATH; install it, and sign in with `{sign_in}`")]
-    NotInstalled {
-        program: &'static str,
-        sign_in: &'static str,
-    },
-    #[error("Couldn't run {program}: {source}")]
-    CouldNotRun {
-        program: &'static str,
-        source: io::Error,
-    },
+    #[error(transparent)]
+    Program(#[from] ProgramError),
     #[error("{program} gave no token ({status}): {stderr}")]
     Failed {
         program: &'static str,
         status: String,
         stderr: String,
     },
-    #[error("{program} gave no token within {} seconds", PROGRAM_TIMEOUT.as_secs())]
-    TimedOut { program: &'static str },
     #[error("{program}'s answer can't be read: {reason}")]
     Unreadable {
         program: &'static str,
         reason: String,
     },
-}
-
-/// A program to run, and its arguments, with no shell in between.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Invocation {
-    program: &'static str,
-    arguments: Vec<String>,
 }
 
 impl EntraTool {
@@ -130,7 +102,7 @@ impl EntraSignIn {
     /// past the timeout, or answers with something other than a token.
     pub async fn token(&self, resource: EntraResource) -> Result<AccessToken, EntraError> {
         let invocation = self.invocation(resource)?;
-        let output = run(&invocation, self.tool.sign_in_command()).await?;
+        let output = program::output(&invocation, self.tool.sign_in_command()).await?;
         if !output.status.success() {
             return Err(EntraError::Failed {
                 program: invocation.program,
@@ -176,56 +148,6 @@ impl EntraSignIn {
             arguments,
         })
     }
-}
-
-async fn run(
-    invocation: &Invocation,
-    sign_in: &'static str,
-) -> Result<std::process::Output, EntraError> {
-    let program = invocation.program;
-    let not_found = || EntraError::NotInstalled { program, sign_in };
-    let started = spawn_found(program, &invocation.arguments);
-    let child = match started {
-        Ok(child) => child,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Err(not_found()),
-        Err(source) => return Err(EntraError::CouldNotRun { program, source }),
-    };
-    tokio::time::timeout(PROGRAM_TIMEOUT, child.wait_with_output())
-        .await
-        .map_err(|_| EntraError::TimedOut { program })?
-        .map_err(|source| EntraError::CouldNotRun { program, source })
-}
-
-/// Starts `program` from the `PATH`, or on a Mac from where Homebrew installs it.
-fn spawn_found(program: &str, arguments: &[String]) -> io::Result<tokio::process::Child> {
-    let started = spawn(program, arguments);
-    #[cfg(target_os = "macos")]
-    if started
-        .as_ref()
-        .is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
-    {
-        let installed = MAC_INSTALL_FOLDERS
-            .iter()
-            .map(|folder| std::path::Path::new(folder).join(program))
-            .find(|path| path.is_file());
-        if let Some(path) = installed {
-            return spawn(&path.to_string_lossy(), arguments);
-        }
-    }
-    started
-}
-
-fn spawn(program: &str, arguments: &[String]) -> io::Result<tokio::process::Child> {
-    let mut command = tokio::process::Command::new(program);
-    command
-        .args(arguments)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    #[cfg(windows)]
-    command.creation_flags(CREATE_NO_WINDOW);
-    command.spawn()
 }
 
 /// `az account get-access-token`'s answer.
@@ -285,6 +207,8 @@ fn read_azure_developer_cli(stdout: &[u8]) -> Result<AccessToken, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     fn sign_in(tool: EntraTool, tenant: Option<&str>) -> EntraSignIn {
@@ -320,6 +244,14 @@ mod tests {
                  --tenant-id 72f988bf-86f1-41af-91ab-2d7cd011db47",
             ),
         ];
+        let databricks = sign_in(EntraTool::AzureCli, None)
+            .invocation(EntraResource::AzureDatabricks)
+            .unwrap();
+        assert_eq!(
+            databricks.arguments.join(" "),
+            "account get-access-token --scope 2ff814a6-3304-4ab8-85cb-cd0e6f879c1d/.default \
+             --output json"
+        );
         for (sign_in, resource, expected) in cases {
             let invocation = sign_in.invocation(resource).unwrap();
             assert_eq!(invocation.arguments.join(" "), expected);
@@ -373,28 +305,5 @@ mod tests {
         assert_eq!(token.secret.expose(), "eyJ0");
         let expected: jiff::Timestamp = "2026-11-02T13:00:00Z".parse().unwrap();
         assert_eq!(token.expires_at, SystemTime::from(expected));
-    }
-
-    /// Cargo stands in for the CLI: it is on every machine the tests run on, and with an
-    /// unknown subcommand it fails as `az` does when it isn't signed in.
-    #[tokio::test]
-    async fn a_program_that_fails_or_is_missing_says_so() {
-        let failing = Invocation {
-            program: env!("CARGO"),
-            arguments: vec!["no-such-subcommand-for-dbrover".into()],
-        };
-        let output = run(&failing, "az login").await.unwrap();
-        assert!(!output.status.success());
-
-        let missing = Invocation {
-            program: "dbrover-no-such-program",
-            arguments: Vec::new(),
-        };
-        let error = run(&missing, "az login").await.unwrap_err().to_string();
-        assert!(
-            error.contains("dbrover-no-such-program was not found"),
-            "{error}"
-        );
-        assert!(error.contains("az login"), "{error}");
     }
 }

@@ -96,6 +96,34 @@ impl Https {
         self.send(request).await
     }
 
+    /// As [`Https::post_form`], signed in with `credentials`, the `user:secret` pair already in
+    /// base64, as HTTP's basic scheme sends it: how an OAuth client authenticates to a token
+    /// endpoint (Databricks's service principals, C6c).
+    pub(crate) async fn post_form_with_basic(
+        &self,
+        address: &str,
+        form: &[(&str, &str)],
+        credentials: &Password,
+    ) -> Result<Answer, HttpError> {
+        let uri = sendable(address)?;
+        let body = form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(form)
+            .finish();
+        let mut request = Request::new(Full::new(Bytes::from(body)));
+        *request.method_mut() = Method::POST;
+        *request.uri_mut() = uri;
+        let mut basic = HeaderValue::from_str(&format!("Basic {}", credentials.expose()))
+            .map_err(|_| HttpError::BadAddress(address.to_owned()))?;
+        basic.set_sensitive(true);
+        let headers = request.headers_mut();
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/x-www-form-urlencoded"),
+        );
+        headers.insert(AUTHORIZATION, basic);
+        self.send(request).await
+    }
+
     /// Gets `address` with `headers`, which carry no secret of their own: a request signed
     /// with SigV4 shows only its signature, so it may go over plain HTTP to a store on the
     /// network, as DuckDB's own requests to it do.
@@ -296,6 +324,8 @@ pub mod stand_in {
     #[derive(Debug)]
     pub struct Received {
         pub request_line: String,
+        /// Each header's name, lowercased, and its value.
+        pub headers: Vec<(String, String)>,
         pub form: Vec<(String, String)>,
     }
 
@@ -304,6 +334,13 @@ pub mod stand_in {
             self.form
                 .iter()
                 .find(|(key, _)| key == name)
+                .map(|(_, value)| value.as_str())
+        }
+
+        pub fn header(&self, name: &str) -> Option<&str> {
+            self.headers
+                .iter()
+                .find(|(key, _)| key.eq_ignore_ascii_case(name))
                 .map(|(_, value)| value.as_str())
         }
     }
@@ -351,6 +388,7 @@ pub mod stand_in {
                 if read == 0 {
                     return Received {
                         request_line: text,
+                        headers: Vec::new(),
                         form: Vec::new(),
                     };
                 }
@@ -367,6 +405,14 @@ pub mod stand_in {
             if body.len() >= length || read == 0 {
                 return Received {
                     request_line: head.lines().next().unwrap_or_default().to_owned(),
+                    headers: head
+                        .lines()
+                        .skip(1)
+                        .filter_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            Some((name.trim().to_ascii_lowercase(), value.trim().to_owned()))
+                        })
+                        .collect(),
                     form: form_urlencoded::parse(body.as_bytes())
                         .into_owned()
                         .collect(),
