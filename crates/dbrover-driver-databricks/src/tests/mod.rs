@@ -378,6 +378,32 @@ async fn the_explorer_walks_unity_catalog_without_a_statement() {
 }
 
 #[tokio::test]
+async fn the_hive_metastore_shows_empty_where_unity_catalog_wont_list_it() {
+    let replay = Replay::start(include_str!("exchanges/hive.json")).await;
+    let mut connection = connected(&config(&replay)).await;
+    let catalogs = connection
+        .children(&CatalogPath::root())
+        .await
+        .expect("the catalogs");
+    assert_eq!(catalogs[0].label, "hive_metastore");
+    assert_eq!(catalogs[0].detail.as_deref(), Some("legacy Hive metastore"));
+    let schemas = connection
+        .children(&catalogs[0].path)
+        .await
+        .expect("an empty level, not an error");
+    assert!(schemas.is_empty());
+    let Err(error) = connection.children(&catalogs[1].path).await else {
+        panic!("another catalog's refusal was hidden");
+    };
+    assert!(
+        describe_error(&error).contains("USE CATALOG"),
+        "{}",
+        describe_error(&error)
+    );
+    replay.finish();
+}
+
+#[tokio::test]
 async fn a_schemas_tables_page_fifty_at_a_time() {
     let replay = Replay::start(include_str!("exchanges/tables-paged.json")).await;
     let mut connection = connected(&config(&replay)).await;

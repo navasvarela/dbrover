@@ -9,7 +9,7 @@ use dbrover_core::{
 };
 use serde_json::Value;
 
-use crate::api::Api;
+use crate::api::{Api, ApiError};
 use crate::errors;
 
 /// Unity Catalog's API, below the workspace's address.
@@ -21,6 +21,9 @@ const PAGE_SIZE: usize = 1000;
 
 /// The most tables one request may ask for: Unity Catalog's limit for listing them.
 const TABLES_PAGE_SIZE: usize = 50;
+
+/// A workspace's legacy Hive metastore, which Unity Catalog shows as a catalog of this name.
+const HIVE_METASTORE: &str = "hive_metastore";
 
 /// What a path names, by its shape.
 enum Level<'a> {
@@ -108,6 +111,34 @@ impl Lister<'_> {
     /// [`DriverError::InvalidPath`] for a path this driver never lists, and Databricks's error
     /// when a request fails.
     pub(crate) async fn page(
+        &self,
+        path: &CatalogPath,
+        query: &ChildrenQuery,
+    ) -> Result<ChildrenPage, DriverError> {
+        let listed = self.level_page(path, query).await;
+        let in_hive_metastore = path.name_of(NodeKind::Database) == Some(HIVE_METASTORE);
+        match listed {
+            // Whether Unity Catalog's API lists the legacy metastore's schemas and tables isn't
+            // documented; where it refuses, the catalog shows empty, its detail saying what it
+            // is, rather than an error on every expansion. Listing it with `SHOW` would start
+            // the warehouse (C6's open question 4, settled on this default).
+            Err(DriverError::Connection(error))
+                if in_hive_metastore
+                    && matches!(
+                        error.downcast_ref::<ApiError>(),
+                        Some(ApiError::Refused { .. })
+                    ) =>
+            {
+                Ok(ChildrenPage {
+                    nodes: Vec::new(),
+                    next: None,
+                })
+            }
+            listed => listed,
+        }
+    }
+
+    async fn level_page(
         &self,
         path: &CatalogPath,
         query: &ChildrenQuery,
@@ -382,6 +413,7 @@ fn catalog_node(parent: &CatalogPath, item: &Value) -> Option<CatalogNode> {
     let name = item["name"].as_str()?;
     let kind = text(item, "catalog_type");
     let detail = match kind {
+        _ if name == HIVE_METASTORE => Some("legacy Hive metastore".to_owned()),
         "" | "MANAGED_CATALOG" => None,
         "DELTASHARING_CATALOG" => Some("shared".to_owned()),
         "FOREIGN_CATALOG" => Some("foreign".to_owned()),

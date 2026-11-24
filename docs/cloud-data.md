@@ -1727,6 +1727,9 @@ workspace.
   a metric view writes its YAML in `WITH METRICS LANGUAGE YAML AS $$…$$`, and of a table adds
   `LOCATION` for an external one and its `COMMENT`. **Open data** reads ``SELECT * FROM
   main.`Sales EU`.orders LIMIT 1000``, backquoting only the names that need it.
+  `hive_metastore` is marked *legacy Hive metastore*; where Unity Catalog's API refuses to list
+  what it holds, it shows empty rather than failing each time it is opened, as the open
+  question's default settled, while any other catalog's refusal is still an error.
 - **C6f — The time limit and the warehouse:** the time budget kept by cancelling at the poll
   past it, the warehouse's name, size, state and own limit in Test connection, and the
   warehouse's HTTP path read as its id.

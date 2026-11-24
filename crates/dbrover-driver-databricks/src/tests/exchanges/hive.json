@@ -1,0 +1,58 @@
+{
+ "doc": "A workspace's legacy Hive metastore, which Unity Catalog lists as a catalog but whose schemas it refuses to list here (whether it does isn't documented): the catalog shows empty, marked, while another catalog's refusal is still an error.",
+ "exchanges": [
+  {
+   "method": "GET",
+   "path": "/api/2.0/sql/warehouses/abc123def456",
+   "response": {
+    "id": "abc123def456",
+    "name": "Shared"
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/catalogs",
+   "query": {
+    "max_results": "1000"
+   },
+   "response": {
+    "catalogs": [
+     {
+      "name": "hive_metastore",
+      "catalog_type": "INTERNAL_CATALOG"
+     },
+     {
+      "name": "main",
+      "catalog_type": "MANAGED_CATALOG"
+     }
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/schemas",
+   "query": {
+    "catalog_name": "hive_metastore",
+    "max_results": "1000"
+   },
+   "status": 400,
+   "response": {
+    "error_code": "INVALID_PARAMETER_VALUE",
+    "message": "Listing schemas of hive_metastore isn't supported."
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/schemas",
+   "query": {
+    "catalog_name": "main",
+    "max_results": "1000"
+   },
+   "status": 403,
+   "response": {
+    "error_code": "PERMISSION_DENIED",
+    "message": "User does not have USE CATALOG on Catalog 'main'."
+   }
+  }
+ ]
+}
