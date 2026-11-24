@@ -6,6 +6,7 @@ mod bigquery;
 mod bucket;
 mod byte_limit;
 mod cassandra;
+mod databricks;
 mod dynamodb;
 mod elasticsearch;
 mod mongo;
@@ -28,6 +29,7 @@ pub use athena::{AthenaFields, LIMIT_LABEL as ATHENA_LIMIT_LABEL};
 pub use bigquery::{BigQueryFields, BigQuerySignIn, LIMIT_LABEL as BIGQUERY_LIMIT_LABEL};
 pub use bucket::{BucketFields, BucketSignIn, LAKE_LIMIT_LABEL};
 pub use cassandra::CassandraFields;
+pub use databricks::{DatabricksFields, DatabricksSignInChoice};
 pub use dynamodb::DynamoDbFields;
 pub use elasticsearch::ElasticsearchFields;
 pub use mongo::{MongoFields, MongoTarget};
@@ -154,6 +156,10 @@ pub enum FormError {
     AccountMissing,
     #[error("Private key file is required to sign in with a key pair.")]
     PrivateKeyFileMissing,
+    #[error("SQL warehouse is required: Databricks runs every statement on one.")]
+    WarehouseMissing,
+    #[error("Client ID is required to sign in as a service principal.")]
+    ClientIdMissing,
     #[error("{0} must be a number of minutes, such as 10 or 0.5, up to seven days.")]
     InvalidTimeLimit(&'static str),
     #[error("{1} doesn't sign in with {0}.")]
@@ -218,6 +224,7 @@ pub enum DriverFields {
     BigQuery(BigQueryFields),
     Trino(TrinoFields),
     Snowflake(SnowflakeFields),
+    Databricks(DatabricksFields),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -316,6 +323,7 @@ impl DriverFields {
             DriverKind::BigQuery => Self::BigQuery(BigQueryFields::default()),
             DriverKind::Trino => Self::Trino(TrinoFields::new()),
             DriverKind::Snowflake => Self::Snowflake(SnowflakeFields::default()),
+            DriverKind::Databricks => Self::Databricks(DatabricksFields::default()),
         }
     }
 
@@ -389,6 +397,9 @@ impl DriverFields {
             ConnectionConfig::Snowflake(config) => {
                 Self::Snowflake(SnowflakeFields::from_config(config))
             }
+            ConnectionConfig::Databricks(config) => {
+                Self::Databricks(DatabricksFields::from_config(config))
+            }
         }
     }
 
@@ -409,6 +420,7 @@ impl DriverFields {
             Self::BigQuery(_) => DriverKind::BigQuery,
             Self::Trino(_) => DriverKind::Trino,
             Self::Snowflake(_) => DriverKind::Snowflake,
+            Self::Databricks(_) => DriverKind::Databricks,
         }
     }
 
@@ -429,7 +441,8 @@ impl DriverFields {
             | Self::DynamoDb(_)
             | Self::Athena(_)
             | Self::BigQuery(_)
-            | Self::Snowflake(_) => None,
+            | Self::Snowflake(_)
+            | Self::Databricks(_) => None,
         }
     }
 
@@ -462,6 +475,7 @@ impl DriverFields {
             Self::BigQuery(fields) => ConnectionConfig::BigQuery(fields.to_config()?),
             Self::Trino(fields) => ConnectionConfig::Trino(fields.to_config()?),
             Self::Snowflake(fields) => ConnectionConfig::Snowflake(fields.to_config()?),
+            Self::Databricks(fields) => ConnectionConfig::Databricks(fields.to_config()?),
         })
     }
 }
@@ -562,6 +576,7 @@ impl DataSourceForm {
                 Some(fields.secret.as_str()).filter(|secret| !secret.is_empty())
             }
             DriverFields::Snowflake(fields) => fields.typed_secret(),
+            DriverFields::Databricks(fields) => fields.typed_secret(),
             _ => self.fields.server().and_then(ServerFields::typed_password),
         };
         match typed {

@@ -20,6 +20,7 @@ the New data source menu and in the data source dialog.
 | `athena.svg` | A database glyph with a magnifying glass for Amazon Athena, drawn for DbRover (see below) | `#8C4FFF` |
 | `googlebigquery.svg` | Google BigQuery (its blue is darkened on the light theme) | `#669DF6` |
 | `snowflake.svg` | Snowflake (its blue is darkened on the light theme) | `#29B5E8` |
+| `databricks.svg` | Layers stacked, drawn for DbRover for Databricks (see below) | `#FF3621` |
 
 ## Source and licence
 
@@ -42,7 +43,9 @@ database a data source connects to. See each project's policy, e.g.
 under the same licence as DbRover, in the colour SQL Server's logo uses. So is `dynamodb.svg`:
 Simple Icons carries no Amazon logo, so it is a cylinder with a bolt through it, drawn for
 DbRover under DbRover's licence, in the blue of AWS's database icons. `athena.svg` is the same
-cylinder with a magnifying glass, in the purple of AWS's analytics icons.
+cylinder with a magnifying glass, in the purple of AWS's analytics icons. `databricks.svg` is
+three layers stacked, drawn for DbRover under DbRover's licence, in the red Databricks's logo
+uses, rather than Databricks's own mark.
 
 ## Adding a database
 

@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use dbrover_core::{
-    ConnectionConfig, DataSource, DataSourceId, DuckDbDatabase, GcsBucket, GoogleCloudSignIn,
-    ObjectStorage, ProjectId, ServerConfig, SnowflakeSignIn, SshLogin, TlsMode, Variables,
-    expand_path,
+    ConnectionConfig, DataSource, DataSourceId, DatabricksSignIn, DuckDbDatabase, GcsBucket,
+    GoogleCloudSignIn, ObjectStorage, ProjectId, ServerConfig, SnowflakeSignIn, SshLogin, TlsMode,
+    Variables, expand_path,
 };
 
 use super::Incoming;
@@ -549,6 +549,25 @@ fn data_source_settings(data_source: &DataSource, names: &ProjectNames) -> Setti
             }
             settings.push(("Endpoint", or_default(&config.endpoint, "Snowflake's own")));
         }
+        ConnectionConfig::Databricks(config) => {
+            settings.push(("Host", config.host.clone()));
+            let signs_in = match &config.sign_in {
+                DatabricksSignIn::PersonalAccessToken => "a personal access token".to_owned(),
+                DatabricksSignIn::ServicePrincipal { client_id } => {
+                    format!("service principal {client_id}")
+                }
+                DatabricksSignIn::DatabricksCli => "the Databricks CLI".to_owned(),
+                DatabricksSignIn::AzureCli { tenant } => match tenant {
+                    Some(tenant) => format!("the Azure CLI, tenant {tenant}"),
+                    None => "the Azure CLI".to_owned(),
+                },
+            };
+            settings.push(("Signs in with", signs_in));
+            settings.push(("SQL warehouse", config.warehouse.clone()));
+            for (name, value) in [("Catalog", &config.catalog), ("Schema", &config.schema)] {
+                settings.push((name, or_default(value, "the workspace's default")));
+            }
+        }
         ConnectionConfig::Sqlite(config) => {
             settings.push(("File", config.path.display().to_string()));
             settings.push(("Read-only", yes_no(config.read_only)));
@@ -644,7 +663,9 @@ fn yes_no(value: bool) -> String {
 fn paths(config: &ConnectionConfig) -> Vec<(&'static str, &Path)> {
     let server = match config {
         ConnectionConfig::Sqlite(config) => return vec![("File", &config.path)],
-        ConnectionConfig::DynamoDb(_) | ConnectionConfig::Athena(_) => return Vec::new(),
+        ConnectionConfig::DynamoDb(_)
+        | ConnectionConfig::Athena(_)
+        | ConnectionConfig::Databricks(_) => return Vec::new(),
         ConnectionConfig::Snowflake(config) => {
             return match &config.sign_in {
                 SnowflakeSignIn::KeyPair { private_key_file } => {

@@ -483,6 +483,7 @@ impl From<DriverKind> for QueryLanguage {
             DriverKind::Athena | DriverKind::Trino => Self::Sql(Dialect::Trino),
             DriverKind::BigQuery => Self::Sql(Dialect::BigQuery),
             DriverKind::Snowflake => Self::Sql(Dialect::Snowflake),
+            DriverKind::Databricks => Self::Sql(Dialect::Databricks),
         }
     }
 }
@@ -704,6 +705,7 @@ mod tests {
                 Some(Dialect::Trino),
                 Some(Dialect::BigQuery),
                 Some(Dialect::Snowflake),
+                Some(Dialect::Databricks),
             ]
         );
         assert_eq!(QueryLanguage::from(DriverKind::Redis), QueryLanguage::Redis);

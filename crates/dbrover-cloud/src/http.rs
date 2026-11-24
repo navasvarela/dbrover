@@ -168,6 +168,36 @@ impl Https {
         self.send(request).await
     }
 
+    /// Gets `address` with `headers` and no token of DbRover's: an address that carries its
+    /// own signature, as Databricks's external links do, which must be fetched without the
+    /// workspace's token (`docs/cloud-data.md`, C6d). The headers are the link's own, which
+    /// may hold a decryption key, so they are marked sensitive.
+    ///
+    /// # Errors
+    ///
+    /// [`HttpError`] when the address or a header can't be sent, or the address can't be
+    /// reached; an answer with an error status is an [`Answer`] all the same.
+    pub async fn get_presigned(
+        &self,
+        address: &str,
+        headers: &[(String, String)],
+    ) -> Result<Answer, HttpError> {
+        let uri: Uri = address
+            .parse()
+            .map_err(|_| HttpError::BadAddress(address.to_owned()))?;
+        let mut request = Request::new(Full::new(Bytes::new()));
+        *request.uri_mut() = uri;
+        for (name, value) in headers {
+            let name = HeaderName::from_bytes(name.as_bytes())
+                .map_err(|_| HttpError::BadAddress(address.to_owned()))?;
+            let mut value = HeaderValue::from_str(value)
+                .map_err(|_| HttpError::BadAddress(address.to_owned()))?;
+            value.set_sensitive(true);
+            request.headers_mut().insert(name, value);
+        }
+        self.send(request).await
+    }
+
     /// Gets `address` with `headers`, and `token` as a bearer token when there is one. A
     /// token is a password for its lifetime, so it goes only over HTTPS, or to this machine.
     pub(crate) async fn get_with_token(

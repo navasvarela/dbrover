@@ -1679,7 +1679,7 @@ workspace.
   30-second limit, no console window on Windows, Homebrew's folders on a Mac) moved out of the
   `entra` module into one both share, `program`. The stand-in token endpoint now hands back the
   headers it was sent, so the test sees the basic sign-in.
-- **C6d — Databricks: settings and statements as jobs:** `ConnectionConfig::Databricks` and
+- **C6d — Databricks: settings and statements as jobs** (built): `ConnectionConfig::Databricks` and
   `DriverKind::Databricks` with the host, sign-in, warehouse, catalog, schema and C0's cost
   guard; a `dbrover-driver-databricks` crate implementing `JobService` over `dbrover-cloud`'s
   client: `wait_timeout=0s`, the poll's states, chunks through their external links, cancel,
@@ -1693,6 +1693,20 @@ workspace.
   a 429 is sent again after its `Retry-After`; `USE CATALOG` changes what the next statement
   sends and not another connection's; `SET` is refused saying why; the settings round-trip
   through `data_sources.toml`.
+  **As built:** the settings are a data source's `host` (a host, or a whole address for a
+  private link or a test server), `sign_in` (`with = "personal-access-token"`,
+  `"service-principal"` and its `client_id`, `"databricks-cli"`, or `"azure-cli"` and an
+  optional `tenant`), `warehouse` (its id), `catalog` and `schema`; the token or client secret
+  is the data source's password, and the CLIs' sign-ins ask the keychain for nothing.
+  Connecting reads the warehouse (`GET /api/2.0/sql/warehouses/{id}`), which starts nothing, and
+  so does each ping; Test connection names it (C6f adds its size and state). Every statement
+  carries the query tag `dbrover`. A chunk's link the storage refuses (400, 403, 404 or 410) is
+  renewed once by asking for its chunk again, which every reader of links needs, not only
+  C6h's. The replay server serves the links itself, at `{endpoint}/links/…`. The dialog's rows,
+  a logo and Databricks's place under **Other cloud services** came forward from C6g, as the
+  compiler asked for them, as Snowflake's did; the time limit, the MCP token and the kittest
+  stay there. The logo is a glyph of stacked layers drawn for DbRover in Databricks's red,
+  rather than Databricks's own mark. The explorer lists nothing until C6e.
 - **C6e — Unity Catalog in the explorer:** catalogs, schemas, tables, views, materialized views,
   streaming tables and volumes, columns with their types, a page at a time from Unity Catalog's
   REST API; **Show definition**; **Found on the server**; **Open data**.

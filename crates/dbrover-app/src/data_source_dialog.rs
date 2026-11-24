@@ -18,10 +18,10 @@ use egui::{
 use crate::data_source_form::{
     ATHENA_LIMIT_LABEL, AthenaFields, BIGQUERY_LIMIT_LABEL, BigQueryFields, BigQuerySignIn,
     BucketFields, BucketSignIn, CassandraFields, CloudFields, DataSourceForm, DatabaseField,
-    DriverFields, DuckDbFields, DuckDbLocation, DynamoDbFields, ElasticsearchFields, FormError,
-    LAKE_LIMIT_LABEL, McpLoginFields, McpPasswordChange, MongoFields, MongoTarget,
-    SNOWFLAKE_LIMIT_LABEL, ServerFields, SnowflakeFields, SnowflakeSignInChoice, SshFields,
-    SshLoginChoice, TlsChoice, TrinoFields,
+    DatabricksFields, DatabricksSignInChoice, DriverFields, DuckDbFields, DuckDbLocation,
+    DynamoDbFields, ElasticsearchFields, FormError, LAKE_LIMIT_LABEL, McpLoginFields,
+    McpPasswordChange, MongoFields, MongoTarget, SNOWFLAKE_LIMIT_LABEL, ServerFields,
+    SnowflakeFields, SnowflakeSignInChoice, SshFields, SshLoginChoice, TlsChoice, TrinoFields,
 };
 use crate::dialog::{self, DialogSize};
 use crate::file_picker::{self, FileEngine};
@@ -244,6 +244,10 @@ impl DataSourceDialog {
             }
             DriverFields::Snowflake(fields) => {
                 snowflake_rows(ui, fields);
+                None
+            }
+            DriverFields::Databricks(fields) => {
+                databricks_rows(ui, fields);
                 None
             }
             DriverFields::Sqlite(fields) => {
@@ -850,6 +854,90 @@ fn snowflake_rows(ui: &mut Ui, fields: &mut SnowflakeFields) {
          until then; a warehouse's own lower limit still wins.",
     );
     ui.end_row();
+}
+
+/// Databricks's workspace, how it signs in, the SQL warehouse statements run on, and the
+/// catalog and schema they start in (C6).
+fn databricks_rows(ui: &mut Ui, fields: &mut DatabricksFields) {
+    setting_row(
+        ui,
+        "Host",
+        &mut fields.host,
+        "dbc-a1b2c3d4-e5f6.cloud.databricks.com",
+        Resolve::Text,
+    );
+    ui.label("");
+    ui.weak("The workspace's address, as its browser tab shows it.");
+    ui.end_row();
+    ui.label("Sign in with");
+    ui.horizontal_wrapped(|ui| {
+        for (choice, label) in [
+            (DatabricksSignInChoice::PersonalAccessToken, "Access token"),
+            (
+                DatabricksSignInChoice::ServicePrincipal,
+                "Service principal",
+            ),
+            (DatabricksSignInChoice::DatabricksCli, "Databricks CLI"),
+            (DatabricksSignInChoice::AzureCli, "Azure CLI"),
+        ] {
+            ui.radio_value(&mut fields.sign_in, choice, label);
+        }
+    });
+    ui.end_row();
+    match fields.sign_in {
+        DatabricksSignInChoice::ServicePrincipal => setting_row(
+            ui,
+            "Client ID",
+            &mut fields.client_id,
+            "the service principal's application ID",
+            Resolve::Text,
+        ),
+        DatabricksSignInChoice::DatabricksCli => {
+            ui.label("");
+            ui.weak("Sign in once with databricks auth login --host <workspace>.");
+            ui.end_row();
+        }
+        DatabricksSignInChoice::AzureCli => {
+            setting_row(
+                ui,
+                "Tenant",
+                &mut fields.tenant,
+                "the Azure CLI's default",
+                Resolve::Text,
+            );
+            ui.label("");
+            ui.weak("For Azure Databricks: sign in once with az login.");
+            ui.end_row();
+        }
+        DatabricksSignInChoice::PersonalAccessToken => {}
+    }
+    if let Some(secret_label) = fields.sign_in.secret_label() {
+        let label = ui.label(secret_label);
+        ui.add(
+            TextEdit::singleline(&mut fields.secret)
+                .password(true)
+                .hint_text("kept in the keychain")
+                .desired_width(FIELD_WIDTH),
+        )
+        .labelled_by(label.id);
+        ui.end_row();
+    }
+    setting_row(
+        ui,
+        "SQL warehouse",
+        &mut fields.warehouse,
+        "its ID",
+        Resolve::Text,
+    );
+    ui.label("");
+    ui.weak("Every statement runs on it; browsing the catalog doesn't start it.");
+    ui.end_row();
+    for (label, value) in [
+        ("Catalog", &mut fields.catalog),
+        ("Schema", &mut fields.schema),
+    ] {
+        setting_row(ui, label, value, "the workspace's default", Resolve::Text);
+    }
 }
 
 /// The passphrase of an encrypted key, or the token, kept in the keychain; an OAuth token may

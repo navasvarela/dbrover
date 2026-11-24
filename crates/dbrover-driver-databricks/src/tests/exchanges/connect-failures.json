@@ -1,0 +1,14 @@
+{
+ "doc": "A token the workspace refuses fails connecting with Databricks's own words.",
+ "exchanges": [
+  {
+   "method": "GET",
+   "path": "/api/2.0/sql/warehouses/abc123def456",
+   "status": 401,
+   "response": {
+    "error_code": "UNAUTHENTICATED",
+    "message": "Invalid access token."
+   }
+  }
+ ]
+}

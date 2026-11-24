@@ -144,7 +144,8 @@ impl DriverKind {
             | Self::Athena
             | Self::Trino
             | Self::BigQuery
-            | Self::Snowflake => &[],
+            | Self::Snowflake
+            | Self::Databricks => &[],
         }
     }
 }

@@ -1,0 +1,123 @@
+{
+ "doc": "A chunk whose link the storage refuses, as it does once the link has expired, is asked for again, which signs a fresh link.",
+ "exchanges": [
+  {
+   "method": "GET",
+   "path": "/api/2.0/sql/warehouses/abc123def456",
+   "headers": {
+    "authorization": "Bearer dapi-test-token"
+   },
+   "response": {
+    "id": "abc123def456",
+    "name": "Shared",
+    "cluster_size": "Small",
+    "state": "STOPPED",
+    "enable_serverless_compute": true,
+    "warehouse_type": "PRO",
+    "auto_stop_mins": 10,
+    "num_clusters": 0
+   }
+  },
+  {
+   "method": "POST",
+   "path": "/api/2.0/sql/statements",
+   "request": {
+    "statement": "SELECT 1 AS one",
+    "warehouse_id": "abc123def456",
+    "wait_timeout": "0s",
+    "disposition": "EXTERNAL_LINKS",
+    "format": "JSON_ARRAY",
+    "query_tags": [
+     {
+      "key": "dbrover"
+     }
+    ]
+   },
+   "status": 200,
+   "response": {
+    "statement_id": "01f0c3a2-6d2f-1b9e-9a3c-4f5e6a7b8c02",
+    "status": {
+     "state": "PENDING"
+    }
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.0/sql/statements/01f0c3a2-6d2f-1b9e-9a3c-4f5e6a7b8c02",
+   "response": {
+    "statement_id": "01f0c3a2-6d2f-1b9e-9a3c-4f5e6a7b8c02",
+    "status": {
+     "state": "SUCCEEDED"
+    },
+    "manifest": {
+     "format": "JSON_ARRAY",
+     "schema": {
+      "column_count": 1,
+      "columns": [
+       {
+        "name": "one",
+        "type_text": "INT",
+        "type_name": "INT",
+        "position": 0
+       }
+      ]
+     },
+     "total_chunk_count": 1,
+     "total_row_count": 1,
+     "truncated": false
+    },
+    "result": {
+     "chunk_index": 0,
+     "row_offset": 0,
+     "row_count": 1,
+     "external_links": [
+      {
+       "chunk_index": 0,
+       "row_offset": 0,
+       "external_link": "{endpoint}/links/stale",
+       "expiration": "2026-11-24T16:15:00.000Z",
+       "http_headers": {
+        "x-amz-server-side-encryption-customer-key": "dGVzdC1rZXk="
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/links/stale",
+   "status": 403,
+   "response": "AccessDenied: Request has expired"
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.0/sql/statements/01f0c3a2-6d2f-1b9e-9a3c-4f5e6a7b8c02/result/chunks/0",
+   "response": {
+    "chunk_index": 0,
+    "row_offset": 0,
+    "row_count": 1,
+    "external_links": [
+     {
+      "chunk_index": 0,
+      "row_offset": 0,
+      "external_link": "{endpoint}/links/fresh",
+      "expiration": "2026-11-24T16:15:00.000Z",
+      "http_headers": {
+       "x-amz-server-side-encryption-customer-key": "dGVzdC1rZXk="
+      }
+     }
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/links/fresh",
+   "response": [
+    [
+     "1"
+    ]
+   ]
+  }
+ ]
+}

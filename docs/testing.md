@@ -172,6 +172,22 @@ Each driver crate runs the suite against its own backend:
   moves one connection only. `live_snowflake`, ignored, runs against Snowflake when
   `DBROVER_TEST_SNOWFLAKE_LIVE` names `account,user,key file,warehouse` (and
   `DBROVER_TEST_SNOWFLAKE_PASSPHRASE` an encrypted key's passphrase); CI never sets it.
+- **Databricks**: no workspace, and no emulator of its own (MiniLake, a third party's, answers
+  the API with DuckDB's SQL). As for Snowflake, each test starts a server on `127.0.0.1` that
+  answers the driver from a file of exchanges in
+  `crates/dbrover-driver-databricks/src/tests/exchanges/`, in their order, written from the
+  Statement Execution API's reference (their README says what that can't show). The server
+  serves the external links too, under `/links/`, so `{endpoint}` in an answer stands for its
+  own address, and `"retry_after"` sends that header. The data source signs in with a made-up
+  personal access token; no `~/.databrickscfg` or CLI cache is read. The tests run
+  `check_lifecycle`; besides: connecting by reading the warehouse, a refused token, what a data
+  source lacks, a `SELECT` polled through `PENDING` and `RUNNING` and read over three chunks
+  through their links (which never carry the token), `NULL` beside empty text, a link renewed
+  after the storage refuses it, a failure's position from `line L pos P`, cancel by the
+  statement's id, a 429 sent again after its `Retry-After`, `USE CATALOG` and `USE SCHEMA`
+  changing what the next statement carries, and a `SET` refused. `live_databricks`, ignored,
+  runs against a workspace when `DBROVER_TEST_DATABRICKS_LIVE` names `host,warehouse id` and
+  `DBROVER_TEST_DATABRICKS_TOKEN` a personal access token; CI never sets them.
 - **Trino**: the `trino` container (Trino 484, port 58080, with only the `memory` and `tpch`
   catalogs of `docker/trino/`), only under the compose file's `nightly` profile, which
   `.github/workflows/nightly.yml` starts once a day: its image is 1.04 GB to download and the

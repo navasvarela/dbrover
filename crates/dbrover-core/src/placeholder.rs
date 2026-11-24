@@ -72,6 +72,8 @@ pub enum Setting {
     Warehouse,
     Role,
     StorageIntegration,
+    /// A Databricks service principal's client ID (C6).
+    ClientId,
 }
 
 impl fmt::Display for Setting {
@@ -110,6 +112,7 @@ impl fmt::Display for Setting {
             Self::Warehouse => "the warehouse",
             Self::Role => "the role",
             Self::StorageIntegration => "the storage integration",
+            Self::ClientId => "the client ID",
         })
     }
 }

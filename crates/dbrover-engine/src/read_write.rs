@@ -51,7 +51,8 @@ pub fn mode(driver: DriverKind) -> Option<WriteMode> {
         | DriverKind::Athena
         | DriverKind::Trino
         | DriverKind::BigQuery
-        | DriverKind::Snowflake => None,
+        | DriverKind::Snowflake
+        | DriverKind::Databricks => None,
     }
 }
 

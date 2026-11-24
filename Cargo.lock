@@ -2526,6 +2526,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dbrover-driver-databricks"
+version = "0.37.0"
+dependencies = [
+ "async-trait",
+ "dbrover-cloud",
+ "dbrover-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "dbrover-driver-duckdb"
 version = "0.37.0"
 dependencies = [
@@ -2649,7 +2662,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-driver-snowflake"
-version = "0.36.0"
+version = "0.37.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2729,6 +2742,7 @@ dependencies = [
  "dbrover-driver-bigquery",
  "dbrover-driver-cassandra",
  "dbrover-driver-clickhouse",
+ "dbrover-driver-databricks",
  "dbrover-driver-duckdb",
  "dbrover-driver-dynamodb",
  "dbrover-driver-elasticsearch",
