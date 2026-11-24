@@ -645,7 +645,7 @@ impl<'d, 'a> Writer<'d, 'a> {
 
     fn change_column(&self, change: &ColumnChange<'_>) -> Vec<String> {
         match self.dialect {
-            // `ddl_statements` refuses CQL's, Trino's, BigQuery's and Snowflake's DDL before
+            // `ddl_statements` refuses CQL's, Trino's, BigQuery's, Snowflake's and Databricks's DDL before
             // this.
             Dialect::Postgres
             | Dialect::DuckDb
@@ -653,7 +653,8 @@ impl<'d, 'a> Writer<'d, 'a> {
             | Dialect::Cassandra
             | Dialect::Trino
             | Dialect::BigQuery
-            | Dialect::Snowflake => self.alter_column(change),
+            | Dialect::Snowflake
+            | Dialect::Databricks => self.alter_column(change),
             Dialect::Mysql => self.modify_mysql_column(change),
             Dialect::SqlServer => self.alter_sql_server_column(change),
             Dialect::ClickHouse => self.modify_clickhouse_column(change),

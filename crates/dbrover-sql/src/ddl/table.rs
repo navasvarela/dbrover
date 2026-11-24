@@ -134,7 +134,8 @@ fn identity_clause(identity: Identity, dialect: Dialect) -> String {
         | Dialect::Cassandra
         | Dialect::Trino
         | Dialect::BigQuery
-        | Dialect::Snowflake => String::new(),
+        | Dialect::Snowflake
+        | Dialect::Databricks => String::new(),
     }
 }
 

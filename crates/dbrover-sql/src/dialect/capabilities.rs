@@ -697,6 +697,47 @@ const SNOWFLAKE: Capabilities = Capabilities {
     schema_compare: false,
 };
 
+/// Databricks: nothing is offered in C6, which has no workspace to try the helpers' DDL
+/// against; [`Dialect::writes_ddl`] keeps the helpers away. The types are Databricks SQL's.
+const DATABRICKS: Capabilities = Capabilities {
+    transactional_ddl: false,
+    drop_cascade: false,
+    unique_keys: false,
+    foreign_keys: false,
+    referential_actions: &[],
+    indexes: false,
+    index_methods: &[],
+    table_changes: &[],
+    rebuilds_tables: false,
+    foreign_key_switch: None,
+    converts_with_using: false,
+    restricted_add_column: false,
+    rebuilds_table_ddl: false,
+    common_types: &[
+        "BIGINT",
+        "INT",
+        "DECIMAL(18, 4)",
+        "DOUBLE",
+        "BOOLEAN",
+        "STRING",
+        "BINARY",
+        "DATE",
+        "TIMESTAMP",
+        "TIMESTAMP_NTZ",
+        "ARRAY<STRING>",
+        "MAP<STRING, STRING>",
+        "VARIANT",
+    ],
+    materialized_views: false,
+    view_replacement: ViewReplacement::OrReplace,
+    renames_views: false,
+    schema_creation: SchemaCreation::Unsupported,
+    schema_owner: false,
+    drop_schema_cascade: false,
+    users: UserModel::Unsupported,
+    schema_compare: false,
+};
+
 impl Dialect {
     /// What the dialect's DDL can do.
     pub fn capabilities(self) -> &'static Capabilities {
@@ -711,6 +752,7 @@ impl Dialect {
             Self::Trino => &TRINO,
             Self::BigQuery => &BIGQUERY,
             Self::Snowflake => &SNOWFLAKE,
+            Self::Databricks => &DATABRICKS,
         }
     }
 
@@ -720,12 +762,12 @@ impl Dialect {
     /// Nor Trino's: what a table can be is each catalog's connector's to say, and Athena's
     /// tables are Hive's, over files in S3 whose format and location the forms don't ask. Nor
     /// BigQuery's, whose tables are made by their partitioning, clustering and options. Nor
-    /// Snowflake's in C5, which has no Snowflake server to try what the helpers would write
-    /// against.
+    /// Snowflake's in C5, nor Databricks's in C6, which have no server to try what the helpers
+    /// would write against.
     pub fn writes_ddl(self) -> bool {
         !matches!(
             self,
-            Self::Cassandra | Self::Trino | Self::BigQuery | Self::Snowflake
+            Self::Cassandra | Self::Trino | Self::BigQuery | Self::Snowflake | Self::Databricks
         )
     }
 

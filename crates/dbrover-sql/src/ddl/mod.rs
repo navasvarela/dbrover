@@ -650,7 +650,8 @@ fn rename(object: &str, old: &ObjectName, new_name: &str, dialect: Dialect) -> S
         | Dialect::Cassandra
         | Dialect::Trino
         | Dialect::BigQuery
-        | Dialect::Snowflake => format!(
+        | Dialect::Snowflake
+        | Dialect::Databricks => format!(
             "ALTER {object} {old_sql} RENAME TO {}",
             quote_name(dialect, new_name)
         ),

@@ -80,3 +80,8 @@ fn bigquery() {
 fn snowflake() {
     check_corpus(Dialect::Snowflake, include_str!("classify/snowflake.sql"));
 }
+
+#[test]
+fn databricks() {
+    check_corpus(Dialect::Databricks, include_str!("classify/databricks.sql"));
+}

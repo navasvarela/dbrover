@@ -1639,7 +1639,7 @@ workspace.
 
 - **C6a — Plan:** this section, C6's rows in [Decisions](#decisions) and [Risks](#risks), and
   the roadmap's entry in layers.
-- **C6b — The Databricks dialect:** `Dialect::Databricks` in `dbrover-sql`: backticks and
+- **C6b — The Databricks dialect** (built): `Dialect::Databricks` in `dbrover-sql`: backticks and
   lower-case bare names, strings in either quote with backslash escapes, `sqlparser`'s
   `DatabricksDialect` for the syntax check, Databricks SQL's functions for completion, `EXPLAIN`,
   `information_schema` hidden, the verbs that write (Delta's among them) and administration's,
@@ -1649,6 +1649,18 @@ workspace.
   backslash escapes and comments splits and formats as Databricks reads it; read-only mode
   classifies the classify corpus (`OPTIMIZE`, `VACUUM`, `RESTORE`, `MERGE` and `COPY INTO` as
   writes, `DESCRIBE HISTORY` and `SHOW` as reads).
+  **As built:** 397 functions for completion. `sqlparser` 0.63's `DatabricksDialect` reads every
+  query and change in the corpus but three, which are its gaps: a table's version after an `@`
+  (`orders@v3`), `INSERT INTO t BY NAME`, and `INSERT INTO t REPLACE WHERE …`. In the classify
+  corpus it reads neither those two inserts nor Delta's `COPY INTO`, `VACUUM`, `RESTORE`, nor a
+  `CREATE TABLE … USING delta`: read-only mode refuses each as a statement it can't classify,
+  which is what it does to a write, and the corpus names them. `OPTIMIZE`, which `sqlparser`
+  reads, is administration, as ClickHouse's is. `DESCRIBE TABLE`, `HISTORY`, `DETAIL`,
+  `EXTENDED` and the other one-word kinds, and `EXPLAIN COST`, `EXTENDED`, `FORMATTED` and
+  `CODEGEN`, are read without that word to be classified. Differences from the plan: `Quoting`
+  (in `dbrover-core`) gains `quote_escape`, since Spark reads `'it''s'` as two strings side by
+  side and joins them into `its`, so DbRover writes a quote in a Databricks string as `\'`; and
+  the object helpers write no Databricks DDL in C6, as for Snowflake.
 - **C6c — Databricks's sign-in:** the `databricks` module in `dbrover-cloud`: a personal access
   token; a service principal's token from `/oidc/v1/token`, kept in a `TokenCache`; the
   Databricks CLI's `auth token`; and Entra ID's Azure Databricks resource.

@@ -14,8 +14,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use dbrover_core::{
     BareNames, BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, Connection, DriverError,
-    MysqlConfig, Password, Quoting, Rejection, RelationName, ResultCursor, Route, ServerInfo,
-    TableConstraints, TableDescription, TableName, TlsMode, TransactionStatus,
+    MysqlConfig, Password, QuoteEscape, Quoting, Rejection, RelationName, ResultCursor, Route,
+    ServerInfo, TableConstraints, TableDescription, TableName, TlsMode, TransactionStatus,
 };
 use mysql_async::consts::StatusFlags;
 use mysql_async::prelude::Queryable;
@@ -37,6 +37,7 @@ pub(crate) const MYSQL_QUOTING: Quoting = Quoting {
     backslash_escapes: true,
     string_prefix: "",
     bare_names: BareNames::Lowercase,
+    quote_escape: QuoteEscape::Doubled,
 };
 
 /// Opens a connection, encrypted as `config.server.tls` says.

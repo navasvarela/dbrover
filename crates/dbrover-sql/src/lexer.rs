@@ -393,7 +393,7 @@ mod tests {
     #[test]
     fn recognises_dialect_specific_quoting() {
         use TokenKind::*;
-        let cases: [Case; 17] = [
+        let cases: [Case; 18] = [
             (
                 "$fn$ a; $x$ b $fn$ ;",
                 Dialect::Postgres,
@@ -618,6 +618,25 @@ mod tests {
                     (Word, "s"),
                     (Semicolon, ";"),
                     (BlockComment, "/* c */"),
+                ],
+            ),
+            // Databricks: `` `…` `` names with a doubled backquote, strings in either quote with
+            // backslash escapes, a raw string, and block comments that nest.
+            (
+                "select `a``b`, \"it\\\"s\", 'x\\'y', r'C:\\t' /* a /* b */ c */ from t",
+                Dialect::Databricks,
+                vec![
+                    (Word, "select"),
+                    (QuotedIdentifier, "`a``b`"),
+                    (Punctuation, ","),
+                    (String, "\"it\\\"s\""),
+                    (Punctuation, ","),
+                    (String, "'x\\'y'"),
+                    (Punctuation, ","),
+                    (String, "r'C:\\t'"),
+                    (BlockComment, "/* a /* b */ c */"),
+                    (Word, "from"),
+                    (Word, "t"),
                 ],
             ),
             // Only Transact-SQL has `@` names; elsewhere `@p` is a parameter marker's sign.

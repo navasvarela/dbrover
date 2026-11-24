@@ -19,8 +19,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use dbrover_core::{
     BareNames, BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, CloudSignIn, Connection,
-    DriverError, Password, Quoting, Rejection, RelationName, ResultCursor, Route, ServerInfo,
-    SqlServerConfig, TableConstraints, TableDescription, TableName, TransactionStatus,
+    DriverError, Password, QuoteEscape, Quoting, Rejection, RelationName, ResultCursor, Route,
+    ServerInfo, SqlServerConfig, TableConstraints, TableDescription, TableName, TransactionStatus,
 };
 use tiberius::{AuthMethod, Client, Config};
 use tokio::net::TcpStream;
@@ -40,6 +40,7 @@ pub(crate) const SQL_SERVER_QUOTING: Quoting = Quoting {
     backslash_escapes: false,
     string_prefix: "N",
     bare_names: BareNames::Lowercase,
+    quote_escape: QuoteEscape::Doubled,
 };
 
 /// The session options SQL Server's own tools and its ODBC and OLE DB drivers set on every

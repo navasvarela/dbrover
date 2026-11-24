@@ -80,7 +80,7 @@ pub use password_command::PasswordCommand;
 pub use placeholder::{
     ExpandError, PlaceholderError, Setting, Variables, expand, expand_path, has_placeholder,
 };
-pub use quoting::{BareNames, Quoting};
+pub use quoting::{BareNames, QuoteEscape, Quoting};
 pub use role::{RoleAttribute, RoleDescription};
 pub use schema::{IndexDescription, SchemaDescription, SchemaTable, ViewDescription};
 pub use sql_template::{
