@@ -1,0 +1,477 @@
+{
+ "doc": "The conformance walk over Unity Catalog's REST API, which starts no warehouse: three catalogs (the system one hidden), a shared one with no schemas, a schema of a Delta table, an Iceberg table, a view, a materialized view and two volumes, and each relation's columns, then two definitions. Nothing here is a statement.",
+ "exchanges": [
+  {
+   "method": "GET",
+   "path": "/api/2.0/sql/warehouses/abc123def456",
+   "response": {
+    "id": "abc123def456",
+    "name": "Shared",
+    "cluster_size": "Small",
+    "state": "STOPPED",
+    "enable_serverless_compute": true
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/catalogs",
+   "query": {
+    "max_results": "1000"
+   },
+   "response": {
+    "catalogs": [
+     {
+      "name": "main",
+      "catalog_type": "MANAGED_CATALOG",
+      "full_name": "main"
+     },
+     {
+      "name": "shared_data",
+      "catalog_type": "DELTASHARING_CATALOG",
+      "full_name": "shared_data"
+     },
+     {
+      "name": "system",
+      "catalog_type": "SYSTEM_CATALOG",
+      "full_name": "system"
+     }
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/schemas",
+   "query": {
+    "catalog_name": "main",
+    "max_results": "1000"
+   },
+   "response": {
+    "schemas": [
+     {
+      "name": "information_schema",
+      "catalog_name": "main",
+      "full_name": "main.information_schema"
+     },
+     {
+      "name": "sales",
+      "catalog_name": "main",
+      "full_name": "main.sales"
+     }
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/schemas",
+   "query": {
+    "catalog_name": "shared_data",
+    "max_results": "1000"
+   },
+   "response": {
+    "schemas": []
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/tables",
+   "query": {
+    "catalog_name": "main",
+    "schema_name": "sales",
+    "omit_columns": "true",
+    "omit_properties": "true",
+    "max_results": "50"
+   },
+   "response": {
+    "tables": [
+     {
+      "name": "orders",
+      "catalog_name": "main",
+      "schema_name": "sales",
+      "full_name": "main.sales.orders",
+      "table_type": "MANAGED",
+      "data_source_format": "DELTA"
+     },
+     {
+      "name": "events",
+      "catalog_name": "main",
+      "schema_name": "sales",
+      "full_name": "main.sales.events",
+      "table_type": "EXTERNAL",
+      "data_source_format": "ICEBERG",
+      "storage_location": "s3://lake/events"
+     },
+     {
+      "name": "v_orders",
+      "catalog_name": "main",
+      "schema_name": "sales",
+      "full_name": "main.sales.v_orders",
+      "table_type": "VIEW"
+     },
+     {
+      "name": "daily",
+      "catalog_name": "main",
+      "schema_name": "sales",
+      "full_name": "main.sales.daily",
+      "table_type": "MATERIALIZED_VIEW"
+     }
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/tables/main.sales.orders",
+   "response": {
+    "name": "orders",
+    "table_type": "MANAGED",
+    "data_source_format": "DELTA",
+    "comment": "one row an order",
+    "columns": [
+     {
+      "name": "id",
+      "type_text": "bigint",
+      "type_name": "LONG",
+      "position": 0,
+      "nullable": false
+     },
+     {
+      "name": "total",
+      "type_text": "decimal(10,2)",
+      "type_name": "DECIMAL",
+      "position": 1,
+      "nullable": true
+     },
+     {
+      "name": "placed",
+      "type_text": "timestamp",
+      "type_name": "TIMESTAMP",
+      "position": 2,
+      "nullable": true
+     },
+     {
+      "name": "day",
+      "type_text": "date",
+      "type_name": "DATE",
+      "position": 3,
+      "nullable": true,
+      "partition_index": 0
+     }
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/tables/main.sales.events",
+   "response": {
+    "name": "events",
+    "table_type": "EXTERNAL",
+    "data_source_format": "ICEBERG",
+    "storage_location": "s3://lake/events",
+    "columns": [
+     {
+      "name": "at",
+      "type_text": "timestamp_ntz",
+      "type_name": "TIMESTAMP_NTZ",
+      "position": 0
+     },
+     {
+      "name": "payload",
+      "type_text": "variant",
+      "type_name": "VARIANT",
+      "position": 1
+     }
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/tables",
+   "query": {
+    "catalog_name": "main",
+    "schema_name": "sales",
+    "omit_columns": "true",
+    "omit_properties": "true",
+    "max_results": "50"
+   },
+   "response": {
+    "tables": [
+     {
+      "name": "orders",
+      "catalog_name": "main",
+      "schema_name": "sales",
+      "full_name": "main.sales.orders",
+      "table_type": "MANAGED",
+      "data_source_format": "DELTA"
+     },
+     {
+      "name": "events",
+      "catalog_name": "main",
+      "schema_name": "sales",
+      "full_name": "main.sales.events",
+      "table_type": "EXTERNAL",
+      "data_source_format": "ICEBERG",
+      "storage_location": "s3://lake/events"
+     },
+     {
+      "name": "v_orders",
+      "catalog_name": "main",
+      "schema_name": "sales",
+      "full_name": "main.sales.v_orders",
+      "table_type": "VIEW"
+     },
+     {
+      "name": "daily",
+      "catalog_name": "main",
+      "schema_name": "sales",
+      "full_name": "main.sales.daily",
+      "table_type": "MATERIALIZED_VIEW"
+     }
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/tables/main.sales.v_orders",
+   "response": {
+    "name": "v_orders",
+    "table_type": "VIEW",
+    "view_definition": "SELECT id, total FROM main.sales.orders WHERE total > 0",
+    "columns": [
+     {
+      "name": "id",
+      "type_text": "bigint",
+      "type_name": "LONG",
+      "position": 0
+     },
+     {
+      "name": "total",
+      "type_text": "decimal(10,2)",
+      "type_name": "DECIMAL",
+      "position": 1
+     }
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/tables/main.sales.daily",
+   "response": {
+    "name": "daily",
+    "table_type": "MATERIALIZED_VIEW",
+    "view_definition": "SELECT day, sum(total) AS total FROM main.sales.orders GROUP BY day",
+    "columns": [
+     {
+      "name": "day",
+      "type_text": "date",
+      "type_name": "DATE",
+      "position": 0
+     },
+     {
+      "name": "total",
+      "type_text": "decimal(20,2)",
+      "type_name": "DECIMAL",
+      "position": 1
+     }
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/volumes",
+   "query": {
+    "catalog_name": "main",
+    "schema_name": "sales",
+    "max_results": "1000"
+   },
+   "response": {
+    "volumes": [
+     {
+      "name": "landing",
+      "volume_type": "MANAGED",
+      "full_name": "main.sales.landing"
+     },
+     {
+      "name": "raw",
+      "volume_type": "EXTERNAL",
+      "storage_location": "s3://lake/raw",
+      "full_name": "main.sales.raw"
+     }
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/tables/main.sales.orders",
+   "response": {
+    "name": "orders",
+    "table_type": "MANAGED",
+    "data_source_format": "DELTA",
+    "comment": "one row an order",
+    "columns": [
+     {
+      "name": "id",
+      "type_text": "bigint",
+      "type_name": "LONG",
+      "position": 0,
+      "nullable": false
+     },
+     {
+      "name": "total",
+      "type_text": "decimal(10,2)",
+      "type_name": "DECIMAL",
+      "position": 1,
+      "nullable": true
+     },
+     {
+      "name": "placed",
+      "type_text": "timestamp",
+      "type_name": "TIMESTAMP",
+      "position": 2,
+      "nullable": true
+     },
+     {
+      "name": "day",
+      "type_text": "date",
+      "type_name": "DATE",
+      "position": 3,
+      "nullable": true,
+      "partition_index": 0
+     }
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/tables/main.sales.events",
+   "response": {
+    "name": "events",
+    "table_type": "EXTERNAL",
+    "data_source_format": "ICEBERG",
+    "storage_location": "s3://lake/events",
+    "columns": [
+     {
+      "name": "at",
+      "type_text": "timestamp_ntz",
+      "type_name": "TIMESTAMP_NTZ",
+      "position": 0
+     },
+     {
+      "name": "payload",
+      "type_text": "variant",
+      "type_name": "VARIANT",
+      "position": 1
+     }
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/tables/main.sales.v_orders",
+   "response": {
+    "name": "v_orders",
+    "table_type": "VIEW",
+    "view_definition": "SELECT id, total FROM main.sales.orders WHERE total > 0",
+    "columns": [
+     {
+      "name": "id",
+      "type_text": "bigint",
+      "type_name": "LONG",
+      "position": 0
+     },
+     {
+      "name": "total",
+      "type_text": "decimal(10,2)",
+      "type_name": "DECIMAL",
+      "position": 1
+     }
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/tables/main.sales.daily",
+   "response": {
+    "name": "daily",
+    "table_type": "MATERIALIZED_VIEW",
+    "view_definition": "SELECT day, sum(total) AS total FROM main.sales.orders GROUP BY day",
+    "columns": [
+     {
+      "name": "day",
+      "type_text": "date",
+      "type_name": "DATE",
+      "position": 0
+     },
+     {
+      "name": "total",
+      "type_text": "decimal(20,2)",
+      "type_name": "DECIMAL",
+      "position": 1
+     }
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/tables/main.sales.orders",
+   "response": {
+    "name": "orders",
+    "table_type": "MANAGED",
+    "data_source_format": "DELTA",
+    "comment": "one row an order",
+    "columns": [
+     {
+      "name": "id",
+      "type_text": "bigint",
+      "type_name": "LONG",
+      "position": 0,
+      "nullable": false
+     },
+     {
+      "name": "total",
+      "type_text": "decimal(10,2)",
+      "type_name": "DECIMAL",
+      "position": 1,
+      "nullable": true
+     },
+     {
+      "name": "placed",
+      "type_text": "timestamp",
+      "type_name": "TIMESTAMP",
+      "position": 2,
+      "nullable": true
+     },
+     {
+      "name": "day",
+      "type_text": "date",
+      "type_name": "DATE",
+      "position": 3,
+      "nullable": true,
+      "partition_index": 0
+     }
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/tables/main.sales.v_orders",
+   "response": {
+    "name": "v_orders",
+    "table_type": "VIEW",
+    "view_definition": "SELECT id, total FROM main.sales.orders WHERE total > 0",
+    "columns": [
+     {
+      "name": "id",
+      "type_text": "bigint",
+      "type_name": "LONG",
+      "position": 0
+     },
+     {
+      "name": "total",
+      "type_text": "decimal(10,2)",
+      "type_name": "DECIMAL",
+      "position": 1
+     }
+    ]
+   }
+  }
+ ]
+}

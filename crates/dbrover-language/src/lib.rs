@@ -370,6 +370,7 @@ impl QueryLanguage {
             Self::Sql(Dialect::Trino) => read_catalog_table(path),
             Self::Sql(Dialect::BigQuery) => read_bigquery_table(path),
             Self::Sql(Dialect::Snowflake) => read_snowflake_table(path),
+            Self::Sql(Dialect::Databricks) => read_databricks_table(path),
             Self::Sql(_) | Self::Redis | Self::Mongo | Self::Search => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
@@ -548,6 +549,29 @@ fn read_bigquery_table(path: &CatalogPath) -> Option<String> {
     Some(format!("SELECT * FROM `{quoted}` LIMIT {OPEN_DATA_LIMIT};"))
 }
 
+/// `SELECT *` of the table, view or materialized view at `path` by its catalog, schema and
+/// name, each in backquotes unless plain and lower case, with [`OPEN_DATA_LIMIT`]. It runs on
+/// the warehouse, which it starts if it is stopped, as Databricks's own sample data does
+/// (`docs/cloud-data.md`, C6).
+fn read_databricks_table(path: &CatalogPath) -> Option<String> {
+    let object = path.last()?;
+    if !matches!(
+        object.kind,
+        NodeKind::Table | NodeKind::View | NodeKind::MaterializedView
+    ) {
+        return None;
+    }
+    let quoting = Dialect::Databricks.quoting();
+    let name = [
+        path.name_of(NodeKind::Database)?,
+        path.name_of(NodeKind::Schema)?,
+        &object.name,
+    ]
+    .map(|name| quoting.identifier_if_needed(name))
+    .join(".");
+    Some(format!("SELECT * FROM {name} LIMIT {OPEN_DATA_LIMIT};"))
+}
+
 /// `SELECT *` of the table, view or materialized view at `path` by its database, schema and
 /// name, each quoted where Snowflake's upper-case folding would change it, with
 /// [`OPEN_DATA_LIMIT`]. It runs on the warehouse, which it resumes if it is suspended, as
@@ -624,6 +648,29 @@ mod tests {
         ];
         for (path, expected) in cases {
             assert_eq!(bigquery.read_all(&path).as_deref(), expected, "{path}");
+        }
+    }
+
+    #[test]
+    fn databricks_opens_a_table_by_its_catalog_schema_and_name() {
+        let schema = CatalogPath::root()
+            .child(NodeKind::Database, "main")
+            .child(NodeKind::Schema, "Sales EU");
+        let tables = schema.child(NodeKind::Folder(FolderKind::Tables), "tables");
+        let databricks = QueryLanguage::Sql(Dialect::Databricks);
+        for (path, expected) in [
+            (
+                tables.child(NodeKind::Table, "orders"),
+                Some("SELECT * FROM main.`Sales EU`.orders LIMIT 1000;"),
+            ),
+            (
+                tables.child(NodeKind::MaterializedView, "Daily"),
+                Some("SELECT * FROM main.`Sales EU`.`Daily` LIMIT 1000;"),
+            ),
+            (schema.child(NodeKind::Volume, "landing"), None),
+            (schema.clone(), None),
+        ] {
+            assert_eq!(databricks.read_all(&path).as_deref(), expected, "{path}");
         }
     }
 

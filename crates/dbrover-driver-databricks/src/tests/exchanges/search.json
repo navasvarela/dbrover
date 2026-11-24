@@ -1,0 +1,110 @@
+{
+ "doc": "A filtered schema's tables come from table summaries with a LIKE pattern, a match in another schema or of a view dropped; a search goes catalog by catalog, skipping the system catalog.",
+ "exchanges": [
+  {
+   "method": "GET",
+   "path": "/api/2.0/sql/warehouses/abc123def456",
+   "response": {
+    "id": "abc123def456",
+    "name": "Shared",
+    "cluster_size": "Small",
+    "state": "STOPPED",
+    "enable_serverless_compute": true
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/table-summaries",
+   "query": {
+    "catalog_name": "main",
+    "schema_name_pattern": "sales",
+    "table_name_pattern": "%ord%",
+    "max_results": "1000"
+   },
+   "response": {
+    "tables": [
+     {
+      "full_name": "main.sales.orders",
+      "table_type": "MANAGED"
+     },
+     {
+      "full_name": "main.sales_eu.orders_eu",
+      "table_type": "MANAGED"
+     },
+     {
+      "full_name": "main.sales.v_orders",
+      "table_type": "VIEW"
+     },
+     {
+      "full_name": "main.sales.Order_Lines",
+      "table_type": "STREAMING_TABLE"
+     }
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/catalogs",
+   "query": {
+    "max_results": "1000"
+   },
+   "response": {
+    "catalogs": [
+     {
+      "name": "main",
+      "catalog_type": "MANAGED_CATALOG",
+      "full_name": "main"
+     },
+     {
+      "name": "shared_data",
+      "catalog_type": "DELTASHARING_CATALOG",
+      "full_name": "shared_data"
+     },
+     {
+      "name": "system",
+      "catalog_type": "SYSTEM_CATALOG",
+      "full_name": "system"
+     }
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/table-summaries",
+   "query": {
+    "catalog_name": "main",
+    "table_name_pattern": "%ord%",
+    "max_results": "101"
+   },
+   "response": {
+    "tables": [
+     {
+      "full_name": "main.sales.orders",
+      "table_type": "MANAGED"
+     },
+     {
+      "full_name": "main.sales.v_orders",
+      "table_type": "VIEW"
+     }
+    ]
+   }
+  },
+  {
+   "method": "GET",
+   "path": "/api/2.1/unity-catalog/table-summaries",
+   "query": {
+    "catalog_name": "shared_data",
+    "table_name_pattern": "%ord%",
+    "max_results": "99"
+   },
+   "response": {
+    "tables": [
+     {
+      "full_name": "shared_data.retail.ord_lines",
+      "table_type": "MANAGED"
+     }
+    ]
+   }
+  }
+ ]
+}

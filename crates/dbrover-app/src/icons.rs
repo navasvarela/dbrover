@@ -128,6 +128,7 @@ pub fn node(kind: NodeKind) -> Icon {
         NodeKind::UserType => Icon::new(glyph::BRACKETS_CURLY, Role::Secondary),
         NodeKind::Aggregate => Icon::new(glyph::FUNCTION, Role::Success),
         NodeKind::Stage => Icon::new(glyph::PACKAGE, Role::Secondary),
+        NodeKind::Volume => Icon::new(glyph::FILES, Role::Secondary),
         NodeKind::Object(object) => match object {
             ObjectKind::Bucket => Icon::new(glyph::CLOUD, Role::Secondary),
             // A folder of keys, drawn apart from the tree's own folders of kinds.
