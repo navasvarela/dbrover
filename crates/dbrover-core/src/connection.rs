@@ -7,8 +7,8 @@ use async_trait::async_trait;
 use crate::{
     CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, Cell, ChildrenPage,
     ChildrenQuery, CostEstimate, DriverError, HandedOver, Handoff, ManagedService, ProgressHandle,
-    RelationName, ResultCursor, RoleDescription, SchemaDescription, TableConstraints,
-    TableDescription, TableName, TransactionStatus,
+    RelationName, ResultCursor, RoleDescription, SchemaDescription, ServerActivity, SessionId,
+    SessionStop, StopOutcome, TableConstraints, TableDescription, TableName, TransactionStatus,
 };
 
 /// What a server reported about itself when the connection was opened.
@@ -253,6 +253,47 @@ pub trait Connection: Send {
     /// fails.
     async fn describe_role(&mut self, path: &CatalogPath) -> Result<RoleDescription, DriverError> {
         Err(DriverError::InvalidPath(path.clone()))
+    }
+
+    /// What the server is doing: its sessions as this login may see them, who waits on whose
+    /// locks, and the statements that would stop each session (W15). Read on a connection of
+    /// its own, never one a console runs on.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError::Unsupported`] on engines that have no other sessions to show (SQLite,
+    /// DuckDB) or whose activity DbRover doesn't read yet; [`DriverError::Connection`] if the
+    /// server's views can't be read.
+    async fn server_activity(&mut self) -> Result<ServerActivity, DriverError> {
+        Err(DriverError::Unsupported(
+            "This database's server activity can't be shown yet.",
+        ))
+    }
+
+    /// Sends one of the statements [`Connection::server_activity`] wrote for a session it
+    /// listed. Only such a statement may be passed: the driver reads its answer as the stop it
+    /// wrote.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError::Unsupported`] where activity isn't read; [`DriverError::Statement`] when
+    /// the server refuses, such as for a login that may not end another user's session.
+    async fn stop_session(&mut self, stop: &SessionStop) -> Result<StopOutcome, DriverError> {
+        let _ = stop;
+        Err(DriverError::Unsupported(
+            "This database's sessions can't be stopped yet.",
+        ))
+    }
+
+    /// The id the server gives this connection's session, as [`Connection::server_activity`]
+    /// lists it, so DbRover can tell its own sessions apart. `None` where the engine has no
+    /// lasting session (ClickHouse over HTTP) or activity isn't read.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError::Connection`] if the server can't be asked.
+    async fn own_session(&mut self) -> Result<Option<SessionId>, DriverError> {
+        Ok(None)
     }
 
     /// Asks the database whether it would accept `sql`, one data query or change (`SELECT`,
