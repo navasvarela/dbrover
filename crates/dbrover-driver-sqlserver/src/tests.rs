@@ -603,3 +603,106 @@ async fn encrypts_as_the_tls_mode_says() {
         .await;
     conformance::check_connect_failure(unverified);
 }
+
+/// W15's blocking scenario, without Cancel, which SQL Server only lets a session's own client
+/// send: killing the holder lets the waiter go on.
+#[tokio::test]
+async fn shows_a_waiting_session_under_its_blocker_and_kills_the_blocker() {
+    let Some(server) = test_server() else {
+        return;
+    };
+    let _shared = SHARED_DATABASE.lock().await;
+    let mut watcher = server.connect().await;
+
+    conformance::check_server_activity(
+        &mut watcher,
+        Box::new(server.connect().await),
+        Box::new(server.connect().await),
+        &conformance::BlockingScript {
+            setup: &[
+                "DROP TABLE IF EXISTS dbo.w15_activity",
+                "CREATE TABLE dbo.w15_activity (id int PRIMARY KEY, n int NOT NULL)",
+                "INSERT INTO dbo.w15_activity VALUES (1, 0)",
+            ],
+            hold: &[
+                "BEGIN TRANSACTION",
+                "UPDATE dbo.w15_activity SET n = n + 1 WHERE id = 1",
+            ],
+            before_wait: &["SET LOCK_TIMEOUT 20000"],
+            wait: "UPDATE dbo.w15_activity SET n = n + 10 WHERE id = 1",
+            // Simple parameterisation lists it with its constants as parameters.
+            wait_listed_as: "UPDATE [dbo].[w15_activity] set [n] = [n]+@1",
+            teardown: &["DROP TABLE dbo.w15_activity"],
+            cancels: false,
+        },
+    )
+    .await;
+}
+
+/// A login without VIEW SERVER STATE sees only its own session, is told what would show the
+/// rest, and, without ALTER ANY CONNECTION, may kill nothing, its own session included.
+#[tokio::test]
+async fn tells_a_login_without_view_server_state_what_it_cannot_see() {
+    let Some(server) = test_server() else {
+        return;
+    };
+    let _shared = SHARED_DATABASE.lock().await;
+    let mut admin = server.connect().await;
+    let login = format!("w15_watcher_{}", std::process::id());
+    let password = "Watcher-Test-2026!";
+    run(
+        &mut admin,
+        &format!(
+            "IF SUSER_ID('{login}') IS NOT NULL DROP LOGIN {login}; \
+             CREATE LOGIN {login} WITH PASSWORD = '{password}', CHECK_POLICY = OFF; \
+             CREATE USER {login} FOR LOGIN {login};"
+        ),
+    )
+    .await;
+    let mut config = server.config.clone();
+    config.server.user.clone_from(&login);
+    let mut watcher = connect(&config, Some(&Password::new(password)), Route::Direct)
+        .await
+        .unwrap();
+    let admin_id = admin.own_session().await.unwrap().unwrap();
+    let own = watcher.own_session().await.unwrap().unwrap();
+
+    let activity = watcher.server_activity().await.unwrap();
+    Box::new(watcher).close().await.unwrap();
+    run(
+        &mut admin,
+        &format!("DROP USER {login}; DROP LOGIN {login};"),
+    )
+    .await;
+
+    let ids: Vec<&SessionId> = activity
+        .sessions
+        .iter()
+        .map(|session| &session.id)
+        .collect();
+    assert!(ids.contains(&&own), "{activity:#?}");
+    assert!(!ids.contains(&&admin_id), "{activity:#?}");
+    assert_eq!(
+        activity.restrictions,
+        [
+            dbrover_core::Restriction {
+                hidden: dbrover_core::Hidden::OthersSessions,
+                shown_by: "VIEW SERVER STATE".to_owned(),
+            },
+            dbrover_core::Restriction {
+                hidden: dbrover_core::Hidden::OthersStatements,
+                shown_by: "VIEW SERVER STATE".to_owned(),
+            },
+        ]
+    );
+    assert_eq!(
+        activity.others_stopped_by.as_deref(),
+        Some("ALTER ANY CONNECTION")
+    );
+    assert!(
+        activity
+            .sessions
+            .iter()
+            .all(|session| session.stops.is_empty())
+    );
+}

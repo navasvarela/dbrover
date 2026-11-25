@@ -766,6 +766,9 @@ pub struct BlockingScript<'a> {
     pub before_wait: &'a [&'a str],
     /// The statement that waits on the row.
     pub wait: &'a str,
+    /// What the waiter's statement, as the server lists it, contains. The statement itself on
+    /// most engines; SQL Server lists it parameterised (`SET [n] = [n]+@1`).
+    pub wait_listed_as: &'a str,
     /// Run on the watching connection at the end: drops the table.
     pub teardown: &'a [&'a str],
     /// Whether the engine can cancel another session's statement and keep the session. SQL
@@ -835,7 +838,7 @@ pub async fn check_server_activity(
         .expect("the waiter's statement");
     assert!(statement.running, "{statement:#?}");
     assert!(
-        statement.text.contains(script.wait.trim_end_matches(';')),
+        statement.text.contains(script.wait_listed_as),
         "{statement:#?}"
     );
     let watching = session(&activity, &watcher_id).expect("the watcher lists itself");

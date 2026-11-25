@@ -377,7 +377,7 @@ const SQL_SERVER: Capabilities = Capabilities {
     drop_schema_cascade: false,
     users: UserModel::Unsupported,
     schema_compare: false,
-    server_activity: false,
+    server_activity: true,
 };
 
 /// A Synapse dedicated SQL pool's part of SQL Server's DDL (C1e), from Microsoft's
@@ -394,6 +394,8 @@ const SYNAPSE_DEDICATED: Capabilities = Capabilities {
         TableChange::AddColumn,
         TableChange::DropColumn,
     ],
+    // A warehouse's sessions are in views of its own, not read yet.
+    server_activity: false,
     ..SQL_SERVER
 };
 

@@ -466,6 +466,7 @@ async fn shows_a_waiting_thread_under_its_blocker_and_stops_both() {
                 hold: &["START TRANSACTION", &statements[3]],
                 before_wait: &["SET SESSION innodb_lock_wait_timeout = 20"],
                 wait: &statements[4],
+                wait_listed_as: &statements[4],
                 teardown: &[&statements[5]],
                 cancels: true,
             },

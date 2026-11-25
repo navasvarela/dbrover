@@ -325,7 +325,9 @@ fn restriction_text(restriction: &dbrover_core::Restriction) -> String {
             "Only this login's own sessions are listed. Seeing other users' needs {shown_by}."
         ),
         dbrover_core::Hidden::OthersStatements => {
-            format!("You see other users' sessions but not what they run: that needs {shown_by}.")
+            format!(
+                "Statements this login may not read are left out: showing them needs {shown_by}."
+            )
         }
         dbrover_core::Hidden::Blocking => {
             format!("Who blocks whom can't be read: that needs {shown_by}.")
