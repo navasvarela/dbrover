@@ -723,3 +723,105 @@ async fn a_failing_query_says_why_when_started_for_batches() {
     };
     assert!(error.contains("no_such_column"), "{error}");
 }
+
+/// Server activity (W15) on ClickHouse: another connection's long query is listed with what it
+/// has read, Cancel stops it, and the same Cancel sent again finds nothing to stop.
+#[tokio::test]
+async fn lists_a_running_query_and_cancels_it() {
+    let Some(server) = test_server() else {
+        return;
+    };
+    let mut watcher = server.connect().await;
+    let mut runner = server.connect().await;
+    let marker = format!("w15_{}", std::process::id());
+    let sql = format!("SELECT sum(number) AS {marker} FROM numbers(1000000000000)");
+    let running = tokio::spawn(async move {
+        let result = async {
+            let mut cursor = runner.execute(&sql).await?;
+            while !cursor.is_exhausted() {
+                cursor.next_page(500).await?;
+            }
+            cursor.finish().await
+        }
+        .await;
+        (runner, result)
+    });
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let listed = loop {
+        let activity = watcher.server_activity().await.unwrap();
+        let found = activity.sessions.into_iter().find(|session| {
+            session
+                .statement
+                .as_ref()
+                .is_some_and(|statement| statement.text.contains(&marker))
+        });
+        if let Some(found) = found {
+            break found;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the query never showed"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    };
+    assert!(
+        listed.extra.iter().any(|(label, _)| label == "Rows read"),
+        "{listed:#?}"
+    );
+    let cancel = listed
+        .stop(dbrover_core::StopKind::CancelQuery)
+        .unwrap()
+        .clone();
+
+    assert_eq!(
+        watcher.stop_session(&cancel).await.unwrap(),
+        StopOutcome::Stopped
+    );
+    let (_, result) = running.await.unwrap();
+    assert!(result.is_err(), "the cancelled query: {result:?}");
+    // ASYNC leaves the query to stop by itself; once it has, nothing matches.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while watcher.stop_session(&cancel).await.unwrap() != StopOutcome::AlreadyEnded {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the query never ended"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+/// Without SELECT on system.processes ClickHouse refuses the read outright, own queries
+/// included, and its message names the grant, which the tab shows.
+#[tokio::test]
+async fn a_user_without_select_on_system_processes_is_told_the_grant() {
+    let Some(server) = test_server() else {
+        return;
+    };
+    let admin = server.connect().await;
+    let user = format!("w15_watcher_{}", std::process::id());
+    for sql in [
+        format!("DROP USER IF EXISTS {user}"),
+        format!("CREATE USER {user} IDENTIFIED WITH plaintext_password BY 'watcher'"),
+        // Connecting checks the database exists, which needs this much.
+        format!(
+            "GRANT SHOW DATABASES ON {}.* TO {user}",
+            server.config.server.database
+        ),
+    ] {
+        execution::single_value(&admin.session, &sql).await.unwrap();
+    }
+    let mut config = server.config.clone();
+    config.server.user.clone_from(&user);
+    let mut watcher = connect(&config, Some(&Password::new("watcher")), Route::Direct)
+        .await
+        .unwrap();
+
+    let refused = watcher.server_activity().await.unwrap_err();
+    execution::single_value(&admin.session, &format!("DROP USER {user}"))
+        .await
+        .unwrap();
+
+    let message = dbrover_core::describe_error(&refused);
+    assert!(message.contains("system.processes"), "{message}");
+}

@@ -193,7 +193,7 @@ partial list off as the whole server:
 | MySQL | Only the login's own threads | `PROCESS` | `CONNECTION_ADMIN` (or `SUPER`) |
 | MariaDB | Only the login's own threads | `PROCESS` | `CONNECTION ADMIN` (or `SUPER`) |
 | SQL Server | Only the login's own session | `VIEW SERVER STATE` (2019), `VIEW SERVER PERFORMANCE STATE` (2022) | `ALTER ANY CONNECTION` |
-| ClickHouse | *to check:* only the user's own queries | *to check* | `KILL QUERY` on other users' queries; a user may always stop its own |
+| ClickHouse | Nothing: the read is refused, own queries included (25.8, found in W15g) | `SELECT` on `system.processes` | `KILL QUERY` on other users' queries; a user may always stop its own. Not asked beforehand (`system.grants` needs a grant of its own): the server refuses |
 
 - **How it's told:** PostgreSQL's `pg_has_role(…, 'member')` and `rolsuper`; SQL Server's
   `HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW SERVER STATE')`; MySQL's and MariaDB's

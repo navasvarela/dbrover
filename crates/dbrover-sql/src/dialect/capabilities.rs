@@ -537,7 +537,7 @@ const CLICKHOUSE: Capabilities = Capabilities {
     drop_schema_cascade: false,
     users: UserModel::Unsupported,
     schema_compare: false,
-    server_activity: false,
+    server_activity: true,
 };
 
 /// CQL's tables: a primary key that can't change, no other keys or constraints, and secondary
