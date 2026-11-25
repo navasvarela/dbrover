@@ -896,6 +896,39 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
       arrives as a `DECIMAL(18,2)`; **Explain report** shows `EXPLAIN COST` and an estimate.
     - Any answer that differs from the replayed exchanges goes into
       `crates/dbrover-driver-databricks/src/tests/exchanges/`.
+- **C7 — Amazon Redshift, signed in with AWS** (planned, proposed 2026-11-25, after C6; its
+  scope awaits the user's choice): Redshift finished, after C1 reached it with a password and
+  read-only tables. Signing in with an AWS profile through Redshift's credentials API, Redshift's
+  own table descriptions, materialized views, functions and procedures in the explorer, C5's time
+  limit kept by Redshift's `statement_timeout`, and the Redshift Data API for a cluster with no
+  route to it. Planned in
+  [Cloud and big data](cloud-data.md#c7--amazon-redshift-signed-in-with-aws), with the
+  alternatives considered (Iceberg catalogs, and Firestore and Cosmos DB) and why they rank lower.
+  In layers, one PR each:
+  - **C7a — Plan:** C7's scope, the candidates, the open questions, and this entry; C7's
+    decisions and risks once the scope is chosen.
+  - **C7b — Redshift's IAM sign-in:** a user and password from `GetClusterCredentialsWithIAM`,
+    `GetClusterCredentials` or Serverless's `GetCredentials`, asked for on every connection.
+  - **C7c — Redshift's table description:** columns with their encoding, distribution and sort
+    keys, and the table's layout where the user may read it.
+  - **C7d — Materialized views, functions and procedures** in the explorer, with **Show
+    definition**.
+  - **C7e — The time limit:** **Stop statements after** sent as `statement_timeout`.
+  - **C7f — The Data API:** statements as jobs over AWS's HTTPS, a session per console.
+  - **C7g — Redshift in the data source dialog:** AWS IAM's rows for Redshift, **Connect
+    through**, the time limit and the MCP server's read-only mode.
+  - **C7h — Manual:** the manual's Redshift section, the demo note and the exit test.
+
+  Nothing would be tried against a real AWS account while building C7: AWS's calls are tested
+  against exchanges written from its API references and replayed on this machine, the catalog on
+  views imitating Redshift's in the PostgreSQL test server, and the Data API against a test
+  server that runs its statements there; the live checks go in the demo note, with a test the
+  user runs by hand.
+
+  **Exit:** a Redshift data source signs in with AWS IAM and no password, describes a table with
+  its sort key, lists a materialized view and a procedure, has a statement past its time limit
+  stopped, and runs a console through the Data API (with replayed exchanges and stand-ins in CI;
+  by hand against Redshift).
 
 ## NoSQL track
 
