@@ -82,13 +82,18 @@ report's result with `report` and binds its `params`, a cycle of reports is a pr
 file, a report's tab lists the reports that read it under **Used by**, and `reuse` takes a kept
 result younger than an age instead of running the report again; and data sources put into
 projects in one step: **New data source** on a project's menu creates one there, and a data
-source dragged onto a project header moves into it) and v0.38.0 (Snowflake and Databricks SQL,
+source dragged onto a project header moves into it), v0.38.0 (Snowflake and Databricks SQL,
 each over its own HTTPS API: Snowflake signed in with a key pair, a programmatic access token or
 an OAuth token, Databricks with an access token, a service principal, the Databricks CLI or the
 Azure CLI; their databases, catalogs and schemas browsed without starting a warehouse; a
 statement stopped after a time limit you set, 10 minutes by default; a role or service principal
 of its own for AI assistants over MCP; and reports that hand a large Snowflake result over
-through an S3 bucket with `COPY INTO` and read Databricks's results as Arrow).
+through an S3 bucket with `COPY INTO` and read Databricks's results as Arrow) and v0.39.0
+(Server activity: a tab that lists a server's sessions, what each is running, how long it has
+waited and which session blocks it, on PostgreSQL, MySQL, MariaDB, SQL Server and ClickHouse;
+Cancel query and Kill where the engine has them, Kill always asking first and both refused on
+a read-only data source; every stop recorded in History; and an `activity` permission that lets
+AI assistants over MCP list sessions and stop one).
 R3's update notice is built, ahead of R2 (see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
