@@ -2,7 +2,7 @@
 
 use std::num::NonZeroU32;
 
-use dbrover_store::{KeywordCase, McpPermissions, Settings};
+use dbrover_store::{ActivitySettings, KeywordCase, McpPermissions, Settings};
 use egui::{Button, RichText, ThemePreference, Ui};
 
 use super::setting::Setting;
@@ -83,6 +83,7 @@ fn control(ui: &mut Ui, setting: Setting, title: &str, draft: &mut Draft<'_>) {
             &COUNTS,
             |count| format!("the newest {count}"),
         ),
+        Setting::ActivityRefresh => activity_refresh(ui, &mut settings.activity.refresh_seconds),
         Setting::Report(default) => default.control(ui, &mut settings.reports),
         Setting::CheckForUpdates => {
             form::toggle(ui, &mut settings.updates.check_on_start, title);
@@ -238,4 +239,37 @@ fn limit_choice(
                 ui.selectable_value(limit, NonZeroU32::new(choice), text);
             }
         });
+}
+
+/// The intervals a new Server activity tab may read at, in seconds; 0 opens it paused.
+const REFRESHES: [(u32, &str); 6] = [
+    (0, "paused"),
+    (1, "every second"),
+    (2, "every 2 s"),
+    (5, "every 5 s"),
+    (10, "every 10 s"),
+    (30, "every 30 s"),
+];
+
+/// Unset means DbRover's default, so choosing the default unsets it again.
+fn activity_refresh(ui: &mut Ui, seconds: &mut Option<u32>) {
+    let default = ActivitySettings::DEFAULT_REFRESH_SECONDS;
+    let mut chosen = seconds.unwrap_or(default);
+    let label = |value: u32| {
+        REFRESHES
+            .iter()
+            .find(|(choice, _)| *choice == value)
+            .map_or_else(
+                || format!("every {value} s"),
+                |(_, label)| (*label).to_owned(),
+            )
+    };
+    egui::ComboBox::from_id_salt("activity_refresh")
+        .selected_text(label(chosen))
+        .show_ui(ui, |ui| {
+            for &(choice, text) in &REFRESHES {
+                ui.selectable_value(&mut chosen, choice, text);
+            }
+        });
+    *seconds = (chosen != default).then_some(chosen);
 }

@@ -36,6 +36,7 @@ pub mod conformance;
 pub use activity::{
     ActivityRow, Hidden, LockWait, Restriction, ServerActivity, ServerSession, SessionId,
     SessionState, SessionStatement, SessionStop, StopKind, StopOutcome, blocking_order,
+    spoken_duration,
 };
 pub use batch::{BatchCursor, bulk_kind};
 pub use blob_id::{BlobId, InvalidBlobId};

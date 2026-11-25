@@ -904,6 +904,22 @@ const SCENES: &[Scene] = &[
         needs: &[POSTGRES_URL],
     },
     Scene {
+        name: "server-activity",
+        data_sources: FixtureSources::Shop,
+        play: server_activity,
+        keeps_pointer: false,
+        region: whole_window,
+        needs: &[POSTGRES_URL],
+    },
+    Scene {
+        name: "server-activity-kill",
+        data_sources: FixtureSources::Shop,
+        play: server_activity_kill,
+        keeps_pointer: false,
+        region: whole_window,
+        needs: &[POSTGRES_URL],
+    },
+    Scene {
         name: "explain-plan",
         data_sources: FixtureSources::Shop,
         play: explain_plan,
@@ -1451,6 +1467,57 @@ fn console_reconnect(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixtu
         .type_text("SELECT status, count(*) FROM orders GROUP BY status;\n");
     harness.run_ok();
     run_all(harness, "reconnect to go on");
+}
+
+/// A table the two consoles of the Server activity scenes fight over. A real table, since the
+/// second console must see the first's row; it stays on the test server, one row, unchanged
+/// once the scene's connections close and roll back.
+const CONTESTED_ORDERS: &str = "\
+CREATE TABLE IF NOT EXISTS screenshot_orders (id int PRIMARY KEY, status text NOT NULL);
+INSERT INTO screenshot_orders VALUES (3, 'open') ON CONFLICT DO NOTHING;
+BEGIN;
+UPDATE screenshot_orders SET status = 'paid' WHERE id = 3;
+";
+
+/// Server activity (W15) on `warehouse`: one console holds a row in its open transaction,
+/// another waits on it, drawn under it; the holder is selected, its details below the list.
+fn server_activity(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
+    let Some((postgres, _)) = &fixture.postgres else {
+        return;
+    };
+    open_console(harness, &postgres.name, CONTESTED_ORDERS);
+    run_all(harness, "Done in");
+    open_console(
+        harness,
+        &postgres.name,
+        "UPDATE screenshot_orders SET status = 'shipped' WHERE id = 3;",
+    );
+    harness.get_by_label("Run all").click();
+    harness.run_ok();
+    harness.get_by_label(&postgres.name).click_secondary();
+    harness.run_ok();
+    harness.get_by_label("Server activity").click();
+    step_until(harness, "a session waiting", |harness| {
+        harness.query_all_by_label("waiting").next().is_some()
+    });
+    harness
+        .get_all_by_label("idle in transaction")
+        .next()
+        .unwrap()
+        .click();
+    step_until_visible(harness, "Transaction open for");
+    harness.run_ok();
+}
+
+/// The same, with Kill… asking first.
+fn server_activity_kill(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
+    server_activity(harness, fixture);
+    if fixture.postgres.is_none() {
+        return;
+    }
+    harness.get_by_label("Kill\u{2026}").click();
+    step_until_visible(harness, "This sends:");
+    harness.run_ok();
 }
 
 /// Customers and their orders as temporary tables, the console's own, so nothing is left on

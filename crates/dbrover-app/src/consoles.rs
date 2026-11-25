@@ -1,7 +1,7 @@
 //! The open query consoles, their files, and the rules for starting runs in them. Returns the
 //! engine commands to send rather than sending them, so it can be tested without an engine.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -62,6 +62,15 @@ impl SavedConsoles {
 impl Consoles {
     /// The open consoles to draw, the saved ones the explorer offers, and the recent
     /// completions, borrowed at once.
+    /// Each open console's tab title, by its id, for naming DbRover's sessions in Server
+    /// activity.
+    pub fn titles(&self) -> HashMap<ConsoleId, String> {
+        self.open
+            .values()
+            .map(|console| (console.id(), console.tab_title()))
+            .collect()
+    }
+
     pub fn open_and_saved_mut(
         &mut self,
     ) -> (

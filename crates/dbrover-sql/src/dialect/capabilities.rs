@@ -67,6 +67,9 @@ pub struct Capabilities {
     /// driver reads a whole schema (`Connection::describe_schema`), and the script between two
     /// is this dialect's DDL.
     pub schema_compare: bool,
+    /// Whether the explorer offers Server activity (W15): the driver reads the server's
+    /// sessions and writes the statements that stop them.
+    pub server_activity: bool,
 }
 
 /// The statements that switch foreign keys off for DDL and check them after, where a dialect
@@ -225,6 +228,7 @@ const POSTGRES: Capabilities = Capabilities {
     drop_schema_cascade: true,
     users: UserModel::Roles,
     schema_compare: true,
+    server_activity: true,
 };
 
 /// SQLite enforces foreign keys only while switched on, and can't switch them inside a
@@ -267,6 +271,7 @@ const SQLITE: Capabilities = Capabilities {
     drop_schema_cascade: false,
     users: UserModel::Unsupported,
     schema_compare: false,
+    server_activity: false,
 };
 
 /// InnoDB parses `SET DEFAULT` but refuses the table, so it isn't offered. `CASCADE` after
@@ -319,6 +324,7 @@ const MYSQL: Capabilities = Capabilities {
     drop_schema_cascade: false,
     users: UserModel::Unsupported,
     schema_compare: false,
+    server_activity: false,
 };
 
 /// SQL Server has no `RESTRICT`: `NO ACTION` is what refuses. Its renames are `sp_rename`
@@ -371,6 +377,7 @@ const SQL_SERVER: Capabilities = Capabilities {
     drop_schema_cascade: false,
     users: UserModel::Unsupported,
     schema_compare: false,
+    server_activity: false,
 };
 
 /// A Synapse dedicated SQL pool's part of SQL Server's DDL (C1e), from Microsoft's
@@ -469,6 +476,7 @@ const DUCKDB: Capabilities = Capabilities {
     drop_schema_cascade: true,
     users: UserModel::Unsupported,
     schema_compare: false,
+    server_activity: false,
 };
 
 /// ClickHouse has no unique or foreign keys, only checks; its `PRIMARY KEY` is the sort
@@ -527,6 +535,7 @@ const CLICKHOUSE: Capabilities = Capabilities {
     drop_schema_cascade: false,
     users: UserModel::Unsupported,
     schema_compare: false,
+    server_activity: false,
 };
 
 /// CQL's tables: a primary key that can't change, no other keys or constraints, and secondary
@@ -574,6 +583,7 @@ const CQL: Capabilities = Capabilities {
     drop_schema_cascade: false,
     users: UserModel::Unsupported,
     schema_compare: false,
+    server_activity: false,
 };
 
 /// Trino and Athena: what DDL a table takes is each connector's (Hive, Iceberg, the memory
@@ -613,6 +623,7 @@ const TRINO: Capabilities = Capabilities {
     drop_schema_cascade: false,
     users: UserModel::Unsupported,
     schema_compare: false,
+    server_activity: false,
 };
 
 /// BigQuery: a table's partitioning, clustering and options are what its DDL is about, and
@@ -654,6 +665,7 @@ const BIGQUERY: Capabilities = Capabilities {
     drop_schema_cascade: false,
     users: UserModel::Unsupported,
     schema_compare: false,
+    server_activity: false,
 };
 
 /// Snowflake: nothing is offered in C5, which has no Snowflake server to try the helpers' DDL
@@ -695,6 +707,7 @@ const SNOWFLAKE: Capabilities = Capabilities {
     drop_schema_cascade: false,
     users: UserModel::Unsupported,
     schema_compare: false,
+    server_activity: false,
 };
 
 /// Databricks: nothing is offered in C6, which has no workspace to try the helpers' DDL
@@ -736,6 +749,7 @@ const DATABRICKS: Capabilities = Capabilities {
     drop_schema_cascade: false,
     users: UserModel::Unsupported,
     schema_compare: false,
+    server_activity: false,
 };
 
 impl Dialect {

@@ -95,8 +95,10 @@ beside the consoles, as History does (D8). One per data source: opening it again
 
 ### Refreshing
 
-- **On a timer, every 5 s by default:** off, 1, 2, 5, 10 or 30 s, from the toolbar, saved in
-  `settings.toml` as `[activity] refresh_seconds = 5` and shown in the Settings tab.
+- **On a timer, every 5 s by default:** 1, 2, 5, 10 or 30 s from the toolbar, for that tab.
+  **Settings › Server activity** sets what a new tab starts with, paused included, saved in
+  `settings.toml` as `[activity] refresh_seconds` (W15d: the toolbar doesn't rewrite the
+  setting, so trying 1 s on one busy server doesn't change every other tab).
   **Pause** stops it and **Refresh** reads once.
 - **Only while the tab is shown.** A tab behind another, or in a window that is minimised,
   isn't read; it reads again when shown. A server isn't polled for a list no one is looking at.

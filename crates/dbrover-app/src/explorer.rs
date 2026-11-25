@@ -108,6 +108,8 @@ pub enum ExplorerAction {
     Diagram(DataSourceId, CatalogPath),
     /// Diagram with related tables: the table at the path and every table its keys join.
     DiagramRelated(DataSourceId, CatalogPath),
+    /// Server activity: the data source's sessions, locks, Cancel and Kill, in a tab (W15).
+    ServerActivity(DataSourceId),
     /// Compare schema…: a compare tab with the schema at the path on its left (W13).
     CompareSchema(DataSourceId, CatalogPath),
     /// Save schema snapshot…: the schema at the path written to a file the user picks (VC3).
@@ -893,6 +895,11 @@ fn data_source_menu(
     }
     if widgets::menu_item(ui, icons::TERMINAL_WINDOW, "New query console").clicked() {
         actions.push(ExplorerAction::NewConsole(id));
+    }
+    let shows_activity =
+        helper_capabilities(entry).is_some_and(|capabilities| capabilities.server_activity);
+    if shows_activity && widgets::menu_item(ui, icons::PULSE, "Server activity").clicked() {
+        actions.push(ExplorerAction::ServerActivity(id));
     }
     saved_consoles_menu(ui, id, tree.saved_consoles, actions);
     saved_diagrams_menu(ui, id, tree.saved_diagrams, actions);

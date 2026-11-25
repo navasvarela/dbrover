@@ -1,10 +1,11 @@
 //! The dockable panel layout: which tabs exist, where they start, and what each one draws.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use dbrover_core::DataSource;
 use dbrover_core::{DataSourceId, SourceColor};
+use dbrover_engine::ConsoleId;
 use dbrover_store::{
     ConsoleKey, CustomAction, DiagramKey, McpPermissions, Project, ReportName, Snippet,
 };
@@ -18,6 +19,7 @@ use crate::command_runs::CommandRuns;
 use dbrover_export::CustomFormat;
 use dbrover_language::QueryLanguage;
 
+use crate::activity_tab::{ActivityAction, ActivityTabs, ActivityView};
 use crate::console::{
     self, CellMenuItems, ConsoleAction, ConsoleContext, LintOptions, QueryConsole,
     RecentCompletions, TreeCatalog,
@@ -83,6 +85,9 @@ pub enum Tab {
     Definition(DefinitionId),
     /// Two schemas compared (W13). Not restored; see [`forget_transient_tabs`].
     SchemaCompare(CompareId),
+    /// A data source's Server activity (W15). Not restored, which would connect at start-up
+    /// to every server whose tab was open; see [`forget_transient_tabs`].
+    Activity(DataSourceId),
 }
 
 /// The consoles whose tabs the layout holds, so they can be reopened at start-up.
@@ -200,17 +205,38 @@ pub fn close_definition_tab(layout: &mut DockState<Tab>, id: DefinitionId) {
     }
 }
 
-/// Drops a saved layout's definition and compare tabs, whose keys mean nothing to this run.
+/// Drops a saved layout's definition, compare and activity tabs: the first two's keys mean
+/// nothing to this run, and an activity tab would connect at start-up.
 pub fn forget_transient_tabs(layout: &mut DockState<Tab>) {
     let transient: Vec<Tab> = layout
         .iter_all_tabs()
-        .filter(|(_, tab)| matches!(tab, Tab::Definition(_) | Tab::SchemaCompare(_)))
+        .filter(|(_, tab)| {
+            matches!(
+                tab,
+                Tab::Definition(_) | Tab::SchemaCompare(_) | Tab::Activity(_)
+            )
+        })
         .map(|(_, tab)| tab.clone())
         .collect();
     for tab in transient {
         if let Some(path) = layout.find_tab(&tab) {
             layout.remove_tab(path);
         }
+    }
+}
+
+/// Brings a data source's activity tab to the front, opening it next to the consoles if it
+/// isn't open.
+pub fn open_activity_tab(layout: &mut DockState<Tab>, data_source: DataSourceId) {
+    let tab = Tab::Activity(data_source);
+    if !focus_tab(layout, &tab) {
+        open_in_main_area(layout, tab);
+    }
+}
+
+pub fn close_activity_tab(layout: &mut DockState<Tab>, data_source: DataSourceId) {
+    if let Some(path) = layout.find_tab(&Tab::Activity(data_source)) {
+        layout.remove_tab(path);
     }
 }
 
@@ -269,6 +295,7 @@ fn open_in_main_area(layout: &mut DockState<Tab>, tab: Tab) {
                 | Tab::History(_)
                 | Tab::Definition(_)
                 | Tab::SchemaCompare(_)
+                | Tab::Activity(_)
         )
     };
     match tree.find_tab_from(in_main_area) {
@@ -363,6 +390,11 @@ pub struct Panels<'a> {
     pub compares: &'a mut SchemaCompares,
     /// What the user asked of the compare tabs this frame.
     pub compare_actions: &'a mut Vec<CompareAction>,
+    pub activity: &'a mut ActivityTabs,
+    /// What the user asked of the activity tabs this frame.
+    pub activity_actions: &'a mut Vec<ActivityAction>,
+    /// Open consoles' titles, by id, for the activity tabs to name DbRover's sessions.
+    pub console_titles: &'a HashMap<ConsoleId, String>,
 }
 
 impl TabViewer for Panels<'_> {
@@ -443,6 +475,18 @@ impl TabViewer for Panels<'_> {
                         role: Role::Primary,
                     },
                     &format!("History of {name}"),
+                    FontId::proportional(TAB_TITLE_SIZE),
+                )
+            }
+            Tab::Activity(data_source) => {
+                let name = self.data_source_name(*data_source);
+                tab_title(
+                    palette,
+                    Icon {
+                        glyph: icons::PULSE,
+                        role: Role::Primary,
+                    },
+                    &format!("Activity on {name}"),
                     FontId::proportional(TAB_TITLE_SIZE),
                 )
             }
@@ -564,6 +608,7 @@ impl TabViewer for Panels<'_> {
                     ui.weak("Loading…");
                 }
             },
+            Tab::Activity(data_source) => self.show_activity(ui, *data_source),
             Tab::Definition(id) => self
                 .definition_actions
                 .extend(self.definitions.show(ui, *id)),
@@ -642,6 +687,7 @@ impl TabViewer for Panels<'_> {
                 | Tab::History(_)
                 | Tab::Definition(_)
                 | Tab::SchemaCompare(_)
+                | Tab::Activity(_)
         )
     }
 
@@ -657,6 +703,10 @@ impl TabViewer for Panels<'_> {
             }
             Tab::History(data_source) => {
                 self.history.close(*data_source);
+                OnCloseResponse::Close
+            }
+            Tab::Activity(data_source) => {
+                self.activity.close(*data_source);
                 OnCloseResponse::Close
             }
             Tab::Report(name) if self.reports.is_unsaved(name) => {
@@ -681,6 +731,37 @@ impl TabViewer for Panels<'_> {
 }
 
 impl Panels<'_> {
+    fn data_source_name(&self, data_source: DataSourceId) -> &str {
+        self.data_sources
+            .entries()
+            .iter()
+            .find(|entry| entry.data_source.id == data_source)
+            .map_or("a removed data source", |entry| {
+                entry.data_source.name.as_str()
+            })
+    }
+
+    fn show_activity(&mut self, ui: &mut Ui, data_source: DataSourceId) {
+        let Some(entry) = self
+            .data_sources
+            .entries()
+            .iter()
+            .find(|entry| entry.data_source.id == data_source)
+        else {
+            ui.weak("The data source was removed.");
+            return;
+        };
+        let Some(tab) = self.activity.get_mut(data_source) else {
+            return;
+        };
+        let view = ActivityView {
+            name: &entry.data_source.name,
+            safety: entry.data_source.safety,
+            consoles: self.console_titles,
+        };
+        self.activity_actions.extend(tab.show(ui, &view));
+    }
+
     /// The colour of the data source a console runs on, looked up every frame so a colour
     /// changed in the data source dialog shows at once.
     fn console_color(&self, key: &ConsoleKey) -> Option<SourceColor> {
