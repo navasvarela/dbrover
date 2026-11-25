@@ -123,7 +123,8 @@ pub const SUMMARY: &str = "Whether MCP clients may use this project, and what th
 /// Whether a search finds `project`: by its name and slug, and by the words of its page.
 pub fn matches(project: &Project, query: &str) -> bool {
     let haystack = format!(
-        "{} {} project mcp clients allow read write schema admin reports row limit timeout schemas \
+        "{} {} project mcp clients allow read write schema admin reports activity sessions row limit \
+         timeout schemas \
          permissions agent",
         project.name, project.slug
     )
@@ -143,6 +144,7 @@ pub fn allows(project: &Project, defaults: &McpPermissions) -> String {
         ("schema", permissions.schema),
         ("admin", permissions.admin),
         ("reports", permissions.reports),
+        ("activity", permissions.activity),
     ]
     .into_iter()
     .filter_map(|(name, allowed)| allowed.then_some(name))

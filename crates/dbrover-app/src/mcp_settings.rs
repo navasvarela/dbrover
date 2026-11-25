@@ -15,6 +15,7 @@ const WRITE: &str = "INSERT, UPDATE, DELETE, MERGE, TRUNCATE";
 const SCHEMA: &str = "CREATE, ALTER, DROP, COMMENT ON and other DDL";
 const ADMIN: &str = "Grants, roles, databases, settings, files, sessions, procedures";
 const REPORTS: &str = "Run the reports whose data sources are all in the project";
+const ACTIVITY: &str = "List the server's sessions and their statements; with Admin, stop them";
 
 /// A row limit nobody would page through, and a timeout of an hour: enough for any real
 /// call, low enough that a typo doesn't turn the limits off.
@@ -154,6 +155,7 @@ fn edit_defaults(ui: &mut Ui, defaults: &mut McpPermissions, schemas: &mut Schem
                 ("Schema", &mut defaults.schema, SCHEMA),
                 ("Admin", &mut defaults.admin, ADMIN),
                 ("Run reports", &mut defaults.reports, REPORTS),
+                ("Server activity", &mut defaults.activity, ACTIVITY),
             ] {
                 ui.checkbox(value, name);
                 ui.weak(meaning);
@@ -195,6 +197,12 @@ pub fn edit_overrides(
                     &mut overrides.reports,
                     defaults.reports,
                     REPORTS,
+                ),
+                (
+                    "Server activity",
+                    &mut overrides.activity,
+                    defaults.activity,
+                    ACTIVITY,
                 ),
             ] {
                 let mut allowed = value.unwrap_or(default);

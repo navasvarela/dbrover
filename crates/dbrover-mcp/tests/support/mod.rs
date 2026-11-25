@@ -57,7 +57,7 @@ pub fn run<F: Future<Output = ()>>(name: &str, test: impl FnOnce() -> F) {
 /// Passwords in memory, standing in for the OS keychain; the server process reads them from
 /// a file the test wrote. Keyed by account as the keychain is: the data source's id, or the
 /// id and `/mcp` for its MCP login.
-pub struct FileSecrets(HashMap<String, Password>);
+pub struct FileSecrets(pub HashMap<String, Password>);
 
 impl SecretStore for FileSecrets {
     fn get(&self, id: DataSourceId, secret: Secret) -> Result<Option<Password>, SecretError> {

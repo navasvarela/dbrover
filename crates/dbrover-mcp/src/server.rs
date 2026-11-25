@@ -23,12 +23,13 @@ use rmcp::{ErrorData, ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::activity::{ActivityArgs, StopArgs};
 use crate::audit::{Audit, Ran};
 use crate::catalog::{self, NodeJson, PathStep};
 use crate::chart::{self as charts, ChartArgs};
 use crate::connections::Connections;
 use crate::execute::ExecuteArgs;
-use crate::project::ServedProject;
+use crate::project::{Permission, ServedProject};
 use crate::report_history::{CompareReportRunsArgs, ReportProfileArgs, ReportRunsArgs};
 use crate::reports::{ExplainReportArgs, ReportRunner, RunReportArgs};
 use crate::scope::Scope;
@@ -192,7 +193,7 @@ impl ToolError {
         }
     }
 
-    fn from_run(error: RunError, prefix_len: usize) -> Self {
+    pub(crate) fn from_run(error: RunError, prefix_len: usize) -> Self {
         match error {
             RunError::Driver(DriverError::Statement {
                 source,
@@ -259,6 +260,14 @@ impl DbRoverMcp {
         // Nor, without the permission, is run_report there to call.
         if !project.reports || reports.is_none() {
             tool_router.remove_route("run_report");
+        }
+        // Server activity shows other users' statements, so it has a permission of its own;
+        // stopping a session is administration on top of it.
+        if !project.activity {
+            tool_router.remove_route("server_activity");
+        }
+        if !(project.activity && project.changes.allows(Permission::Admin)) {
+            tool_router.remove_route("stop_session");
         }
         Self {
             inner: Arc::new(Inner {
@@ -396,6 +405,33 @@ impl DbRoverMcp {
     ))]
     async fn execute(&self, Parameters(args): Parameters<ExecuteArgs>) -> ToolResult {
         reply(self.execute_json(args).await)
+    }
+
+    /// What the data source's server is doing: its sessions as this project's login may see
+    /// them (id, user, database, application, state, seconds in that state, open
+    /// transaction's age, statement), in blocking order: a session waiting on another's lock
+    /// comes right after it with a greater depth, blocked_by naming the holders and
+    /// waits_for the lock. Other users' statements are redacted of passwords. hidden says what
+    /// the login can't see and the privilege that would show it; stops lists what
+    /// stop_session may send to each session. Reads the server's own views; changes nothing.
+    #[tool(annotations(read_only_hint = true, open_world_hint = false))]
+    async fn server_activity(&self, Parameters(args): Parameters<ActivityArgs>) -> ToolResult {
+        reply(self.activity_json(args).await)
+    }
+
+    /// Stops one session server_activity lists: "cancel" stops its running statement and
+    /// keeps the session; "kill" ends the session, and the server rolls back its open
+    /// transaction. The session is read again first and stopped only if it is still the one
+    /// listed. Refused on a read-only data source and for this server's own session. Recorded
+    /// in DbRover's query history.
+    #[tool(annotations(
+        read_only_hint = false,
+        destructive_hint = true,
+        idempotent_hint = false,
+        open_world_hint = false
+    ))]
+    async fn stop_session(&self, Parameters(args): Parameters<StopArgs>) -> ToolResult {
+        reply(self.stop_json(args).await)
     }
 
     /// Lists the reports in DbRover's reports folder that read only this project's data
