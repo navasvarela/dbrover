@@ -119,6 +119,9 @@ pub struct ServedProject {
     pub data_sources: Vec<DataSource>,
     /// Whether `run_report` may run the project's reports.
     pub reports: bool,
+    /// Whether `server_activity` lists the servers' sessions, and, with `admin`,
+    /// `stop_session` stops them (W15).
+    pub activity: bool,
 }
 
 impl ServedProject {
@@ -184,6 +187,7 @@ impl ServedProject {
             schemas: permissions.schemas.clone(),
             data_sources,
             reports: permissions.reports,
+            activity: permissions.activity,
         })
     }
 

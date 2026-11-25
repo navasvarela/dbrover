@@ -94,6 +94,10 @@ pub struct McpPermissions {
     /// "Finishing RP4"). Off by default: a run reads as much as its report says, under the
     /// report's own limits, not the project's.
     pub reports: bool,
+    /// Listing the server's sessions with `server_activity`, and, with `admin` too, stopping
+    /// them with `stop_session` (W15, `docs/server-activity.md`). Off by default: other users'
+    /// statements can hold anything they typed.
+    pub activity: bool,
     /// The most rows one call returns; the reply says when there were more.
     pub max_rows: NonZeroU32,
     /// How long one statement may run before it is cancelled.
@@ -120,6 +124,7 @@ impl Default for McpPermissions {
             schema: false,
             admin: false,
             reports: false,
+            activity: false,
             max_rows: DEFAULT_MAX_ROWS,
             statement_timeout: StatementTimeout(DEFAULT_STATEMENT_TIMEOUT),
             schemas: SchemaScope::All,
@@ -142,6 +147,8 @@ pub struct McpOverrides {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reports: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub activity: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_rows: Option<NonZeroU32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub statement_timeout: Option<StatementTimeout>,
@@ -162,6 +169,7 @@ impl McpOverrides {
             schema: self.schema.unwrap_or(defaults.schema),
             admin: self.admin.unwrap_or(defaults.admin),
             reports: self.reports.unwrap_or(defaults.reports),
+            activity: self.activity.unwrap_or(defaults.activity),
             max_rows: self.max_rows.unwrap_or(defaults.max_rows),
             statement_timeout: self.statement_timeout.unwrap_or(defaults.statement_timeout),
             schemas: self

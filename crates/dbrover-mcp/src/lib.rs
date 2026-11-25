@@ -12,6 +12,7 @@
 //! project's permission for its kind; beyond reading, only the grants of a data source's MCP
 //! login are airtight.
 
+mod activity;
 mod audit;
 mod catalog;
 mod chart;

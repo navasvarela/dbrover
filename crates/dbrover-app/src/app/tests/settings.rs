@@ -296,6 +296,9 @@ fn lists_each_project_and_keeps_its_unsaved_changes() {
     harness.run();
     assert!(is_on(&harness, allow), "the change is kept");
 
+    // Below the permissions' rows, which can be taller than the window.
+    harness.get_by_label("Discard").scroll_to_me();
+    harness.run();
     harness.get_by_label("Discard").click();
     harness.run();
     assert!(!is_on(&harness, allow));

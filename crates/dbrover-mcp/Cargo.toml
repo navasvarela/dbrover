@@ -59,6 +59,10 @@ name = "login"
 harness = false
 
 [[test]]
+name = "activity"
+harness = false
+
+[[test]]
 name = "redis"
 harness = false
 

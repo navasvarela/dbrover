@@ -90,6 +90,7 @@ Each project has these, each falling back to `mcp_defaults`:
 | `write` | `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `TRUNCATE` | off |
 | `schema` | `CREATE`, `ALTER`, `DROP`, `COMMENT ON` and other DDL | off |
 | `admin` | `GRANT`, `REVOKE`, roles and users, `CREATE DATABASE`, `VACUUM`, server settings, `COPY` to or from files, killing sessions | off |
+| `activity` | `server_activity`, the servers' sessions and their statements (W15, [Server activity](server-activity.md)); with `admin` too, `stop_session` | off |
 | `max_rows` | The most rows one call returns; the reply says when it is cut short | 500 |
 | `statement_timeout` | How long one statement may run before it is cancelled | 30 s |
 | `schemas` | Optional allow-list of schemas the catalog tools show and statements may name | all |
