@@ -3,6 +3,7 @@
 //! Nothing here does I/O. Driver crates implement [`Connection`]; the engine owns the
 //! connections and the UI only ever sees the plain data types.
 
+mod activity;
 mod batch;
 mod blob_id;
 mod byte_size;
@@ -32,6 +33,10 @@ mod table;
 #[cfg(feature = "conformance")]
 pub mod conformance;
 
+pub use activity::{
+    ActivityRow, Hidden, LockWait, Restriction, ServerActivity, ServerSession, SessionId,
+    SessionState, SessionStatement, SessionStop, StopKind, StopOutcome, blocking_order,
+};
 pub use batch::{BatchCursor, bulk_kind};
 pub use blob_id::{BlobId, InvalidBlobId};
 pub use byte_size::ByteSize;

@@ -38,6 +38,15 @@ Implemented:
   order, each with a type and whether it is nullable, and the primary key in key order, a
   keyless table has an empty key, and views and missing tables are `None`.
 
+- `check_server_activity` (W15): one connection holds a row lock in a transaction left
+  open, a second waits on it, and a third reads the server's activity until the waiter is
+  listed as waiting under the holder, with its lock and statement; it cancels the waiter
+  (whose statement fails and whose session lives on), kills the holder (whose connection is
+  then lost), and finds the same kill sent again stops nothing. Each engine passes its own
+  statements (`BlockingScript`), the waiter's with a lock timeout so a broken driver fails
+  rather than hangs; SQL Server, which can't cancel another session's statement, kills the
+  holder and the waiter goes on. The reads poll every 50 ms rather than sleeping.
+
 Races hide in cancellation, so after changing it, run the cancel tests in a loop. A one-off
 pass proved nothing in M3: the console's cancel test hung 2 runs in 5 before its fix.
 

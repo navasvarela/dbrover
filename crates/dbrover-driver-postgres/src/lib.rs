@@ -2,6 +2,7 @@
 //!
 //! Must run inside a tokio runtime: each connection spawns a task that drives the socket.
 
+mod activity;
 mod catalog;
 mod execution;
 mod redshift;
@@ -19,8 +20,9 @@ use async_trait::async_trait;
 use dbrover_core::{
     CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, ChildrenPage,
     ChildrenQuery, Connection, DriverError, ManagedService, NodeKind, Password, PostgresConfig,
-    Rejection, RelationName, ResultCursor, RoleDescription, Route, SchemaDescription, ServerInfo,
-    TableConstraints, TableDescription, TableName, TransactionStatus,
+    Rejection, RelationName, ResultCursor, RoleDescription, Route, SchemaDescription,
+    ServerActivity, ServerInfo, SessionId, SessionStop, StopOutcome, TableConstraints,
+    TableDescription, TableName, TransactionStatus,
 };
 use tokio::task::{JoinError, JoinHandle};
 use tokio_postgres::tls::MakeTlsConnect;
@@ -33,6 +35,8 @@ pub use tls::TlsSetupError;
 const APPLICATION_NAME: &str = "dbrover";
 const PRODUCT: &str = "PostgreSQL";
 const REDSHIFT_PRODUCT: &str = "Amazon Redshift";
+const REDSHIFT_ACTIVITY: DriverError =
+    DriverError::Unsupported("Redshift's server activity can't be shown yet.");
 
 /// Opens a connection, encrypted as `config.server.tls` says.
 ///
@@ -377,6 +381,29 @@ impl Connection for PostgresConnection {
         }
     }
 
+    /// Redshift keeps its sessions in tables of its own (`STV_SESSIONS`, `STV_RECENTS`), not
+    /// read yet.
+    async fn server_activity(&mut self) -> Result<ServerActivity, DriverError> {
+        match self.catalog {
+            Catalog::Postgres => activity::read(&self.primary.client).await,
+            Catalog::Redshift => Err(REDSHIFT_ACTIVITY),
+        }
+    }
+
+    async fn stop_session(&mut self, stop: &SessionStop) -> Result<StopOutcome, DriverError> {
+        match self.catalog {
+            Catalog::Postgres => activity::stop(&self.primary.client, stop).await,
+            Catalog::Redshift => Err(REDSHIFT_ACTIVITY),
+        }
+    }
+
+    async fn own_session(&mut self) -> Result<Option<SessionId>, DriverError> {
+        match self.catalog {
+            Catalog::Postgres => activity::own_session(&self.primary.client).await.map(Some),
+            Catalog::Redshift => Ok(None),
+        }
+    }
+
     async fn validate(&mut self, sql: &str) -> Result<Option<Rejection>, DriverError> {
         execution::validate(&self.primary.client, sql).await
     }
@@ -528,6 +555,120 @@ mod tests {
         .await;
 
         conformance::check_lost(Box::new(connection)).await;
+    }
+
+    /// W15's blocking scenario: one session holds a row lock in an open transaction, another
+    /// waits on it, and a third watches, cancels the waiter and ends the holder.
+    #[tokio::test]
+    async fn shows_a_waiting_session_under_its_blocker_and_stops_both() {
+        let Some((config, password)) = test_server() else {
+            return;
+        };
+        let open = || async {
+            Box::new(
+                connect(&config, password.as_ref(), Route::Direct)
+                    .await
+                    .unwrap(),
+            )
+        };
+        let mut watcher = open().await;
+
+        conformance::check_server_activity(
+            watcher.as_mut(),
+            open().await,
+            open().await,
+            &conformance::BlockingScript {
+                setup: &[
+                    "DROP TABLE IF EXISTS w15_activity",
+                    "CREATE TABLE w15_activity (id int PRIMARY KEY, n int NOT NULL)",
+                    "INSERT INTO w15_activity VALUES (1, 0)",
+                ],
+                hold: &["BEGIN", "UPDATE w15_activity SET n = n + 1 WHERE id = 1"],
+                before_wait: &["SET lock_timeout = '20s'"],
+                wait: "UPDATE w15_activity SET n = n + 10 WHERE id = 1",
+                teardown: &["DROP TABLE w15_activity"],
+                cancels: true,
+            },
+        )
+        .await;
+    }
+
+    /// A login outside `pg_read_all_stats` sees every session, but not what other roles run,
+    /// and is told which role would show it; it may stop only its own role's sessions.
+    #[tokio::test]
+    async fn tells_a_login_without_pg_read_all_stats_what_it_cannot_see() {
+        let Some((config, password)) = test_server() else {
+            return;
+        };
+        let admin = connect(&config, password.as_ref(), Route::Direct)
+            .await
+            .unwrap();
+        let role = format!("w15_watcher_{}", std::process::id());
+        admin
+            .primary
+            .client
+            .batch_execute(&format!(
+                "DROP ROLE IF EXISTS {role}; CREATE ROLE {role} LOGIN PASSWORD 'watcher'"
+            ))
+            .await
+            .unwrap();
+        let mut watcher_config = config.clone();
+        watcher_config.server.user.clone_from(&role);
+        let mut watcher = connect(
+            &watcher_config,
+            Some(&Password::new("watcher")),
+            Route::Direct,
+        )
+        .await
+        .unwrap();
+        let admin_pid: i32 = admin
+            .primary
+            .client
+            .query_one("SELECT pg_backend_pid()", &[])
+            .await
+            .unwrap()
+            .get(0);
+
+        let activity = watcher.server_activity().await.unwrap();
+        let own = watcher.own_session().await.unwrap().unwrap();
+        Box::new(watcher).close().await.unwrap();
+        admin
+            .primary
+            .client
+            .batch_execute(&format!("DROP ROLE {role}"))
+            .await
+            .unwrap();
+
+        let session = |id: &SessionId| {
+            activity
+                .sessions
+                .iter()
+                .find(|session| &session.id == id)
+                .unwrap()
+        };
+        let other = session(&SessionId::Number(i64::from(admin_pid)));
+        assert_eq!(
+            other.state,
+            dbrover_core::SessionState::Hidden,
+            "{other:#?}"
+        );
+        assert_eq!(other.statement, None);
+        assert!(other.stops.is_empty());
+        let mine = session(&own);
+        assert_eq!(mine.state, dbrover_core::SessionState::Active, "{mine:#?}");
+        assert!(mine.statement.is_some());
+        assert!(!mine.stops.is_empty());
+        assert_eq!(
+            activity.restrictions,
+            [dbrover_core::Restriction {
+                hidden: dbrover_core::Hidden::OthersStatements,
+                shown_by: "pg_read_all_stats".to_owned(),
+            }]
+        );
+        assert_eq!(
+            activity.others_stopped_by.as_deref(),
+            Some("pg_signal_backend")
+        );
     }
 
     #[tokio::test]

@@ -7,8 +7,9 @@ use std::time::{Duration, Instant};
 
 use crate::{
     CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, ChildrenQuery, Connection,
-    DriverError, Identifier, NodeKind, RejectionKind, RelationName, ResultCursor,
-    TransactionStatus, describe_error,
+    DriverError, Identifier, NodeKind, RejectionKind, RelationName, ResultCursor, ServerActivity,
+    ServerSession, SessionId, SessionState, StopKind, StopOutcome, TransactionStatus,
+    blocking_order, describe_error,
 };
 
 /// A fresh connection reports its server, answers pings, and closes cleanly.
@@ -751,4 +752,195 @@ pub async fn check_cancel(connection: &mut dyn Connection, long_running_sql: &st
         .expect("cancel task")
         .expect("cancel request");
     connection.ping().await.expect("usable after cancel");
+}
+
+/// What [`check_server_activity`] runs on one engine: a committed table with one row, that row
+/// locked in a transaction left open, and a statement made to wait on it.
+pub struct BlockingScript<'a> {
+    /// Run on the watching connection: creates the table, with the row whose `id` is 1.
+    pub setup: &'a [&'a str],
+    /// Run on the holding connection: opens a transaction and locks the row.
+    pub hold: &'a [&'a str],
+    /// Run on the waiting connection before it waits: a lock timeout of some seconds, so a
+    /// broken driver fails the test rather than hanging it.
+    pub before_wait: &'a [&'a str],
+    /// The statement that waits on the row.
+    pub wait: &'a str,
+    /// Run on the watching connection at the end: drops the table.
+    pub teardown: &'a [&'a str],
+    /// Whether the engine can cancel another session's statement and keep the session. SQL
+    /// Server can't.
+    pub cancels: bool,
+}
+
+/// How long a test waits for the server to show what it expects. Generous, since a loaded CI
+/// runner can be slow, but far below the waiter's own lock timeout.
+const ACTIVITY_DEADLINE: Duration = Duration::from_secs(10);
+
+/// Server activity (W15) shows a session waiting on another's row lock, under it, with the
+/// lock; cancelling the waiter stops its statement and keeps its session; killing the holder
+/// ends its session; and the same kill sent again, once the session has gone, stops nothing.
+///
+/// `watcher` reads and stops; `holder` and `waiter` are two more connections to the same
+/// server, which the check uses up.
+pub async fn check_server_activity(
+    watcher: &mut dyn Connection,
+    mut holder: Box<dyn Connection>,
+    mut waiter: Box<dyn Connection>,
+    script: &BlockingScript<'_>,
+) {
+    for sql in script.setup {
+        run_to_end(watcher, sql).await;
+    }
+    for sql in script.hold {
+        run_to_end(holder.as_mut(), sql).await;
+    }
+    let watcher_id = own_session(watcher).await;
+    let holder_id = own_session(holder.as_mut()).await;
+    let waiter_id = own_session(waiter.as_mut()).await;
+    for sql in script.before_wait {
+        run_to_end(waiter.as_mut(), sql).await;
+    }
+    let wait_sql = script.wait.to_owned();
+    let waiting = tokio::spawn(async move {
+        let result = run_once(waiter.as_mut(), &wait_sql).await;
+        (waiter, result)
+    });
+
+    let activity = read_until(
+        watcher,
+        "the waiter listed as waiting on the holder",
+        |activity| {
+            session(activity, &waiter_id).is_some_and(|waiter| {
+                waiter.state == SessionState::Waiting && waiter.blocked_by.contains(&holder_id)
+            })
+        },
+    )
+    .await;
+    let holder_session = session(&activity, &holder_id).expect("the holder is listed");
+    let waiter_session = session(&activity, &waiter_id).expect("the waiter is listed");
+    assert_eq!(
+        holder_session.state,
+        SessionState::IdleInTransaction,
+        "{holder_session:#?}"
+    );
+    assert!(
+        holder_session.transaction_for.is_some(),
+        "{holder_session:#?}"
+    );
+    assert!(waiter_session.lock.is_some(), "{waiter_session:#?}");
+    let statement = waiter_session
+        .statement
+        .as_ref()
+        .expect("the waiter's statement");
+    assert!(statement.running, "{statement:#?}");
+    assert!(
+        statement.text.contains(script.wait.trim_end_matches(';')),
+        "{statement:#?}"
+    );
+    let watching = session(&activity, &watcher_id).expect("the watcher lists itself");
+    assert_eq!(watching.state, SessionState::Active, "{watching:#?}");
+
+    let rows = blocking_order(&activity.sessions, |_| true);
+    let holder_row = rows
+        .iter()
+        .position(|row| activity.sessions[row.session].id == holder_id)
+        .expect("the holder has a row");
+    assert_eq!(rows[holder_row].depth, 0);
+    let under = rows.get(holder_row + 1).expect("a row under the holder");
+    assert_eq!(activity.sessions[under.session].id, waiter_id);
+    assert_eq!(under.depth, 1);
+
+    let kill = holder_session
+        .stop(StopKind::EndSession)
+        .expect("the holder can be killed")
+        .clone();
+    if script.cancels {
+        let cancel = waiter_session
+            .stop(StopKind::CancelQuery)
+            .expect("the waiter's statement can be cancelled");
+        assert_eq!(stop(watcher, cancel).await, StopOutcome::Stopped);
+        let (mut waiter, result) = waiting.await.expect("the waiting task");
+        assert!(
+            matches!(result, Err(DriverError::Statement { .. })),
+            "the cancelled statement: {result:?}"
+        );
+        waiter
+            .ping()
+            .await
+            .expect("the waiter's session outlives Cancel");
+        assert_eq!(stop(watcher, &kill).await, StopOutcome::Stopped);
+    } else {
+        assert!(
+            waiter_session.stop(StopKind::CancelQuery).is_none(),
+            "no Cancel is offered: {waiter_session:#?}"
+        );
+        assert_eq!(stop(watcher, &kill).await, StopOutcome::Stopped);
+        let (_, result) = waiting.await.expect("the waiting task");
+        result.expect("the waiter goes on once the holder is gone");
+    }
+
+    read_until(watcher, "the holder's session ending", |activity| {
+        session(activity, &holder_id).is_none()
+    })
+    .await;
+    check_lost(holder).await;
+    assert_eq!(stop(watcher, &kill).await, StopOutcome::AlreadyEnded);
+
+    for sql in script.teardown {
+        run_to_end(watcher, sql).await;
+    }
+}
+
+async fn own_session(connection: &mut dyn Connection) -> SessionId {
+    connection
+        .own_session()
+        .await
+        .expect("asking for the session's id")
+        .expect("a session id")
+}
+
+fn session<'a>(activity: &'a ServerActivity, id: &SessionId) -> Option<&'a ServerSession> {
+    activity.sessions.iter().find(|session| &session.id == id)
+}
+
+async fn stop(watcher: &mut dyn Connection, stop: &crate::SessionStop) -> StopOutcome {
+    watcher
+        .stop_session(stop)
+        .await
+        .unwrap_or_else(|error| panic!("{}: {}", stop.statement, describe_error(&error)))
+}
+
+/// Reads the server's activity until `done` holds, polling: how long a server takes to show a
+/// wait or end a session varies, and a fixed sleep is either slow or flaky.
+async fn read_until(
+    watcher: &mut dyn Connection,
+    what: &str,
+    done: impl Fn(&ServerActivity) -> bool,
+) -> ServerActivity {
+    let deadline = Instant::now() + ACTIVITY_DEADLINE;
+    loop {
+        let activity = watcher
+            .server_activity()
+            .await
+            .unwrap_or_else(|error| panic!("reading activity: {}", describe_error(&error)));
+        if done(&activity) {
+            return activity;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{what} never happened: {activity:#?}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// Runs `sql` to completion, as [`run_to_end`] does, but returns a failure instead of
+/// panicking on it.
+async fn run_once(connection: &mut dyn Connection, sql: &str) -> Result<(), DriverError> {
+    let mut cursor = connection.execute(sql).await?;
+    while !cursor.is_exhausted() {
+        cursor.next_page(PAGE).await?;
+    }
+    cursor.finish().await.map(|_| ())
 }

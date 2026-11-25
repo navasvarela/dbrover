@@ -229,9 +229,10 @@ partial list off as the whole server:
   there in W15 (see Later).
 - **PgBouncer** in front of the server: the sessions are the server's connections, not the
   clients', and in transaction pooling one connection serves many clients, so Kill ends
-  whichever client is using it. The manual says so; whether DbRover can tell it is behind
-  PgBouncer, and say so above the list, is *to check* in W15b against the `pgbouncer` test
-  service.
+  whichever client is using it. DbRover can't tell it is behind PgBouncer: through the
+  `pgbouncer` test service (W15b), the server shows the client's `application_name` and
+  PgBouncer's address, and nothing marks the session as pooled. So the manual says it, and
+  *DbRover: this tab* may name another pooled session than the tab's.
 
 ### MySQL and MariaDB
 

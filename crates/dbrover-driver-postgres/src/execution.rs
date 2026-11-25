@@ -115,7 +115,7 @@ pub(crate) async fn validate(client: &Client, sql: &str) -> Result<Option<Reject
 
 /// Maps a server error to [`DriverError::Statement`], with its position, unless it means
 /// the connection is gone.
-fn statement_error(sql: &str, error: tokio_postgres::Error) -> DriverError {
+pub(crate) fn statement_error(sql: &str, error: tokio_postgres::Error) -> DriverError {
     if crate::is_lost(&error) {
         return DriverError::Lost(Box::new(error));
     }
