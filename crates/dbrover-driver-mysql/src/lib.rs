@@ -3,6 +3,7 @@
 //! One driver for both servers: they speak the same protocol and SQL, and what differs is
 //! keyed off the version the server reports. Must run inside a tokio runtime.
 
+mod activity;
 mod catalog;
 mod errors;
 mod execution;
@@ -15,7 +16,8 @@ use async_trait::async_trait;
 use dbrover_core::{
     BareNames, BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, Connection, DriverError,
     MysqlConfig, Password, QuoteEscape, Quoting, Rejection, RelationName, ResultCursor, Route,
-    ServerInfo, TableConstraints, TableDescription, TableName, TlsMode, TransactionStatus,
+    ServerActivity, ServerInfo, SessionId, SessionStop, StopOutcome, TableConstraints,
+    TableDescription, TableName, TlsMode, TransactionStatus,
 };
 use mysql_async::consts::StatusFlags;
 use mysql_async::prelude::Queryable;
@@ -242,6 +244,22 @@ impl Connection for MysqlConnection {
     ) -> Result<TableConstraints, DriverError> {
         let flavour = Flavour::of(&self.server_info);
         table::describe_constraints(&mut *self.conn.lock().await, table, flavour).await
+    }
+
+    async fn server_activity(&mut self) -> Result<ServerActivity, DriverError> {
+        let flavour = Flavour::of(&self.server_info);
+        let mut conn = self.conn.lock().await;
+        activity::read(&mut conn, flavour, &self.server_info.version).await
+    }
+
+    async fn stop_session(&mut self, stop: &SessionStop) -> Result<StopOutcome, DriverError> {
+        activity::stop(&mut *self.conn.lock().await, stop).await
+    }
+
+    async fn own_session(&mut self) -> Result<Option<SessionId>, DriverError> {
+        activity::own_session(&mut *self.conn.lock().await)
+            .await
+            .map(Some)
     }
 
     async fn validate(&mut self, sql: &str) -> Result<Option<Rejection>, DriverError> {

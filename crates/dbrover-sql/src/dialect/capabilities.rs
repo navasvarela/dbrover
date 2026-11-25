@@ -324,7 +324,7 @@ const MYSQL: Capabilities = Capabilities {
     drop_schema_cascade: false,
     users: UserModel::Unsupported,
     schema_compare: false,
-    server_activity: false,
+    server_activity: true,
 };
 
 /// SQL Server has no `RESTRICT`: `NO ACTION` is what refuses. Its renames are `sp_rename`
