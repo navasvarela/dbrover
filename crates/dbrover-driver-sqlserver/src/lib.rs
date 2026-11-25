@@ -5,6 +5,7 @@
 //! options it creates belong to the session, as in SQL Server's own tools. Must run inside a
 //! tokio runtime.
 
+mod activity;
 mod catalog;
 mod constraint;
 mod errors;
@@ -20,7 +21,8 @@ use async_trait::async_trait;
 use dbrover_core::{
     BareNames, BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, CloudSignIn, Connection,
     DriverError, Password, QuoteEscape, Quoting, Rejection, RelationName, ResultCursor, Route,
-    ServerInfo, SqlServerConfig, TableConstraints, TableDescription, TableName, TransactionStatus,
+    ServerActivity, ServerInfo, SessionId, SessionStop, SqlServerConfig, StopOutcome,
+    TableConstraints, TableDescription, TableName, TransactionStatus,
 };
 use tiberius::{AuthMethod, Client, Config};
 use tokio::net::TcpStream;
@@ -221,6 +223,15 @@ pub struct SqlServerConnection {
 }
 
 impl SqlServerConnection {
+    fn refuse_warehouses(&self) -> Result<(), DriverError> {
+        match self.server_info.service {
+            Some(_) => Err(DriverError::Unsupported(
+                "A warehouse's server activity can't be shown yet.",
+            )),
+            None => Ok(()),
+        }
+    }
+
     /// The client, once no statement holds it, unless a lost cancel acknowledgement has left
     /// it out of step with the server.
     async fn client(&self) -> Result<tokio::sync::MutexGuard<'_, SqlClient>, DriverError> {
@@ -291,6 +302,27 @@ impl Connection for SqlServerConnection {
         table: &TableName,
     ) -> Result<TableConstraints, DriverError> {
         constraint::describe_constraints(&mut *self.client().await?, table).await
+    }
+
+    /// Synapse's and Fabric's warehouses keep their sessions in views of their own
+    /// (`sys.dm_pdw_exec_sessions`), not read yet.
+    async fn server_activity(&mut self) -> Result<ServerActivity, DriverError> {
+        self.refuse_warehouses()?;
+        activity::read(&mut *self.client().await?).await
+    }
+
+    async fn stop_session(&mut self, stop: &SessionStop) -> Result<StopOutcome, DriverError> {
+        self.refuse_warehouses()?;
+        activity::stop(&mut *self.client().await?, stop).await
+    }
+
+    async fn own_session(&mut self) -> Result<Option<SessionId>, DriverError> {
+        if self.server_info.service.is_some() {
+            return Ok(None);
+        }
+        activity::own_session(&mut *self.client().await?)
+            .await
+            .map(Some)
     }
 
     async fn validate(&mut self, sql: &str) -> Result<Option<Rejection>, DriverError> {

@@ -586,6 +586,7 @@ mod tests {
                 hold: &["BEGIN", "UPDATE w15_activity SET n = n + 1 WHERE id = 1"],
                 before_wait: &["SET lock_timeout = '20s'"],
                 wait: "UPDATE w15_activity SET n = n + 10 WHERE id = 1",
+                wait_listed_as: "UPDATE w15_activity SET n = n + 10 WHERE id = 1",
                 teardown: &["DROP TABLE w15_activity"],
                 cancels: true,
             },
