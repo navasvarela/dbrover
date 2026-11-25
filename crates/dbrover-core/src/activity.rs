@@ -212,6 +212,17 @@ pub struct ServerActivity {
     pub others_stopped_by: Option<String>,
 }
 
+/// A duration as people say it, for how long a session has been in its state: *12 s*,
+/// *41 min*, *3 h 5 min*. Seconds stop counting past a minute, which is past what matters.
+pub fn spoken_duration(time: Duration) -> String {
+    let seconds = time.as_secs();
+    match seconds {
+        0..60 => format!("{seconds} s"),
+        60..3600 => format!("{} min", seconds / 60),
+        _ => format!("{} h {} min", seconds / 3600, seconds % 3600 / 60),
+    }
+}
+
 /// One row of the activity list, in the order [`blocking_order`] gives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActivityRow {
@@ -473,6 +484,16 @@ mod tests {
         assert_eq!(
             order(&sessions, |_| true),
             [(2, 0, false), (3, 1, false), (1, 0, false)]
+        );
+    }
+
+    #[test]
+    fn speaks_durations() {
+        assert_eq!(spoken_duration(Duration::from_secs(12)), "12 s");
+        assert_eq!(spoken_duration(Duration::from_secs(41 * 60 + 59)), "41 min");
+        assert_eq!(
+            spoken_duration(Duration::from_secs(3 * 3600 + 5 * 60)),
+            "3 h 5 min"
         );
     }
 

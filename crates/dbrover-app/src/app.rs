@@ -19,6 +19,7 @@ use egui::{Align, Frame, Layout, Margin, RichText, Sense};
 use egui_dock::{DockArea, DockState};
 
 use crate::about_dialog;
+use crate::activity_tab::{ActivityAction, ActivityTabs};
 use crate::background_runs::BackgroundRuns;
 use crate::command_runs::{CommandRuns, Finished};
 use crate::commands::{self, AppCommand, CommandState};
@@ -146,6 +147,8 @@ pub struct DbRoverApp {
     clipboard: Option<String>,
     definitions: DefinitionTabs,
     compares: SchemaCompares,
+    /// Server activity tabs, one per data source (W15).
+    activity: ActivityTabs,
     history: HistoryTabs,
     rollback_confirmation: Option<RollbackConfirmation>,
     password_prompt: Option<PasswordPrompt>,
@@ -298,6 +301,7 @@ impl DbRoverApp {
             clipboard: None,
             definitions: DefinitionTabs::default(),
             compares: SchemaCompares::default(),
+            activity: ActivityTabs::default(),
             history: HistoryTabs::default(),
             rollback_confirmation: None,
             password_prompt: None,
@@ -557,6 +561,7 @@ impl DbRoverApp {
         }
         self.definitions.apply(event);
         self.compares.apply(event);
+        self.activity.apply(event);
         if let Event::SchemaSnapshotSaved { path, result, .. } = event {
             self.snapshot_notice = Some(result.clone().map(|()| path.clone()));
         }
@@ -626,6 +631,8 @@ impl DbRoverApp {
         if let Event::DataSourceDeleted(id) = event {
             self.history.close(*id);
             workspace::close_history_tab(&mut self.dock, *id);
+            self.activity.close(*id);
+            workspace::close_activity_tab(&mut self.dock, *id);
             for definition in self.definitions.of(*id) {
                 self.definitions.close(definition);
                 workspace::close_definition_tab(&mut self.dock, definition);
@@ -1596,6 +1603,7 @@ impl DbRoverApp {
             ExplorerAction::ExportData(id, path) => self.open_table_export(id, &path),
             ExplorerAction::Diagram(id, path) => self.open_diagram_dialog(id, &path),
             ExplorerAction::CompareSchema(id, path) => self.open_schema_compare(id, &path),
+            ExplorerAction::ServerActivity(id) => self.open_activity(id),
             ExplorerAction::SaveSchemaSnapshot(id, path) => {
                 if let Some(schema) = path.name_of(NodeKind::Schema) {
                     self.save_schema_snapshot(LiveSchema {
@@ -2266,6 +2274,33 @@ impl DbRoverApp {
                     workspace::open_console_tab(&mut self.dock, console);
                 }
             }
+        }
+    }
+
+    /// Opens the data source's Server activity tab, or brings it to the front; a new tab reads
+    /// at once, then as often as the settings say.
+    fn open_activity(&mut self, data_source: DataSourceId) {
+        let every = self.settings.settings().activity.refresh();
+        self.activity.open(data_source, every);
+        workspace::open_activity_tab(&mut self.dock, data_source);
+    }
+
+    fn handle_activity_action(&mut self, action: ActivityAction, ctx: &egui::Context) {
+        match action {
+            ActivityAction::Read(data_source) => self.send(Command::ReadActivity(data_source)),
+            ActivityAction::Stop {
+                data_source,
+                session,
+                kind,
+            } => self.send(Command::StopSession {
+                data_source,
+                session,
+                kind,
+            }),
+            ActivityAction::OpenInConsole(data_source, text) => {
+                self.open_program_output(data_source, text);
+            }
+            ActivityAction::Copy(text) => ctx.copy_text(text),
         }
     }
 
@@ -3124,6 +3159,8 @@ impl eframe::App for DbRoverApp {
         let mut history_actions = Vec::new();
         let mut definition_actions = Vec::new();
         let mut compare_actions = Vec::new();
+        let mut activity_actions = Vec::new();
+        let console_titles = self.consoles.titles();
         let report_sources: Vec<dbrover_core::DataSource> = self
             .state
             .data_sources
@@ -3181,6 +3218,9 @@ impl eframe::App for DbRoverApp {
                     definition_actions: &mut definition_actions,
                     compares: &mut self.compares,
                     compare_actions: &mut compare_actions,
+                    activity: &mut self.activity,
+                    activity_actions: &mut activity_actions,
+                    console_titles: &console_titles,
                 },
             );
         if let Some(text) = self.clipboard.take() {
@@ -3211,6 +3251,11 @@ impl eframe::App for DbRoverApp {
         for action in compare_actions {
             self.handle_compare_action(action);
         }
+        for action in activity_actions {
+            self.handle_activity_action(action, &ctx);
+        }
+        let closed = self.activity.take_closed();
+        self.send_all(closed);
         for (console, action) in console_actions {
             match action {
                 ConsoleAction::ShowHistory => self.open_history(console),
@@ -3318,6 +3363,7 @@ impl Repaint for EguiRepaint {
 #[cfg(test)]
 mod tests {
     mod actions;
+    mod activity;
     mod charts;
     mod commands;
     mod customisation;

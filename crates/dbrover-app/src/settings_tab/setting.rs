@@ -16,6 +16,7 @@ pub enum Category {
     Appearance,
     Editor,
     History,
+    Activity,
     Reports,
     Mcp,
     Updates,
@@ -23,10 +24,11 @@ pub enum Category {
 }
 
 impl Category {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Appearance,
         Self::Editor,
         Self::History,
+        Self::Activity,
         Self::Reports,
         Self::Mcp,
         Self::Updates,
@@ -38,6 +40,7 @@ impl Category {
             Self::Appearance => "Appearance",
             Self::Editor => "Editor",
             Self::History => "Query history",
+            Self::Activity => "Server activity",
             Self::Reports => "Reports",
             Self::Mcp => "MCP",
             Self::Updates => "Updates",
@@ -50,6 +53,7 @@ impl Category {
             Self::Appearance => icons::PALETTE,
             Self::Editor => icons::CODE,
             Self::History => icons::CLOCK_COUNTER_CLOCKWISE,
+            Self::Activity => icons::PULSE,
             Self::Reports => icons::CLIPBOARD_TEXT,
             Self::Mcp => icons::PLUGS_CONNECTED,
             Self::Updates => icons::ARROWS_CLOCKWISE,
@@ -63,6 +67,7 @@ impl Category {
             Self::Appearance => "How DbRover looks.",
             Self::Editor => "How SQL is formatted, and what the console checks while you type.",
             Self::History => "How long the query history keeps what ran.",
+            Self::Activity => "How often a Server activity tab reads its server's sessions.",
             Self::Reports => {
                 "The limits every report runs under unless its file sets its own, and the runs \
                  kept."
@@ -83,6 +88,7 @@ pub enum Setting {
     Lint(LintRule),
     HistoryAge,
     HistoryCount,
+    ActivityRefresh,
     Report(ReportDefault),
     CheckForUpdates,
     McpDefaults,
@@ -99,7 +105,7 @@ impl Setting {
             Self::AskDatabase,
         ];
         settings.extend(LintRule::ALL.into_iter().map(Self::Lint));
-        settings.extend([Self::HistoryAge, Self::HistoryCount]);
+        settings.extend([Self::HistoryAge, Self::HistoryCount, Self::ActivityRefresh]);
         settings.extend(ReportDefault::ALL.into_iter().map(Self::Report));
         settings.extend([
             Self::McpDefaults,
@@ -116,6 +122,7 @@ impl Setting {
                 Category::Editor
             }
             Self::HistoryAge | Self::HistoryCount => Category::History,
+            Self::ActivityRefresh => Category::Activity,
             Self::Report(_) => Category::Reports,
             Self::McpDefaults => Category::Mcp,
             Self::CheckForUpdates => Category::Updates,
@@ -130,6 +137,7 @@ impl Setting {
             Self::KeywordCase | Self::IndentWidth => "SQL formatting",
             Self::AskDatabase | Self::Lint(_) => "Problems while typing",
             Self::HistoryAge | Self::HistoryCount => "Keeping statements",
+            Self::ActivityRefresh => "Refreshing",
             Self::Report(default) => default.section(),
             Self::McpDefaults => "Defaults for every project",
             Self::CheckForUpdates => "New releases",
@@ -146,6 +154,7 @@ impl Setting {
             Self::Lint(rule) => rule.description().into(),
             Self::HistoryAge => "Keep statements for".into(),
             Self::HistoryCount => "Keep per data source".into(),
+            Self::ActivityRefresh => "Read a new tab".into(),
             Self::Report(default) => default.title().into(),
             Self::CheckForUpdates => "Check for a new release when DbRover starts".into(),
             Self::McpDefaults => "What MCP clients may do".into(),
@@ -164,6 +173,9 @@ impl Setting {
                 "Older statements are deleted at start-up and when this changes.".into()
             }
             Self::HistoryCount => return None,
+            Self::ActivityRefresh => {
+                "Only while the tab is shown. Its toolbar changes it for that tab alone.".into()
+            }
             Self::Report(default) => default.description().into(),
             Self::CheckForUpdates => {
                 "Asks GitHub once per start. Help › Check for updates works either way.".into()
@@ -186,6 +198,15 @@ impl Setting {
             Self::IndentWidth => &["format", "spaces", "width"],
             Self::AskDatabase | Self::Lint(_) => &["lint", "check", "warning"],
             Self::HistoryAge | Self::HistoryCount => &["history", "delete", "limit", "prune"],
+            Self::ActivityRefresh => &[
+                "activity",
+                "sessions",
+                "processes",
+                "locks",
+                "kill",
+                "refresh",
+                "interval",
+            ],
             Self::Report(_) => &["report", "limit", "default", "guardrail"],
             Self::CheckForUpdates => &["update", "release", "version"],
             Self::McpDefaults => &[

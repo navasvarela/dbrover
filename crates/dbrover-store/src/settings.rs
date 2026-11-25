@@ -23,6 +23,7 @@ pub struct Settings {
     pub history: HistorySettings,
     pub reports: ReportSettings,
     pub explorer: ExplorerSettings,
+    pub activity: ActivitySettings,
 }
 
 /// How the SQL formatter writes statements.
@@ -91,6 +92,29 @@ pub struct HistorySettings {
     /// Only the newest this many statements of each data source stay.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_per_data_source: Option<NonZeroU32>,
+}
+
+/// How a Server activity tab refreshes (W15, `docs/server-activity.md`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ActivitySettings {
+    /// Seconds between reads in a newly opened tab; 0 opens it paused. Unset for DbRover's
+    /// default, [`ActivitySettings::DEFAULT_REFRESH_SECONDS`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refresh_seconds: Option<u32>,
+}
+
+impl ActivitySettings {
+    /// Quick enough to watch a lock clear, slow enough that watching costs the server little.
+    pub const DEFAULT_REFRESH_SECONDS: u32 = 5;
+
+    /// How often a new tab reads; `None` when it opens paused.
+    pub fn refresh(self) -> Option<std::time::Duration> {
+        let seconds = self
+            .refresh_seconds
+            .unwrap_or(Self::DEFAULT_REFRESH_SECONDS);
+        (seconds > 0).then(|| std::time::Duration::from_secs(u64::from(seconds)))
+    }
 }
 
 /// What the explorer lists besides data sources.
@@ -424,6 +448,9 @@ mod tests {
             explorer: ExplorerSettings {
                 query_folders: vec!["~/src/shop/queries".into(), "/srv/queries".into()],
             },
+            activity: ActivitySettings {
+                refresh_seconds: Some(2),
+            },
         };
 
         let read = file.read().unwrap();
@@ -435,6 +462,7 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("memory_limit = \"4 GiB\"\n"), "{text}");
+        assert!(text.contains("[activity]\nrefresh_seconds = 2\n"), "{text}");
         assert!(
             text.contains(
                 "[explorer]\nquery_folders = [\"~/src/shop/queries\", \"/srv/queries\"]\n"
@@ -444,6 +472,16 @@ mod tests {
 
         std::fs::write(file.path(), "[format]\nindent = 2\n").unwrap();
         assert!(matches!(file.load(), Err(SettingsError::Parse { .. })));
+    }
+
+    #[test]
+    fn activity_refreshes_every_five_seconds_unless_set() {
+        let every = |seconds| ActivitySettings {
+            refresh_seconds: seconds,
+        };
+        assert_eq!(every(None).refresh(), Some(Duration::from_secs(5)));
+        assert_eq!(every(Some(30)).refresh(), Some(Duration::from_secs(30)));
+        assert_eq!(every(Some(0)).refresh(), None);
     }
 
     #[test]

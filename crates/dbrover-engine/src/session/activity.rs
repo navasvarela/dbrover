@@ -2,7 +2,9 @@
 
 use std::time::{Duration, Instant};
 
-use dbrover_core::{DriverError, ServerSession, SessionId, StopKind, StopOutcome, describe_error};
+use dbrover_core::{
+    DriverError, ServerSession, SessionId, StopKind, StopOutcome, describe_error, spoken_duration,
+};
 use dbrover_store::{HistoryEntry, HistoryOutcome, HistorySource, redact_secrets};
 use jiff::Timestamp;
 
@@ -163,7 +165,7 @@ fn stopped(session: &ServerSession, kind: StopKind, outcome: Option<StopOutcome>
     }
     text.push_str(&format!(", {}", session.state.label()));
     if let Some(time) = session.in_state_for {
-        text.push_str(&format!(" for {}", spoken(time)));
+        text.push_str(&format!(" for {}", spoken_duration(time)));
     }
     if let Some(statement) = &session.statement {
         let verb = if statement.running {
@@ -188,16 +190,6 @@ fn stopped(session: &ServerSession, kind: StopKind, outcome: Option<StopOutcome>
         });
     }
     text
-}
-
-/// A duration as people say it: *12 s*, *41 min*, *3 h 5 min*.
-fn spoken(time: Duration) -> String {
-    let seconds = time.as_secs();
-    match seconds {
-        0..60 => format!("{seconds} s"),
-        60..3600 => format!("{} min", seconds / 60),
-        _ => format!("{} h {} min", seconds / 3600, seconds % 3600 / 60),
-    }
 }
 
 #[cfg(test)]
@@ -259,12 +251,5 @@ mod tests {
         assert!(!text.contains("s3cret"), "{text}");
         assert!(text.contains("running ALTER ROLE app PASSWORD"), "{text}");
         assert!(text.ends_with('\u{2026}'), "{text}");
-    }
-
-    #[test]
-    fn speaks_durations() {
-        assert_eq!(spoken(Duration::from_secs(12)), "12 s");
-        assert_eq!(spoken(Duration::from_secs(41 * 60 + 59)), "41 min");
-        assert_eq!(spoken(Duration::from_secs(3 * 3600 + 5 * 60)), "3 h 5 min");
     }
 }
