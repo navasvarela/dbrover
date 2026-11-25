@@ -9,6 +9,8 @@ built. W12, charts from results, designed on 2026-11-01 [below](#w12--charts-fro
 built. W14, every setting in the Settings tab, designed on 2026-11-01
 [below](#w14--settings-in-one-place) and built. W15, server activity (sessions, locks, Cancel
 and Kill), designed on 2026-11-25 in [Server activity](server-activity.md) and built.
+W16, searching a database's data, proposed on 2026-11-25 in
+[Searching a database's data](data-search.md).
 Proposed on 2026-10-24.
 
 DbRover browses, queries and edits PostgreSQL, SQLite, MySQL and MariaDB, and ships as a

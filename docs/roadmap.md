@@ -2072,6 +2072,46 @@ three to five, **L** a track of its own).
   careful data source asks, naming the data source, then ends the session and releases the
   lock, and History lists the kill as **Activity**; on a read-only data source both are
   refused.
+- **W16 — Searching a database's data (L):** proposed on 2026-11-25 in
+  [Searching a database's data](data-search.md), its open questions waiting for an answer. Pick
+  a data source, a schema or some tables, type a value, and DbRover finds the rows that hold
+  it, grouped by table; each match opens in a console on its row. Second in the competitor-gap
+  review of 2026-11-25, after server activity: DBeaver, DataGrip, TablePlus and DBX all have
+  it. It starts with PostgreSQL, SQLite and DuckDB, then MySQL, MariaDB, SQL Server and
+  ClickHouse, then Trino and the engines that bill each read, which ask first; Elasticsearch,
+  OpenSearch and MongoDB are left for a following milestone, Redis, Cassandra and DynamoDB out.
+  - **The search:** one statement per table, on the columns whose type can hold the value:
+    text with `LIKE` (**Contains** or **Whole value**, ignoring case or not), numbers, UUIDs and
+    dates as whole values in their own columns; `%` and `_` escaped with each dialect's escape
+    character; only the key and searched columns read.
+  - **Limits:** one table at a time on a connection of its own, smallest first, 15 s and 100
+    rows per table, **Cancel**, and progress across tables; set in **Settings › Data search**.
+  - **Safety and cost:** every statement in the engine's read-only mode, on every data source;
+    a careful data source asks before more than one table; BigQuery, Athena, Snowflake and
+    Databricks always ask, with BigQuery's dry-run estimate, and only on a schema or a table.
+  - **History:** one entry per search, origin **Search**. **MCP:** `search_data` behind `read`,
+    refused on the engines that bill each read.
+  - **W16a — The plan:** the design and this entry.
+  - **W16b — The search's shape:** the core model, the value's reading, and `search_statement`
+    with its `LIKE` escaping for every SQL dialect, golden tested.
+  - **W16c — PostgreSQL, SQLite and DuckDB:** `Connection::searchable_tables`, and the
+    conformance check `check_data_search` on a seeded schema of hard values.
+  - **W16d — The engine and the history:** commands, the search's session, read-only mode, the
+    time limit, the cap, Cancel, the careful question, `HistorySource::Search`.
+  - **W16e — The tab:** the menus, the scope picker, results by table, Open row, Open all, the
+    settings.
+  - **W16f — MySQL, MariaDB, SQL Server and ClickHouse:** their columns, through the same check.
+  - **W16g — Trino and the engines that bill each read:** their columns, the question with an
+    estimate, Redshift turned off until C7.
+  - **W16h — MCP:** `search_data`.
+  - **W16i — Manual and demo note:** a chapter with pictures, and the exit as an engine test.
+
+  **Exit:** on the PostgreSQL test server, searching a schema for `o'brien` lists `customers`
+  and `notes` with the matching rows and columns, and nothing else; `50%_off` finds only the
+  literal text; `1042` finds the order by its id and the customer by their phone; a UUID finds
+  its row by its key; double-clicking a match opens a console on that row; a table locked by
+  another session times out and the search goes on; Cancel keeps what was found; a careful
+  data source asks first; History lists the search once, as **Search**.
 
 ## Diagrams track
 

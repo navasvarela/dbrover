@@ -462,4 +462,5 @@ their layers are built.
 - **Killing many sessions at once.**
 - **A lock graph** beyond the tree, and locks held by sessions no one waits on.
 - **Prepared (two-phase) transactions**, replication slots, and vacuum progress.
-- **Search across a database's data**, a separate, later milestone.
+- **Search across a database's data**, a separate milestone: W16, [Searching a database's
+  data](data-search.md).
