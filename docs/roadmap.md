@@ -1998,6 +1998,46 @@ three to five, **L** a track of its own).
   right-click a project → **Project settings…** opens its page, where allowing writes and
   saving writes `projects.toml`; searching *format* finds the Format shortcuts beside the
   Format SQL settings; no keymap, actions or project settings window is left.
+- **W15 — Server activity (L):** planned; designed on 2026-11-25 in
+  [Server activity](server-activity.md), its questions answered the same day, as proposed. What
+  is running on a database server and stopping it:
+  the server's sessions and their statements, who is waiting on whose locks, and **Cancel
+  query** and **Kill…**, in a tab per data source. It starts with PostgreSQL, then MySQL and
+  MariaDB, SQL Server and ClickHouse; SQLite and DuckDB run inside DbRover, and the cloud
+  warehouses and NoSQL engines are left for later, each one's needs recorded in the plan.
+  - **The tab:** right-click a data source → **Server activity**; one row per session (id,
+    user, database, application, state, for how long, statement), waiting sessions drawn under
+    the session that blocks them with the lock they wait for, DbRover's own sessions named,
+    idle and background sessions hidden unless they block, and the selected one's details.
+  - **Refreshed every 5 s** while the tab is shown, one read at a time on a connection of its
+    own; **Pause**, **Refresh**, and the interval in Settings. Reads aren't recorded.
+  - **Cancel and Kill** under the safety level: refused on a read-only data source, asked
+    first on a careful one naming it, Kill asked on a normal one too; the session matched by
+    its start time so a reused id is never stopped; recorded in History as **Activity**.
+  - **What a login may see** is told under the toolbar with the privilege that shows more
+    (`pg_read_all_stats`, `PROCESS`, `VIEW SERVER STATE`).
+  - **MCP:** `server_activity` with a new `activity` permission, off by default;
+    `stop_session` with `activity` and `admin`.
+  - **W15a — The plan:** the design and this entry.
+  - **W15b — The model and PostgreSQL:** core types, the blocking tree, `Connection::
+    server_activity`, `stop_session` and `own_session`, and a conformance check with one
+    connection holding a row lock and another waiting on it.
+  - **W15c — The engine and the history:** commands, the tab's session, the safety check,
+    `HistorySource::Activity`.
+  - **W15d — The tab:** the list, the tree, filters, details, the timer, Cancel and Kill.
+  - **W15e — MySQL and MariaDB:** row locks, MySQL's metadata locks, a login without `PROCESS`.
+  - **W15f — SQL Server:** sessions without requests, `KILL` behind a `login_time` check, no
+    Cancel.
+  - **W15g — ClickHouse:** `system.processes`, Cancel only.
+  - **W15h — MCP:** the permission and the two tools.
+  - **W15i — Manual and demo note:** a chapter with pictures, and the exit as an engine test.
+
+  **Exit:** on PostgreSQL, with one session holding a row lock in an open transaction and
+  another waiting on it, Server activity shows the waiter under its blocker with the lock it
+  waits for; **Cancel query** on the waiter stops its statement; **Kill…** on the blocker of a
+  careful data source asks, naming the data source, then ends the session and releases the
+  lock, and History lists the kill as **Activity**; on a read-only data source both are
+  refused.
 
 ## Diagrams track
 
