@@ -25,6 +25,9 @@ pub enum HistorySource {
     Mcp { client: Option<String> },
     /// A custom action from `actions.toml`, by its id.
     Action { id: String },
+    /// Cancel query or Kill in a Server activity tab (W15), with what was stopped: the
+    /// session, whose it was, and its statement, redacted.
+    Activity { stopped: String },
     /// DbRover, before it recorded where a statement came from: rows written before the history
     /// had provenance, or since then by an older DbRover sharing the file.
     DbRover,
@@ -40,11 +43,12 @@ pub enum HistorySourceKind {
     Export,
     Mcp,
     Action,
+    Activity,
     DbRover,
 }
 
 impl HistorySourceKind {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Console,
         Self::GridEdit,
         Self::ObjectHelper,
@@ -52,6 +56,7 @@ impl HistorySourceKind {
         Self::Export,
         Self::Mcp,
         Self::Action,
+        Self::Activity,
         Self::DbRover,
     ];
 
@@ -67,6 +72,7 @@ impl HistorySourceKind {
             Self::Export => "export",
             Self::Mcp => "mcp",
             Self::Action => "action",
+            Self::Activity => "activity",
             Self::DbRover => "app",
         }
     }
@@ -86,6 +92,7 @@ impl HistorySource {
             Self::Export => HistorySourceKind::Export,
             Self::Mcp { .. } => HistorySourceKind::Mcp,
             Self::Action { .. } => HistorySourceKind::Action,
+            Self::Activity { .. } => HistorySourceKind::Activity,
             Self::DbRover => HistorySourceKind::DbRover,
         }
     }
@@ -113,6 +120,7 @@ impl HistorySource {
             Self::Import { file } => Some(file.to_string_lossy().into_owned()),
             Self::Mcp { client } => client.clone(),
             Self::Action { id } => Some(id.clone()),
+            Self::Activity { stopped } => Some(stopped.clone()),
             _ => None,
         }
     }
@@ -143,6 +151,9 @@ impl HistorySource {
             HistorySourceKind::Action => Self::Action {
                 id: detail.unwrap_or_default(),
             },
+            HistorySourceKind::Activity => Self::Activity {
+                stopped: detail.unwrap_or_default(),
+            },
             HistorySourceKind::DbRover => Self::DbRover,
         })
     }
@@ -172,6 +183,9 @@ mod tests {
                 client: Some("claude-ai".to_owned()),
             },
             HistorySource::Mcp { client: None },
+            HistorySource::Activity {
+                stopped: "Killed 4211: app on orders-api".to_owned(),
+            },
             HistorySource::Action {
                 id: "row-count".to_owned(),
             },

@@ -71,8 +71,8 @@ pub use programs::{
     ProgramRunner,
 };
 pub use protocol::{
-    Command, ConsoleId, CostApproval, DatabaseFile, DdlFailure, DescribedTable, Document,
-    EditFailure, Event, Exporter, ImportFailure, PasswordKept, PasswordUpdate, Picture,
+    Activity, Command, ConsoleId, CostApproval, DatabaseFile, DdlFailure, DescribedTable, Document,
+    EditFailure, Event, Exporter, ImportFailure, OwnSession, PasswordKept, PasswordUpdate, Picture,
     QueryFolderProblem, ReportSaveFailure, ReportText, RowEdit, RowsImport, RunId, RunOrigin,
     RunOutcome, RunPurpose, SessionState, StatementCheck, StatementFailure, StatementSummary,
     TableExport, TransactionEnd, TransactionMode,
