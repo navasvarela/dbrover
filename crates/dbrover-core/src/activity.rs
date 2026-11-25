@@ -140,7 +140,7 @@ pub enum StopOutcome {
 }
 
 /// One session on the server, as the login may see it.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ServerSession {
     pub id: SessionId,
     pub user: Option<String>,
@@ -203,7 +203,7 @@ pub struct Restriction {
 }
 
 /// What the server was doing when it was read.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ServerActivity {
     pub sessions: Vec<ServerSession>,
     /// What this login can't see. Empty when nothing was hidden from it.

@@ -6,8 +6,9 @@ use std::time::{Duration, SystemTime};
 use dbrover_core::{
     CatalogMatches, CatalogPath, CatalogSearch, ChildrenPage, ChildrenQuery, ColumnInfo,
     CostEstimate, DataSource, DataSourceId, DriverKind, JobProgress, Password, PasswordCommand,
-    ProjectId, ReadPace, Rejection, RelationName, ResultShape, RoleDescription, Row, ServerInfo,
-    TableDescription, TableName, TransactionStatus,
+    ProjectId, ReadPace, Rejection, RelationName, ResultShape, RoleDescription, Row,
+    ServerActivity, ServerInfo, SessionId, StopKind, StopOutcome, TableDescription, TableName,
+    TransactionStatus,
 };
 use dbrover_export::{ExportSpec, SqlTable};
 use dbrover_schema::Schema;
@@ -277,6 +278,22 @@ pub enum Command {
         data_source: DataSourceId,
         path: CatalogPath,
     },
+    /// Reads what the data source's server is doing, for its Server activity tab (W15), on a
+    /// connection of the tab's own, opened by the first read and kept until
+    /// [`Command::CloseActivity`]. Reads are never recorded in the history. Answered by
+    /// [`Event::ActivityRead`]; the connection's state by [`Event::ActivitySessionChanged`].
+    ReadActivity(DataSourceId),
+    /// Sends the statement the last [`Command::ReadActivity`] wrote to stop `session`, on the
+    /// activity tab's connection. Refused on a read-only data source, for the tab's own
+    /// session, and for a session or stop the last read didn't list. Recorded in the history.
+    /// Answered by [`Event::SessionStopped`].
+    StopSession {
+        data_source: DataSourceId,
+        session: SessionId,
+        kind: StopKind,
+    },
+    /// Closes the activity tab's connection.
+    CloseActivity(DataSourceId),
     /// Runs statements that create or change database objects (the object helpers' DDL), in
     /// order, on the explorer's connection to the data source, connecting first if needed.
     /// Where the dialect's DDL is transactional they run in one transaction, so a failure
@@ -725,6 +742,24 @@ pub enum Event {
         data_source: DataSourceId,
         path: CatalogPath,
         result: Result<RoleDescription, String>,
+    },
+    /// The answer to [`Command::ReadActivity`].
+    ActivityRead {
+        data_source: DataSourceId,
+        result: Result<Activity, String>,
+    },
+    /// The answer to [`Command::StopSession`].
+    SessionStopped {
+        data_source: DataSourceId,
+        session: SessionId,
+        kind: StopKind,
+        result: Result<StopOutcome, String>,
+    },
+    /// The state of a Server activity tab's own connection, as [`Event::SessionChanged`] is
+    /// the explorer's.
+    ActivitySessionChanged {
+        data_source: DataSourceId,
+        state: SessionState,
     },
     /// The answer to [`Command::ApplyDdl`].
     DdlApplied {
@@ -1183,4 +1218,31 @@ pub enum ReportSaveFailure {
     /// Another program changed the file since it was read.
     ChangedOnDisk,
     Failed(String),
+}
+
+/// What a data source's server was doing, with DbRover's own sessions named.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Activity {
+    pub server: ServerActivity,
+    /// The sessions DbRover itself has open on this data source, by the id the server gives
+    /// them. Listed only where the driver can say a connection's id.
+    pub own: Vec<(SessionId, OwnSession)>,
+}
+
+impl Activity {
+    pub fn own(&self, session: &SessionId) -> Option<OwnSession> {
+        self.own
+            .iter()
+            .find(|(id, _)| id == session)
+            .map(|(_, own)| *own)
+    }
+}
+
+/// Which of DbRover's connections a session is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OwnSession {
+    /// The activity tab's own connection, the one that read the list.
+    ThisTab,
+    Explorer,
+    Console(ConsoleId),
 }

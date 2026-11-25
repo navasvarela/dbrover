@@ -61,6 +61,7 @@ fn provenance(source: &HistorySource) -> String {
             "Run by an MCP client, through dbrover mcp.".to_owned()
         }
         HistorySource::Action { id } => format!("Run by the action {id} from actions.toml."),
+        HistorySource::Activity { stopped } => format!("Sent from Server activity. {stopped}."),
         HistorySource::DbRover => {
             "Run by a DbRover from before the history recorded where.".to_owned()
         }

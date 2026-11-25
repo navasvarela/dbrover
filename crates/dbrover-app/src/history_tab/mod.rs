@@ -457,6 +457,11 @@ fn source_badge(ui: &mut Ui, source: &HistorySource) {
             palette.text_weak,
             format!("Run by the action {id} from actions.toml"),
         ),
+        HistorySource::Activity { stopped } => (
+            "Activity",
+            palette.warning,
+            format!("Sent from Server activity: {stopped}"),
+        ),
         HistorySource::DbRover => (
             "DbRover",
             palette.text_weak,

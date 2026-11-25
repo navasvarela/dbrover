@@ -32,7 +32,7 @@ use crate::query_folders;
 use crate::registry::{OutsideChanges as DataSourceChanges, Registry, RegistryError};
 use crate::releases::{self, ReleaseFeed};
 use crate::report_files;
-use crate::session::{Script, Services, Session, SessionOwner, SessionRequest};
+use crate::session::{OwnSessions, Script, Services, Session, SessionOwner, SessionRequest};
 use crate::settings;
 use crate::sql_files;
 use crate::transfer;
@@ -106,6 +106,8 @@ pub(crate) async fn run(
         events,
         sessions: HashMap::new(),
         consoles: HashMap::new(),
+        activities: HashMap::new(),
+        own_sessions: OwnSessions::default(),
         closing: JoinSet::new(),
     };
     while let Some(command) = commands.recv().await {
@@ -157,6 +159,10 @@ struct Engine {
     sessions: HashMap<DataSourceId, Session>,
     /// Each query console's own session.
     consoles: HashMap<ConsoleId, ConsoleSession>,
+    /// Each Server activity tab's own session, one per data source (W15).
+    activities: HashMap<DataSourceId, Session>,
+    /// The ids the servers gave DbRover's connections, for the activity tabs to name them.
+    own_sessions: OwnSessions,
     /// Sessions that were asked to disconnect and are still closing their connection.
     closing: JoinSet<()>,
 }
@@ -375,6 +381,25 @@ impl Engine {
                     console.session.cancel(run);
                 }
             }
+            Command::ReadActivity(data_source) => {
+                if let Some(session) = self.activity_session(data_source) {
+                    session.request(SessionRequest::ReadActivity);
+                }
+            }
+            Command::StopSession {
+                data_source,
+                session,
+                kind,
+            } => match self.activities.get(&data_source) {
+                Some(activity) => activity.request(SessionRequest::StopSession(session, kind)),
+                None => self.events.send(Event::SessionStopped {
+                    data_source,
+                    session,
+                    kind,
+                    result: Err("The Server activity tab isn't connected.".to_owned()),
+                }),
+            },
+            Command::CloseActivity(data_source) => self.close_activity(data_source),
             Command::ReconnectConsole(console) => self.reconnect_console(console),
             Command::CloseConsole(console) => self.close_console(console),
             Command::SaveConsole { key, text } => {
@@ -1212,6 +1237,36 @@ impl Engine {
             commands: self.password_commands(),
             events: self.events.clone(),
             history: self.history.clone(),
+            own_sessions: self.own_sessions.clone(),
+        }
+    }
+
+    /// The activity tab's session on `data_source`, started if it has none, or if its last one
+    /// ended. `None` for a data source that isn't saved.
+    fn activity_session(&mut self, data_source: DataSourceId) -> Option<&Session> {
+        let running = self
+            .activities
+            .get(&data_source)
+            .is_some_and(|session| !session.is_finished());
+        if !running {
+            self.close_activity(data_source);
+            let Some(config) = self.registry.get(data_source) else {
+                tracing::warn!(%data_source, "activity requested for an unknown data source");
+                return None;
+            };
+            let session = Session::start(
+                config.clone(),
+                SessionOwner::Activity(data_source),
+                self.services(),
+            );
+            self.activities.insert(data_source, session);
+        }
+        self.activities.get(&data_source)
+    }
+
+    fn close_activity(&mut self, data_source: DataSourceId) {
+        if let Some(session) = self.activities.remove(&data_source) {
+            self.closing.spawn(session.stop());
         }
     }
 
@@ -1272,6 +1327,7 @@ impl Engine {
         for console in consoles {
             self.close_console(console);
         }
+        self.close_activity(id);
     }
 
     async fn shut_down(mut self) {
@@ -1281,6 +1337,9 @@ impl Engine {
         }
         for (_, console) in self.consoles.drain() {
             self.closing.spawn(console.session.stop());
+        }
+        for (_, activity) in self.activities.drain() {
+            self.closing.spawn(activity.stop());
         }
         while let Some(result) = self.closing.join_next().await {
             if let Err(error) = result {

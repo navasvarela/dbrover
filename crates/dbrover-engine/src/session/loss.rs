@@ -8,7 +8,8 @@ use dbrover_core::{
     CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, Cell, ChildrenPage,
     ChildrenQuery, ColumnInfo, Connection, CostEstimate, DriverError, JobProgress, ProgressHandle,
     Rejection, RelationName, ResultCursor, ResultShape, RoleDescription, Row, SchemaDescription,
-    ServerInfo, TableConstraints, TableDescription, TableName, TransactionStatus, describe_error,
+    ServerActivity, ServerInfo, SessionId, SessionStop, StopOutcome, TableConstraints,
+    TableDescription, TableName, TransactionStatus, describe_error,
 };
 
 use super::{SessionContext, SessionOwner, SessionRequest};
@@ -140,6 +141,18 @@ impl Connection for Watched {
             .watch(self.connection.describe_schema(schema).await)
     }
 
+    async fn server_activity(&mut self) -> Result<ServerActivity, DriverError> {
+        self.loss.watch(self.connection.server_activity().await)
+    }
+
+    async fn stop_session(&mut self, stop: &SessionStop) -> Result<StopOutcome, DriverError> {
+        self.loss.watch(self.connection.stop_session(stop).await)
+    }
+
+    async fn own_session(&mut self) -> Result<Option<SessionId>, DriverError> {
+        self.loss.watch(self.connection.own_session().await)
+    }
+
     async fn validate(&mut self, sql: &str) -> Result<Option<Rejection>, DriverError> {
         self.loss.watch(self.connection.validate(sql).await)
     }
@@ -211,7 +224,7 @@ pub(super) fn refuse(context: &SessionContext, request: SessionRequest, reason: 
     let message = format!("the connection was lost ({reason}); reconnect to go on");
     let console = match context.owner {
         SessionOwner::Console(console) => Some(console),
-        SessionOwner::Explorer(_) => None,
+        SessionOwner::Explorer(_) | SessionOwner::Activity(_) => None,
     };
     let id = context.data_source.id;
     let event = match (request, console) {
@@ -324,6 +337,16 @@ pub(super) fn refuse(context: &SessionContext, request: SessionRequest, reason: 
             data_source: id,
             schema,
             path,
+            result: Err(message),
+        },
+        (SessionRequest::ReadActivity, _) => Event::ActivityRead {
+            data_source: id,
+            result: Err(message),
+        },
+        (SessionRequest::StopSession(session, kind), _) => Event::SessionStopped {
+            data_source: id,
+            session,
+            kind,
             result: Err(message),
         },
         // Rows to fetch were the lost connection's; the explorer never edits or ends a

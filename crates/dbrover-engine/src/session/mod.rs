@@ -3,6 +3,7 @@
 //! The explorer has one session per data source; each query console has its own, so a long
 //! query never holds up browsing or another console.
 
+mod activity;
 mod catalog;
 mod cost;
 mod ddl;
@@ -11,6 +12,7 @@ mod export;
 mod guard;
 mod import;
 mod loss;
+mod own;
 mod parameters;
 mod query;
 mod schema;
@@ -24,7 +26,8 @@ use std::time::{Duration, Instant};
 
 use dbrover_core::{
     CancelHandle, CatalogPath, CatalogSearch, ChildrenQuery, Connection, DataSource, DataSourceId,
-    ProgressHandle, RelationName, SafetyLevel, TransactionStatus, describe_error,
+    ProgressHandle, RelationName, SafetyLevel, ServerActivity, SessionId, StopKind,
+    TransactionStatus, describe_error,
 };
 use dbrover_language::QueryLanguage;
 use dbrover_sql::{Dialect, ParameterValues};
@@ -46,6 +49,7 @@ use crate::{
 };
 use guard::ReadOnly;
 use loss::{Loss, Watched};
+pub(crate) use own::OwnSessions;
 
 /// Work for a session's connection. Answered with events, in the order received.
 #[derive(Debug)]
@@ -73,6 +77,10 @@ pub(crate) enum SessionRequest {
     ExportAll(ExportAll),
     ExportTable(TableExport),
     ImportRows(RowsImport),
+    /// Reads the server's activity; see [`crate::Command::ReadActivity`].
+    ReadActivity,
+    /// Stops a session the last read listed; see [`crate::Command::StopSession`].
+    StopSession(SessionId, StopKind),
 }
 
 /// Statements to run in a console, in order.
@@ -89,17 +97,21 @@ pub(crate) struct Script {
 }
 
 /// Who a session works for, which decides how its state changes are reported.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum SessionOwner {
     Explorer(DataSourceId),
     Console(ConsoleId),
+    /// A data source's Server activity tab (W15).
+    Activity(DataSourceId),
 }
 
 impl SessionOwner {
     /// Who the session's exports report to.
     pub(crate) fn exporter(self) -> Exporter {
         match self {
-            Self::Explorer(data_source) => Exporter::DataSource(data_source),
+            Self::Explorer(data_source) | Self::Activity(data_source) => {
+                Exporter::DataSource(data_source)
+            }
             Self::Console(console) => Exporter::Console(console),
         }
     }
@@ -114,6 +126,7 @@ pub(crate) struct Services {
     pub(crate) commands: PasswordCommands,
     pub(crate) events: EventSink,
     pub(crate) history: HistoryLog,
+    pub(crate) own_sessions: OwnSessions,
 }
 
 /// A live connection, owned by its own task so a slow connect or query never holds up the
@@ -140,6 +153,7 @@ impl Session {
             commands,
             events,
             history,
+            own_sessions,
         } = services;
         let (disconnect, disconnect_signal) = oneshot::channel();
         let (requests, request_receiver) = mpsc::unbounded_channel();
@@ -160,6 +174,7 @@ impl Session {
             // What the user runs belongs in the history: a console's statements and the
             // explorer's DDL, never its catalog queries, which don't record anything.
             history,
+            own_sessions,
         };
         let signals = Signals {
             disconnect: disconnect_signal,
@@ -222,6 +237,9 @@ struct SessionContext {
     owner: SessionOwner,
     events: EventSink,
     history: HistoryLog,
+    /// Where this session says the id the server gave its connection, and where a Server
+    /// activity tab finds the ids of DbRover's other sessions.
+    own_sessions: OwnSessions,
 }
 
 impl SessionContext {
@@ -268,6 +286,9 @@ impl SessionContext {
         self.send(match self.owner {
             SessionOwner::Explorer(id) => Event::SessionChanged { id, state },
             SessionOwner::Console(console) => Event::ConsoleSessionChanged { console, state },
+            SessionOwner::Activity(data_source) => {
+                Event::ActivitySessionChanged { data_source, state }
+            }
         });
     }
 }
@@ -349,6 +370,10 @@ async fn run(
         };
         let loss = Loss::default();
         let mut connection: Box<dyn Connection> = Box::new(Watched::new(connection, loss.clone()));
+        context
+            .own_sessions
+            .learn(&context, connection.as_mut())
+            .await;
         let cancel_handle = connection.cancel_handle();
         let progress_handle = connection.progress_handle();
         let mut worker = Worker {
@@ -362,8 +387,10 @@ async fn run(
             parked: None,
             transaction: TransactionStatus::Idle,
             read_only_open: None,
+            activity: None,
         };
         let ended = worker.serve(&mut requests, pending.take()).await;
+        context.own_sessions.forget(context.owner);
         if let Some(parked) = worker.parked.take() {
             query::discard(&context, parked, cancel_handle.as_ref()).await;
         }
@@ -395,9 +422,9 @@ async fn run(
                 }
                 return;
             }
-            // The explorer has nothing to lose by reconnecting, so it does on its next
-            // request.
-            SessionOwner::Explorer(_) => {
+            // The explorer and an activity tab have nothing to lose by reconnecting, so they
+            // do on their next request.
+            SessionOwner::Explorer(_) | SessionOwner::Activity(_) => {
                 pending = match unserved {
                     Some(request) => Some(request),
                     None => match next_request_while_lost(&mut signals, &mut requests).await {
@@ -528,6 +555,8 @@ struct Worker<'a> {
     transaction: TransactionStatus,
     /// The read-only transaction a read-only data source's statement runs in, while open.
     read_only_open: Option<read_only::ReadOnlyMode>,
+    /// An activity tab's last read: what a stop may be sent to (W15).
+    activity: Option<ServerActivity>,
 }
 
 impl Worker<'_> {
@@ -671,6 +700,8 @@ impl Worker<'_> {
                 let work = schema::save_snapshot(self.context, &mut *self.connection, schema, path);
                 self.signals.guard(work, None, self.cancel_handle).await
             }
+            SessionRequest::ReadActivity => activity::read(self).await,
+            SessionRequest::StopSession(session, kind) => activity::stop(self, session, kind).await,
             SessionRequest::FetchMore(_) | SessionRequest::Validate(_) => Ok(()),
         }
     }
