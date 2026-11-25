@@ -20,7 +20,8 @@ The row above the list narrows it down:
 - **This data source / Every data source**: every data source's statements at once, each named
   beside its statement. A data source you have since removed shows as *Removed data source*.
 - **All sources** or one kind: **Consoles**, **Grid edits**, **Object helpers**, **Imports**,
-  **Exports**, **MCP clients**, **Actions**, or **Earlier DbRover** for statements recorded before DbRover
+  **Exports**, **MCP clients**, **Actions**, **Server activity** (what
+  [Cancel query and Kill](server-activity.md#cancel-query-and-kill) sent), or **Earlier DbRover** for statements recorded before DbRover
   kept where they came from.
 - **Any time**, or the last hour, 24 hours, 7 days or 30 days.
 - **Search statements**: any part of the statement, ignoring case.

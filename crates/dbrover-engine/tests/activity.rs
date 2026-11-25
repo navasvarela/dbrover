@@ -314,3 +314,118 @@ fn a_read_only_data_source_shows_activity_but_stops_nothing() {
     execute(&runtime, other.as_mut(), "SELECT 1");
     engine.shut_down();
 }
+
+/// W15's exit (`docs/roadmap.md`): on PostgreSQL, a console holding a row lock in its open
+/// transaction and another session waiting on it; Server activity draws the waiter under the
+/// console with the lock it waits for, Cancel query stops the waiter's statement, Kill ends
+/// the console's session, and the history lists both as Activity. (Kill asking first on a
+/// careful data source is the tab's, tested in the app; the read-only refusal is above.)
+#[test]
+fn w15_exit() {
+    let Some(server) = postgres_test_server() else {
+        return;
+    };
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let table = format!(
+        "w15_exit_{}",
+        DataSourceId::generate().to_string().replace('-', "_")
+    );
+    let mut setup = connect(&runtime, &server);
+    execute(
+        &runtime,
+        setup.as_mut(),
+        &format!("CREATE TABLE {table} (id int PRIMARY KEY, n int NOT NULL)"),
+    );
+    execute(
+        &runtime,
+        setup.as_mut(),
+        &format!("INSERT INTO {table} VALUES (1, 0)"),
+    );
+    let production = data_source(&server, SafetyLevel::Careful);
+    let (mut engine, _dir) = engine(&server, &production);
+    let id = production.id;
+    assert_eq!(
+        run(
+            &mut engine,
+            id,
+            1,
+            &format!("UPDATE {table} SET n = 1 WHERE id = 1")
+        ),
+        RunOutcome::Completed
+    );
+    let mut waiter = connect(&runtime, &server);
+    let waiter_id = runtime.block_on(waiter.own_session()).unwrap().unwrap();
+    let waiting_sql = format!("UPDATE {table} SET n = 2 WHERE id = 1");
+    let waiting = runtime.spawn(async move {
+        let result = async {
+            waiter
+                .execute("SET lock_timeout = '20s'")
+                .await?
+                .finish()
+                .await?;
+            waiter.execute(&waiting_sql).await?.finish().await
+        }
+        .await;
+        (waiter, result)
+    });
+
+    let activity = read_until(&mut engine, id, "the waiter under the console", |read| {
+        read.server
+            .sessions
+            .iter()
+            .any(|session| session.id == waiter_id && session.state == SessionState::Waiting)
+    });
+    let console = own_id(&activity, OwnSession::Console(CONSOLE));
+    let rows = dbrover_core::blocking_order(&activity.server.sessions, |_| true);
+    let at = |id: &SessionId| {
+        rows.iter()
+            .position(|row| &activity.server.sessions[row.session].id == id)
+            .unwrap()
+    };
+    assert_eq!(
+        at(&waiter_id),
+        at(&console) + 1,
+        "the waiter right under the console"
+    );
+    assert_eq!(rows[at(&waiter_id)].depth, rows[at(&console)].depth + 1);
+    let waiter_row = &activity.server.sessions[rows[at(&waiter_id)].session];
+    let lock = waiter_row.lock.as_ref().expect("the lock it waits for");
+    assert!(lock.to_string().contains(&table), "{lock}");
+
+    assert_eq!(
+        stop(&mut engine, id, waiter_id, StopKind::CancelQuery),
+        Ok(StopOutcome::Stopped)
+    );
+    let (_waiter, result) = runtime.block_on(waiting).unwrap();
+    assert!(result.is_err(), "the waiter's statement was cancelled");
+    assert_eq!(
+        stop(&mut engine, id, console, StopKind::EndSession),
+        Ok(StopOutcome::Stopped)
+    );
+
+    engine.send(Command::SearchHistory(HistoryQuery {
+        kind: Some(HistorySourceKind::Activity),
+        ..HistoryQuery::all(id)
+    }));
+    let entries = until(&mut engine, |event| match event {
+        Event::HistoryFound { result, .. } => Some(result.unwrap()),
+        _ => None,
+    });
+    let stopped: Vec<&str> = entries
+        .iter()
+        .filter_map(|entry| match &entry.source {
+            HistorySource::Activity { stopped } => Some(stopped.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(stopped.len(), 2, "{stopped:#?}");
+    assert!(
+        stopped
+            .iter()
+            .any(|text| text.starts_with("Cancelled the statement"))
+    );
+    assert!(stopped.iter().any(|text| text.starts_with("Ended session")));
+
+    engine.shut_down();
+    execute(&runtime, setup.as_mut(), &format!("DROP TABLE {table}"));
+}

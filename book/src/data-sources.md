@@ -468,6 +468,7 @@ Right-click a data source in the explorer for:
 | **Diagrams** | Reopens one of the data source's saved ER diagrams; see [ER diagrams](diagrams.md#diagrams-are-saved). Shown when there are any. |
 | **New › Schema…** | Creates a database, on MySQL, MariaDB and ClickHouse, whose schemas are databases. See [Views and schemas](views-schemas.md#new-schema). |
 | **New › User…**, **New › Role…** | Creates a role that can log in, or one that can't, on PostgreSQL. See [Users and roles](users-roles.md). |
+| **Server activity** | Opens a tab of the server's sessions, who waits on whose locks, and Cancel query and Kill, on PostgreSQL, MySQL, MariaDB, SQL Server and ClickHouse. See [Server activity](server-activity.md). |
 | **Edit…** | Opens the dialog with the saved settings. |
 | **Move to project ›** | Puts the data source in a project, in **No project**, or in a new project. Dragging its row onto a project header does the same. See [Projects](explorer.md#projects). |
 | **Delete…** | Asks for confirmation, then removes the data source and deletes its saved password. |

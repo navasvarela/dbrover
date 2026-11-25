@@ -1,6 +1,8 @@
 # Server activity
 
-Status: **planned on 2026-11-25** (W15a), its open questions answered the same day. The [roadmap](roadmap.md#well-rounded-track) tracks it
+Status: **built on 2026-11-25**, in one stack, #694, #695 and #697 to #703; the manual's chapter
+is [Server activity](../book/src/server-activity.md), and the departures are in the roadmap's
+demo note. Planned the same day (W15a), its open questions answered as proposed. The [roadmap](roadmap.md#well-rounded-track) tracks it
 as W15 in the well-rounded track. It starts with PostgreSQL, then MySQL and MariaDB, SQL Server
 and ClickHouse. Each layer's decisions are confirmed as it is built, and departures go in the
 demo note.

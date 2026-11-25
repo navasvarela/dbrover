@@ -1998,7 +1998,7 @@ three to five, **L** a track of its own).
   right-click a project → **Project settings…** opens its page, where allowing writes and
   saving writes `projects.toml`; searching *format* finds the Format shortcuts beside the
   Format SQL settings; no keymap, actions or project settings window is left.
-- **W15 — Server activity (L):** planned; designed on 2026-11-25 in
+- **W15 — Server activity (L):** built; designed on 2026-11-25 in
   [Server activity](server-activity.md), its questions answered the same day, as proposed. What
   is running on a database server and stopping it:
   the server's sessions and their statements, who is waiting on whose locks, and **Cancel
@@ -2031,6 +2031,40 @@ three to five, **L** a track of its own).
   - **W15g — ClickHouse:** `system.processes`, Cancel only.
   - **W15h — MCP:** the permission and the two tools.
   - **W15i — Manual and demo note:** a chapter with pictures, and the exit as an engine test.
+
+  **W15 demo note:** built in #694, #695 and #697 to #703, described in
+  [Server activity](../book/src/server-activity.md). On a PostgreSQL data source made
+  **Careful**, run `UPDATE orders SET status = 'paid' WHERE id = 3` in a console (it starts in
+  manual commit, so the row stays locked), and the same `UPDATE` from `psql`. Right-click the
+  data source → **Server activity**: the `psql` session is **waiting**, indented under
+  *DbRover: Orders.sql*, **idle in transaction**; click it and its details say it waits for
+  *ShareLock on a row of orders, held by transaction 812*, **Held by** the console's pid.
+  **Cancel query** on it runs at once and its statement fails in `psql`; **Kill…** on the
+  console asks *Kill session 4211 on "production"?* with the `pg_terminate_backend` statement
+  it will send; **Kill** ends it (the console finds its session gone at its next run, as W3 built), and
+  History lists both under **Server activity**, *Ended session 4211 (…), idle in transaction
+  for 2 min, last ran UPDATE orders …*. On a read-only data
+  source both buttons are disabled with the reason. The tab reads every 5 s only while shown;
+  **Pause**, **Refresh** and the interval are in its toolbar, and **Settings › Server
+  activity** sets a new tab's. MySQL and MariaDB show their threads, `sys.innodb_lock_waits`'
+  and `INNODB_LOCK_WAITS`' blockers, and `KILL QUERY` / `KILL CONNECTION` (`KILL QUERY ID` on
+  MariaDB); SQL Server its sessions and `blocking_session_id`, with only Kill, sent behind a
+  check of the session's `login_time`; ClickHouse its running queries from `system.processes`,
+  with only Cancel. With a project's new **Server activity** permission, an assistant gets
+  `server_activity`, and with **Admin** too `stop_session`. Departures from the design: the
+  toolbar's interval is the tab's own and doesn't rewrite the setting; a stop the engine never
+  offers is hidden rather than disabled; SQL Server refuses a login without `VIEW SERVER
+  STATE` even its own statement, so none is shown; ClickHouse 25.8 refuses `system.processes`
+  outright without `SELECT` on it, which the tab shows as the server's message; the MCP tools
+  run outside the per-call transaction; DbRover can't tell it is behind PgBouncer (found
+  against the `pgbouncer` service), which the manual says. Covered by
+  `conformance::check_server_activity` on PostgreSQL, MySQL, MariaDB and SQL Server (a row
+  held in an open transaction, a waiter, Cancel and Kill, a stale kill), each driver's test of
+  a login without the privilege, ClickHouse's cancel of a running query, engine tests of
+  naming DbRover's sessions, the refusals and the history (with `w15_exit`), kittest tests of
+  the tab on a careful and a read-only data source, and `dbrover-mcp`'s `activity` test. Still
+  to come, if asked: Trino, Redshift (with C7), a cluster's other ClickHouse nodes, MariaDB's
+  metadata locks, killing several sessions at once, and a server dashboard of counters.
 
   **Exit:** on PostgreSQL, with one session holding a row lock in an open transaction and
   another waiting on it, Server activity shows the waiter under its blocker with the lock it

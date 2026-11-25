@@ -31,6 +31,7 @@
 - [Creating and changing tables](objects.md)
 - [Views and schemas](views-schemas.md)
 - [Users and roles](users-roles.md)
+- [Server activity](server-activity.md)
 - [ER diagrams](diagrams.md)
 - [Comparing schemas](schema-compare.md)
 
