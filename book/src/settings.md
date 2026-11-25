@@ -14,6 +14,8 @@ The sidebar lists its pages:
   [problems](consoles.md) the console points out while you type.
 - **Query history**: how long [the history](history.md) keeps statements, and how many it keeps
   for each data source.
+- **Server activity**: how often a new [Server activity](server-activity.md) tab reads its
+  server, or that it starts paused.
 - **Reports**: the limits every [report](reports.md#limits) runs under unless its file sets its
   own, where runs keep their work folders, whether a long run keeps the computer awake, and how
   many runs of each report are kept.
@@ -43,9 +45,9 @@ in the sidebar to leave the search.
 
 ## Where each page saves
 
-- **Appearance, Editor, Query history, Reports and Updates** save every change at once in
-  `settings.toml` (see [Where DbRover keeps its files](files.md)), except the theme, which is kept
-  with the window's layout. After editing `settings.toml` by hand, click **Reload** at the
+- **Appearance, Editor, Query history, Server activity, Reports and Updates** save every
+  change at once in `settings.toml` (see [Where DbRover keeps its files](files.md)), except the
+  theme, which is kept with the window's layout. After editing `settings.toml` by hand, click **Reload** at the
   bottom of the page.
 - **MCP** and **a project's page** wait for their own button, **Save MCP defaults** or **Save
   project settings**, and write `projects.toml`; **Discard** drops the changes. A project's

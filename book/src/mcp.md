@@ -102,6 +102,8 @@ Each statement it runs shows up in the data source's **History**, marked **MCP**
 | `explain` | Shows how the database would run one read statement, without running it. |
 | `chart` | Draws one statement that only reads as a chart, bars, lines or a scatter, as the **Chart** tab draws it, and returns it as a PNG the assistant shows you, or with `format` set to `svg`, as SVG text. `chart` takes [a chart's keys](charts.md#the-keys) as a JSON object, such as `{"kind": "bars", "x": "category", "y": "net"}`; a key left out takes the value **Chart** starts with. The statement runs as `query` runs it, under the same row limit: when the limit cuts the rows, the chart draws those it read, and both the picture's last line and the reply say so. |
 | `execute` | Runs statements that change something, in one transaction. Only offered when the project allows `write`, `schema` or `admin`. |
+| `server_activity` | A data source's sessions as its login may see them, in blocking order: a session waiting on a lock comes after the one holding it, with what it waits for; and what the login can't see. Only offered when the project allows **Server activity**. |
+| `stop_session` | Cancels a session's statement, or kills the session, as [Server activity](server-activity.md#cancel-query-and-kill) does, after reading it again so a session that has ended isn't confused with one that took its id. Refused on a read-only data source; recorded in the history. Only offered when the project allows **Server activity** and **Admin**. |
 | `list_reports` | The [reports](reports.md) whose data sources are all in the project: each one's name, title, parameters with their types, its data sources, `can_run`, and what keeps it from running; and `may_run`, whether the project lets the assistant run reports at all. Reports that read another project's data sources aren't listed. |
 | `report_runs` | The runs a report has kept, newest first: each one's id, when it started, how long it took, how it ended, its parameters, where it was run from, the step that took the longest share of it, and any step that took far longer than its median over the runs kept. `limit` asks for fewer or more than the ten it answers by default, up to a hundred. Also the step that dominates every finished run, where they agree, and the hints the report silences. |
 | `report_profile` | One kept run in full: every step with its phases, waits and ranges; what the run measured of itself, such as the worker's peak memory and the DbRover that ran it; the step on the critical path that held it longest; the data funnel, a source at a time — what its engine scanned, what it returned, what the combine used of it, and what the run wrote; and the [hints](reports.md#a-runs-profile) its numbers give, each marked when the report's `quiet_hints` silences it. The widest drop in the funnel is where that source's query should filter. `run` picks a run by its id; the newest kept run otherwise. The same numbers as the **Profile** under a run in the report's tab, and as `dbrover report run --profile`. |
@@ -133,6 +135,7 @@ defaults in **View › Settings… › MCP**; they apply to every project that d
 | **Schema** | `CREATE`, `ALTER`, `DROP`, `COMMENT ON` and other DDL | off |
 | **Admin** | Grants, roles and users, databases, server settings, `COPY` to or from files, killing sessions, procedures (`CALL`), and anything DbRover can't parse | off |
 | **Run reports** | Running the reports whose data sources are all in the project, with `run_report`. A run reads what its report says, under the report's limits rather than the row limit and statement timeout below. The read-only report tools don't need it | off |
+| **Server activity** | Listing a data source's sessions with `server_activity`, other users' statements included (with passwords taken out); with **Admin** too, stopping one with `stop_session`. See [Server activity](server-activity.md#for-ai-assistants) | off |
 | **Row limit** | The most rows one call returns; the reply says `"truncated": true` when there were more | 500 |
 | **Statement timeout** | How long one statement may run before it is cancelled | 30 s |
 | **Schemas** | All, or only the schemas listed: the catalog tools show only those, and statements may only name those | all |
@@ -145,8 +148,9 @@ exception is MySQL and MariaDB, which commit DDL on their own; there the reply s
 wasn't atomic. `query` still only reads, whatever the project allows.
 
 A run from `run_report` is kept with the report's [runs](reports.md#runs), marked *from MCP*.
-**Run reports** is saved as `reports = true` in `projects.toml`; an older DbRover, from before
-the setting, refuses a `projects.toml` that has it, so switch it off before going back to one.
+**Run reports** is saved as `reports = true` in `projects.toml`, and **Server activity** as
+`activity = true`; an older DbRover, from before the setting, refuses a `projects.toml` that
+has it, so switch it off before going back to one.
 
 A running server keeps the settings it started with. After changing them, restart the server:
 most clients have a button for it, or restart the client.
