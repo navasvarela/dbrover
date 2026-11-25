@@ -1,6 +1,6 @@
 # Server activity
 
-Status: **proposed on 2026-11-25** (W15a). The [roadmap](roadmap.md#well-rounded-track) tracks it
+Status: **planned on 2026-11-25** (W15a), its open questions answered the same day. The [roadmap](roadmap.md#well-rounded-track) tracks it
 as W15 in the well-rounded track. It starts with PostgreSQL, then MySQL and MariaDB, SQL Server
 and ClickHouse. Each layer's decisions are confirmed as it is built, and departures go in the
 demo note.
@@ -148,7 +148,7 @@ The rules are the data source's safety level (W2), applied as the object helpers
   "production"?*, with the user, application, how long its transaction has been open, its
   statement, and what will be sent (`SELECT pg_terminate_backend(4211) …`).
 - **Normal:** **Cancel query** runs at once; **Kill…** asks, as above, because it rolls back
-  someone's transaction. (Open question 1.)
+  someone's transaction.
 - **What can't work isn't offered.** A session of another user, when the login may only end
   its own, has the buttons disabled with the reason (*Ending another user's session needs
   pg_signal_backend*). The server still has the last word, and its refusal is shown as is.
@@ -405,15 +405,16 @@ lists the kill as **Activity**; on a read-only data source both are refused.
 
 ## Decisions
 
-Proposed defaults; the open ones are marked, and each is confirmed when its layer starts.
+The first five were asked on 2026-11-25 and confirmed as proposed; the rest are confirmed as
+their layers are built.
 
 | Question | Proposed | Consequence |
 | --- | --- | --- |
-| Kill on a normal data source (**open**) | **Asks**, as a drop does; Cancel runs at once | One click never rolls back someone's hour of work; stopping a runaway query stays quick. |
-| Reading activity over MCP (**open**) | **A new permission, `activity`, off by default**; stopping needs `admin` too | Other users' statements aren't shown to an assistant that may only read tables. |
-| The refresh (**open**) | **Every 5 s, only while the tab is shown**, saved in Settings | Quick enough to watch a lock clear, and nothing polls a server no one is looking at. |
-| What shows at first (**open**) | **Idle and background sessions hidden**, except in a blocking chain | The list starts with what is doing something; the idle blocker still shows. |
-| The engines (**open**) | **PostgreSQL, MySQL, MariaDB, SQL Server, ClickHouse**; Trino next; Redshift with C7 | The servers DbRover's users run themselves first. |
+| Kill on a normal data source | **Asks**, as a drop does; Cancel runs at once | One click never rolls back someone's hour of work; stopping a runaway query stays quick. |
+| Reading activity over MCP | **A new permission, `activity`, off by default**; stopping needs `admin` too | Other users' statements aren't shown to an assistant that may only read tables. |
+| The refresh | **Every 5 s, only while the tab is shown**, saved in Settings | Quick enough to watch a lock clear, and nothing polls a server no one is looking at. |
+| What shows at first | **Idle and background sessions hidden**, except in a blocking chain | The list starts with what is doing something; the idle blocker still shows. |
+| The engines | **PostgreSQL, MySQL, MariaDB, SQL Server, ClickHouse**; Trino next; Redshift with C7 | The servers DbRover's users run themselves first. |
 | How many sessions one Kill stops | **One at a time** | A confirmation that names what it ends; ending a blocker usually frees the rest. |
 | Where reads run | **The tab's own connection** | Never behind the explorer or a console; one connection per open tab. |
 | Restoring the tab at start-up | **No** | Starting DbRover doesn't connect to every server whose tab was open. |

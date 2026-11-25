@@ -1999,7 +1999,8 @@ three to five, **L** a track of its own).
   saving writes `projects.toml`; searching *format* finds the Format shortcuts beside the
   Format SQL settings; no keymap, actions or project settings window is left.
 - **W15 — Server activity (L):** planned; designed on 2026-11-25 in
-  [Server activity](server-activity.md). What is running on a database server and stopping it:
+  [Server activity](server-activity.md), its questions answered the same day, as proposed. What
+  is running on a database server and stopping it:
   the server's sessions and their statements, who is waiting on whose locks, and **Cancel
   query** and **Kill…**, in a tab per data source. It starts with PostgreSQL, then MySQL and
   MariaDB, SQL Server and ClickHouse; SQLite and DuckDB run inside DbRover, and the cloud
