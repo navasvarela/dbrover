@@ -45,6 +45,16 @@ pub(super) fn offered(
     })
 }
 
+/// Whether the engine has `kind` at all, as far as the last read shows: some session was
+/// offered it. A login that may stop only its own sessions is still offered both on its own.
+pub(super) fn engine_has(activity: &dbrover_engine::Activity, kind: StopKind) -> bool {
+    activity
+        .server
+        .sessions
+        .iter()
+        .any(|session| session.stop(kind).is_some())
+}
+
 /// Whether `kind` asks before it is sent: both on a careful data source, Kill everywhere, since
 /// it rolls back someone's transaction. Cancel on a normal data source goes at once.
 pub(super) fn asks_first(safety: SafetyLevel, kind: StopKind) -> bool {

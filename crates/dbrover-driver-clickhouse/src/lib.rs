@@ -8,6 +8,7 @@
 //! ClickHouse has no transactions in practice (they are experimental), so a connection is
 //! never inside one.
 
+mod activity;
 mod batches;
 mod catalog;
 mod errors;
@@ -21,8 +22,8 @@ use clickhouse::Client;
 use dbrover_core::{
     BareNames, BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, ClickHouseConfig,
     Connection, DriverError, Password, ProgressHandle, QuoteEscape, Quoting, Rejection,
-    RelationName, ResultCursor, Route, ServerInfo, TableConstraints, TableDescription, TableName,
-    TlsMode, TransactionStatus,
+    RelationName, ResultCursor, Route, ServerActivity, ServerInfo, SessionStop, StopOutcome,
+    TableConstraints, TableDescription, TableName, TlsMode, TransactionStatus,
 };
 pub use dbrover_tls::TlsSetupError;
 use hyper_rustls::FixedServerNameResolver;
@@ -227,6 +228,14 @@ impl Connection for ClickHouseConnection {
         table: &TableName,
     ) -> Result<TableConstraints, DriverError> {
         table::describe_constraints(&self.session, table).await
+    }
+
+    async fn server_activity(&mut self) -> Result<ServerActivity, DriverError> {
+        activity::read(&self.session).await
+    }
+
+    async fn stop_session(&mut self, stop: &SessionStop) -> Result<StopOutcome, DriverError> {
+        activity::stop(&self.session, stop).await
     }
 
     async fn validate(&mut self, sql: &str) -> Result<Option<Rejection>, DriverError> {

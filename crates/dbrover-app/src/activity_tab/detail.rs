@@ -156,6 +156,11 @@ fn buttons(
             (StopKind::CancelQuery, icons::STOP, "Cancel query"),
             (StopKind::EndSession, icons::X_CIRCLE, "Kill\u{2026}"),
         ] {
+            // A stop no session is offered is one the engine doesn't have (Kill on
+            // ClickHouse, whose queries have no session; Cancel on SQL Server): not shown.
+            if !stops::engine_has(activity, kind) {
+                continue;
+            }
             let offered = if listed {
                 stops::offered(&context, session, kind)
             } else {
