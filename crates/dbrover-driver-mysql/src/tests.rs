@@ -425,3 +425,99 @@ async fn a_cloud_sign_in_needs_tls_that_cant_fall_back() {
         assert!(message.contains("needs TLS"), "{tls:?}: {message}");
     }
 }
+
+/// The compose servers' root login, which a DBA watching the server would use: it sees every
+/// thread, its transactions and lock waits, and may stop any of them.
+const ROOT_PASSWORD: &str = "dbrover";
+
+impl TestServer {
+    async fn connect_as_root(&self) -> MysqlConnection {
+        let mut config = self.config.clone();
+        config.server.user = "root".to_owned();
+        connect(&config, Some(&Password::new(ROOT_PASSWORD)), Route::Direct)
+            .await
+            .unwrap_or_else(|error| panic!("{} as root: {error:?}", self.variable))
+    }
+}
+
+/// W15's blocking scenario: the test login holds a row in an open transaction from one
+/// connection and waits on it from another; root watches, cancels the waiter and ends the
+/// holder.
+#[tokio::test]
+async fn shows_a_waiting_thread_under_its_blocker_and_stops_both() {
+    let _shared = SHARED_DATABASE.lock().await;
+    for server in test_servers() {
+        let mut watcher = server.connect_as_root().await;
+        let table = format!("{}.w15_activity", server.config.server.database);
+        let statements = [
+            format!("DROP TABLE IF EXISTS {table}"),
+            format!("CREATE TABLE {table} (id INT PRIMARY KEY, n INT NOT NULL) ENGINE = InnoDB"),
+            format!("INSERT INTO {table} VALUES (1, 0)"),
+            format!("UPDATE {table} SET n = n + 1 WHERE id = 1"),
+            format!("UPDATE {table} SET n = n + 10 WHERE id = 1"),
+            format!("DROP TABLE {table}"),
+        ];
+        conformance::check_server_activity(
+            &mut watcher,
+            Box::new(server.connect().await),
+            Box::new(server.connect().await),
+            &conformance::BlockingScript {
+                setup: &[&statements[0], &statements[1], &statements[2]],
+                hold: &["START TRANSACTION", &statements[3]],
+                before_wait: &["SET SESSION innodb_lock_wait_timeout = 20"],
+                wait: &statements[4],
+                teardown: &[&statements[5]],
+                cancels: true,
+            },
+        )
+        .await;
+    }
+}
+
+/// A login without PROCESS sees only its own threads, no lock waits, and is told which
+/// privilege would show them; it may stop its own threads.
+#[tokio::test]
+async fn tells_a_login_without_process_what_it_cannot_see() {
+    let _shared = SHARED_DATABASE.lock().await;
+    for server in test_servers() {
+        let mut root = server.connect_as_root().await;
+        let root_id = root.own_session().await.unwrap().unwrap();
+        let mut watcher = server.connect().await;
+        let own = watcher.own_session().await.unwrap().unwrap();
+
+        let activity = watcher.server_activity().await.unwrap();
+
+        let ids: Vec<&SessionId> = activity
+            .sessions
+            .iter()
+            .map(|session| &session.id)
+            .collect();
+        assert!(ids.contains(&&own), "{}: {activity:#?}", server.variable);
+        assert!(
+            !ids.contains(&&root_id),
+            "{}: root's thread is hidden",
+            server.variable
+        );
+        assert_eq!(
+            activity.restrictions,
+            [
+                dbrover_core::Restriction {
+                    hidden: dbrover_core::Hidden::OthersSessions,
+                    shown_by: "PROCESS".to_owned(),
+                },
+                dbrover_core::Restriction {
+                    hidden: dbrover_core::Hidden::Blocking,
+                    shown_by: "PROCESS".to_owned(),
+                },
+            ],
+            "{}",
+            server.variable
+        );
+        let mine = activity
+            .sessions
+            .iter()
+            .find(|session| session.id == own)
+            .unwrap();
+        assert!(!mine.stops.is_empty(), "{}: {mine:#?}", server.variable);
+    }
+}
