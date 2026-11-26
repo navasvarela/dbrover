@@ -4,6 +4,7 @@ use super::*;
 
 fn table(schema: &str, key: &[&str], columns: &[(&str, &str)]) -> SearchableTable {
     SearchableTable {
+        database: None,
         name: TableName {
             schema: schema.to_owned(),
             name: "customers".to_owned(),
@@ -502,5 +503,19 @@ fn redshift_waits_for_c7() {
     assert_eq!(
         Dialect::Postgres.data_search(Some(ManagedService::Neon)),
         SearchSupport::Searchable
+    );
+}
+
+#[test]
+fn a_table_in_another_database_is_named_with_it() {
+    let attached = SearchableTable {
+        database: Some("lake".to_owned()),
+        ..one_column("VARCHAR")
+    };
+    assert_eq!(
+        sql(Dialect::DuckDb, &attached, &contains("x"))
+            .as_deref()
+            .and_then(|sql| sql.lines().nth(1)),
+        Some("FROM \"lake\".\"shop\".\"customers\"")
     );
 }

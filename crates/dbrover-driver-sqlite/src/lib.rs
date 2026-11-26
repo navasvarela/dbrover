@@ -6,6 +6,7 @@
 mod catalog;
 mod constraints;
 mod execution;
+mod search;
 mod table;
 
 use std::path::Path;
@@ -15,7 +16,8 @@ use async_trait::async_trait;
 use dbrover_core::{
     BoxError, CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, Cell,
     ChildrenPage, ChildrenQuery, Connection, DriverError, Rejection, RelationName, ResultCursor,
-    ServerInfo, SqliteConfig, TableConstraints, TableDescription, TableName, TransactionStatus,
+    SearchableTable, ServerInfo, SqliteConfig, TableConstraints, TableDescription, TableName,
+    TablesToSearch, TransactionStatus,
 };
 use rusqlite::OpenFlags;
 
@@ -198,6 +200,15 @@ impl Connection for SqliteConnection {
         execution::execute(&self.connection, &self.cancel, sql, values).await
     }
 
+    async fn searchable_tables(
+        &mut self,
+        tables: &TablesToSearch,
+    ) -> Result<Vec<SearchableTable>, DriverError> {
+        let tables = tables.clone();
+        self.run_blocking(move |connection| search::searchable_tables(connection, &tables))
+            .await
+    }
+
     async fn describe_table(
         &mut self,
         table: &RelationName,
@@ -302,6 +313,56 @@ mod tests {
 
     /// C0g: a search finds tables and views in every attached schema, as their levels list
     /// them, cut at the limit when there are more.
+    /// W16's data search. SQLite has no UUID, decimal or date types, so the fixture keeps them
+    /// as text and numbers, which the search reads as text.
+    #[tokio::test]
+    async fn finds_a_value_across_tables() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let mut connection = connect(&SqliteConfig {
+            path: file.path().to_owned(),
+            read_only: false,
+        })
+        .await
+        .unwrap();
+        let write = |table: &dbrover_core::SearchableTable, search: &dbrover_core::DataSearch| {
+            dbrover_sql::search_statement(
+                dbrover_sql::Dialect::Sqlite,
+                table,
+                search,
+                dbrover_core::RowsPerTable::DEFAULT,
+            )
+            .map(|statement| statement.sql)
+        };
+        conformance::check_data_search(
+            &mut connection,
+            &conformance::SearchFixture {
+                setup: &[
+                    "CREATE TABLE dbrover_search_customers (id integer PRIMARY KEY, \
+                     name varchar(80), email text, phone varchar(40), notes text)",
+                    "INSERT INTO dbrover_search_customers VALUES \
+                     (1, 'Kate O''Brien', 'kate.obrien@example.com', '+44 20 1042 7731', 'VIP'), \
+                     (2, 'Liam Hale', 'liam@example.org', NULL, 'asked for 50%_off [today]'), \
+                     (3, 'Ana Ruiz', 'ana@example.com', NULL, '50 offers')",
+                    "CREATE TABLE dbrover_search_orders (id integer PRIMARY KEY, \
+                     ref text, amount numeric(10, 2), placed date)",
+                    "INSERT INTO dbrover_search_orders VALUES \
+                     (1042, '3f2c8e1a-9b7d-4c3e-8a1f-0d2b4c6e8f10', 42.50, '2026-11-25'), \
+                     (7, '0d2b4c6e-8f10-4c3e-8a1f-3f2c8e1a9b7d', 9.99, '2026-01-02')",
+                    "CREATE TABLE dbrover_search_numbers (id integer PRIMARY KEY, n integer)",
+                    "INSERT INTO dbrover_search_numbers VALUES (1, 21042)",
+                ],
+                teardown: &[
+                    "DROP TABLE IF EXISTS dbrover_search_customers",
+                    "DROP TABLE IF EXISTS dbrover_search_orders",
+                    "DROP TABLE IF EXISTS dbrover_search_numbers",
+                ],
+                scope: CatalogPath::root().child(NodeKind::Schema, "main"),
+            },
+            &write,
+        )
+        .await;
+    }
+
     #[tokio::test]
     async fn searches_every_schema_without_loading_it() {
         let dir = tempfile::tempdir().unwrap();

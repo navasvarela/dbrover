@@ -153,7 +153,7 @@ fn sql_error(error: rusqlite::Error) -> DriverError {
 }
 
 /// Runs `sql` and maps every row with `read`.
-fn rows<T>(
+pub(crate) fn rows<T>(
     connection: &Connection,
     sql: &str,
     params: impl Params,

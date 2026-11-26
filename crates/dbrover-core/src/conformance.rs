@@ -6,9 +6,10 @@
 use std::time::{Duration, Instant};
 
 use crate::{
-    CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, ChildrenQuery, Connection,
-    DriverError, Identifier, NodeKind, RejectionKind, RelationName, ResultCursor, ServerActivity,
-    ServerSession, SessionId, SessionState, StopKind, StopOutcome, TransactionStatus,
+    CaseMatch, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, ChildrenQuery, Connection,
+    DataSearch, DriverError, Identifier, MatchKind, NodeKind, RejectionKind, RelationName,
+    Relations, ResultCursor, SearchScope, SearchableTable, ServerActivity, ServerSession,
+    SessionId, SessionState, StopKind, StopOutcome, TablesToSearch, TransactionStatus,
     blocking_order, describe_error,
 };
 
@@ -946,4 +947,165 @@ async fn run_once(connection: &mut dyn Connection, sql: &str) -> Result<(), Driv
         cursor.next_page(PAGE).await?;
     }
     cursor.finish().await.map(|_| ())
+}
+
+/// The tables [`check_data_search`] searches, which each engine creates in its own DDL, in a
+/// schema (or database) of their own, with these rows:
+///
+/// - `dbrover_search_customers (id, name, email, phone, notes)`, keyed by `id`:
+///   `(1, 'Kate O''Brien', 'kate.obrien@example.com', '+44 20 1042 7731', 'VIP')`,
+///   `(2, 'Liam Hale', 'liam@example.org', NULL, 'asked for 50%_off [today]')`,
+///   `(3, 'Ana Ruiz', 'ana@example.com', NULL, '50 offers')`;
+/// - `dbrover_search_orders (id, ref, amount, placed)`, keyed by `id`, `ref` a UUID where the
+///   engine has the type, `amount` a `DECIMAL(10, 2)`, `placed` a `DATE`:
+///   `(1042, '3f2c8e1a-9b7d-4c3e-8a1f-0d2b4c6e8f10', 42.50, '2026-11-25')`,
+///   `(7, '0d2b4c6e-8f10-4c3e-8a1f-3f2c8e1a9b7d', 9.99, '2026-01-02')`;
+/// - `dbrover_search_numbers (id, n)`, both integers, keyed by `id`: `(1, 21042)`.
+pub struct SearchFixture<'a> {
+    /// Creates the three tables and their rows.
+    pub setup: &'a [&'a str],
+    /// Drops them.
+    pub teardown: &'a [&'a str],
+    /// The catalog node that holds them, and nothing else the check would find.
+    pub scope: CatalogPath,
+}
+
+/// Writes one table's search statement: `dbrover_sql::search_statement` in the driver's
+/// dialect, which `dbrover-core` can't depend on.
+pub type WriteSearch<'a> = &'a dyn Fn(&SearchableTable, &DataSearch) -> Option<String>;
+
+/// A data search (W16) lists the fixture's tables with their keys, and each search finds the
+/// rows it should and none it shouldn't: a quote, `%` and `_` matched as themselves, a number
+/// as a whole value in a number column and inside text, a UUID however it is written, a date,
+/// whole values, and case.
+pub async fn check_data_search(
+    connection: &mut dyn Connection,
+    fixture: &SearchFixture<'_>,
+    write: WriteSearch<'_>,
+) {
+    for sql in fixture.teardown {
+        let _ = run_once(connection, sql).await;
+    }
+    for sql in fixture.setup {
+        run_to_end(connection, sql).await;
+    }
+    let tables = connection
+        .searchable_tables(&TablesToSearch {
+            scope: SearchScope::Under(fixture.scope.clone()),
+            views: Relations::TablesOnly,
+        })
+        .await
+        .unwrap_or_else(|error| panic!("searchable tables: {}", describe_error(&error)));
+    let mut names: Vec<&str> = tables
+        .iter()
+        .map(|table| table.name.name.as_str())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        [
+            "dbrover_search_customers",
+            "dbrover_search_numbers",
+            "dbrover_search_orders"
+        ],
+        "the fixture's tables, and nothing else"
+    );
+    for table in &tables {
+        assert_eq!(table.key, ["id"], "{}'s key", table.name.name);
+        assert!(
+            fixture.scope.is_root() || table.path.starts_with(&fixture.scope),
+            "{:?} is under the scope",
+            table.path
+        );
+    }
+
+    let ignoring = |text: &str, matching| {
+        DataSearch::new(text, matching, CaseMatch::Ignore).expect("a value to search for")
+    };
+    let matching = |text: &str, matching| {
+        DataSearch::new(text, matching, CaseMatch::Match).expect("a value to search for")
+    };
+    let cases: [(DataSearch, &[(&str, &str)]); 11] = [
+        (
+            ignoring("o'brien", MatchKind::Contains),
+            &[("customers", "1")],
+        ),
+        (
+            ignoring("50%_off", MatchKind::Contains),
+            &[("customers", "2")],
+        ),
+        (
+            ignoring("1042", MatchKind::Contains),
+            &[("customers", "1"), ("orders", "1042")],
+        ),
+        (
+            ignoring("3F2C8E1A-9B7D-4C3E-8A1F-0D2B4C6E8F10", MatchKind::Contains),
+            &[("orders", "1042")],
+        ),
+        (
+            ignoring("42.50", MatchKind::Contains),
+            &[("orders", "1042")],
+        ),
+        (
+            ignoring("2026-11-25", MatchKind::Contains),
+            &[("orders", "1042")],
+        ),
+        (
+            ignoring("KATE O'BRIEN", MatchKind::WholeValue),
+            &[("customers", "1")],
+        ),
+        (ignoring("Kate", MatchKind::WholeValue), &[]),
+        (matching("KATE O'BRIEN", MatchKind::WholeValue), &[]),
+        (matching("KATE", MatchKind::Contains), &[]),
+        (
+            matching("Kate O", MatchKind::Contains),
+            &[("customers", "1")],
+        ),
+    ];
+    for (search, expected) in cases {
+        let found = search_rows(connection, &tables, &search, write).await;
+        let found: Vec<(&str, &str)> = found
+            .iter()
+            .map(|(table, id)| (table.as_str(), id.as_str()))
+            .collect();
+        assert_eq!(found, expected, "{search:?}");
+    }
+    for sql in fixture.teardown {
+        run_to_end(connection, sql).await;
+    }
+}
+
+/// Runs each table's search statement and returns the rows found, as the table's name without
+/// its `dbrover_search_` prefix and the row's `id`, sorted.
+async fn search_rows(
+    connection: &mut dyn Connection,
+    tables: &[SearchableTable],
+    search: &DataSearch,
+    write: WriteSearch<'_>,
+) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    for table in tables {
+        let Some(sql) = write(table, search) else {
+            continue;
+        };
+        let mut cursor = connection
+            .execute(&sql)
+            .await
+            .unwrap_or_else(|error| panic!("{sql}: {}", describe_error(&error)));
+        let id = cursor
+            .columns()
+            .iter()
+            .position(|column| column.name.eq_ignore_ascii_case("id"))
+            .unwrap_or_else(|| panic!("{sql} reads the key"));
+        while !cursor.is_exhausted() {
+            for row in cursor.next_page(PAGE).await.expect("read rows") {
+                let value = row.get(id).cloned().flatten().expect("an id");
+                let name = table.name.name.trim_start_matches("dbrover_search_");
+                found.push((name.to_owned(), value));
+            }
+        }
+        cursor.finish().await.expect("finish");
+    }
+    found.sort();
+    found
 }

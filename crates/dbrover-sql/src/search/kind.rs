@@ -250,9 +250,12 @@ fn decimal_kind(dialect: Dialect, name: &str) -> SearchKind {
 }
 
 /// SQLite's columns hold any value whatever they declare, and its `LIKE` reads any value as
-/// text, so every column is searched as text except those whose affinity is a number (where
-/// a text search would find digits) and those declared as `BLOB`. The rules are SQLite's own
-/// affinity rules, as `value_kind` reads them.
+/// text. Its own affinity rules (<https://www.sqlite.org/datatype3.html>, section 3.1, as
+/// `value_kind` reads them) say what a column mostly holds: integers and reals are compared as
+/// numbers, and a column declared as a decimal too, since `42.50` is kept there as the real
+/// `42.5`, which no text search for `42.50` finds. Booleans and `BLOB` columns are never
+/// searched. Any other column is searched as text, even one SQLite gives numeric affinity
+/// (`date`, `uuid`, `json`, no type at all), which people use to keep text.
 fn sqlite_search_kind(name: &str) -> SearchKind {
     if name.contains("int") {
         return SearchKind::integer_bits(64, true);
@@ -271,6 +274,15 @@ fn sqlite_search_kind(name: &str) -> SearchKind {
         .any(|float| name.contains(float))
     {
         return SearchKind::Float;
+    }
+    if name.contains("bool") {
+        return SearchKind::Never;
+    }
+    if ["numeric", "decimal", "number", "money"]
+        .iter()
+        .any(|number| name.contains(number))
+    {
+        return SearchKind::Decimal { digits: None };
     }
     SearchKind::Text
 }
@@ -406,12 +418,16 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_searches_everything_but_numbers_and_blobs_as_text() {
+    fn sqlite_reads_its_affinities() {
         let cases = [
             ("", SearchKind::Text),
             ("TEXT", SearchKind::Text),
             ("datetime", SearchKind::Text),
-            ("NUMERIC", SearchKind::Text),
+            ("DATE", SearchKind::Text),
+            ("NUMERIC", SearchKind::Decimal { digits: None }),
+            ("decimal(10, 2)", SearchKind::Decimal { digits: None }),
+            ("boolean", SearchKind::Never),
+            ("uuid", SearchKind::Text),
             ("INTEGER", SearchKind::integer_bits(64, true)),
             ("REAL", SearchKind::Float),
             ("BLOB", SearchKind::Never),

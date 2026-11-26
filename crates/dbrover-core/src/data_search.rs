@@ -12,7 +12,7 @@ use std::num::NonZeroU32;
 
 use uuid::Uuid;
 
-use crate::{CatalogPath, TableName};
+use crate::{CatalogPath, NodeKind, TableName};
 
 /// What a search looks for, and how it matches.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -256,6 +256,59 @@ pub enum SearchScope {
     Tables(Vec<CatalogPath>),
 }
 
+impl SearchScope {
+    fn paths(&self) -> &[CatalogPath] {
+        match self {
+            Self::Under(path) => std::slice::from_ref(path),
+            Self::Tables(paths) => paths,
+        }
+    }
+
+    /// Whether the scope takes in the relation the explorer shows at `path`: a path under the
+    /// node searched, or one of the tables ticked.
+    pub fn includes(&self, path: &CatalogPath) -> bool {
+        match self {
+            Self::Under(under) => path.starts_with(under),
+            Self::Tables(paths) => paths.contains(path),
+        }
+    }
+
+    /// The schemas the scope names, when every part of it names one, so a driver need read
+    /// only their columns; `None` when a part is the whole data source or a database.
+    pub fn schemas(&self) -> Option<Vec<&str>> {
+        let mut schemas: Vec<&str> = Vec::new();
+        for path in self.paths() {
+            let schema = path.name_of(NodeKind::Schema)?;
+            if !schemas.contains(&schema) {
+                schemas.push(schema);
+            }
+        }
+        Some(schemas)
+    }
+
+    /// The databases the scope names, in the order it names them; empty when a part is the
+    /// whole data source.
+    pub fn databases(&self) -> Vec<&str> {
+        let mut databases: Vec<&str> = Vec::new();
+        for path in self.paths() {
+            if let Some(database) = path.name_of(NodeKind::Database)
+                && !databases.contains(&database)
+            {
+                databases.push(database);
+            }
+        }
+        databases
+    }
+
+    /// Whether a part of the scope names a schema, so its relations are searched even if the
+    /// schema is the system's own: a search of the whole data source leaves those out.
+    pub fn names_schema(&self, schema: &str) -> bool {
+        self.paths()
+            .iter()
+            .any(|path| path.name_of(NodeKind::Schema) == Some(schema))
+    }
+}
+
 /// What [`Connection::searchable_tables`] is asked for.
 ///
 /// [`Connection::searchable_tables`]: crate::Connection::searchable_tables
@@ -277,6 +330,10 @@ pub enum Relations {
 /// A table or view a search may read, as the driver found it in the catalog.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchableTable {
+    /// The database the table is in, where one connection reaches several and a statement
+    /// has to name it (DuckDB's attached databases); `None` where the connection's own is the
+    /// only one a statement reaches.
+    pub database: Option<String>,
     pub name: TableName,
     /// The node the explorer shows it as.
     pub path: CatalogPath,
@@ -451,6 +508,32 @@ mod tests {
         assert_eq!(next(2024, 2, 28), Some("2024-02-29".into()));
         assert_eq!(next(2026, 12, 31), Some("2027-01-01".into()));
         assert_eq!(next(9999, 12, 31), None);
+    }
+
+    fn orders_path() -> CatalogPath {
+        CatalogPath::root()
+            .child(NodeKind::Database, "shop")
+            .child(NodeKind::Schema, "public")
+            .child(NodeKind::Folder(crate::FolderKind::Tables), "Tables")
+            .child(NodeKind::Table, "orders")
+    }
+
+    #[test]
+    fn a_scope_takes_in_what_is_under_it_or_ticked() {
+        let orders = orders_path();
+        let database = CatalogPath::root().child(NodeKind::Database, "shop");
+        let other = database.child(NodeKind::Schema, "audit");
+        assert!(SearchScope::Under(CatalogPath::root()).includes(&orders));
+        assert!(SearchScope::Under(database.clone()).includes(&orders));
+        assert!(!SearchScope::Under(other.clone()).includes(&orders));
+        assert!(SearchScope::Tables(vec![orders.clone()]).includes(&orders));
+        assert_eq!(SearchScope::Under(CatalogPath::root()).schemas(), None);
+        assert_eq!(SearchScope::Under(database.clone()).schemas(), None);
+        assert_eq!(SearchScope::Under(database).databases(), vec!["shop"]);
+        assert_eq!(
+            SearchScope::Tables(vec![orders, other]).schemas(),
+            Some(vec!["public", "audit"])
+        );
     }
 
     #[test]

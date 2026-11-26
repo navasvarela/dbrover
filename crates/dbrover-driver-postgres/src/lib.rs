@@ -8,6 +8,7 @@ mod execution;
 mod redshift;
 mod roles;
 mod schema;
+mod search;
 mod table;
 mod tls;
 
@@ -21,8 +22,8 @@ use dbrover_core::{
     CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, ChildrenPage,
     ChildrenQuery, Connection, DriverError, ManagedService, NodeKind, Password, PostgresConfig,
     Rejection, RelationName, ResultCursor, RoleDescription, Route, SchemaDescription,
-    ServerActivity, ServerInfo, SessionId, SessionStop, StopOutcome, TableConstraints,
-    TableDescription, TableName, TransactionStatus,
+    SearchableTable, ServerActivity, ServerInfo, SessionId, SessionStop, StopOutcome,
+    TableConstraints, TableDescription, TableName, TablesToSearch, TransactionStatus,
 };
 use tokio::task::{JoinError, JoinHandle};
 use tokio_postgres::tls::MakeTlsConnect;
@@ -381,6 +382,18 @@ impl Connection for PostgresConnection {
         }
     }
 
+    async fn searchable_tables(
+        &mut self,
+        tables: &TablesToSearch,
+    ) -> Result<Vec<SearchableTable>, DriverError> {
+        match self.catalog {
+            Catalog::Postgres => search::searchable_tables(&self.primary.client, tables).await,
+            Catalog::Redshift => Err(DriverError::Unsupported(
+                "Redshift's data can't be searched yet.",
+            )),
+        }
+    }
+
     /// Redshift keeps its sessions in tables of its own (`STV_SESSIONS`, `STV_RECENTS`), not
     /// read yet.
     async fn server_activity(&mut self) -> Result<ServerActivity, DriverError> {
@@ -592,6 +605,72 @@ mod tests {
             },
         )
         .await;
+    }
+
+    /// W16's data search, in a database of its own: the catalog walk of the test database
+    /// would otherwise list the fixture's tables while this test drops them.
+    #[tokio::test]
+    async fn finds_a_value_across_tables() {
+        let Some((config, password)) = test_server() else {
+            return;
+        };
+        let admin = connect(&config, password.as_ref(), Route::Direct)
+            .await
+            .unwrap();
+        let database = format!("w16_search_{}", std::process::id());
+        for sql in [
+            format!("DROP DATABASE IF EXISTS {database}"),
+            format!("CREATE DATABASE {database}"),
+        ] {
+            admin.primary.client.batch_execute(&sql).await.unwrap();
+        }
+        let mut searched = config.clone();
+        searched.server.database.clone_from(&database);
+        let mut connection = connect(&searched, password.as_ref(), Route::Direct)
+            .await
+            .unwrap();
+        let write = |table: &dbrover_core::SearchableTable, search: &dbrover_core::DataSearch| {
+            dbrover_sql::search_statement(
+                dbrover_sql::Dialect::Postgres,
+                table,
+                search,
+                dbrover_core::RowsPerTable::DEFAULT,
+            )
+            .map(|statement| statement.sql)
+        };
+        conformance::check_data_search(
+            &mut connection,
+            &conformance::SearchFixture {
+                setup: &[
+                    "CREATE TABLE dbrover_search_customers (id int PRIMARY KEY, \
+                     name varchar(80), email text, phone varchar(40), notes text)",
+                    "INSERT INTO dbrover_search_customers VALUES \
+                     (1, 'Kate O''Brien', 'kate.obrien@example.com', '+44 20 1042 7731', 'VIP'), \
+                     (2, 'Liam Hale', 'liam@example.org', NULL, 'asked for 50%_off [today]'), \
+                     (3, 'Ana Ruiz', 'ana@example.com', NULL, '50 offers')",
+                    "CREATE TABLE dbrover_search_orders (id int PRIMARY KEY, \
+                     ref uuid, amount numeric(10, 2), placed date)",
+                    "INSERT INTO dbrover_search_orders VALUES \
+                     (1042, '3f2c8e1a-9b7d-4c3e-8a1f-0d2b4c6e8f10', 42.50, '2026-11-25'), \
+                     (7, '0d2b4c6e-8f10-4c3e-8a1f-3f2c8e1a9b7d', 9.99, '2026-01-02')",
+                    "CREATE TABLE dbrover_search_numbers (id int PRIMARY KEY, n int)",
+                    "INSERT INTO dbrover_search_numbers VALUES (1, 21042)",
+                ],
+                teardown: &[
+                    "DROP TABLE IF EXISTS dbrover_search_customers",
+                    "DROP TABLE IF EXISTS dbrover_search_orders",
+                    "DROP TABLE IF EXISTS dbrover_search_numbers",
+                ],
+                scope: CatalogPath::root()
+                    .child(NodeKind::Database, database.clone())
+                    .child(NodeKind::Schema, "public"),
+            },
+            &write,
+        )
+        .await;
+        Box::new(connection).close().await.unwrap();
+        let drop = format!("DROP DATABASE {database}");
+        admin.primary.client.batch_execute(&drop).await.unwrap();
     }
 
     /// A login outside `pg_read_all_stats` sees every session, but not what other roles run,
