@@ -10,6 +10,7 @@ mod catalog;
 mod constraint;
 mod errors;
 mod execution;
+mod search;
 mod table;
 mod tls;
 mod values;
@@ -21,8 +22,8 @@ use async_trait::async_trait;
 use dbrover_core::{
     BareNames, BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, CloudSignIn, Connection,
     DriverError, Password, QuoteEscape, Quoting, Rejection, RelationName, ResultCursor, Route,
-    ServerActivity, ServerInfo, SessionId, SessionStop, SqlServerConfig, StopOutcome,
-    TableConstraints, TableDescription, TableName, TransactionStatus,
+    SearchableTable, ServerActivity, ServerInfo, SessionId, SessionStop, SqlServerConfig,
+    StopOutcome, TableConstraints, TableDescription, TableName, TablesToSearch, TransactionStatus,
 };
 use tiberius::{AuthMethod, Client, Config};
 use tokio::net::TcpStream;
@@ -288,6 +289,13 @@ impl Connection for SqlServerConnection {
         values: &[Cell],
     ) -> Result<Box<dyn ResultCursor>, DriverError> {
         self.run(sql, values).await
+    }
+
+    async fn searchable_tables(
+        &mut self,
+        tables: &TablesToSearch,
+    ) -> Result<Vec<SearchableTable>, DriverError> {
+        search::searchable_tables(&mut *self.client().await?, tables).await
     }
 
     async fn describe_table(

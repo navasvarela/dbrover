@@ -20,14 +20,15 @@ const SCHEMA_FOLDERS: &[FolderKind] = &[
 
 /// The server's own databases, which the explorer hides unless asked. `information_schema`
 /// comes in both spellings, since names are case-sensitive.
-const SYSTEM_SCHEMAS: &[&str] = &["INFORMATION_SCHEMA", "information_schema", "system"];
+pub(crate) const SYSTEM_SCHEMAS: &[&str] = &["INFORMATION_SCHEMA", "information_schema", "system"];
 
 /// The engines of objects that aren't tables, which their own folders list.
-const NOT_TABLES: &str = "('View', 'MaterializedView', 'Dictionary', 'LiveView', 'WindowView')";
+pub(crate) const NOT_TABLES: &str =
+    "('View', 'MaterializedView', 'Dictionary', 'LiveView', 'WindowView')";
 
 /// The table where a materialized view without a `TO` table keeps its rows, named
 /// `.inner_id.<uuid>` (or `.inner.<view>` in an `Ordinary` database).
-const INNER_TABLE_PREFIX: &str = ".inner";
+pub(crate) const INNER_TABLE_PREFIX: &str = ".inner";
 
 /// Which level of the tree a path points at, with the names its query needs.
 enum Level<'a> {
@@ -160,7 +161,7 @@ fn node(
 }
 
 /// Column `index` of a catalog row, which the query guarantees is there and not `NULL`.
-fn field(row: &Row, index: usize) -> Result<String, DriverError> {
+pub(crate) fn field(row: &Row, index: usize) -> Result<String, DriverError> {
     row.get(index)
         .cloned()
         .flatten()

@@ -13,6 +13,7 @@ mod batches;
 mod catalog;
 mod errors;
 mod execution;
+mod search;
 mod table;
 
 use std::sync::Arc;
@@ -22,8 +23,9 @@ use clickhouse::Client;
 use dbrover_core::{
     BareNames, BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, ClickHouseConfig,
     Connection, DriverError, Password, ProgressHandle, QuoteEscape, Quoting, Rejection,
-    RelationName, ResultCursor, Route, ServerActivity, ServerInfo, SessionStop, StopOutcome,
-    TableConstraints, TableDescription, TableName, TlsMode, TransactionStatus,
+    RelationName, ResultCursor, Route, SearchableTable, ServerActivity, ServerInfo, SessionStop,
+    StopOutcome, TableConstraints, TableDescription, TableName, TablesToSearch, TlsMode,
+    TransactionStatus,
 };
 pub use dbrover_tls::TlsSetupError;
 use hyper_rustls::FixedServerNameResolver;
@@ -214,6 +216,13 @@ impl Connection for ClickHouseConnection {
             return self.execute_bound(sql, values).await;
         }
         batches::execute(&self.session, &self.cancel, sql).await
+    }
+
+    async fn searchable_tables(
+        &mut self,
+        tables: &TablesToSearch,
+    ) -> Result<Vec<SearchableTable>, DriverError> {
+        search::searchable_tables(&self.session, tables).await
     }
 
     async fn describe_table(

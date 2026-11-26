@@ -20,7 +20,8 @@ const SCHEMA_FOLDERS: &[FolderKind] = &[
 ];
 
 /// The server's own databases, which the explorer hides unless asked.
-const SYSTEM_SCHEMAS: &[&str] = &["information_schema", "mysql", "performance_schema", "sys"];
+pub(crate) const SYSTEM_SCHEMAS: &[&str] =
+    &["information_schema", "mysql", "performance_schema", "sys"];
 
 /// Which level of the tree a path points at, with the names its query needs.
 enum Level<'a> {
@@ -146,7 +147,7 @@ fn node(
 }
 
 /// Runs a catalog query and returns its rows as text, `NULL` as `None`.
-async fn query(
+pub(crate) async fn query(
     conn: &mut Conn,
     sql: &str,
     params: impl Into<Params> + Send,
@@ -172,7 +173,7 @@ fn text(value: Value) -> Option<String> {
 }
 
 /// Column `index` of a catalog row, which the query guarantees is there and not `NULL`.
-fn field(row: &[Option<String>], index: usize) -> Result<String, DriverError> {
+pub(crate) fn field(row: &[Option<String>], index: usize) -> Result<String, DriverError> {
     row.get(index)
         .cloned()
         .flatten()
