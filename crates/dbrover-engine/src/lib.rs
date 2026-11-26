@@ -9,6 +9,7 @@ mod cloud_sign_in;
 mod command_loop;
 mod config_files;
 mod console_files;
+mod data_search;
 mod diagram_files;
 mod environment;
 mod events;
@@ -52,6 +53,10 @@ mod tunnels;
 mod updater;
 mod whole_file;
 
+pub use data_search::{
+    PlannedTable, SearchEnd, SearchLimits, SearchPlan, SearchQuestion, SearchRequest,
+    TABLE_TIME_LIMIT, TableOutcome, TableSearched,
+};
 pub use dbrover_ssh::HostKey;
 pub use environment::ProcessEnvironment;
 pub use export::{Export, ExportAll};

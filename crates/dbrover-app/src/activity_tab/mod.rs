@@ -311,6 +311,7 @@ fn own_name(own: OwnSession, consoles: &HashMap<ConsoleId, String>) -> String {
     match own {
         OwnSession::ThisTab => "DbRover: this tab".to_owned(),
         OwnSession::Explorer => "DbRover: explorer".to_owned(),
+        OwnSession::DataSearch => "DbRover: data search".to_owned(),
         OwnSession::Console(console) => match consoles.get(&console) {
             Some(title) => format!("DbRover: {title}"),
             None => "DbRover: a console".to_owned(),

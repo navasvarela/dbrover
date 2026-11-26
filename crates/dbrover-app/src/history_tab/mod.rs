@@ -462,6 +462,11 @@ fn source_badge(ui: &mut Ui, source: &HistorySource) {
             palette.warning,
             format!("Sent from Server activity: {stopped}"),
         ),
+        HistorySource::Search { searched } => (
+            "Search",
+            palette.text_weak,
+            format!("Run by Search data: {searched}"),
+        ),
         HistorySource::DbRover => (
             "DbRover",
             palette.text_weak,

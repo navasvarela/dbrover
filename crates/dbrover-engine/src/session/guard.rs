@@ -6,10 +6,11 @@
 //! for one whose rows are still being paged through. The console's own transaction status
 //! never sees it, so the console shows no open transaction and nothing asks to roll one back.
 
-use dbrover_core::{DriverError, describe_error};
+use dbrover_core::{DriverError, TimeLimit, describe_error};
 use dbrover_language::QueryLanguage;
 
 use super::{Disconnected, Worker};
+use crate::RunId;
 use crate::read_only::{self, ReadOnlyMode, Refusal};
 
 /// How a read-only data source's sessions refuse changes.
@@ -42,13 +43,30 @@ pub(super) async fn open(
     worker: &mut Worker<'_>,
     read_only: ReadOnly,
 ) -> Result<Result<(), DriverError>, Disconnected> {
+    open_for_run(worker, read_only, None, None).await
+}
+
+/// [`open`] for `run`, telling the transaction to stop its statement after `limit` where the
+/// engine can be told (PostgreSQL's `statement_timeout`), so a statement stops even if a cancel
+/// can't get through. A cancel of `run` that arrives while the transaction opens is then seen
+/// by [`super::Signals::is_cancelled`] rather than lost before the statement starts.
+pub(super) async fn open_for_run(
+    worker: &mut Worker<'_>,
+    read_only: ReadOnly,
+    run: Option<RunId>,
+    limit: Option<TimeLimit>,
+) -> Result<Result<(), DriverError>, Disconnected> {
     let Some(mode @ ReadOnlyMode::Transaction { .. }) = read_only.mode else {
         return Ok(Ok(()));
     };
-    let begin = read_only::begin(&mut *worker.connection, mode, None);
+    let begin = read_only::begin(
+        &mut *worker.connection,
+        mode,
+        limit.map(TimeLimit::duration),
+    );
     let begun = worker
         .signals
-        .guard(begin, None, worker.cancel_handle)
+        .guard(begin, run, worker.cancel_handle)
         .await?;
     if begun.is_ok() {
         worker.read_only_open = Some(mode);

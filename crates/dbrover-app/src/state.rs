@@ -209,6 +209,11 @@ impl AppState {
             | Event::ActivityRead { .. }
             | Event::SessionStopped { .. }
             | Event::ActivitySessionChanged { .. }
+            | Event::DataSearchPlanned { .. }
+            | Event::DataSearchTableStarted { .. }
+            | Event::DataSearchTableSearched { .. }
+            | Event::DataSearchEnded { .. }
+            | Event::DataSearchSessionChanged { .. }
             | Event::DdlApplied { .. }
             | Event::DdlLoaded { .. }
             | Event::TableLoaded { .. }

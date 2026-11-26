@@ -28,6 +28,9 @@ pub enum HistorySource {
     /// Cancel query or Kill in a Server activity tab (W15), with what was stopped: the
     /// session, whose it was, and its statement, redacted.
     Activity { stopped: String },
+    /// A data search (W16), recorded once with the statements of the tables that matched, and
+    /// what was searched for, where, and what was found.
+    Search { searched: String },
     /// DbRover, before it recorded where a statement came from: rows written before the history
     /// had provenance, or since then by an older DbRover sharing the file.
     DbRover,
@@ -44,11 +47,12 @@ pub enum HistorySourceKind {
     Mcp,
     Action,
     Activity,
+    Search,
     DbRover,
 }
 
 impl HistorySourceKind {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Console,
         Self::GridEdit,
         Self::ObjectHelper,
@@ -57,6 +61,7 @@ impl HistorySourceKind {
         Self::Mcp,
         Self::Action,
         Self::Activity,
+        Self::Search,
         Self::DbRover,
     ];
 
@@ -73,6 +78,7 @@ impl HistorySourceKind {
             Self::Mcp => "mcp",
             Self::Action => "action",
             Self::Activity => "activity",
+            Self::Search => "search",
             Self::DbRover => "app",
         }
     }
@@ -93,6 +99,7 @@ impl HistorySource {
             Self::Mcp { .. } => HistorySourceKind::Mcp,
             Self::Action { .. } => HistorySourceKind::Action,
             Self::Activity { .. } => HistorySourceKind::Activity,
+            Self::Search { .. } => HistorySourceKind::Search,
             Self::DbRover => HistorySourceKind::DbRover,
         }
     }
@@ -121,6 +128,7 @@ impl HistorySource {
             Self::Mcp { client } => client.clone(),
             Self::Action { id } => Some(id.clone()),
             Self::Activity { stopped } => Some(stopped.clone()),
+            Self::Search { searched } => Some(searched.clone()),
             _ => None,
         }
     }
@@ -153,6 +161,9 @@ impl HistorySource {
             },
             HistorySourceKind::Activity => Self::Activity {
                 stopped: detail.unwrap_or_default(),
+            },
+            HistorySourceKind::Search => Self::Search {
+                searched: detail.unwrap_or_default(),
             },
             HistorySourceKind::DbRover => Self::DbRover,
         })
@@ -188,6 +199,9 @@ mod tests {
             },
             HistorySource::Action {
                 id: "row-count".to_owned(),
+            },
+            HistorySource::Search {
+                searched: "Searched 3 tables of shop.public for \"o'brien\"".to_owned(),
             },
             HistorySource::DbRover,
         ];

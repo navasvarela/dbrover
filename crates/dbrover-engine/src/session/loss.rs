@@ -16,7 +16,7 @@ use dbrover_core::{
 use super::{SessionContext, SessionOwner, SessionRequest};
 use crate::{
     DdlFailure, DescribedTable, EditFailure, Event, ExportAll, ImportFailure, RunOutcome,
-    StatementCheck, StatementFailure, TableExport,
+    SearchEnd, StatementCheck, StatementFailure, TableExport,
 };
 
 /// Why the connection was lost, once a call has reported [`DriverError::Lost`]. Shared with
@@ -233,7 +233,7 @@ pub(super) fn refuse(context: &SessionContext, request: SessionRequest, reason: 
     let message = format!("the connection was lost ({reason}); reconnect to go on");
     let console = match context.owner {
         SessionOwner::Console(console) => Some(console),
-        SessionOwner::Explorer(_) | SessionOwner::Activity(_) => None,
+        SessionOwner::Explorer(_) | SessionOwner::Activity(_) | SessionOwner::DataSearch(_) => None,
     };
     let id = context.data_source.id;
     let event = match (request, console) {
@@ -357,6 +357,16 @@ pub(super) fn refuse(context: &SessionContext, request: SessionRequest, reason: 
             session,
             kind,
             result: Err(message),
+        },
+        (SessionRequest::PlanSearch { run, .. }, _) => Event::DataSearchPlanned {
+            data_source: id,
+            run,
+            result: Err(message),
+        },
+        (SessionRequest::RunSearch(run), _) => Event::DataSearchEnded {
+            data_source: id,
+            run,
+            end: SearchEnd::Failed(message),
         },
         // Rows to fetch were the lost connection's; the explorer never edits or ends a
         // transaction.

@@ -69,6 +69,7 @@ impl OwnSessions {
                 let own = match *owner {
                     owner if owner == reader => OwnSession::ThisTab,
                     SessionOwner::Console(console) => OwnSession::Console(console),
+                    SessionOwner::DataSearch(_) => OwnSession::DataSearch,
                     SessionOwner::Explorer(_) | SessionOwner::Activity(_) => OwnSession::Explorer,
                 };
                 (known.id.clone(), own)
