@@ -5,10 +5,10 @@
 DbRover is a desktop tool to browse and query databases. It connects to **PostgreSQL**,
 **MySQL and MariaDB**, **SQLite**, **SQL Server**, **DuckDB**, **ClickHouse**, **Redis, Valkey
 and Dragonfly**, **MongoDB**, **Elasticsearch and OpenSearch**, **Cassandra and ScyllaDB**,
-**Amazon DynamoDB**, **Amazon Athena**, **Google BigQuery**, and **Trino, Starburst and
-Presto**, and to the cloud services that run them. It shows what is inside them as a tree, and
-gives you query consoles to write and run queries in each database's own language, page
-through, sort, chart and export the results, and edit rows.
+**Amazon DynamoDB**, **Amazon Athena**, **Google BigQuery**, **Snowflake**, **Databricks**,
+and **Trino, Starburst and Presto**, and to the cloud services that run them. It shows what is
+inside them as a tree, and gives you query consoles to write and run queries in each database's
+own language, page through, sort, chart and export the results, and edit rows.
 
 Beyond the consoles, it draws ER diagrams and compares schemas, runs reports that combine
 several databases into CSV, Excel and Parquet files, and lets an AI assistant query your data
