@@ -2072,7 +2072,7 @@ three to five, **L** a track of its own).
   careful data source asks, naming the data source, then ends the session and releases the
   lock, and History lists the kill as **Activity**; on a read-only data source both are
   refused.
-- **W16 — Searching a database's data (L):** planned on 2026-11-25 in
+- **W16 — Searching a database's data (L):** built; planned on 2026-11-25 in
   [Searching a database's data](data-search.md), its questions answered on 2026-11-26 as
   proposed. Pick
   a data source, a schema or some tables, type a value, and DbRover finds the rows that hold
@@ -2106,6 +2106,44 @@ three to five, **L** a track of its own).
     estimate, Redshift turned off until C7.
   - **W16h — MCP:** `search_data`.
   - **W16i — Manual and demo note:** a chapter with pictures, and the exit as an engine test.
+
+  **W16 demo note:** built in #705 and the eight layers stacked on it, described in
+  [Searching data](../book/src/data-search.md). Right-click the shop's data source → **Search
+  data…**, type `an` and press Enter: the progress line counts the tables, *main.customers*
+  shows *Frances Allen* with `an` highlighted, *main.orders* five cancelled orders, and
+  *main.products* a product, each with **Open row** and **Open all**, and the table of numbers
+  is folded into *1 table with no column that can hold the value*. **Open row** opens a console
+  on `SELECT * FROM "main"."customers" WHERE "id" = '8'`, editable. On a careful data source
+  the search first asks *Search 3 tables of "shop" for "an"?*. On PostgreSQL, a table another
+  session holds locked is listed *timed out after 15 s* with **Retry**, and the search goes on;
+  **Cancel** keeps what was found. History lists each search once under **Data searches**,
+  with the matching tables' statements. Settings › Data search sets the time limit, the rows
+  per table and whether views are searched. On BigQuery, Athena, Snowflake, Databricks and
+  Trino, **Search data…** is on a schema or a table only, and asks: BigQuery with the bytes its
+  dry runs add up to. An assistant gets `search_data` with **Read**. Departures from the
+  design: whether an engine is searched is `Dialect::data_search`, not a `Capabilities` field,
+  since the warehouses have no `Capabilities`; Trino asks first too, as a lake's tables are read
+  whole, and Synapse and Fabric wait with Redshift; those five engines list a search's tables by
+  walking the catalog the explorer shows, with no row estimate or key, and a table without a key
+  reads every column a search could compare, so a row found can be opened by its values;
+  ClickHouse lists its primary key columns as the key, though they don't make rows unique;
+  SQL Server and PostgreSQL search only the database the data source connects to; the time
+  limit is kept by cancelling the statement on every engine, and on PostgreSQL by the read-only
+  transaction's `statement_timeout`, with the cancel two seconds behind it (cancelling at the
+  same moment cancelled the `ROLLBACK` that followed, one run in three); SQLite's columns
+  declared as decimals are compared as numbers, since it keeps `42.50` as `42.5`; the word
+  indexes a later **Words** match would use aren't recorded yet; the highlighting is the same
+  match done again on the text returned, so a collation's accent folding finds a row it doesn't
+  highlight; Retry asks about the time limit, not again about cost; MCP's searches are recorded
+  as the client's, as its other statements are. Covered by `dbrover_sql`'s golden tests on
+  every dialect, `conformance::check_data_search` on PostgreSQL, SQLite, DuckDB, MySQL,
+  MariaDB, SQL Server and ClickHouse (and Trino in the nightly workflow), engine tests of the
+  plan, the cap, the careful question, a locked table timing out, Cancel and the history (with
+  `w16_exit`), kittest tests of the tab, and `dbrover-mcp`'s `search` test. Not tried against
+  BigQuery, Athena, Snowflake or Databricks themselves, which need accounts. Still to come, if
+  asked: a **Words** match on the engines' word indexes; Elasticsearch, OpenSearch and MongoDB;
+  Redshift; a row of a DuckDB attached database opens in the default database, since the
+  console's row query names a schema only; searching several data sources at once.
 
   **Exit:** on the PostgreSQL test server, searching a schema for `o'brien` lists `customers`
   and `notes` with the matching rows and columns, and nothing else; `50%_off` finds only the
