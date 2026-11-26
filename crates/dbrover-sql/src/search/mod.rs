@@ -107,11 +107,16 @@ pub fn search_statement(
             .map(|name| writer.names.identifier(name))
             .collect::<Vec<_>>()
             .join(", "),
-        from: format!(
-            "{}.{}",
-            writer.names.identifier(&table.name.schema),
-            writer.names.identifier(&table.name.name)
-        ),
+        from: [
+            table.database.as_deref(),
+            Some(&table.name.schema),
+            Some(&table.name.name),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|name| writer.names.identifier(name))
+        .collect::<Vec<_>>()
+        .join("."),
         condition: conditions
             .into_iter()
             .map(|(_, condition)| condition)

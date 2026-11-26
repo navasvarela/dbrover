@@ -11,6 +11,7 @@ mod handoff;
 mod lake;
 mod parquet;
 mod profile;
+mod search;
 mod table;
 mod values;
 mod workspace;
@@ -26,8 +27,8 @@ use bucket::tree::BucketPath;
 use dbrover_core::{
     BoxError, CATALOG_PAGE_SIZE, CancelHandle, CatalogNode, CatalogPath, Cell, ChildrenPage,
     ChildrenQuery, Connection, DriverError, DuckDbConfig, DuckDbDatabase, PageToken, Password,
-    Rejection, RelationName, ResultCursor, ServerInfo, TableConstraints, TableDescription,
-    TableFormat, TableName, TransactionStatus,
+    Rejection, RelationName, ResultCursor, SearchableTable, ServerInfo, TableConstraints,
+    TableDescription, TableFormat, TableName, TablesToSearch, TransactionStatus,
 };
 use duckdb::AccessMode;
 
@@ -574,6 +575,15 @@ impl Connection for DuckDbConnection {
     ) -> Result<Box<dyn ResultCursor>, DriverError> {
         self.make_bucket_secret().await?;
         execution::execute(&self.connection, &self.cancel, sql, values).await
+    }
+
+    async fn searchable_tables(
+        &mut self,
+        tables: &TablesToSearch,
+    ) -> Result<Vec<SearchableTable>, DriverError> {
+        let tables = tables.clone();
+        self.run_blocking(move |connection| search::searchable_tables(connection, &tables))
+            .await
     }
 
     async fn describe_table(

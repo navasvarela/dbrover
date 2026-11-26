@@ -122,7 +122,7 @@ fn relation_folders(kind: NodeKind) -> &'static [FolderKind] {
     }
 }
 
-fn is_system_schema(name: &str) -> bool {
+pub(crate) fn is_system_schema(name: &str) -> bool {
     matches!(name, "pg_catalog" | "information_schema")
         || name.starts_with("pg_toast")
         || name.starts_with("pg_temp_")
@@ -182,7 +182,7 @@ fn node(
 }
 
 /// A parameter of a catalog query, with the type the server is told it has.
-type Param<'a> = (&'a (dyn ToSql + Sync), Type);
+pub(crate) type Param<'a> = (&'a (dyn ToSql + Sync), Type);
 
 /// Runs one of the driver's own queries as an unnamed statement, its parameters' types given
 /// rather than asked for, in one round trip (C1c).
@@ -192,7 +192,11 @@ type Param<'a> = (&'a (dyn ToSql + Sync), Type);
 /// message may reach another server connection, where the statement doesn't exist, or where a
 /// statement another client left behind has the same name. An unnamed statement lives only
 /// until the next one on the same message exchange.
-async fn query(client: &Client, sql: &str, params: &[Param<'_>]) -> Result<Vec<Row>, DriverError> {
+pub(crate) async fn query(
+    client: &Client,
+    sql: &str,
+    params: &[Param<'_>],
+) -> Result<Vec<Row>, DriverError> {
     client
         .query_typed(sql, params)
         .await
