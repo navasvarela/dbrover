@@ -9,7 +9,8 @@
 use std::time::Instant;
 
 use dbrover_core::{
-    CaseMatch, Connection, DriverError, MatchKind, ResultCursor, Row, SafetyLevel, describe_error,
+    CaseMatch, Connection, DriverError, MatchKind, ResultCursor, Row, SafetyLevel, TablesToSearch,
+    describe_error,
 };
 use dbrover_sql::{SearchSupport, search_statement};
 use dbrover_store::{HistoryEntry, HistoryOutcome, HistorySource};
@@ -118,6 +119,27 @@ async fn list(
             table,
         })
         .collect()))
+}
+
+/// The tables under a scope, for the tab to tick some; nothing is read from them.
+pub(super) async fn list_tables(
+    worker: &mut Worker<'_>,
+    tables: &TablesToSearch,
+) -> Result<(), Disconnected> {
+    let cancel_handle = worker.cancel_handle;
+    let listed = worker
+        .signals
+        .guard(
+            worker.connection.searchable_tables(tables),
+            None,
+            cancel_handle,
+        )
+        .await?;
+    worker.context.send(Event::SearchTablesListed {
+        data_source: worker.context.data_source.id,
+        result: listed.map_err(|error| describe_error(&error)),
+    });
+    Ok(())
 }
 
 /// Runs the plan `run` names, table by table, then records the search.

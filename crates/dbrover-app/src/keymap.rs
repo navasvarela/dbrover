@@ -22,6 +22,8 @@ pub enum Action {
     ExplainAnalyse,
     Cancel,
     ShowHistory,
+    /// Open the console's data source's Search data tab (W16).
+    SearchData,
     Commit,
     Rollback,
     Format,
@@ -47,7 +49,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Self; 33] = [
+    pub const ALL: [Self; 34] = [
         Self::Complete,
         Self::RunCurrent,
         Self::RunAll,
@@ -55,6 +57,7 @@ impl Action {
         Self::ExplainAnalyse,
         Self::Cancel,
         Self::ShowHistory,
+        Self::SearchData,
         Self::Commit,
         Self::Rollback,
         Self::Format,
@@ -92,6 +95,7 @@ impl Action {
             Self::ExplainAnalyse => "console.explain-analyse",
             Self::Cancel => "console.cancel",
             Self::ShowHistory => "console.history",
+            Self::SearchData => "console.search-data",
             Self::Commit => "console.commit",
             Self::Rollback => "console.rollback",
             Self::Format => "console.format",
@@ -125,6 +129,7 @@ impl Action {
             }
             Self::Cancel => "Stop the running statement or discard unread rows",
             Self::ShowHistory => "Open the data source's query history",
+            Self::SearchData => "Search the data source's data for a value",
             Self::Commit => "Commit the console's transaction",
             Self::Rollback => "Roll back the console's transaction",
             Self::Format => "Format the selection, or the statement at the cursor",
@@ -202,7 +207,11 @@ impl Action {
             Self::RunToFile => shortcut(Modifiers::COMMAND | Modifiers::ALT, Key::Enter),
             // ⌘C with ⇧, which no other action here takes.
             Self::CopyWithHeaders => shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::C),
-            Self::ShowHistory | Self::Commit | Self::Rollback | Self::CopyAs(_) => Vec::new(),
+            Self::ShowHistory
+            | Self::SearchData
+            | Self::Commit
+            | Self::Rollback
+            | Self::CopyAs(_) => Vec::new(),
         }
     }
 }

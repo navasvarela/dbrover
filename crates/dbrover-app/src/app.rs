@@ -71,6 +71,7 @@ use crate::query_folders::{
 use crate::reports::{self, RenameAction, RenameReportDialog, ReportAction, Reports, ReportsSetup};
 use crate::rollback_dialog::{Closing, RollbackChoice, RollbackConfirmation};
 use crate::schema_compare::{CompareAction, LiveSchema, Reading, SchemaCompares};
+use crate::search_tab::{SearchAction, SearchDefaults, SearchTabs};
 use crate::settings::AppSettings;
 use crate::settings_tab::{Page, SettingsAction, SettingsTab};
 use crate::sql_files::{self, Destination, OpenFileAction, OpenFileDialog, SqlFiles};
@@ -149,6 +150,8 @@ pub struct DbRoverApp {
     compares: SchemaCompares,
     /// Server activity tabs, one per data source (W15).
     activity: ActivityTabs,
+    /// Search data tabs, one per data source (W16).
+    search: SearchTabs,
     history: HistoryTabs,
     rollback_confirmation: Option<RollbackConfirmation>,
     password_prompt: Option<PasswordPrompt>,
@@ -302,6 +305,7 @@ impl DbRoverApp {
             definitions: DefinitionTabs::default(),
             compares: SchemaCompares::default(),
             activity: ActivityTabs::default(),
+            search: SearchTabs::default(),
             history: HistoryTabs::default(),
             rollback_confirmation: None,
             password_prompt: None,
@@ -562,6 +566,7 @@ impl DbRoverApp {
         self.definitions.apply(event);
         self.compares.apply(event);
         self.activity.apply(event);
+        self.search.apply(event);
         if let Event::SchemaSnapshotSaved { path, result, .. } = event {
             self.snapshot_notice = Some(result.clone().map(|()| path.clone()));
         }
@@ -633,6 +638,8 @@ impl DbRoverApp {
             workspace::close_history_tab(&mut self.dock, *id);
             self.activity.close(*id);
             workspace::close_activity_tab(&mut self.dock, *id);
+            self.search.close(*id);
+            workspace::close_search_tab(&mut self.dock, *id);
             for definition in self.definitions.of(*id) {
                 self.definitions.close(definition);
                 workspace::close_definition_tab(&mut self.dock, definition);
@@ -1604,6 +1611,7 @@ impl DbRoverApp {
             ExplorerAction::Diagram(id, path) => self.open_diagram_dialog(id, &path),
             ExplorerAction::CompareSchema(id, path) => self.open_schema_compare(id, &path),
             ExplorerAction::ServerActivity(id) => self.open_activity(id),
+            ExplorerAction::SearchData(id, path) => self.open_search(id, path),
             ExplorerAction::SaveSchemaSnapshot(id, path) => {
                 if let Some(schema) = path.name_of(NodeKind::Schema) {
                     self.save_schema_snapshot(LiveSchema {
@@ -2283,6 +2291,65 @@ impl DbRoverApp {
         let every = self.settings.settings().activity.refresh();
         self.activity.open(data_source, every);
         workspace::open_activity_tab(&mut self.dock, data_source);
+    }
+
+    /// Opens the data source's Search data tab on `scope`, or brings it to the front pointed
+    /// at `scope`.
+    fn open_search(&mut self, data_source: DataSourceId, scope: CatalogPath) {
+        let defaults = SearchDefaults::from_settings(self.settings.settings().data_search);
+        self.search.open(data_source, scope, defaults);
+        workspace::open_search_tab(&mut self.dock, data_source);
+    }
+
+    fn handle_search_action(&mut self, action: SearchAction, ctx: &egui::Context) {
+        match action {
+            SearchAction::Plan {
+                data_source,
+                run,
+                request,
+            } => self.send(Command::PlanDataSearch {
+                data_source,
+                run,
+                request,
+            }),
+            SearchAction::Run { data_source, run } => {
+                self.send(Command::RunDataSearch { data_source, run });
+            }
+            SearchAction::Cancel { data_source, run } => {
+                self.send(Command::CancelDataSearch { data_source, run });
+            }
+            SearchAction::ListTables {
+                data_source,
+                tables,
+            } => self.send(Command::ListSearchTables {
+                data_source,
+                tables,
+            }),
+            SearchAction::OpenRows(data_source, rows) => {
+                let opened = self
+                    .state
+                    .data_source(data_source)
+                    .and_then(|entry| self.consoles.open_rows(&entry.data_source, &rows));
+                if let Some((key, command)) = opened {
+                    workspace::open_console_tab(&mut self.dock, key);
+                    self.send(command);
+                }
+            }
+            SearchAction::RunInConsole(data_source, sql) => {
+                let Some(entry) = self.state.data_source(data_source) else {
+                    return;
+                };
+                let (key, command) =
+                    self.consoles
+                        .open_action(&entry.data_source, sql, Some(RunOrigin::Console));
+                workspace::open_console_tab(&mut self.dock, key);
+                self.send_if(command);
+            }
+            SearchAction::OpenInConsole(data_source, sql) => {
+                self.open_program_output(data_source, sql);
+            }
+            SearchAction::Copy(text) => ctx.copy_text(text),
+        }
     }
 
     fn handle_activity_action(&mut self, action: ActivityAction, ctx: &egui::Context) {
@@ -3160,6 +3227,7 @@ impl eframe::App for DbRoverApp {
         let mut definition_actions = Vec::new();
         let mut compare_actions = Vec::new();
         let mut activity_actions = Vec::new();
+        let mut search_actions = Vec::new();
         let console_titles = self.consoles.titles();
         let report_sources: Vec<dbrover_core::DataSource> = self
             .state
@@ -3220,6 +3288,8 @@ impl eframe::App for DbRoverApp {
                     compare_actions: &mut compare_actions,
                     activity: &mut self.activity,
                     activity_actions: &mut activity_actions,
+                    search: &mut self.search,
+                    search_actions: &mut search_actions,
                     console_titles: &console_titles,
                 },
             );
@@ -3256,9 +3326,17 @@ impl eframe::App for DbRoverApp {
         }
         let closed = self.activity.take_closed();
         self.send_all(closed);
+        for action in search_actions {
+            self.handle_search_action(action, &ctx);
+        }
+        let closed = self.search.take_closed();
+        self.send_all(closed);
         for (console, action) in console_actions {
             match action {
                 ConsoleAction::ShowHistory => self.open_history(console),
+                ConsoleAction::SearchData => {
+                    self.open_search(console.data_source, CatalogPath::root());
+                }
                 ConsoleAction::OpenExportDialog => self.open_export_dialog(console),
                 ConsoleAction::RunToFile => self.open_run_to_file(console),
                 ConsoleAction::Copy(copy) => self.copy_cells(&console, copy, &ctx),
@@ -3384,6 +3462,7 @@ mod tests {
     mod query_folders;
     mod reports;
     mod schema_compare;
+    mod search;
     mod settings;
     mod title_bar;
 

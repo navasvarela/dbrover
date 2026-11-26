@@ -66,6 +66,7 @@ mod schema_command;
 mod schema_compare;
 #[cfg(test)]
 mod screenshots;
+mod search_tab;
 mod settings;
 mod settings_folder;
 mod settings_tab;

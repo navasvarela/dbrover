@@ -214,6 +214,7 @@ impl AppState {
             | Event::DataSearchTableSearched { .. }
             | Event::DataSearchEnded { .. }
             | Event::DataSearchSessionChanged { .. }
+            | Event::SearchTablesListed { .. }
             | Event::DdlApplied { .. }
             | Event::DdlLoaded { .. }
             | Event::TableLoaded { .. }

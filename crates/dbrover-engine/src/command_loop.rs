@@ -432,6 +432,16 @@ impl Engine {
                     session.cancel(run);
                 }
             }
+            Command::ListSearchTables {
+                data_source,
+                tables,
+            } => match self.search_session(data_source) {
+                Some((session, _)) => session.request(SessionRequest::ListSearchTables(tables)),
+                None => self.events.send(Event::SearchTablesListed {
+                    data_source,
+                    result: Err("The data source isn't saved.".to_owned()),
+                }),
+            },
             Command::CloseDataSearch(data_source) => self.close_search(data_source),
             Command::ReconnectConsole(console) => self.reconnect_console(console),
             Command::CloseConsole(console) => self.close_console(console),
