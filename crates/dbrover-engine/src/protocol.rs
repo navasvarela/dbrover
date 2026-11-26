@@ -7,8 +7,8 @@ use dbrover_core::{
     CatalogMatches, CatalogPath, CatalogSearch, ChildrenPage, ChildrenQuery, ColumnInfo,
     CostEstimate, DataSource, DataSourceId, DriverKind, JobProgress, Password, PasswordCommand,
     ProjectId, ReadPace, Rejection, RelationName, ResultShape, RoleDescription, Row,
-    ServerActivity, ServerInfo, SessionId, StopKind, StopOutcome, TableDescription, TableName,
-    TransactionStatus,
+    SearchableTable, ServerActivity, ServerInfo, SessionId, StopKind, StopOutcome,
+    TableDescription, TableName, TablesToSearch, TransactionStatus,
 };
 use dbrover_export::{ExportSpec, SqlTable};
 
@@ -317,6 +317,12 @@ pub enum Command {
     CancelDataSearch {
         data_source: DataSourceId,
         run: RunId,
+    },
+    /// Lists the tables under a scope for the Search data tab's **Change…**, to tick some, on
+    /// the tab's connection. Answered by [`Event::SearchTablesListed`].
+    ListSearchTables {
+        data_source: DataSourceId,
+        tables: TablesToSearch,
     },
     /// Closes the Search data tab's connection.
     CloseDataSearch(DataSourceId),
@@ -810,6 +816,11 @@ pub enum Event {
         data_source: DataSourceId,
         run: RunId,
         end: SearchEnd,
+    },
+    /// The answer to [`Command::ListSearchTables`].
+    SearchTablesListed {
+        data_source: DataSourceId,
+        result: Result<Vec<SearchableTable>, String>,
     },
     /// The state of a Search data tab's own connection.
     DataSearchSessionChanged {

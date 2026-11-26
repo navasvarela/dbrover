@@ -563,6 +563,7 @@ impl Consoles {
             // The app opens a window, a file dialog or a console, or updates the catalog, for
             // these.
             ConsoleAction::ShowHistory
+            | ConsoleAction::SearchData
             | ConsoleAction::OpenExportDialog
             | ConsoleAction::Copy(_)
             | ConsoleAction::RunToFile

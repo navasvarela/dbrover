@@ -24,6 +24,7 @@ pub struct Settings {
     pub reports: ReportSettings,
     pub explorer: ExplorerSettings,
     pub activity: ActivitySettings,
+    pub data_search: DataSearchSettings,
 }
 
 /// How the SQL formatter writes statements.
@@ -114,6 +115,48 @@ impl ActivitySettings {
             .refresh_seconds
             .unwrap_or(Self::DEFAULT_REFRESH_SECONDS);
         (seconds > 0).then(|| std::time::Duration::from_secs(u64::from(seconds)))
+    }
+}
+
+/// What a data search starts with (W16, `docs/data-search.md`). Each key is written only when
+/// it differs from DbRover's default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DataSearchSettings {
+    /// How long one table may take, in seconds; 0 for no limit. Unset for DbRover's default,
+    /// [`DataSearchSettings::DEFAULT_TABLE_SECONDS`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table_seconds: Option<u32>,
+    /// The most rows shown from one table. Unset for DbRover's default,
+    /// [`DataSearchSettings::DEFAULT_ROWS_PER_TABLE`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rows_per_table: Option<NonZeroU32>,
+    /// Whether a new search reads views too.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub include_views: bool,
+}
+
+impl DataSearchSettings {
+    /// Long enough for an indexed or small table on a busy server, short enough that a table
+    /// read whole from disk is left for a Retry rather than holding up the rest.
+    pub const DEFAULT_TABLE_SECONDS: u32 = 15;
+    /// Enough to see what a table holds; few enough that a search of a thousand tables stays
+    /// small in memory.
+    pub const DEFAULT_ROWS_PER_TABLE: u32 = 100;
+    /// The most rows per table the setting allows, to keep a search's results in memory.
+    pub const MAX_ROWS_PER_TABLE: u32 = 1_000;
+
+    /// Seconds one table may take; `None` for no limit.
+    pub fn table_limit_seconds(self) -> Option<u32> {
+        let seconds = self.table_seconds.unwrap_or(Self::DEFAULT_TABLE_SECONDS);
+        (seconds > 0).then_some(seconds)
+    }
+
+    /// The rows shown per table, within the allowed range.
+    pub fn rows(self) -> u32 {
+        self.rows_per_table
+            .map_or(Self::DEFAULT_ROWS_PER_TABLE, NonZeroU32::get)
+            .min(Self::MAX_ROWS_PER_TABLE)
     }
 }
 
@@ -451,6 +494,11 @@ mod tests {
             activity: ActivitySettings {
                 refresh_seconds: Some(2),
             },
+            data_search: DataSearchSettings {
+                table_seconds: Some(0),
+                rows_per_table: NonZeroU32::new(50),
+                include_views: true,
+            },
         };
 
         let read = file.read().unwrap();
@@ -463,6 +511,12 @@ mod tests {
         );
         assert!(text.contains("memory_limit = \"4 GiB\"\n"), "{text}");
         assert!(text.contains("[activity]\nrefresh_seconds = 2\n"), "{text}");
+        assert!(
+            text.contains(
+                "[data_search]\ntable_seconds = 0\nrows_per_table = 50\ninclude_views = true\n"
+            ),
+            "{text}"
+        );
         assert!(
             text.contains(
                 "[explorer]\nquery_folders = [\"~/src/shop/queries\", \"/srv/queries\"]\n"
@@ -482,6 +536,20 @@ mod tests {
         assert_eq!(every(None).refresh(), Some(Duration::from_secs(5)));
         assert_eq!(every(Some(30)).refresh(), Some(Duration::from_secs(30)));
         assert_eq!(every(Some(0)).refresh(), None);
+    }
+
+    #[test]
+    fn a_data_search_limits_each_table_to_15_s_and_100_rows_unless_set() {
+        let defaults = DataSearchSettings::default();
+        assert_eq!(defaults.table_limit_seconds(), Some(15));
+        assert_eq!(defaults.rows(), 100);
+        let set = DataSearchSettings {
+            table_seconds: Some(0),
+            rows_per_table: NonZeroU32::new(5_000),
+            include_views: false,
+        };
+        assert_eq!(set.table_limit_seconds(), None);
+        assert_eq!(set.rows(), 1_000);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 use std::num::NonZeroU32;
 
-use dbrover_store::{ActivitySettings, KeywordCase, McpPermissions, Settings};
+use dbrover_store::{ActivitySettings, DataSearchSettings, KeywordCase, McpPermissions, Settings};
 use egui::{Button, RichText, ThemePreference, Ui};
 
 use super::setting::Setting;
@@ -84,6 +84,11 @@ fn control(ui: &mut Ui, setting: Setting, title: &str, draft: &mut Draft<'_>) {
             |count| format!("the newest {count}"),
         ),
         Setting::ActivityRefresh => activity_refresh(ui, &mut settings.activity.refresh_seconds),
+        Setting::SearchTimeLimit => search_time_limit(ui, &mut settings.data_search.table_seconds),
+        Setting::SearchRows => search_rows(ui, &mut settings.data_search.rows_per_table),
+        Setting::SearchViews => {
+            form::toggle(ui, &mut settings.data_search.include_views, title);
+        }
         Setting::Report(default) => default.control(ui, &mut settings.reports),
         Setting::CheckForUpdates => {
             form::toggle(ui, &mut settings.updates.check_on_start, title);
@@ -272,4 +277,50 @@ fn activity_refresh(ui: &mut Ui, seconds: &mut Option<u32>) {
             }
         });
     *seconds = (chosen != default).then_some(chosen);
+}
+
+/// How long a data search may spend on one table, in seconds; 0 for no limit.
+const TABLE_LIMITS: [(u32, &str); 6] = [
+    (5, "5 s"),
+    (15, "15 s"),
+    (30, "30 s"),
+    (60, "1 min"),
+    (300, "5 min"),
+    (0, "never"),
+];
+
+/// Unset means DbRover's default, so choosing the default unsets it again.
+fn search_time_limit(ui: &mut Ui, seconds: &mut Option<u32>) {
+    let default = DataSearchSettings::DEFAULT_TABLE_SECONDS;
+    let mut chosen = seconds.unwrap_or(default);
+    let label = |value: u32| {
+        TABLE_LIMITS
+            .iter()
+            .find(|(choice, _)| *choice == value)
+            .map_or_else(|| format!("{value} s"), |(_, label)| (*label).to_owned())
+    };
+    egui::ComboBox::from_id_salt("search_time_limit")
+        .selected_text(label(chosen))
+        .show_ui(ui, |ui| {
+            for &(choice, text) in &TABLE_LIMITS {
+                ui.selectable_value(&mut chosen, choice, text);
+            }
+        });
+    *seconds = (chosen != default).then_some(chosen);
+}
+
+/// The rows a data search may show per table.
+const ROWS_PER_TABLE: [u32; 5] = [10, 50, 100, 500, 1_000];
+
+fn search_rows(ui: &mut Ui, rows: &mut Option<NonZeroU32>) {
+    let default = DataSearchSettings::DEFAULT_ROWS_PER_TABLE;
+    let mut chosen = rows.map_or(default, NonZeroU32::get);
+    egui::ComboBox::from_id_salt("search_rows")
+        .selected_text(chosen.to_string())
+        .show_ui(ui, |ui| {
+            for choice in ROWS_PER_TABLE {
+                ui.selectable_value(&mut chosen, choice, choice.to_string());
+            }
+        });
+    *rows = NonZeroU32::new(chosen).filter(|rows| rows.get() != default);
 }

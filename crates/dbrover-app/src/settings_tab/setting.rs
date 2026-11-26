@@ -17,6 +17,7 @@ pub enum Category {
     Editor,
     History,
     Activity,
+    DataSearch,
     Reports,
     Mcp,
     Updates,
@@ -24,11 +25,12 @@ pub enum Category {
 }
 
 impl Category {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Appearance,
         Self::Editor,
         Self::History,
         Self::Activity,
+        Self::DataSearch,
         Self::Reports,
         Self::Mcp,
         Self::Updates,
@@ -41,6 +43,7 @@ impl Category {
             Self::Editor => "Editor",
             Self::History => "Query history",
             Self::Activity => "Server activity",
+            Self::DataSearch => "Data search",
             Self::Reports => "Reports",
             Self::Mcp => "MCP",
             Self::Updates => "Updates",
@@ -54,6 +57,7 @@ impl Category {
             Self::Editor => icons::CODE,
             Self::History => icons::CLOCK_COUNTER_CLOCKWISE,
             Self::Activity => icons::PULSE,
+            Self::DataSearch => icons::MAGNIFYING_GLASS,
             Self::Reports => icons::CLIPBOARD_TEXT,
             Self::Mcp => icons::PLUGS_CONNECTED,
             Self::Updates => icons::ARROWS_CLOCKWISE,
@@ -68,6 +72,7 @@ impl Category {
             Self::Editor => "How SQL is formatted, and what the console checks while you type.",
             Self::History => "How long the query history keeps what ran.",
             Self::Activity => "How often a Server activity tab reads its server's sessions.",
+            Self::DataSearch => "How long Search data spends on each table, and what it reads.",
             Self::Reports => {
                 "The limits every report runs under unless its file sets its own, and the runs \
                  kept."
@@ -89,6 +94,9 @@ pub enum Setting {
     HistoryAge,
     HistoryCount,
     ActivityRefresh,
+    SearchTimeLimit,
+    SearchRows,
+    SearchViews,
     Report(ReportDefault),
     CheckForUpdates,
     McpDefaults,
@@ -105,7 +113,14 @@ impl Setting {
             Self::AskDatabase,
         ];
         settings.extend(LintRule::ALL.into_iter().map(Self::Lint));
-        settings.extend([Self::HistoryAge, Self::HistoryCount, Self::ActivityRefresh]);
+        settings.extend([
+            Self::HistoryAge,
+            Self::HistoryCount,
+            Self::ActivityRefresh,
+            Self::SearchTimeLimit,
+            Self::SearchRows,
+            Self::SearchViews,
+        ]);
         settings.extend(ReportDefault::ALL.into_iter().map(Self::Report));
         settings.extend([
             Self::McpDefaults,
@@ -123,6 +138,7 @@ impl Setting {
             }
             Self::HistoryAge | Self::HistoryCount => Category::History,
             Self::ActivityRefresh => Category::Activity,
+            Self::SearchTimeLimit | Self::SearchRows | Self::SearchViews => Category::DataSearch,
             Self::Report(_) => Category::Reports,
             Self::McpDefaults => Category::Mcp,
             Self::CheckForUpdates => Category::Updates,
@@ -138,6 +154,7 @@ impl Setting {
             Self::AskDatabase | Self::Lint(_) => "Problems while typing",
             Self::HistoryAge | Self::HistoryCount => "Keeping statements",
             Self::ActivityRefresh => "Refreshing",
+            Self::SearchTimeLimit | Self::SearchRows | Self::SearchViews => "Each table",
             Self::Report(default) => default.section(),
             Self::McpDefaults => "Defaults for every project",
             Self::CheckForUpdates => "New releases",
@@ -155,6 +172,9 @@ impl Setting {
             Self::HistoryAge => "Keep statements for".into(),
             Self::HistoryCount => "Keep per data source".into(),
             Self::ActivityRefresh => "Read a new tab".into(),
+            Self::SearchTimeLimit => "Give up on a table after".into(),
+            Self::SearchRows => "Rows shown per table".into(),
+            Self::SearchViews => "Search views as well as tables".into(),
             Self::Report(default) => default.title().into(),
             Self::CheckForUpdates => "Check for a new release when DbRover starts".into(),
             Self::McpDefaults => "What MCP clients may do".into(),
@@ -175,6 +195,15 @@ impl Setting {
             Self::HistoryCount => return None,
             Self::ActivityRefresh => {
                 "Only while the tab is shown. Its toolbar changes it for that tab alone.".into()
+            }
+            Self::SearchTimeLimit => {
+                "A table that takes longer is listed with Retry, and the search goes on.".into()
+            }
+            Self::SearchRows => "A table with more says so; Open all reads them all.".into(),
+            Self::SearchViews => {
+                "Views read their tables again, often with joins, so they're left out unless \
+                 this is on."
+                    .into()
             }
             Self::Report(default) => default.description().into(),
             Self::CheckForUpdates => {
@@ -207,6 +236,9 @@ impl Setting {
                 "refresh",
                 "interval",
             ],
+            Self::SearchTimeLimit => &["search", "find", "data", "timeout", "limit"],
+            Self::SearchRows => &["search", "find", "data", "rows", "limit"],
+            Self::SearchViews => &["search", "find", "data", "views"],
             Self::Report(_) => &["report", "limit", "default", "guardrail"],
             Self::CheckForUpdates => &["update", "release", "version"],
             Self::McpDefaults => &[
@@ -267,6 +299,7 @@ mod tests {
         assert_eq!(
             found("timeout"),
             [
+                Setting::SearchTimeLimit,
                 Setting::Report(ReportDefault::SourceTimeout),
                 Setting::Report(ReportDefault::CombineTimeout),
                 Setting::Report(ReportDefault::RunTimeout),

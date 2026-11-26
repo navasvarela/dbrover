@@ -25,7 +25,7 @@ use dbrover_engine::{
 };
 use dbrover_language::ExplainDepth;
 use dbrover_language::redis::KeyView;
-use dbrover_sql::Dialect;
+use dbrover_sql::{Dialect, SearchSupport};
 use dbrover_store::{ActionId, Snippet};
 
 use super::CellMenuItems;
@@ -33,7 +33,7 @@ use super::CellMenuItems;
 use crate::custom_actions::GridCells;
 
 /// What the console's keys can do while its editor has focus.
-const EDITOR_ACTIONS: [Action; 18] = [
+const EDITOR_ACTIONS: [Action; 19] = [
     Action::Complete,
     Action::RunCurrent,
     Action::RunToFile,
@@ -42,6 +42,7 @@ const EDITOR_ACTIONS: [Action; 18] = [
     Action::ExplainAnalyse,
     Action::Cancel,
     Action::ShowHistory,
+    Action::SearchData,
     Action::Commit,
     Action::Rollback,
     Action::Format,
@@ -75,6 +76,8 @@ pub enum ConsoleAction {
     RunToFile,
     /// Opens the data source's query history, to insert a past statement here.
     ShowHistory,
+    /// Opens the data source's Search data tab (W16).
+    SearchData,
     /// Loads these catalog levels into the explorer's cache, for completion.
     LoadCatalog(Vec<CatalogPath>),
     /// Asks which columns and key a result's table has, to decide whether rows can be edited.
@@ -241,6 +244,10 @@ fn perform(console: &QueryConsole, action: Action, actions: &mut Vec<ConsoleActi
             actions.push(ConsoleAction::ShowHistory);
             return;
         }
+        Action::SearchData => {
+            actions.push(ConsoleAction::SearchData);
+            return;
+        }
         Action::Commit => {
             actions.push(ConsoleAction::EndTransaction(TransactionEnd::Commit));
             return;
@@ -308,6 +315,10 @@ fn offered(console: &QueryConsole, action: Action) -> bool {
         Action::ExplainAnalyse => console
             .language()
             .can_explain(ExplainDepth::Analysed, console.server()),
+        Action::SearchData => console.dialect().is_some_and(|dialect| {
+            let service = console.server().and_then(|server| server.service);
+            dialect.data_search(service) == SearchSupport::Searchable
+        }),
         action => !needs_sql(action) || console.dialect().is_some(),
     }
 }
@@ -325,6 +336,7 @@ fn is_enabled(console: &QueryConsole, action: Action) -> bool {
         Action::Cancel => console.cancellable_run().is_some(),
         Action::Commit | Action::Rollback => console.has_open_transaction(),
         Action::ShowHistory
+        | Action::SearchData
         | Action::ViewCell
         | Action::EditCell
         | Action::CopyWithHeaders
@@ -383,7 +395,8 @@ fn toolbar_icon(action: Action) -> Option<(&'static str, Role)> {
         Action::Cancel => Some((icons::STOP, Role::Error)),
         Action::ShowHistory => Some((icons::CLOCK_COUNTER_CLOCKWISE, Role::Weak)),
         Action::Format => Some((icons::TEXT_INDENT, Role::Primary)),
-        Action::Commit
+        Action::SearchData
+        | Action::Commit
         | Action::Rollback
         | Action::ExplainAnalyse
         | Action::RunToFile

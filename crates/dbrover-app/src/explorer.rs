@@ -9,7 +9,7 @@ use dbrover_core::{
 };
 use dbrover_engine::SessionState;
 use dbrover_language::QueryLanguage;
-use dbrover_sql::{Capabilities, SchemaCreation, TableChange, UserModel};
+use dbrover_sql::{Capabilities, SchemaCreation, SearchSupport, TableChange, UserModel};
 use dbrover_store::{ActionId, ActionTarget, ConsoleKey, CustomAction, DiagramKey, Project};
 use egui::{
     Color32, CornerRadius, DragAndDrop, Id, Label, LayerId, Order, Rangef, Rect, Response,
@@ -110,6 +110,8 @@ pub enum ExplorerAction {
     DiagramRelated(DataSourceId, CatalogPath),
     /// Server activity: the data source's sessions, locks, Cancel and Kill, in a tab (W15).
     ServerActivity(DataSourceId),
+    /// Search data…: the Search data tab, searching the tables under the path (W16).
+    SearchData(DataSourceId, CatalogPath),
     /// Compare schema…: a compare tab with the schema at the path on its left (W13).
     CompareSchema(DataSourceId, CatalogPath),
     /// Save schema snapshot…: the schema at the path written to a file the user picks (VC3).
@@ -790,6 +792,7 @@ fn data_source_tree(
             own_database: entry.data_source.config.database(),
             driver: entry.data_source.config.driver(),
             language,
+            data_search: data_search(entry),
             actions: tree.actions,
             selected: tree
                 .selected
@@ -866,6 +869,15 @@ fn shown_project(project: &Option<ProjectId>, projects: &[Project]) -> Option<Pr
 
 /// What the object helpers may write for `entry`: its dialect's DDL, unless it writes none
 /// (CQL's) or its server is a service whose DDL differs (C1).
+/// Whether the data source's data can be searched (W16), and whether it asks first.
+fn data_search(entry: &DataSourceEntry) -> SearchSupport {
+    QueryLanguage::from(entry.data_source.config.driver())
+        .dialect()
+        .map_or(SearchSupport::Unsupported, |dialect| {
+            dialect.data_search(entry.service())
+        })
+}
+
 fn helper_capabilities(entry: &DataSourceEntry) -> Option<&'static Capabilities> {
     QueryLanguage::from(entry.data_source.config.driver())
         .dialect()?
@@ -900,6 +912,12 @@ fn data_source_menu(
         helper_capabilities(entry).is_some_and(|capabilities| capabilities.server_activity);
     if shows_activity && widgets::menu_item(ui, icons::PULSE, "Server activity").clicked() {
         actions.push(ExplorerAction::ServerActivity(id));
+    }
+    // An engine that bills each read is searched a schema or a table at a time, never whole.
+    if data_search(entry) == SearchSupport::Searchable
+        && widgets::menu_item(ui, icons::MAGNIFYING_GLASS, "Search data\u{2026}").clicked()
+    {
+        actions.push(ExplorerAction::SearchData(id, CatalogPath::root()));
     }
     saved_consoles_menu(ui, id, tree.saved_consoles, actions);
     saved_diagrams_menu(ui, id, tree.saved_diagrams, actions);
@@ -1026,6 +1044,8 @@ struct TreeView<'a> {
     driver: DriverKind,
     /// What **Open data** asks for a language that reads a table in its own words.
     language: QueryLanguage,
+    /// Whether **Search data…** is offered, and on which nodes.
+    data_search: SearchSupport,
     actions: &'a [CustomAction],
     /// The selected node, if it is in this data source.
     selected: Option<&'a CatalogPath>,
@@ -1307,6 +1327,7 @@ fn node_menu(
     if holds_rows && widgets::menu_item(ui, icons::EXPORT, "Export data…").clicked() {
         actions.push(ExplorerAction::ExportData(id, node.path.clone()));
     }
+    search_item(ui, tree, node, actions);
     diagram_items(ui, tree, node, actions);
     compare_items(ui, tree, node, actions);
     if node.kind() == Some(NodeKind::Table)
@@ -1342,6 +1363,42 @@ fn node_menu(
                 action,
             });
         });
+    }
+}
+
+/// **Search data…** on a node that holds tables, or on one table (W16). PostgreSQL searches
+/// only the database it connects to; an engine that bills each read, only a schema or a table.
+fn search_item(
+    ui: &mut Ui,
+    tree: &TreeView<'_>,
+    node: &CatalogNode,
+    actions: &mut Vec<ExplorerAction>,
+) {
+    let Some(kind) = node.kind() else {
+        return;
+    };
+    let offered = match tree.data_search {
+        SearchSupport::Unsupported => false,
+        SearchSupport::Searchable => matches!(
+            kind,
+            NodeKind::Database
+                | NodeKind::Schema
+                | NodeKind::Folder(
+                    FolderKind::Tables | FolderKind::Views | FolderKind::MaterializedViews
+                )
+                | NodeKind::Table
+                | NodeKind::View
+                | NodeKind::MaterializedView
+        ),
+        SearchSupport::AsksFirst => {
+            matches!(kind, NodeKind::Schema | NodeKind::Table | NodeKind::View)
+        }
+    };
+    if offered
+        && tree.can_change(&node.path)
+        && widgets::menu_item(ui, icons::MAGNIFYING_GLASS, "Search data\u{2026}").clicked()
+    {
+        actions.push(ExplorerAction::SearchData(tree.id, node.path.clone()));
     }
 }
 

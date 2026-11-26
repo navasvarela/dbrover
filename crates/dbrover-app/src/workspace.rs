@@ -40,6 +40,7 @@ use crate::mcp_settings::McpDefaultsEditor;
 use crate::query_folders::QueryFolders;
 use crate::reports::{self, ReportAction, ReportView, Reports};
 use crate::schema_compare::{Candidate, CompareAction, CompareId, SchemaCompares};
+use crate::search_tab::{SearchAction, SearchTabs, SearchView};
 use crate::settings::AppSettings;
 use crate::settings_tab::{SettingsAction, SettingsTab, SettingsView};
 use crate::state::DataSources;
@@ -88,6 +89,9 @@ pub enum Tab {
     /// A data source's Server activity (W15). Not restored, which would connect at start-up
     /// to every server whose tab was open; see [`forget_transient_tabs`].
     Activity(DataSourceId),
+    /// A data source's Search data (W16). Not restored, as an activity tab isn't; see
+    /// [`forget_transient_tabs`].
+    DataSearch(DataSourceId),
 }
 
 /// The consoles whose tabs the layout holds, so they can be reopened at start-up.
@@ -213,7 +217,7 @@ pub fn forget_transient_tabs(layout: &mut DockState<Tab>) {
         .filter(|(_, tab)| {
             matches!(
                 tab,
-                Tab::Definition(_) | Tab::SchemaCompare(_) | Tab::Activity(_)
+                Tab::Definition(_) | Tab::SchemaCompare(_) | Tab::Activity(_) | Tab::DataSearch(_)
             )
         })
         .map(|(_, tab)| tab.clone())
@@ -236,6 +240,21 @@ pub fn open_activity_tab(layout: &mut DockState<Tab>, data_source: DataSourceId)
 
 pub fn close_activity_tab(layout: &mut DockState<Tab>, data_source: DataSourceId) {
     if let Some(path) = layout.find_tab(&Tab::Activity(data_source)) {
+        layout.remove_tab(path);
+    }
+}
+
+/// Brings a data source's search tab to the front, opening it next to the consoles if it
+/// isn't open.
+pub fn open_search_tab(layout: &mut DockState<Tab>, data_source: DataSourceId) {
+    let tab = Tab::DataSearch(data_source);
+    if !focus_tab(layout, &tab) {
+        open_in_main_area(layout, tab);
+    }
+}
+
+pub fn close_search_tab(layout: &mut DockState<Tab>, data_source: DataSourceId) {
+    if let Some(path) = layout.find_tab(&Tab::DataSearch(data_source)) {
         layout.remove_tab(path);
     }
 }
@@ -296,6 +315,7 @@ fn open_in_main_area(layout: &mut DockState<Tab>, tab: Tab) {
                 | Tab::Definition(_)
                 | Tab::SchemaCompare(_)
                 | Tab::Activity(_)
+                | Tab::DataSearch(_)
         )
     };
     match tree.find_tab_from(in_main_area) {
@@ -393,6 +413,9 @@ pub struct Panels<'a> {
     pub activity: &'a mut ActivityTabs,
     /// What the user asked of the activity tabs this frame.
     pub activity_actions: &'a mut Vec<ActivityAction>,
+    pub search: &'a mut SearchTabs,
+    /// What the user asked of the search tabs this frame.
+    pub search_actions: &'a mut Vec<SearchAction>,
     /// Open consoles' titles, by id, for the activity tabs to name DbRover's sessions.
     pub console_titles: &'a HashMap<ConsoleId, String>,
 }
@@ -487,6 +510,18 @@ impl TabViewer for Panels<'_> {
                         role: Role::Primary,
                     },
                     &format!("Activity on {name}"),
+                    FontId::proportional(TAB_TITLE_SIZE),
+                )
+            }
+            Tab::DataSearch(data_source) => {
+                let name = self.data_source_name(*data_source);
+                tab_title(
+                    palette,
+                    Icon {
+                        glyph: icons::MAGNIFYING_GLASS,
+                        role: Role::Primary,
+                    },
+                    &format!("Search in {name}"),
                     FontId::proportional(TAB_TITLE_SIZE),
                 )
             }
@@ -609,6 +644,7 @@ impl TabViewer for Panels<'_> {
                 }
             },
             Tab::Activity(data_source) => self.show_activity(ui, *data_source),
+            Tab::DataSearch(data_source) => self.show_search(ui, *data_source),
             Tab::Definition(id) => self
                 .definition_actions
                 .extend(self.definitions.show(ui, *id)),
@@ -688,6 +724,7 @@ impl TabViewer for Panels<'_> {
                 | Tab::Definition(_)
                 | Tab::SchemaCompare(_)
                 | Tab::Activity(_)
+                | Tab::DataSearch(_)
         )
     }
 
@@ -707,6 +744,10 @@ impl TabViewer for Panels<'_> {
             }
             Tab::Activity(data_source) => {
                 self.activity.close(*data_source);
+                OnCloseResponse::Close
+            }
+            Tab::DataSearch(data_source) => {
+                self.search.close(*data_source);
                 OnCloseResponse::Close
             }
             Tab::Report(name) if self.reports.is_unsaved(name) => {
@@ -739,6 +780,25 @@ impl Panels<'_> {
             .map_or("a removed data source", |entry| {
                 entry.data_source.name.as_str()
             })
+    }
+
+    fn show_search(&mut self, ui: &mut Ui, data_source: DataSourceId) {
+        let Some(entry) = self
+            .data_sources
+            .entries()
+            .iter()
+            .find(|entry| entry.data_source.id == data_source)
+        else {
+            ui.weak("The data source was removed.");
+            return;
+        };
+        let Some(tab) = self.search.get_mut(data_source) else {
+            return;
+        };
+        let view = SearchView {
+            name: &entry.data_source.name,
+        };
+        self.search_actions.extend(tab.show(ui, &view));
     }
 
     fn show_activity(&mut self, ui: &mut Ui, data_source: DataSourceId) {

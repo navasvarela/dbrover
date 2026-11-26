@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 
 use dbrover_core::{
     CancelHandle, CatalogPath, CatalogSearch, ChildrenQuery, Connection, DataSource, DataSourceId,
-    ProgressHandle, RelationName, SafetyLevel, ServerActivity, SessionId, StopKind,
+    ProgressHandle, RelationName, SafetyLevel, ServerActivity, SessionId, StopKind, TablesToSearch,
     TransactionStatus, describe_error,
 };
 use dbrover_language::QueryLanguage;
@@ -93,6 +93,8 @@ pub(crate) enum SessionRequest {
     },
     /// Runs the last plan; see [`crate::Command::RunDataSearch`].
     RunSearch(RunId),
+    /// Lists a scope's tables; see [`crate::Command::ListSearchTables`].
+    ListSearchTables(TablesToSearch),
 }
 
 /// Statements to run in a console, in order.
@@ -728,6 +730,7 @@ impl Worker<'_> {
                 safety,
             } => search::plan(self, run, *request, safety).await,
             SessionRequest::RunSearch(run) => search::run(self, run).await,
+            SessionRequest::ListSearchTables(tables) => search::list_tables(self, &tables).await,
             SessionRequest::FetchMore(_) | SessionRequest::Validate(_) => Ok(()),
         }
     }

@@ -363,6 +363,10 @@ pub(super) fn refuse(context: &SessionContext, request: SessionRequest, reason: 
             run,
             result: Err(message),
         },
+        (SessionRequest::ListSearchTables(_), _) => Event::SearchTablesListed {
+            data_source: id,
+            result: Err(message),
+        },
         (SessionRequest::RunSearch(run), _) => Event::DataSearchEnded {
             data_source: id,
             run,
