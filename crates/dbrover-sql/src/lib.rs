@@ -28,6 +28,7 @@ mod parameters;
 mod password;
 mod projection;
 mod safety;
+mod search;
 mod split;
 mod summarise;
 mod transaction;
@@ -58,6 +59,7 @@ pub use parameters::{
 pub use password::ScramVerifier;
 pub use projection::{ProjectionItem, projection};
 pub use safety::{Hazard, hazard};
+pub use search::{SearchKind, SearchStatement, SearchSupport, search_statement};
 pub use split::{split_statements, statement_at};
 pub use summarise::{BUCKET_COUNTS, Summarised, Summary};
 pub use transaction::{commits_implicitly, controls_transactions};

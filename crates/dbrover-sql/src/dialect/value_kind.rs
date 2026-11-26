@@ -163,7 +163,7 @@ fn cql_kind(name: &str) -> ValueKind {
 
 /// ClickHouse's type without the wrappers that don't change what its values are:
 /// `Nullable(LowCardinality(String))` is a `string`.
-fn unwrap_clickhouse(name: &str) -> &str {
+pub(crate) fn unwrap_clickhouse(name: &str) -> &str {
     let mut name = name;
     for wrapper in ["nullable(", "lowcardinality("] {
         if let Some(inner) = name
