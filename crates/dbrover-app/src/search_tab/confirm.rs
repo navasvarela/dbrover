@@ -1,7 +1,6 @@
 //! The questions a search asks: before a careful data source's tables are read, and before a
 //! timed-out table is searched again with no limit.
 
-use dbrover_engine::SearchQuestion;
 use egui::Id;
 
 use super::{Phase, Question, SearchAction, SearchTab, SearchView};
@@ -23,11 +22,7 @@ pub(super) fn show(
             Id::new(("search_careful", tab.data_source)),
             &heading,
             |ui| {
-                let SearchQuestion::Careful { tables } = question;
-                ui.label(format!(
-                    "This reads {tables} tables one at a time{}. Nothing is changed.",
-                    limit.map_or_else(String::new, |limit| format!(", up to {limit} each"))
-                ));
+                ui.label(super::question_body(question, limit));
             },
         )?;
         if answer {

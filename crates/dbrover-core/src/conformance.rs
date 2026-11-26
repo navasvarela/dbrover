@@ -968,6 +968,8 @@ pub struct SearchFixture<'a> {
     pub teardown: &'a [&'a str],
     /// The catalog node that holds them, and nothing else the check would find.
     pub scope: CatalogPath,
+    /// Whether the driver lists the tables' keys, `id` each; Trino's tables have none.
+    pub keyed: bool,
 }
 
 /// Writes one table's search statement: `dbrover_sql::search_statement` in the driver's
@@ -1010,8 +1012,9 @@ pub async fn check_data_search(
         ],
         "the fixture's tables, and nothing else"
     );
+    let key: &[&str] = if fixture.keyed { &["id"] } else { &[] };
     for table in &tables {
-        assert_eq!(table.key, ["id"], "{}'s key", table.name.name);
+        assert_eq!(table.key, key, "{}'s key", table.name.name);
         assert!(
             fixture.scope.is_root() || table.path.starts_with(&fixture.scope),
             "{:?} is under the scope",

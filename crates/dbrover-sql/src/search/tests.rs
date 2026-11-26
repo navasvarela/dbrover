@@ -495,7 +495,7 @@ fn the_key_comes_first_and_is_read_once() {
 }
 
 #[test]
-fn redshift_waits_for_c7() {
+fn says_which_engines_are_searched_and_which_ask_first() {
     assert_eq!(
         Dialect::Postgres.data_search(Some(ManagedService::Redshift)),
         SearchSupport::Unsupported
@@ -503,6 +503,22 @@ fn redshift_waits_for_c7() {
     assert_eq!(
         Dialect::Postgres.data_search(Some(ManagedService::Neon)),
         SearchSupport::Searchable
+    );
+    for dialect in [
+        Dialect::Trino,
+        Dialect::BigQuery,
+        Dialect::Snowflake,
+        Dialect::Databricks,
+    ] {
+        assert_eq!(
+            dialect.data_search(None),
+            SearchSupport::AsksFirst,
+            "{dialect:?}"
+        );
+    }
+    assert_eq!(
+        Dialect::SqlServer.data_search(Some(ManagedService::SynapseServerless)),
+        SearchSupport::Unsupported
     );
 }
 
@@ -517,5 +533,32 @@ fn a_table_in_another_database_is_named_with_it() {
             .as_deref()
             .and_then(|sql| sql.lines().nth(1)),
         Some("FROM \"lake\".\"shop\".\"customers\"")
+    );
+}
+
+#[test]
+fn a_table_without_a_key_reads_every_column_it_could_compare() {
+    let events = table(
+        "shop",
+        &[],
+        &[
+            ("id", "integer"),
+            ("note", "text"),
+            ("payload", "bytea"),
+            ("at", "date"),
+        ],
+    );
+    let statement = search_statement(
+        Dialect::Postgres,
+        &events,
+        &contains("refund"),
+        RowsPerTable::DEFAULT,
+    );
+    assert_eq!(
+        statement.map(|statement| (statement.selected, statement.searched)),
+        Some((
+            vec!["id".to_owned(), "note".to_owned(), "at".to_owned()],
+            vec!["note".to_owned()]
+        ))
     );
 }

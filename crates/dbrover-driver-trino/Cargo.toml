@@ -28,6 +28,8 @@ tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
 dbrover-core = { workspace = true, features = ["conformance"] }
+# Writes the statements the data search conformance check runs (W16).
+dbrover-sql.workspace = true
 # The small server that answers the protocol in the tests listens on the loopback address.
 tokio = { workspace = true, features = ["net", "io-util", "macros", "rt-multi-thread"] }
 

@@ -664,6 +664,7 @@ mod tests {
                 scope: CatalogPath::root()
                     .child(NodeKind::Database, database.clone())
                     .child(NodeKind::Schema, "public"),
+                keyed: true,
             },
             &write,
         )

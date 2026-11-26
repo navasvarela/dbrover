@@ -1,5 +1,6 @@
 //! The statements a data search runs (W16, `docs/data-search.md`): one per table, on the columns
-//! whose types can hold the searched value, reading only the table's key and those columns.
+//! whose types can hold the searched value, reading only the table's key and those columns
+//! (every comparable column of a table without a key).
 //!
 //! ```sql
 //! SELECT "id", "name", "email"
@@ -42,21 +43,28 @@ pub enum SearchSupport {
 
 impl Dialect {
     /// Whether a data source of this dialect, on `service`, can be searched, and how.
-    /// Redshift, reached through PostgreSQL's driver, keeps its columns in views of its own
-    /// and bills Serverless compute: it waits for C7.
+    ///
+    /// The engines that read lakes and warehouses ask first, a schema or a table at a time:
+    /// BigQuery and Athena bill the bytes a statement scans, Snowflake and Databricks the time
+    /// their warehouse runs, and Trino, whose dialect Athena shares, reads each table of a lake
+    /// whole. Redshift, reached through PostgreSQL's driver, keeps its columns in views of its
+    /// own and bills Serverless compute; Synapse's serverless pools bill what they scan, and a
+    /// warehouse's catalog differs: all three wait for a later milestone.
     pub fn data_search(self, service: Option<ManagedService>) -> SearchSupport {
         match (self, service) {
-            (Self::Postgres, Some(ManagedService::Redshift)) => SearchSupport::Unsupported,
-            // Synapse's serverless pools bill the bytes they scan, and a warehouse's catalog
-            // differs: both wait, as Redshift does.
-            (
+            (Self::Postgres, Some(ManagedService::Redshift))
+            | (
                 Self::SqlServer,
                 Some(
                     ManagedService::SynapseDedicated
                     | ManagedService::SynapseServerless
                     | ManagedService::Fabric,
                 ),
-            ) => SearchSupport::Unsupported,
+            )
+            | (Self::Cassandra, _) => SearchSupport::Unsupported,
+            (Self::Trino | Self::BigQuery | Self::Snowflake | Self::Databricks, _) => {
+                SearchSupport::AsksFirst
+            }
             (
                 Self::Postgres
                 | Self::Sqlite
@@ -66,7 +74,6 @@ impl Dialect {
                 | Self::ClickHouse,
                 _,
             ) => SearchSupport::Searchable,
-            _ => SearchSupport::Unsupported,
         }
     }
 }
@@ -78,7 +85,8 @@ pub struct SearchStatement {
     pub sql: String,
     /// The same, with no cap, for **Open all**.
     pub every_row: String,
-    /// The columns it reads, in its select list's order: the key's, then the others searched.
+    /// The columns it reads, in its select list's order: the key's, then the others searched;
+    /// for a table without a key, every column a search could compare.
     pub selected: Vec<String>,
     /// The columns it searches, in table order.
     pub searched: Vec<String>,
@@ -112,13 +120,7 @@ pub fn search_statement(
         .iter()
         .map(|(name, _)| (*name).to_owned())
         .collect();
-    let mut selected = table.key.clone();
-    selected.extend(
-        searched
-            .iter()
-            .filter(|name| !table.key.contains(name))
-            .cloned(),
-    );
+    let selected = selected_columns(dialect, table, &searched);
     let parts = Parts {
         select: selected
             .iter()
@@ -147,6 +149,28 @@ pub fn search_statement(
         selected,
         searched,
     })
+}
+
+/// What the statement reads: the key, then the columns searched. A table without a key reads
+/// every column a search could compare instead (never binary data, arrays or the like), so a
+/// row found can be told from the others and opened by its values.
+fn selected_columns(dialect: Dialect, table: &SearchableTable, searched: &[String]) -> Vec<String> {
+    if table.key.is_empty() {
+        return table
+            .columns
+            .iter()
+            .filter(|column| dialect.search_kind(&column.data_type) != SearchKind::Never)
+            .map(|column| column.name.clone())
+            .collect();
+    }
+    let mut selected = table.key.clone();
+    selected.extend(
+        searched
+            .iter()
+            .filter(|name| !table.key.contains(name))
+            .cloned(),
+    );
+    selected
 }
 
 struct Parts {

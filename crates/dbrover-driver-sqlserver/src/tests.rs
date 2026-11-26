@@ -753,6 +753,7 @@ async fn finds_a_value_across_tables() {
             scope: CatalogPath::root()
                 .child(NodeKind::Database, server.config.server.database.clone())
                 .child(NodeKind::Schema, "w16_search"),
+            keyed: true,
         },
         &write,
     )

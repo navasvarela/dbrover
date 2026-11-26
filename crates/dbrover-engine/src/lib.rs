@@ -54,7 +54,7 @@ mod updater;
 mod whole_file;
 
 pub use data_search::{
-    PlannedTable, SearchEnd, SearchLimits, SearchPlan, SearchQuestion, SearchRequest,
+    BilledCost, PlannedTable, SearchEnd, SearchLimits, SearchPlan, SearchQuestion, SearchRequest,
     TABLE_TIME_LIMIT, TableOutcome, TableSearched,
 };
 pub use dbrover_ssh::HostKey;

@@ -357,6 +357,7 @@ mod tests {
                     "DROP TABLE IF EXISTS dbrover_search_numbers",
                 ],
                 scope: CatalogPath::root().child(NodeKind::Schema, "main"),
+                keyed: true,
             },
             &write,
         )

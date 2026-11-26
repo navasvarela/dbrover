@@ -221,6 +221,14 @@ impl Connection for BigQueryConnection {
 
     /// `None`: BigQuery's tables have no enforced key that tells their rows apart, so their
     /// rows are never edited (`Dialect::read_only_results`).
+    /// Read from the catalog the explorer shows, a schema or a table at a time (W16g).
+    async fn searchable_tables(
+        &mut self,
+        tables: &dbrover_core::TablesToSearch,
+    ) -> Result<Vec<dbrover_core::SearchableTable>, DriverError> {
+        dbrover_core::searchable_tables_from_catalog(self, tables).await
+    }
+
     async fn describe_table(
         &mut self,
         _table: &RelationName,
