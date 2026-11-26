@@ -10,6 +10,8 @@ mod capabilities;
 mod functions;
 mod value_kind;
 
+pub(crate) use value_kind::unwrap_clickhouse;
+
 pub use capabilities::{
     Capabilities, ForeignKeySwitch, SchemaCreation, TableChange, UserModel, ViewReplacement,
 };

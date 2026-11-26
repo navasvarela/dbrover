@@ -10,7 +10,8 @@ use dbrover_core::{
     CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, Cell, ChildrenPage,
     ChildrenQuery, Connection, CostEstimate, DataSourceId, DriverError, HandedOver, Handoff,
     ProgressHandle, Rejection, RelationName, ResultCursor, RoleDescription, SchemaDescription,
-    ServerInfo, SshConfig, TableConstraints, TableDescription, TableName, TransactionStatus,
+    SearchableTable, ServerInfo, SshConfig, TableConstraints, TableDescription, TableName,
+    TablesToSearch, TransactionStatus,
 };
 use dbrover_ssh::{SshError, Tunnel, TunnelRequest};
 
@@ -181,6 +182,13 @@ impl Connection for Tunnelled {
         schema: &str,
     ) -> Result<Option<SchemaDescription>, DriverError> {
         self.connection.describe_schema(schema).await
+    }
+
+    async fn searchable_tables(
+        &mut self,
+        tables: &TablesToSearch,
+    ) -> Result<Vec<SearchableTable>, DriverError> {
+        self.connection.searchable_tables(tables).await
     }
 
     async fn validate(&mut self, sql: &str) -> Result<Option<Rejection>, DriverError> {

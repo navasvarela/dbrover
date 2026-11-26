@@ -13,6 +13,7 @@ mod cloud_sign_in;
 mod command_template;
 mod connection;
 mod cost;
+mod data_search;
 mod data_source;
 mod error;
 mod execution;
@@ -54,6 +55,11 @@ pub use connection::{Connection, Rejection, RejectionKind, ServerInfo};
 pub use cost::{
     ByteCount, CostEstimate, CostGuard, FullScan, Precision, ReadPace, ScanEstimate, ScanGuard,
     TimeLimit,
+};
+pub use data_search::{
+    CaseMatch, DataSearch, EmptySearch, MatchKind, RelationKind, Relations, RowsPerTable,
+    SearchColumn, SearchDate, SearchNumber, SearchScope, SearchValue, SearchableTable,
+    TablesToSearch,
 };
 pub use data_source::{
     AthenaConfig, AwsSignInKind, BigQueryConfig, CassandraConfig, ClickHouseConfig,

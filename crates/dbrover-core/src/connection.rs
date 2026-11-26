@@ -7,8 +7,9 @@ use async_trait::async_trait;
 use crate::{
     CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, Cell, ChildrenPage,
     ChildrenQuery, CostEstimate, DriverError, HandedOver, Handoff, ManagedService, ProgressHandle,
-    RelationName, ResultCursor, RoleDescription, SchemaDescription, ServerActivity, SessionId,
-    SessionStop, StopOutcome, TableConstraints, TableDescription, TableName, TransactionStatus,
+    RelationName, ResultCursor, RoleDescription, SchemaDescription, SearchableTable,
+    ServerActivity, SessionId, SessionStop, StopOutcome, TableConstraints, TableDescription,
+    TableName, TablesToSearch, TransactionStatus,
 };
 
 /// What a server reported about itself when the connection was opened.
@@ -294,6 +295,27 @@ pub trait Connection: Send {
     /// [`DriverError::Connection`] if the server can't be asked.
     async fn own_session(&mut self) -> Result<Option<SessionId>, DriverError> {
         Ok(None)
+    }
+
+    /// The tables of a search's scope, each with its key, its row estimate and its columns as
+    /// the catalog types them (W16, `docs/data-search.md`), read in a few catalog queries
+    /// rather than one per table, since a schema may have thousands. System schemas are left
+    /// out of a search of the whole data source.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError::Unsupported`] where the driver doesn't list them yet (see
+    /// `dbrover_sql::Capabilities::data_search`); [`DriverError::InvalidPath`] for a scope that
+    /// names no database, schema, folder or table; [`DriverError::Connection`] if a catalog
+    /// query fails.
+    async fn searchable_tables(
+        &mut self,
+        tables: &TablesToSearch,
+    ) -> Result<Vec<SearchableTable>, DriverError> {
+        let _ = tables;
+        Err(DriverError::Unsupported(
+            "This database's data can't be searched yet.",
+        ))
     }
 
     /// Asks the database whether it would accept `sql`, one data query or change (`SELECT`,

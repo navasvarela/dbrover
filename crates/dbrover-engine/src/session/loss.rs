@@ -8,8 +8,9 @@ use dbrover_core::{
     CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, Cell, ChildrenPage,
     ChildrenQuery, ColumnInfo, Connection, CostEstimate, DriverError, JobProgress, ProgressHandle,
     Rejection, RelationName, ResultCursor, ResultShape, RoleDescription, Row, SchemaDescription,
-    ServerActivity, ServerInfo, SessionId, SessionStop, StopOutcome, TableConstraints,
-    TableDescription, TableName, TransactionStatus, describe_error,
+    SearchableTable, ServerActivity, ServerInfo, SessionId, SessionStop, StopOutcome,
+    TableConstraints, TableDescription, TableName, TablesToSearch, TransactionStatus,
+    describe_error,
 };
 
 use super::{SessionContext, SessionOwner, SessionRequest};
@@ -139,6 +140,14 @@ impl Connection for Watched {
     ) -> Result<Option<SchemaDescription>, DriverError> {
         self.loss
             .watch(self.connection.describe_schema(schema).await)
+    }
+
+    async fn searchable_tables(
+        &mut self,
+        tables: &TablesToSearch,
+    ) -> Result<Vec<SearchableTable>, DriverError> {
+        self.loss
+            .watch(self.connection.searchable_tables(tables).await)
     }
 
     async fn server_activity(&mut self) -> Result<ServerActivity, DriverError> {
