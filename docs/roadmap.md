@@ -2072,8 +2072,9 @@ three to five, **L** a track of its own).
   careful data source asks, naming the data source, then ends the session and releases the
   lock, and History lists the kill as **Activity**; on a read-only data source both are
   refused.
-- **W16 — Searching a database's data (L):** proposed on 2026-11-25 in
-  [Searching a database's data](data-search.md), its open questions waiting for an answer. Pick
+- **W16 — Searching a database's data (L):** planned on 2026-11-25 in
+  [Searching a database's data](data-search.md), its questions answered on 2026-11-26 as
+  proposed. Pick
   a data source, a schema or some tables, type a value, and DbRover finds the rows that hold
   it, grouped by table; each match opens in a console on its row. Second in the competitor-gap
   review of 2026-11-25, after server activity: DBeaver, DataGrip, TablePlus and DBX all have

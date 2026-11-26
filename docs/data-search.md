@@ -1,7 +1,7 @@
 # Searching a database's data
 
-Status: **proposed on 2026-11-25** (W16a), its open questions waiting for an answer before
-anything is built. The [roadmap](roadmap.md#well-rounded-track) tracks it as W16 in the
+Status: **planned on 2026-11-25** (W16a), its open questions answered on 2026-11-26, all nine
+as proposed. The [roadmap](roadmap.md#well-rounded-track) tracks it as W16 in the
 well-rounded track. It starts with PostgreSQL, SQLite and DuckDB, then MySQL and MariaDB, SQL
 Server and ClickHouse, then the engines that bill each read, which ask first. Each layer's
 decisions are confirmed as it is built, and departures go in the demo note.
@@ -505,8 +505,8 @@ once, as **Search**.
 
 ## Decisions
 
-All proposed, waiting for the open questions below; the rest are confirmed as their layers are
-built.
+The nine open questions below were answered on 2026-11-26, all as proposed; the rest are
+confirmed as their layers are built.
 
 | Question | Proposed | Consequence |
 | --- | --- | --- |
@@ -561,7 +561,7 @@ built.
 
 ## Open questions
 
-Each has the answer proposed above; a different answer changes the layers as said.
+Answered on 2026-11-26: all nine as proposed. Kept as they were asked.
 
 1. **Engines.** PostgreSQL, SQLite and DuckDB, then MySQL, MariaDB, SQL Server and ClickHouse,
    then Trino, BigQuery, Athena, Snowflake and Databricks with a question first, all in W16;
