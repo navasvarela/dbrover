@@ -825,3 +825,47 @@ async fn a_user_without_select_on_system_processes_is_told_the_grant() {
     let message = dbrover_core::describe_error(&refused);
     assert!(message.contains("system.processes"), "{message}");
 }
+
+/// W16's data search, in a database of its own, with ClickHouse's own types: a
+/// `LowCardinality(String)`, `Nullable` text, a `UUID`, a `Decimal` and a `Date`.
+#[tokio::test]
+async fn finds_a_value_across_tables() {
+    let Some(server) = test_server() else { return };
+    let mut connection = server.connect().await;
+    let write = |table: &dbrover_core::SearchableTable, search: &dbrover_core::DataSearch| {
+        dbrover_sql::search_statement(
+            dbrover_sql::Dialect::ClickHouse,
+            table,
+            search,
+            dbrover_core::RowsPerTable::DEFAULT,
+        )
+        .map(|statement| statement.sql)
+    };
+    conformance::check_data_search(
+        &mut connection,
+        &conformance::SearchFixture {
+            setup: &[
+                "CREATE DATABASE w16_search",
+                "CREATE TABLE w16_search.dbrover_search_customers (id Int32, \
+                 name LowCardinality(String), email String, phone Nullable(String), \
+                 notes Nullable(String)) ENGINE = MergeTree ORDER BY id",
+                "INSERT INTO w16_search.dbrover_search_customers VALUES \
+                 (1, 'Kate O''Brien', 'kate.obrien@example.com', '+44 20 1042 7731', 'VIP'), \
+                 (2, 'Liam Hale', 'liam@example.org', NULL, 'asked for 50%_off [today]'), \
+                 (3, 'Ana Ruiz', 'ana@example.com', NULL, '50 offers')",
+                "CREATE TABLE w16_search.dbrover_search_orders (id Int32, ref UUID, \
+                 amount Decimal(10, 2), placed Date) ENGINE = MergeTree ORDER BY id",
+                "INSERT INTO w16_search.dbrover_search_orders VALUES \
+                 (1042, '3f2c8e1a-9b7d-4c3e-8a1f-0d2b4c6e8f10', 42.50, '2026-11-25'), \
+                 (7, '0d2b4c6e-8f10-4c3e-8a1f-3f2c8e1a9b7d', 9.99, '2026-01-02')",
+                "CREATE TABLE w16_search.dbrover_search_numbers (id Int32, n Int32) \
+                 ENGINE = MergeTree ORDER BY id",
+                "INSERT INTO w16_search.dbrover_search_numbers VALUES (1, 21042)",
+            ],
+            teardown: &["DROP DATABASE IF EXISTS w16_search"],
+            scope: CatalogPath::root().child(NodeKind::Schema, "w16_search"),
+        },
+        &write,
+    )
+    .await;
+}

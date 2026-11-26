@@ -47,7 +47,25 @@ impl Dialect {
     pub fn data_search(self, service: Option<ManagedService>) -> SearchSupport {
         match (self, service) {
             (Self::Postgres, Some(ManagedService::Redshift)) => SearchSupport::Unsupported,
-            (Self::Postgres | Self::Sqlite | Self::DuckDb, _) => SearchSupport::Searchable,
+            // Synapse's serverless pools bill the bytes they scan, and a warehouse's catalog
+            // differs: both wait, as Redshift does.
+            (
+                Self::SqlServer,
+                Some(
+                    ManagedService::SynapseDedicated
+                    | ManagedService::SynapseServerless
+                    | ManagedService::Fabric,
+                ),
+            ) => SearchSupport::Unsupported,
+            (
+                Self::Postgres
+                | Self::Sqlite
+                | Self::DuckDb
+                | Self::Mysql
+                | Self::SqlServer
+                | Self::ClickHouse,
+                _,
+            ) => SearchSupport::Searchable,
             _ => SearchSupport::Unsupported,
         }
     }

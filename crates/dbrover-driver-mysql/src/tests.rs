@@ -522,3 +522,48 @@ async fn tells_a_login_without_process_what_it_cannot_see() {
         assert!(!mine.stops.is_empty(), "{}: {mine:#?}", server.variable);
     }
 }
+
+/// W16's data search, as root in a database of its own. The customers' names are kept in a
+/// binary collation, so ignoring case there takes `LOWER()`.
+#[tokio::test]
+async fn finds_a_value_across_tables() {
+    let _shared = SHARED_DATABASE.lock().await;
+    for server in test_servers() {
+        let mut connection = server.connect_as_root().await;
+        let write = |table: &dbrover_core::SearchableTable, search: &dbrover_core::DataSearch| {
+            dbrover_sql::search_statement(
+                dbrover_sql::Dialect::Mysql,
+                table,
+                search,
+                dbrover_core::RowsPerTable::DEFAULT,
+            )
+            .map(|statement| statement.sql)
+        };
+        conformance::check_data_search(
+            &mut connection,
+            &conformance::SearchFixture {
+                setup: &[
+                    "CREATE DATABASE w16_search",
+                    "CREATE TABLE w16_search.dbrover_search_customers (id INT PRIMARY KEY, \
+                     name VARCHAR(80) COLLATE utf8mb4_bin, email VARCHAR(200), \
+                     phone VARCHAR(40), notes TEXT)",
+                    "INSERT INTO w16_search.dbrover_search_customers VALUES \
+                     (1, 'Kate O''Brien', 'kate.obrien@example.com', '+44 20 1042 7731', 'VIP'), \
+                     (2, 'Liam Hale', 'liam@example.org', NULL, 'asked for 50%_off [today]'), \
+                     (3, 'Ana Ruiz', 'ana@example.com', NULL, '50 offers')",
+                    "CREATE TABLE w16_search.dbrover_search_orders (id INT PRIMARY KEY, \
+                     ref CHAR(36), amount DECIMAL(10, 2), placed DATE)",
+                    "INSERT INTO w16_search.dbrover_search_orders VALUES \
+                     (1042, '3f2c8e1a-9b7d-4c3e-8a1f-0d2b4c6e8f10', 42.50, '2026-11-25'), \
+                     (7, '0d2b4c6e-8f10-4c3e-8a1f-3f2c8e1a9b7d', 9.99, '2026-01-02')",
+                    "CREATE TABLE w16_search.dbrover_search_numbers (id INT PRIMARY KEY, n INT)",
+                    "INSERT INTO w16_search.dbrover_search_numbers VALUES (1, 21042)",
+                ],
+                teardown: &["DROP DATABASE IF EXISTS w16_search"],
+                scope: CatalogPath::root().child(NodeKind::Schema, "w16_search"),
+            },
+            &write,
+        )
+        .await;
+    }
+}

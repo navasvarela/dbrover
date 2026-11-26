@@ -31,6 +31,8 @@ uuid.workspace = true
 
 [dev-dependencies]
 dbrover-core = { workspace = true, features = ["conformance"] }
+# Writes the statements the data search conformance check runs (W16).
+dbrover-sql.workspace = true
 
 [lints]
 workspace = true
