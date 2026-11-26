@@ -270,3 +270,56 @@ async fn checks_statements_without_running_them() {
     let error = connection.execute("SELECT * FROM dbrover_validate").await;
     assert!(matches!(error, Err(DriverError::Statement { .. })));
 }
+
+/// W16's data search in a schema of the `memory` catalog, read through the explorer's catalog.
+/// Trino has no implicit conversion from text, so the UUID, the decimal and the date are each
+/// compared as a literal of its type; and no keys.
+#[tokio::test]
+async fn finds_a_value_across_tables() {
+    let Some(config) = test_config() else {
+        return;
+    };
+    let mut connection = connected(&config).await;
+    let write = |table: &dbrover_core::SearchableTable, search: &dbrover_core::DataSearch| {
+        dbrover_sql::search_statement(
+            dbrover_sql::Dialect::Trino,
+            table,
+            search,
+            dbrover_core::RowsPerTable::DEFAULT,
+        )
+        .map(|statement| statement.sql)
+    };
+    conformance::check_data_search(
+        &mut connection,
+        &conformance::SearchFixture {
+            setup: &[
+                "CREATE SCHEMA memory.w16_search",
+                "CREATE TABLE memory.w16_search.dbrover_search_customers (id integer, \
+                 name varchar(80), email varchar, phone varchar(40), notes varchar)",
+                "INSERT INTO memory.w16_search.dbrover_search_customers VALUES \
+                 (1, 'Kate O''Brien', 'kate.obrien@example.com', '+44 20 1042 7731', 'VIP'), \
+                 (2, 'Liam Hale', 'liam@example.org', NULL, 'asked for 50%_off [today]'), \
+                 (3, 'Ana Ruiz', 'ana@example.com', NULL, '50 offers')",
+                "CREATE TABLE memory.w16_search.dbrover_search_orders (id integer, ref uuid, \
+                 amount decimal(10, 2), placed date)",
+                "INSERT INTO memory.w16_search.dbrover_search_orders VALUES \
+                 (1042, UUID '3f2c8e1a-9b7d-4c3e-8a1f-0d2b4c6e8f10', 42.50, DATE '2026-11-25'), \
+                 (7, UUID '0d2b4c6e-8f10-4c3e-8a1f-3f2c8e1a9b7d', 9.99, DATE '2026-01-02')",
+                "CREATE TABLE memory.w16_search.dbrover_search_numbers (id integer, n integer)",
+                "INSERT INTO memory.w16_search.dbrover_search_numbers VALUES (1, 21042)",
+            ],
+            teardown: &[
+                "DROP TABLE IF EXISTS memory.w16_search.dbrover_search_customers",
+                "DROP TABLE IF EXISTS memory.w16_search.dbrover_search_orders",
+                "DROP TABLE IF EXISTS memory.w16_search.dbrover_search_numbers",
+                "DROP SCHEMA IF EXISTS memory.w16_search",
+            ],
+            scope: CatalogPath::root()
+                .child(NodeKind::Database, "memory")
+                .child(NodeKind::Schema, "w16_search"),
+            keyed: false,
+        },
+        &write,
+    )
+    .await;
+}

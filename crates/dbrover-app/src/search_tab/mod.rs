@@ -12,8 +12,8 @@ use dbrover_core::{
     SearchScope, SearchableTable, TablesToSearch, TimeLimit,
 };
 use dbrover_engine::{
-    Command, Event, RunId, SearchEnd, SearchLimits, SearchPlan, SearchQuestion, SearchRequest,
-    TableSearched,
+    BilledCost, Command, Event, RunId, SearchEnd, SearchLimits, SearchPlan, SearchQuestion,
+    SearchRequest, TableSearched,
 };
 use egui::Ui;
 
@@ -502,11 +502,123 @@ fn table_label(table: &SearchableTable) -> String {
     format!("{}.{}", table.name.schema, table.name.name)
 }
 
-/// The question a plan asks, in words: *Search 38 tables of "production" for "o'brien"?*
+/// The question a plan asks, in words: *Search 38 tables of "production" for "o'brien"?*, or
+/// on an engine that bills it *Scan 34.2 GB to search 12 tables of "warehouse"?*.
 fn question_heading(question: SearchQuestion, data_source: &str, value: &str) -> String {
+    let tables = |count: usize| {
+        if count == 1 {
+            "1 table".to_owned()
+        } else {
+            format!("{count} tables")
+        }
+    };
     match question {
-        SearchQuestion::Careful { tables } => format!(
-            "Search {tables} tables of \u{201c}{data_source}\u{201d} for \u{201c}{value}\u{201d}?"
+        SearchQuestion::Careful { tables: count }
+        | SearchQuestion::Billed {
+            tables: count,
+            cost: BilledCost::UnknownScans | BilledCost::WarehouseTime { .. },
+        } => format!(
+            "Search {} of \u{201c}{data_source}\u{201d} for \u{201c}{value}\u{201d}?",
+            tables(count)
         ),
+        SearchQuestion::Billed {
+            tables: count,
+            cost: BilledCost::Scans(scan),
+        } => format!(
+            "Scan {scan} to search {} of \u{201c}{data_source}\u{201d}?",
+            tables(count)
+        ),
+    }
+}
+
+/// What the question says beneath its heading: what the search reads, and what it costs.
+fn question_body(question: SearchQuestion, limit: Option<TimeLimit>) -> String {
+    let each = limit.map_or_else(String::new, |limit| format!(", up to {limit} each"));
+    match question {
+        SearchQuestion::Careful { tables } => {
+            format!("This reads {tables} tables one at a time{each}. Nothing is changed.")
+        }
+        SearchQuestion::Billed {
+            cost: BilledCost::Scans(scan),
+            ..
+        } => format!(
+            "{} Each table is read whole for the value, whatever it finds.",
+            dbrover_core::CostEstimate::Bytes(scan).describe()
+        ),
+        SearchQuestion::Billed {
+            cost: BilledCost::UnknownScans,
+            ..
+        } => "Each table is read whole for the value, and the engine bills what it scans, \
+              which it can't tell beforehand."
+            .to_owned(),
+        SearchQuestion::Billed {
+            cost: BilledCost::WarehouseTime { .. },
+            ..
+        } => format!(
+            "Each table's statement runs on the warehouse{each}, which bills the time it runs, \
+             and may start it if it is suspended."
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use dbrover_core::{ByteCount, Precision, ScanEstimate};
+
+    use super::*;
+
+    #[test]
+    fn a_billed_search_says_what_it_would_scan_or_why_it_cannot() {
+        let scans = SearchQuestion::Billed {
+            tables: 12,
+            cost: BilledCost::Scans(ScanEstimate {
+                bytes: ByteCount(34_200_000_000),
+                precision: Precision::AtLeast,
+            }),
+        };
+        assert_eq!(
+            question_heading(scans, "warehouse", "o'brien"),
+            "Scan at least 34.2 GB to search 12 tables of \u{201c}warehouse\u{201d}?"
+        );
+        let unknown = SearchQuestion::Billed {
+            tables: 1,
+            cost: BilledCost::UnknownScans,
+        };
+        assert_eq!(
+            question_heading(unknown, "lake", "o'brien"),
+            "Search 1 table of \u{201c}lake\u{201d} for \u{201c}o'brien\u{201d}?"
+        );
+        assert!(question_body(unknown, None).contains("can't tell beforehand"));
+        let time = SearchQuestion::Billed {
+            tables: 3,
+            cost: BilledCost::WarehouseTime {
+                per_table: TimeLimit::from_seconds(15),
+            },
+        };
+        assert!(
+            question_body(time, TimeLimit::from_seconds(15)).contains("up to 15 s each"),
+            "{}",
+            question_body(time, TimeLimit::from_seconds(15))
+        );
+    }
+
+    #[test]
+    fn names_the_scope_without_its_folders() {
+        let orders = CatalogPath::root()
+            .child(NodeKind::Database, "shop")
+            .child(NodeKind::Schema, "public")
+            .child(
+                NodeKind::Folder(dbrover_core::FolderKind::Tables),
+                dbrover_core::FolderKind::Tables.label(),
+            )
+            .child(NodeKind::Table, "orders");
+        assert_eq!(
+            scope_label(&SearchScope::Under(orders), "production"),
+            "shop \u{203a} public \u{203a} orders"
+        );
+        assert_eq!(
+            scope_label(&SearchScope::Under(CatalogPath::root()), "production"),
+            "all of production"
+        );
     }
 }

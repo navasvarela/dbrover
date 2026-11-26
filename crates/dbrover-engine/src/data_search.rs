@@ -6,7 +6,9 @@
 
 use std::time::Duration;
 
-use dbrover_core::{DataSearch, Row, RowsPerTable, SearchableTable, TablesToSearch, TimeLimit};
+use dbrover_core::{
+    DataSearch, Row, RowsPerTable, ScanEstimate, SearchableTable, TablesToSearch, TimeLimit,
+};
 use dbrover_sql::SearchStatement;
 
 /// What to search for, where, and under which limits.
@@ -73,6 +75,22 @@ pub struct PlannedTable {
 pub enum SearchQuestion {
     /// The data source is careful, and the search reads more than one table.
     Careful { tables: usize },
+    /// The engine bills each read, or reads a lake's tables whole: always asked, whatever the
+    /// data source's cost guard says, since a search reads many tables at once.
+    Billed { tables: usize, cost: BilledCost },
+}
+
+/// What a search would cost on an engine that bills it, as far as can be told beforehand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BilledCost {
+    /// The bytes its statements would scan, summed from each one's dry run (BigQuery). At least
+    /// that many when a dry run couldn't say.
+    Scans(ScanEstimate),
+    /// The bytes it would scan, which the engine can't tell before it runs (Athena, Trino).
+    UnknownScans,
+    /// The time a warehouse runs its statements, which it bills (Snowflake, Databricks), up to
+    /// the time limit for each table.
+    WarehouseTime { per_table: Option<TimeLimit> },
 }
 
 /// How one table's statement ended.

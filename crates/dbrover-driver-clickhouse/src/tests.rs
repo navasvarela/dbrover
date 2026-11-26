@@ -864,6 +864,7 @@ async fn finds_a_value_across_tables() {
             ],
             teardown: &["DROP DATABASE IF EXISTS w16_search"],
             scope: CatalogPath::root().child(NodeKind::Schema, "w16_search"),
+            keyed: true,
         },
         &write,
     )

@@ -2722,6 +2722,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "dbrover-core",
+ "dbrover-sql",
  "dbrover-tls",
  "form_urlencoded",
  "http-body-util",

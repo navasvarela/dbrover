@@ -9,8 +9,8 @@
 use std::time::Instant;
 
 use dbrover_core::{
-    CaseMatch, Connection, DriverError, MatchKind, ResultCursor, Row, SafetyLevel, TablesToSearch,
-    describe_error,
+    ByteCount, CaseMatch, Connection, CostEstimate, DriverError, DriverKind, MatchKind, Precision,
+    ResultCursor, Row, SafetyLevel, ScanEstimate, SearchableTable, TablesToSearch, describe_error,
 };
 use dbrover_sql::{SearchSupport, search_statement};
 use dbrover_store::{HistoryEntry, HistoryOutcome, HistorySource};
@@ -19,7 +19,8 @@ use jiff::Timestamp;
 use super::guard::{self, ReadOnly};
 use super::{Disconnected, Worker, cancel_running_statement};
 use crate::data_search::{
-    PlannedTable, SearchEnd, SearchPlan, SearchQuestion, SearchRequest, TableOutcome, TableSearched,
+    BilledCost, PlannedTable, SearchEnd, SearchPlan, SearchQuestion, SearchRequest, TableOutcome,
+    TableSearched,
 };
 use crate::read_only::ReadOnlyMode;
 use crate::{Event, RunId};
@@ -49,15 +50,13 @@ pub(super) async fn plan(
     safety: SafetyLevel,
 ) -> Result<(), Disconnected> {
     worker.search = None;
-    let result = list(worker, run, &request).await?.map(|tables| {
-        let searched = tables
-            .iter()
-            .filter(|table| table.statement.is_some())
-            .count();
-        let question = (safety == SafetyLevel::Careful && searched > 1)
-            .then_some(SearchQuestion::Careful { tables: searched });
-        SearchPlan { tables, question }
-    });
+    let result = match list(worker, run, &request).await? {
+        Ok((support, tables)) => {
+            let question = question(worker, run, &request, support, safety, &tables).await?;
+            Ok(SearchPlan { tables, question })
+        }
+        Err(error) => Err(error),
+    };
     if let Ok(plan) = &result {
         worker.search = Some(Planned {
             run,
@@ -73,28 +72,96 @@ pub(super) async fn plan(
     Ok(())
 }
 
+/// What to ask before the plan runs: on an engine that bills it, always; on a careful data
+/// source, before more than one table.
+async fn question(
+    worker: &mut Worker<'_>,
+    run: RunId,
+    request: &SearchRequest,
+    support: SearchSupport,
+    safety: SafetyLevel,
+    tables: &[PlannedTable],
+) -> Result<Option<SearchQuestion>, Disconnected> {
+    let searched = tables
+        .iter()
+        .filter(|table| table.statement.is_some())
+        .count();
+    if support == SearchSupport::AsksFirst && searched > 0 {
+        let cost = billed_cost(worker, run, request, tables).await?;
+        return Ok(Some(SearchQuestion::Billed {
+            tables: searched,
+            cost,
+        }));
+    }
+    Ok((safety == SafetyLevel::Careful && searched > 1)
+        .then_some(SearchQuestion::Careful { tables: searched }))
+}
+
+/// What the search would cost, as far as the engine can say before it runs: BigQuery's dry
+/// runs, summed; the time a warehouse runs; or nothing.
+async fn billed_cost(
+    worker: &mut Worker<'_>,
+    run: RunId,
+    request: &SearchRequest,
+    tables: &[PlannedTable],
+) -> Result<BilledCost, Disconnected> {
+    match worker.context.data_source.config.driver() {
+        DriverKind::BigQuery => {}
+        DriverKind::Snowflake | DriverKind::Databricks => {
+            return Ok(BilledCost::WarehouseTime {
+                per_table: request.limits.per_table,
+            });
+        }
+        _ => return Ok(BilledCost::UnknownScans),
+    }
+    let mut total = 0_u64;
+    let mut precision = Precision::Exactly;
+    for statement in tables.iter().filter_map(|table| table.statement.as_ref()) {
+        let cancel_handle = worker.cancel_handle;
+        let estimate = worker
+            .signals
+            .guard(
+                worker.connection.estimate_cost(&statement.sql),
+                Some(run),
+                cancel_handle,
+            )
+            .await?;
+        match estimate {
+            Ok(Some(CostEstimate::Bytes(scan))) => {
+                total = total.saturating_add(scan.bytes.0);
+                if scan.may_scan_more() {
+                    precision = Precision::AtLeast;
+                }
+            }
+            // A dry run that failed or said nothing: the statement will scan something more.
+            _ => precision = Precision::AtLeast,
+        }
+    }
+    Ok(BilledCost::Scans(ScanEstimate {
+        bytes: ByteCount(total),
+        precision,
+    }))
+}
+
 async fn list(
     worker: &mut Worker<'_>,
     run: RunId,
     request: &SearchRequest,
-) -> Result<Result<Vec<PlannedTable>, String>, Disconnected> {
+) -> Result<Result<(SearchSupport, Vec<PlannedTable>), String>, Disconnected> {
     let Some(dialect) = worker.context.dialect() else {
         return Ok(Err("This database's data can't be searched.".to_owned()));
     };
     let service = worker.connection.server_info().service;
-    if dialect.data_search(service) == SearchSupport::Unsupported {
+    let support = dialect.data_search(service);
+    if support == SearchSupport::Unsupported {
         return Ok(Err("This database's data can't be searched yet.".to_owned()));
     }
-    let cancel_handle = worker.cancel_handle;
-    let listed = worker
-        .signals
-        .guard(
-            worker.connection.searchable_tables(&request.tables),
-            Some(run),
-            cancel_handle,
-        )
-        .await?;
-    let mut tables = match listed {
+    if support == SearchSupport::AsksFirst && request.tables.scope.schemas().is_none() {
+        return Ok(Err(
+            "This engine is searched a schema or a table at a time.".to_owned(),
+        ));
+    }
+    let mut tables = match searchable_tables(worker, &request.tables, Some(run)).await? {
         Ok(tables) => tables,
         Err(error) => return Ok(Err(describe_error(&error))),
     };
@@ -112,13 +179,31 @@ async fn list(
                 &b.name.name,
             ))
     });
-    Ok(Ok(tables
+    let planned = tables
         .into_iter()
         .map(|table| PlannedTable {
             statement: search_statement(dialect, &table, &request.search, request.limits.rows),
             table,
         })
-        .collect()))
+        .collect();
+    Ok(Ok((support, planned)))
+}
+
+/// The scope's tables, as the driver lists them.
+async fn searchable_tables(
+    worker: &mut Worker<'_>,
+    tables: &TablesToSearch,
+    run: Option<RunId>,
+) -> Result<Result<Vec<SearchableTable>, DriverError>, Disconnected> {
+    let cancel_handle = worker.cancel_handle;
+    worker
+        .signals
+        .guard(
+            worker.connection.searchable_tables(tables),
+            run,
+            cancel_handle,
+        )
+        .await
 }
 
 /// The tables under a scope, for the tab to tick some; nothing is read from them.
@@ -126,15 +211,7 @@ pub(super) async fn list_tables(
     worker: &mut Worker<'_>,
     tables: &TablesToSearch,
 ) -> Result<(), Disconnected> {
-    let cancel_handle = worker.cancel_handle;
-    let listed = worker
-        .signals
-        .guard(
-            worker.connection.searchable_tables(tables),
-            None,
-            cancel_handle,
-        )
-        .await?;
+    let listed = searchable_tables(worker, tables, None).await?;
     worker.context.send(Event::SearchTablesListed {
         data_source: worker.context.data_source.id,
         result: listed.map_err(|error| describe_error(&error)),
@@ -173,6 +250,11 @@ pub(super) async fn run(worker: &mut Worker<'_>, run: RunId) -> Result<(), Disco
             index,
         });
         let table_started = Instant::now();
+        // The user saw what the search would scan and said yes; BigQuery's byte limit for
+        // one statement isn't what they were asked about.
+        if matches!(plan.question, Some(SearchQuestion::Billed { .. })) {
+            worker.connection.allow_next_past_limit();
+        }
         let outcome = search_table(worker, run, &statement.sql, &request).await?;
         if worker.signals.is_cancelled(run) {
             end = SearchEnd::Cancelled;

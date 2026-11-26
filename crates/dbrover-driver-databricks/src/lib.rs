@@ -319,6 +319,14 @@ impl Connection for DatabricksConnection {
 
     /// `None`: Databricks's keys are informational and not enforced, so nothing tells a
     /// table's rows apart and they are never edited (`Dialect::read_only_results`).
+    /// Read from the catalog the explorer shows, a schema or a table at a time (W16g).
+    async fn searchable_tables(
+        &mut self,
+        tables: &dbrover_core::TablesToSearch,
+    ) -> Result<Vec<dbrover_core::SearchableTable>, DriverError> {
+        dbrover_core::searchable_tables_from_catalog(self, tables).await
+    }
+
     async fn describe_table(
         &mut self,
         _table: &RelationName,
