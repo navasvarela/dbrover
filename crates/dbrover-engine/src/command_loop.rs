@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use dbrover_core::{DataSource, DataSourceId, Password, ProjectId, describe_error};
+use dbrover_core::{DataSource, DataSourceId, Password, ProjectId, SafetyLevel, describe_error};
 use dbrover_export::ExportSpec;
 use dbrover_store::{
     ConsoleFiles, CustomFiles, DiagramFiles, ImportPlan, KeymapFile, Project, Secret, SecretError,
@@ -40,7 +40,7 @@ use crate::tunnels::Tunnels;
 use crate::updater::{self, UpdateInstaller};
 use crate::{
     Command, ConsoleId, Document, EditFailure, EngineConfig, Event, ExportAll, Exporter, HostKey,
-    PasswordKept, PasswordUpdate, ProcessEnvironment, RunOutcome, StatementCheck,
+    PasswordKept, PasswordUpdate, ProcessEnvironment, RunOutcome, SearchEnd, StatementCheck,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -107,6 +107,7 @@ pub(crate) async fn run(
         sessions: HashMap::new(),
         consoles: HashMap::new(),
         activities: HashMap::new(),
+        searches: HashMap::new(),
         own_sessions: OwnSessions::default(),
         closing: JoinSet::new(),
     };
@@ -161,6 +162,8 @@ struct Engine {
     consoles: HashMap<ConsoleId, ConsoleSession>,
     /// Each Server activity tab's own session, one per data source (W15).
     activities: HashMap<DataSourceId, Session>,
+    /// Each Search data tab's own session, one per data source, opened read-only (W16).
+    searches: HashMap<DataSourceId, Session>,
     /// The ids the servers gave DbRover's connections, for the activity tabs to name them.
     own_sessions: OwnSessions,
     /// Sessions that were asked to disconnect and are still closing their connection.
@@ -400,6 +403,36 @@ impl Engine {
                 }),
             },
             Command::CloseActivity(data_source) => self.close_activity(data_source),
+            Command::PlanDataSearch {
+                data_source,
+                run,
+                request,
+            } => match self.search_session(data_source) {
+                Some((session, safety)) => session.request(SessionRequest::PlanSearch {
+                    run,
+                    request: Box::new(request),
+                    safety,
+                }),
+                None => self.events.send(Event::DataSearchPlanned {
+                    data_source,
+                    run,
+                    result: Err("The data source isn't saved.".to_owned()),
+                }),
+            },
+            Command::RunDataSearch { data_source, run } => match self.searches.get(&data_source) {
+                Some(session) => session.request(SessionRequest::RunSearch(run)),
+                None => self.events.send(Event::DataSearchEnded {
+                    data_source,
+                    run,
+                    end: SearchEnd::Failed("The search isn't connected.".to_owned()),
+                }),
+            },
+            Command::CancelDataSearch { data_source, run } => {
+                if let Some(session) = self.searches.get(&data_source) {
+                    session.cancel(run);
+                }
+            }
+            Command::CloseDataSearch(data_source) => self.close_search(data_source),
             Command::ReconnectConsole(console) => self.reconnect_console(console),
             Command::CloseConsole(console) => self.close_console(console),
             Command::SaveConsole { key, text } => {
@@ -1270,6 +1303,40 @@ impl Engine {
         }
     }
 
+    /// The search tab's session on `data_source`, started if it has none or its last one
+    /// ended, with the data source's own safety level: the session itself always runs as a
+    /// read-only data source's does, so a search never writes, whatever the data source's
+    /// level. `None` for a data source that isn't saved.
+    fn search_session(&mut self, data_source: DataSourceId) -> Option<(&Session, SafetyLevel)> {
+        let config = self.registry.get(data_source)?.clone();
+        let safety = config.safety;
+        let running = self
+            .searches
+            .get(&data_source)
+            .is_some_and(|session| !session.is_finished());
+        if !running {
+            self.close_search(data_source);
+            let session = Session::start(
+                DataSource {
+                    safety: SafetyLevel::ReadOnly,
+                    ..config
+                },
+                SessionOwner::DataSearch(data_source),
+                self.services(),
+            );
+            self.searches.insert(data_source, session);
+        }
+        self.searches
+            .get(&data_source)
+            .map(|session| (session, safety))
+    }
+
+    fn close_search(&mut self, data_source: DataSourceId) {
+        if let Some(session) = self.searches.remove(&data_source) {
+            self.closing.spawn(session.stop());
+        }
+    }
+
     /// Replaces the console's session with a new one to the same data source.
     fn reconnect_console(&mut self, console: ConsoleId) {
         let Some(data_source) = self
@@ -1328,6 +1395,7 @@ impl Engine {
             self.close_console(console);
         }
         self.close_activity(id);
+        self.close_search(id);
     }
 
     async fn shut_down(mut self) {
@@ -1340,6 +1408,9 @@ impl Engine {
         }
         for (_, activity) in self.activities.drain() {
             self.closing.spawn(activity.stop());
+        }
+        for (_, search) in self.searches.drain() {
+            self.closing.spawn(search.stop());
         }
         while let Some(result) = self.closing.join_next().await {
             if let Err(error) = result {

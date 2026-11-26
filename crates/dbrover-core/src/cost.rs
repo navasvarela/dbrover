@@ -188,12 +188,19 @@ pub struct TimeLimit(std::num::NonZeroU32);
 
 impl TimeLimit {
     /// `seconds` as a limit; `None` for zero.
-    pub fn from_seconds(seconds: u32) -> Option<Self> {
-        std::num::NonZeroU32::new(seconds).map(Self)
+    pub const fn from_seconds(seconds: u32) -> Option<Self> {
+        match std::num::NonZeroU32::new(seconds) {
+            Some(seconds) => Some(Self(seconds)),
+            None => None,
+        }
     }
 
-    pub fn seconds(self) -> u32 {
+    pub const fn seconds(self) -> u32 {
         self.0.get()
+    }
+
+    pub fn duration(self) -> std::time::Duration {
+        std::time::Duration::from_secs(u64::from(self.seconds()))
     }
 }
 

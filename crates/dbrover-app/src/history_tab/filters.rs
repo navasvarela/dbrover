@@ -111,6 +111,7 @@ fn kind_label(kind: HistorySourceKind) -> &'static str {
         HistorySourceKind::Mcp => "MCP clients",
         HistorySourceKind::Action => "Actions",
         HistorySourceKind::Activity => "Server activity",
+        HistorySourceKind::Search => "Data searches",
         HistorySourceKind::DbRover => "Earlier DbRover",
     }
 }

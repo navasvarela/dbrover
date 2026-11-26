@@ -11,6 +11,8 @@ use dbrover_core::{
     TransactionStatus,
 };
 use dbrover_export::{ExportSpec, SqlTable};
+
+use crate::data_search::{SearchEnd, SearchPlan, SearchRequest, TableSearched};
 use dbrover_schema::Schema;
 use dbrover_sql::{ExistingTable, ParameterValues};
 use dbrover_store::{
@@ -294,6 +296,30 @@ pub enum Command {
     },
     /// Closes the activity tab's connection.
     CloseActivity(DataSourceId),
+    /// Lists the tables a data search reads and writes each one's statement (W16), on a
+    /// connection of the Search data tab's own, always opened read-only, kept until
+    /// [`Command::CloseDataSearch`]. Answered by [`Event::DataSearchPlanned`], whose plan says
+    /// whether to ask before running it; nothing is read from a table yet.
+    PlanDataSearch {
+        data_source: DataSourceId,
+        run: RunId,
+        request: SearchRequest,
+    },
+    /// Runs the plan [`Command::PlanDataSearch`] made for `run`, one table at a time, each in
+    /// the engine's read-only mode under the request's time limit. Answered by
+    /// [`Event::DataSearchTableStarted`] and [`Event::DataSearchTableSearched`] for each table,
+    /// then [`Event::DataSearchEnded`]. Recorded in the history once, when it ends.
+    RunDataSearch {
+        data_source: DataSourceId,
+        run: RunId,
+    },
+    /// Stops the table being read and the search with it; what was found stays found.
+    CancelDataSearch {
+        data_source: DataSourceId,
+        run: RunId,
+    },
+    /// Closes the Search data tab's connection.
+    CloseDataSearch(DataSourceId),
     /// Runs statements that create or change database objects (the object helpers' DDL), in
     /// order, on the explorer's connection to the data source, connecting first if needed.
     /// Where the dialect's DDL is transactional they run in one transaction, so a failure
@@ -758,6 +784,35 @@ pub enum Event {
     /// The state of a Server activity tab's own connection, as [`Event::SessionChanged`] is
     /// the explorer's.
     ActivitySessionChanged {
+        data_source: DataSourceId,
+        state: SessionState,
+    },
+    /// The answer to [`Command::PlanDataSearch`].
+    DataSearchPlanned {
+        data_source: DataSourceId,
+        run: RunId,
+        result: Result<SearchPlan, String>,
+    },
+    /// A data search started reading the table at `index` of its plan.
+    DataSearchTableStarted {
+        data_source: DataSourceId,
+        run: RunId,
+        index: usize,
+    },
+    /// A data search finished with a table.
+    DataSearchTableSearched {
+        data_source: DataSourceId,
+        run: RunId,
+        searched: TableSearched,
+    },
+    /// A data search ended; no more of its tables will be read.
+    DataSearchEnded {
+        data_source: DataSourceId,
+        run: RunId,
+        end: SearchEnd,
+    },
+    /// The state of a Search data tab's own connection.
+    DataSearchSessionChanged {
         data_source: DataSourceId,
         state: SessionState,
     },
@@ -1244,5 +1299,7 @@ pub enum OwnSession {
     /// The activity tab's own connection, the one that read the list.
     ThisTab,
     Explorer,
+    /// A Search data tab's connection (W16).
+    DataSearch,
     Console(ConsoleId),
 }

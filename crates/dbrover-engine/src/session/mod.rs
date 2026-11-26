@@ -16,6 +16,7 @@ mod own;
 mod parameters;
 mod query;
 mod schema;
+mod search;
 mod transaction;
 mod validate;
 
@@ -36,6 +37,7 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{oneshot, watch};
 use tokio::task::JoinHandle;
 
+use crate::data_search::SearchRequest;
 use crate::events::EventSink;
 use crate::history::HistoryLog;
 use crate::open::{Connector, OpenError, TypedSecrets, open};
@@ -81,6 +83,16 @@ pub(crate) enum SessionRequest {
     ReadActivity,
     /// Stops a session the last read listed; see [`crate::Command::StopSession`].
     StopSession(SessionId, StopKind),
+    /// Lists and plans a data search; see [`crate::Command::PlanDataSearch`]. `safety` is the
+    /// data source's own level: the search's session always runs as read-only.
+    PlanSearch {
+        run: RunId,
+        /// Boxed: it is the largest request, and every queued request takes its size.
+        request: Box<SearchRequest>,
+        safety: SafetyLevel,
+    },
+    /// Runs the last plan; see [`crate::Command::RunDataSearch`].
+    RunSearch(RunId),
 }
 
 /// Statements to run in a console, in order.
@@ -103,15 +115,17 @@ pub(crate) enum SessionOwner {
     Console(ConsoleId),
     /// A data source's Server activity tab (W15).
     Activity(DataSourceId),
+    /// A data source's Search data tab (W16).
+    DataSearch(DataSourceId),
 }
 
 impl SessionOwner {
     /// Who the session's exports report to.
     pub(crate) fn exporter(self) -> Exporter {
         match self {
-            Self::Explorer(data_source) | Self::Activity(data_source) => {
-                Exporter::DataSource(data_source)
-            }
+            Self::Explorer(data_source)
+            | Self::Activity(data_source)
+            | Self::DataSearch(data_source) => Exporter::DataSource(data_source),
             Self::Console(console) => Exporter::Console(console),
         }
     }
@@ -289,6 +303,9 @@ impl SessionContext {
             SessionOwner::Activity(data_source) => {
                 Event::ActivitySessionChanged { data_source, state }
             }
+            SessionOwner::DataSearch(data_source) => {
+                Event::DataSearchSessionChanged { data_source, state }
+            }
         });
     }
 }
@@ -388,6 +405,7 @@ async fn run(
             transaction: TransactionStatus::Idle,
             read_only_open: None,
             activity: None,
+            search: None,
         };
         let ended = worker.serve(&mut requests, pending.take()).await;
         context.own_sessions.forget(context.owner);
@@ -424,7 +442,7 @@ async fn run(
             }
             // The explorer and an activity tab have nothing to lose by reconnecting, so they
             // do on their next request.
-            SessionOwner::Explorer(_) | SessionOwner::Activity(_) => {
+            SessionOwner::Explorer(_) | SessionOwner::Activity(_) | SessionOwner::DataSearch(_) => {
                 pending = match unserved {
                     Some(request) => Some(request),
                     None => match next_request_while_lost(&mut signals, &mut requests).await {
@@ -557,6 +575,8 @@ struct Worker<'a> {
     read_only_open: Option<read_only::ReadOnlyMode>,
     /// An activity tab's last read: what a stop may be sent to (W15).
     activity: Option<ServerActivity>,
+    /// A search tab's last plan, until it is run (W16).
+    search: Option<search::Planned>,
 }
 
 impl Worker<'_> {
@@ -702,6 +722,12 @@ impl Worker<'_> {
             }
             SessionRequest::ReadActivity => activity::read(self).await,
             SessionRequest::StopSession(session, kind) => activity::stop(self, session, kind).await,
+            SessionRequest::PlanSearch {
+                run,
+                request,
+                safety,
+            } => search::plan(self, run, *request, safety).await,
+            SessionRequest::RunSearch(run) => search::run(self, run).await,
             SessionRequest::FetchMore(_) | SessionRequest::Validate(_) => Ok(()),
         }
     }
