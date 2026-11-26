@@ -920,6 +920,22 @@ const SCENES: &[Scene] = &[
         needs: &[POSTGRES_URL],
     },
     Scene {
+        name: "data-search",
+        data_sources: FixtureSources::Shop,
+        play: data_search,
+        keeps_pointer: false,
+        region: whole_window,
+        needs: &[],
+    },
+    Scene {
+        name: "data-search-scope",
+        data_sources: FixtureSources::Shop,
+        play: data_search_scope,
+        keeps_pointer: false,
+        region: whole_window,
+        needs: &[],
+    },
+    Scene {
         name: "explain-plan",
         data_sources: FixtureSources::Shop,
         play: explain_plan,
@@ -936,6 +952,39 @@ const SCENES: &[Scene] = &[
         needs: &[],
     },
 ];
+
+/// Search data (W16) on the shop for "an": a customer's name, a product's and the cancelled
+/// orders' status, each table with its rows.
+fn data_search(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    open_data_search(harness);
+    let field = "A value to find";
+    harness.get_by_label(field).focus();
+    harness.run_ok();
+    harness.get_by_label(field).type_text("an");
+    harness.run_ok();
+    harness
+        .get_by_role_and_label(Role::Button, "Search")
+        .click();
+    step_until_visible(harness, "Searched");
+    harness.run_ok();
+}
+
+/// The same tab's **Change…**, ticking some of the shop's tables.
+fn data_search_scope(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    open_data_search(harness);
+    harness.get_by_label("Change\u{2026}").click();
+    step_until_visible(harness, "main.order_items");
+    harness.run_ok();
+    harness.get_by_label("main.order_items").click();
+    harness.run_ok();
+}
+
+fn open_data_search(harness: &mut Harness<'static, DbRoverApp>) {
+    harness.get_by_label("shop").click_secondary();
+    harness.run_ok();
+    harness.get_by_label("Search data\u{2026}").click();
+    step_until_visible(harness, "A value to find");
+}
 
 /// The shop's schema as an ER diagram (ER1): every table, laid out with referenced tables
 /// first, and the events table, which no key joins, beside them.

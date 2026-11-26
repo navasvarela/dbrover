@@ -1,10 +1,11 @@
 # Searching a database's data
 
-Status: **planned on 2026-11-25** (W16a), its open questions answered on 2026-11-26, all nine
-as proposed. The [roadmap](roadmap.md#well-rounded-track) tracks it as W16 in the
-well-rounded track. It starts with PostgreSQL, SQLite and DuckDB, then MySQL and MariaDB, SQL
-Server and ClickHouse, then the engines that bill each read, which ask first. Each layer's
-decisions are confirmed as it is built, and departures go in the demo note.
+Status: **built on 2026-11-26**, in one stack, #705 and the layers above it; the manual's
+chapter is [Searching data](../book/src/data-search.md), and the departures are in the
+roadmap's demo note. Planned on 2026-11-25 (W16a), its open questions answered on 2026-11-26,
+all nine as proposed. The [roadmap](roadmap.md#well-rounded-track) tracks it as W16 in the
+well-rounded track. It searches PostgreSQL, SQLite, DuckDB, MySQL, MariaDB, SQL Server and
+ClickHouse, and, asking first, Trino, Athena, BigQuery, Snowflake and Databricks.
 
 A support ticket quotes an order reference, `ORD-7731-K`, and nothing else. A customer's email
 address has to be found everywhere it is kept before it is deleted. A UUID turns up in a log

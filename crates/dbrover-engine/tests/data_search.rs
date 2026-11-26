@@ -455,3 +455,176 @@ fn a_locked_table_times_out_and_cancel_ends_the_search() {
         &format!("DROP SCHEMA {schema} CASCADE"),
     );
 }
+
+/// W16's exit, on the PostgreSQL test server: a schema searched for `o'brien` lists the
+/// customers and notes that hold it and nothing else; `50%_off` finds only the literal text;
+/// `1042` finds the order by its id and the customer by their phone; a UUID finds its row by
+/// its key; a table locked by another session times out and the search goes on; Cancel keeps
+/// what was found; a careful data source asks first; and History lists each search once, as
+/// Search. Opening a match on its row is the app's, covered by its kittest.
+#[test]
+fn w16_exit() {
+    let Some(server) = postgres_test_server() else {
+        return;
+    };
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let schema = format!(
+        "w16_exit_{}",
+        DataSourceId::generate().to_string().replace('-', "_")
+    );
+    let mut setup = connect(&runtime, &server);
+    for sql in [
+        format!("CREATE SCHEMA {schema}"),
+        format!(
+            "CREATE TABLE {schema}.customers (id int PRIMARY KEY, name text, phone text, \
+             ref uuid)"
+        ),
+        format!(
+            "INSERT INTO {schema}.customers VALUES \
+             (1, 'Kate O''Brien', '+44 20 1042 7731', '3f2c8e1a-9b7d-4c3e-8a1f-0d2b4c6e8f10'), \
+             (2, 'Liam Hale', NULL, NULL)"
+        ),
+        format!("CREATE TABLE {schema}.notes (id int PRIMARY KEY, body text)"),
+        format!(
+            "INSERT INTO {schema}.notes VALUES (88, 'called O''Brien about 50%_off'), \
+             (89, '50 offers')"
+        ),
+        format!("CREATE TABLE {schema}.orders (id int PRIMARY KEY, total numeric(10, 2))"),
+        format!("INSERT INTO {schema}.orders VALUES (1042, 42.50), (7, 9.99)"),
+        format!("CREATE TABLE {schema}.zz_locked (id int PRIMARY KEY, note text)"),
+    ] {
+        execute(&runtime, setup.as_mut(), &sql);
+    }
+    let mut holder = connect(&runtime, &server);
+    execute(&runtime, holder.as_mut(), "BEGIN");
+    execute(
+        &runtime,
+        holder.as_mut(),
+        &format!("LOCK TABLE {schema}.zz_locked IN ACCESS EXCLUSIVE MODE"),
+    );
+
+    let mut production = postgres_source(&server);
+    production.safety = SafetyLevel::Careful;
+    let (mut engine, _dir) = start_engine(&production, Some(&server.password));
+    let id = production.id;
+    let scope = CatalogPath::root()
+        .child(NodeKind::Database, server.config.server.database.clone())
+        .child(NodeKind::Schema, schema.clone());
+    let one_second = TimeLimit::from_seconds(1);
+
+    // Each search, run to its end: the tables that matched, with their rows' keys, and those
+    // that timed out.
+    let mut next = 0;
+    let mut search = |engine: &mut TestEngine, text: &str| {
+        next += 1;
+        let plan = plan(engine, id, next, request(text, scope.clone(), one_second));
+        if plan.question.is_some() {
+            assert_eq!(
+                plan.question,
+                Some(SearchQuestion::Careful {
+                    tables: plan.searched()
+                }),
+                "a careful data source asks before more than one table"
+            );
+        }
+        let (searched, end) = run(engine, id, next);
+        assert_eq!(end, SearchEnd::Finished);
+        let mut matched: Vec<(String, Vec<String>)> = Vec::new();
+        let mut timed_out = Vec::new();
+        for table in &searched {
+            let name = table_name(&plan, table);
+            match &table.outcome {
+                TableOutcome::Matched { rows, .. } => {
+                    let keys = rows
+                        .iter()
+                        .map(|row| row[0].clone().unwrap_or_default())
+                        .collect();
+                    matched.push((name, keys));
+                }
+                TableOutcome::TimedOut(_) => timed_out.push(name),
+                TableOutcome::NoMatch => {}
+                TableOutcome::Failed(message) => panic!("{name} failed: {message}"),
+            }
+        }
+        matched.sort();
+        (matched, timed_out)
+    };
+    let row = |table: &str, keys: &[&str]| {
+        (
+            table.to_owned(),
+            keys.iter().map(|key| (*key).to_owned()).collect::<Vec<_>>(),
+        )
+    };
+
+    let (matched, timed_out) = search(&mut engine, "o'brien");
+    assert_eq!(matched, [row("customers", &["1"]), row("notes", &["88"])]);
+    assert_eq!(
+        timed_out,
+        ["zz_locked"],
+        "the locked table timed out, and the rest were read"
+    );
+    let (matched, _) = search(&mut engine, "50%_off");
+    assert_eq!(matched, [row("notes", &["88"])]);
+    let (matched, _) = search(&mut engine, "1042");
+    assert_eq!(
+        matched,
+        [row("customers", &["1"]), row("orders", &["1042"])]
+    );
+    let (matched, _) = search(&mut engine, "{3F2C8E1A-9B7D-4C3E-8A1F-0D2B4C6E8F10}");
+    assert_eq!(matched, [row("customers", &["1"])]);
+
+    // Without a time limit the locked table holds the search, and Cancel ends it, keeping
+    // what the tables before it found.
+    plan(&mut engine, id, 99, request("o'brien", scope, None));
+    engine.send(Command::RunDataSearch {
+        data_source: id,
+        run: RunId(99),
+    });
+    let mut found_before = 0;
+    until(&mut engine, |event| match event {
+        Event::DataSearchTableSearched { run: RunId(99), .. } => {
+            found_before += 1;
+            None
+        }
+        Event::DataSearchTableStarted {
+            run: RunId(99),
+            index: 3,
+            ..
+        } => Some(()),
+        _ => None,
+    });
+    engine.send(Command::CancelDataSearch {
+        data_source: id,
+        run: RunId(99),
+    });
+    let end = until(&mut engine, |event| match event {
+        Event::DataSearchEnded {
+            run: RunId(99),
+            end,
+            ..
+        } => Some(end),
+        _ => None,
+    });
+    assert_eq!(end, SearchEnd::Cancelled);
+    assert_eq!(
+        found_before, 2,
+        "customers and notes were read first; orders has no text column"
+    );
+
+    let entries = searches(&mut engine, id);
+    assert_eq!(entries.len(), 5, "each search recorded once: {entries:#?}");
+    assert!(
+        entries
+            .iter()
+            .all(|entry| matches!(entry.source, HistorySource::Search { .. }))
+    );
+
+    engine.send(Command::CloseDataSearch(id));
+    engine.shut_down();
+    execute(&runtime, holder.as_mut(), "ROLLBACK");
+    execute(
+        &runtime,
+        setup.as_mut(),
+        &format!("DROP SCHEMA {schema} CASCADE"),
+    );
+}
