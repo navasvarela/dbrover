@@ -159,7 +159,7 @@ impl DbRoverMcp {
     /// Runs `work` on the data source's connection without a transaction around it, then
     /// releases the connection as other calls do. A connection that fails is discarded, so
     /// the next call opens a new one.
-    async fn on_bare_connection<T: Send>(
+    pub(crate) async fn on_bare_connection<T: Send>(
         &self,
         tool: &str,
         data_source: &DataSource,

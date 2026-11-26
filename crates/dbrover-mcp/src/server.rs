@@ -33,6 +33,7 @@ use crate::project::{Permission, ServedProject};
 use crate::report_history::{CompareReportRunsArgs, ReportProfileArgs, ReportRunsArgs};
 use crate::reports::{ExplainReportArgs, ReportRunner, RunReportArgs};
 use crate::scope::Scope;
+use crate::search::SearchArgs;
 use crate::transaction::{self, Access, CallSettings, Rows, RunError, Watchdog};
 
 /// Work to run on a connection inside a call's transaction. Boxed because it borrows the
@@ -417,6 +418,19 @@ impl DbRoverMcp {
     #[tool(annotations(read_only_hint = true, open_world_hint = false))]
     async fn server_activity(&self, Parameters(args): Parameters<ActivityArgs>) -> ToolResult {
         reply(self.activity_json(args).await)
+    }
+
+    /// Finds the rows that hold a value across the data source's tables: text in text
+    /// columns (contains, or the whole value), and a number, UUID or date (YYYY-MM-DD) as a
+    /// whole value in columns of its type too. Each table is read on its own, in a read-only
+    /// transaction under the statement time limit; the project's schemas narrow the search,
+    /// and its row limit caps the rows over every table. Returns each table that matched with
+    /// its key, the columns read and the rows, then the tables with no match, those that timed
+    /// out or failed, and those with no column that can hold the value. Refused on BigQuery,
+    /// Athena, Snowflake, Databricks and Trino, which bill each read or read a lake whole.
+    #[tool(annotations(read_only_hint = true, open_world_hint = false))]
+    async fn search_data(&self, Parameters(args): Parameters<SearchArgs>) -> ToolResult {
+        reply(self.search_json(args).await)
     }
 
     /// Stops one session server_activity lists: "cancel" stops its running statement and

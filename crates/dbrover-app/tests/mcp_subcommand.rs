@@ -197,7 +197,8 @@ async fn serves_a_project_over_stdio_with_no_window() {
             "list_reports",
             "query",
             "report_profile",
-            "report_runs"
+            "report_runs",
+            "search_data"
         ]
     );
     assert!(tools.iter().all(|tool| {
