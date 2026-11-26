@@ -86,7 +86,7 @@ Each project has these, each falling back to `mcp_defaults`:
 
 | Permission | Allows | Default |
 | --- | --- | --- |
-| `read` | Browsing the catalog, `SELECT`, `EXPLAIN`, `SHOW`, describing tables | on |
+| `read` | Browsing the catalog, `SELECT`, `EXPLAIN`, `SHOW`, describing tables, `search_data` (W16, [Searching a database's data](data-search.md)) | on |
 | `write` | `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `TRUNCATE` | off |
 | `schema` | `CREATE`, `ALTER`, `DROP`, `COMMENT ON` and other DDL | off |
 | `admin` | `GRANT`, `REVOKE`, roles and users, `CREATE DATABASE`, `VACUUM`, server settings, `COPY` to or from files, killing sessions | off |

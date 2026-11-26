@@ -63,6 +63,10 @@ name = "activity"
 harness = false
 
 [[test]]
+name = "search"
+harness = false
+
+[[test]]
 name = "redis"
 harness = false
 

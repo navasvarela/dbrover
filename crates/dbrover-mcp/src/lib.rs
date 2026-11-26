@@ -22,6 +22,7 @@ mod project;
 mod report_history;
 mod reports;
 mod scope;
+mod search;
 mod server;
 mod transaction;
 
