@@ -2151,6 +2151,58 @@ three to five, **L** a track of its own).
   its row by its key; double-clicking a match opens a console on that row; a table locked by
   another session times out and the search goes on; Cancel keeps what was found; a careful
   data source asks first; History lists the search once, as **Search**.
+- **W17 — Dump and restore (L):** planned on 2026-11-27 in [Dump and restore](dump-restore.md);
+  its open questions wait for the user. A database, some schemas or some tables written to a
+  file by the engine's own program, and read back, optionally on a schedule. Third in the
+  competitor-gap review of 2026-11-25, after server activity and searching data: all seven tools
+  compared have it, four of them free. It starts with PostgreSQL (`pg_dump`, `pg_restore`,
+  `psql`), then MySQL and MariaDB (`mysqldump`, `mariadb-dump` and their clients), then SQLite's
+  backup and DuckDB's `EXPORT DATABASE`, which need no program; SQL Server (`sqlpackage`),
+  MongoDB and ClickHouse are left for later, the billed and cloud engines out.
+  - **The programs:** found, not shipped: the path set in Settings, `PATH`, then the places
+    installers put them; each copy's version read, and the one that fits the server's version
+    chosen and shown; a `pg_dump` older than the server refused, with how to install one.
+  - **Secrets:** the data source's password, token or password command's output in a file only
+    the user can read (`PGPASSFILE`, `--defaults-file`), removed once the program has connected;
+    never on the command line or in the environment. TLS and the SSH tunnel come from the data
+    source, so **Copy command** gives a command that works in a terminal.
+  - **Formats:** PostgreSQL custom by default, directory and plain SQL; MySQL and MariaDB plain
+    SQL; `.sql.gz` written and read by DbRover; schema only, data only, chosen schemas and
+    tables.
+  - **Restore safety:** refused on a read-only data source; every restore asks, into a new
+    database by default; into an existing database of a careful one, its name typed; owners and
+    privileges left out by default.
+  - **Progress:** in the status bar with **Cancel**, the program's lines in the log console, a
+    `.partial` file renamed when the run ends well. **History:** one entry per run, origins
+    **Dump** and **Restore**.
+  - **Schedules:** saved dumps in `dumps.toml`, run by DbRover while it is open with one catch-up
+    run at the next start, and by `dbrover dump run` from the operating system's scheduler.
+    **MCP:** none.
+  - **W17a — The plan:** the design and this entry.
+  - **W17b — Finding the programs:** the core model, a `dbrover-dump` crate with the search
+    places, version reading and choice, and every engine's arguments and secret files, golden
+    tested.
+  - **W17c — PostgreSQL dump:** the engine's run, its secret file, tunnel, progress, Cancel,
+    `.partial` file and `HistorySource::Dump`, against the compose PostgreSQL.
+  - **W17d — PostgreSQL restore:** reading a file, a new database, `pg_restore` and `psql`, all
+    or nothing, chosen tables, `HistorySource::Restore`.
+  - **W17e — The dialogs:** **Dump…** and **Restore…**, the confirmations, the status bar, and
+    **Settings › Dumps › Programs**.
+  - **W17f — MySQL and MariaDB:** their programs, the `DEFINER` filter, the same tests.
+  - **W17g — SQLite and DuckDB:** the backup API and `EXPORT DATABASE`, on every runner.
+  - **W17h — Saved and scheduled dumps:** `dumps.toml`, **Settings › Dumps**, the schedule's
+    clock, keeping the last few, and `dbrover dump run`.
+  - **W17i — Manual and demo note:** a chapter with pictures, and the exit as an engine test.
+
+  **Exit:** on the PostgreSQL test server, **Dump…** on a database writes a custom dump through
+  the program DbRover found and named, with no password on its command line or in its
+  environment; **Restore…** of that file into a new database asks first and gives the same
+  tables and rows; a plain dump with an error in it, restored all or nothing, leaves the new
+  database empty; a cancelled dump leaves no file; a read-only data source refuses a restore,
+  and a careful one asks for the database's name; a `pg_dump` older than the server is refused
+  with how to install one; History lists the dump and the restore once each; a saved dump due
+  while DbRover was closed runs once at the next start.
+
 - **W18 — Users beyond PostgreSQL (L):** built; planned on 2026-11-27 in
   [Users beyond PostgreSQL](users-beyond-postgres.md), its questions answered the same day as
   proposed. MySQL's and MariaDB's `'name'@'host'` accounts and roles, and SQL Server's logins,
