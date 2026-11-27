@@ -96,3 +96,79 @@ fn creates_an_account_whose_password_stays_out_of_the_history_and_copy_ddl() {
         engine.shut_down();
     }
 }
+
+#[test]
+fn creates_a_sql_server_login_whose_hash_stays_out_of_the_history() {
+    use dbrover_sql::{
+        DatabaseUserSpec, LoginPolicy, LoginSource, LoginSpec, SqlServerHash, SqlServerOperation,
+        SqlServerPassword, UserMapping,
+    };
+
+    let Some((config, password)) = sqlserver_test_server() else {
+        return;
+    };
+    let database = config.server.database.clone();
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = start(dir.path());
+    let sqlserver = data_source("sqlserver", ConnectionConfig::SqlServer(config));
+    save(&mut engine, &sqlserver, Some(password));
+    let management = user_management(&mut engine, sqlserver.id);
+    assert!(
+        matches!(management.server, ManagedUsers::Logins(_)),
+        "{management:?}"
+    );
+    let login = unique("w18f", &sqlserver);
+    let hash = SqlServerHash::hash("W18f-Pass-2026!");
+    let create = DdlOperation::SqlServer(SqlServerOperation::CreateLogin {
+        name: login.clone(),
+        source: LoginSource::Sql {
+            password: SqlServerPassword::Hashed(hash.clone()),
+            must_change: false,
+        },
+        spec: LoginSpec {
+            server_roles: ["##MS_DefinitionReader##".to_owned()].into(),
+            ..LoginSpec::new(Some(LoginPolicy {
+                check_policy: false,
+                check_expiration: false,
+            }))
+        },
+        mappings: vec![UserMapping {
+            database: database.clone(),
+            user: login.clone(),
+            spec: DatabaseUserSpec {
+                default_schema: Some("dbo".to_owned()),
+                roles: ["db_datareader".to_owned()].into(),
+            },
+        }],
+    });
+    let statements = ddl_statements(&[create], Dialect::SqlServer).unwrap();
+    assert_eq!(apply(&mut engine, sqlserver.id, statements), Ok(()));
+
+    engine.send(Command::SearchHistory(HistoryQuery::all(sqlserver.id)));
+    let entries = match engine.next_event() {
+        Event::HistoryFound { result, .. } => result.unwrap(),
+        other => panic!("expected the history, got {other:?}"),
+    };
+    let created = entries
+        .iter()
+        .find(|entry| entry.sql.starts_with("CREATE LOGIN"))
+        .unwrap_or_else(|| panic!("no CREATE LOGIN in {entries:#?}"));
+    assert!(
+        created.sql.contains("PASSWORD = 0x<redacted> HASHED"),
+        "{}",
+        created.sql
+    );
+    for entry in &entries {
+        assert!(!entry.sql.contains(&hash.as_str()[2..]), "{}", entry.sql);
+    }
+    let drop = DdlOperation::SqlServer(SqlServerOperation::DropLogin {
+        name: login.clone(),
+        users: vec![dbrover_core::DatabaseUserName {
+            database,
+            user: login,
+        }],
+    });
+    let statements = ddl_statements(&[drop], Dialect::SqlServer).unwrap();
+    assert_eq!(apply(&mut engine, sqlserver.id, statements), Ok(()));
+    engine.shut_down();
+}

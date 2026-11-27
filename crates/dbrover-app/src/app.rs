@@ -1684,7 +1684,7 @@ impl DbRoverApp {
                     let Some(target) = Target::new(&entry.data_source) else {
                         return;
                     };
-                    let Some(form) = object_dialog::form(helper, target.dialect) else {
+                    let Some(form) = object_dialog::form(helper, &target) else {
                         return;
                     };
                     let dialog = ObjectDialog::new(target, form);

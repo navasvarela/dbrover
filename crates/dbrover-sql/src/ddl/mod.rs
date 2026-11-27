@@ -553,6 +553,8 @@ pub enum DdlError {
     UnencryptedPassword,
     #[error("This login may not do this: it needs {0}.")]
     NotAllowed(String),
+    #[error("SQL Server's own roles can't be renamed or dropped.")]
+    FixedRole,
     #[error("SQL Server unlocks a login only with a new password.")]
     UnlockNeedsPassword,
     #[error("Must change at next login needs a new password, sent as typed.")]
