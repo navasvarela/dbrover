@@ -266,6 +266,9 @@ fn mysqldump(
             "--single-transaction",
             "--hex-blob",
             "--default-character-set=utf8mb4",
+            // Tablespaces are the server's, not a database's, and MySQL 8 asks for the
+            // server-wide PROCESS privilege to dump them, which a database's own login lacks.
+            "--no-tablespaces",
             "--verbose",
         ]
         .map(str::to_owned),
@@ -507,6 +510,7 @@ mod tests {
                 "--single-transaction",
                 "--hex-blob",
                 "--default-character-set=utf8mb4",
+                "--no-tablespaces",
                 "--verbose",
                 "--routines",
                 "--triggers",

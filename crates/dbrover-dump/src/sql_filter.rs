@@ -1,10 +1,14 @@
-//! Leaving owners and privileges out of a plain SQL dump as it is sent to `psql`, line by line,
-//! for **Leave out owners and privileges** on restore: what `pg_restore --no-owner
-//! --no-privileges` does for an archive.
+//! Leaving owners and privileges out of a plain SQL dump as it is sent to its client, line by
+//! line, for **Leave out owners and privileges** on restore.
 //!
-//! pg_dump writes each `ALTER … OWNER TO`, `GRANT` and `REVOKE` on a line of its own, and a
-//! table's rows between `COPY … FROM stdin;` and `\.`, where a row may hold any text; so lines
-//! are only left out outside those blocks.
+//! - **PostgreSQL** ([`OwnerFilter`]): what `pg_restore --no-owner --no-privileges` does for an
+//!   archive. pg_dump writes each `ALTER … OWNER TO`, `GRANT` and `REVOKE` on a line of its
+//!   own, and a table's rows between `COPY … FROM stdin;` and `\.`, where a row may hold any
+//!   text; so lines are only left out outside those blocks.
+//! - **MySQL and MariaDB** ([`DefinerFilter`]): a view, routine, trigger or event names the
+//!   account that made it (`DEFINER=\`root\`@\`%\``), and a restore by another account
+//!   fails on it without `SET_USER_ID` or `SUPER`. The clause is taken out, so the restoring
+//!   account defines them; rows, in `INSERT` lines, are never touched.
 
 use std::borrow::Cow;
 
@@ -30,6 +34,80 @@ impl OwnerFilter {
         }
         (!is_ownership_or_privilege(text)).then_some(Cow::Borrowed(line))
     }
+}
+
+/// Takes the `DEFINER=…` clauses out of a MySQL or MariaDB dump's lines.
+#[derive(Debug, Default)]
+pub struct DefinerFilter;
+
+/// What starts the clause, as mysqldump and mariadb-dump write it.
+const DEFINER: &[u8] = b"DEFINER=";
+
+impl DefinerFilter {
+    /// `line` without its `DEFINER=user@host` clauses.
+    pub fn apply<'a>(&mut self, line: &'a [u8]) -> Cow<'a, [u8]> {
+        if line.starts_with(b"INSERT INTO ") || !contains(line, DEFINER) {
+            return Cow::Borrowed(line);
+        }
+        let mut kept = Vec::with_capacity(line.len());
+        let mut rest = line;
+        while let Some(at) = find(rest, DEFINER) {
+            let account = &rest[at + DEFINER.len()..];
+            match account_length(account) {
+                Some(length) => {
+                    kept.extend_from_slice(&rest[..at]);
+                    let mut after = &account[length..];
+                    // The clause's own space, so `CREATE DEFINER=… PROCEDURE` reads
+                    // `CREATE PROCEDURE`.
+                    if after.first() == Some(&b' ') && kept.last() == Some(&b' ') {
+                        after = &after[1..];
+                    }
+                    rest = after;
+                }
+                None => {
+                    kept.extend_from_slice(&rest[..at + DEFINER.len()]);
+                    rest = account;
+                }
+            }
+        }
+        kept.extend_from_slice(rest);
+        Cow::Owned(kept)
+    }
+}
+
+/// The length of `` `user`@`host` ``, `'user'@'host'` or `CURRENT_USER` at the start of
+/// `text`, a quote written twice inside a name standing for itself.
+fn account_length(text: &[u8]) -> Option<usize> {
+    if text.starts_with(b"CURRENT_USER") {
+        let length = b"CURRENT_USER".len();
+        let call = text[length..].starts_with(b"()");
+        return Some(length + if call { 2 } else { 0 });
+    }
+    let user = quoted_length(text)?;
+    let host = text.get(user..)?.strip_prefix(b"@")?;
+    Some(user + 1 + quoted_length(host)?)
+}
+
+fn quoted_length(text: &[u8]) -> Option<usize> {
+    let quote = *text.first().filter(|quote| matches!(quote, b'`' | b'\''))?;
+    let mut at = 1;
+    while at < text.len() {
+        if text[at] == quote {
+            if text.get(at + 1) == Some(&quote) {
+                at += 2;
+                continue;
+            }
+            return Some(at + 1);
+        }
+        at += 1;
+    }
+    None
+}
+
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 fn trim_line_ending(line: &[u8]) -> &[u8] {
@@ -89,6 +167,41 @@ ALTER TABLE t OWNER TO z;
 ALTER TABLE ONLY public.notes ADD CONSTRAINT notes_pkey PRIMARY KEY (body);
 "
         );
+    }
+
+    fn without_definers(line: &str) -> String {
+        String::from_utf8(DefinerFilter.apply(line.as_bytes()).into_owned()).unwrap()
+    }
+
+    #[test]
+    fn takes_out_mysqls_definers_but_never_rows() {
+        let cases = [
+            (
+                "/*!50013 DEFINER=`root`@`%` SQL SECURITY DEFINER */\n",
+                "/*!50013 SQL SECURITY DEFINER */\n",
+            ),
+            (
+                "CREATE DEFINER=`ad``min`@`localhost` PROCEDURE `p`()\n",
+                "CREATE PROCEDURE `p`()\n",
+            ),
+            (
+                "/*!50003 CREATE*/ /*!50017 DEFINER=`root`@`%`*/ /*!50003 TRIGGER `t` BEFORE\n",
+                "/*!50003 CREATE*/ /*!50017 */ /*!50003 TRIGGER `t` BEFORE\n",
+            ),
+            (
+                "/*!50106 CREATE*/ /*!50117 DEFINER='app'@'10.0.0.%'*/ /*!50106 EVENT `e`\n",
+                "/*!50106 CREATE*/ /*!50117 */ /*!50106 EVENT `e`\n",
+            ),
+            ("CREATE DEFINER=CURRENT_USER VIEW v\n", "CREATE VIEW v\n"),
+            (
+                "INSERT INTO `notes` VALUES ('DEFINER=`root`@`%`');\n",
+                "INSERT INTO `notes` VALUES ('DEFINER=`root`@`%`');\n",
+            ),
+            ("-- DEFINER=unquoted\n", "-- DEFINER=unquoted\n"),
+        ];
+        for (line, expected) in cases {
+            assert_eq!(without_definers(line), expected, "{line}");
+        }
     }
 
     #[test]

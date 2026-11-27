@@ -31,9 +31,19 @@ pub struct RestoreSpec<'a> {
 pub enum Input {
     /// The program reads the file it is given.
     Named,
-    /// DbRover sends the file on the program's standard input, gunzipped when `gzip`, and
-    /// without owners and privileges when `leave_out_owners`.
-    Stdin { gzip: bool, leave_out_owners: bool },
+    /// DbRover sends the file on the program's standard input, gunzipped when `gzip`, through
+    /// `filter`.
+    Stdin { gzip: bool, filter: LineFilter },
+}
+
+/// What DbRover takes out of plain SQL on its way to the program.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineFilter {
+    Nothing,
+    /// PostgreSQL's owners and privileges ([`crate::OwnerFilter`]).
+    Owners,
+    /// MySQL's and MariaDB's `DEFINER` clauses ([`crate::DefinerFilter`]).
+    Definers,
 }
 
 /// A restore program's run, ready to start.
@@ -67,7 +77,13 @@ pub fn restore_command(
             pg_restore(spec, target, files)
         }
         (DumpEngine::Postgres, DumpFileKind::Sql { gzip, .. }) => psql(spec, target, files, gzip),
-        (DumpEngine::Mysql | DumpEngine::MariaDb, _) => Err(ArgumentError::Format(spec.engine)),
+        (DumpEngine::Mysql | DumpEngine::MariaDb, DumpFileKind::Sql { gzip, .. }) => {
+            Ok(mysql(spec, target, files, gzip))
+        }
+        (
+            DumpEngine::Mysql | DumpEngine::MariaDb,
+            DumpFileKind::Custom | DumpFileKind::Directory,
+        ) => Err(ArgumentError::Format(spec.engine)),
     }
 }
 
@@ -149,9 +165,39 @@ fn psql(
         environment: password_file(files),
         input: Input::Stdin {
             gzip,
-            leave_out_owners: spec.options.leave_out_owners,
+            filter: if spec.options.leave_out_owners {
+                LineFilter::Owners
+            } else {
+                LineFilter::Nothing
+            },
         },
     })
+}
+
+/// `mysql` or `mariadb` reading the dump on stdin into the target database, stopping at the
+/// first error (its default in batch mode). There is no all or nothing: MySQL commits each
+/// `CREATE` and `DROP` as it runs it.
+fn mysql(spec: &RestoreSpec<'_>, target: &Target, files: &RunFiles, gzip: bool) -> RestoreCommand {
+    let mut shown = target.mysql_options(spec.engine);
+    shown.push("--default-character-set=utf8mb4".to_owned());
+    shown.push(target.database.clone());
+    // `--defaults-file` must come first, or the clients refuse it.
+    let arguments = std::iter::once(format!("--defaults-file={}", files.secret.display()))
+        .chain(shown.iter().cloned())
+        .collect();
+    RestoreCommand {
+        arguments,
+        shown,
+        environment: Vec::new(),
+        input: Input::Stdin {
+            gzip,
+            filter: if spec.options.leave_out_owners {
+                LineFilter::Definers
+            } else {
+                LineFilter::Nothing
+            },
+        },
+    }
 }
 
 fn password_file(files: &RunFiles) -> Vec<(String, String)> {
@@ -296,7 +342,39 @@ mod tests {
             command.input,
             Input::Stdin {
                 gzip: true,
-                leave_out_owners: true
+                filter: LineFilter::Owners
+            }
+        );
+    }
+
+    #[test]
+    fn sends_a_mysql_dump_to_its_client_without_definers() {
+        let mut mysql = spec(DumpFileKind::Sql {
+            engine: Some(DumpEngine::MariaDb),
+            gzip: false,
+        });
+        mysql.engine = DumpEngine::Mysql;
+        let mut target = target();
+        target.port = 3306;
+        let command = restore_command(&mysql, &target, &files()).unwrap();
+        assert_eq!(command.arguments[0], "--defaults-file=/run/secret");
+        assert_eq!(
+            command.shown,
+            [
+                "--host=db",
+                "--port=3306",
+                "--user=ada",
+                "--protocol=TCP",
+                "--ssl-mode=DISABLED",
+                "--default-character-set=utf8mb4",
+                "shop_restored"
+            ]
+        );
+        assert_eq!(
+            command.input,
+            Input::Stdin {
+                gzip: false,
+                filter: LineFilter::Definers
             }
         );
     }

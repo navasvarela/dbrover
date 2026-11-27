@@ -16,6 +16,11 @@ pub enum SecretError {
          can't be given it"
     )]
     LineBreak,
+    #[error(
+        "the password's quotes and # can't be written to a MySQL option file so that the \
+         client reads them back"
+    )]
+    OptionFile,
 }
 
 /// The password file `engine`'s programs read: for PostgreSQL a `PGPASSFILE`, for MySQL and
@@ -23,11 +28,12 @@ pub enum SecretError {
 ///
 /// # Errors
 ///
-/// [`SecretError::LineBreak`] for a PostgreSQL password with a line break in it.
+/// [`SecretError::LineBreak`] for a PostgreSQL password with a line break in it, and
+/// [`SecretError::OptionFile`] for a MySQL one whose quotes and `#` the client would misread.
 pub fn password_file(engine: DumpEngine, password: &str) -> Result<String, SecretError> {
     match engine {
         DumpEngine::Postgres => pgpass(password),
-        DumpEngine::Mysql | DumpEngine::MariaDb => Ok(option_file(password)),
+        DumpEngine::Mysql | DumpEngine::MariaDb => option_file(password),
     }
 }
 
@@ -42,10 +48,44 @@ fn pgpass(password: &str) -> Result<String, SecretError> {
     Ok(format!("*:*:*:*:{escaped}\n"))
 }
 
-/// A `[client]` group with the password in double quotes, so `#`, `;`, quotes and spaces at
-/// either end are kept: MySQL's and MariaDB's option file reader strips one pair of quotes
-/// around a value and reads `\\`, `\n`, `\r`, `\t` and `\b` escapes inside it.
-fn option_file(password: &str) -> String {
+/// A `[client]` group with the password in quotes, so `#`, `;` and spaces at either end are
+/// kept: MySQL's and MariaDB's option file reader strips the first and last character of a
+/// value when they are the same quote, and reads `\\`, `\n`, `\r`, `\t` and `\b` escapes
+/// inside it. A quote inside can't be escaped (`\"` stays two characters), and the reader
+/// takes a `#` it finds outside a quoted stretch as a comment's start, so the quote is the
+/// kind the password lacks, and a line the reader would cut short is refused.
+fn option_file(password: &str) -> Result<String, SecretError> {
+    let escaped = option_escaped(password);
+    ['"', '\'']
+        .into_iter()
+        .map(|quote| format!("password={quote}{escaped}{quote}"))
+        .find(|line| !cut_by_a_comment(line))
+        .map(|line| format!("[client]\n{line}\n"))
+        .ok_or(SecretError::OptionFile)
+}
+
+/// Whether MySQL's option file reader would take part of `line` for a comment: its
+/// `remove_end_comment`, which ends the line at a `#` outside a quoted stretch, a quote
+/// opening or closing a stretch unless a backslash inside one escapes it.
+fn cut_by_a_comment(line: &str) -> bool {
+    let mut quote = None;
+    let mut escape = false;
+    for c in line.chars() {
+        if (c == '\'' || c == '"') && !escape {
+            quote = match quote {
+                None => Some(c),
+                Some(open) if open == c => None,
+                open => open,
+            };
+        } else if quote.is_none() && c == '#' {
+            return true;
+        }
+        escape = quote.is_some() && c == '\\' && !escape;
+    }
+    false
+}
+
+fn option_escaped(password: &str) -> String {
     let mut escaped = String::with_capacity(password.len());
     for c in password.chars() {
         match c {
@@ -57,7 +97,7 @@ fn option_file(password: &str) -> String {
             other => escaped.push(other),
         }
     }
-    format!("[client]\npassword=\"{escaped}\"\n")
+    escaped
 }
 
 #[cfg(test)]
@@ -79,12 +119,30 @@ mod tests {
     #[test]
     fn quotes_and_escapes_an_option_file() {
         assert_eq!(
-            password_file(DumpEngine::Mysql, "p\"a#ss;\\ \n\t").unwrap(),
-            "[client]\npassword=\"p\"a#ss;\\\\ \\n\\t\"\n"
+            password_file(DumpEngine::Mysql, "pa#ss;\\ \n\t").unwrap(),
+            "[client]\npassword=\"pa#ss;\\\\ \\n\\t\"\n"
         );
         assert_eq!(
             password_file(DumpEngine::MariaDb, " spaced ").unwrap(),
             "[client]\npassword=\" spaced \"\n"
+        );
+    }
+
+    #[test]
+    fn quotes_with_the_quote_the_password_lacks() {
+        assert_eq!(
+            password_file(DumpEngine::Mysql, " p\"a#ss ").unwrap(),
+            "[client]\npassword=' p\"a#ss '\n"
+        );
+        // Both quotes but no `#`: nothing is cut, whichever quote opens.
+        assert_eq!(
+            password_file(DumpEngine::Mysql, "it's \"x\"").unwrap(),
+            "[client]\npassword=\"it's \"x\"\"\n"
+        );
+        // Quoted either way, a `#` is left outside a quoted stretch.
+        assert_eq!(
+            password_file(DumpEngine::Mysql, "\"#'#"),
+            Err(SecretError::OptionFile)
         );
     }
 }

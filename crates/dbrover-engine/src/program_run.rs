@@ -14,7 +14,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use dbrover_core::{DataSource, DumpEngine, Password, describe_error};
-use dbrover_dump::{OwnerFilter, SecretError, Target};
+use dbrover_dump::{DefinerFilter, LineFilter, OwnerFilter, SecretError, Target};
 use dbrover_store::SecretStore;
 
 use crate::Event;
@@ -220,12 +220,11 @@ pub(crate) fn remove_leftovers(folder: &Path) {
 /// What the program reads on its standard input.
 pub(crate) enum RunInput {
     Nothing,
-    /// A dump file, sent as it is read, gunzipped when `gzip`, without owners and privileges
-    /// when `leave_out_owners`.
+    /// A dump file, sent as it is read, gunzipped when `gzip`, through `filter`.
     File {
         path: PathBuf,
         gzip: bool,
-        leave_out_owners: bool,
+        filter: LineFilter,
     },
 }
 
@@ -343,21 +342,14 @@ impl ProgramRun {
         let files_error = |error: io::Error| DumpFailure::Files(describe_error(&error));
         let bytes = Arc::clone(bytes);
         match (&self.input, &self.output) {
-            (
-                RunInput::File {
-                    path,
-                    gzip,
-                    leave_out_owners,
-                },
-                _,
-            ) => {
+            (RunInput::File { path, gzip, filter }, _) => {
                 let stdin = child.stdin.take().ok_or_else(|| {
                     DumpFailure::Files("the program can't be sent the dump".into())
                 })?;
                 let file = File::open(path).map_err(files_error)?;
-                let (gzip, leave_out_owners) = (*gzip, *leave_out_owners);
+                let (gzip, filter) = (*gzip, *filter);
                 Ok(Some(std::thread::spawn(move || {
-                    send(file, stdin, gzip, leave_out_owners, &bytes)
+                    send(file, stdin, gzip, filter, &bytes)
                 })))
             }
             (RunInput::Nothing, RunOutput::Stdout { path, gzip }) => {
@@ -496,42 +488,40 @@ fn pump(mut from: impl Read, to: &mut impl Write, bytes: &AtomicU64) -> io::Resu
     }
 }
 
-/// Sends a dump file to a program's stdin, gunzipped when `gzip`, counting the file's bytes
-/// read. Closing stdin at the end is how the program knows the dump is over.
+/// Sends a dump file to a program's stdin, gunzipped when `gzip`, through `filter`, counting
+/// the file's bytes read. Closing stdin at the end is how the program knows the dump is over.
 fn send(
     file: File,
     stdin: ChildStdin,
     gzip: bool,
-    leave_out_owners: bool,
+    filter: LineFilter,
     bytes: &AtomicU64,
 ) -> io::Result<()> {
     let counted = Counted { inner: file, bytes };
     let mut to = io::BufWriter::new(stdin);
     if gzip {
-        lines(
-            BufReader::new(flate2::read::GzDecoder::new(counted)),
-            &mut to,
-            leave_out_owners,
-        )?;
+        let gunzipped = flate2::read::GzDecoder::new(counted);
+        lines(BufReader::new(gunzipped), &mut to, filter)?;
     } else {
-        lines(BufReader::new(counted), &mut to, leave_out_owners)?;
+        lines(BufReader::new(counted), &mut to, filter)?;
     }
     to.flush()
 }
 
-/// Copies a dump line by line, through [`OwnerFilter`] when `leave_out_owners`.
-fn lines(mut from: impl BufRead, to: &mut impl Write, leave_out_owners: bool) -> io::Result<()> {
-    let mut filter = OwnerFilter::default();
+/// Copies a dump line by line, through `filter`.
+fn lines(mut from: impl BufRead, to: &mut impl Write, filter: LineFilter) -> io::Result<()> {
+    let mut owners = OwnerFilter::default();
+    let mut definers = DefinerFilter;
     let mut line = Vec::new();
     loop {
         line.clear();
         if from.read_until(b'\n', &mut line)? == 0 {
             return Ok(());
         }
-        let kept = if leave_out_owners {
-            filter.apply(&line)
-        } else {
-            Some(Cow::Borrowed(line.as_slice()))
+        let kept = match filter {
+            LineFilter::Nothing => Some(Cow::Borrowed(line.as_slice())),
+            LineFilter::Owners => owners.apply(&line),
+            LineFilter::Definers => Some(definers.apply(&line)),
         };
         if let Some(kept) = kept {
             to.write_all(&kept)?;
