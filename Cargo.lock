@@ -2737,6 +2737,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "dbrover-dump"
+version = "0.40.0"
+dependencies = [
+ "dbrover-core",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "dbrover-engine"
 version = "0.40.0"
 dependencies = [
