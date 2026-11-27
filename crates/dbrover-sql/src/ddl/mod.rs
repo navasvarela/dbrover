@@ -18,7 +18,10 @@ mod table;
 mod tests;
 mod view;
 
-pub use account::{AccountOperation, AccountPassword, AccountSpec, PasswordPlugin};
+pub use account::{
+    AccountOperation, AccountPassword, AccountSpec, PasswordPlugin, PrivilegeGroup, account_ddl,
+    privilege_groups,
+};
 pub use alter::rebuild_refusal;
 pub use login::{
     DatabaseUserSpec, LoginPolicy, LoginSource, LoginSpec, SqlServerOperation, SqlServerPassword,
@@ -543,6 +546,13 @@ pub enum DdlError {
         server: &'static str,
         what: &'static str,
     },
+    #[error(
+        "The password would be sent as typed, so the server's password checks can read it, \
+         and this connection isn't encrypted."
+    )]
+    UnencryptedPassword,
+    #[error("This login may not do this: it needs {0}.")]
+    NotAllowed(String),
     #[error("SQL Server unlocks a login only with a new password.")]
     UnlockNeedsPassword,
     #[error("Must change at next login needs a new password, sent as typed.")]

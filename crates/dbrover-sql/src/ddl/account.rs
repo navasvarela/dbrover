@@ -78,6 +78,93 @@ impl From<&AccountDescription> for AccountSpec {
     }
 }
 
+/// A group of privileges, as the dialogs show them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PrivilegeGroup {
+    pub label: &'static str,
+    pub privileges: &'static [&'static str],
+}
+
+const DATA: PrivilegeGroup = PrivilegeGroup {
+    label: "Data",
+    privileges: &["SELECT", "INSERT", "UPDATE", "DELETE"],
+};
+
+/// MariaDB's system-versioned tables add `DELETE HISTORY`.
+const MARIADB_DATA: PrivilegeGroup = PrivilegeGroup {
+    label: "Data",
+    privileges: &["SELECT", "INSERT", "UPDATE", "DELETE", "DELETE HISTORY"],
+};
+
+const STRUCTURE: PrivilegeGroup = PrivilegeGroup {
+    label: "Structure",
+    privileges: &[
+        "CREATE",
+        "ALTER",
+        "DROP",
+        "INDEX",
+        "REFERENCES",
+        "CREATE VIEW",
+        "SHOW VIEW",
+        "CREATE ROUTINE",
+        "ALTER ROUTINE",
+        "EXECUTE",
+        "TRIGGER",
+        "EVENT",
+        "CREATE TEMPORARY TABLES",
+        "LOCK TABLES",
+    ],
+};
+
+/// The static privileges that only `*.*` takes. MySQL 8's dynamic privileges
+/// (`BACKUP_ADMIN` and the rest) are added by name, since components add their own.
+const MYSQL_ADMINISTRATION: PrivilegeGroup = PrivilegeGroup {
+    label: "Administration",
+    privileges: &[
+        "CREATE USER",
+        "CREATE ROLE",
+        "DROP ROLE",
+        "PROCESS",
+        "RELOAD",
+        "SHUTDOWN",
+        "SHOW DATABASES",
+        "FILE",
+        "SUPER",
+        "REPLICATION CLIENT",
+        "REPLICATION SLAVE",
+        "CREATE TABLESPACE",
+    ],
+};
+
+const MARIADB_ADMINISTRATION: PrivilegeGroup = PrivilegeGroup {
+    label: "Administration",
+    privileges: &[
+        "CREATE USER",
+        "PROCESS",
+        "RELOAD",
+        "SHUTDOWN",
+        "SHOW DATABASES",
+        "FILE",
+        "SUPER",
+        "BINLOG MONITOR",
+        "REPLICATION SLAVE",
+        "CREATE TABLESPACE",
+    ],
+};
+
+/// The privileges the dialogs offer on `*.*` (`global`) or on one database, by group.
+pub fn privilege_groups(flavor: MysqlFlavor, global: bool) -> Vec<PrivilegeGroup> {
+    let (data, administration) = match flavor {
+        MysqlFlavor::Mysql => (DATA, MYSQL_ADMINISTRATION),
+        MysqlFlavor::MariaDb => (MARIADB_DATA, MARIADB_ADMINISTRATION),
+    };
+    let mut groups = vec![data, STRUCTURE];
+    if global {
+        groups.push(administration);
+    }
+    groups
+}
+
 /// The password plugins DbRover writes passwords for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PasswordPlugin {
@@ -90,6 +177,29 @@ pub enum PasswordPlugin {
 }
 
 impl PasswordPlugin {
+    /// In the order the dialogs offer them, each server's default first.
+    pub const ALL: [Self; 3] = [Self::CachingSha2, Self::MysqlNative, Self::Ed25519];
+
+    /// The plugin a server names `name`, if DbRover writes passwords for it.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|plugin| plugin.name() == name)
+    }
+
+    /// Whether DbRover hashes a password for it: not for `ed25519`, whose key it doesn't
+    /// derive.
+    pub fn hashed(self) -> bool {
+        self != Self::Ed25519
+    }
+
+    /// The password hashed in this plugin's form; `None` for `ed25519`.
+    pub fn hash(self, password: &str) -> Option<AccountHash> {
+        match self {
+            Self::CachingSha2 => Some(AccountHash::caching_sha2(password)),
+            Self::MysqlNative => Some(AccountHash::mysql_native(password)),
+            Self::Ed25519 => None,
+        }
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             Self::CachingSha2 => "caching_sha2_password",
@@ -451,6 +561,35 @@ impl Writer {
     }
 }
 
+/// The statements that make `account` again, for Copy DDL: as New user would write it, with
+/// no password (the server only shows its hash, a secret on the clipboard), then the grants
+/// on tables, columns and routines, which New user doesn't write.
+///
+/// # Errors
+///
+/// [`DdlError`] for an account the server's flavour can't write (MariaDB with more than one
+/// default role, which it never reports).
+pub fn account_ddl(
+    flavor: MysqlFlavor,
+    described: &AccountDescription,
+) -> Result<Vec<String>, DdlError> {
+    let spec = AccountSpec {
+        objects: BTreeSet::new(),
+        // Expiring now is a state, not something to copy.
+        password_expired: false,
+        ..AccountSpec::from(described)
+    };
+    let mut statements = Writer { flavor }.create(&described.name, &spec, None)?;
+    let target = account(&described.name);
+    statements.extend(
+        described
+            .objects
+            .iter()
+            .map(|object| format!("GRANT {} TO {target}", object_clause(object))),
+    );
+    Ok(statements)
+}
+
 /// `REVOKE` for every privilege taken away and `GRANT` for every one given, level by level:
 /// global, then each database, then (revoked only) tables, columns and routines.
 fn privilege_changes(
@@ -514,10 +653,16 @@ fn privilege_changes(
 }
 
 fn object_revoke(object: &ObjectPrivilege, target: &str) -> String {
+    format!("REVOKE {} FROM {target}", object_clause(object))
+}
+
+/// What `GRANT` and `REVOKE` say between their keyword and the account: the privilege, with
+/// the column it is on, and where.
+fn object_clause(object: &ObjectPrivilege) -> String {
     let privilege = &object.privilege;
     match &object.level {
         ObjectLevel::Table { database, table } => format!(
-            "REVOKE {privilege} ON {}.{} FROM {target}",
+            "{privilege} ON {}.{}",
             identifier(database),
             identifier(table)
         ),
@@ -526,7 +671,7 @@ fn object_revoke(object: &ObjectPrivilege, target: &str) -> String {
             table,
             column,
         } => format!(
-            "REVOKE {privilege} ({}) ON {}.{} FROM {target}",
+            "{privilege} ({}) ON {}.{}",
             identifier(column),
             identifier(database),
             identifier(table)
@@ -536,7 +681,7 @@ fn object_revoke(object: &ObjectPrivilege, target: &str) -> String {
             name,
             kind,
         } => format!(
-            "REVOKE {privilege} ON {} {}.{} FROM {target}",
+            "{privilege} ON {} {}.{}",
             kind.keyword(),
             identifier(database),
             identifier(name)
@@ -1025,6 +1170,43 @@ mod tests {
         for (operation, expected) in cases {
             assert_eq!(run(flavor, operation).unwrap(), [expected]);
         }
+    }
+
+    #[test]
+    fn copies_an_account_without_its_password_and_with_its_table_grants() {
+        let flavor = MysqlFlavor::Mysql;
+        let account = AccountDescription {
+            name: app(),
+            kind: AccountKind::User,
+            plugin: "caching_sha2_password".to_owned(),
+            has_password: true,
+            locked: true,
+            password_expired: true,
+            lifetime: PasswordLifetime::ServerDefault,
+            failed_login: None,
+            limits: AccountLimits::default(),
+            roles: BTreeMap::new(),
+            default_roles: BTreeSet::new(),
+            global: privileges(&["process"], false),
+            databases: BTreeMap::new(),
+            objects: BTreeSet::from([ObjectPrivilege {
+                level: ObjectLevel::Table {
+                    database: "shop".to_owned(),
+                    table: "a FROM b".to_owned(),
+                },
+                privilege: Privilege::new("select"),
+            }]),
+            members: BTreeSet::new(),
+            defines: Vec::new(),
+        };
+        assert_eq!(
+            account_ddl(flavor, &account).unwrap(),
+            [
+                "CREATE USER `app`@`%` ACCOUNT LOCK",
+                "GRANT PROCESS ON *.* TO `app`@`%`",
+                "GRANT SELECT ON `shop`.`a FROM b` TO `app`@`%`",
+            ]
+        );
     }
 
     #[test]

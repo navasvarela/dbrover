@@ -6,6 +6,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+#[path = "ddl/accounts.rs"]
+mod accounts;
 mod common;
 #[path = "ddl/schema_compare.rs"]
 mod schema_compare;

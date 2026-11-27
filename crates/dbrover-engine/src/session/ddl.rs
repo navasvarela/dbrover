@@ -5,12 +5,12 @@
 use std::time::Instant;
 
 use dbrover_core::{
-    CatalogNode, CatalogPath, Connection, DriverError, FolderKind, Identifier, NodeKind,
-    RelationName, Row, TableDescription, describe_error,
+    CatalogNode, CatalogPath, Connection, DriverError, FolderKind, Identifier, ManagedUsers,
+    NodeKind, PrincipalDescription, RelationName, Row, TableDescription, describe_error,
 };
 use dbrover_sql::{
     ColumnSpec, DdlOperation, Dialect, ExistingTable, ForeignKeySwitch, ObjectName, RoleSpec,
-    TableSpec, rebuild_refusal,
+    TableSpec, UserModel, account_ddl, rebuild_refusal,
 };
 use dbrover_store::{HistoryEntry, HistoryOutcome, HistorySource, redact_secrets};
 use jiff::Timestamp;
@@ -253,6 +253,11 @@ pub(super) async fn load(
     let kind = path.last().map(|segment| segment.kind);
     let result = if kind == Some(NodeKind::Table) && rebuilds_table_ddl(context) {
         rebuild(context, connection, &path).await
+    } else if matches!(kind, Some(NodeKind::Role | NodeKind::User))
+        && sql_dialect(context)
+            .is_ok_and(|dialect| dialect.capabilities().users == UserModel::Accounts)
+    {
+        rebuild_account(connection, &path).await
     } else if kind == Some(NodeKind::Role) {
         rebuild_role(context, connection, &path).await
     } else {
@@ -438,6 +443,34 @@ async fn rebuild_role(
     }
     .statements(dialect)
     .map_err(|error| error.to_string())?;
+    Ok(statements
+        .iter()
+        .map(|statement| format!("{statement};\n"))
+        .collect())
+}
+
+/// `CREATE USER` or `CREATE ROLE` and its grants for the MySQL or MariaDB account at `path`
+/// (W18), from its description: everything but its password, whose hash is a secret on the
+/// clipboard.
+async fn rebuild_account(
+    connection: &mut dyn Connection,
+    path: &CatalogPath,
+) -> Result<String, String> {
+    let management = connection
+        .user_management()
+        .await
+        .map_err(|error| describe_error(&error))?;
+    let ManagedUsers::Accounts(server) = management.server else {
+        return Err("This server's users aren't MySQL's accounts.".to_owned());
+    };
+    let PrincipalDescription::Account(account) = connection
+        .describe_principal(path)
+        .await
+        .map_err(|error| describe_error(&error))?
+    else {
+        return Err(format!("{path} isn't an account."));
+    };
+    let statements = account_ddl(server.flavor, &account).map_err(|error| error.to_string())?;
     Ok(statements
         .iter()
         .map(|statement| format!("{statement};\n"))

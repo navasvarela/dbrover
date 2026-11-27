@@ -1703,6 +1703,15 @@ impl DbRoverApp {
                             path,
                         });
                     }
+                    if let Some(path) = dialog.principal_request() {
+                        self.send(Command::DescribePrincipal {
+                            data_source: id,
+                            path,
+                        });
+                    }
+                    if dialog.needs_user_management() {
+                        self.send(Command::LoadUserManagement(id));
+                    }
                     self.object_dialog = Some(dialog);
                 }
             }

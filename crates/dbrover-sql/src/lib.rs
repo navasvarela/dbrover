@@ -41,10 +41,10 @@ pub use classify::{
 pub use ddl::{
     AccountOperation, AccountPassword, AccountSpec, Check, ColumnSpec, DatabaseUserSpec, DdlError,
     DdlOperation, ExistingTable, ForeignKey, IndexMethod, IndexSpec, LoginPolicy, LoginSource,
-    LoginSpec, ObjectName, OwnedObjects, PasswordChange, PasswordPlugin, ReferentialAction,
-    RoleSpec, SchemaSpec, SqlServerOperation, SqlServerPassword, TableAlteration, TableSpec,
-    UniqueKey, UserMapping, UserSource, ViewKind, ViewSpec, ddl_statements, quote_name,
-    rebuild_refusal, view_query,
+    LoginSpec, ObjectName, OwnedObjects, PasswordChange, PasswordPlugin, PrivilegeGroup,
+    ReferentialAction, RoleSpec, SchemaSpec, SqlServerOperation, SqlServerPassword,
+    TableAlteration, TableSpec, UniqueKey, UserMapping, UserSource, ViewKind, ViewSpec,
+    account_ddl, ddl_statements, privilege_groups, quote_name, rebuild_refusal, view_query,
 };
 pub use dialect::{
     Capabilities, Dialect, ExplainDepth, ExplainSetting, ForeignKeySwitch, PlanRequest, Savepoint,
