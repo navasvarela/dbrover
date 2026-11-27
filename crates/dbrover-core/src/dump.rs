@@ -6,7 +6,10 @@ use std::fmt;
 use std::num::NonZeroU8;
 use std::path::PathBuf;
 
-use crate::{ConnectionConfig, DataSourceId, ManagedService, ServerInfo, TableName};
+use crate::{
+    ConnectionConfig, DataSourceId, DuckDbConfig, DuckDbDatabase, ManagedService, ServerInfo,
+    TableName,
+};
 
 /// An engine DbRover can dump and restore, which decides the programs and formats offered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -14,6 +17,10 @@ pub enum DumpEngine {
     Postgres,
     Mysql,
     MariaDb,
+    /// SQLite, dumped as a consistent copy of its file by SQLite itself (`VACUUM INTO`).
+    Sqlite,
+    /// DuckDB, dumped by DuckDB itself (`EXPORT DATABASE`) to a folder.
+    DuckDb,
 }
 
 /// What `ServerInfo::product` says for a MariaDB server, as the MySQL driver reports it.
@@ -30,6 +37,14 @@ impl DumpEngine {
             ConnectionConfig::Postgres(_) => Some(Self::Postgres),
             ConnectionConfig::Mysql(_) if server.product == MARIADB_PRODUCT => Some(Self::MariaDb),
             ConnectionConfig::Mysql(_) => Some(Self::Mysql),
+            ConnectionConfig::Sqlite(_) => Some(Self::Sqlite),
+            // A file only: an in-memory database is the session's own, which another
+            // connection can't see, and MotherDuck's are in its cloud, left out with the
+            // billed engines.
+            ConnectionConfig::DuckDb(DuckDbConfig {
+                database: DuckDbDatabase::File { .. },
+                ..
+            }) => Some(Self::DuckDb),
             _ => None,
         }
     }
@@ -44,7 +59,15 @@ impl DumpEngine {
                 DumpFormat::SqlGz,
             ],
             Self::Mysql | Self::MariaDb => &[DumpFormat::Sql, DumpFormat::SqlGz],
+            Self::Sqlite => &[DumpFormat::DatabaseFile],
+            Self::DuckDb => &[DumpFormat::Parquet, DumpFormat::Csv],
         }
+    }
+
+    /// Whether a dump runs the engine's own program; SQLite and DuckDB dump themselves, inside
+    /// DbRover, so there is nothing to find or install.
+    pub fn runs_a_program(self) -> bool {
+        matches!(self, Self::Postgres | Self::Mysql | Self::MariaDb)
     }
 
     /// Whether a dump can be limited to some schemas. MySQL's databases are its schemas, so a
@@ -60,6 +83,8 @@ impl fmt::Display for DumpEngine {
             Self::Postgres => "PostgreSQL",
             Self::Mysql => "MySQL",
             Self::MariaDb => "MariaDB",
+            Self::Sqlite => "SQLite",
+            Self::DuckDb => "DuckDB",
         })
     }
 }
@@ -75,6 +100,13 @@ pub enum DumpFormat {
     Sql,
     /// Plain SQL, gzipped by DbRover as it is written.
     SqlGz,
+    /// SQLite's: a consistent copy of the database file, opened as it is.
+    DatabaseFile,
+    /// DuckDB's `EXPORT DATABASE`: a folder of the schema, a load script and a Parquet file per
+    /// table.
+    Parquet,
+    /// DuckDB's `EXPORT DATABASE` with a CSV file per table.
+    Csv,
 }
 
 impl DumpFormat {
@@ -85,6 +117,8 @@ impl DumpFormat {
             Self::Directory => None,
             Self::Sql => Some("sql"),
             Self::SqlGz => Some("sql.gz"),
+            Self::DatabaseFile => Some("sqlite"),
+            Self::Parquet | Self::Csv => None,
         }
     }
 
@@ -100,6 +134,9 @@ impl DumpFormat {
             Self::Directory => "Directory: a folder, dumped by several jobs at once",
             Self::Sql => "Plain SQL (.sql): readable, restored all at once",
             Self::SqlGz => "Plain SQL, gzipped (.sql.gz)",
+            Self::DatabaseFile => "A copy of the database file, consistent while others write",
+            Self::Parquet => "A folder: the schema, a load script and a Parquet file per table",
+            Self::Csv => "A folder: the schema, a load script and a CSV file per table",
         }
     }
 }
@@ -262,7 +299,11 @@ mod tests {
                 ServerInfo::new("MariaDB", "11.4.4"),
                 Some(DumpEngine::MariaDb),
             ),
-            (&sqlite, ServerInfo::new("SQLite", "3.46.0"), None),
+            (
+                &sqlite,
+                ServerInfo::new("SQLite", "3.46.0"),
+                Some(DumpEngine::Sqlite),
+            ),
         ];
         for (config, info, expected) in cases {
             assert_eq!(DumpEngine::of(config, &info), expected, "{info}");

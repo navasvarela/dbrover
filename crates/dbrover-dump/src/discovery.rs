@@ -9,7 +9,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use crate::program::{Os, Program};
+use crate::program::{ClientFamily, Os, Program};
 
 /// What the search needs of the file system, so it can be tested on a made-up one.
 pub trait Folders {
@@ -97,29 +97,28 @@ fn each(parent: impl Into<PathBuf>, prefix: &'static str, rest: &'static str) ->
     }
 }
 
-fn mac_places(family: dbrover_core::DumpEngine) -> Vec<Place> {
-    use dbrover_core::DumpEngine;
+fn mac_places(family: ClientFamily) -> Vec<Place> {
     let mut places = Vec::new();
     for brew in HOMEBREW_PREFIXES {
         let brew = Path::new(brew);
         match family {
-            DumpEngine::Postgres => {
+            ClientFamily::Postgres => {
                 places.push(Place::Fixed(brew.join("libpq/bin")));
                 places.push(each(brew, "postgresql@", "bin"));
             }
-            DumpEngine::Mysql => {
+            ClientFamily::Mysql => {
                 places.push(Place::Fixed(brew.join("mysql-client/bin")));
                 places.push(Place::Fixed(brew.join("mysql/bin")));
                 places.push(each(brew, "mysql@", "bin"));
             }
-            DumpEngine::MariaDb => {
+            ClientFamily::MariaDb => {
                 places.push(Place::Fixed(brew.join("mariadb/bin")));
                 places.push(each(brew, "mariadb@", "bin"));
             }
         }
     }
     match family {
-        DumpEngine::Postgres => {
+        ClientFamily::Postgres => {
             places.push(each(
                 "/Applications/Postgres.app/Contents/Versions",
                 "",
@@ -127,31 +126,29 @@ fn mac_places(family: dbrover_core::DumpEngine) -> Vec<Place> {
             ));
             places.push(each("/Library/PostgreSQL", "", "bin"));
         }
-        DumpEngine::Mysql => places.push(Place::Fixed("/usr/local/mysql/bin".into())),
-        DumpEngine::MariaDb => {}
+        ClientFamily::Mysql => places.push(Place::Fixed("/usr/local/mysql/bin".into())),
+        ClientFamily::MariaDb => {}
     }
     places
 }
 
-fn linux_places(family: dbrover_core::DumpEngine) -> Vec<Place> {
-    use dbrover_core::DumpEngine;
+fn linux_places(family: ClientFamily) -> Vec<Place> {
     match family {
         // Debian and Ubuntu keep one folder per version (`/usr/bin/pg_dump` is a wrapper that
         // picks one by cluster); PGDG's Red Hat and Fedora packages do too.
-        DumpEngine::Postgres => vec![
+        ClientFamily::Postgres => vec![
             each("/usr/lib/postgresql", "", "bin"),
             each("/usr", "pgsql-", "bin"),
         ],
-        DumpEngine::Mysql | DumpEngine::MariaDb => vec![Place::Fixed("/usr/bin".into())],
+        ClientFamily::Mysql | ClientFamily::MariaDb => vec![Place::Fixed("/usr/bin".into())],
     }
 }
 
-fn windows_places(family: dbrover_core::DumpEngine, program_files: &Path) -> Vec<Place> {
-    use dbrover_core::DumpEngine;
+fn windows_places(family: ClientFamily, program_files: &Path) -> Vec<Place> {
     match family {
-        DumpEngine::Postgres => vec![each(program_files.join("PostgreSQL"), "", "bin")],
-        DumpEngine::Mysql => vec![each(program_files.join("MySQL"), "MySQL Server ", "bin")],
-        DumpEngine::MariaDb => vec![each(program_files, "MariaDB ", "bin")],
+        ClientFamily::Postgres => vec![each(program_files.join("PostgreSQL"), "", "bin")],
+        ClientFamily::Mysql => vec![each(program_files.join("MySQL"), "MySQL Server ", "bin")],
+        ClientFamily::MariaDb => vec![each(program_files, "MariaDB ", "bin")],
     }
 }
 

@@ -30,9 +30,24 @@ pub(crate) enum ProgramState {
     Choosing,
     Chosen(ProgramLine),
     Missing(String),
+    /// SQLite and DuckDB dump and restore themselves.
+    Itself(DumpEngine),
 }
 
 impl ProgramState {
+    /// What a run of `engine` starts with: a program to look for, or none to run.
+    pub(crate) fn for_engine(engine: DumpEngine) -> Self {
+        if engine.runs_a_program() {
+            Self::Choosing
+        } else {
+            Self::Itself(engine)
+        }
+    }
+
+    pub(crate) fn is_ready(&self) -> bool {
+        matches!(self, Self::Chosen(_) | Self::Itself(_))
+    }
+
     pub(crate) fn apply(&mut self, query: &ProgramQuery, event: &Event) {
         if let Event::DumpProgramChosen {
             query: answered,
@@ -74,6 +89,12 @@ impl ProgramState {
             Self::Missing(why) => {
                 widgets::status(ui, icons::WARNING, palette.error, why);
             }
+            Self::Itself(engine) => {
+                form::description_label(
+                    ui,
+                    &format!("{engine} does it itself, inside DbRover: no program to install."),
+                );
+            }
         }
     }
 }
@@ -110,12 +131,17 @@ impl DumpDialog {
         path: &CatalogPath,
         folder: &Path,
         programs: ProgramPaths,
-    ) -> Option<(Self, Command)> {
+    ) -> Option<(Self, Option<Command>)> {
         let engine = entry.dump_engine()?;
         let dbrover_engine::SessionState::Connected(server) = &entry.session else {
             return None;
         };
-        let own = entry.data_source.config.database().unwrap_or_default();
+        // A SQLite or DuckDB file has no database name of its own: the data source's stands in.
+        let own = entry
+            .data_source
+            .config
+            .database()
+            .unwrap_or(&entry.data_source.name);
         let (database, scope) = dump_scope(engine, path, own);
         let format = engine.formats()[0];
         let file = folder.join(dump_file_name(&database, format, &jiff::Zoned::now()));
@@ -126,14 +152,16 @@ impl DumpDialog {
             archive_made_by: None,
             programs,
         };
-        let command = Command::ChooseDumpProgram(query.clone());
+        let command = engine
+            .runs_a_program()
+            .then(|| Command::ChooseDumpProgram(query.clone()));
         let dialog = Self {
             data_source: entry.data_source.id,
             name: entry.data_source.name.clone(),
             engine,
             server: server.version.clone(),
             query,
-            program: ProgramState::Choosing,
+            program: ProgramState::for_engine(engine),
             target: copy_target(entry, &database),
             database,
             scope,
@@ -229,7 +257,7 @@ impl DumpDialog {
         if browse {
             return Some(DumpAction::Browse);
         }
-        let ready = matches!(self.program, ProgramState::Chosen(_)) && !self.file.trim().is_empty();
+        let ready = self.program.is_ready() && !self.file.trim().is_empty();
         let ((), (dump, cancel)) = form::footer_with_leading(
             ui,
             |ui| self.copy_command(ui),
@@ -265,8 +293,8 @@ impl DumpDialog {
         let copy = ui
             .add_enabled(command.is_some(), egui::Button::new("Copy command"))
             .on_disabled_hover_text(
-                "Through an SSH tunnel the command is known once the dump runs: it is in the log \
-                 and in History",
+                "Known once the dump runs, through an SSH tunnel or inside DbRover: the log and \
+                 History have it then",
             );
         if let Some(command) = command.filter(|_| copy.clicked()) {
             ui.ctx().copy_text(command);
@@ -324,6 +352,9 @@ fn format_name(format: DumpFormat) -> &'static str {
         DumpFormat::Directory => "Directory",
         DumpFormat::Sql => "Plain SQL (.sql)",
         DumpFormat::SqlGz => "Plain SQL, gzipped (.sql.gz)",
+        DumpFormat::DatabaseFile => "A copy of the file (.sqlite)",
+        DumpFormat::Parquet => "Parquet files in a folder",
+        DumpFormat::Csv => "CSV files in a folder",
     }
 }
 
@@ -356,6 +387,8 @@ pub(crate) fn dump_scope(engine: DumpEngine, path: &CatalogPath, own: &str) -> (
             };
             (database, scope)
         }
+        // A whole database, the one file.
+        DumpEngine::Sqlite | DumpEngine::DuckDb => (own.to_owned(), DumpScope::Database),
     }
 }
 

@@ -75,7 +75,7 @@ pub(crate) async fn inspect(
         DumpFileKind::Custom | DumpFileKind::Directory => {
             Some(list_archive(file, services, paths).await?)
         }
-        DumpFileKind::Sql { .. } => None,
+        DumpFileKind::Sql { .. } | DumpFileKind::SqliteFile | DumpFileKind::DuckDbExport => None,
     };
     Ok(DumpFileFound {
         kind,
@@ -90,9 +90,11 @@ fn sniff_file(path: &Path) -> Result<DumpFileKind, String> {
     if path.is_dir() {
         return if path.join("toc.dat").is_file() {
             Ok(DumpFileKind::Directory)
+        } else if path.join("load.sql").is_file() && path.join("schema.sql").is_file() {
+            Ok(DumpFileKind::DuckDbExport)
         } else {
             Err(format!(
-                "{} isn't a dump: a folder without toc.dat",
+                "{} isn't a dump: a folder with neither toc.dat nor DuckDB's load.sql",
                 path.display()
             ))
         };
@@ -124,7 +126,7 @@ async fn list_archive(
     let found = services.versions.find(&[Program::PgRestore], paths).await;
     let newest = found
         .iter()
-        .filter(|copy| copy.version.family == DumpEngine::Postgres)
+        .filter(|copy| copy.version.family == dbrover_dump::ClientFamily::Postgres)
         .max_by_key(|copy| copy.version.version)
         .ok_or_else(|| {
             dbrover_dump::install_hint(DumpEngine::Postgres, 17, dbrover_dump::Os::current())
@@ -181,11 +183,14 @@ async fn restore(
     }
     let engine = DumpEngine::of(&data_source.config, &run.server)
         .ok_or_else(|| DumpFailure::NotDumpable(run.server.to_string()))?;
-    let server = Version::parse_leading(&run.server.version)
-        .ok_or_else(|| DumpFailure::ServerVersion(run.server.version.clone()))?;
     let found = inspect(&run.request.file, services, &run.programs)
         .await
         .map_err(DumpFailure::File)?;
+    if !engine.runs_a_program() {
+        return crate::self_dumps::restore(run, engine, found.kind, data_source, services).await;
+    }
+    let server = Version::parse_leading(&run.server.version)
+        .ok_or_else(|| DumpFailure::ServerVersion(run.server.version.clone()))?;
     if !found.kind.restores_into(engine) {
         return Err(DumpFailure::Arguments(
             dbrover_dump::ArgumentError::OtherEngine {

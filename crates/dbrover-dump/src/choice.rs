@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use dbrover_core::DumpEngine;
 
-use crate::program::{Os, Program, Role};
+use crate::program::{ClientFamily, Os, Program, Role};
 use crate::version::{ProgramVersion, Version};
 
 /// A copy of a program, and what its `--version` said.
@@ -61,7 +61,7 @@ pub fn choose<'a>(found: &'a [FoundProgram], need: &Need, os: Os) -> Result<Choi
     let candidates: Vec<&FoundProgram> = found
         .iter()
         .filter(|copy| programs.contains(&copy.program))
-        .filter(|copy| copy.version.family == need.engine)
+        .filter(|copy| ClientFamily::of(need.engine) == Some(copy.version.family))
         .collect();
     let at_least = minimum_major(need);
     let fitting: Vec<&FoundProgram> = candidates
@@ -174,6 +174,9 @@ pub fn install_hint(engine: DumpEngine, major: u32, os: Os) -> String {
         (DumpEngine::MariaDb, Os::Windows) => {
             "Install MariaDB's client programs with MariaDB's installer.".to_owned()
         }
+        (DumpEngine::Sqlite | DumpEngine::DuckDb, _) => {
+            format!("Nothing to install: DbRover dumps {engine} itself.")
+        }
     }
 }
 
@@ -181,7 +184,7 @@ pub fn install_hint(engine: DumpEngine, major: u32, os: Os) -> String {
 mod tests {
     use super::*;
 
-    fn copy(program: Program, family: DumpEngine, major: u32, minor: u32) -> FoundProgram {
+    fn copy(program: Program, family: ClientFamily, major: u32, minor: u32) -> FoundProgram {
         FoundProgram {
             program,
             path: PathBuf::from(format!("/opt/{program}-{major}.{minor}")),
@@ -204,10 +207,10 @@ mod tests {
     #[test]
     fn prefers_the_servers_major_version_then_the_newest() {
         let found = [
-            copy(Program::PgDump, DumpEngine::Postgres, 16, 4),
-            copy(Program::PgDump, DumpEngine::Postgres, 17, 1),
-            copy(Program::PgDump, DumpEngine::Postgres, 17, 2),
-            copy(Program::PgDump, DumpEngine::Postgres, 18, 0),
+            copy(Program::PgDump, ClientFamily::Postgres, 16, 4),
+            copy(Program::PgDump, ClientFamily::Postgres, 17, 1),
+            copy(Program::PgDump, ClientFamily::Postgres, 17, 2),
+            copy(Program::PgDump, ClientFamily::Postgres, 18, 0),
         ];
         let to_17 = choose(
             &found,
@@ -228,7 +231,7 @@ mod tests {
 
     #[test]
     fn refuses_a_pg_dump_older_than_the_server_saying_what_to_install() {
-        let found = [copy(Program::PgDump, DumpEngine::Postgres, 16, 4)];
+        let found = [copy(Program::PgDump, ClientFamily::Postgres, 16, 4)];
         let refused = choose(
             &found,
             &need(DumpEngine::Postgres, Role::Dump, 17),
@@ -247,7 +250,7 @@ mod tests {
 
     #[test]
     fn pg_restore_must_be_as_new_as_the_archives_maker() {
-        let found = [copy(Program::PgRestore, DumpEngine::Postgres, 16, 4)];
+        let found = [copy(Program::PgRestore, ClientFamily::Postgres, 16, 4)];
         let mut restore = need(DumpEngine::Postgres, Role::RestoreArchive, 16);
         restore.archive_made_by = Some(Version::new(17, 2, 0));
         let refused = choose(&found, &restore, Os::MacOs).unwrap_err();
@@ -262,12 +265,12 @@ mod tests {
     #[test]
     fn chooses_each_familys_own_client_by_its_version() {
         let found = [
-            copy(Program::Mysqldump, DumpEngine::Mysql, 8, 4),
-            copy(Program::Mysqldump, DumpEngine::MariaDb, 10, 11),
-            copy(Program::MariadbDump, DumpEngine::MariaDb, 11, 4),
+            copy(Program::Mysqldump, ClientFamily::Mysql, 8, 4),
+            copy(Program::Mysqldump, ClientFamily::MariaDb, 10, 11),
+            copy(Program::MariadbDump, ClientFamily::MariaDb, 11, 4),
         ];
         let mysql = choose(&found, &need(DumpEngine::Mysql, Role::Dump, 8), Os::Linux).unwrap();
-        assert_eq!(mysql.program.version.family, DumpEngine::Mysql);
+        assert_eq!(mysql.program.version.family, ClientFamily::Mysql);
         let mariadb = choose(
             &found,
             &need(DumpEngine::MariaDb, Role::Dump, 11),
@@ -275,7 +278,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(mariadb.program.program, Program::MariadbDump);
-        let only_mysql = [copy(Program::Mysqldump, DumpEngine::Mysql, 8, 4)];
+        let only_mysql = [copy(Program::Mysqldump, ClientFamily::Mysql, 8, 4)];
         assert!(
             choose(
                 &only_mysql,
@@ -288,7 +291,7 @@ mod tests {
 
     #[test]
     fn warns_of_a_mysql_client_older_than_the_server() {
-        let found = [copy(Program::Mysql, DumpEngine::Mysql, 8, 0)];
+        let found = [copy(Program::Mysql, ClientFamily::Mysql, 8, 0)];
         let chosen = choose(&found, &need(DumpEngine::Mysql, Role::RunSql, 9), Os::MacOs).unwrap();
         assert!(
             chosen

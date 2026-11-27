@@ -154,6 +154,9 @@ async fn dump(
 ) -> Result<DumpDone, DumpFailure> {
     let engine = DumpEngine::of(&data_source.config, &run.server)
         .ok_or_else(|| DumpFailure::NotDumpable(run.server.to_string()))?;
+    if !engine.runs_a_program() {
+        return crate::self_dumps::dump(&run, engine, data_source, services, cancelled).await;
+    }
     let server = Version::parse_leading(&run.server.version)
         .ok_or_else(|| DumpFailure::ServerVersion(run.server.version.clone()))?;
     let choice = choose_program(services, engine, Role::Dump, server, None, &run.programs).await?;
@@ -322,6 +325,7 @@ fn table_reader(engine: DumpEngine) -> fn(&str) -> Option<String> {
         DumpEngine::Mysql | DumpEngine::MariaDb => {
             |line| dbrover_dump::dumped_table(DumpEngine::Mysql, line)
         }
+        DumpEngine::Sqlite | DumpEngine::DuckDb => |_| None,
     }
 }
 
@@ -332,7 +336,7 @@ pub(crate) fn partial_path(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
-fn refuse_existing(final_path: &Path, partial: &Path) -> Result<(), DumpFailure> {
+pub(crate) fn refuse_existing(final_path: &Path, partial: &Path) -> Result<(), DumpFailure> {
     if final_path.exists() {
         return Err(DumpFailure::Exists(final_path.to_owned()));
     }
@@ -346,7 +350,7 @@ fn refuse_existing(final_path: &Path, partial: &Path) -> Result<(), DumpFailure>
 }
 
 /// Renames the `.partial` file once the program ended well; removes it otherwise.
-fn finish(
+pub(crate) fn finish(
     ended: Result<(), DumpFailure>,
     partial: &Path,
     final_path: &Path,
@@ -375,7 +379,7 @@ fn finish(
     }
 }
 
-fn history_entry(
+pub(crate) fn history_entry(
     data_source: &DataSource,
     request: &DumpRequest,
     command: String,
@@ -412,6 +416,9 @@ fn summary(request: &DumpRequest, result: &Result<DumpDone, DumpFailure>) -> Str
         DumpFormat::Directory => "directory",
         DumpFormat::Sql => "plain SQL",
         DumpFormat::SqlGz => "plain SQL, gzipped",
+        DumpFormat::DatabaseFile => "a copy of the file",
+        DumpFormat::Parquet => "Parquet",
+        DumpFormat::Csv => "CSV",
     };
     let what = format!(
         "{} ({format}{scope}) to {}",

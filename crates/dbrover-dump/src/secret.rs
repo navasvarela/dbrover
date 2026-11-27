@@ -34,6 +34,8 @@ pub fn password_file(engine: DumpEngine, password: &str) -> Result<String, Secre
     match engine {
         DumpEngine::Postgres => pgpass(password),
         DumpEngine::Mysql | DumpEngine::MariaDb => option_file(password),
+        // They dump themselves: there is no program to give a password.
+        DumpEngine::Sqlite | DumpEngine::DuckDb => Ok(String::new()),
     }
 }
 

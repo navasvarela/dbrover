@@ -2901,7 +2901,7 @@ impl DbRoverApp {
             DumpDialog::open(entry, path, &folder, self.dump_programs())
         {
             self.dump_dialog = Some(dialog);
-            self.send(command);
+            self.send_if(command);
         }
     }
 

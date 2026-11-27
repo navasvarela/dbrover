@@ -259,9 +259,12 @@ pub fn pick_restore_file() -> Option<PathBuf> {
     let picked = rfd::FileDialog::new()
         .set_title("Choose a dump to restore")
         .pick_file()?;
-    // A directory archive is chosen by the toc.dat inside it.
+    // A PostgreSQL directory archive is chosen by the toc.dat inside it, and a DuckDB export
+    // by its load.sql.
     match picked.file_name() {
-        Some(name) if name == "toc.dat" => picked.parent().map(Path::to_path_buf),
+        Some(name) if name == "toc.dat" || name == "load.sql" => {
+            picked.parent().map(Path::to_path_buf)
+        }
         _ => Some(picked),
     }
 }

@@ -35,6 +35,8 @@ enum FileState {
 enum Into {
     NewDatabase,
     Existing,
+    /// SQLite's and DuckDB's: a new database file, never one that exists.
+    NewFile,
 }
 
 pub struct RestoreDialog {
@@ -68,6 +70,7 @@ impl RestoreDialog {
         programs: ProgramPaths,
     ) -> Option<(Self, Command)> {
         let engine = entry.dump_engine()?;
+        let itself = !engine.runs_a_program();
         let dbrover_engine::SessionState::Connected(server) = &entry.session else {
             return None;
         };
@@ -88,12 +91,16 @@ impl RestoreDialog {
             engine,
             server: server.version.clone(),
             programs,
-            new_name: format!("{}_restored", stem(&file)),
+            new_name: if itself {
+                restored_file(&file, engine)
+            } else {
+                format!("{}_restored", stem(&file))
+            },
             file,
             state: FileState::Reading,
             query: None,
-            program: ProgramState::Choosing,
-            into: if database.is_some() {
+            program: ProgramState::for_engine(engine),
+            into: if database.is_some() && !itself {
                 Into::Existing
             } else {
                 Into::NewDatabase
@@ -118,6 +125,10 @@ impl RestoreDialog {
             return None;
         }
         match result {
+            Ok(found) if !self.engine.runs_a_program() => {
+                self.state = FileState::Read(found.clone());
+                None
+            }
             Ok(found) => {
                 if let Some(database) = found.contents.as_ref().and_then(|c| c.database.as_ref()) {
                     self.new_name = format!("{database}_restored");
@@ -188,19 +199,23 @@ impl RestoreDialog {
             if !matches!(self.state, FileState::Read(_)) {
                 return;
             }
-            rows.row("Into", None, |ui| {
-                form::segmented(
-                    ui,
-                    &mut self.into,
-                    &[
-                        Segment::new(Into::NewDatabase, "A new database"),
-                        Segment::new(Into::Existing, "An existing database"),
-                    ],
-                );
-            });
-            let (label, name) = match self.into {
-                Into::NewDatabase => ("New database", &mut self.new_name),
-                Into::Existing => ("Database", &mut self.existing_name),
+            let itself = !self.engine.runs_a_program();
+            if !itself {
+                rows.row("Into", None, |ui| {
+                    form::segmented(
+                        ui,
+                        &mut self.into,
+                        &[
+                            Segment::new(Into::NewDatabase, "A new database"),
+                            Segment::new(Into::Existing, "An existing database"),
+                        ],
+                    );
+                });
+            }
+            let (label, name) = match (self.into, itself) {
+                (Into::NewDatabase | Into::NewFile, true) => ("New file", &mut self.new_name),
+                (Into::NewDatabase | Into::NewFile, false) => ("New database", &mut self.new_name),
+                (Into::Existing, _) => ("Database", &mut self.existing_name),
             };
             rows.row(label, None, |ui| {
                 widgets::name(
@@ -212,6 +227,10 @@ impl RestoreDialog {
             });
             if !self.tables.is_empty() {
                 rows.full(|ui| tables(ui, &mut self.tables));
+            }
+            if itself {
+                rows.full(|ui| self.program.show(ui, &self.server, palette));
+                return;
             }
             rows.row(
                 "Leave out owners and privileges",
@@ -255,7 +274,7 @@ impl RestoreDialog {
             matches!(&self.state, FileState::Read(found) if found.kind.restores_into(self.engine));
         let some_tables = self.tables.is_empty() || self.tables.iter().any(|(_, ticked)| *ticked);
         let ready = restorable
-            && matches!(self.program, ProgramState::Chosen(_))
+            && self.program.is_ready()
             && !self.database().trim().is_empty()
             && some_tables;
         let (restore, cancel) = form::footer(ui, |ui| {
@@ -320,7 +339,7 @@ impl RestoreDialog {
 
     fn database(&self) -> &str {
         match self.into {
-            Into::NewDatabase => &self.new_name,
+            Into::NewDatabase | Into::NewFile => &self.new_name,
             Into::Existing => &self.existing_name,
         }
     }
@@ -338,9 +357,14 @@ impl RestoreDialog {
         form::Header::new(icons::WARNING, "Restore?")
             .danger()
             .show(ui);
+        let into = if self.engine.runs_a_program() {
+            self.into
+        } else {
+            Into::NewFile
+        };
         ui.label(question(
             &self.file,
-            self.into,
+            into,
             &database,
             &self.name,
             self.options.drop_first && self.archive(),
@@ -388,7 +412,7 @@ impl RestoreDialog {
             data_source: self.data_source,
             file: self.file.clone(),
             target: match self.into {
-                Into::NewDatabase => RestoreTarget::NewDatabase(database),
+                Into::NewDatabase | Into::NewFile => RestoreTarget::NewDatabase(database),
                 Into::Existing => RestoreTarget::Existing(database),
             },
             tables,
@@ -428,6 +452,9 @@ fn question(
         (Into::NewDatabase, _) => {
             format!("Restore {file} into a new database \"{database}\" on \"{data_source}\"?")
         }
+        (Into::NewFile, _) => {
+            format!("Restore {file}, a dump of \"{data_source}\", into a new file {database}?")
+        }
         (Into::Existing, false) => format!(
             "Restore {file} into \"{database}\" on \"{data_source}\"? Objects that already exist \
              will make the restore fail."
@@ -444,6 +471,8 @@ fn describe(found: &DumpFileFound) -> String {
     let kind = match found.kind {
         DumpFileKind::Custom => "PostgreSQL custom dump".to_owned(),
         DumpFileKind::Directory => "PostgreSQL directory dump".to_owned(),
+        DumpFileKind::SqliteFile => "SQLite database".to_owned(),
+        DumpFileKind::DuckDbExport => "DuckDB export".to_owned(),
         DumpFileKind::Sql { engine, gzip } => {
             let engine = engine.map_or("SQL".to_owned(), |engine| format!("{engine} SQL"));
             if gzip {
@@ -461,13 +490,25 @@ fn describe(found: &DumpFileFound) -> String {
     format!("{kind}{tables}, {}", dbrover_core::ByteSize(found.bytes))
 }
 
+/// Where a SQLite or DuckDB dump is restored by default: beside it, as a new file.
+fn restored_file(dump: &Path, engine: DumpEngine) -> String {
+    let ending = if engine == DumpEngine::DuckDb {
+        "duckdb"
+    } else {
+        "sqlite"
+    };
+    dump.with_file_name(format!("{}-restored.{ending}", stem(dump)))
+        .display()
+        .to_string()
+}
+
 /// The file's name without its dump endings: `shop-2026-11-27-1412` for `….sql.gz`.
 fn stem(file: &Path) -> String {
     let name = file
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
-    [".sql.gz", ".dump", ".sql"]
+    [".sql.gz", ".dump", ".sql", ".sqlite"]
         .iter()
         .find_map(|ending| name.strip_suffix(ending))
         .unwrap_or(&name)
