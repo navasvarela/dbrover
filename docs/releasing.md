@@ -88,12 +88,18 @@ an OAuth token, Databricks with an access token, a service principal, the Databr
 Azure CLI; their databases, catalogs and schemas browsed without starting a warehouse; a
 statement stopped after a time limit you set, 10 minutes by default; a role or service principal
 of its own for AI assistants over MCP; and reports that hand a large Snowflake result over
-through an S3 bucket with `COPY INTO` and read Databricks's results as Arrow) and v0.39.0
+through an S3 bucket with `COPY INTO` and read Databricks's results as Arrow), v0.39.0
 (Server activity: a tab that lists a server's sessions, what each is running, how long it has
 waited and which session blocks it, on PostgreSQL, MySQL, MariaDB, SQL Server and ClickHouse;
 Cancel query and Kill where the engine has them, Kill always asking first and both refused on
 a read-only data source; every stop recorded in History; and an `activity` permission that lets
-AI assistants over MCP list sessions and stop one).
+AI assistants over MCP list sessions and stop one) and v0.40.0
+(Search data: a value found across a data source's tables and columns, each match opened on
+its row, on PostgreSQL, SQLite, DuckDB, MySQL, MariaDB, SQL Server and ClickHouse, and a
+schema or table at a time, after asking, on Trino, Athena, BigQuery, Snowflake and Databricks;
+time and row limits per table set in Settings, each search recorded in History, and an MCP
+`search_data` tool behind `read`; and Server activity on SQL Server showing a transaction that
+has just begun as zero seconds old rather than unknown).
 R3's update notice is built, ahead of R2 (see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
