@@ -126,8 +126,7 @@ fn dumps_from_the_menu_with_the_program_it_names() {
             .query_by_label_contains("for a server of version")
             .is_some()
     });
-    harness.get_by_label("Browse…").click();
-    harness.run_steps(2);
+    click(&mut harness, "Browse…");
     // A pointer rests on a button before it presses it; pressed the frame it arrives, the
     // press lands on what was under it the frame before.
     harness.get_by_role_and_label(Role::Button, "Dump").hover();
