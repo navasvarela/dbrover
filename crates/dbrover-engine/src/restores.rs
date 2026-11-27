@@ -248,13 +248,10 @@ async fn restore(
     let executed_at = jiff::Timestamp::now();
     let input = match command.input {
         Input::Named => RunInput::Nothing,
-        Input::Stdin {
-            gzip,
-            leave_out_owners,
-        } => RunInput::File {
+        Input::Stdin { gzip, filter } => RunInput::File {
             path: run.request.file.clone(),
             gzip,
-            leave_out_owners,
+            filter,
         },
     };
     let events = services.events.clone();
@@ -265,6 +262,7 @@ async fn restore(
         environment: command.environment,
         input,
         output: RunOutput::Nothing,
+        // MySQL's client says nothing per table; a plain restore's progress is the bytes sent.
         table: dbrover_dump::restored_table,
         report: Box::new(move |progress| events.send(Event::DumpProgress { run: id, progress })),
     };
