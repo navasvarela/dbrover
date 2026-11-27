@@ -2151,7 +2151,7 @@ three to five, **L** a track of its own).
   its row by its key; double-clicking a match opens a console on that row; a table locked by
   another session times out and the search goes on; Cancel keeps what was found; a careful
   data source asks first; History lists the search once, as **Search**.
-- **W18 — Users beyond PostgreSQL (L):** planned on 2026-11-27 in
+- **W18 — Users beyond PostgreSQL (L):** built; planned on 2026-11-27 in
   [Users beyond PostgreSQL](users-beyond-postgres.md), its questions answered the same day as
   proposed. MySQL's and MariaDB's `'name'@'host'` accounts and roles, and SQL Server's logins,
   server roles, database users and database roles, listed in the explorer and created, changed,
@@ -2185,6 +2185,50 @@ three to five, **L** a track of its own).
     roles, Map to login, Drop with users and schemas, Copy DDL.
   - **W18g — Manual and demo note:** the Users and roles chapter extended, with pictures, and
     the exit as an engine test.
+
+  **W18 demo note:** built in #720 and the six layers stacked on it, described in
+  [Users and roles](../book/src/users-roles.md). On a MySQL data source signed in as `root`,
+  expand **users**: `dbrover@%`, `root@%` and `root@localhost`, and **roles** beside it.
+  Right-click **users** → **New › User…**, type `report` and a password twice: the SQL reads
+  `` CREATE USER `report`@`%` IDENTIFIED WITH caching_sha2_password AS '<redacted>' ``, and
+  under the password *Hashed on this computer for caching_sha2_password*. Open **Privileges**,
+  add the `dbrover` database and tick `SELECT`; tick `SUPER` on `*.*` and a warning names it
+  above **Execute**, which turns red. Execute, log in as `report` from a new data source, and
+  its tables are there; **Lock or unlock…** on it writes `ACCOUNT LOCK`, and the next login is
+  refused. On MariaDB the same, with `IDENTIFIED BY PASSWORD '*…'`, one default role, and roles
+  without a host. On SQL Server as `sa`, **logins**, **server roles**, and each database's
+  **users** and **roles** are listed; **New › Login…** with **Enforce password policy** unticked
+  writes `PASSWORD = 0x<redacted> HASHED`, ticked writes the password as typed, and **Map to
+  databases** adds `EXEC [dbrover].sys.sp_executesql N'CREATE USER …'` and its roles. Drop on a
+  login drops its users first unless unticked; Drop on a user gives its schemas to `dbo`. History
+  keeps every statement with the password or hash redacted, and Copy DDL on a MySQL account
+  copies `CREATE USER` and its grants without the password. Departures from the design:
+  `check_accounts` and `check_logins` are each driver's round-trip tests, not conformance
+  checks, since the statements are `dbrover-sql`'s, which `dbrover-core` can't use; MariaDB's
+  `information_schema.USER_PRIVILEGES` leaves roles out, so global privileges are read from
+  `SHOW GRANTS`, and its `JSON_VALUE` reads `true` as `1`; MariaDB refuses `RENAME USER` for a
+  role, so the builder refuses it; MariaDB grants a new role to its creator, which the dialog
+  says; SQL Server revokes server permissions only in `master`, so they are revoked through
+  `[master].sys.sp_executesql`; `DROP ROLE` refuses a role with members, so Drop takes them out
+  first; SQL Server won't drop a login that is connected, which the manual says; a login
+  without `VIEW SERVER STATE` can't learn whether its session is encrypted (and
+  `CONNECTIONPROPERTY` has no `encrypt_option`), so the data source's TLS or SSH setting answers
+  then; the menus aren't disabled for a login without the privilege, since they are drawn
+  before the server is asked: the dialog says what is missing and has nothing to execute; no
+  Copy DDL for SQL Server's principals, since a SQL login can't be written without a password;
+  MariaDB's statement time limit isn't offered; the review panel's note about the password no
+  longer says SCRAM on these engines; the history's redaction gained SQL Server's `0x…` hash and
+  a contained user's `N''…''` password inside `sp_executesql`, which it showed before. Covered
+  by golden tests of every statement and of the three hashes (against hashes MySQL 8.4 and
+  MariaDB 11.4 made and one SQL Server 2022 accepted), each driver's round trip against the
+  compose servers (an account or login made with a client-hashed password logs in and reads,
+  is locked or disabled and refused, renamed and dropped; what a login without the privileges
+  sees), engine tests of the history's redaction and Copy DDL (with `w18_exit`), and unit tests
+  of the dialogs. Not tried live: `mysql_native_password` on MySQL (off on 8.4), MariaDB's
+  `ed25519`, Windows and Microsoft Entra logins, contained users, and the managed services
+  (RDS, Cloud SQL, Azure). Still to come, if asked: a grants editor on tables and schemas for
+  every engine, PostgreSQL first; Copy DDL on SQL Server; ClickHouse's, Snowflake's and the NoSQL
+  engines' users; Redshift with C7.
 
   **Exit:** on MySQL and MariaDB, a user created with a password, `SELECT` on a database and a
   default role logs in from a new data source and reads; locked, its login is refused;

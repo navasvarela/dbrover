@@ -1,7 +1,9 @@
 # Users beyond PostgreSQL
 
-Status: **planned on 2026-11-27** (W18a), its twelve open questions answered the same day, all
-as proposed. The [roadmap](roadmap.md#well-rounded-track) tracks it as W18 in the well-rounded
+Status: **built on 2026-11-27**, in one stack, #720 and the layers above it; the manual's
+chapter is [Users and roles](../book/src/users-roles.md), and the departures are in the
+roadmap's demo note. Planned the same day (W18a), its twelve open questions answered as
+proposed. The [roadmap](roadmap.md#well-rounded-track) tracks it as W18 in the well-rounded
 track. Third in the competitor-gap review of 2026-11-25 ([comparison](comparison.md), gap 3),
 after server activity (W15) and searching data (W16); dump and restore (W17) is planned beside
 it.
