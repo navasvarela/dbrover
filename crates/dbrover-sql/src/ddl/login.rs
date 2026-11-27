@@ -60,6 +60,9 @@ pub enum LoginSource {
     External,
 }
 
+/// Where server-scope permissions are granted and revoked.
+const SERVER_PERMISSIONS_DATABASE: &str = "master";
+
 /// What the server's default database is when a login names none.
 const DEFAULT_DATABASE: &str = "master";
 
@@ -187,9 +190,11 @@ pub enum SqlServerOperation {
         name: String,
         new_name: String,
     },
+    /// Takes `members` out first: SQL Server refuses to drop a role that has any.
     DropRole {
         scope: PrincipalScope,
         name: String,
+        members: BTreeSet<String>,
     },
     CreateUser {
         database: String,
@@ -331,12 +336,18 @@ pub(super) fn statements(
                 ),
             )])
         }
-        SqlServerOperation::DropRole { scope, name } => {
+        SqlServerOperation::DropRole {
+            scope,
+            name,
+            members,
+        } => {
             require_name(name, "role")?;
-            Ok(vec![scoped(
+            let mut statements = member_changes(scope, name, members, &BTreeSet::new());
+            statements.push(scoped(
                 scope,
                 &format!("DROP {} {}", role_keyword(scope), bracket(name)),
-            )])
+            ));
+            Ok(statements)
         }
         SqlServerOperation::CreateUser {
             database,
@@ -392,7 +403,13 @@ pub(super) fn statements(
             grant,
         } => {
             require_name(principal, "principal")?;
-            Ok(vec![scoped(scope, &revoke(principal, grant))])
+            let statement = revoke(principal, grant);
+            Ok(vec![match scope {
+                // Tried on SQL Server 2022: "Permissions at the server scope can only be
+                // granted when the current database is master", and revoked likewise.
+                PrincipalScope::Server => in_database(SERVER_PERMISSIONS_DATABASE, &statement),
+                PrincipalScope::Database(database) => in_database(database, &statement),
+            }])
         }
     }
 }
@@ -1053,8 +1070,12 @@ mod tests {
                 SqlServerOperation::DropRole {
                     scope: shop,
                     name: "it's".to_owned(),
+                    members: strings(&["u"]),
                 },
-                vec!["EXEC [shop].sys.sp_executesql N'DROP ROLE [it''s]'"],
+                vec![
+                    "EXEC [shop].sys.sp_executesql N'ALTER ROLE [it''s] DROP MEMBER [u]'",
+                    "EXEC [shop].sys.sp_executesql N'DROP ROLE [it''s]'",
+                ],
             ),
         ];
         for (operation, expected) in cases {
@@ -1176,7 +1197,7 @@ mod tests {
                     securable: Securable::Server,
                     state: PermissionState::Grant,
                 },
-                "REVOKE VIEW SERVER STATE FROM [app]",
+                "EXEC [master].sys.sp_executesql N'REVOKE VIEW SERVER STATE FROM [app]'",
             ),
             (
                 shop.clone(),
@@ -1206,7 +1227,7 @@ mod tests {
                     },
                     state: PermissionState::Grant,
                 },
-                "REVOKE IMPERSONATE ON LOGIN::[sa] FROM [app]",
+                "EXEC [master].sys.sp_executesql N'REVOKE IMPERSONATE ON LOGIN::[sa] FROM [app]'",
             ),
         ];
         for (scope, grant, expected) in cases {

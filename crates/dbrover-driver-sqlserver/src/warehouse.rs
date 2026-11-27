@@ -37,6 +37,9 @@ pub(crate) struct CatalogSupport {
     /// Indexes on a view, which SQL Server's indexed views have and the warehouses don't.
     pub indexed_views: bool,
     pub constraints: &'static [ConstraintKind],
+    /// Logins, server roles, and each database's users and roles (W18): SQL Server's, and
+    /// none of the warehouses', whose users are Microsoft Entra's, managed in the portal.
+    pub principals: bool,
 }
 
 const ALL_CONSTRAINTS: &[ConstraintKind] = &[
@@ -55,6 +58,7 @@ pub(crate) const SQL_SERVER: CatalogSupport = CatalogSupport {
     indexes: true,
     indexed_views: true,
     constraints: ALL_CONSTRAINTS,
+    principals: true,
 };
 
 /// One database per pool, read through its own `sys` views; clustered columnstore, clustered
@@ -68,6 +72,7 @@ const SYNAPSE_DEDICATED: CatalogSupport = CatalogSupport {
     indexes: true,
     indexed_views: false,
     constraints: &[ConstraintKind::Key, ConstraintKind::Default],
+    principals: false,
 };
 
 /// External tables and views over files, read across the workspace's databases; no
@@ -80,6 +85,7 @@ const SYNAPSE_SERVERLESS: CatalogSupport = CatalogSupport {
     indexes: false,
     indexed_views: false,
     constraints: &[],
+    principals: false,
 };
 
 /// The workspace's warehouses and endpoints read across by name; no indexes; primary keys,
@@ -92,6 +98,7 @@ const FABRIC: CatalogSupport = CatalogSupport {
     indexes: false,
     indexed_views: false,
     constraints: &[ConstraintKind::Key, ConstraintKind::Foreign],
+    principals: false,
 };
 
 /// The warehouse a server is, from its `EngineEdition` and the host name connected to.

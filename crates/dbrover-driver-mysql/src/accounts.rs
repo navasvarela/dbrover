@@ -688,7 +688,7 @@ pub(crate) async fn user_management(
     };
     Ok(UserManagement {
         current: current.label(),
-        encrypted: cipher.is_some_and(|(_, cipher)| !cipher.is_empty()),
+        encrypted: Some(cipher.is_some_and(|(_, cipher)| !cipher.is_empty())),
         may_list: permit(reads_accounts || creates_users, LISTS_ACCOUNTS),
         may_change: permit(creates_users, CHANGES_ACCOUNTS),
         server: ManagedUsers::Accounts(AccountServer {

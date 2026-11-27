@@ -39,8 +39,9 @@ pub struct UserManagement {
     /// The account or login DbRover is connected as, named as its folder lists it.
     pub current: String,
     /// The connection is encrypted, so a password may be sent as typed (question 5 of the
-    /// plan).
-    pub encrypted: bool,
+    /// plan); `None` where the server won't tell this login (SQL Server without `VIEW SERVER
+    /// STATE`), and the data source's own TLS setting has to answer.
+    pub encrypted: Option<bool>,
     /// Listing the other accounts or logins; without it, the folder shows the login's own.
     pub may_list: Permit,
     /// Creating, changing and dropping them.

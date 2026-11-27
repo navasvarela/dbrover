@@ -11,6 +11,7 @@
 use dbrover_core::{CatalogNode, CatalogPath, DriverError, FolderKind, NodeKind, PathSegment};
 use tiberius::ToSql;
 
+use crate::principals::{self, PrincipalFolder};
 use crate::warehouse::{CatalogSupport, ConstraintKind};
 use crate::{SQL_SERVER_QUOTING, SqlClient, column, connection_error, constraint};
 
@@ -39,6 +40,8 @@ enum Level<'a> {
     Schemas {
         database: &'a str,
     },
+    /// A logins, server roles, users or roles folder (W18).
+    Principals(PrincipalAt<'a>),
     SchemaFolders,
     SchemaObjects {
         database: &'a str,
@@ -63,6 +66,28 @@ impl<'a> Level<'a> {
             [database] if database.kind == NodeKind::Database => Some(Self::Schemas {
                 database: &database.name,
             }),
+            [folder] if support.principals => match folder_kind(folder) {
+                Some(FolderKind::Logins) => Some(Self::Principals(PrincipalAt::Logins)),
+                Some(FolderKind::ServerRoles) => Some(Self::Principals(PrincipalAt::ServerRoles)),
+                _ => None,
+            },
+            [database, folder]
+                if support.principals
+                    && database.kind == NodeKind::Database
+                    && matches!(
+                        folder_kind(folder),
+                        Some(FolderKind::Users | FolderKind::Roles)
+                    ) =>
+            {
+                let database = database.name.as_str();
+                Some(Self::Principals(
+                    if folder_kind(folder) == Some(FolderKind::Users) {
+                        PrincipalAt::Users(database)
+                    } else {
+                        PrincipalAt::Roles(database)
+                    },
+                ))
+            }
             [database, schema, rest @ ..]
                 if database.kind == NodeKind::Database && schema.kind == NodeKind::Schema =>
             {
@@ -152,8 +177,36 @@ pub(crate) async fn children(
 ) -> Result<Vec<CatalogNode>, DriverError> {
     let level = Level::of(path, support).ok_or_else(|| DriverError::InvalidPath(path.clone()))?;
     match level {
-        Level::Databases => databases(client, path, support).await,
-        Level::Schemas { database } => schemas(client, path, &catalog_of(database, support)).await,
+        // Logins and server roles belong to the server, so their folders come before the
+        // databases; a database's users and roles, before its schemas.
+        Level::Databases => {
+            let mut nodes = principal_folders(
+                path,
+                support,
+                &[FolderKind::Logins, FolderKind::ServerRoles],
+            );
+            nodes.extend(databases(client, path, support).await?);
+            Ok(nodes)
+        }
+        Level::Schemas { database } => {
+            let mut nodes =
+                principal_folders(path, support, &[FolderKind::Users, FolderKind::Roles]);
+            nodes.extend(schemas(client, path, &catalog_of(database, support)).await?);
+            Ok(nodes)
+        }
+        Level::Principals(at) => {
+            let folder = match at {
+                PrincipalAt::Logins => PrincipalFolder::Logins,
+                PrincipalAt::ServerRoles => PrincipalFolder::ServerRoles,
+                PrincipalAt::Users(database) => PrincipalFolder::Users {
+                    catalog: &catalog_of(database, support),
+                },
+                PrincipalAt::Roles(database) => PrincipalFolder::Roles {
+                    catalog: &catalog_of(database, support),
+                },
+            };
+            principals::list(client, path, folder).await
+        }
         Level::SchemaFolders => Ok(folders(path, &schema_folders(support))),
         Level::SchemaObjects {
             database,
@@ -179,9 +232,30 @@ pub(crate) async fn children(
     }
 }
 
+/// Which principal folder a path points at.
+#[derive(Debug, Clone, Copy)]
+enum PrincipalAt<'a> {
+    Logins,
+    ServerRoles,
+    Users(&'a str),
+    Roles(&'a str),
+}
+
+fn principal_folders(
+    parent: &CatalogPath,
+    support: &CatalogSupport,
+    kinds: &[FolderKind],
+) -> Vec<CatalogNode> {
+    if support.principals {
+        folders(parent, kinds)
+    } else {
+        Vec::new()
+    }
+}
+
 /// Where `database`'s catalog views are: `[sales].sys`, or `sys` on a server whose other
 /// databases can't be read by name, where the tree lists only the connected one.
-fn catalog_of(database: &str, support: &CatalogSupport) -> String {
+pub(crate) fn catalog_of(database: &str, support: &CatalogSupport) -> String {
     if support.other_databases {
         format!("{}.sys", SQL_SERVER_QUOTING.identifier(database))
     } else {

@@ -25,6 +25,8 @@ tracing.workspace = true
 
 [dev-dependencies]
 dbrover-core = { workspace = true, features = ["conformance"] }
+# Writes the statements the users round trip runs (W18).
+dbrover-sql.workspace = true
 tempfile.workspace = true
 
 [lints]

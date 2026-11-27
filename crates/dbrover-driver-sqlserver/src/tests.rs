@@ -759,3 +759,416 @@ async fn finds_a_value_across_tables() {
     )
     .await;
 }
+
+/// The statements W18's dialogs would run for `operation`, one at a time.
+async fn apply_principal(
+    connection: &mut SqlServerConnection,
+    operation: dbrover_sql::SqlServerOperation,
+) {
+    let statements = dbrover_sql::DdlOperation::SqlServer(operation)
+        .statements(dbrover_sql::Dialect::SqlServer)
+        .expect("statements");
+    for sql in statements {
+        run(connection, &sql).await;
+    }
+}
+
+async fn describe(
+    connection: &mut SqlServerConnection,
+    path: &CatalogPath,
+) -> Result<dbrover_core::PrincipalDescription, DriverError> {
+    connection.describe_principal(path).await
+}
+
+/// W18's round trip: a login made with a password DbRover hashed, with a server role and a
+/// user in the test database that reads through `db_datareader`; it logs in and reads, is
+/// listed and described, joins a database role, loses a permission, is disabled (and refused),
+/// renamed, and dropped with its user after the schema it owns is given away. A login dropped
+/// alone leaves its user orphaned, which is mapped to another login. A login with no
+/// permissions sees only itself, `sa` and the server roles.
+#[tokio::test]
+async fn manages_logins_users_and_roles_with_a_hashed_password() {
+    use std::collections::BTreeSet;
+
+    use dbrover_core::{
+        DatabaseUserKind, DatabaseUserName, LoginKind, PermissionGrant, PermissionState,
+        PrincipalDescription, PrincipalScope, Securable,
+    };
+    use dbrover_sql::{
+        DatabaseUserSpec, LoginPolicy, LoginSource, LoginSpec, SqlServerHash, SqlServerOperation,
+        SqlServerPassword, UserMapping, UserSource,
+    };
+
+    let Some(server) = test_server() else {
+        return;
+    };
+    let _shared = SHARED_DATABASE.lock().await;
+    let mut admin = server.connect().await;
+    let database = server.config.server.database.clone();
+    let password = "W18-Pass-2026!";
+    let strings = |names: &[&str]| -> BTreeSet<String> {
+        names.iter().map(|name| (*name).to_owned()).collect()
+    };
+    let in_database = |sql: &str| format!("EXEC [{database}].sys.sp_executesql N'{sql}'");
+    for sql in [
+        in_database("DROP SCHEMA IF EXISTS w18_owned"),
+        in_database("DROP USER IF EXISTS w18_app"),
+        in_database("DROP USER IF EXISTS w18_app_b"),
+        in_database("DROP USER IF EXISTS w18_orphan"),
+        in_database("DROP ROLE IF EXISTS w18_reporting"),
+        in_database("DROP TABLE IF EXISTS dbo.w18_orders"),
+        in_database("CREATE TABLE dbo.w18_orders (id int PRIMARY KEY)"),
+        in_database("INSERT INTO dbo.w18_orders VALUES (7)"),
+        in_database("DROP USER IF EXISTS w18_noone"),
+        in_database("DROP USER IF EXISTS w18_plain"),
+    ] {
+        run(&mut admin, &sql).await;
+    }
+    // Logins before the server role, whose members they may still be.
+    for login in [
+        "w18_app",
+        "w18_app_b",
+        "w18_orphan",
+        "w18_mapped",
+        "w18_plain",
+    ] {
+        run(
+            &mut admin,
+            &format!("IF SUSER_ID('{login}') IS NOT NULL DROP LOGIN [{login}]"),
+        )
+        .await;
+    }
+    run(
+        &mut admin,
+        "IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = 'w18_monitor') \
+         DROP SERVER ROLE w18_monitor",
+    )
+    .await;
+
+    let no_policy = Some(LoginPolicy {
+        check_policy: false,
+        check_expiration: false,
+    });
+    let sql_login =
+        |name: &str, mappings: Vec<UserMapping>, roles: &[&str]| SqlServerOperation::CreateLogin {
+            name: name.to_owned(),
+            source: LoginSource::Sql {
+                password: SqlServerPassword::Hashed(SqlServerHash::hash(password)),
+                must_change: false,
+            },
+            spec: LoginSpec {
+                default_database: database.clone(),
+                server_roles: strings(roles),
+                ..LoginSpec::new(no_policy)
+            },
+            mappings,
+        };
+    let mapping = |user: &str, roles: &[&str]| UserMapping {
+        database: database.clone(),
+        user: user.to_owned(),
+        spec: DatabaseUserSpec {
+            default_schema: Some("dbo".to_owned()),
+            roles: strings(roles),
+        },
+    };
+    apply_principal(
+        &mut admin,
+        sql_login(
+            "w18_app",
+            vec![mapping("w18_app", &["db_datareader"])],
+            &["##MS_ServerStateReader##"],
+        ),
+    )
+    .await;
+
+    // The login logs in with the password DbRover hashed and reads through db_datareader.
+    let as_login = |name: &str| {
+        let mut config = server.config.clone();
+        config.server.user = name.to_owned();
+        config
+    };
+    let mut login = connect(
+        &as_login("w18_app"),
+        Some(&Password::new(password)),
+        Route::Direct,
+    )
+    .await
+    .unwrap_or_else(|error| panic!("w18_app logs in: {error:?}"));
+    assert_eq!(
+        first_row(&mut login, "SELECT id FROM dbo.w18_orders").await[0].as_deref(),
+        Some("7")
+    );
+    Box::new(login).close().await.unwrap();
+
+    // Listed and described.
+    let logins = CatalogPath::root().child(NodeKind::Folder(FolderKind::Logins), "logins");
+    let listed = admin.children(&logins).await.unwrap();
+    let node = listed
+        .iter()
+        .find(|node| node.label == "w18_app")
+        .unwrap_or_else(|| panic!("w18_app in {listed:?}"));
+    assert_eq!(
+        node.detail.as_deref(),
+        Some("SQL login, ##MS_ServerStateReader##")
+    );
+    let login_path = logins.child(NodeKind::Login, "w18_app");
+    let Ok(PrincipalDescription::Login(described)) = describe(&mut admin, &login_path).await else {
+        panic!("w18_app not described as a login");
+    };
+    assert_eq!(described.kind, LoginKind::Sql);
+    assert_eq!(described.default_database, database);
+    assert!(!described.sql.unwrap().check_policy);
+    assert_eq!(
+        described.users,
+        BTreeSet::from([DatabaseUserName {
+            database: database.clone(),
+            user: "w18_app".to_owned(),
+        }])
+    );
+    let database_path = CatalogPath::root().child(NodeKind::Database, &database);
+    let users = database_path.child(NodeKind::Folder(FolderKind::Users), "users");
+    let user_path = users.child(NodeKind::User, "w18_app");
+    let listed_users = admin.children(&users).await.unwrap();
+    assert!(
+        listed_users.iter().any(|node| node.label == "w18_app"
+            && node.detail.as_deref() == Some("for login w18_app, db_datareader")),
+        "{listed_users:?}"
+    );
+
+    // A database role and a server role, each with the login's user as a member.
+    let shop = PrincipalScope::Database(database.clone());
+    for (scope, role, member) in [
+        (shop.clone(), "w18_reporting", "w18_app"),
+        (PrincipalScope::Server, "w18_monitor", "w18_app"),
+    ] {
+        apply_principal(
+            &mut admin,
+            SqlServerOperation::CreateRole {
+                scope,
+                name: role.to_owned(),
+                owner: None,
+                members: strings(&[member]),
+            },
+        )
+        .await;
+    }
+    let role_path = database_path
+        .child(NodeKind::Folder(FolderKind::Roles), "roles")
+        .child(NodeKind::Role, "w18_reporting");
+    let Ok(PrincipalDescription::SqlServerRole(role)) = describe(&mut admin, &role_path).await
+    else {
+        panic!("w18_reporting not described");
+    };
+    assert!(!role.fixed);
+    assert_eq!(role.members, strings(&["w18_app"]));
+    let server_role = CatalogPath::root()
+        .child(NodeKind::Folder(FolderKind::ServerRoles), "server roles")
+        .child(NodeKind::Role, "w18_monitor");
+    let Ok(PrincipalDescription::SqlServerRole(role)) = describe(&mut admin, &server_role).await
+    else {
+        panic!("w18_monitor not described");
+    };
+    assert_eq!(role.members, strings(&["w18_app"]));
+
+    // A permission granted by hand is listed, and revoked.
+    run(
+        &mut admin,
+        "EXEC [master].sys.sp_executesql N'GRANT VIEW SERVER STATE TO [w18_app]'",
+    )
+    .await;
+    let view_server_state = PermissionGrant {
+        permission: "VIEW SERVER STATE".to_owned(),
+        securable: Securable::Server,
+        state: PermissionState::Grant,
+    };
+    let permissions = |description| match description {
+        Ok(PrincipalDescription::Login(login)) => login.permissions,
+        other => panic!("not a login: {other:?}"),
+    };
+    assert!(permissions(describe(&mut admin, &login_path).await).contains(&view_server_state));
+    apply_principal(
+        &mut admin,
+        SqlServerOperation::Revoke {
+            scope: PrincipalScope::Server,
+            principal: "w18_app".to_owned(),
+            grant: view_server_state.clone(),
+        },
+    )
+    .await;
+    assert!(!permissions(describe(&mut admin, &login_path).await).contains(&view_server_state));
+
+    // Disabled, it can't log in.
+    apply_principal(
+        &mut admin,
+        SqlServerOperation::SetLoginEnabled {
+            name: "w18_app".to_owned(),
+            enabled: false,
+        },
+    )
+    .await;
+    assert!(
+        connect(
+            &as_login("w18_app"),
+            Some(&Password::new(password)),
+            Route::Direct
+        )
+        .await
+        .is_err(),
+        "a disabled login logged in"
+    );
+
+    // What a login with no permissions sees.
+    // A user with no roles, so it may open the test database at all.
+    apply_principal(
+        &mut admin,
+        sql_login("w18_plain", vec![mapping("w18_plain", &[])], &[]),
+    )
+    .await;
+    let mut plain = connect(
+        &as_login("w18_plain"),
+        Some(&Password::new(password)),
+        Route::Direct,
+    )
+    .await
+    .unwrap();
+    let management = plain.user_management().await.unwrap();
+    assert!(!management.may_change.allowed(), "{management:?}");
+    // A login without VIEW SERVER STATE isn't told whether its session is encrypted.
+    assert_eq!(management.encrypted, None, "{management:?}");
+    let seen: Vec<String> = plain
+        .children(&logins)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|node| node.label)
+        .collect();
+    assert!(seen.contains(&"w18_plain".to_owned()), "{seen:?}");
+    assert!(!seen.contains(&"w18_app".to_owned()), "{seen:?}");
+    Box::new(plain).close().await.unwrap();
+    assert!(admin.user_management().await.unwrap().may_change.allowed());
+
+    // Renamed, then dropped with its user, once the schema the user owns is given away.
+    run(
+        &mut admin,
+        &in_database("EXEC(''CREATE SCHEMA w18_owned AUTHORIZATION w18_app'')"),
+    )
+    .await;
+    apply_principal(
+        &mut admin,
+        SqlServerOperation::RenameLogin {
+            name: "w18_app".to_owned(),
+            new_name: "w18_app_b".to_owned(),
+        },
+    )
+    .await;
+    let Ok(PrincipalDescription::DatabaseUser(user)) = describe(&mut admin, &user_path).await
+    else {
+        panic!("w18_app's user not described");
+    };
+    assert_eq!(user.kind, DatabaseUserKind::Login("w18_app_b".to_owned()));
+    assert_eq!(user.roles, strings(&["db_datareader", "w18_reporting"]));
+    assert_eq!(user.owned_schemas, ["w18_owned"]);
+    // The database role's member is the user, named as before; the server role's is the
+    // login, renamed.
+    for (scope, role, member) in [
+        (shop.clone(), "w18_reporting", "w18_app"),
+        (PrincipalScope::Server, "w18_monitor", "w18_app_b"),
+    ] {
+        apply_principal(
+            &mut admin,
+            SqlServerOperation::DropRole {
+                scope,
+                name: role.to_owned(),
+                members: strings(&[member]),
+            },
+        )
+        .await;
+    }
+    apply_principal(
+        &mut admin,
+        SqlServerOperation::DropUser {
+            database: database.clone(),
+            name: "w18_app".to_owned(),
+            owned_schemas: user.owned_schemas.clone(),
+            owned_roles: user.owned_roles.clone(),
+            give_to: Some("dbo".to_owned()),
+        },
+    )
+    .await;
+    apply_principal(
+        &mut admin,
+        SqlServerOperation::DropLogin {
+            name: "w18_app_b".to_owned(),
+            users: vec![],
+        },
+    )
+    .await;
+    assert!(describe(&mut admin, &user_path).await.is_err());
+
+    // A login dropped alone leaves its user orphaned; mapping it to another login fixes it.
+    apply_principal(
+        &mut admin,
+        sql_login("w18_orphan", vec![mapping("w18_orphan", &[])], &[]),
+    )
+    .await;
+    apply_principal(&mut admin, sql_login("w18_mapped", vec![], &[])).await;
+    apply_principal(
+        &mut admin,
+        SqlServerOperation::DropLogin {
+            name: "w18_orphan".to_owned(),
+            users: vec![],
+        },
+    )
+    .await;
+    let orphan_path = users.child(NodeKind::User, "w18_orphan");
+    let user_kind = |description| match description {
+        Ok(PrincipalDescription::DatabaseUser(user)) => user.kind,
+        other => panic!("not a user: {other:?}"),
+    };
+    assert_eq!(
+        user_kind(describe(&mut admin, &orphan_path).await),
+        DatabaseUserKind::Orphaned
+    );
+    apply_principal(
+        &mut admin,
+        SqlServerOperation::AlterUser {
+            database: database.clone(),
+            name: "w18_orphan".to_owned(),
+            before: DatabaseUserSpec::default(),
+            after: DatabaseUserSpec::default(),
+            login: Some("w18_mapped".to_owned()),
+            password: None,
+        },
+    )
+    .await;
+    assert_eq!(
+        user_kind(describe(&mut admin, &orphan_path).await),
+        DatabaseUserKind::Login("w18_mapped".to_owned())
+    );
+    apply_principal(
+        &mut admin,
+        SqlServerOperation::CreateUser {
+            database: database.clone(),
+            name: "w18_noone".to_owned(),
+            source: UserSource::WithoutLogin,
+            spec: DatabaseUserSpec::default(),
+        },
+    )
+    .await;
+    assert_eq!(
+        user_kind(describe(&mut admin, &users.child(NodeKind::User, "w18_noone")).await),
+        DatabaseUserKind::WithoutLogin
+    );
+
+    for sql in [
+        in_database("DROP USER w18_noone"),
+        in_database("DROP USER w18_orphan"),
+        in_database("DROP USER w18_plain"),
+        in_database("DROP SCHEMA w18_owned"),
+        in_database("DROP TABLE dbo.w18_orders"),
+        "DROP LOGIN w18_mapped".to_owned(),
+        "DROP LOGIN w18_plain".to_owned(),
+    ] {
+        run(&mut admin, &sql).await;
+    }
+}
