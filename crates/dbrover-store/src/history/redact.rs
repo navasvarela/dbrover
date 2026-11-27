@@ -57,6 +57,11 @@ fn find_secrets(sql: &str, offset: usize, secrets: &mut Vec<Range<usize>>) {
     let shifted = |range: Range<usize>| range.start + offset..range.end + offset;
     while let Some(token) = scanner.next_token() {
         match token {
+            Token::Word(word) if clause.is_some() && is_binary_literal(&sql[word.clone()]) => {
+                // SQL Server's hashed password, `PASSWORD = 0x0200… HASHED`: the digits go,
+                // the `0x` stays, so the statement still reads as what it is.
+                secrets.push(shifted(word.start + 2..word.end));
+            }
             Token::Word(word) => {
                 if clause.is_none()
                     && SECRET_WORDS
@@ -102,6 +107,13 @@ fn find_secrets(sql: &str, offset: usize, secrets: &mut Vec<Range<usize>>) {
     }
 }
 
+/// `0x` and hex digits: a binary literal, as SQL Server and MySQL write one.
+fn is_binary_literal(word: &str) -> bool {
+    word.strip_prefix("0x")
+        .or_else(|| word.strip_prefix("0X"))
+        .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
 /// Between the quotes of the literal from `start` to `end`, or to the end of the text if it
 /// never closes.
 fn content(sql: &str, start: usize, end: usize) -> Range<usize> {
@@ -141,13 +153,13 @@ fn secrets_in_connection_string(text: &str) -> Vec<Range<usize>> {
         }
         let value_start =
             equals + 1 + (text[equals + 1..].len() - text[equals + 1..].trim_start().len());
-        let value = if text[value_start..].starts_with("''") {
+        // A T-SQL Unicode literal inside the literal, as dynamic SQL writes a contained user's
+        // password (`sp_executesql N'… PASSWORD = N''…'''`), is quoted like any other.
+        let unicode = usize::from(text[value_start..].starts_with(['N', 'n']));
+        let value = if text[value_start + unicode..].starts_with("''") {
             // A quoted value, its quotes doubled inside the SQL literal.
-            let inner = value_start + 2;
-            let end = text[inner..]
-                .find("''")
-                .map_or(text.len(), |end| inner + end);
-            inner..end
+            let inner = value_start + unicode + 2;
+            inner..quoted_value_end(text, inner)
         } else {
             let end = text[value_start..]
                 .find(|c: char| c.is_whitespace() || matches!(c, ';' | '&' | '\''))
@@ -174,6 +186,21 @@ fn secrets_in_connection_string(text: &str) -> Vec<Range<usize>> {
     secrets.sort_by_key(|secret| secret.start);
     secrets.dedup_by(|later, earlier| later.start < earlier.end);
     secrets
+}
+
+/// Where a value quoted with `''` inside a literal ends: at a `''` that isn't the first half
+/// of `''''`, which is how a quote inside the value is written there.
+fn quoted_value_end(text: &str, start: usize) -> usize {
+    let mut at = start;
+    while let Some(found) = text[at..].find("''") {
+        let quote = at + found;
+        if text[quote + 2..].starts_with("''") {
+            at = quote + 4;
+        } else {
+            return quote;
+        }
+    }
+    text.len()
 }
 
 fn is_secret_key(key: &str) -> bool {
@@ -357,6 +384,26 @@ mod tests {
                 "CREATE LOGIN app WITH PASSWORD = N'<redacted>', CHECK_POLICY = OFF, DEFAULT_DATABASE = 'shop'",
             ),
             // MySQL and MariaDB, where a backslash escapes a quote.
+            (
+                "CREATE LOGIN [app] WITH PASSWORD = 0x0200A1B2C3D4FF HASHED, CHECK_POLICY = OFF",
+                "CREATE LOGIN [app] WITH PASSWORD = 0x<redacted> HASHED, CHECK_POLICY = OFF",
+            ),
+            (
+                "ALTER LOGIN [app] WITH PASSWORD = 0x0200a1 HASHED UNLOCK",
+                "ALTER LOGIN [app] WITH PASSWORD = 0x<redacted> HASHED UNLOCK",
+            ),
+            (
+                "EXEC [shop].sys.sp_executesql N'ALTER USER [c] WITH PASSWORD = N''it''''s s3cret'''",
+                "EXEC [shop].sys.sp_executesql N'ALTER USER [c] WITH PASSWORD = N''<redacted>'''",
+            ),
+            (
+                "CREATE USER `app`@`%` IDENTIFIED WITH caching_sha2_password AS '$A$005$abc' ACCOUNT LOCK",
+                "CREATE USER `app`@`%` IDENTIFIED WITH caching_sha2_password AS '<redacted>' ACCOUNT LOCK",
+            ),
+            (
+                "EXEC [shop].sys.sp_executesql N'CREATE USER [c] WITH PASSWORD = N''s3cret'', DEFAULT_SCHEMA = [s]'",
+                "EXEC [shop].sys.sp_executesql N'CREATE USER [c] WITH PASSWORD = N''<redacted>'', DEFAULT_SCHEMA = [s]'",
+            ),
             (
                 "CREATE USER 'app'@'%' IDENTIFIED BY 'it\\'s s3cret'",
                 "CREATE USER 'app'@'%' IDENTIFIED BY '<redacted>'",

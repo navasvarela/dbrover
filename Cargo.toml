@@ -158,10 +158,13 @@ ring = "0.17.14"
 pkcs8 = { version = "0.11.0", default-features = false, features = ["encryption"] }
 # HMAC-SHA1, which OpenSSH hashes host names in known_hosts with. The versions russh uses.
 # hmac also checks SCRAM verifiers in dbrover-sql's tests, with sha2 and base64, at the
-# versions postgres-protocol uses.
+# versions postgres-protocol uses; sha1 and sha2 hash MySQL's and SQL Server's passwords there.
 hmac = "0.13.0"
 sha1 = "0.11.0"
 sha2 = "0.11.1"
+# Salts the password hashes dbrover-sql writes for MySQL and SQL Server (W18): the version
+# postgres-protocol already builds for SCRAM's salts, so nothing new is compiled.
+rand = "0.10.3"
 base64 = "0.22.1"
 # Snowflake's SQL API sends a result's later partitions gzipped (C5d): the version, with its
 # default Rust backend, mysql_async and the updater already build.

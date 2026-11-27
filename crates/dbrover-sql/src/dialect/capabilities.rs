@@ -87,13 +87,18 @@ pub struct ForeignKeySwitch {
 /// How a dialect's users are modelled, for the users and roles helpers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UserModel {
-    /// None DbRover manages yet: SQLite has no users, and the other engines' kinds of users
-    /// (MySQL's `'name'@'host'` accounts, SQL Server's logins) are variants of their own when
-    /// they are built.
+    /// None DbRover manages: SQLite and DuckDB have no users, and the warehouses' are their
+    /// cloud's.
     Unsupported,
     /// PostgreSQL's roles, which belong to the whole server: a user is a role that may log
     /// in, so one kind of object serves both.
     Roles,
+    /// MySQL's and MariaDB's `'name'@'host'` accounts, and the roles granted to them, which
+    /// belong to the whole server.
+    Accounts,
+    /// SQL Server's logins and server roles, which belong to the server, and the users and
+    /// roles of each database.
+    LoginsAndUsers,
 }
 
 /// How a dialect replaces an existing view's query.
@@ -322,7 +327,7 @@ const MYSQL: Capabilities = Capabilities {
     schema_creation: SchemaCreation::CreateDatabase,
     schema_owner: false,
     drop_schema_cascade: false,
-    users: UserModel::Unsupported,
+    users: UserModel::Accounts,
     schema_compare: false,
     server_activity: true,
 };
@@ -375,7 +380,7 @@ const SQL_SERVER: Capabilities = Capabilities {
     schema_creation: SchemaCreation::CreateSchema,
     schema_owner: true,
     drop_schema_cascade: false,
-    users: UserModel::Unsupported,
+    users: UserModel::LoginsAndUsers,
     schema_compare: false,
     server_activity: true,
 };
@@ -396,6 +401,8 @@ const SYNAPSE_DEDICATED: Capabilities = Capabilities {
     ],
     // A warehouse's sessions are in views of its own, not read yet.
     server_activity: false,
+    // Microsoft Entra only, managed in the portal (W18).
+    users: UserModel::Unsupported,
     ..SQL_SERVER
 };
 

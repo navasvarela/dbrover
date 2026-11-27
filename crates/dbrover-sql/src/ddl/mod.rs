@@ -6,8 +6,10 @@
 //! the dialect requires (see [`quote_name`]), and refuses what the dialect can't do, as its
 //! [`Capabilities`](crate::Capabilities) say.
 
+mod account;
 mod alter;
 mod index;
+mod login;
 mod reserved;
 mod role;
 mod schema;
@@ -16,14 +18,19 @@ mod table;
 mod tests;
 mod view;
 
+pub use account::{AccountOperation, AccountPassword, AccountSpec, PasswordPlugin};
 pub use alter::rebuild_refusal;
+pub use login::{
+    DatabaseUserSpec, LoginPolicy, LoginSource, LoginSpec, SqlServerOperation, SqlServerPassword,
+    UserMapping, UserSource,
+};
 pub use view::view_query;
 
 use std::collections::{BTreeMap, BTreeSet};
 
 pub use dbrover_core::ReferentialAction;
 use dbrover_core::{
-    ColumnDescription, Identity, RoleAttribute, RoleDescription, TableConstraints,
+    ColumnDescription, Identity, MysqlFlavor, RoleAttribute, RoleDescription, TableConstraints,
     TableDescription, TableName,
 };
 
@@ -483,6 +490,13 @@ pub enum DdlOperation {
         name: String,
         owned: OwnedObjects,
     },
+    /// A change to MySQL's or MariaDB's accounts, which the two servers spell differently.
+    Account {
+        flavor: MysqlFlavor,
+        operation: AccountOperation,
+    },
+    /// A change to SQL Server's logins, users or their roles.
+    SqlServer(SqlServerOperation),
 }
 
 /// Why a spec can't be written as SQL. The message is shown in the dialog, which stays open to
@@ -520,6 +534,21 @@ pub enum DdlError {
     NoNewOwner,
     #[error("A role's objects can't be given to the role itself.")]
     ReassignToItself,
+    #[error("The default role \u{201c}{0}\u{201d} isn't one of the roles granted.")]
+    DefaultRoleNotGranted(String),
+    #[error("Privileges on tables, columns and routines are granted from a console.")]
+    ObjectGrants,
+    #[error("{server} has no {what}.")]
+    ServerLacks {
+        server: &'static str,
+        what: &'static str,
+    },
+    #[error("SQL Server unlocks a login only with a new password.")]
+    UnlockNeedsPassword,
+    #[error("Must change at next login needs a new password, sent as typed.")]
+    MustChangeNeedsTypedPassword,
+    #[error("Must change at next login needs the password policy and expiration enforced.")]
+    MustChangeNeedsPolicy,
     #[error("{dialect} can't {what}.", dialect = .dialect.display_name())]
     CantAlter {
         what: &'static str,
@@ -598,6 +627,8 @@ impl DdlOperation {
                 role::rename(name, new_name, dialect).map(|sql| vec![sql])
             }
             Self::DropRole { name, owned } => role::drop(name, owned, dialect),
+            Self::Account { flavor, operation } => account::statements(*flavor, operation, dialect),
+            Self::SqlServer(operation) => login::statements(operation, dialect),
         }
     }
 }
