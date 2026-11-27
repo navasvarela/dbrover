@@ -131,9 +131,21 @@ pub(crate) async fn run(
     services: ProgramServices,
     cancelled: oneshot::Receiver<()>,
 ) {
+    dump_and_report(run, data_source, &services, cancelled)
+        .await
+        .ok();
+}
+
+/// Runs `run` as [`run`] does, and returns how it ended as well as reporting it.
+pub(crate) async fn dump_and_report(
+    run: DumpRun,
+    data_source: DataSource,
+    services: &ProgramServices,
+    cancelled: oneshot::Receiver<()>,
+) -> Result<DumpDone, DumpFailure> {
     let id = run.run;
     let events = services.events.clone();
-    let result = dump(run, &data_source, &services, cancelled).await;
+    let result = dump(run, &data_source, services, cancelled).await;
     match &result {
         Ok(done) => tracing::info!(
             data_source = %data_source.name,
@@ -143,7 +155,11 @@ pub(crate) async fn run(
         ),
         Err(failure) => tracing::warn!(data_source = %data_source.name, "dump: {failure}"),
     }
-    events.send(Event::DumpEnded { run: id, result });
+    events.send(Event::DumpEnded {
+        run: id,
+        result: result.clone(),
+    });
+    result
 }
 
 async fn dump(

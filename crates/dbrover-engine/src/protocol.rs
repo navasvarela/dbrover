@@ -19,7 +19,8 @@ use dbrover_store::{
     ActionId, ConsoleKey, CustomFile, CustomFileKind, DiagramFile, DiagramKey, HistoryEntry,
     HistoryQuery, ImportPlan, ImportPreview, KeymapBindings, McpOverrides, McpPermissions, Project,
     Projects, QueryTree, ReportFiles, ReportName, ReportRun, RowChange, SavedConsole, SavedDiagram,
-    Secret, Separator, Settings, SqlFileContents, TrustedCommand, TrustedCommands,
+    SavedDump, ScheduleState, Secret, Separator, Settings, SqlFileContents, TrustedCommand,
+    TrustedCommands,
 };
 
 use crate::{
@@ -504,6 +505,27 @@ pub enum Command {
     /// Answered as a dump is, by [`Event::DumpStarted`] and [`Event::DumpProgress`], then
     /// [`Event::RestoreEnded`]; recorded in the history once.
     StartRestore(Box<RestoreRun>),
+    /// The saved dumps and this machine's schedules, as read at start. Answered by
+    /// [`Event::SavedDumpsLoaded`].
+    LoadSavedDumps,
+    /// Saves a dump's settings under its id in `dumps.toml`, replacing one with that id.
+    /// Answered by [`Event::SavedDumpsLoaded`].
+    SaveDump(Box<SavedDump>),
+    /// Removes a saved dump and this machine's record of its schedule. Answered by
+    /// [`Event::SavedDumpsLoaded`].
+    DeleteSavedDump(String),
+    /// Turns a saved dump's schedule on or off on this machine. Answered by
+    /// [`Event::SavedDumpsLoaded`].
+    SetDumpSchedule {
+        id: String,
+        on: bool,
+    },
+    /// Runs a saved dump now, by its id, as its schedule would. Answered by
+    /// [`Event::SavedDumpStarted`], the dump's events, then [`Event::SavedDumpsLoaded`].
+    RunSavedDump(String),
+    /// Starts the saved dumps whose schedules are due; the engine sends itself this every
+    /// minute.
+    CheckDumpSchedules,
     /// The program a dump or restore would use, for its dialog to show before anything runs.
     /// Answered by [`Event::DumpProgramChosen`].
     ChooseDumpProgram(ProgramQuery),
@@ -745,6 +767,16 @@ pub enum Event {
     DumpEnded {
         run: DumpRunId,
         result: Result<DumpDone, DumpFailure>,
+    },
+    /// The saved dumps, and this machine's record of their schedules and runs.
+    SavedDumpsLoaded {
+        dumps: Vec<SavedDump>,
+        states: Vec<ScheduleState>,
+    },
+    /// A saved dump the engine started, by hand or on its schedule, so the app shows it running.
+    SavedDumpStarted {
+        run: DumpRunId,
+        name: String,
     },
     DumpProgramChosen {
         query: ProgramQuery,

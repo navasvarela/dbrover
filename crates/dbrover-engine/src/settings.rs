@@ -86,6 +86,17 @@ pub(crate) async fn look_again(
 
 /// The history's retention in what [`load`] or [`save`] read; `None` if the file couldn't be
 /// read, so a broken file never prunes by the defaults.
+/// The dump programs' paths set by hand, from settings just loaded or saved.
+pub(crate) fn dump_programs(loaded: &Event) -> Option<crate::ProgramPaths> {
+    match loaded {
+        Event::SettingsLoaded {
+            result: Ok(settings),
+            ..
+        } => Some(crate::ProgramPaths::from_settings(&settings.dumps)),
+        _ => None,
+    }
+}
+
 pub(crate) fn history_retention(loaded: &Event) -> Option<HistorySettings> {
     match loaded {
         Event::SettingsLoaded {

@@ -325,3 +325,65 @@ fn dumps_a_sqlite_file_and_restores_it_into_a_new_one() {
         .unwrap();
     assert_eq!(body, "kept");
 }
+
+/// A dump saved from the Dump dialog is listed under the data source's **Saved dumps…**, with
+/// its schedule and the command that runs it, and **Run now** runs it in the status bar.
+#[test]
+fn saves_a_dump_and_runs_it_from_saved_dumps() {
+    let dir = tempfile::tempdir().unwrap();
+    let shop = save_shop(dir.path(), "CREATE TABLE notes (body TEXT);");
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    step_until_visible(&mut harness, "shop");
+    harness.get_by_label("shop").click_secondary();
+    harness.run_steps(2);
+    harness.get_by_label("Connect").click();
+    step_until(&mut harness, "the data source connecting", |harness| {
+        harness
+            .state()
+            .state
+            .data_source(shop.id)
+            .is_some_and(|entry| entry.dump_engine().is_some())
+    });
+    let folder = dir.path().join("nightly");
+    let picked = folder.join("copy.sqlite");
+    harness.state_mut().pick_dump_file = Box::new(move |_| Some(picked.clone()));
+
+    harness.get_by_label("shop").click_secondary();
+    harness.run_steps(2);
+    harness.get_by_label("Dump\u{2026}").click();
+    harness.run_steps(2);
+    step_until_visible(&mut harness, "Dump from shop");
+    click(&mut harness, "Browse…");
+    harness.get_by_label("Save…").hover();
+    harness.run_steps(2);
+    harness.get_by_label("Save…").click();
+    harness.run_steps(2);
+    step_until_visible(&mut harness, "Save to run again");
+    harness.get_by_role_and_label(Role::Button, "Save").hover();
+    harness.run_steps(2);
+    harness.get_by_role_and_label(Role::Button, "Save").click();
+    step_until(&mut harness, "the dialog closing", |harness| {
+        harness.query_by_label("Dump from shop").is_none()
+    });
+
+    harness.get_by_label("shop").click_secondary();
+    harness.run_steps(2);
+    harness.get_by_label("Saved dumps\u{2026}").click();
+    harness.run_steps(2);
+    step_until_visible(&mut harness, "shop dump");
+    harness.get_by_label_contains("Every day at 02:00");
+    harness.get_by_label_contains("dbrover dump run shop-dump");
+    harness.get_by_label("Run now").hover();
+    harness.run_steps(2);
+    harness.get_by_label("Run now").click();
+    step_until(&mut harness, "the run ending", |harness| {
+        harness
+            .query_by_label_contains("Dumped shop dump to")
+            .is_some()
+    });
+    step_until(&mut harness, "its last run listed", |harness| {
+        harness.query_by_label_contains("Last ran").is_some()
+    });
+    assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 1);
+}

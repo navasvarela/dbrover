@@ -6,6 +6,8 @@ use std::fmt;
 use std::num::NonZeroU8;
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     ConnectionConfig, DataSourceId, DuckDbConfig, DuckDbDatabase, ManagedService, ServerInfo,
     TableName,
@@ -90,7 +92,9 @@ impl fmt::Display for DumpEngine {
 }
 
 /// How a dump is written. Tar is left out: it is the custom format without its compression.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Saved dumps write it in kebab case (`custom`, `sql-gz`, `database-file`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum DumpFormat {
     /// PostgreSQL's custom archive: one compressed file, any table restorable on its own.
     Custom,
@@ -141,8 +145,10 @@ impl DumpFormat {
     }
 }
 
-/// Whether a dump holds the tables' definitions, their rows, or both.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+/// Whether a dump holds the tables' definitions, their rows, or both. Saved dumps write it in
+/// kebab case (`schema-and-data`, `schema-only`, `data-only`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum DumpContent {
     #[default]
     SchemaAndData,

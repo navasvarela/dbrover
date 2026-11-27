@@ -15,12 +15,15 @@ use egui::{Id, Ui};
 use crate::dialog::{self, DialogSize};
 use crate::form::{self, Segment};
 use crate::icons;
+use crate::save_dump_form::SaveDumpForm;
 use crate::state::DataSourceEntry;
 use crate::theme::Palette;
 use crate::widgets;
 
 pub enum DumpAction {
     Start(DumpRequest),
+    /// Save the dump's settings under a name, to run again (W17h).
+    Save(Box<dbrover_store::SavedDump>),
     Browse,
     Close,
 }
@@ -121,6 +124,8 @@ pub struct DumpDialog {
     /// Where **Copy command** says the program connects; `None` through an SSH tunnel, whose
     /// port is only known once the dump runs.
     target: Option<Target>,
+    /// **Save…**'s form, once asked for.
+    saving: Option<SaveDumpForm>,
 }
 
 impl DumpDialog {
@@ -168,6 +173,7 @@ impl DumpDialog {
             format,
             options: DumpOptions::default(),
             file: file.display().to_string(),
+            saving: None,
         };
         Some((dialog, command))
     }
@@ -258,9 +264,31 @@ impl DumpDialog {
             return Some(DumpAction::Browse);
         }
         let ready = self.program.is_ready() && !self.file.trim().is_empty();
-        let ((), (dump, cancel)) = form::footer_with_leading(
+        let request = self.request();
+        let data_source = self.data_source;
+        if let Some(saving) = &mut self.saving {
+            form::section(ui, "Save to run again", |ui| saving.show(ui));
+            let problem = saving.problem();
+            let (save, back) = form::footer(ui, |ui| {
+                let save = form::primary_button(
+                    ui,
+                    "Save",
+                    problem.is_none() && !self.file.trim().is_empty(),
+                )
+                .on_disabled_hover_text(problem.unwrap_or("Choose where its files go"))
+                .clicked();
+                (save, ui.button("Back").clicked())
+            });
+            if back {
+                self.saving = None;
+                return None;
+            }
+            let saved = save.then(|| saving.saved(data_source, &request)).flatten();
+            return saved.map(|saved| DumpAction::Save(Box::new(saved)));
+        }
+        let ((save, ()), (dump, cancel)) = form::footer_with_leading(
             ui,
-            |ui| self.copy_command(ui),
+            |ui| (ui.button("Save…").clicked(), self.copy_command(ui)),
             |ui| {
                 let dump = form::primary_button(ui, "Dump", ready).clicked();
                 (dump, ui.button("Cancel").clicked())
@@ -268,6 +296,9 @@ impl DumpDialog {
         );
         if cancel {
             return Some(DumpAction::Close);
+        }
+        if save {
+            self.saving = Some(SaveDumpForm::new(&self.database));
         }
         dump.then(|| DumpAction::Start(self.request()))
     }
@@ -407,15 +438,7 @@ fn scope_label(database: &str, scope: &DumpScope) -> String {
     }
 }
 
-/// `shop-2026-11-27-1412.dump`: the database and when, so dumps sort by time and none
-/// overwrites another.
-pub(crate) fn dump_file_name(database: &str, format: DumpFormat, now: &jiff::Zoned) -> String {
-    let stem = format!("{database}-{}", now.strftime("%Y-%m-%d-%H%M"));
-    match format.extension() {
-        Some(extension) => format!("{stem}.{extension}"),
-        None => stem,
-    }
-}
+pub(crate) use dbrover_store::dump_file_name;
 
 /// `file` with `from`'s ending swapped for `to`'s, so changing the format keeps the name.
 fn with_extension(file: &str, from: DumpFormat, to: DumpFormat) -> String {
@@ -490,11 +513,11 @@ mod tests {
         let now: jiff::Zoned = "2026-11-27T14:12:00[Europe/Madrid]".parse().unwrap();
         assert_eq!(
             dump_file_name("shop", DumpFormat::Custom, &now),
-            "shop-2026-11-27-1412.dump"
+            "shop-2026-11-27-141200.dump"
         );
         assert_eq!(
             dump_file_name("shop", DumpFormat::Directory, &now),
-            "shop-2026-11-27-1412"
+            "shop-2026-11-27-141200"
         );
         assert_eq!(
             with_extension("/d/shop-1.dump", DumpFormat::Custom, DumpFormat::SqlGz),
