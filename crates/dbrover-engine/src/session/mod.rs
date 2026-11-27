@@ -66,6 +66,8 @@ pub(crate) enum SessionRequest {
     DescribeTables(Vec<RelationName>),
     ApplyEdits(Vec<RowEdit>),
     DescribeRole(CatalogPath),
+    DescribePrincipal(CatalogPath),
+    LoadUserManagement,
     ApplyDdl(Vec<String>),
     Ddl(CatalogPath),
     LoadTable(CatalogPath),
@@ -699,6 +701,14 @@ impl Worker<'_> {
             }
             SessionRequest::DescribeRole(path) => {
                 let work = catalog::describe_role(self.context, &mut *self.connection, path);
+                self.signals.guard(work, None, self.cancel_handle).await
+            }
+            SessionRequest::DescribePrincipal(path) => {
+                let work = catalog::describe_principal(self.context, &mut *self.connection, path);
+                self.signals.guard(work, None, self.cancel_handle).await
+            }
+            SessionRequest::LoadUserManagement => {
+                let work = catalog::load_user_management(self.context, &mut *self.connection);
                 self.signals.guard(work, None, self.cancel_handle).await
             }
             SessionRequest::ApplyEdits(statements) => edits::apply(self, &statements).await,

@@ -6,9 +6,9 @@ use std::time::{Duration, SystemTime};
 use dbrover_core::{
     CatalogMatches, CatalogPath, CatalogSearch, ChildrenPage, ChildrenQuery, ColumnInfo,
     CostEstimate, DataSource, DataSourceId, DriverKind, JobProgress, Password, PasswordCommand,
-    ProjectId, ReadPace, Rejection, RelationName, ResultShape, RoleDescription, Row,
-    SearchableTable, ServerActivity, ServerInfo, SessionId, StopKind, StopOutcome,
-    TableDescription, TableName, TablesToSearch, TransactionStatus,
+    PrincipalDescription, ProjectId, ReadPace, Rejection, RelationName, ResultShape,
+    RoleDescription, Row, SearchableTable, ServerActivity, ServerInfo, SessionId, StopKind,
+    StopOutcome, TableDescription, TableName, TablesToSearch, TransactionStatus, UserManagement,
 };
 use dbrover_export::{ExportSpec, SqlTable};
 
@@ -280,6 +280,17 @@ pub enum Command {
         data_source: DataSourceId,
         path: CatalogPath,
     },
+    /// Describes the account, login, user or role at `path` (a node of a users, logins or
+    /// roles folder, W18) on the explorer's connection, for its dialogs. Answered by
+    /// [`Event::PrincipalDescribed`].
+    DescribePrincipal {
+        data_source: DataSourceId,
+        path: CatalogPath,
+    },
+    /// Reads what the server offers for managing its users and what this login may do there,
+    /// on the explorer's connection, when a users folder first loads (W18). Answered by
+    /// [`Event::UserManagementLoaded`].
+    LoadUserManagement(DataSourceId),
     /// Reads what the data source's server is doing, for its Server activity tab (W15), on a
     /// connection of the tab's own, opened by the first read and kept until
     /// [`Command::CloseActivity`]. Reads are never recorded in the history. Answered by
@@ -774,6 +785,17 @@ pub enum Event {
         data_source: DataSourceId,
         path: CatalogPath,
         result: Result<RoleDescription, String>,
+    },
+    /// The answer to [`Command::DescribePrincipal`].
+    PrincipalDescribed {
+        data_source: DataSourceId,
+        path: CatalogPath,
+        result: Result<PrincipalDescription, String>,
+    },
+    /// The answer to [`Command::LoadUserManagement`].
+    UserManagementLoaded {
+        data_source: DataSourceId,
+        result: Result<UserManagement, String>,
     },
     /// The answer to [`Command::ReadActivity`].
     ActivityRead {

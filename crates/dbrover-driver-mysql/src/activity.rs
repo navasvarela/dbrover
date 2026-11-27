@@ -379,7 +379,7 @@ fn seconds(seconds: Option<i64>) -> Option<Duration> {
 }
 
 /// Whether `version`, as `8.4.3` or `11.4.4`, is at least `wanted`.
-fn version_at_least(version: &str, wanted: (u32, u32, u32)) -> bool {
+pub(crate) fn version_at_least(version: &str, wanted: (u32, u32, u32)) -> bool {
     let mut parts = version
         .split(|character: char| !character.is_ascii_digit())
         .filter(|part| !part.is_empty())

@@ -172,6 +172,14 @@ pub(super) fn statements(
         AccountOperation::Rename { name, new_name } => {
             require_account(name)?;
             require_account(new_name)?;
+            // Tried on MariaDB 11.4: `RENAME USER` refuses a role, the only account without a
+            // host.
+            if flavor == MysqlFlavor::MariaDb && name.host.is_empty() {
+                return Err(DdlError::ServerLacks {
+                    server: "MariaDB",
+                    what: "way to rename a role",
+                });
+            }
             Ok(vec![format!(
                 "RENAME USER {} TO {}",
                 account(name),
@@ -1017,6 +1025,27 @@ mod tests {
         for (operation, expected) in cases {
             assert_eq!(run(flavor, operation).unwrap(), [expected]);
         }
+    }
+
+    #[test]
+    fn mariadb_cant_rename_a_role() {
+        let rename = |flavor| {
+            run(
+                flavor,
+                AccountOperation::Rename {
+                    name: AccountName::role("r", flavor),
+                    new_name: AccountName::role("s", flavor),
+                },
+            )
+        };
+        assert_eq!(
+            rename(MysqlFlavor::Mysql).unwrap(),
+            ["RENAME USER `r`@`%` TO `s`@`%`"]
+        );
+        assert!(matches!(
+            rename(MysqlFlavor::MariaDb),
+            Err(DdlError::ServerLacks { .. })
+        ));
     }
 
     #[test]

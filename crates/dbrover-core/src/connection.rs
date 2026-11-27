@@ -6,10 +6,11 @@ use async_trait::async_trait;
 
 use crate::{
     CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, Cell, ChildrenPage,
-    ChildrenQuery, CostEstimate, DriverError, HandedOver, Handoff, ManagedService, ProgressHandle,
-    RelationName, ResultCursor, RoleDescription, SchemaDescription, SearchableTable,
-    ServerActivity, SessionId, SessionStop, StopOutcome, TableConstraints, TableDescription,
-    TableName, TablesToSearch, TransactionStatus,
+    ChildrenQuery, CostEstimate, DriverError, HandedOver, Handoff, ManagedService,
+    PrincipalDescription, ProgressHandle, RelationName, ResultCursor, RoleDescription,
+    SchemaDescription, SearchableTable, ServerActivity, SessionId, SessionStop, StopOutcome,
+    TableConstraints, TableDescription, TableName, TablesToSearch, TransactionStatus,
+    UserManagement,
 };
 
 /// What a server reported about itself when the connection was opened.
@@ -253,6 +254,34 @@ pub trait Connection: Send {
     /// or for a role that no longer exists; [`DriverError::Connection`] if the catalog query
     /// fails.
     async fn describe_role(&mut self, path: &CatalogPath) -> Result<RoleDescription, DriverError> {
+        Err(DriverError::InvalidPath(path.clone()))
+    }
+
+    /// What the server offers for managing its users, and what this login may do there (W18):
+    /// read when a users folder first loads, before any of the users dialogs opens.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError::Unsupported`] on engines whose users DbRover doesn't manage this way;
+    /// [`DriverError::Connection`] if the server can't be asked.
+    async fn user_management(&mut self) -> Result<UserManagement, DriverError> {
+        Err(DriverError::Unsupported(
+            "This database's users can't be managed here yet.",
+        ))
+    }
+
+    /// Describes the account, login, user or role at `path`, a node a users, logins or roles
+    /// folder lists, on MySQL, MariaDB and SQL Server (W18). PostgreSQL's roles are described
+    /// by [`Connection::describe_role`].
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError::InvalidPath`] for a path that isn't one, or one that no longer exists;
+    /// [`DriverError::Connection`] if the catalog can't be read.
+    async fn describe_principal(
+        &mut self,
+        path: &CatalogPath,
+    ) -> Result<PrincipalDescription, DriverError> {
         Err(DriverError::InvalidPath(path.clone()))
     }
 

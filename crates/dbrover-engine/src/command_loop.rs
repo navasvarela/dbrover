@@ -499,6 +499,12 @@ impl Engine {
             Command::DescribeRole { data_source, path } => {
                 self.request(data_source, SessionRequest::DescribeRole(path));
             }
+            Command::DescribePrincipal { data_source, path } => {
+                self.request(data_source, SessionRequest::DescribePrincipal(path));
+            }
+            Command::LoadUserManagement(data_source) => {
+                self.request(data_source, SessionRequest::LoadUserManagement);
+            }
             Command::ApplyDdl {
                 data_source,
                 statements,

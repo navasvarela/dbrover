@@ -9,7 +9,7 @@ use dbrover_core::{CatalogNode, CatalogPath, DriverError, FolderKind, NodeKind, 
 use mysql_async::prelude::Queryable;
 use mysql_async::{Conn, Params, Value};
 
-use crate::{MYSQL_QUOTING, connection_error};
+use crate::{Flavour, MYSQL_QUOTING, accounts, connection_error};
 
 const SCHEMA_FOLDERS: &[FolderKind] = &[
     FolderKind::Tables,
@@ -25,7 +25,10 @@ pub(crate) const SYSTEM_SCHEMAS: &[&str] =
 
 /// Which level of the tree a path points at, with the names its query needs.
 enum Level<'a> {
-    Schemas,
+    /// The users and roles folders, then the schemas.
+    Root,
+    /// The users or the roles folder (W18).
+    Accounts(FolderKind),
     SchemaFolders,
     SchemaObjects {
         schema: &'a str,
@@ -44,8 +47,13 @@ enum Level<'a> {
 impl<'a> Level<'a> {
     fn of(path: &'a CatalogPath) -> Option<Self> {
         let [schema, rest @ ..] = path.segments() else {
-            return Some(Self::Schemas);
+            return Some(Self::Root);
         };
+        if let (Some(folder @ (FolderKind::Users | FolderKind::Roles)), []) =
+            (folder_kind(schema), rest)
+        {
+            return Some(Self::Accounts(folder));
+        }
         if schema.kind != NodeKind::Schema {
             return None;
         }
@@ -103,11 +111,19 @@ fn relation_folders(kind: NodeKind) -> &'static [FolderKind] {
 
 pub(crate) async fn children(
     conn: &mut Conn,
+    flavour: Flavour,
     path: &CatalogPath,
 ) -> Result<Vec<CatalogNode>, DriverError> {
     let level = Level::of(path).ok_or_else(|| DriverError::InvalidPath(path.clone()))?;
     match level {
-        Level::Schemas => schemas(conn, path).await,
+        // Accounts belong to the whole server, so their folders come before the databases, as
+        // PostgreSQL's roles folder does.
+        Level::Root => {
+            let mut nodes = folders(path, &[FolderKind::Users, FolderKind::Roles]);
+            nodes.extend(schemas(conn, path).await?);
+            Ok(nodes)
+        }
+        Level::Accounts(folder) => accounts::list(conn, flavour, path, folder).await,
         Level::SchemaFolders => Ok(folders(path, SCHEMA_FOLDERS)),
         Level::SchemaObjects { schema, folder } => schema_objects(conn, path, schema, folder).await,
         Level::RelationFolders { relation_kind } => {

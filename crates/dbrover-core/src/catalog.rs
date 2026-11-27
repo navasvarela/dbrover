@@ -40,8 +40,14 @@ pub enum NodeKind {
     Index,
     Constraint,
     Trigger,
-    /// A user or group of the whole server (PostgreSQL's roles), listed beside its databases.
+    /// A user or group of the whole server (PostgreSQL's roles), listed beside its databases;
+    /// a MySQL or MariaDB role; a SQL Server server role or database role. Its folder says which.
     Role,
+    /// A MySQL or MariaDB account that logs in, named `user@host` (`AccountName::label`), or a
+    /// SQL Server database user, under a database's users folder.
+    User,
+    /// A SQL Server login, beside its databases.
+    Login,
     /// A Redis key, with the type of its value. Its path segment's name is the key written as
     /// `dbrover_language::redis::quote` writes an argument, so a key that isn't text survives.
     Key(KeyType),
@@ -169,6 +175,11 @@ pub enum FolderKind {
     Constraints,
     Triggers,
     Roles,
+    /// MySQL's and MariaDB's accounts that log in, or a SQL Server database's users.
+    Users,
+    /// SQL Server's logins.
+    Logins,
+    ServerRoles,
     /// Elasticsearch's and OpenSearch's indices.
     Indices,
     Aliases,
@@ -200,6 +211,9 @@ impl FolderKind {
             Self::Constraints => "constraints",
             Self::Triggers => "triggers",
             Self::Roles => "roles",
+            Self::Users => "users",
+            Self::Logins => "logins",
+            Self::ServerRoles => "server roles",
             Self::Indices => "indices",
             Self::Aliases => "aliases",
             Self::DataStreams => "data streams",
@@ -322,9 +336,15 @@ impl CatalogPath {
             NodeKind::Function | NodeKind::Aggregate => {
                 Some(self.schema_qualified(&object.name, quote))
             }
-            NodeKind::Column | NodeKind::Constraint | NodeKind::Trigger | NodeKind::Role => {
-                Some(quote(&object.name))
-            }
+            NodeKind::Column
+            | NodeKind::Constraint
+            | NodeKind::Trigger
+            | NodeKind::Role
+            | NodeKind::Login => Some(quote(&object.name)),
+            // A MySQL account's name is two names, `user@host`, which one identifier's quoting
+            // would make one name of; the users dialogs write it (`dbrover_sql`'s account
+            // statements).
+            NodeKind::User => None,
             // A key's, a collection's or an index's name as a command takes it: it belongs to
             // no schema.
             NodeKind::Key(_)

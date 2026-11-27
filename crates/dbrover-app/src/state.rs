@@ -206,6 +206,8 @@ impl AppState {
             | Event::TablesDescribed { .. }
             | Event::EditsApplied { .. }
             | Event::RoleDescribed { .. }
+            | Event::PrincipalDescribed { .. }
+            | Event::UserManagementLoaded { .. }
             | Event::ActivityRead { .. }
             | Event::SessionStopped { .. }
             | Event::ActivitySessionChanged { .. }
