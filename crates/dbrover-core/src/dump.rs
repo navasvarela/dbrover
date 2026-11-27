@@ -162,6 +162,61 @@ pub struct DumpRequest {
     pub file: PathBuf,
 }
 
+/// Where a restore writes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RestoreTarget {
+    /// A database DbRover creates first, so nothing that was there can be lost.
+    NewDatabase(String),
+    /// A database that exists, written into.
+    Existing(String),
+}
+
+impl RestoreTarget {
+    pub fn database(&self) -> &str {
+        match self {
+            Self::NewDatabase(name) | Self::Existing(name) => name,
+        }
+    }
+}
+
+/// The options a restore runs with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RestoreOptions {
+    /// Leaves out `ALTER … OWNER TO`, `GRANT` and `REVOKE` (and MySQL's `DEFINER`): the
+    /// common case is a server without the dump's roles, where they fail.
+    pub leave_out_owners: bool,
+    /// One transaction, so a restore that fails or is cancelled leaves nothing (PostgreSQL;
+    /// not with more than one job).
+    pub all_or_nothing: bool,
+    /// Drops each object before creating it (PostgreSQL's `--clean --if-exists`), only into an
+    /// existing database.
+    pub drop_first: bool,
+    /// Connections restoring at once, for PostgreSQL's archives.
+    pub jobs: NonZeroU8,
+}
+
+impl Default for RestoreOptions {
+    fn default() -> Self {
+        Self {
+            leave_out_owners: true,
+            all_or_nothing: true,
+            drop_first: false,
+            jobs: NonZeroU8::MIN,
+        }
+    }
+}
+
+/// One restore to run: a dump file into a database of a data source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestoreRequest {
+    pub data_source: DataSourceId,
+    pub file: PathBuf,
+    pub target: RestoreTarget,
+    /// Some of an archive's tables only; `None` for everything in the file.
+    pub tables: Option<Vec<TableName>>,
+    pub options: RestoreOptions,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

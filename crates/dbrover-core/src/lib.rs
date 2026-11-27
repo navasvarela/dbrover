@@ -80,7 +80,10 @@ pub use data_source::{
     ServerConfig, SnowflakeConfig, SnowflakeSignIn, SourceColor, SqlServerConfig, SqliteConfig,
     SshConfig, SshLogin, TlsMode, TrinoConfig, TrinoProtocol,
 };
-pub use dump::{DumpContent, DumpEngine, DumpFormat, DumpOptions, DumpRequest, DumpScope};
+pub use dump::{
+    DumpContent, DumpEngine, DumpFormat, DumpOptions, DumpRequest, DumpScope, RestoreOptions,
+    RestoreRequest, RestoreTarget,
+};
 pub use error::{BoxError, DriverError, describe_error, position_at};
 pub use execution::{
     CancelHandle, Cell, ColumnInfo, ResultCursor, ResultShape, Row, TransactionStatus, ValueKind,

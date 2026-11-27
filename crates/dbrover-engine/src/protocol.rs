@@ -23,9 +23,10 @@ use dbrover_store::{
 };
 
 use crate::{
-    DumpDone, DumpFailure, DumpProgress, DumpRun, DumpRunId, DumpStart, Export, ExportAll,
-    ExportProgramRequest, HostKey, InstalledUpdate, Noticed, PasswordNeeded, ProgramFailure,
-    ProgramId, ProgramOutput, ProgramRequest, Release, WatchedFile,
+    DumpDone, DumpFailure, DumpFileFound, DumpProgress, DumpRun, DumpRunId, DumpStart, Export,
+    ExportAll, ExportProgramRequest, HostKey, InstalledUpdate, Noticed, PasswordNeeded,
+    ProgramFailure, ProgramId, ProgramOutput, ProgramPaths, ProgramRequest, Release, RestoreDone,
+    RestoreRun, WatchedFile,
 };
 
 /// A file in the settings folder that the app shows as one document, which the engine
@@ -488,9 +489,21 @@ pub enum Command {
     /// history once. A password or trust connecting lacks is asked for as a session asks, and
     /// the dump ends; the app sends it again once it has it.
     StartDump(Box<DumpRun>),
-    /// Stops a dump's program and removes what it had written. Answered by its
-    /// [`Event::DumpEnded`].
+    /// Stops a dump's or a restore's program; a dump's file is removed. Answered by its
+    /// [`Event::DumpEnded`] or [`Event::RestoreEnded`].
     CancelDump(DumpRunId),
+    /// Reads what a dump file is, for the Restore dialog: its kind, and for a PostgreSQL
+    /// archive what it holds and which `pg_dump` wrote it. Answered by
+    /// [`Event::DumpFileInspected`].
+    InspectDumpFile {
+        file: PathBuf,
+        programs: ProgramPaths,
+    },
+    /// Restores a dump into a database of a data source (W17), creating the database first
+    /// when it is new; refused on a read-only data source. The app asks before sending it.
+    /// Answered as a dump is, by [`Event::DumpStarted`] and [`Event::DumpProgress`], then
+    /// [`Event::RestoreEnded`]; recorded in the history once.
+    StartRestore(Box<RestoreRun>),
     /// Lets the command run without asking from now on, in place of whatever its action ran
     /// before, and saves that. Answered by [`Event::TrustedCommandsLoaded`].
     TrustCommand(TrustedCommand),
@@ -729,6 +742,14 @@ pub enum Event {
     DumpEnded {
         run: DumpRunId,
         result: Result<DumpDone, DumpFailure>,
+    },
+    DumpFileInspected {
+        file: PathBuf,
+        result: Result<DumpFileFound, String>,
+    },
+    RestoreEnded {
+        run: DumpRunId,
+        result: Result<RestoreDone, DumpFailure>,
     },
     ProgramFinished {
         program: ProgramId,

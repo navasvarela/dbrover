@@ -17,7 +17,7 @@ use crate::config_files;
 use crate::console_files;
 use crate::diagram_files;
 use crate::dump_programs::ProgramVersions;
-use crate::dumps::{self, DumpFailure, DumpRun, DumpRunId, DumpServices};
+use crate::dumps::{self, DumpFailure, DumpRun, DumpRunId};
 use crate::events::EventSink;
 use crate::export;
 use crate::export_programs::{self, ExportProgramRequest};
@@ -28,12 +28,14 @@ use crate::outside_changes::{DocumentVersions, Noticed};
 use crate::password_commands::PasswordCommands;
 use crate::passwords::SessionPasswords;
 use crate::pictures;
+use crate::program_run::{self, ProgramServices};
 use crate::programs::{self, ProgramFailure, ProgramId, ProgramRequest, ProgramRunner};
 use crate::projects::{OutsideChanges as ProjectChanges, ProjectError, ProjectRegistry};
 use crate::query_folders;
 use crate::registry::{OutsideChanges as DataSourceChanges, Registry, RegistryError};
 use crate::releases::{self, ReleaseFeed};
 use crate::report_files;
+use crate::restores::{self, RestoreRun};
 use crate::session::{OwnSessions, Script, Services, Session, SessionOwner, SessionRequest};
 use crate::settings;
 use crate::sql_files;
@@ -71,10 +73,10 @@ pub(crate) async fn run(
     for event in config_files::load_custom(&config.custom_files).await {
         events.send(event);
     }
-    let dump_files = dumps::run_files_folder(&config.trusted_commands);
+    let dump_files = program_run::run_files_folder(&config.trusted_commands);
     let leftovers = dump_files.clone();
     if let Err(error) =
-        tokio::task::spawn_blocking(move || dumps::remove_leftovers(&leftovers)).await
+        tokio::task::spawn_blocking(move || program_run::remove_leftovers(&leftovers)).await
     {
         tracing::warn!("could not look for a dump's leftover files: {error}");
     }
@@ -557,6 +559,16 @@ impl Engine {
                 }
             }
             Command::StartDump(run) => self.start_dump(*run),
+            Command::StartRestore(run) => self.start_restore(*run),
+            Command::InspectDumpFile { file, programs } => {
+                let services = self.program_services();
+                tokio::spawn(async move {
+                    let result = restores::inspect(&file, &services, &programs).await;
+                    services
+                        .events
+                        .send(Event::DumpFileInspected { file, result });
+                });
+            }
             Command::CancelDump(run) => {
                 if let Some(cancel) = self.dumps.remove(&run) {
                     // The dump may have ended already, taking its receiver with it.
@@ -1307,10 +1319,43 @@ impl Engine {
             });
             return;
         };
+        let cancelled = self.cancellable(id);
+        tokio::spawn(dumps::run(
+            run,
+            data_source,
+            self.program_services(),
+            cancelled,
+        ));
+    }
+
+    fn start_restore(&mut self, run: RestoreRun) {
+        let id = run.run;
+        let Some(data_source) = self.registry.get(run.request.data_source).cloned() else {
+            self.events.send(Event::RestoreEnded {
+                run: id,
+                result: Err(DumpFailure::NoDataSource),
+            });
+            return;
+        };
+        let cancelled = self.cancellable(id);
+        tokio::spawn(restores::run(
+            run,
+            data_source,
+            self.program_services(),
+            cancelled,
+        ));
+    }
+
+    /// What [`Command::CancelDump`] stops `run` by.
+    fn cancellable(&mut self, run: DumpRunId) -> oneshot::Receiver<()> {
         let (cancel, cancelled) = oneshot::channel();
         self.dumps.retain(|_, cancel| !cancel.is_closed());
-        self.dumps.insert(id, cancel);
-        let services = DumpServices {
+        self.dumps.insert(run, cancel);
+        cancelled
+    }
+
+    fn program_services(&self) -> ProgramServices {
+        ProgramServices {
             secrets: Arc::clone(&self.secrets),
             passwords: self.passwords.clone(),
             tunnels: self.tunnels.clone(),
@@ -1319,8 +1364,7 @@ impl Engine {
             history: self.history.clone(),
             versions: self.program_versions.clone(),
             run_files: self.dump_files.clone(),
-        };
-        tokio::spawn(dumps::run(run, data_source, services, cancelled));
+        }
     }
 
     fn password_commands(&self) -> PasswordCommands {

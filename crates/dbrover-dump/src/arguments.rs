@@ -62,8 +62,13 @@ pub struct DumpCommand {
 pub enum ArgumentError {
     #[error(transparent)]
     Connection(#[from] ConnectionError),
-    #[error("{0} can't write a dump in this format")]
+    #[error("{0} can't write or read a dump in this format")]
     Format(DumpEngine),
+    #[error("this is a {file} dump, which can't be restored into {server}")]
+    OtherEngine {
+        file: DumpEngine,
+        server: DumpEngine,
+    },
     #[error("{0} has no schemas inside a database; choose the database or some of its tables")]
     NoSchemas(DumpEngine),
     #[error("\"{0}\" starts with a dash, which the program would read as an option")]

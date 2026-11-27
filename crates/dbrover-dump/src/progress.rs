@@ -21,6 +21,16 @@ pub fn dumped_table(engine: DumpEngine, line: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_owned())
 }
 
+/// The table a restore program has started on: `pg_restore: processing data for table
+/// "public.orders"`.
+pub fn restored_table(line: &str) -> Option<String> {
+    let rest = line
+        .trim()
+        .strip_prefix("pg_restore: processing data for table ")?;
+    let name = rest.trim().trim_matches('"');
+    (!name.is_empty()).then(|| name.to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -54,5 +64,18 @@ mod tests {
         for (engine, line, table) in cases {
             assert_eq!(dumped_table(engine, line).as_deref(), table, "{line}");
         }
+    }
+
+    #[test]
+    fn reads_pg_restores_table_lines() {
+        assert_eq!(
+            restored_table("pg_restore: processing data for table \"public.Order Items\"")
+                .as_deref(),
+            Some("public.Order Items")
+        );
+        assert_eq!(
+            restored_table("pg_restore: creating TABLE \"public.orders\""),
+            None
+        );
     }
 }
