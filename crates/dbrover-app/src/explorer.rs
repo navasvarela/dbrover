@@ -1612,7 +1612,8 @@ fn new_roles(
             (icons::USER, "User…", Helper::NewUser(path.clone())),
             (icons::USERS, "Role…", Helper::NewRole(path.clone())),
         ],
-        UserModel::Unsupported => Vec::new(),
+        // MySQL's accounts and SQL Server's logins have menus of their own (W18e, W18f).
+        UserModel::Accounts | UserModel::LoginsAndUsers | UserModel::Unsupported => Vec::new(),
     }
 }
 

@@ -160,10 +160,12 @@ pub(super) fn drop(
 fn supported(dialect: Dialect) -> Result<(), DdlError> {
     match dialect.capabilities().users {
         UserModel::Roles => Ok(()),
-        UserModel::Unsupported => Err(DdlError::Unsupported {
-            what: "roles DbRover can create or change",
-            dialect,
-        }),
+        UserModel::Accounts | UserModel::LoginsAndUsers | UserModel::Unsupported => {
+            Err(DdlError::Unsupported {
+                what: "roles DbRover can create or change",
+                dialect,
+            })
+        }
     }
 }
 

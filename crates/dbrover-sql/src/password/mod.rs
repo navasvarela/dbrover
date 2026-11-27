@@ -1,6 +1,12 @@
 //! Passwords in DDL, hashed on the client before a statement holds one.
 
+mod mysql;
+mod sqlserver;
+
 use std::fmt;
+
+pub use mysql::AccountHash;
+pub use sqlserver::SqlServerHash;
 
 /// A password hashed for PostgreSQL's SCRAM-SHA-256 authentication: the verifier the server
 /// stores in its place, `SCRAM-SHA-256$<iterations>:<salt>$<stored key>:<server key>`.

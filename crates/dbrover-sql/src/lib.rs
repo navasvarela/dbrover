@@ -39,9 +39,11 @@ pub use classify::{
     Analysis, NamePart, NamedSchemas, StatementKind, Unclassified, analyze, classify,
 };
 pub use ddl::{
-    Check, ColumnSpec, DdlError, DdlOperation, ExistingTable, ForeignKey, IndexMethod, IndexSpec,
-    ObjectName, OwnedObjects, PasswordChange, ReferentialAction, RoleSpec, SchemaSpec,
-    TableAlteration, TableSpec, UniqueKey, ViewKind, ViewSpec, ddl_statements, quote_name,
+    AccountOperation, AccountPassword, AccountSpec, Check, ColumnSpec, DatabaseUserSpec, DdlError,
+    DdlOperation, ExistingTable, ForeignKey, IndexMethod, IndexSpec, LoginPolicy, LoginSource,
+    LoginSpec, ObjectName, OwnedObjects, PasswordChange, PasswordPlugin, ReferentialAction,
+    RoleSpec, SchemaSpec, SqlServerOperation, SqlServerPassword, TableAlteration, TableSpec,
+    UniqueKey, UserMapping, UserSource, ViewKind, ViewSpec, ddl_statements, quote_name,
     rebuild_refusal, view_query,
 };
 pub use dialect::{
@@ -56,7 +58,7 @@ pub use parameters::{
     MissingValue, Parameter, ParameterBinding, ParameterValues, Prepared, bind, inline,
     parameter_names, parameters, values_comment,
 };
-pub use password::ScramVerifier;
+pub use password::{AccountHash, ScramVerifier, SqlServerHash};
 pub use projection::{ProjectionItem, projection};
 pub use safety::{Hazard, hazard};
 pub use search::{SearchKind, SearchStatement, SearchSupport, search_statement};

@@ -13,13 +13,15 @@ dbrover-core.workspace = true
 # The plan formats a dialect's plan requests are answered in.
 dbrover-plan.workspace = true
 postgres-protocol.workspace = true
+rand.workspace = true
+sha1.workspace = true
+sha2.workspace = true
 sqlparser.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 base64.workspace = true
 hmac.workspace = true
-sha2.workspace = true
 
 [lints]
 workspace = true

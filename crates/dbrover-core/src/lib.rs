@@ -3,6 +3,7 @@
 //! Nothing here does I/O. Driver crates implement [`Connection`]; the engine owns the
 //! connections and the UI only ever sees the plain data types.
 
+mod account;
 mod activity;
 mod batch;
 mod blob_id;
@@ -20,6 +21,7 @@ mod error;
 mod execution;
 mod handoff;
 mod job;
+mod login;
 mod managed_service;
 mod mongo_uri;
 mod object_storage;
@@ -35,6 +37,11 @@ mod table;
 #[cfg(feature = "conformance")]
 pub mod conformance;
 
+pub use account::{
+    AccountDescription, AccountKind, AccountLimits, AccountName, AdminOption, DefinedKind,
+    DefinedObject, FailedLoginLock, LockTime, MysqlFlavor, ObjectLevel, ObjectPrivilege,
+    PasswordLifetime, Privilege, PrivilegeSet, RoutineKind,
+};
 pub use activity::{
     ActivityRow, Hidden, LockWait, Restriction, ServerActivity, ServerSession, SessionId,
     SessionState, SessionStatement, SessionStop, StopKind, StopOutcome, blocking_order,
@@ -78,6 +85,11 @@ pub use execution::{
 pub use handoff::{HandedOver, Handoff, HandoffFiles, HandoffFolder, HandoffSupport};
 pub use job::{
     JobFailure, JobId, JobPage, JobProgress, JobService, JobState, Jobs, ProgressHandle,
+};
+pub use login::{
+    DatabaseUserDescription, DatabaseUserKind, DatabaseUserName, LoginDescription, LoginKind,
+    PermissionGrant, PermissionState, PrincipalScope, Securable, SqlLoginState,
+    SqlServerRoleDescription, sql_server_is_administrative,
 };
 pub use managed_service::{
     ManagedService, ServiceAddress, ServiceEngine, ServicePreset, ServiceSignIn, ServiceTls,
