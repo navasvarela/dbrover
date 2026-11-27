@@ -115,6 +115,7 @@ impl BackgroundRuns {
                     self.notice = Some(work.imported(result));
                 }
             }
+            Event::SavedDumpStarted { run, name } => self.dump(*run, name.clone()),
             Event::DumpProgress { run, progress } => {
                 if let Some(running) = self.running.iter_mut().find(|r| r.work.is_run(*run)) {
                     running.dumped = progress.clone();

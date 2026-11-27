@@ -116,6 +116,8 @@ pub enum ExplorerAction {
     Dump(DataSourceId, CatalogPath),
     /// Restore…: the Restore dialog, into the database named, or a new one (W17).
     Restore(DataSourceId, Option<String>),
+    /// Saved dumps…: the data source's saved dumps and their schedules (W17h).
+    SavedDumps(DataSourceId),
     /// Compare schema…: a compare tab with the schema at the path on its left (W13).
     CompareSchema(DataSourceId, CatalogPath),
     /// Save schema snapshot…: the schema at the path written to a file the user picks (VC3).
@@ -936,6 +938,9 @@ fn dump_items(ui: &mut Ui, entry: &DataSourceEntry, actions: &mut Vec<ExplorerAc
     let id = entry.data_source.id;
     if widgets::menu_item(ui, icons::DOWNLOAD_SIMPLE, "Dump\u{2026}").clicked() {
         actions.push(ExplorerAction::Dump(id, CatalogPath::root()));
+    }
+    if widgets::menu_item(ui, icons::CLOCK_COUNTER_CLOCKWISE, "Saved dumps\u{2026}").clicked() {
+        actions.push(ExplorerAction::SavedDumps(id));
     }
     let writable = entry.data_source.safety != SafetyLevel::ReadOnly;
     let restore = ui

@@ -21,6 +21,7 @@ mod previous_install;
 mod projects;
 mod query_folders;
 mod reports;
+mod saved_dumps;
 mod secrets;
 mod settings;
 mod settings_folder;
@@ -72,6 +73,10 @@ pub use query_folders::{
     home_relative, read_query_folder,
 };
 pub use reports::{ReportFiles, ReportName, ReportSaveError};
+pub use saved_dumps::{
+    DEFAULT_KEEP, DUMP_SCHEDULES_FILE_NAME, Day, SAVED_DUMPS_FILE_NAME, SavedDump, SavedDumpsError,
+    SavedDumpsFile, Schedule, ScheduleState, ScheduleStatesFile, TimeOfDay, dump_file_name,
+};
 pub use secrets::{Secret, SecretError, SecretStore, os_keychain};
 pub use settings::{
     ActivitySettings, DataSearchSettings, DumpSettings, ExplorerSettings, FormatSettings,

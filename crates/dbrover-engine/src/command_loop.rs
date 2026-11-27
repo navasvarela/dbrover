@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dbrover_core::{DataSource, DataSourceId, Password, ProjectId, SafetyLevel, describe_error};
@@ -16,7 +16,7 @@ use tokio::task::{JoinError, JoinSet};
 use crate::config_files;
 use crate::console_files;
 use crate::diagram_files;
-use crate::dump_programs::ProgramVersions;
+use crate::dump_programs::{ProgramPaths, ProgramVersions};
 use crate::dumps::{self, DumpFailure, DumpRun, DumpRunId};
 use crate::events::EventSink;
 use crate::export;
@@ -36,6 +36,11 @@ use crate::registry::{OutsideChanges as DataSourceChanges, Registry, RegistryErr
 use crate::releases::{self, ReleaseFeed};
 use crate::report_files;
 use crate::restores::{self, RestoreRun};
+use crate::saved_dump_runs::{self, SCHEDULE_CHECK, SavedDumps, SharedSavedDumps};
+
+/// Where the ids of the dumps the engine starts itself begin: far past any the app chooses,
+/// counting from 1, so the two never meet.
+const ENGINE_RUNS: u64 = 1 << 62;
 use crate::session::{OwnSessions, Script, Services, Session, SessionOwner, SessionRequest};
 use crate::settings;
 use crate::sql_files;
@@ -69,11 +74,21 @@ pub(crate) async fn run(
     let mut documents = DocumentVersions::default();
     let settings = settings::load(&config.settings, &mut documents).await;
     let retention = settings::history_retention(&settings);
+    let dump_programs = settings::dump_programs(&settings).unwrap_or_default();
     events.send(settings);
     for event in config_files::load_custom(&config.custom_files).await {
         events.send(event);
     }
     let dump_files = program_run::run_files_folder(&config.trusted_commands);
+    let saved_dumps = {
+        let settings_folder = config.settings.path().parent().unwrap_or(Path::new("."));
+        let data_folder = config
+            .trusted_commands
+            .path()
+            .parent()
+            .unwrap_or(Path::new("."));
+        Arc::new(Mutex::new(SavedDumps::load(settings_folder, data_folder)))
+    };
     let leftovers = dump_files.clone();
     if let Err(error) =
         tokio::task::spawn_blocking(move || program_run::remove_leftovers(&leftovers)).await
@@ -115,6 +130,9 @@ pub(crate) async fn run(
         dumps: HashMap::new(),
         program_versions: ProgramVersions::default(),
         dump_files,
+        dump_programs,
+        saved_dumps,
+        next_engine_run: ENGINE_RUNS,
         releases: config.releases,
         updater: config.updater,
         events,
@@ -125,8 +143,16 @@ pub(crate) async fn run(
         own_sessions: OwnSessions::default(),
         closing: JoinSet::new(),
     };
-    while let Some(command) = commands.recv().await {
-        engine.handle(command).await;
+    let mut schedules =
+        tokio::time::interval_at(tokio::time::Instant::now() + SCHEDULE_CHECK, SCHEDULE_CHECK);
+    loop {
+        tokio::select! {
+            command = commands.recv() => match command {
+                Some(command) => engine.handle(command).await,
+                None => break,
+            },
+            _ = schedules.tick() => engine.run_due_dumps(),
+        }
     }
     // Sessions hold history handles too, so the history thread ends only once they have
     // stopped and their last statements are recorded.
@@ -173,6 +199,12 @@ struct Engine {
     program_versions: ProgramVersions,
     /// The data folder's folder for dumps' password files.
     dump_files: PathBuf,
+    /// The dump programs' paths set in Settings, for the runs the engine starts itself.
+    dump_programs: ProgramPaths,
+    /// `dumps.toml` and this machine's schedules (W17h).
+    saved_dumps: SharedSavedDumps,
+    /// The id the next dump the engine starts itself runs under, apart from the app's.
+    next_engine_run: u64,
     releases: Arc<dyn ReleaseFeed>,
     updater: Arc<dyn UpdateInstaller>,
     events: EventSink,
@@ -560,6 +592,21 @@ impl Engine {
             }
             Command::StartDump(run) => self.start_dump(*run),
             Command::StartRestore(run) => self.start_restore(*run),
+            Command::SaveDump(dump) => {
+                let saved = self.saved_dumps().save(*dump);
+                self.saved_dumps_changed(saved);
+            }
+            Command::DeleteSavedDump(id) => {
+                let deleted = self.saved_dumps().delete(&id);
+                self.saved_dumps_changed(deleted);
+            }
+            Command::SetDumpSchedule { id, on } => {
+                let set = self.saved_dumps().set_on(&id, on, jiff::Timestamp::now());
+                self.saved_dumps_changed(set);
+            }
+            Command::RunSavedDump(id) => self.run_saved_dump(&id),
+            Command::LoadSavedDumps => self.saved_dumps_changed(Ok(())),
+            Command::CheckDumpSchedules => self.run_due_dumps(),
             Command::ChooseDumpProgram(query) => {
                 let services = self.program_services();
                 tokio::spawn(async move {
@@ -670,6 +717,9 @@ impl Engine {
             Command::SaveSettings(new) => {
                 let saved = settings::save(&self.settings_file, &mut self.documents, new).await;
                 if let Some(saved) = saved {
+                    if let Some(programs) = settings::dump_programs(&saved) {
+                        self.dump_programs = programs;
+                    }
                     if let Some(retention) = settings::history_retention(&saved) {
                         self.history.prune(retention);
                     }
@@ -1351,6 +1401,52 @@ impl Engine {
             run,
             data_source,
             self.program_services(),
+            cancelled,
+        ));
+    }
+
+    fn saved_dumps(&self) -> std::sync::MutexGuard<'_, SavedDumps> {
+        self.saved_dumps
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Tells the app what the saved dumps are now, and why a change wasn't saved.
+    fn saved_dumps_changed(&self, result: Result<(), String>) {
+        if let Err(error) = result {
+            tracing::error!("{error}");
+        }
+        let event = self.saved_dumps().event();
+        self.events.send(event);
+    }
+
+    /// Starts every saved dump whose schedule is due, and isn't already running.
+    fn run_due_dumps(&mut self) {
+        let due = self.saved_dumps().due(&jiff::Zoned::now());
+        for dump in due {
+            self.run_saved_dump(&dump.id);
+        }
+    }
+
+    fn run_saved_dump(&mut self, id: &str) {
+        let Some(dump) = self.saved_dumps().find(id).cloned() else {
+            tracing::warn!("there is no saved dump {id}");
+            return;
+        };
+        let Some(data_source) = self.registry.get(dump.data_source).cloned() else {
+            tracing::warn!("{}'s data source no longer exists", dump.name);
+            return;
+        };
+        self.next_engine_run += 1;
+        let run = DumpRunId(self.next_engine_run);
+        let cancelled = self.cancellable(run);
+        tokio::spawn(saved_dump_runs::run(
+            dump,
+            data_source,
+            run,
+            self.dump_programs.clone(),
+            self.program_services(),
+            Arc::clone(&self.saved_dumps),
             cancelled,
         ));
     }

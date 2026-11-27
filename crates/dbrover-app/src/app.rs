@@ -72,6 +72,7 @@ use crate::query_folders::{
 use crate::reports::{self, RenameAction, RenameReportDialog, ReportAction, Reports, ReportsSetup};
 use crate::restore_dialog::{RestoreAction, RestoreDialog};
 use crate::rollback_dialog::{Closing, RollbackChoice, RollbackConfirmation};
+use crate::saved_dumps_dialog::{SavedDumpsAction, SavedDumpsDialog};
 use crate::schema_compare::{CompareAction, LiveSchema, Reading, SchemaCompares};
 use crate::search_tab::{SearchAction, SearchDefaults, SearchTabs};
 use crate::settings::AppSettings;
@@ -168,6 +169,7 @@ pub struct DbRoverApp {
     /// Dump… and Restore… (W17).
     dump_dialog: Option<DumpDialog>,
     restore_dialog: Option<RestoreDialog>,
+    saved_dumps_dialog: Option<SavedDumpsDialog>,
     /// The id the next dump or restore runs under.
     next_dump_run: u64,
     /// The folder each data source was last dumped to, where its next dump goes first.
@@ -333,6 +335,7 @@ impl DbRoverApp {
             csv_import: None,
             dump_dialog: None,
             restore_dialog: None,
+            saved_dumps_dialog: None,
             next_dump_run: 0,
             dump_folders: HashMap::new(),
             restoring: HashMap::new(),
@@ -608,6 +611,9 @@ impl DbRoverApp {
             dialog.apply(event);
         }
         if let Some(dialog) = &mut self.dump_dialog {
+            dialog.apply(event);
+        }
+        if let Some(dialog) = &mut self.saved_dumps_dialog {
             dialog.apply(event);
         }
         if let Some(dialog) = &mut self.restore_dialog {
@@ -1639,6 +1645,13 @@ impl DbRoverApp {
             ExplorerAction::ImportCsv(id, path) => self.open_csv_import(id, &path),
             ExplorerAction::Dump(id, path) => self.open_dump(id, &path),
             ExplorerAction::Restore(id, database) => self.open_restore(id, database),
+            ExplorerAction::SavedDumps(id) => {
+                if let Some(entry) = self.state.data_source(id) {
+                    let (dialog, command) = SavedDumpsDialog::open(id, &entry.data_source.name);
+                    self.saved_dumps_dialog = Some(dialog);
+                    self.send(command);
+                }
+            }
             ExplorerAction::ExportData(id, path) => self.open_table_export(id, &path),
             ExplorerAction::Diagram(id, path) => self.open_diagram_dialog(id, &path),
             ExplorerAction::CompareSchema(id, path) => self.open_schema_compare(id, &path),
@@ -2939,6 +2952,10 @@ impl DbRoverApp {
                     programs,
                 })));
             }
+            Some(DumpAction::Save(saved)) => {
+                self.dump_dialog = None;
+                self.send(Command::SaveDump(saved));
+            }
             Some(DumpAction::Close) => self.dump_dialog = None,
             None => {}
         }
@@ -3003,6 +3020,17 @@ impl DbRoverApp {
         if let Some((dialog, command)) = RestoreDialog::open(entry, database, file, programs) {
             self.restore_dialog = Some(dialog);
             self.send(command);
+        }
+    }
+
+    fn show_saved_dumps_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.saved_dumps_dialog else {
+            return;
+        };
+        match dialog.show(ctx) {
+            Some(SavedDumpsAction::Send(command)) => self.send(*command),
+            Some(SavedDumpsAction::Close) => self.saved_dumps_dialog = None,
+            None => {}
         }
     }
 
@@ -3580,6 +3608,7 @@ impl eframe::App for DbRoverApp {
         self.show_csv_import(&ctx);
         self.show_dump_dialog(&ctx);
         self.show_restore_dialog(&ctx);
+        self.show_saved_dumps_dialog(&ctx);
         self.show_diagram_dialog(&ctx);
         let commands = self.command_runs.show(&ctx);
         self.send_all(commands);

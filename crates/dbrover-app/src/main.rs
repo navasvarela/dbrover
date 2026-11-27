@@ -22,6 +22,7 @@ mod definition_tab;
 mod delete_dialog;
 mod diagram;
 mod dialog;
+mod dump_command;
 mod dump_dialog;
 mod explorer;
 mod export_dialog;
@@ -64,6 +65,8 @@ mod report_worker;
 mod reports;
 mod restore_dialog;
 mod rollback_dialog;
+mod save_dump_form;
+mod saved_dumps_dialog;
 mod schema_command;
 mod schema_compare;
 #[cfg(test)]
@@ -126,6 +129,9 @@ fn main() -> anyhow::Result<()> {
         }
         version::CliRequest::Schema(request) => {
             std::process::exit(schema_command::main(request));
+        }
+        version::CliRequest::Dump(request) => {
+            std::process::exit(dump_command::main(request));
         }
         version::CliRequest::ReportWorker { config_dir } => {
             std::process::exit(report_worker::run(config_dir.as_deref()));

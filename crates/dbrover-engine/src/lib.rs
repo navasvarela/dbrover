@@ -47,6 +47,7 @@ mod report_worker;
 #[cfg(test)]
 mod repository_rename_tests;
 mod restores;
+mod saved_dump_runs;
 mod schema_snapshot;
 mod self_dumps;
 mod session;
@@ -95,6 +96,7 @@ pub use report_disk::disk_budget;
 pub use report_source::{ReportSource, SourceAccess};
 pub use report_worker::{RunStopper, RunWatch, WorkerRun};
 pub use restores::{DumpFileFound, RestoreDone, RestoreRun};
+pub use saved_dump_runs::{HeadlessDump, run_saved_dump};
 pub use schema_snapshot::{read_schema, read_snapshot_file};
 pub use sql_files::WatchedFile;
 pub use stop_signals::StopSignals;

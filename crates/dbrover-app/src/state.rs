@@ -208,6 +208,8 @@ impl AppState {
             | Event::DumpEnded { .. }
             | Event::DumpFileInspected { .. }
             | Event::DumpProgramChosen { .. }
+            | Event::SavedDumpsLoaded { .. }
+            | Event::SavedDumpStarted { .. }
             | Event::RestoreEnded { .. }
             | Event::SettingsLoaded { .. }
             | Event::LatestRelease(_)
