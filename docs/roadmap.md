@@ -2151,6 +2151,47 @@ three to five, **L** a track of its own).
   its row by its key; double-clicking a match opens a console on that row; a table locked by
   another session times out and the search goes on; Cancel keeps what was found; a careful
   data source asks first; History lists the search once, as **Search**.
+- **W18 — Users beyond PostgreSQL (L):** planned on 2026-11-27 in
+  [Users beyond PostgreSQL](users-beyond-postgres.md); its questions wait for answers. MySQL's
+  and MariaDB's `'name'@'host'` accounts and roles, and SQL Server's logins, server roles,
+  database users and database roles, listed in the explorer and created, changed, renamed and
+  dropped through E3's dialogs and review panel. Third in the competitor-gap review of
+  2026-11-25: DataGrip, TablePlus and DBX all have it.
+  - **The explorer:** **users** and **roles** folders at the top of a MySQL or MariaDB data
+    source; **logins** and **server roles** at the top of a SQL Server one, and **users** and
+    **roles** in each database.
+  - **The dialogs:** New, Edit, Rename and Drop for each kind; an account's password, plugin,
+    lock, expiry, limits, roles and default roles, and its global and database privileges; a
+    login's kind, password policy, server roles and user mapping; a user's login, default
+    schema and database roles. Finer grants are listed with **Revoke**.
+  - **Passwords:** hashed on the client in each plugin's form (MySQL's
+    `caching_sha2_password` and `mysql_native_password`, MariaDB's, SQL Server's `HASHED`),
+    except where the server would check the password, and never kept.
+  - **Safety:** always previewed; careful data sources ask, read-only ones refuse; granting
+    administration is flagged; Drop says what it breaks (definers, orphaned users, owned
+    schemas); a login without the privileges sees what it may, and why not more.
+  - **History:** as E3, **Object helper**, redacted. **MCP:** nothing new proposed.
+  - **W18a — The plan:** the design and this entry.
+  - **W18b — The model and the statements:** core types, `UserModel::Accounts` and
+    `LoginsAndUsers`, the builders for MySQL, MariaDB and SQL Server, the three password
+    hashes, and the redaction of SQL Server's `HASHED` literal, golden tested.
+  - **W18c — MySQL and MariaDB, read and round trip:** the folders, `describe_principal`,
+    `user_management`, privileges at every level, definers; `check_accounts` on both servers.
+  - **W18d — SQL Server, read and round trip:** logins, server roles, each database's users
+    and roles, permissions, orphaned users; `check_logins`.
+  - **W18e — The MySQL and MariaDB dialogs:** the menus, New user and role, Edit, Lock,
+    Expire, Rename, Drop, Copy DDL.
+  - **W18f — The SQL Server dialogs:** logins of each kind, server roles, database users and
+    roles, Map to login, Drop with users and schemas, Copy DDL.
+  - **W18g — Manual and demo note:** the Users and roles chapter extended, with pictures, and
+    the exit as an engine test.
+
+  **Exit:** on MySQL and MariaDB, a user created with a password, `SELECT` on a database and a
+  default role logs in from a new data source and reads; locked, its login is refused;
+  dropped, it is gone. On SQL Server, a SQL login with a user that is a member of
+  `db_datareader` logs in and reads; disabled, it is refused; dropped with its users, nothing
+  is left. Careful data sources ask first and read-only ones refuse; no password or hash
+  appears in the history, the log or the review panel.
 
 ## Diagrams track
 
