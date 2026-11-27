@@ -354,8 +354,7 @@ fn saves_a_dump_and_runs_it_from_saved_dumps() {
     harness.get_by_label("Dump\u{2026}").click();
     harness.run_steps(2);
     step_until_visible(&mut harness, "Dump from shop");
-    harness.get_by_label("Browse…").click();
-    harness.run_steps(2);
+    click(&mut harness, "Browse…");
     harness.get_by_label("Save…").hover();
     harness.run_steps(2);
     harness.get_by_label("Save…").click();
