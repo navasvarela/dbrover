@@ -34,6 +34,9 @@ pub enum HistorySource {
     /// A dump (W17), recorded once with the command that ran, and what was dumped, where to,
     /// and how large it was.
     Dump { dumped: String },
+    /// A restore (W17), recorded once with the command that ran, and what was restored into
+    /// which database.
+    Restore { restored: String },
     /// DbRover, before it recorded where a statement came from: rows written before the history
     /// had provenance, or since then by an older DbRover sharing the file.
     DbRover,
@@ -52,11 +55,12 @@ pub enum HistorySourceKind {
     Activity,
     Search,
     Dump,
+    Restore,
     DbRover,
 }
 
 impl HistorySourceKind {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Console,
         Self::GridEdit,
         Self::ObjectHelper,
@@ -67,6 +71,7 @@ impl HistorySourceKind {
         Self::Activity,
         Self::Search,
         Self::Dump,
+        Self::Restore,
         Self::DbRover,
     ];
 
@@ -85,6 +90,7 @@ impl HistorySourceKind {
             Self::Activity => "activity",
             Self::Search => "search",
             Self::Dump => "dump",
+            Self::Restore => "restore",
             Self::DbRover => "app",
         }
     }
@@ -107,6 +113,7 @@ impl HistorySource {
             Self::Activity { .. } => HistorySourceKind::Activity,
             Self::Search { .. } => HistorySourceKind::Search,
             Self::Dump { .. } => HistorySourceKind::Dump,
+            Self::Restore { .. } => HistorySourceKind::Restore,
             Self::DbRover => HistorySourceKind::DbRover,
         }
     }
@@ -137,6 +144,7 @@ impl HistorySource {
             Self::Activity { stopped } => Some(stopped.clone()),
             Self::Search { searched } => Some(searched.clone()),
             Self::Dump { dumped } => Some(dumped.clone()),
+            Self::Restore { restored } => Some(restored.clone()),
             _ => None,
         }
     }
@@ -175,6 +183,9 @@ impl HistorySource {
             },
             HistorySourceKind::Dump => Self::Dump {
                 dumped: detail.unwrap_or_default(),
+            },
+            HistorySourceKind::Restore => Self::Restore {
+                restored: detail.unwrap_or_default(),
             },
             HistorySourceKind::DbRover => Self::DbRover,
         })
@@ -216,6 +227,9 @@ mod tests {
             },
             HistorySource::Dump {
                 dumped: "Dumped shop to /dumps/shop.dump (custom, 142 MB)".to_owned(),
+            },
+            HistorySource::Restore {
+                restored: "Restored /dumps/shop.dump into a new database shop_restored".to_owned(),
             },
             HistorySource::DbRover,
         ];

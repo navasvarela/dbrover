@@ -1,6 +1,7 @@
-//! Dumping a database with the engine's own program (W17): the program chosen for the
-//! server's version, its password in a file of its own, a `.partial` file renamed once it has
-//! ended well, Cancel, and one history entry per dump.
+//! Dumping and restoring a database with the engine's own programs (W17): the program chosen
+//! for the server's version, its password in a file of its own, a `.partial` file renamed once
+//! it has ended well, Cancel, a restore into a new database, all or nothing, and one history
+//! entry per dump or restore.
 //!
 //! The PostgreSQL tests are skipped unless `DBROVER_TEST_POSTGRES_URL` is set and
 //! `DBROVER_TEST_CLIENTS` names a folder with `pg_dump` and `pg_restore` in it: on CI the
@@ -18,13 +19,13 @@ use std::sync::Arc;
 use common::{MemorySecrets, ParsedUrl, TestEngine, postgres_test_server, ssh_test_server};
 use dbrover_core::{
     Connection, ConnectionConfig, DataSource, DataSourceId, DumpFormat, DumpOptions, DumpRequest,
-    DumpScope, Password, PostgresConfig, Route, SafetyLevel, ServerConfig, ServerInfo, SshLogin,
-    TableName,
+    DumpScope, Password, PostgresConfig, RestoreOptions, RestoreRequest, RestoreTarget, Route,
+    SafetyLevel, ServerConfig, ServerInfo, SshLogin, TableName,
 };
 use dbrover_dump::Program;
 use dbrover_engine::{
     Command, DumpDone, DumpFailure, DumpRun, DumpRunId, DumpStart, Event, PasswordUpdate,
-    ProgramPaths,
+    ProgramPaths, RestoreDone, RestoreRun,
 };
 use dbrover_store::{HistoryEntry, HistoryOutcome, HistoryQuery, HistorySource, HistorySourceKind};
 
@@ -52,6 +53,10 @@ fn program_paths(clients: &Path) -> ProgramPaths {
             .collect(),
     )
 }
+
+/// How many databases a test may restore into, named after the fixture's with `_r1` and on,
+/// all dropped with it.
+const RESTORED_DATABASES: u32 = 6;
 
 /// A password every layer has to pass on as it is: a `.pgpass` separator, a backslash, a
 /// comment sign, quotes and a space.
@@ -89,7 +94,7 @@ impl Fixture {
         execute(
             &runtime,
             admin.as_mut(),
-            &format!("CREATE ROLE {role} LOGIN PASSWORD '{password}'"),
+            &format!("CREATE ROLE {role} LOGIN CREATEDB PASSWORD '{password}'"),
         );
         execute(
             &runtime,
@@ -154,10 +159,13 @@ impl Drop for Fixture {
         let database = &self.database;
         let role = &self.role;
         self.runtime.block_on(async {
-            for sql in [
+            let restored = (1..=RESTORED_DATABASES)
+                .map(|n| format!("DROP DATABASE IF EXISTS {database}_r{n} WITH (FORCE)"));
+            let fixture = [
                 format!("DROP DATABASE IF EXISTS {database} WITH (FORCE)"),
                 format!("DROP ROLE IF EXISTS {role}"),
-            ] {
+            ];
+            for sql in restored.chain(fixture) {
                 if let Ok(cursor) = self.admin.execute(&sql).await {
                     let _ = cursor.finish().await;
                 }
@@ -488,6 +496,317 @@ fn dumps_through_an_ssh_tunnel() {
     engine.shut_down();
 }
 
+fn restored(engine: &mut TestEngine, run: DumpRunId) -> Result<RestoreDone, DumpFailure> {
+    until(engine, |event| match event {
+        Event::RestoreEnded { run: ended, result } if ended == run => Some(result),
+        _ => None,
+    })
+}
+
+fn restore_run(
+    run: u64,
+    data_source: &DataSource,
+    fixture: &Fixture,
+    file: PathBuf,
+    target: RestoreTarget,
+    programs: ProgramPaths,
+) -> Box<RestoreRun> {
+    Box::new(RestoreRun {
+        run: DumpRunId(run),
+        request: RestoreRequest {
+            data_source: data_source.id,
+            file,
+            target,
+            tables: None,
+            options: RestoreOptions::default(),
+        },
+        server: fixture.server.clone(),
+        programs,
+    })
+}
+
+/// What `sql` gives in `database`, one row a line, read by `psql` as the test server's admin.
+fn query(clients: &Path, server: &ParsedUrl, database: &str, sql: &str) -> String {
+    let url = std::env::var("DBROVER_TEST_POSTGRES_URL").unwrap();
+    let base = &url[..url.rfind('/').unwrap()];
+    let _ = server;
+    let output = std::process::Command::new(clients.join("psql"))
+        .arg(format!("--dbname={base}/{database}"))
+        .args([
+            "--no-psqlrc",
+            "--tuples-only",
+            "--no-align",
+            "--command",
+            sql,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+const ROWS: &str = "SELECT string_agg(name, ',' ORDER BY id) FROM customers \
+                    UNION ALL SELECT string_agg(sku, ',') FROM \"Order Items\"";
+
+/// Each format dumped, then restored into a new database the restore creates: the same rows
+/// come back, owned by the login that restored them. The archive is read first.
+#[test]
+fn restores_each_format_into_a_new_database() {
+    let (Some(server), Some(clients)) = (postgres_test_server(), clients()) else {
+        return;
+    };
+    let fixture = Fixture::create(&server, "restore");
+    let data_source = fixture.data_source(fixture.config.clone());
+    let (mut engine, dir) = start_engine(&data_source);
+    let formats = [
+        (DumpFormat::Custom, "shop.dump"),
+        (DumpFormat::Directory, "shop-folder"),
+        (DumpFormat::Sql, "shop.sql"),
+        (DumpFormat::SqlGz, "shop.sql.gz"),
+    ];
+    let original = query(&clients, &server, &fixture.database, ROWS);
+    assert_eq!(original, "Kate O'Brien,Liam Hale\nORD-7731-K");
+    for (n, (format, name)) in (1_u64..).zip(formats) {
+        let file = dir.path().join(name);
+        engine.send(Command::StartDump(dump_run(
+            10 + n,
+            &data_source,
+            &fixture,
+            DumpScope::Database,
+            format,
+            file.clone(),
+            program_paths(&clients),
+        )));
+        ended(&mut engine, DumpRunId(10 + n)).unwrap();
+
+        if format == DumpFormat::Custom {
+            engine.send(Command::InspectDumpFile {
+                file: file.clone(),
+                programs: program_paths(&clients),
+            });
+            let found = until(&mut engine, |event| match event {
+                Event::DumpFileInspected { result, .. } => Some(result),
+                _ => None,
+            })
+            .unwrap();
+            let contents = found.contents.unwrap();
+            assert_eq!(
+                contents.database.as_deref(),
+                Some(fixture.database.as_str())
+            );
+            assert_eq!(contents.tables.len(), 2, "{contents:?}");
+            assert!(contents.made_by.is_some());
+        }
+
+        let database = format!("{}_r{n}", fixture.database);
+        engine.send(Command::StartRestore(restore_run(
+            20 + n,
+            &data_source,
+            &fixture,
+            file,
+            RestoreTarget::NewDatabase(database.clone()),
+            program_paths(&clients),
+        )));
+        let done = restored(&mut engine, DumpRunId(20 + n)).unwrap();
+        assert_eq!(done.database, database);
+        assert!(done.created);
+        assert_eq!(
+            query(&clients, &server, &database, ROWS),
+            original,
+            "{format:?}"
+        );
+    }
+    engine.send(Command::SearchHistory(HistoryQuery {
+        kind: Some(HistorySourceKind::Restore),
+        ..HistoryQuery::all(data_source.id)
+    }));
+    let restores = until(&mut engine, |event| match event {
+        Event::HistoryFound { result, .. } => Some(result.unwrap()),
+        _ => None,
+    });
+    assert_eq!(restores.len(), 4);
+    assert!(
+        restores
+            .iter()
+            .all(|entry| entry.outcome == HistoryOutcome::Ok)
+    );
+    engine.shut_down();
+}
+
+/// Some tables of an archive only.
+#[test]
+fn restores_chosen_tables_of_an_archive() {
+    let (Some(server), Some(clients)) = (postgres_test_server(), clients()) else {
+        return;
+    };
+    let fixture = Fixture::create(&server, "chosen");
+    let data_source = fixture.data_source(fixture.config.clone());
+    let (mut engine, dir) = start_engine(&data_source);
+    let file = dir.path().join("shop.dump");
+    engine.send(Command::StartDump(dump_run(
+        1,
+        &data_source,
+        &fixture,
+        DumpScope::Database,
+        DumpFormat::Custom,
+        file.clone(),
+        program_paths(&clients),
+    )));
+    ended(&mut engine, DumpRunId(1)).unwrap();
+    let database = format!("{}_r1", fixture.database);
+    let mut run = restore_run(
+        2,
+        &data_source,
+        &fixture,
+        file,
+        RestoreTarget::NewDatabase(database.clone()),
+        program_paths(&clients),
+    );
+    run.request.tables = Some(vec![TableName {
+        schema: "public".to_owned(),
+        name: "customers".to_owned(),
+    }]);
+    engine.send(Command::StartRestore(run));
+    restored(&mut engine, DumpRunId(2)).unwrap();
+    let tables = query(
+        &clients,
+        &server,
+        &database,
+        "SELECT string_agg(relname, ',') FROM pg_class WHERE relkind = 'r' AND relnamespace = 'public'::regnamespace",
+    );
+    assert_eq!(tables, "customers");
+    engine.shut_down();
+}
+
+/// A plain dump that fails half way, restored all or nothing, leaves nothing behind it.
+#[test]
+fn a_failing_restore_all_or_nothing_leaves_the_database_empty() {
+    let (Some(server), Some(clients)) = (postgres_test_server(), clients()) else {
+        return;
+    };
+    let fixture = Fixture::create(&server, "failing");
+    let data_source = fixture.data_source(fixture.config.clone());
+    let (mut engine, dir) = start_engine(&data_source);
+    let file = dir.path().join("broken.sql");
+    std::fs::write(
+        &file,
+        "--\n-- PostgreSQL database dump\n--\n\
+         CREATE TABLE half (id integer);\n\
+         INSERT INTO half VALUES (1);\n\
+         SELECT 1 / 0;\n",
+    )
+    .unwrap();
+    let database = format!("{}_r1", fixture.database);
+    engine.send(Command::StartRestore(restore_run(
+        1,
+        &data_source,
+        &fixture,
+        file,
+        RestoreTarget::NewDatabase(database.clone()),
+        program_paths(&clients),
+    )));
+    let failure = restored(&mut engine, DumpRunId(1)).unwrap_err();
+    let DumpFailure::Exited {
+        program, stderr, ..
+    } = &failure
+    else {
+        panic!("{failure:?}");
+    };
+    assert_eq!(program, "psql");
+    assert!(stderr.contains("division by zero"), "{stderr}");
+    let tables = query(
+        &clients,
+        &server,
+        &database,
+        "SELECT count(*) FROM pg_class WHERE relname = 'half'",
+    );
+    assert_eq!(tables, "0");
+    engine.shut_down();
+}
+
+/// Nothing is restored into a read-only data source, and a dump for another engine is
+/// refused before anything is created.
+#[test]
+fn refuses_a_read_only_data_source_and_another_engines_dump() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("mysql.sql");
+    std::fs::write(
+        &file,
+        "-- MySQL dump 10.13  Distrib 8.4.3, for Linux (x86_64)\n",
+    )
+    .unwrap();
+    for (safety, expected) in [
+        (
+            SafetyLevel::ReadOnly,
+            DumpFailure::ReadOnly("never reached".to_owned()),
+        ),
+        (
+            SafetyLevel::Normal,
+            DumpFailure::Arguments(dbrover_dump::ArgumentError::OtherEngine {
+                file: dbrover_core::DumpEngine::Mysql,
+                server: dbrover_core::DumpEngine::Postgres,
+            }),
+        ),
+    ] {
+        let mut data_source = unreachable_source();
+        data_source.safety = safety;
+        let data_dir = tempfile::tempdir().unwrap();
+        let mut engine = TestEngine::start(
+            &data_dir.path().join("data_sources.toml"),
+            Arc::new(MemorySecrets::default()),
+        );
+        engine.expect_started(vec![]);
+        engine.send(Command::SaveDataSource {
+            data_source: data_source.clone(),
+            password: PasswordUpdate::Keep,
+            ssh_secret: PasswordUpdate::Keep,
+        });
+        engine.expect(Event::DataSourceSaved(data_source.clone()));
+        engine.send(Command::StartRestore(Box::new(RestoreRun {
+            run: DumpRunId(1),
+            request: RestoreRequest {
+                data_source: data_source.id,
+                file: file.clone(),
+                target: RestoreTarget::NewDatabase("shop_restored".to_owned()),
+                tables: None,
+                options: RestoreOptions::default(),
+            },
+            server: ServerInfo::new("PostgreSQL", "17.4"),
+            programs: ProgramPaths::default(),
+        })));
+        assert_eq!(restored(&mut engine, DumpRunId(1)), Err(expected));
+        engine.shut_down();
+    }
+}
+
+/// A data source the refusals in these tests are decided before reaching.
+fn unreachable_source() -> DataSource {
+    DataSource {
+        id: DataSourceId::generate(),
+        name: "never reached".to_owned(),
+        color: None,
+        safety: SafetyLevel::Normal,
+        project: None,
+        mcp_login: None,
+        config: ConnectionConfig::Postgres(PostgresConfig {
+            server: ServerConfig {
+                host: "127.0.0.1".to_owned(),
+                port: 5432.into(),
+                database: "shop".to_owned(),
+                user: "ada".to_owned(),
+                tls: dbrover_core::TlsMode::Disable,
+                ssh: None,
+                password_command: None,
+                cloud_sign_in: None,
+            },
+        }),
+    }
+}
+
 #[cfg(unix)]
 mod without_a_server {
     use std::os::unix::fs::PermissionsExt;
@@ -504,30 +823,6 @@ mod without_a_server {
         .unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         ProgramPaths([(Program::PgDump, path)].into_iter().collect())
-    }
-
-    /// A data source the refusals below are decided before reaching.
-    fn unreachable_source() -> DataSource {
-        DataSource {
-            id: DataSourceId::generate(),
-            name: "never reached".to_owned(),
-            color: None,
-            safety: SafetyLevel::Normal,
-            project: None,
-            mcp_login: None,
-            config: ConnectionConfig::Postgres(PostgresConfig {
-                server: ServerConfig {
-                    host: "127.0.0.1".to_owned(),
-                    port: 5432.into(),
-                    database: "shop".to_owned(),
-                    user: "ada".to_owned(),
-                    tls: dbrover_core::TlsMode::Disable,
-                    ssh: None,
-                    password_command: None,
-                    cloud_sign_in: None,
-                },
-            }),
-        }
     }
 
     fn run_on(

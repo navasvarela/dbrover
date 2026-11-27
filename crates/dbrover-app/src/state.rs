@@ -195,6 +195,8 @@ impl AppState {
             | Event::DumpStarted { .. }
             | Event::DumpProgress { .. }
             | Event::DumpEnded { .. }
+            | Event::DumpFileInspected { .. }
+            | Event::RestoreEnded { .. }
             | Event::SettingsLoaded { .. }
             | Event::LatestRelease(_)
             | Event::UpdateProgress { .. }

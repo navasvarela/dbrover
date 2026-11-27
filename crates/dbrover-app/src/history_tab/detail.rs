@@ -64,6 +64,7 @@ fn provenance(source: &HistorySource) -> String {
         HistorySource::Activity { stopped } => format!("Sent from Server activity. {stopped}."),
         HistorySource::Search { searched } => format!("Run by Search data. {searched}."),
         HistorySource::Dump { dumped } => format!("Run by Dump. {dumped}."),
+        HistorySource::Restore { restored } => format!("Run by Restore. {restored}."),
         HistorySource::DbRover => {
             "Run by a DbRover from before the history recorded where.".to_owned()
         }
