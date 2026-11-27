@@ -12,7 +12,7 @@ and Kill), designed on 2026-11-25 in [Server activity](server-activity.md) and b
 W16, searching a database's data, planned on 2026-11-25 in
 [Searching a database's data](data-search.md) and built. W18, users beyond PostgreSQL
 (MySQL's and MariaDB's accounts, SQL Server's logins and users), planned on 2026-11-27 in
-[Users beyond PostgreSQL](users-beyond-postgres.md).
+[Users beyond PostgreSQL](users-beyond-postgres.md) and built.
 Proposed on 2026-10-24.
 
 DbRover browses, queries and edits PostgreSQL, SQLite, MySQL and MariaDB, and ships as a

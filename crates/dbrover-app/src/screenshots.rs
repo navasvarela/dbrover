@@ -16,13 +16,13 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use dbrover_core::{
-    ConnectionConfig, DataSource, DataSourceId, Password, PostgresConfig, ProjectId, ServerConfig,
-    SourceColor, SqliteConfig, TlsMode,
+    ConnectionConfig, DataSource, DataSourceId, MysqlConfig, Password, PostgresConfig, ProjectId,
+    ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, TlsMode,
 };
 use dbrover_store::{
     ChosenFolder, ChosenFolderFile, DataSourceFile, HistoryEntry, HistoryFile, HistoryOutcome,
     HistorySource, InstallFolders, NamedCell, Project, ProjectFile, ProjectSlug, Projects,
-    ReplacedCell, RowChange, RowChangeKind, SettingsFolder,
+    ReplacedCell, RowChange, RowChangeKind, Secret, SecretStore, SettingsFolder,
 };
 use egui::accesskit::Role;
 use egui::{Theme, Vec2};
@@ -328,6 +328,11 @@ impl Scene {
 const POSTGRES_URL: &str = "DBROVER_TEST_POSTGRES_URL";
 const SSH_URL: &str = "DBROVER_TEST_SSH_URL";
 const SSH_POSTGRES_URL: &str = "DBROVER_TEST_SSH_POSTGRES_URL";
+const MYSQL_URL: &str = "DBROVER_TEST_MYSQL_URL";
+const SQLSERVER_URL: &str = "DBROVER_TEST_SQLSERVER_URL";
+/// The compose MySQL server's root password, which may manage accounts; the test login may
+/// not.
+const MYSQL_ROOT_PASSWORD: &str = "dbrover";
 
 /// Which data sources a scene's app starts with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -339,6 +344,10 @@ enum FixtureSources {
     /// The same, grouped into projects, with two more SQLite data sources over the shop
     /// database: `archive` beside `shop`, and `scratch` in no project.
     Projects,
+    /// The shop, plus `crm` on the MySQL test server and `erp` on the SQL Server one, each
+    /// signed in as the server's administrator, for the users chapter (W18). Kept apart so the
+    /// other pictures don't show them.
+    Servers,
 }
 
 const SCENES: &[Scene] = &[
@@ -557,6 +566,30 @@ const SCENES: &[Scene] = &[
         keeps_pointer: false,
         region: whole_window,
         needs: &[POSTGRES_URL],
+    },
+    Scene {
+        name: "new-account",
+        data_sources: FixtureSources::Servers,
+        play: new_account,
+        keeps_pointer: false,
+        region: whole_window,
+        needs: &[MYSQL_URL],
+    },
+    Scene {
+        name: "new-login",
+        data_sources: FixtureSources::Servers,
+        play: new_login,
+        keeps_pointer: false,
+        region: whole_window,
+        needs: &[SQLSERVER_URL],
+    },
+    Scene {
+        name: "sqlserver-users",
+        data_sources: FixtureSources::Servers,
+        play: sqlserver_users,
+        keeps_pointer: false,
+        region: whole_window,
+        needs: &[SQLSERVER_URL],
     },
     Scene {
         name: "report-page",
@@ -1138,6 +1171,8 @@ fn theme_name(theme: Theme) -> &'static str {
 struct Fixture {
     dir: tempfile::TempDir,
     postgres: Option<(DataSource, Password)>,
+    /// `crm` and `erp`, for [`FixtureSources::Servers`].
+    servers: Vec<(DataSource, Password)>,
     sources: FixtureSources,
 }
 
@@ -1148,6 +1183,7 @@ impl Fixture {
             return Self {
                 dir,
                 postgres: None,
+                servers: Vec::new(),
                 sources,
             };
         }
@@ -1172,6 +1208,12 @@ impl Fixture {
             }),
         }];
         data_sources.extend(postgres.iter().map(|(data_source, _)| data_source.clone()));
+        let servers = if sources == FixtureSources::Servers {
+            server_data_sources()
+        } else {
+            Vec::new()
+        };
+        data_sources.extend(servers.iter().map(|(data_source, _)| data_source.clone()));
         if sources == FixtureSources::Projects {
             group_into_projects(dir.path(), &mut data_sources);
         }
@@ -1181,6 +1223,7 @@ impl Fixture {
         Self {
             dir,
             postgres,
+            servers,
             sources,
         }
     }
@@ -1191,16 +1234,18 @@ impl Fixture {
             .with_pixels_per_point(PIXELS_PER_POINT)
             .with_theme(theme)
             .wgpu();
-        let secrets = match &self.postgres {
-            Some((data_source, password)) => {
-                MemorySecrets::with_password(data_source.id, password.clone())
-            }
-            None => MemorySecrets::default(),
-        };
+        let secrets = MemorySecrets::default();
+        for (data_source, password) in self.postgres.iter().chain(&self.servers) {
+            secrets
+                .set(data_source.id, Secret::Database, password)
+                .unwrap();
+        }
         let mut harness = start_app(builder, self.dir.path(), log_feed(), secrets);
         let ready = match self.sources {
             FixtureSources::None => "No data sources yet",
-            FixtureSources::Shop | FixtureSources::Projects => "Expand shop",
+            FixtureSources::Shop | FixtureSources::Projects | FixtureSources::Servers => {
+                "Expand shop"
+            }
         };
         step_until_visible(&mut harness, ready);
         harness
@@ -1240,6 +1285,63 @@ fn group_into_projects(dir: &Path, data_sources: &mut Vec<DataSource>) {
             ..Projects::default()
         })
         .unwrap();
+}
+
+/// `crm` on the MySQL test server, as root, and `erp` on the SQL Server one, as the URL's
+/// login (`sa`), where their URLs are set.
+fn server_data_sources() -> Vec<(DataSource, Password)> {
+    let mut servers = Vec::new();
+    if let Ok(url) = std::env::var(MYSQL_URL) {
+        let (mut server, _) = server_config(&url, "mysql://");
+        server.user = "root".to_owned();
+        servers.push((
+            server_data_source("crm", ConnectionConfig::Mysql(MysqlConfig { server })),
+            Password::new(MYSQL_ROOT_PASSWORD),
+        ));
+    }
+    if let Ok(url) = std::env::var(SQLSERVER_URL) {
+        let (server, password) = server_config(&url, "sqlserver://");
+        servers.push((
+            server_data_source(
+                "erp",
+                ConnectionConfig::SqlServer(SqlServerConfig { server }),
+            ),
+            password,
+        ));
+    }
+    servers
+}
+
+fn server_data_source(name: &str, config: ConnectionConfig) -> DataSource {
+    DataSource {
+        id: DataSourceId::generate(),
+        name: name.to_owned(),
+        color: None,
+        safety: dbrover_core::SafetyLevel::Normal,
+        project: None,
+        mcp_login: None,
+        config,
+    }
+}
+
+/// Reads `<scheme>user:password@host:port/database`.
+fn server_config(url: &str, scheme: &str) -> (ServerConfig, Password) {
+    let rest = url.strip_prefix(scheme).unwrap();
+    let (credentials, rest) = rest.split_once('@').unwrap();
+    let (user, password) = credentials.split_once(':').unwrap();
+    let (address, database) = rest.split_once('/').unwrap();
+    let (host, port) = address.split_once(':').unwrap();
+    let server = ServerConfig {
+        host: host.to_owned(),
+        port: port.parse::<u16>().unwrap().into(),
+        database: database.to_owned(),
+        user: user.to_owned(),
+        tls: TlsMode::default(),
+        ssh: None,
+        password_command: None,
+        cloud_sign_in: None,
+    };
+    (server, Password::new(password))
 }
 
 /// Parses `postgres://user:password@host:port/database`, the form the tests' URL takes.
@@ -1939,6 +2041,76 @@ fn new_user(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
     harness.run_ok();
     harness.key_press(egui::Key::Escape);
     harness.run_ok();
+}
+
+/// New user on MySQL (W18): a name and a password hashed for `caching_sha2_password`, the
+/// statement showing it redacted.
+fn new_account(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    expand(harness, &["crm", "users"]);
+    harness.get_by_label("users").click_secondary();
+    harness.run_ok();
+    harness.get_by_label("New").hover();
+    harness.run_ok();
+    harness.get_by_label("User…").click();
+    step_until_visible(harness, "Authentication");
+    retype(harness, "Name", "report");
+    type_passwords(harness, "correct horse battery");
+    step_until_visible(harness, "Execute");
+    harness.run_ok();
+}
+
+/// New login on SQL Server (W18): a SQL login hashed (the policy unticked), with a user in
+/// the test database reading through `db_datareader`.
+fn new_login(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    expand(harness, &["erp", "logins"]);
+    harness.get_by_label("logins").click_secondary();
+    harness.run_ok();
+    harness.get_by_label("New").hover();
+    harness.run_ok();
+    harness.get_by_label("Login…").click();
+    step_until_visible(harness, "Enforce password policy");
+    retype(harness, "Name", "reports_svc");
+    type_passwords(harness, "Correct-Horse-2026");
+    harness.get_by_label("Enforce password policy").click();
+    harness.run_ok();
+    harness.get_by_label_contains("Map to databases").click();
+    harness.run_ok();
+    harness.get_by_label("Database to map").click();
+    harness.run_ok();
+    // The menu's entry, after the explorer's node of the same name.
+    if let Some(entry) = harness.get_all_by_label("dbrover").next_back() {
+        entry.click();
+    }
+    harness.run_ok();
+    harness.get_by_label("Add a user there").click();
+    step_until_visible(harness, "db_datareader");
+    harness.get_by_label("db_datareader").click();
+    harness.run_ok();
+}
+
+/// SQL Server's folders, and a database's users with system objects shown, each saying its
+/// login and roles (W18).
+fn sqlserver_users(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    harness
+        .get_by_label("Show system schemas and tables")
+        .click();
+    harness.run_ok();
+    expand(harness, &["erp", "dbrover", "users"]);
+    step_until_visible(harness, "dbo");
+    harness.run_ok();
+}
+
+fn type_passwords(harness: &mut Harness<'static, DbRoverApp>, password: &str) {
+    for label in ["Password", "Confirm password"] {
+        harness
+            .get_by_role_and_label(Role::PasswordInput, label)
+            .focus();
+        harness.run_ok();
+        harness
+            .get_by_role_and_label(Role::PasswordInput, label)
+            .type_text(password);
+        harness.run_ok();
+    }
 }
 
 fn explorer_projects(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {

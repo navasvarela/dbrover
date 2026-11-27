@@ -55,7 +55,9 @@ rows went in, and the file.
 ## Passwords stay out
 
 Passwords never reach the history file, whoever sends the statement. In `CREATE ROLE …
-PASSWORD '…'`, `CREATE LOGIN … WITH PASSWORD = '…'`, `CREATE USER … IDENTIFIED BY '…'`,
+PASSWORD '…'`, `CREATE LOGIN … WITH PASSWORD = '…'` (and a hashed `PASSWORD = 0x… HASHED`, kept
+as `0x<redacted>`), `CREATE USER … IDENTIFIED BY '…'` (and `… AS '<hash>'`), a contained user's
+password inside `sp_executesql`,
 DuckDB's `CREATE SECRET`, foreign servers' user mappings, and connection strings (`password=…`,
 `Pwd=…`, `postgresql://user:password@…`), the secret is stored as `'<redacted>'`, and the log
 shows it the same way. A statement put back from the history then needs its password typed in

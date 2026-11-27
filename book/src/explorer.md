@@ -78,6 +78,8 @@ data source
 
 ```text
 data source
+├─ users                  the server's accounts that log in, as user@host (see Users and roles)
+├─ roles                  the roles granted to them
 └─ database               every database you may see, shown as a schema
    ├─ tables
    │  └─ table
@@ -96,7 +98,11 @@ connection browse them all:
 
 ```text
 data source
+├─ logins                   the server's logins (see Users and roles)
+├─ server roles
 └─ database                 every database the login may open
+   ├─ users                 the database's users, each with its login and roles
+   ├─ roles                 the database's roles
    └─ schema
       ├─ tables
       │  └─ table
