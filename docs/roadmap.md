@@ -2151,8 +2151,8 @@ three to five, **L** a track of its own).
   its row by its key; double-clicking a match opens a console on that row; a table locked by
   another session times out and the search goes on; Cancel keeps what was found; a careful
   data source asks first; History lists the search once, as **Search**.
-- **W17 — Dump and restore (L):** planned on 2026-11-27 in [Dump and restore](dump-restore.md);
-  its open questions wait for the user. A database, some schemas or some tables written to a
+- **W17 — Dump and restore (L):** planned on 2026-11-27 in [Dump and restore](dump-restore.md),
+  its questions answered the same day as proposed. A database, some schemas or some tables written to a
   file by the engine's own program, and read back, optionally on a schedule. Third in the
   competitor-gap review of 2026-11-25, after server activity and searching data: all seven tools
   compared have it, four of them free. It starts with PostgreSQL (`pg_dump`, `pg_restore`,

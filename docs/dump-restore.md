@@ -1,7 +1,7 @@
 # Dump and restore
 
-Status: **planned on 2026-11-27** (W17a); its open questions wait for the user's answers, and
-nothing is built until they come. The [roadmap](roadmap.md#well-rounded-track) tracks it as W17
+Status: **planned on 2026-11-27** (W17a), its nine open questions answered the same day, all as
+proposed; being built in one stack, #719 and the layers above it. The [roadmap](roadmap.md#well-rounded-track) tracks it as W17
 in the well-rounded track. It is the third gap of the competitor review of 2026-11-25
 ([Comparison](comparison.md#gaps-worth-closing-soon)), after server activity (W15) and searching
 data (W16). It starts with PostgreSQL, then MySQL and MariaDB, then SQLite and DuckDB, which need
@@ -643,7 +643,8 @@ a saved dump due while DbRover was closed runs once at the next start.
 
 ## Decisions
 
-Proposed; each waits for its question's answer or is confirmed as its layer is built.
+The nine open questions below were answered on 2026-11-27, all as proposed; the rest are
+confirmed as their layers are built.
 
 | Question | Proposed | Consequence |
 | --- | --- | --- |
@@ -701,6 +702,8 @@ Proposed; each waits for its question's answer or is confirmed as its layer is b
   command is copied to a terminal for anything else.
 
 ## Open questions
+
+Answered on 2026-11-27: all nine as proposed. Kept as they were asked.
 
 1. **Engines.** PostgreSQL, MySQL and MariaDB first, then SQLite and DuckDB (no program needed)
    in W17g, with SQL Server (`sqlpackage` `.bacpac`), MongoDB (`mongodump`) and ClickHouse left
