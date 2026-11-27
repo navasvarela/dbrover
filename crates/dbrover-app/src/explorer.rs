@@ -169,6 +169,27 @@ pub enum Helper {
     DropRole(CatalogPath),
     /// MySQL's and MariaDB's accounts (W18).
     Account(AccountHelper),
+    /// SQL Server's logins, users and roles (W18).
+    SqlServer(SqlServerHelper),
+}
+
+/// The helpers for SQL Server's logins, server roles, database users and database roles.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SqlServerHelper {
+    /// On the data source (the root) or its logins folder.
+    NewLogin(CatalogPath),
+    /// On the server roles folder.
+    NewServerRole(CatalogPath),
+    /// On a database's users folder.
+    NewUser(CatalogPath),
+    /// On a database's roles folder.
+    NewDatabaseRole(CatalogPath),
+    /// On a login, a server role, a database user or a database role, as the next two.
+    Edit(CatalogPath),
+    Rename(CatalogPath),
+    Drop(CatalogPath),
+    /// On a login: Disable, or Enable a disabled one.
+    SetEnabled(CatalogPath),
 }
 
 /// The helpers for MySQL's and MariaDB's accounts.
@@ -1555,7 +1576,14 @@ fn helpers_menu(
             object.push((icons::TRASH, "Drop index…", Helper::DropIndex(path.clone())));
         }
         Some(NodeKind::Folder(FolderKind::Roles)) => new.extend(new_roles(path, capabilities)),
-        Some(NodeKind::Folder(FolderKind::Users)) => new.extend(new_roles(path, capabilities)),
+        Some(NodeKind::Folder(
+            FolderKind::Users | FolderKind::Logins | FolderKind::ServerRoles,
+        )) => new.extend(new_roles(path, capabilities)),
+        Some(kind @ (NodeKind::Login | NodeKind::User | NodeKind::Role))
+            if capabilities.users == UserModel::LoginsAndUsers =>
+        {
+            object.extend(sql_server_actions(path, kind));
+        }
         Some(kind @ (NodeKind::User | NodeKind::Role))
             if capabilities.users == UserModel::Accounts =>
         {
@@ -1649,9 +1677,75 @@ fn new_roles(
                 Helper::Account(AccountHelper::New(path.clone(), AccountKind::Role)),
             ),
         ],
-        // SQL Server's logins have menus of their own (W18f).
-        UserModel::LoginsAndUsers | UserModel::Unsupported => Vec::new(),
+        UserModel::LoginsAndUsers => new_sql_server_principals(path),
+        UserModel::Unsupported => Vec::new(),
     }
+}
+
+/// New login, server role, user or role, by the folder at `path` (or the data source, where
+/// New login is offered).
+fn new_sql_server_principals(path: &CatalogPath) -> Vec<(&'static str, &'static str, Helper)> {
+    let helper = |helper| Helper::SqlServer(helper);
+    let folder = path.last().and_then(|segment| match segment.kind {
+        NodeKind::Folder(folder) => Some(folder),
+        _ => None,
+    });
+    match (path.is_root(), folder) {
+        (true, _) | (false, Some(FolderKind::Logins)) => vec![(
+            icons::USER,
+            "Login…",
+            helper(SqlServerHelper::NewLogin(path.clone())),
+        )],
+        (false, Some(FolderKind::ServerRoles)) => vec![(
+            icons::USERS,
+            "Server role…",
+            helper(SqlServerHelper::NewServerRole(path.clone())),
+        )],
+        (false, Some(FolderKind::Users)) => vec![(
+            icons::USER,
+            "User…",
+            helper(SqlServerHelper::NewUser(path.clone())),
+        )],
+        (false, Some(FolderKind::Roles)) => vec![(
+            icons::USERS,
+            "Role…",
+            helper(SqlServerHelper::NewDatabaseRole(path.clone())),
+        )],
+        _ => Vec::new(),
+    }
+}
+
+/// What can be done to the SQL Server login, user or role at `path`.
+fn sql_server_actions(
+    path: &CatalogPath,
+    kind: NodeKind,
+) -> Vec<(&'static str, &'static str, Helper)> {
+    let helper = |helper| Helper::SqlServer(helper);
+    let mut items = vec![
+        (
+            icons::PENCIL_SIMPLE,
+            "Edit…",
+            helper(SqlServerHelper::Edit(path.clone())),
+        ),
+        (
+            icons::PENCIL_SIMPLE,
+            "Rename…",
+            helper(SqlServerHelper::Rename(path.clone())),
+        ),
+    ];
+    if kind == NodeKind::Login {
+        items.push((
+            icons::LOCK_SIMPLE,
+            "Disable or enable…",
+            helper(SqlServerHelper::SetEnabled(path.clone())),
+        ));
+    }
+    items.push((
+        icons::TRASH,
+        "Drop…",
+        helper(SqlServerHelper::Drop(path.clone())),
+    ));
+    items
 }
 
 /// What can be done to the MySQL or MariaDB account at `path`: a user (`NodeKind::User`) or

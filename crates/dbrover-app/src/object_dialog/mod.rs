@@ -9,6 +9,7 @@ mod account;
 mod confirm;
 mod fields;
 mod index;
+mod login;
 mod review;
 mod role;
 mod schema;
@@ -18,7 +19,7 @@ mod view;
 
 use dbrover_core::{
     CatalogPath, DataSource, DataSourceId, NodeKind, PrincipalDescription, RoleDescription,
-    SafetyLevel, SourceColor, UserManagement,
+    SafetyLevel, SourceColor, TlsMode, UserManagement,
 };
 use dbrover_engine::{Event, SessionState};
 use dbrover_language::QueryLanguage;
@@ -51,6 +52,9 @@ pub struct Target {
     /// Coloured red, the colour that marks production: a destructive change asks for the
     /// object's name to be typed.
     pub red: bool,
+    /// The data source's settings encrypt its connection: TLS that isn't turned off, or an
+    /// SSH tunnel. What a password sent as typed relies on when the server won't say (W18).
+    pub encrypted_by_settings: bool,
 }
 
 impl Target {
@@ -65,6 +69,10 @@ impl Target {
                 .filter(|dialect| dialect.writes_ddl())?,
             safety: data_source.safety,
             red: data_source.color == Some(SourceColor::Red),
+            encrypted_by_settings: data_source
+                .config
+                .server()
+                .is_some_and(|server| server.tls != TlsMode::Disable || server.ssh.is_some()),
         })
     }
 }
@@ -174,7 +182,8 @@ pub enum ObjectDialogAction {
 
 /// The form for a helper the explorer asked for. `None` if its node isn't the kind the
 /// helper works on, which the explorer's menus never offer.
-pub fn form(helper: Helper, dialect: Dialect) -> Option<Box<dyn ObjectForm>> {
+pub fn form(helper: Helper, target: &Target) -> Option<Box<dyn ObjectForm>> {
+    let dialect = target.dialect;
     let first_type = dialect.capabilities().common_types.first().copied();
     Some(match helper {
         Helper::NewTable(path) => {
@@ -200,6 +209,7 @@ pub fn form(helper: Helper, dialect: Dialect) -> Option<Box<dyn ObjectForm>> {
         Helper::RenameRole(path) => Box::new(RenameRole::new(&path)?),
         Helper::DropRole(path) => Box::new(DropRole::new(path)?),
         Helper::Account(helper) => account_form(helper)?,
+        Helper::SqlServer(helper) => login::form(helper, target.encrypted_by_settings)?,
     })
 }
 
