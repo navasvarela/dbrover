@@ -90,6 +90,15 @@ fn start_connected(
     harness
 }
 
+/// Clicks `label` as a pointer does: resting on it for a frame first. Pressed the frame it
+/// arrives, a press lands on what was under the pointer the frame before.
+fn click(harness: &mut Harness<'_, DbRoverApp>, label: &str) {
+    harness.get_by_label(label).hover();
+    harness.run_steps(2);
+    harness.get_by_label(label).click();
+    harness.run_steps(2);
+}
+
 fn open_menu_item(harness: &mut Harness<'_, DbRoverApp>, item: &str) {
     harness.get_by_label("production").click_secondary();
     harness.run_steps(2);
@@ -174,10 +183,8 @@ fn a_careful_data_source_asks_for_the_database_name_before_restoring_into_it() {
             .query_by_label_contains("for a server of version")
             .is_some()
     });
-    harness.get_by_label("An existing database").click();
-    harness.run_steps(2);
-    harness.get_by_label("Restore…").click();
-    harness.run_steps(2);
+    click(&mut harness, "An existing database");
+    click(&mut harness, "Restore…");
     let database = server.database.clone();
     step_until_visible(
         &mut harness,
@@ -204,8 +211,7 @@ fn a_careful_data_source_asks_for_the_database_name_before_restoring_into_it() {
             .is_disabled()
     );
     // Not clicked: it would restore into the server every test shares.
-    harness.get_by_label("Back").click();
-    harness.run_steps(2);
+    click(&mut harness, "Back");
     harness.get_by_label("Cancel").click();
     step_until(&mut harness, "the dialog closing", |harness| {
         harness.query_by_label("Restore into production").is_none()
