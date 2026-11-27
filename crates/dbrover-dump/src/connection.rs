@@ -94,11 +94,10 @@ impl Target {
             "--protocol=TCP".to_owned(),
         ];
         let tunnelled = self.tunnel_port.is_some();
-        match family {
-            DumpEngine::MariaDb => options.extend(mariadb_tls(&self.tls)),
-            DumpEngine::Mysql | DumpEngine::Postgres => {
-                options.extend(mysql_tls(&self.tls, tunnelled));
-            }
+        if family == DumpEngine::MariaDb {
+            options.extend(mariadb_tls(&self.tls));
+        } else {
+            options.extend(mysql_tls(&self.tls, tunnelled));
         }
         options
     }

@@ -24,7 +24,7 @@ pub use choice::{Choice, FoundProgram, Need, NoFit, choose, install_hint};
 pub use connection::{APPLICATION_NAME, ConnectionError, Target};
 pub use discovery::{Folders, RealFolders, SearchContext, find};
 pub use dump_file::{ArchiveContents, DumpFileKind, GZIP_MAGIC, sniff};
-pub use program::{Os, Program, Role};
+pub use program::{ClientFamily, Os, Program, Role};
 pub use progress::{dumped_table, restored_table};
 pub use restore::{Input, LineFilter, RestoreCommand, RestoreSpec, restore_command};
 pub use secret::{SecretError, password_file};

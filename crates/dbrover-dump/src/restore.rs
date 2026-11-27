@@ -80,9 +80,13 @@ pub fn restore_command(
         (DumpEngine::Mysql | DumpEngine::MariaDb, DumpFileKind::Sql { gzip, .. }) => {
             Ok(mysql(spec, target, files, gzip))
         }
+        (DumpEngine::Sqlite | DumpEngine::DuckDb, _) => Err(ArgumentError::NoProgram(spec.engine)),
         (
-            DumpEngine::Mysql | DumpEngine::MariaDb,
-            DumpFileKind::Custom | DumpFileKind::Directory,
+            DumpEngine::Postgres | DumpEngine::Mysql | DumpEngine::MariaDb,
+            DumpFileKind::Custom
+            | DumpFileKind::Directory
+            | DumpFileKind::SqliteFile
+            | DumpFileKind::DuckDbExport,
         ) => Err(ArgumentError::Format(spec.engine)),
     }
 }

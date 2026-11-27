@@ -3,7 +3,7 @@
 
 use std::fmt;
 
-use dbrover_core::DumpEngine;
+use crate::program::ClientFamily;
 
 /// A version number. Missing parts read as 0, so `18beta1` is 18.0.0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -53,7 +53,7 @@ impl fmt::Display for Version {
 /// Whose client tools a copy of a program is, and which version, as its `--version` says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ProgramVersion {
-    pub family: DumpEngine,
+    pub family: ClientFamily,
     pub version: Version,
 }
 
@@ -72,14 +72,14 @@ impl ProgramVersion {
         let line = output.lines().next()?.trim();
         if let Some(rest) = line.split_once("(PostgreSQL)").map(|(_, rest)| rest) {
             return Some(Self {
-                family: DumpEngine::Postgres,
+                family: ClientFamily::Postgres,
                 version: Version::parse_leading(rest)?,
             });
         }
         let family = if line.contains("MariaDB") {
-            DumpEngine::MariaDb
+            ClientFamily::MariaDb
         } else {
-            DumpEngine::Mysql
+            ClientFamily::Mysql
         };
         let number = after_word(line, "Distrib")
             .or_else(|| after_word(line, "from"))
@@ -113,47 +113,47 @@ mod tests {
         let cases = [
             (
                 "pg_dump (PostgreSQL) 17.2",
-                DumpEngine::Postgres,
+                ClientFamily::Postgres,
                 Version::new(17, 2, 0),
             ),
             (
                 "pg_restore (PostgreSQL) 16.4 (Homebrew)\n",
-                DumpEngine::Postgres,
+                ClientFamily::Postgres,
                 Version::new(16, 4, 0),
             ),
             (
                 "psql (PostgreSQL) 17.2 (Debian 17.2-1.pgdg120+1)",
-                DumpEngine::Postgres,
+                ClientFamily::Postgres,
                 Version::new(17, 2, 0),
             ),
             (
                 "pg_dump (PostgreSQL) 18beta1",
-                DumpEngine::Postgres,
+                ClientFamily::Postgres,
                 Version::new(18, 0, 0),
             ),
             (
                 "mysqldump  Ver 8.4.3 for macos15 on arm64 (Homebrew)",
-                DumpEngine::Mysql,
+                ClientFamily::Mysql,
                 Version::new(8, 4, 3),
             ),
             (
                 "mysqldump  Ver 10.13 Distrib 5.7.44, for Linux (x86_64)",
-                DumpEngine::Mysql,
+                ClientFamily::Mysql,
                 Version::new(5, 7, 44),
             ),
             (
                 "mariadb-dump from 11.4.4-MariaDB, client 10.19 for debian-linux-gnu (aarch64)",
-                DumpEngine::MariaDb,
+                ClientFamily::MariaDb,
                 Version::new(11, 4, 4),
             ),
             (
                 "mysqldump  Ver 10.19 Distrib 10.11.6-MariaDB, for debian-linux-gnu (x86_64)",
-                DumpEngine::MariaDb,
+                ClientFamily::MariaDb,
                 Version::new(10, 11, 6),
             ),
             (
                 "mysql  Ver 8.0.40-0ubuntu0.24.04.1 for Linux on x86_64 ((Ubuntu))",
-                DumpEngine::Mysql,
+                ClientFamily::Mysql,
                 Version::new(8, 0, 40),
             ),
         ];

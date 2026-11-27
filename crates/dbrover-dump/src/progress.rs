@@ -16,6 +16,7 @@ pub fn dumped_table(engine: DumpEngine, line: &str) -> Option<String> {
         DumpEngine::Mysql | DumpEngine::MariaDb => line
             .strip_prefix("-- Retrieving table structure for table ")?
             .trim_end_matches('.'),
+        DumpEngine::Sqlite | DumpEngine::DuckDb => return None,
     };
     let name = rest.trim().trim_matches('"').trim_matches('`');
     (!name.is_empty()).then(|| name.to_owned())

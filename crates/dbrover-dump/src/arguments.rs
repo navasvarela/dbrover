@@ -64,6 +64,8 @@ pub enum ArgumentError {
     Connection(#[from] ConnectionError),
     #[error("{0} can't write or read a dump in this format")]
     Format(DumpEngine),
+    #[error("{0} dumps and restores itself, with no program")]
+    NoProgram(DumpEngine),
     #[error("this is a {file} dump, which can't be restored into {server}")]
     OtherEngine {
         file: DumpEngine,
@@ -108,6 +110,7 @@ pub fn dump_command(
     match spec.engine {
         DumpEngine::Postgres => pg_dump(spec, target, files),
         DumpEngine::Mysql | DumpEngine::MariaDb => mysqldump(spec, target, files),
+        DumpEngine::Sqlite | DumpEngine::DuckDb => Err(ArgumentError::NoProgram(spec.engine)),
     }
 }
 
@@ -126,6 +129,9 @@ fn pg_dump(
         DumpFormat::Custom => "custom",
         DumpFormat::Directory => "directory",
         DumpFormat::Sql | DumpFormat::SqlGz => "plain",
+        DumpFormat::DatabaseFile | DumpFormat::Parquet | DumpFormat::Csv => {
+            return Err(ArgumentError::Format(spec.engine));
+        }
     };
     arguments.push(format!("--format={format}"));
     let stdout = match spec.format {
@@ -135,6 +141,9 @@ fn pg_dump(
         }
         DumpFormat::Sql => Stdout::Dump { gzip: false },
         DumpFormat::SqlGz => Stdout::Dump { gzip: true },
+        DumpFormat::DatabaseFile | DumpFormat::Parquet | DumpFormat::Csv => {
+            return Err(ArgumentError::Format(spec.engine));
+        }
     };
     if spec.format == DumpFormat::Directory && spec.options.jobs.get() > 1 {
         arguments.push(format!("--jobs={}", spec.options.jobs));

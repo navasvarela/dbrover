@@ -246,3 +246,82 @@ fn a_pg_dump_too_old_for_the_server_says_how_to_install_one() {
             .is_disabled()
     );
 }
+
+/// SQLite dumps itself: a copy of its file from the data source's menu, restored into a new
+/// file, with no program and no server.
+#[test]
+fn dumps_a_sqlite_file_and_restores_it_into_a_new_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let shop = save_shop(
+        dir.path(),
+        "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT); \
+         INSERT INTO notes VALUES (1, 'kept');",
+    );
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    step_until_visible(&mut harness, "shop");
+    harness.get_by_label("shop").click_secondary();
+    harness.run_steps(2);
+    harness.get_by_label("Connect").click();
+    step_until(&mut harness, "the data source connecting", |harness| {
+        harness
+            .state()
+            .state
+            .data_source(shop.id)
+            .is_some_and(|entry| entry.dump_engine().is_some())
+    });
+    let dump = dir.path().join("copy.sqlite");
+    let picked = dump.clone();
+    harness.state_mut().pick_dump_file = Box::new(move |_| Some(picked.clone()));
+
+    harness.get_by_label("shop").click_secondary();
+    harness.run_steps(2);
+    harness.get_by_label("Dump\u{2026}").click();
+    harness.run_steps(2);
+    step_until_visible(&mut harness, "Dump from shop");
+    harness.get_by_label_contains("SQLite does it itself");
+    click(&mut harness, "Browse…");
+    harness.get_by_role_and_label(Role::Button, "Dump").hover();
+    harness.run_steps(2);
+    harness.get_by_role_and_label(Role::Button, "Dump").click();
+    step_until(&mut harness, "the dump ending", |harness| {
+        harness
+            .query_by_label_contains("Dumped shop from shop")
+            .is_some()
+    });
+    assert!(dump.is_file());
+
+    let restored = dir.path().join("copy-restored.sqlite");
+    let picked = dump.clone();
+    harness.state_mut().pick_restore_file = Box::new(move || Some(picked.clone()));
+    harness.get_by_label("shop").click_secondary();
+    harness.run_steps(2);
+    harness.get_by_label("Restore\u{2026}").click();
+    harness.run_steps(2);
+    step_until(&mut harness, "the file read", |harness| {
+        harness
+            .query_by_label_contains("SQLite database, ")
+            .is_some()
+    });
+    click(&mut harness, "Restore…");
+    step_until(&mut harness, "the question", |harness| {
+        harness.query_by_label_contains("into a new file").is_some()
+    });
+    harness
+        .get_by_role_and_label(Role::Button, "Restore")
+        .hover();
+    harness.run_steps(2);
+    harness
+        .get_by_role_and_label(Role::Button, "Restore")
+        .click();
+    step_until(&mut harness, "the restore ending", |harness| {
+        harness
+            .query_by_label_contains("Restored copy.sqlite")
+            .is_some()
+    });
+    let body: String = rusqlite::Connection::open(&restored)
+        .unwrap()
+        .query_row("SELECT body FROM notes", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(body, "kept");
+}

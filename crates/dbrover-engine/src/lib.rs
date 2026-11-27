@@ -48,6 +48,7 @@ mod report_worker;
 mod repository_rename_tests;
 mod restores;
 mod schema_snapshot;
+mod self_dumps;
 mod session;
 mod settings;
 mod sql_files;

@@ -54,7 +54,7 @@ fn clients() -> Option<PathBuf> {
 fn programs(clients: &Path, engine: DumpEngine) -> ProgramPaths {
     let own = match engine {
         DumpEngine::MariaDb => [Program::MariadbDump, Program::Mariadb],
-        DumpEngine::Mysql | DumpEngine::Postgres => [Program::Mysqldump, Program::Mysql],
+        _ => [Program::Mysqldump, Program::Mysql],
     };
     ProgramPaths(
         own.into_iter()

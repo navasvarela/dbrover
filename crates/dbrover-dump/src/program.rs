@@ -16,6 +16,36 @@ pub enum Program {
     Mariadb,
 }
 
+/// Whose client tools a program is: the engines that dump with a program of their own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ClientFamily {
+    Postgres,
+    Mysql,
+    MariaDb,
+}
+
+impl ClientFamily {
+    /// The family whose programs dump `engine`; `None` for an engine that dumps itself.
+    pub fn of(engine: DumpEngine) -> Option<Self> {
+        match engine {
+            DumpEngine::Postgres => Some(Self::Postgres),
+            DumpEngine::Mysql => Some(Self::Mysql),
+            DumpEngine::MariaDb => Some(Self::MariaDb),
+            DumpEngine::Sqlite | DumpEngine::DuckDb => None,
+        }
+    }
+}
+
+impl fmt::Display for ClientFamily {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Postgres => "PostgreSQL",
+            Self::Mysql => "MySQL",
+            Self::MariaDb => "MariaDB",
+        })
+    }
+}
+
 /// What a program is for, whichever engine's it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Role {
@@ -63,25 +93,28 @@ impl Program {
     /// its programs under MySQL's names too, and older MariaDBs only under those; which family
     /// a copy is comes from its version, not its name.
     pub fn for_role(engine: DumpEngine, role: Role) -> &'static [Self] {
-        match (engine, role) {
-            (DumpEngine::Postgres, Role::Dump) => &[Self::PgDump],
-            (DumpEngine::Postgres, Role::RestoreArchive) => &[Self::PgRestore],
-            (DumpEngine::Postgres, Role::RunSql) => &[Self::Psql],
-            (DumpEngine::Mysql, Role::Dump) => &[Self::Mysqldump],
-            (DumpEngine::Mysql, Role::RunSql) => &[Self::Mysql],
-            (DumpEngine::MariaDb, Role::Dump) => &[Self::MariadbDump, Self::Mysqldump],
-            (DumpEngine::MariaDb, Role::RunSql) => &[Self::Mariadb, Self::Mysql],
-            (DumpEngine::Mysql | DumpEngine::MariaDb, Role::RestoreArchive) => &[],
+        let Some(family) = ClientFamily::of(engine) else {
+            return &[];
+        };
+        match (family, role) {
+            (ClientFamily::Postgres, Role::Dump) => &[Self::PgDump],
+            (ClientFamily::Postgres, Role::RestoreArchive) => &[Self::PgRestore],
+            (ClientFamily::Postgres, Role::RunSql) => &[Self::Psql],
+            (ClientFamily::Mysql, Role::Dump) => &[Self::Mysqldump],
+            (ClientFamily::Mysql, Role::RunSql) => &[Self::Mysql],
+            (ClientFamily::MariaDb, Role::Dump) => &[Self::MariadbDump, Self::Mysqldump],
+            (ClientFamily::MariaDb, Role::RunSql) => &[Self::Mariadb, Self::Mysql],
+            (ClientFamily::Mysql | ClientFamily::MariaDb, Role::RestoreArchive) => &[],
         }
     }
 
     /// The client tools' family the program is first looked for under: PostgreSQL's, MySQL's
     /// or MariaDB's. A `mysqldump` may still turn out to be MariaDB's.
-    pub fn family(self) -> DumpEngine {
+    pub fn family(self) -> ClientFamily {
         match self {
-            Self::PgDump | Self::PgRestore | Self::Psql => DumpEngine::Postgres,
-            Self::Mysqldump | Self::Mysql => DumpEngine::Mysql,
-            Self::MariadbDump | Self::Mariadb => DumpEngine::MariaDb,
+            Self::PgDump | Self::PgRestore | Self::Psql => ClientFamily::Postgres,
+            Self::Mysqldump | Self::Mysql => ClientFamily::Mysql,
+            Self::MariadbDump | Self::Mariadb => ClientFamily::MariaDb,
         }
     }
 
@@ -151,5 +184,6 @@ mod tests {
             [Program::Mysqldump]
         );
         assert!(Program::for_role(DumpEngine::Mysql, Role::RestoreArchive).is_empty());
+        assert!(Program::for_role(DumpEngine::Sqlite, Role::Dump).is_empty());
     }
 }

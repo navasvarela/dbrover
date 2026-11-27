@@ -1452,6 +1452,10 @@ fn node_dump_items(
     let (Some(engine), Some(kind)) = (tree.dumps, node.kind()) else {
         return;
     };
+    // SQLite and DuckDB dump their whole file, from the data source's own menu.
+    if !engine.runs_a_program() {
+        return;
+    }
     let dumpable = matches!(
         kind,
         NodeKind::Database | NodeKind::Schema | NodeKind::Table

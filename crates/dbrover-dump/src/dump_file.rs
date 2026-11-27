@@ -19,6 +19,11 @@ pub enum DumpFileKind {
         engine: Option<DumpEngine>,
         gzip: bool,
     },
+    /// A SQLite database file, copied as it is.
+    SqliteFile,
+    /// DuckDB's `EXPORT DATABASE` folder (with `schema.sql` and `load.sql`), read back by
+    /// `IMPORT DATABASE`.
+    DuckDbExport,
 }
 
 impl DumpFileKind {
@@ -27,6 +32,8 @@ impl DumpFileKind {
         match self {
             Self::Custom | Self::Directory => Some(DumpEngine::Postgres),
             Self::Sql { engine, .. } => engine,
+            Self::SqliteFile => Some(DumpEngine::Sqlite),
+            Self::DuckDbExport => Some(DumpEngine::DuckDb),
         }
     }
 
@@ -37,6 +44,9 @@ impl DumpFileKind {
     /// Whether a file of this kind restores into a server of `engine`: MySQL's and MariaDB's
     /// plain dumps into either, and a dump that names no engine into any.
     pub fn restores_into(self, engine: DumpEngine) -> bool {
+        if matches!(engine, DumpEngine::Sqlite | DumpEngine::DuckDb) {
+            return self.engine() == Some(engine);
+        }
         matches!(
             (self.engine(), engine),
             (None, _)
@@ -52,6 +62,9 @@ impl DumpFileKind {
 /// The start of a custom archive.
 const CUSTOM_MAGIC: &[u8] = b"PGDMP";
 
+/// The start of every SQLite database file.
+const SQLITE_MAGIC: &[u8] = b"SQLite format 3\0";
+
 /// The start of a gzip stream.
 pub const GZIP_MAGIC: &[u8] = &[0x1f, 0x8b];
 
@@ -60,6 +73,9 @@ pub const GZIP_MAGIC: &[u8] = &[0x1f, 0x8b];
 pub fn sniff(start: &[u8], gzip: bool) -> Option<DumpFileKind> {
     if !gzip && start.starts_with(CUSTOM_MAGIC) {
         return Some(DumpFileKind::Custom);
+    }
+    if !gzip && start.starts_with(SQLITE_MAGIC) {
+        return Some(DumpFileKind::SqliteFile);
     }
     let text = String::from_utf8_lossy(start);
     if text.contains('\0') {
@@ -157,7 +173,7 @@ mod tests {
 
     #[test]
     fn tells_dumps_apart_by_their_first_bytes() {
-        let cases: [(&[u8], bool, Option<DumpFileKind>); 7] = [
+        let cases: [(&[u8], bool, Option<DumpFileKind>); 8] = [
             (b"PGDMP\x01\x10\x00", false, Some(DumpFileKind::Custom)),
             (
                 b"--\n-- PostgreSQL database dump\n--\n",
@@ -200,6 +216,11 @@ mod tests {
                 }),
             ),
             (b"\x89PNG\r\n\x1a\n\0\0", false, None),
+            (
+                b"SQLite format 3\0\x10\0",
+                false,
+                Some(DumpFileKind::SqliteFile),
+            ),
         ];
         for (start, gzip, expected) in cases {
             assert_eq!(
