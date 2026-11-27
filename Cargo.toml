@@ -32,6 +32,7 @@ dbrover-driver-sqlserver = { path = "crates/dbrover-driver-sqlserver" }
 dbrover-driver-snowflake = { path = "crates/dbrover-driver-snowflake" }
 dbrover-driver-trino = { path = "crates/dbrover-driver-trino" }
 dbrover-document = { path = "crates/dbrover-document" }
+dbrover-dump = { path = "crates/dbrover-dump" }
 dbrover-engine = { path = "crates/dbrover-engine" }
 dbrover-export = { path = "crates/dbrover-export" }
 dbrover-insight = { path = "crates/dbrover-insight" }
