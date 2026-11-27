@@ -6,8 +6,8 @@ use dbrover_core::{
     CatalogPath, ChildrenQuery, DataSource, DataSourceId, NodeKind, ProjectId, TableName,
 };
 use dbrover_engine::{
-    Command, EngineConfig, EngineError, EngineHandle, Event, PasswordKept, Repaint, Restart,
-    RunOrigin,
+    Command, DumpRun, DumpRunId, EngineConfig, EngineError, EngineHandle, Event, PasswordKept,
+    ProgramPaths, Repaint, Restart, RestoreRun, RunOrigin, SessionState,
 };
 use dbrover_export::{CustomFormatId, CustomFormatKind, ExportSpec};
 use dbrover_language::QueryLanguage;
@@ -38,6 +38,7 @@ use crate::delete_dialog::{DeleteChoice, DeleteConfirmation};
 use crate::diagram::{
     Diagram, DiagramAction, DiagramDialog, DiagramDialogAction, Diagrams, Growth,
 };
+use crate::dump_dialog::{self, DumpAction, DumpDialog};
 use crate::explorer::{ExplorerAction, ExplorerOptions};
 use crate::export_dialog::{
     self, ExportChoices, ExportDialog, ExportDialogAction, ExportPreview, ExportSubject, FileType,
@@ -69,6 +70,7 @@ use crate::query_folders::{
     self, CreatedQuery, NewQueryAction, NewQueryDialog, QueryFolderAction, QueryFolders,
 };
 use crate::reports::{self, RenameAction, RenameReportDialog, ReportAction, Reports, ReportsSetup};
+use crate::restore_dialog::{RestoreAction, RestoreDialog};
 use crate::rollback_dialog::{Closing, RollbackChoice, RollbackConfirmation};
 use crate::schema_compare::{CompareAction, LiveSchema, Reading, SchemaCompares};
 use crate::search_tab::{SearchAction, SearchDefaults, SearchTabs};
@@ -163,6 +165,19 @@ pub struct DbRoverApp {
     export_choices: ExportChoices,
     import_dialog: Option<ImportDialog>,
     csv_import: Option<CsvImportDialog>,
+    /// Dump… and Restore… (W17).
+    dump_dialog: Option<DumpDialog>,
+    restore_dialog: Option<RestoreDialog>,
+    /// The id the next dump or restore runs under.
+    next_dump_run: u64,
+    /// The folder each data source was last dumped to, where its next dump goes first.
+    dump_folders: HashMap<DataSourceId, PathBuf>,
+    /// The data source each restore under way writes to, whose tree is refreshed once it has.
+    restoring: HashMap<DumpRunId, DataSourceId>,
+    /// Ask where a dump goes and which dump to restore. The platform's file dialogs, except in
+    /// tests.
+    pub(crate) pick_dump_file: Box<PickDumpFile>,
+    pub(crate) pick_restore_file: Box<dyn Fn() -> Option<PathBuf>>,
     /// Table exports and CSV imports under way, once their dialog has closed.
     background_runs: BackgroundRuns,
     /// Ask where to export data sources to and which file to import. The platform's file
@@ -316,6 +331,13 @@ impl DbRoverApp {
             export_choices,
             import_dialog: None,
             csv_import: None,
+            dump_dialog: None,
+            restore_dialog: None,
+            next_dump_run: 0,
+            dump_folders: HashMap::new(),
+            restoring: HashMap::new(),
+            pick_dump_file: Box::new(file_picker::pick_dump_file),
+            pick_restore_file: Box::new(file_picker::pick_restore_file),
             background_runs: BackgroundRuns::default(),
             pick_data_sources_export: Box::new(file_picker::pick_data_sources_export),
             pick_data_sources_import: Box::new(file_picker::pick_data_sources_import),
@@ -585,6 +607,14 @@ impl DbRoverApp {
         if let Some(dialog) = &mut self.csv_import {
             dialog.apply(event);
         }
+        if let Some(dialog) = &mut self.dump_dialog {
+            dialog.apply(event);
+        }
+        if let Some(dialog) = &mut self.restore_dialog {
+            let command = dialog.apply(event);
+            self.send_if(command);
+        }
+        self.refresh_after_restore(event);
         if let Some(dialog) = &mut self.export_dialog {
             dialog.apply(event);
         }
@@ -1607,6 +1637,8 @@ impl DbRoverApp {
                 }
             }
             ExplorerAction::ImportCsv(id, path) => self.open_csv_import(id, &path),
+            ExplorerAction::Dump(id, path) => self.open_dump(id, &path),
+            ExplorerAction::Restore(id, database) => self.open_restore(id, database),
             ExplorerAction::ExportData(id, path) => self.open_table_export(id, &path),
             ExplorerAction::Diagram(id, path) => self.open_diagram_dialog(id, &path),
             ExplorerAction::CompareSchema(id, path) => self.open_schema_compare(id, &path),
@@ -2847,6 +2879,151 @@ impl DbRoverApp {
         }
     }
 
+    fn dump_programs(&self) -> ProgramPaths {
+        ProgramPaths::from_settings(&self.settings.settings().dumps)
+    }
+
+    fn new_dump_run(&mut self) -> DumpRunId {
+        self.next_dump_run += 1;
+        DumpRunId(self.next_dump_run)
+    }
+
+    fn open_dump(&mut self, id: DataSourceId, path: &CatalogPath) {
+        let Some(entry) = self.state.data_source(id) else {
+            return;
+        };
+        let folder = self
+            .dump_folders
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| dump_dialog::default_folder(&entry.data_source.name));
+        if let Some((dialog, command)) =
+            DumpDialog::open(entry, path, &folder, self.dump_programs())
+        {
+            self.dump_dialog = Some(dialog);
+            self.send(command);
+        }
+    }
+
+    fn show_dump_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.dump_dialog else {
+            return;
+        };
+        match dialog.show(ctx) {
+            Some(DumpAction::Browse) => {
+                if let Some(path) = (self.pick_dump_file)(&dialog.file()) {
+                    dialog.set_file(&path);
+                }
+            }
+            Some(DumpAction::Start(request)) => {
+                self.dump_dialog = None;
+                let Some(entry) = self.state.data_source(request.data_source) else {
+                    return;
+                };
+                let SessionState::Connected(server) = &entry.session else {
+                    return;
+                };
+                let (server, name) = (server.clone(), entry.data_source.name.clone());
+                if let Some(folder) = request.file.parent() {
+                    self.dump_folders
+                        .insert(request.data_source, folder.to_path_buf());
+                }
+                let run = self.new_dump_run();
+                self.background_runs
+                    .dump(run, format!("{} from {name}", request.database));
+                let programs = self.dump_programs();
+                self.send(Command::StartDump(Box::new(DumpRun {
+                    run,
+                    request,
+                    server,
+                    programs,
+                })));
+            }
+            Some(DumpAction::Close) => self.dump_dialog = None,
+            None => {}
+        }
+    }
+
+    /// Asks for a dump file, then opens the dialog that restores it into `database`, or a new
+    /// database.
+    fn open_restore(&mut self, id: DataSourceId, database: Option<String>) {
+        if let Some(file) = (self.pick_restore_file)() {
+            self.open_restore_file(id, database, file);
+        }
+    }
+
+    fn show_restore_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.restore_dialog else {
+            return;
+        };
+        match dialog.show(ctx) {
+            Some(RestoreAction::Browse) => {
+                if let Some(file) = (self.pick_restore_file)() {
+                    let (id, database) = (dialog.data_source(), dialog.chosen_database());
+                    self.restore_dialog = None;
+                    self.open_restore_file(id, database, file);
+                }
+            }
+            Some(RestoreAction::Start(request)) => {
+                self.restore_dialog = None;
+                let Some(entry) = self.state.data_source(request.data_source) else {
+                    return;
+                };
+                let SessionState::Connected(server) = &entry.session else {
+                    return;
+                };
+                let (server, name) = (server.clone(), entry.data_source.name.clone());
+                let file = request
+                    .file
+                    .file_name()
+                    .map(|file| file.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let run = self.new_dump_run();
+                self.restoring.insert(run, request.data_source);
+                self.background_runs
+                    .restore(run, format!("{file} into {name}"));
+                let programs = self.dump_programs();
+                self.send(Command::StartRestore(Box::new(RestoreRun {
+                    run,
+                    request,
+                    server,
+                    programs,
+                })));
+            }
+            Some(RestoreAction::Close) => self.restore_dialog = None,
+            None => {}
+        }
+    }
+
+    fn open_restore_file(&mut self, id: DataSourceId, database: Option<String>, file: PathBuf) {
+        let programs = self.dump_programs();
+        let Some(entry) = self.state.data_source(id) else {
+            return;
+        };
+        if let Some((dialog, command)) = RestoreDialog::open(entry, database, file, programs) {
+            self.restore_dialog = Some(dialog);
+            self.send(command);
+        }
+    }
+
+    /// A restore that worked made or changed a database: the explorer shows it.
+    fn refresh_after_restore(&mut self, event: &Event) {
+        let Event::RestoreEnded { run, result } = event else {
+            return;
+        };
+        let Some(id) = self.restoring.remove(run) else {
+            return;
+        };
+        if result.is_ok() {
+            let root = CatalogPath::root();
+            let needs_loading = self
+                .state
+                .catalog_mut(id)
+                .is_some_and(|catalog| catalog.refresh(&root));
+            self.load_children_if(needs_loading, id, root);
+        }
+    }
+
     /// Asks for a CSV file, then opens the dialog that imports it into the table at `path`.
     fn open_csv_import(&mut self, id: DataSourceId, path: &CatalogPath) {
         let Some(file) = (self.pick_csv_file)() else {
@@ -2957,8 +3134,10 @@ impl DbRoverApp {
                 self.send(Command::SaveMcpDefaults(defaults));
             }
             SettingsAction::Save(settings) => {
+                let trusted = newly_set_programs(&self.settings.settings().dumps, &settings.dumps);
                 self.settings.set((*settings).clone());
                 self.send(Command::SaveSettings(*settings));
+                self.send_all(trusted.into_iter().map(Command::TrustCommand));
             }
             SettingsAction::Reload => self.send(Command::ReloadSettings),
             SettingsAction::KeepMine => {
@@ -3399,6 +3578,8 @@ impl eframe::App for DbRoverApp {
         self.show_export_dialog(&ctx);
         self.show_import_dialog(&ctx);
         self.show_csv_import(&ctx);
+        self.show_dump_dialog(&ctx);
+        self.show_restore_dialog(&ctx);
         self.show_diagram_dialog(&ctx);
         let commands = self.command_runs.show(&ctx);
         self.send_all(commands);
@@ -3447,6 +3628,22 @@ impl Repaint for EguiRepaint {
     }
 }
 
+/// Asks where a dump goes, starting from the file suggested.
+type PickDumpFile = dyn Fn(&Path) -> Option<PathBuf>;
+/// The dump programs whose path was typed in **Settings › Dumps**, trusted to run as they are
+/// saved: a path that arrived in a copied or synced `settings.toml` isn't, until set here.
+fn newly_set_programs(
+    before: &dbrover_store::DumpSettings,
+    after: &dbrover_store::DumpSettings,
+) -> Vec<dbrover_store::TrustedCommand> {
+    after
+        .programs
+        .iter()
+        .filter(|(key, path)| before.programs.get(*key) != Some(*path))
+        .map(|(key, path)| dbrover_store::TrustedCommand::dump_program(key, path))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     mod actions;
@@ -3456,6 +3653,7 @@ mod tests {
     mod customisation;
     mod definitions;
     mod diagrams;
+    mod dumps;
     mod exports;
     mod files;
     mod find;

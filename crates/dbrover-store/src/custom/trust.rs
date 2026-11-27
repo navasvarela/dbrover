@@ -19,7 +19,8 @@ use crate::atomic::write_atomically;
 
 const HEADER: &str = "\
 # Commands DbRover runs without asking first, each as it was when you chose Run: command
-# actions from actions.toml, data sources' password commands, and programs from exports.toml.
+# actions from actions.toml, data sources' password commands, programs from exports.toml,
+# and dump programs set in Settings.
 # DbRover writes this file; remove an entry to be asked again.
 
 ";
@@ -44,6 +45,8 @@ enum Owner {
     DataSource { data_source: DataSourceId },
     /// A program from `exports.toml`, which reads rows as JSON Lines.
     Export { export: CustomFormatId },
+    /// A dump program's path set by hand in Settings (W17), by the program's key.
+    Dump { dump_program: String },
 }
 
 impl Owner {
@@ -55,9 +58,16 @@ impl Owner {
                 data_source == other
             }
             (Self::Export { export }, Self::Export { export: other }) => export == other,
-            (Self::Action { .. }, _) | (Self::DataSource { .. }, _) | (Self::Export { .. }, _) => {
-                false
-            }
+            (
+                Self::Dump { dump_program },
+                Self::Dump {
+                    dump_program: other,
+                },
+            ) => dump_program == other,
+            (Self::Action { .. }, _)
+            | (Self::DataSource { .. }, _)
+            | (Self::Export { .. }, _)
+            | (Self::Dump { .. }, _) => false,
         }
     }
 }
@@ -77,6 +87,16 @@ impl TrustedCommand {
         Self {
             owner: Owner::Export { export: id.clone() },
             command: program.command.source().to_vec(),
+        }
+    }
+
+    /// A dump program's path set by hand, under the program's settings key.
+    pub fn dump_program(key: &str, path: &Path) -> Self {
+        Self {
+            owner: Owner::Dump {
+                dump_program: key.to_owned(),
+            },
+            command: vec![path.to_string_lossy().into_owned()],
         }
     }
 

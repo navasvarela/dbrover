@@ -25,8 +25,8 @@ use dbrover_store::{
 use crate::{
     DumpDone, DumpFailure, DumpFileFound, DumpProgress, DumpRun, DumpRunId, DumpStart, Export,
     ExportAll, ExportProgramRequest, HostKey, InstalledUpdate, Noticed, PasswordNeeded,
-    ProgramFailure, ProgramId, ProgramOutput, ProgramPaths, ProgramRequest, Release, RestoreDone,
-    RestoreRun, WatchedFile,
+    ProgramFailure, ProgramId, ProgramLine, ProgramOutput, ProgramPaths, ProgramQuery,
+    ProgramRequest, Release, RestoreDone, RestoreRun, WatchedFile,
 };
 
 /// A file in the settings folder that the app shows as one document, which the engine
@@ -504,6 +504,9 @@ pub enum Command {
     /// Answered as a dump is, by [`Event::DumpStarted`] and [`Event::DumpProgress`], then
     /// [`Event::RestoreEnded`]; recorded in the history once.
     StartRestore(Box<RestoreRun>),
+    /// The program a dump or restore would use, for its dialog to show before anything runs.
+    /// Answered by [`Event::DumpProgramChosen`].
+    ChooseDumpProgram(ProgramQuery),
     /// Lets the command run without asking from now on, in place of whatever its action ran
     /// before, and saves that. Answered by [`Event::TrustedCommandsLoaded`].
     TrustCommand(TrustedCommand),
@@ -742,6 +745,10 @@ pub enum Event {
     DumpEnded {
         run: DumpRunId,
         result: Result<DumpDone, DumpFailure>,
+    },
+    DumpProgramChosen {
+        query: ProgramQuery,
+        result: Result<ProgramLine, String>,
     },
     DumpFileInspected {
         file: PathBuf,

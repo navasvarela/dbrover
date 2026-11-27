@@ -25,6 +25,7 @@ pub struct Settings {
     pub explorer: ExplorerSettings,
     pub activity: ActivitySettings,
     pub data_search: DataSearchSettings,
+    pub dumps: DumpSettings,
 }
 
 /// How the SQL formatter writes statements.
@@ -158,6 +159,18 @@ impl DataSearchSettings {
             .map_or(Self::DEFAULT_ROWS_PER_TABLE, NonZeroU32::get)
             .min(Self::MAX_ROWS_PER_TABLE)
     }
+}
+
+/// Dump and restore (W17, `docs/dump-restore.md`): the programs set by hand, which win over
+/// every copy DbRover finds.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DumpSettings {
+    /// A program's path by its key (`pg_dump`, `pg_restore`, `psql`, `mysqldump`, `mysql`,
+    /// `mariadb_dump`, `mariadb`), as `[dumps.programs]` writes it. A path runs only once it
+    /// is trusted, so a copied or synced settings folder brings no program that runs.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub programs: std::collections::BTreeMap<String, std::path::PathBuf>,
 }
 
 /// What the explorer lists besides data sources.
@@ -499,6 +512,11 @@ mod tests {
                 rows_per_table: NonZeroU32::new(50),
                 include_views: true,
             },
+            dumps: DumpSettings {
+                programs: [("pg_dump".to_owned(), "/opt/pg/17/bin/pg_dump".into())]
+                    .into_iter()
+                    .collect(),
+            },
         };
 
         let read = file.read().unwrap();
@@ -511,6 +529,10 @@ mod tests {
         );
         assert!(text.contains("memory_limit = \"4 GiB\"\n"), "{text}");
         assert!(text.contains("[activity]\nrefresh_seconds = 2\n"), "{text}");
+        assert!(
+            text.contains("[dumps.programs]\npg_dump = \"/opt/pg/17/bin/pg_dump\"\n"),
+            "{text}"
+        );
         assert!(
             text.contains(
                 "[data_search]\ntable_seconds = 0\nrows_per_table = 50\ninclude_views = true\n"

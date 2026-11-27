@@ -19,6 +19,7 @@ dbrover-core.workspace = true
 dbrover-diagram.workspace = true
 dbrover-picture.workspace = true
 dbrover-document.workspace = true
+dbrover-dump.workspace = true
 dbrover-engine.workspace = true
 dbrover-export.workspace = true
 dbrover-insight.workspace = true

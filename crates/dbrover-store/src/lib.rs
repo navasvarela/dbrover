@@ -74,9 +74,9 @@ pub use query_folders::{
 pub use reports::{ReportFiles, ReportName, ReportSaveError};
 pub use secrets::{Secret, SecretError, SecretStore, os_keychain};
 pub use settings::{
-    ActivitySettings, DataSearchSettings, ExplorerSettings, FormatSettings, HistorySettings,
-    KeywordCase, LintSettings, ReportSettings, Settings, SettingsError, SettingsFile,
-    UpdateSettings,
+    ActivitySettings, DataSearchSettings, DumpSettings, ExplorerSettings, FormatSettings,
+    HistorySettings, KeywordCase, LintSettings, ReportSettings, Settings, SettingsError,
+    SettingsFile, UpdateSettings,
 };
 pub use settings_folder::{
     CONFIG_DIR_FLAG, CONFIG_DIR_VARIABLE, ChosenFolder, ChosenFolderError, ChosenFolderFile,
