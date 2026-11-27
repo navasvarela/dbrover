@@ -6,6 +6,8 @@ use std::borrow::Cow;
 
 use dbrover_sql::LintRule;
 
+use dbrover_dump::Program;
+
 use super::report_defaults::ReportDefault;
 use crate::icons;
 
@@ -18,6 +20,7 @@ pub enum Category {
     History,
     Activity,
     DataSearch,
+    Dumps,
     Reports,
     Mcp,
     Updates,
@@ -25,12 +28,13 @@ pub enum Category {
 }
 
 impl Category {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Appearance,
         Self::Editor,
         Self::History,
         Self::Activity,
         Self::DataSearch,
+        Self::Dumps,
         Self::Reports,
         Self::Mcp,
         Self::Updates,
@@ -44,6 +48,7 @@ impl Category {
             Self::History => "Query history",
             Self::Activity => "Server activity",
             Self::DataSearch => "Data search",
+            Self::Dumps => "Dumps",
             Self::Reports => "Reports",
             Self::Mcp => "MCP",
             Self::Updates => "Updates",
@@ -58,6 +63,7 @@ impl Category {
             Self::History => icons::CLOCK_COUNTER_CLOCKWISE,
             Self::Activity => icons::PULSE,
             Self::DataSearch => icons::MAGNIFYING_GLASS,
+            Self::Dumps => icons::DOWNLOAD_SIMPLE,
             Self::Reports => icons::CLIPBOARD_TEXT,
             Self::Mcp => icons::PLUGS_CONNECTED,
             Self::Updates => icons::ARROWS_CLOCKWISE,
@@ -73,6 +79,10 @@ impl Category {
             Self::History => "How long the query history keeps what ran.",
             Self::Activity => "How often a Server activity tab reads its server's sessions.",
             Self::DataSearch => "How long Search data spends on each table, and what it reads.",
+            Self::Dumps => {
+                "The programs Dump and Restore run. Left empty, DbRover finds them where \
+                 installers put them."
+            }
             Self::Reports => {
                 "The limits every report runs under unless its file sets its own, and the runs \
                  kept."
@@ -97,6 +107,8 @@ pub enum Setting {
     SearchTimeLimit,
     SearchRows,
     SearchViews,
+    /// A dump program's path, set by hand (W17).
+    DumpProgram(Program),
     Report(ReportDefault),
     CheckForUpdates,
     McpDefaults,
@@ -121,6 +133,7 @@ impl Setting {
             Self::SearchRows,
             Self::SearchViews,
         ]);
+        settings.extend(Program::ALL.into_iter().map(Self::DumpProgram));
         settings.extend(ReportDefault::ALL.into_iter().map(Self::Report));
         settings.extend([
             Self::McpDefaults,
@@ -139,6 +152,7 @@ impl Setting {
             Self::HistoryAge | Self::HistoryCount => Category::History,
             Self::ActivityRefresh => Category::Activity,
             Self::SearchTimeLimit | Self::SearchRows | Self::SearchViews => Category::DataSearch,
+            Self::DumpProgram(_) => Category::Dumps,
             Self::Report(_) => Category::Reports,
             Self::McpDefaults => Category::Mcp,
             Self::CheckForUpdates => Category::Updates,
@@ -155,6 +169,7 @@ impl Setting {
             Self::HistoryAge | Self::HistoryCount => "Keeping statements",
             Self::ActivityRefresh => "Refreshing",
             Self::SearchTimeLimit | Self::SearchRows | Self::SearchViews => "Each table",
+            Self::DumpProgram(_) => "Programs",
             Self::Report(default) => default.section(),
             Self::McpDefaults => "Defaults for every project",
             Self::CheckForUpdates => "New releases",
@@ -175,6 +190,7 @@ impl Setting {
             Self::SearchTimeLimit => "Give up on a table after".into(),
             Self::SearchRows => "Rows shown per table".into(),
             Self::SearchViews => "Search views as well as tables".into(),
+            Self::DumpProgram(program) => program.name().into(),
             Self::Report(default) => default.title().into(),
             Self::CheckForUpdates => "Check for a new release when DbRover starts".into(),
             Self::McpDefaults => "What MCP clients may do".into(),
@@ -205,6 +221,12 @@ impl Setting {
                  this is on."
                     .into()
             }
+            Self::DumpProgram(Program::PgDump) => {
+                "A path typed here is trusted to run; one in a copied or synced settings.toml \
+                 runs only once set here again."
+                    .into()
+            }
+            Self::DumpProgram(_) => return None,
             Self::Report(default) => default.description().into(),
             Self::CheckForUpdates => {
                 "Asks GitHub once per start. Help › Check for updates works either way.".into()
@@ -239,6 +261,15 @@ impl Setting {
             Self::SearchTimeLimit => &["search", "find", "data", "timeout", "limit"],
             Self::SearchRows => &["search", "find", "data", "rows", "limit"],
             Self::SearchViews => &["search", "find", "data", "views"],
+            Self::DumpProgram(_) => &[
+                "dump",
+                "restore",
+                "backup",
+                "pg_dump",
+                "mysqldump",
+                "program",
+                "path",
+            ],
             Self::Report(_) => &["report", "limit", "default", "guardrail"],
             Self::CheckForUpdates => &["update", "release", "version"],
             Self::McpDefaults => &[

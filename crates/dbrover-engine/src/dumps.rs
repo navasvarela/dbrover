@@ -101,6 +101,11 @@ pub enum DumpFailure {
     /// The data source couldn't be reached; the app has been told what it needs, if anything.
     #[error("{0}")]
     Connect(String),
+    #[error(
+        "{program} at {}, set in Settings, isn't trusted to run yet; trust it in Settings › Dumps",
+        path.display()
+    )]
+    Untrusted { program: String, path: PathBuf },
     #[error("{} already exists; choose another name", .0.display())]
     Exists(PathBuf),
     #[error("{0}")]
@@ -239,6 +244,18 @@ pub(crate) async fn choose_program(
     archive_made_by: Option<Version>,
     paths: &ProgramPaths,
 ) -> Result<ChosenProgram, DumpFailure> {
+    for &program in Program::for_role(engine, role) {
+        let Some(path) = paths.0.get(&program) else {
+            continue;
+        };
+        let trusted = dbrover_store::TrustedCommand::dump_program(program.setting_key(), path);
+        if !services.trusted.borrow().contains(&trusted) {
+            return Err(DumpFailure::Untrusted {
+                program: program.name().to_owned(),
+                path: path.clone(),
+            });
+        }
+    }
     let need = Need {
         engine,
         role,
@@ -274,6 +291,30 @@ pub(crate) async fn run_until_cancelled(
     ended.unwrap_or_else(|error| Err(DumpFailure::Files(error.to_string())))
 }
 
+/// Answers the dialogs' [`ProgramQuery`].
+pub(crate) async fn chosen_line(
+    services: &ProgramServices,
+    query: &crate::dump_programs::ProgramQuery,
+) -> Result<crate::dump_programs::ProgramLine, String> {
+    let server = Version::parse_leading(&query.server)
+        .ok_or_else(|| DumpFailure::ServerVersion(query.server.clone()).to_string())?;
+    let chosen = choose_program(
+        services,
+        query.engine,
+        query.role,
+        server,
+        query.archive_made_by,
+        &query.programs,
+    )
+    .await
+    .map_err(|failure| failure.to_string())?;
+    Ok(crate::dump_programs::ProgramLine {
+        path: chosen.program.path,
+        version: chosen.program.version,
+        warning: chosen.warning,
+    })
+}
+
 /// How a dump program's stderr names the table it has started on.
 fn table_reader(engine: DumpEngine) -> fn(&str) -> Option<String> {
     match engine {
@@ -294,6 +335,11 @@ pub(crate) fn partial_path(path: &Path) -> PathBuf {
 fn refuse_existing(final_path: &Path, partial: &Path) -> Result<(), DumpFailure> {
     if final_path.exists() {
         return Err(DumpFailure::Exists(final_path.to_owned()));
+    }
+    // The folder first chosen for a data source's dumps may not exist yet.
+    if let Some(folder) = final_path.parent() {
+        std::fs::create_dir_all(folder)
+            .map_err(|error| DumpFailure::Files(describe_error(&error)))?;
     }
     // A partial file is a run's that crashed: nobody else writes that name.
     remove_any(partial).map_err(|error| DumpFailure::Files(describe_error(&error)))

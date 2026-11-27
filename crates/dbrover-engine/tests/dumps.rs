@@ -27,7 +27,9 @@ use dbrover_engine::{
     Command, DumpDone, DumpFailure, DumpRun, DumpRunId, DumpStart, Event, PasswordUpdate,
     ProgramPaths, RestoreDone, RestoreRun,
 };
-use dbrover_store::{HistoryEntry, HistoryOutcome, HistoryQuery, HistorySource, HistorySourceKind};
+use dbrover_store::{
+    HistoryEntry, HistoryOutcome, HistoryQuery, HistorySource, HistorySourceKind, TrustedCommand,
+};
 
 /// The folder `DBROVER_TEST_CLIENTS` names, or `None`, with a note, so the test skips.
 fn clients() -> Option<PathBuf> {
@@ -211,7 +213,31 @@ fn start_engine(data_source: &DataSource) -> (TestEngine, tempfile::TempDir) {
         ssh_secret: PasswordUpdate::Keep,
     });
     engine.expect(Event::DataSourceSaved(data_source.clone()));
+    trust_clients(&mut engine);
     (engine, dir)
+}
+
+/// Trusts `programs` to run, as typing their paths in Settings › Dumps does: a path set by
+/// hand runs only once trusted.
+fn trust(engine: &mut TestEngine, programs: &ProgramPaths) {
+    for (program, path) in &programs.0 {
+        engine.send(Command::TrustCommand(TrustedCommand::dump_program(
+            program.setting_key(),
+            path,
+        )));
+        until(engine, |event| {
+            matches!(event, Event::TrustedCommandsLoaded(_)).then_some(())
+        });
+    }
+}
+
+/// Trusts the clients `DBROVER_TEST_CLIENTS` names, when it names some.
+fn trust_clients(engine: &mut TestEngine) {
+    if std::env::var_os("DBROVER_TEST_CLIENTS").is_some()
+        && let Some(clients) = clients()
+    {
+        trust(engine, &program_paths(&clients));
+    }
 }
 
 fn until<T>(engine: &mut TestEngine, mut pick: impl FnMut(Event) -> Option<T>) -> T {
@@ -474,6 +500,7 @@ fn dumps_through_an_ssh_tunnel() {
         ssh_secret: PasswordUpdate::Set(ssh.password.clone()),
     });
     engine.expect(Event::DataSourceSaved(data_source.clone()));
+    trust_clients(&mut engine);
 
     let file = dir.path().join("tunnelled.dump");
     engine.send(Command::StartDump(dump_run(
@@ -867,6 +894,7 @@ mod without_a_server {
         let data_source = unreachable_source();
         let (mut engine, dir) = engine_with(&data_source);
         let programs = fake_pg_dump(dir.path(), "16.4");
+        trust(&mut engine, &programs);
         engine.send(Command::StartDump(run_on(
             &data_source,
             dir.path().join("shop.dump"),
@@ -888,6 +916,7 @@ mod without_a_server {
         let file = dir.path().join("shop.dump");
         std::fs::write(&file, "yesterday's dump").unwrap();
         let programs = fake_pg_dump(dir.path(), "17.2");
+        trust(&mut engine, &programs);
         engine.send(Command::StartDump(run_on(
             &data_source,
             file.clone(),

@@ -2343,6 +2343,7 @@ dependencies = [
  "dbrover-core",
  "dbrover-diagram",
  "dbrover-document",
+ "dbrover-dump",
  "dbrover-engine",
  "dbrover-export",
  "dbrover-insight",

@@ -38,6 +38,9 @@ pub(crate) struct ProgramServices {
     pub(crate) events: EventSink,
     pub(crate) history: HistoryLog,
     pub(crate) versions: ProgramVersions,
+    /// The commands the user trusted: a dump program's path set by hand runs only once
+    /// trusted.
+    pub(crate) trusted: tokio::sync::watch::Receiver<dbrover_store::TrustedCommands>,
     /// Where each run's password and filter files go: a folder in the data folder.
     pub(crate) run_files: PathBuf,
 }

@@ -62,7 +62,7 @@ pub use data_search::{
     TABLE_TIME_LIMIT, TableOutcome, TableSearched,
 };
 pub use dbrover_ssh::HostKey;
-pub use dump_programs::ProgramPaths;
+pub use dump_programs::{ProgramLine, ProgramPaths, ProgramQuery};
 pub use dumps::{DumpDone, DumpFailure, DumpProgress, DumpRun, DumpRunId, DumpStart};
 pub use environment::ProcessEnvironment;
 pub use export::{Export, ExportAll};

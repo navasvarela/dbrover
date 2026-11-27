@@ -239,6 +239,33 @@ pub fn pick_schema_snapshot_path(schema: &str) -> Option<PathBuf> {
         .save_file()
 }
 
+/// Shows the save dialog for a dump (W17), starting from the file the Dump dialog suggests.
+/// Nothing is written here; the engine refuses a file that exists, even if the dialog asked
+/// "Replace?".
+pub fn pick_dump_file(suggested: &Path) -> Option<PathBuf> {
+    let mut dialog = rfd::FileDialog::new().set_title("Dump to");
+    if let Some(folder) = suggested.parent() {
+        dialog = dialog.set_directory(folder);
+    }
+    if let Some(name) = suggested.file_name() {
+        dialog = dialog.set_file_name(name.to_string_lossy());
+    }
+    dialog.save_file()
+}
+
+/// Shows the open dialog for a dump to restore (W17): a file, since a directory archive is
+/// chosen by its `toc.dat`.
+pub fn pick_restore_file() -> Option<PathBuf> {
+    let picked = rfd::FileDialog::new()
+        .set_title("Choose a dump to restore")
+        .pick_file()?;
+    // A directory archive is chosen by the toc.dat inside it.
+    match picked.file_name() {
+        Some(name) if name == "toc.dat" => picked.parent().map(Path::to_path_buf),
+        _ => Some(picked),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -560,6 +560,15 @@ impl Engine {
             }
             Command::StartDump(run) => self.start_dump(*run),
             Command::StartRestore(run) => self.start_restore(*run),
+            Command::ChooseDumpProgram(query) => {
+                let services = self.program_services();
+                tokio::spawn(async move {
+                    let result = dumps::chosen_line(&services, &query).await;
+                    services
+                        .events
+                        .send(Event::DumpProgramChosen { query, result });
+                });
+            }
             Command::InspectDumpFile { file, programs } => {
                 let services = self.program_services();
                 tokio::spawn(async move {
@@ -1363,6 +1372,7 @@ impl Engine {
             events: self.events.clone(),
             history: self.history.clone(),
             versions: self.program_versions.clone(),
+            trusted: self.trusted.subscribe(),
             run_files: self.dump_files.clone(),
         }
     }

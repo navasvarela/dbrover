@@ -19,6 +19,42 @@ const VERSION_TIMEOUT: Duration = Duration::from_secs(5);
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProgramPaths(pub BTreeMap<Program, PathBuf>);
 
+impl ProgramPaths {
+    /// The paths `[dumps.programs]` sets, by each program's key; an unknown key is left out.
+    pub fn from_settings(settings: &dbrover_store::DumpSettings) -> Self {
+        Self(
+            Program::ALL
+                .into_iter()
+                .filter_map(|program| {
+                    let path = settings.programs.get(program.setting_key())?;
+                    Some((program, path.clone()))
+                })
+                .collect(),
+        )
+    }
+}
+
+/// What the Dump and Restore dialogs ask of the engine: the program a run would use, so the
+/// dialog can show it, or why there is none, before anything runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgramQuery {
+    pub engine: dbrover_core::DumpEngine,
+    pub role: dbrover_dump::Role,
+    /// The server's version, as its connection reported it.
+    pub server: String,
+    /// For a restore of a PostgreSQL archive, the `pg_dump` that wrote it.
+    pub archive_made_by: Option<dbrover_dump::Version>,
+    pub programs: ProgramPaths,
+}
+
+/// The program a run would use, as the dialogs show it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgramLine {
+    pub path: PathBuf,
+    pub version: ProgramVersion,
+    pub warning: Option<String>,
+}
+
 /// What each copy's `--version` said, kept until its file changes, so a dump doesn't start
 /// every copy on the machine again. Cloning shares it.
 #[derive(Clone, Default)]

@@ -89,6 +89,7 @@ fn control(ui: &mut Ui, setting: Setting, title: &str, draft: &mut Draft<'_>) {
         Setting::SearchViews => {
             form::toggle(ui, &mut settings.data_search.include_views, title);
         }
+        Setting::DumpProgram(program) => dump_program(ui, program, &mut settings.dumps),
         Setting::Report(default) => default.control(ui, &mut settings.reports),
         Setting::CheckForUpdates => {
             form::toggle(ui, &mut settings.updates.check_on_start, title);
@@ -323,4 +324,36 @@ fn search_rows(ui: &mut Ui, rows: &mut Option<NonZeroU32>) {
             }
         });
     *rows = NonZeroU32::new(chosen).filter(|rows| rows.get() != default);
+}
+
+/// A dump program's path, empty for the one DbRover finds.
+fn dump_program(
+    ui: &mut Ui,
+    program: dbrover_dump::Program,
+    dumps: &mut dbrover_store::DumpSettings,
+) {
+    let key = program.setting_key();
+    let mut text = dumps
+        .programs
+        .get(key)
+        .map(|path| path.display().to_string())
+        .unwrap_or_default();
+    let field = egui::TextEdit::singleline(&mut text)
+        .hint_text("Found by DbRover")
+        .desired_width(280.0);
+    if crate::widgets::name(
+        ui.add(field),
+        egui::WidgetType::TextEdit,
+        program.name(),
+        true,
+    )
+    .changed()
+    {
+        let text = text.trim();
+        if text.is_empty() {
+            dumps.programs.remove(key);
+        } else {
+            dumps.programs.insert(key.to_owned(), text.into());
+        }
+    }
 }

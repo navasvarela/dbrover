@@ -4,8 +4,8 @@
 use std::collections::BTreeSet;
 
 use dbrover_core::{
-    AccountKind, CatalogNode, CatalogPath, DataSourceId, DriverKind, FolderKind, ManagedService,
-    NodeKind, ProjectId, Quoting, ServiceVendor,
+    AccountKind, CatalogNode, CatalogPath, DataSourceId, DriverKind, DumpEngine, FolderKind,
+    ManagedService, NodeKind, ProjectId, Quoting, SafetyLevel, ServiceVendor,
 };
 use dbrover_engine::SessionState;
 use dbrover_language::QueryLanguage;
@@ -112,6 +112,10 @@ pub enum ExplorerAction {
     ServerActivity(DataSourceId),
     /// Search data…: the Search data tab, searching the tables under the path (W16).
     SearchData(DataSourceId, CatalogPath),
+    /// Dump…: the Dump dialog, dumping the database, schema or table at the path (W17).
+    Dump(DataSourceId, CatalogPath),
+    /// Restore…: the Restore dialog, into the database named, or a new one (W17).
+    Restore(DataSourceId, Option<String>),
     /// Compare schema…: a compare tab with the schema at the path on its left (W13).
     CompareSchema(DataSourceId, CatalogPath),
     /// Save schema snapshot…: the schema at the path written to a file the user picks (VC3).
@@ -830,6 +834,8 @@ fn data_source_tree(
             driver: entry.data_source.config.driver(),
             language,
             data_search: data_search(entry),
+            dumps: entry.dump_engine(),
+            read_only: entry.data_source.safety == SafetyLevel::ReadOnly,
             actions: tree.actions,
             selected: tree
                 .selected
@@ -921,6 +927,31 @@ fn helper_capabilities(entry: &DataSourceEntry) -> Option<&'static Capabilities>
         .capabilities_on(entry.service())
 }
 
+/// **Dump…** and **Restore…** on a connected data source of an engine DbRover dumps (W17);
+/// Restore disabled, with the reason, on a read-only one.
+fn dump_items(ui: &mut Ui, entry: &DataSourceEntry, actions: &mut Vec<ExplorerAction>) {
+    if entry.dump_engine().is_none() {
+        return;
+    }
+    let id = entry.data_source.id;
+    if widgets::menu_item(ui, icons::DOWNLOAD_SIMPLE, "Dump\u{2026}").clicked() {
+        actions.push(ExplorerAction::Dump(id, CatalogPath::root()));
+    }
+    let writable = entry.data_source.safety != SafetyLevel::ReadOnly;
+    let restore = ui
+        .add_enabled_ui(writable, |ui| {
+            widgets::menu_item(ui, icons::UPLOAD_SIMPLE, "Restore\u{2026}")
+        })
+        .inner
+        .on_disabled_hover_text(READ_ONLY_RESTORE);
+    if restore.clicked() {
+        actions.push(ExplorerAction::Restore(id, None));
+    }
+}
+
+/// Why a read-only data source's **Restore…** is disabled.
+const READ_ONLY_RESTORE: &str = "This data source is read-only, so nothing can be restored into it";
+
 fn data_source_menu(
     ui: &mut Ui,
     entry: &DataSourceEntry,
@@ -956,6 +987,7 @@ fn data_source_menu(
     {
         actions.push(ExplorerAction::SearchData(id, CatalogPath::root()));
     }
+    dump_items(ui, entry, actions);
     saved_consoles_menu(ui, id, tree.saved_consoles, actions);
     saved_diagrams_menu(ui, id, tree.saved_diagrams, actions);
     let root = CatalogPath::root();
@@ -1083,6 +1115,10 @@ struct TreeView<'a> {
     language: QueryLanguage,
     /// Whether **Search data…** is offered, and on which nodes.
     data_search: SearchSupport,
+    /// The engine **Dump…** runs the programs of; `None` where it isn't offered (W17).
+    dumps: Option<DumpEngine>,
+    /// Whether the data source is read-only, which disables **Restore…**.
+    read_only: bool,
     actions: &'a [CustomAction],
     /// The selected node, if it is in this data source.
     selected: Option<&'a CatalogPath>,
@@ -1365,6 +1401,7 @@ fn node_menu(
         actions.push(ExplorerAction::ExportData(id, node.path.clone()));
     }
     search_item(ui, tree, node, actions);
+    node_dump_items(ui, tree, node, actions);
     diagram_items(ui, tree, node, actions);
     compare_items(ui, tree, node, actions);
     if node.kind() == Some(NodeKind::Table)
@@ -1400,6 +1437,53 @@ fn node_menu(
                 action,
             });
         });
+    }
+}
+
+/// **Dump…** on a database, a schema or a table, and **Restore into this database…** on a
+/// database, of a connected data source DbRover dumps (W17). PostgreSQL's programs connect to
+/// one database, so only the data source's own is offered there.
+fn node_dump_items(
+    ui: &mut Ui,
+    tree: &TreeView<'_>,
+    node: &CatalogNode,
+    actions: &mut Vec<ExplorerAction>,
+) {
+    let (Some(engine), Some(kind)) = (tree.dumps, node.kind()) else {
+        return;
+    };
+    let dumpable = matches!(
+        kind,
+        NodeKind::Database | NodeKind::Schema | NodeKind::Table
+    ) && (engine != DumpEngine::Postgres || tree.can_change(&node.path));
+    if dumpable && widgets::menu_item(ui, icons::DOWNLOAD_SIMPLE, "Dump\u{2026}").clicked() {
+        actions.push(ExplorerAction::Dump(tree.id, node.path.clone()));
+    }
+    // MySQL's tree lists its databases as schemas.
+    let database = match (engine, kind) {
+        (DumpEngine::Postgres, NodeKind::Database) if tree.can_change(&node.path) => {
+            node.path.name_of(NodeKind::Database)
+        }
+        (DumpEngine::Mysql | DumpEngine::MariaDb, NodeKind::Schema) => {
+            node.path.name_of(NodeKind::Schema)
+        }
+        _ => None,
+    };
+    let Some(database) = database else {
+        return;
+    };
+    let restore = ui
+        .add_enabled_ui(!tree.read_only, |ui| {
+            widgets::menu_item(
+                ui,
+                icons::UPLOAD_SIMPLE,
+                "Restore into this database\u{2026}",
+            )
+        })
+        .inner
+        .on_disabled_hover_text(READ_ONLY_RESTORE);
+    if restore.clicked() {
+        actions.push(ExplorerAction::Restore(tree.id, Some(database.to_owned())));
     }
 }
 

@@ -106,6 +106,17 @@ impl DataSourceEntry {
         }
     }
 
+    /// The engine a dump or restore of the connected server runs the programs of (W17); `None`
+    /// while not connected, and for engines DbRover doesn't dump.
+    pub fn dump_engine(&self) -> Option<dbrover_core::DumpEngine> {
+        match &self.session {
+            SessionState::Connected(server) => {
+                dbrover_core::DumpEngine::of(&self.data_source.config, server)
+            }
+            _ => None,
+        }
+    }
+
     /// The managed service the connected server said it is (C1), whose catalog or DDL differs
     /// from its engine's.
     pub fn service(&self) -> Option<ManagedService> {
@@ -196,6 +207,7 @@ impl AppState {
             | Event::DumpProgress { .. }
             | Event::DumpEnded { .. }
             | Event::DumpFileInspected { .. }
+            | Event::DumpProgramChosen { .. }
             | Event::RestoreEnded { .. }
             | Event::SettingsLoaded { .. }
             | Event::LatestRelease(_)

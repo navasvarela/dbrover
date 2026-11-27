@@ -1,11 +1,15 @@
-//! Exports of a whole table and CSV imports, once their dialog has closed: the status bar shows
-//! each one running, with **Cancel** where it can be cancelled, and how the last one ended, as
-//! it does for programs. A long export no longer holds the app behind its dialog.
+//! Exports of a whole table, CSV imports, dumps and restores (W17), once their dialog has
+//! closed: the status bar shows each one running, with **Cancel** where it can be cancelled,
+//! and how the last one ended, as it does for programs. A long export no longer holds the app
+//! behind its dialog.
 
 use std::path::Path;
 
-use dbrover_core::DataSourceId;
-use dbrover_engine::{Command, Event, Exporter, ImportFailure, RunId};
+use dbrover_core::{ByteSize, DataSourceId};
+use dbrover_engine::{
+    Command, DumpDone, DumpFailure, DumpProgress, DumpRunId, Event, Exporter, ImportFailure,
+    RestoreDone, RunId,
+};
 use egui::RichText;
 
 use crate::theme::Palette;
@@ -17,10 +21,12 @@ pub struct BackgroundRuns {
     notice: Option<Notice>,
 }
 
-/// A run under way, and the rows it has written so far.
+/// A run under way, and the rows it has written so far, or for a dump or restore its tables
+/// and bytes.
 struct Running {
     work: Work,
     rows: u64,
+    dumped: DumpProgress,
 }
 
 /// What a run does. The engine reports progress by data source, so each data source runs one
@@ -36,6 +42,16 @@ enum Work {
         data_source: DataSourceId,
         /// `main.orders`, as the dialog named it.
         table: String,
+    },
+    Dump {
+        run: DumpRunId,
+        /// *shop from production*, for the status bar.
+        what: String,
+    },
+    Restore {
+        run: DumpRunId,
+        /// *shop.dump into production*.
+        what: String,
     },
 }
 
@@ -57,8 +73,20 @@ impl BackgroundRuns {
         self.start(Work::CsvImport { data_source, table });
     }
 
+    pub fn dump(&mut self, run: DumpRunId, what: String) {
+        self.start(Work::Dump { run, what });
+    }
+
+    pub fn restore(&mut self, run: DumpRunId, what: String) {
+        self.start(Work::Restore { run, what });
+    }
+
     fn start(&mut self, work: Work) {
-        self.running.push(Running { work, rows: 0 });
+        self.running.push(Running {
+            work,
+            rows: 0,
+            dumped: DumpProgress::default(),
+        });
     }
 
     pub fn apply(&mut self, event: &Event) {
@@ -87,6 +115,21 @@ impl BackgroundRuns {
                     self.notice = Some(work.imported(result));
                 }
             }
+            Event::DumpProgress { run, progress } => {
+                if let Some(running) = self.running.iter_mut().find(|r| r.work.is_run(*run)) {
+                    running.dumped = progress.clone();
+                }
+            }
+            Event::DumpEnded { run, result } => {
+                if let Some(work) = self.finish(|work| work.is_run(*run)) {
+                    self.notice = Some(work.dumped(result));
+                }
+            }
+            Event::RestoreEnded { run, result } => {
+                if let Some(work) = self.finish(|work| work.is_run(*run)) {
+                    self.notice = Some(work.restored(result));
+                }
+            }
             _ => {}
         }
     }
@@ -113,7 +156,7 @@ impl BackgroundRuns {
         let mut cancels = Vec::new();
         for running in &self.running {
             ui.label(
-                RichText::new(running.work.describe(running.rows))
+                RichText::new(running.work.describe(running.rows, &running.dumped))
                     .small()
                     .color(palette.text_weak),
             );
@@ -150,17 +193,66 @@ impl Work {
         matches!(self, Self::CsvImport { data_source, .. } if *data_source == id)
     }
 
+    fn is_run(&self, id: DumpRunId) -> bool {
+        matches!(self, Self::Dump { run, .. } | Self::Restore { run, .. } if *run == id)
+    }
+
     fn table(&self) -> &str {
         match self {
             Self::TableExport { table, .. } | Self::CsvImport { table, .. } => table,
+            Self::Dump { what, .. } | Self::Restore { what, .. } => what,
         }
     }
 
-    fn describe(&self, rows: u64) -> String {
+    fn describe(&self, rows: u64, dumped: &DumpProgress) -> String {
         let table = self.table();
         match self {
             Self::TableExport { .. } => format!("Exporting {table}… {rows} rows"),
             Self::CsvImport { .. } => format!("Importing into {table}… {rows} rows"),
+            Self::Dump { .. } => format!("Dumping {table}… {}", dump_progress(dumped)),
+            Self::Restore { .. } => format!("Restoring {table}… {}", dump_progress(dumped)),
+        }
+    }
+
+    fn dumped(&self, result: &Result<DumpDone, DumpFailure>) -> Notice {
+        match result {
+            Ok(done) => Notice {
+                text: format!(
+                    "Dumped {} to {}, {}",
+                    self.table(),
+                    done.file.display(),
+                    ByteSize(done.bytes)
+                ),
+                failed: false,
+            },
+            Err(DumpFailure::Cancelled) => Notice {
+                text: format!(
+                    "Cancelled the dump of {}; nothing was written",
+                    self.table()
+                ),
+                failed: false,
+            },
+            Err(failure) => Notice {
+                text: format!("Dumping {} failed: {failure}", self.table()),
+                failed: true,
+            },
+        }
+    }
+
+    fn restored(&self, result: &Result<RestoreDone, DumpFailure>) -> Notice {
+        match result {
+            Ok(done) => Notice {
+                text: format!("Restored {} ({})", self.table(), done.database),
+                failed: false,
+            },
+            Err(DumpFailure::Cancelled) => Notice {
+                text: format!("Cancelled the restore of {}", self.table()),
+                failed: true,
+            },
+            Err(failure) => Notice {
+                text: format!("Restoring {} failed: {failure}", self.table()),
+                failed: true,
+            },
         }
     }
 
@@ -175,6 +267,7 @@ impl Work {
                 run: *run,
             }),
             Self::CsvImport { .. } => None,
+            Self::Dump { run, .. } | Self::Restore { run, .. } => Some(Command::CancelDump(*run)),
         }
     }
 
@@ -214,6 +307,15 @@ impl Work {
             }
         }
     }
+}
+
+/// *12 tables, 142 MB*: what the program has got through.
+fn dump_progress(progress: &DumpProgress) -> String {
+    let tables = match progress.tables {
+        1 => "1 table".to_owned(),
+        count => format!("{count} tables"),
+    };
+    format!("{tables}, {}", ByteSize(progress.bytes))
 }
 
 #[cfg(test)]
@@ -271,5 +373,43 @@ mod tests {
             .click();
         harness.run();
         assert!(harness.query_by_label_contains("Exported").is_none());
+    }
+
+    #[test]
+    fn shows_a_dumps_tables_and_bytes_and_cancels_it() {
+        let runs = Rc::new(RefCell::new(BackgroundRuns::default()));
+        runs.borrow_mut()
+            .dump(DumpRunId(3), "shop from production".to_owned());
+        let cancels = Rc::new(RefCell::new(Vec::new()));
+        let mut harness = crate::test_support::ui_harness({
+            let (runs, cancels) = (Rc::clone(&runs), Rc::clone(&cancels));
+            move |ui| {
+                let palette = Palette::for_visuals(ui.visuals());
+                let asked = runs.borrow_mut().status(ui, &palette);
+                cancels.borrow_mut().extend(asked);
+            }
+        });
+        runs.borrow_mut().apply(&Event::DumpProgress {
+            run: DumpRunId(3),
+            progress: DumpProgress {
+                tables: 12,
+                table: Some("public.orders".to_owned()),
+                bytes: 142_000_000,
+            },
+        });
+        harness.run();
+        harness.get_by_label_contains("Dumping shop from production… 12 tables");
+        harness.get_by_label("Cancel").click();
+        harness.run();
+        assert!(matches!(
+            cancels.borrow().as_slice(),
+            [Command::CancelDump(DumpRunId(3))]
+        ));
+        runs.borrow_mut().apply(&Event::DumpEnded {
+            run: DumpRunId(3),
+            result: Err(DumpFailure::Cancelled),
+        });
+        harness.run();
+        harness.get_by_label("Cancelled the dump of shop from production; nothing was written");
     }
 }
