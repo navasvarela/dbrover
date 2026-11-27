@@ -22,7 +22,8 @@ The row above the list narrows it down:
 - **All sources** or one kind: **Consoles**, **Grid edits**, **Object helpers**, **Imports**,
   **Exports**, **MCP clients**, **Actions**, **Server activity** (what
   [Cancel query and Kill](server-activity.md#cancel-query-and-kill) sent), **Data searches**
-  (each [search](data-search.md#in-the-history), once), or **Earlier DbRover** for statements recorded before DbRover
+  (each [search](data-search.md#in-the-history), once), **Dumps** and **Restores** (each
+  [dump or restore](dump-restore.md#in-the-history), once), or **Earlier DbRover** for statements recorded before DbRover
   kept where they came from.
 - **Any time**, or the last hour, 24 hours, 7 days or 30 days.
 - **Search statements**: any part of the statement, ignoring case.

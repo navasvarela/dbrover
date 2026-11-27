@@ -18,6 +18,8 @@ The sidebar lists its pages:
   server, or that it starts paused.
 - **Data search**: how long [Search data](data-search.md#limits) spends on each table, how many
   of its rows it shows, and whether it searches views.
+- **Dumps**: the path of each program [Dump and restore](dump-restore.md#finding-the-programs)
+  runs, where you don't want the one DbRover finds. A path typed here is trusted to run.
 - **Reports**: the limits every [report](reports.md#limits) runs under unless its file sets its
   own, where runs keep their work folders, whether a long run keeps the computer awake, and how
   many runs of each report are kept.
@@ -47,7 +49,7 @@ in the sidebar to leave the search.
 
 ## Where each page saves
 
-- **Appearance, Editor, Query history, Server activity, Data search, Reports and Updates** save every
+- **Appearance, Editor, Query history, Server activity, Data search, Dumps, Reports and Updates** save every
   change at once in `settings.toml` (see [Where DbRover keeps its files](files.md)), except the
   theme, which is kept with the window's layout. After editing `settings.toml` by hand, click **Reload** at the
   bottom of the page.

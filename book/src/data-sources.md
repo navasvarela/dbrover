@@ -471,6 +471,7 @@ Right-click a data source in the explorer for:
 | **New › Login…** | Creates a login on SQL Server, with its server roles and a user in each database you tick. See [Users and roles](users-roles.md#sql-server). |
 | **Server activity** | Opens a tab of the server's sessions, who waits on whose locks, and Cancel query and Kill, on PostgreSQL, MySQL, MariaDB, SQL Server and ClickHouse. See [Server activity](server-activity.md). |
 | **Search data…** | Opens a tab that finds the rows holding a value across the data source's tables. Also on a database, a schema, a folder of tables and a table. See [Searching data](data-search.md). |
+| **Dump…**, **Restore…**, **Saved dumps…** | Dumps the data source, or restores a dump into it, with the engine's own programs, and runs saved dumps on a schedule; PostgreSQL, MySQL, MariaDB, SQLite and DuckDB, once connected. **Dump…** is also on a database, a schema and a table, and **Restore into this database…** on a database. See [Dump and restore](dump-restore.md). |
 | **Edit…** | Opens the dialog with the saved settings. |
 | **Move to project ›** | Puts the data source in a project, in **No project**, or in a new project. Dragging its row onto a project header does the same. See [Projects](explorer.md#projects). |
 | **Delete…** | Asks for confirmation, then removes the data source and deletes its saved password. |

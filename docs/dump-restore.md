@@ -1,7 +1,8 @@
 # Dump and restore
 
-Status: **planned on 2026-11-27** (W17a), its nine open questions answered the same day, all as
-proposed; being built in one stack, #719 and the layers above it. The [roadmap](roadmap.md#well-rounded-track) tracks it as W17
+Status: **built on 2026-11-27**, in one stack, #719 and the layers above it; the manual's chapter
+is [Dump and restore](../book/src/dump-restore.md), and the departures are in the roadmap's demo
+note. Planned the same day (W17a), its nine open questions answered as proposed. The [roadmap](roadmap.md#well-rounded-track) tracks it as W17
 in the well-rounded track. It is the third gap of the competitor review of 2026-11-25
 ([Comparison](comparison.md#gaps-worth-closing-soon)), after server activity (W15) and searching
 data (W16). It starts with PostgreSQL, then MySQL and MariaDB, then SQLite and DuckDB, which need
