@@ -280,8 +280,7 @@ fn dumps_a_sqlite_file_and_restores_it_into_a_new_one() {
     harness.run_steps(2);
     step_until_visible(&mut harness, "Dump from shop");
     harness.get_by_label_contains("SQLite does it itself");
-    harness.get_by_label("Browse…").click();
-    harness.run_steps(2);
+    click(&mut harness, "Browse…");
     harness.get_by_role_and_label(Role::Button, "Dump").hover();
     harness.run_steps(2);
     harness.get_by_role_and_label(Role::Button, "Dump").click();
@@ -304,8 +303,7 @@ fn dumps_a_sqlite_file_and_restores_it_into_a_new_one() {
             .query_by_label_contains("SQLite database, ")
             .is_some()
     });
-    harness.get_by_label("Restore…").click();
-    harness.run_steps(2);
+    click(&mut harness, "Restore…");
     step_until(&mut harness, "the question", |harness| {
         harness.query_by_label_contains("into a new file").is_some()
     });
