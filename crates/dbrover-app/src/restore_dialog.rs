@@ -187,13 +187,17 @@ impl RestoreDialog {
 
     fn contents(&mut self, ui: &mut Ui) -> Option<RestoreAction> {
         let palette = &Palette::for_visuals(ui.visuals());
-        form::Header::new(icons::UPLOAD_SIMPLE, &format!("Restore into {}", self.name))
-            .subtitle(&self.file.display().to_string())
-            .show(ui);
+        form::Header::new(icons::UPLOAD_SIMPLE, &format!("Restore into {}", self.name)).show(ui);
         let mut browse = false;
         form::card(ui, |rows| {
+            let file = self.file.file_name().map_or_else(
+                || self.file.display().to_string(),
+                |name| name.to_string_lossy().into_owned(),
+            );
             rows.row("File", None, |ui| {
                 browse = ui.button("Browse…").clicked();
+                ui.label(file)
+                    .on_hover_text(self.file.display().to_string());
             });
             rows.full(|ui| self.file_summary(ui, palette));
             if !matches!(self.state, FileState::Read(_)) {
@@ -508,11 +512,26 @@ fn stem(file: &Path) -> String {
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
-    [".sql.gz", ".dump", ".sql", ".sqlite"]
+    let stem = [".sql.gz", ".dump", ".sql", ".sqlite"]
         .iter()
         .find_map(|ending| name.strip_suffix(ending))
-        .unwrap_or(&name)
-        .to_owned()
+        .unwrap_or(&name);
+    without_time(stem).to_owned()
+}
+
+/// `shop` for `shop-2026-11-27-141203`, the name DbRover gives a dump: the database's name
+/// alone, for the database a restore makes.
+fn without_time(stem: &str) -> &str {
+    let mut parts = stem.rsplitn(5, '-');
+    let time: Vec<&str> = parts.by_ref().take(4).collect();
+    let numeric = time.len() == 4
+        && time
+            .iter()
+            .all(|part| part.chars().all(|c| c.is_ascii_digit()));
+    match parts.next() {
+        Some(database) if numeric && !database.is_empty() => database,
+        _ => stem,
+    }
 }
 
 #[cfg(test)]
@@ -530,5 +549,9 @@ mod tests {
             question(file, Into::Existing, "shop", "staging", true).ends_with("with its data.")
         );
         assert_eq!(stem(Path::new("/d/shop-1.sql.gz")), "shop-1");
+        assert_eq!(
+            stem(Path::new("/d/my-shop-2026-11-27-141203.dump")),
+            "my-shop"
+        );
     }
 }
