@@ -330,10 +330,7 @@ fn dumps_a_database_with_no_password_on_its_command_line() {
 
     let contents = archive_contents(&clients, &file);
     assert!(contents.contains("TABLE public customers"), "{contents}");
-    assert!(
-        contents.contains("TABLE public Order Items"),
-        "{contents}"
-    );
+    assert!(contents.contains("TABLE public Order Items"), "{contents}");
     assert_eq!(
         files_in(dir.path())
             .iter()
