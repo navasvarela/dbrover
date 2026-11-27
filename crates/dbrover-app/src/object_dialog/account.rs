@@ -17,10 +17,11 @@ use dbrover_sql::{
     AccountOperation, AccountPassword, AccountSpec, DdlError, DdlOperation, Dialect,
     PasswordPlugin, PrivilegeGroup, privilege_groups,
 };
-use egui::{CollapsingHeader, ComboBox, DragValue, Grid, TextEdit, Ui};
+use egui::{CollapsingHeader, ComboBox, DragValue, Grid, TextEdit, Ui, WidgetType};
 
 use super::{Destruction, FormContext, ObjectForm};
 use crate::catalog_tree::CatalogTree;
+use crate::widgets;
 
 const FIELD_WIDTH: f32 = 260.0;
 /// Where Expires every … days starts, MySQL's own example.
@@ -388,16 +389,22 @@ impl AccountFields {
         own_name: &AccountName,
     ) {
         if self.kind == AccountKind::User {
+            let set =
+                self.locked || self.lifetime != LifetimeChoice::ServerDefault || self.failed_login;
             CollapsingHeader::new("Password expiry and lock")
-                .default_open(true)
+                .default_open(set)
                 .show(ui, |ui| self.show_expiry(ui, server));
             CollapsingHeader::new("Limits").show(ui, |ui| self.show_limits(ui));
         }
         CollapsingHeader::new(format!("Roles ({})", self.roles.len()))
+            .id_salt("roles")
             .default_open(!self.roles.is_empty())
             .show(ui, |ui| self.show_roles(ui, server, catalog, own_name));
+        // Open where there is something to see, so a new account's dialog keeps its SQL in view.
+        let granted =
+            !self.global.is_empty() || !self.databases.is_empty() || !self.objects.is_empty();
         CollapsingHeader::new("Privileges")
-            .default_open(true)
+            .default_open(granted)
             .show(ui, |ui| self.show_privileges(ui, server, catalog));
     }
 
@@ -609,7 +616,7 @@ impl AccountFields {
             .filter(|name| !self.databases.contains_key(name))
             .collect();
         ui.horizontal(|ui| {
-            ComboBox::from_id_salt("account_new_database")
+            let combo = ComboBox::from_id_salt("account_new_database")
                 .selected_text(if self.new_database.is_empty() {
                     "Database…"
                 } else {
@@ -620,6 +627,12 @@ impl AccountFields {
                         ui.selectable_value(&mut self.new_database, database.clone(), database);
                     }
                 });
+            widgets::name(
+                combo.response,
+                WidgetType::ComboBox,
+                "Database to add",
+                true,
+            );
             if ui
                 .add_enabled(
                     !self.new_database.is_empty(),

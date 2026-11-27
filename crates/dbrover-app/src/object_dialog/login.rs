@@ -16,11 +16,12 @@ use dbrover_sql::{
     DatabaseUserSpec, DdlError, DdlOperation, Dialect, LoginPolicy, LoginSource, LoginSpec,
     SqlServerHash, SqlServerOperation, SqlServerPassword, UserMapping, UserSource,
 };
-use egui::{CollapsingHeader, ComboBox, Grid, TextEdit, Ui};
+use egui::{CollapsingHeader, ComboBox, Grid, TextEdit, Ui, WidgetType};
 
 use super::{Destruction, FormContext, ObjectForm};
 use crate::catalog_tree::CatalogTree;
 use crate::explorer::SqlServerHelper;
+use crate::widgets;
 
 const FIELD_WIDTH: f32 = 260.0;
 /// The schema a new user's objects go in when no other is named.
@@ -438,8 +439,9 @@ fn schemas(catalog: &CatalogTree, database: &str) -> Vec<String> {
         .collect()
 }
 
-fn combo(ui: &mut Ui, salt: &str, value: &mut String, options: Vec<String>, placeholder: &str) {
-    ComboBox::from_id_salt(salt)
+/// A choice among `options`, named `label` for screen readers and tests.
+fn combo(ui: &mut Ui, label: &str, value: &mut String, options: Vec<String>, placeholder: &str) {
+    let combo = ComboBox::from_id_salt(label)
         .selected_text(if value.is_empty() {
             placeholder
         } else {
@@ -450,6 +452,7 @@ fn combo(ui: &mut Ui, salt: &str, value: &mut String, options: Vec<String>, plac
                 ui.selectable_value(value, option.clone(), option);
             }
         });
+    widgets::name(combo.response, WidgetType::ComboBox, label, true);
 }
 
 /// Permissions as ticks, each unticked one revoked (question 4 of the plan: granting is a
@@ -462,19 +465,21 @@ fn permission_ticks(
     if permissions.is_empty() {
         return;
     }
-    CollapsingHeader::new(format!("Permissions ({})", permissions.len())).show(ui, |ui| {
-        ui.weak("Untick one to revoke it; new ones are granted from a console.");
-        for grant in permissions {
-            let mut kept = !revoked.contains(grant);
-            if ui.checkbox(&mut kept, permission_label(grant)).changed() {
-                if kept {
-                    revoked.remove(grant);
-                } else {
-                    revoked.insert(grant.clone());
+    CollapsingHeader::new(format!("Permissions ({})", permissions.len()))
+        .id_salt("permissions")
+        .show(ui, |ui| {
+            ui.weak("Untick one to revoke it; new ones are granted from a console.");
+            for grant in permissions {
+                let mut kept = !revoked.contains(grant);
+                if ui.checkbox(&mut kept, permission_label(grant)).changed() {
+                    if kept {
+                        revoked.remove(grant);
+                    } else {
+                        revoked.insert(grant.clone());
+                    }
                 }
             }
-        }
-    });
+        });
 }
 
 fn permission_label(grant: &PermissionGrant) -> String {
@@ -618,7 +623,7 @@ impl ObjectForm for NewLogin {
                 ui.label("Default database");
                 combo(
                     ui,
-                    "login_default_database",
+                    "Default database",
                     &mut self.default_database,
                     databases(context.catalog),
                     "master",
@@ -651,9 +656,9 @@ impl ObjectForm for NewLogin {
                 names_in(context.catalog, &server_roles_folder(), NodeKind::Role),
             );
         });
-        CollapsingHeader::new(format!("Map to databases ({})", self.mappings.len())).show(
-            ui,
-            |ui| {
+        CollapsingHeader::new(format!("Map to databases ({})", self.mappings.len()))
+            .id_salt("map to databases")
+            .show(ui, |ui| {
                 let mut removed = None;
                 for (index, (database, roles)) in self.mappings.iter_mut().enumerate() {
                     ui.horizontal(|ui| {
@@ -681,7 +686,7 @@ impl ObjectForm for NewLogin {
                         .collect();
                     combo(
                         ui,
-                        "login_new_mapping",
+                        "Database to map",
                         &mut self.new_mapping,
                         options,
                         "Database…",
@@ -697,8 +702,7 @@ impl ObjectForm for NewLogin {
                             .push((std::mem::take(&mut self.new_mapping), BTreeSet::new()));
                     }
                 });
-            },
-        );
+            });
     }
 
     fn catalog_requests(&self) -> Vec<CatalogPath> {
@@ -868,7 +872,7 @@ impl ObjectForm for EditLogin {
             ui.label("Default database");
             combo(
                 ui,
-                "edit_login_database",
+                "Default database",
                 &mut self.after.default_database,
                 databases(context.catalog),
                 "master",
@@ -885,17 +889,16 @@ impl ObjectForm for EditLogin {
             ui.checkbox(&mut self.unlock, "Unlock (with a new password)");
         }
         ui.checkbox(&mut self.after.enabled, "Enabled");
-        CollapsingHeader::new(format!("Server roles ({})", self.after.server_roles.len())).show(
-            ui,
-            |ui| {
+        CollapsingHeader::new(format!("Server roles ({})", self.after.server_roles.len()))
+            .id_salt("server roles")
+            .show(ui, |ui| {
                 ticks(
                     ui,
                     "edit_login_roles",
                     &mut self.after.server_roles,
                     names_in(context.catalog, &server_roles_folder(), NodeKind::Role),
                 );
-            },
-        );
+            });
         permission_ticks(ui, &login.permissions, &mut self.revoked);
         if !login.users.is_empty() {
             let users: Vec<String> = login
@@ -1040,7 +1043,7 @@ impl ObjectForm for NewUser {
             if self.kind == NewUserKind::Login {
                 ui.label("Login");
                 let before = self.login.clone();
-                combo(ui, "new_user_login", &mut self.login, names_in(context.catalog, &logins_folder(), NodeKind::Login), "Choose…");
+                combo(ui, "Login", &mut self.login, names_in(context.catalog, &logins_folder(), NodeKind::Login), "Choose…");
                 if self.login != before && (self.name.is_empty() || self.name == before) {
                     self.name.clone_from(&self.login);
                 }
@@ -1057,7 +1060,7 @@ impl ObjectForm for NewUser {
                 ui.end_row();
             }
             ui.label("Default schema");
-            combo(ui, "new_user_schema", &mut self.default_schema, schemas(context.catalog, &self.database), DEFAULT_SCHEMA);
+            combo(ui, "Default schema", &mut self.default_schema, schemas(context.catalog, &self.database), DEFAULT_SCHEMA);
             ui.end_row();
         });
         CollapsingHeader::new("Roles")
@@ -1200,7 +1203,7 @@ impl ObjectForm for EditUser {
                 ui.label("Map to login");
                 combo(
                     ui,
-                    "edit_user_login",
+                    "Map to login",
                     &mut self.login,
                     names_in(context.catalog, &logins_folder(), NodeKind::Login),
                     "Keep",
@@ -1214,7 +1217,7 @@ impl ObjectForm for EditUser {
             let mut schema = self.after.default_schema.clone().unwrap_or_default();
             combo(
                 ui,
-                "edit_user_schema",
+                "Default schema",
                 &mut schema,
                 schemas(context.catalog, &self.database),
                 DEFAULT_SCHEMA,
@@ -1223,6 +1226,7 @@ impl ObjectForm for EditUser {
             ui.end_row();
         });
         CollapsingHeader::new(format!("Roles ({})", self.after.roles.len()))
+            .id_salt("roles")
             .default_open(true)
             .show(ui, |ui| {
                 ticks(
@@ -1475,6 +1479,7 @@ impl ObjectForm for EditRole {
         }
         let options = member_options(&self.scope(), context.catalog);
         CollapsingHeader::new(format!("Members ({})", self.members.len()))
+            .id_salt("members")
             .default_open(true)
             .show(ui, |ui| {
                 ticks(ui, "edit_role_members", &mut self.members, options);

@@ -4,7 +4,7 @@
 use dbrover_core::SafetyLevel;
 use dbrover_engine::DdlFailure;
 use dbrover_language::QueryLanguage;
-use dbrover_sql::DdlError;
+use dbrover_sql::{DdlError, Dialect};
 use dbrover_store::redact_secrets;
 use egui::{Id, ScrollArea, TextEdit, Ui};
 
@@ -302,10 +302,15 @@ fn notes(ui: &mut Ui, target: &Target, statements: usize, holds_password: bool) 
     if holds_password {
         ui.horizontal_wrapped(|ui| {
             ui.label(widgets::glyph(icons::LOCK_SIMPLE).color(palette.success));
-            ui.label(
-                "The password is hashed here into a SCRAM-SHA-256 verifier, which is sent in \
-                 its place, and redacted here, in the history and in the log.",
-            );
+            ui.label(match target.dialect {
+                Dialect::Postgres => {
+                    "The password is hashed here into a SCRAM-SHA-256 verifier, which is sent \
+                     in its place, and redacted here, in the history and in the log."
+                }
+                // MySQL's and SQL Server's forms say above whether it is hashed or sent as
+                // typed (W18).
+                _ => "The password, or its hash, is redacted here, in the history and in the log.",
+            });
         });
     }
     if target.safety == SafetyLevel::ReadOnly {
