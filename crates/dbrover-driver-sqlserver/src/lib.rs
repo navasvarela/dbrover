@@ -10,6 +10,7 @@ mod catalog;
 mod constraint;
 mod errors;
 mod execution;
+mod principals;
 mod search;
 mod table;
 mod tls;
@@ -21,9 +22,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use dbrover_core::{
     BareNames, BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, CloudSignIn, Connection,
-    DriverError, Password, QuoteEscape, Quoting, Rejection, RelationName, ResultCursor, Route,
-    SearchableTable, ServerActivity, ServerInfo, SessionId, SessionStop, SqlServerConfig,
-    StopOutcome, TableConstraints, TableDescription, TableName, TablesToSearch, TransactionStatus,
+    DriverError, Password, PrincipalDescription, QuoteEscape, Quoting, Rejection, RelationName,
+    ResultCursor, Route, SearchableTable, ServerActivity, ServerInfo, SessionId, SessionStop,
+    SqlServerConfig, StopOutcome, TableConstraints, TableDescription, TableName, TablesToSearch,
+    TransactionStatus, UserManagement,
 };
 use tiberius::{AuthMethod, Client, Config};
 use tokio::net::TcpStream;
@@ -233,6 +235,17 @@ impl SqlServerConnection {
         }
     }
 
+    /// The warehouses' users are Microsoft Entra's, managed in the portal (W18).
+    fn refuse_without_principals(&self) -> Result<(), DriverError> {
+        if self.catalog.principals {
+            Ok(())
+        } else {
+            Err(DriverError::Unsupported(
+                "A warehouse's users are managed in the Azure portal.",
+            ))
+        }
+    }
+
     /// The client, once no statement holds it, unless a lost cancel acknowledgement has left
     /// it out of step with the server.
     async fn client(&self) -> Result<tokio::sync::MutexGuard<'_, SqlClient>, DriverError> {
@@ -310,6 +323,23 @@ impl Connection for SqlServerConnection {
         table: &TableName,
     ) -> Result<TableConstraints, DriverError> {
         constraint::describe_constraints(&mut *self.client().await?, table).await
+    }
+
+    async fn user_management(&mut self) -> Result<UserManagement, DriverError> {
+        self.refuse_without_principals()?;
+        principals::user_management(&mut *self.client().await?).await
+    }
+
+    async fn describe_principal(
+        &mut self,
+        path: &CatalogPath,
+    ) -> Result<PrincipalDescription, DriverError> {
+        self.refuse_without_principals()?;
+        let support = self.catalog;
+        principals::describe(&mut *self.client().await?, path, |database| {
+            catalog::catalog_of(database, support)
+        })
+        .await
     }
 
     /// Synapse's and Fabric's warehouses keep their sessions in views of their own
