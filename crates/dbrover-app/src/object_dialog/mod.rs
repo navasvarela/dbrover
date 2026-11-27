@@ -5,6 +5,7 @@
 //! Each helper is an [`ObjectForm`]; this module is the frame they share: the window, the
 //! confirmation a destructive change needs, the review panel, and waiting for the engine.
 
+mod account;
 mod confirm;
 mod fields;
 mod index;
@@ -16,7 +17,8 @@ mod table_form;
 mod view;
 
 use dbrover_core::{
-    CatalogPath, DataSource, DataSourceId, NodeKind, RoleDescription, SafetyLevel, SourceColor,
+    CatalogPath, DataSource, DataSourceId, NodeKind, PrincipalDescription, RoleDescription,
+    SafetyLevel, SourceColor, UserManagement,
 };
 use dbrover_engine::{Event, SessionState};
 use dbrover_language::QueryLanguage;
@@ -35,7 +37,7 @@ use view::{DropView, EditView, NewView, RefreshView, RenameView, ViewAt};
 
 use crate::catalog_tree::CatalogTree;
 use crate::dialog::{self, DialogSize};
-use crate::explorer::Helper;
+use crate::explorer::{AccountHelper, Helper};
 use crate::form;
 use review::{Approval, Review, ReviewAction};
 
@@ -98,6 +100,30 @@ pub trait ObjectForm {
 
     /// The answer to [`ObjectForm::role_request`].
     fn role_described(&mut self, _result: &Result<RoleDescription, String>) {}
+
+    /// The account, login, user or role the form starts from (W18): described once, when the
+    /// dialog opens.
+    fn principal_request(&self) -> Option<CatalogPath> {
+        None
+    }
+
+    /// The answer to [`ObjectForm::principal_request`].
+    fn principal_described(&mut self, _result: &Result<PrincipalDescription, String>) {}
+
+    /// Whether the form needs to know what the server offers for its users and what this
+    /// login may do (W18), read once when the dialog opens.
+    fn needs_user_management(&self) -> bool {
+        false
+    }
+
+    /// The answer to [`ObjectForm::needs_user_management`].
+    fn user_management_loaded(&mut self, _result: &Result<UserManagement, String>) {}
+
+    /// What the change gives that administers the server (`SUPER`, `sysadmin`), said before
+    /// Execute, which turns into the danger button (question 8 of the W18 plan).
+    fn administration(&self) -> Option<String> {
+        None
+    }
 
     /// The table the form starts from, such as the one Modify table changes: loaded once,
     /// when the dialog opens.
@@ -173,6 +199,18 @@ pub fn form(helper: Helper, dialect: Dialect) -> Option<Box<dyn ObjectForm>> {
         Helper::EditRole(path) => Box::new(EditRole::new(path)?),
         Helper::RenameRole(path) => Box::new(RenameRole::new(&path)?),
         Helper::DropRole(path) => Box::new(DropRole::new(path)?),
+        Helper::Account(helper) => account_form(helper)?,
+    })
+}
+
+fn account_form(helper: AccountHelper) -> Option<Box<dyn ObjectForm>> {
+    Some(match helper {
+        AccountHelper::New(path, kind) => Box::new(account::NewAccount::new(&path, kind)?),
+        AccountHelper::Edit(path) => Box::new(account::EditAccount::new(path)?),
+        AccountHelper::Rename(path) => Box::new(account::RenameAccount::new(&path)?),
+        AccountHelper::Lock(path) => Box::new(account::LockAccount::new(path)?),
+        AccountHelper::ExpirePassword(path) => Box::new(account::ExpirePassword::new(&path)?),
+        AccountHelper::Drop(path) => Box::new(account::DropAccount::new(path)?),
     })
 }
 
@@ -217,6 +255,16 @@ impl ObjectDialog {
         self.form.table_request()
     }
 
+    /// See [`ObjectForm::principal_request`].
+    pub fn principal_request(&self) -> Option<CatalogPath> {
+        self.form.principal_request()
+    }
+
+    /// See [`ObjectForm::needs_user_management`].
+    pub fn needs_user_management(&self) -> bool {
+        self.form.needs_user_management()
+    }
+
     /// Follows the engine's answer to Execute. Returns the node to refresh once the change
     /// has been applied, which means the dialog is done.
     pub fn apply(&mut self, event: &Event) -> Option<CatalogPath> {
@@ -247,6 +295,21 @@ impl ObjectDialog {
                 result,
             } if *answered == data_source && Some(path) == self.form.table_request().as_ref() => {
                 self.form.table_loaded(result);
+            }
+            Event::PrincipalDescribed {
+                data_source: answered,
+                path,
+                result,
+            } if *answered == data_source
+                && Some(path) == self.form.principal_request().as_ref() =>
+            {
+                self.form.principal_described(result);
+            }
+            Event::UserManagementLoaded {
+                data_source: answered,
+                result,
+            } if *answered == data_source && self.form.needs_user_management() => {
+                self.form.user_management_loaded(result);
             }
             // A request sent while connecting is never answered if the connection fails.
             Event::SessionChanged { id, state } if *id == data_source => match state {
@@ -289,6 +352,7 @@ impl ObjectDialog {
             catalog,
         };
         let destruction = self.form.destruction(self.target.dialect);
+        let administration = self.form.administration();
         // One card for the fields and the confirmation of what they destroy: a Drop has no
         // fields, and would otherwise show an empty card.
         let approval = form::card(ui, |rows| {
@@ -299,7 +363,13 @@ impl ObjectDialog {
                         Approval::Given
                     }
                     Some(_) => Approval::Awaited,
-                    None => Approval::NotNeeded,
+                    None => match &administration {
+                        Some(warning) => {
+                            ui.colored_label(ui.visuals().warn_fg_color, warning);
+                            Approval::Warned
+                        }
+                        None => Approval::NotNeeded,
+                    },
                 }
             })
         });

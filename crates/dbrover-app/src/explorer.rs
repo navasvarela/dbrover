@@ -4,8 +4,8 @@
 use std::collections::BTreeSet;
 
 use dbrover_core::{
-    CatalogNode, CatalogPath, DataSourceId, DriverKind, FolderKind, ManagedService, NodeKind,
-    ProjectId, Quoting, ServiceVendor,
+    AccountKind, CatalogNode, CatalogPath, DataSourceId, DriverKind, FolderKind, ManagedService,
+    NodeKind, ProjectId, Quoting, ServiceVendor,
 };
 use dbrover_engine::SessionState;
 use dbrover_language::QueryLanguage;
@@ -167,6 +167,22 @@ pub enum Helper {
     EditRole(CatalogPath),
     RenameRole(CatalogPath),
     DropRole(CatalogPath),
+    /// MySQL's and MariaDB's accounts (W18).
+    Account(AccountHelper),
+}
+
+/// The helpers for MySQL's and MariaDB's accounts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AccountHelper {
+    /// On the data source (the root), or its users or roles folder.
+    New(CatalogPath, AccountKind),
+    /// On a user or role, as the next ones.
+    Edit(CatalogPath),
+    Rename(CatalogPath),
+    /// On a user only, as the next one.
+    Lock(CatalogPath),
+    ExpirePassword(CatalogPath),
+    Drop(CatalogPath),
 }
 
 /// The explorer's own view settings.
@@ -1539,6 +1555,12 @@ fn helpers_menu(
             object.push((icons::TRASH, "Drop index…", Helper::DropIndex(path.clone())));
         }
         Some(NodeKind::Folder(FolderKind::Roles)) => new.extend(new_roles(path, capabilities)),
+        Some(NodeKind::Folder(FolderKind::Users)) => new.extend(new_roles(path, capabilities)),
+        Some(kind @ (NodeKind::User | NodeKind::Role))
+            if capabilities.users == UserModel::Accounts =>
+        {
+            object.extend(account_actions(path, kind));
+        }
         Some(NodeKind::Role) if capabilities.users == UserModel::Roles => {
             object.push((
                 icons::PENCIL_SIMPLE,
@@ -1566,7 +1588,10 @@ fn helpers_menu(
     let copies_ddl = match node.kind() {
         Some(NodeKind::Table) => node.has_definition || capabilities.rebuilds_table_ddl,
         Some(NodeKind::View | NodeKind::MaterializedView) => node.has_definition,
-        Some(NodeKind::Role) => capabilities.users == UserModel::Roles,
+        Some(NodeKind::Role) => {
+            matches!(capabilities.users, UserModel::Roles | UserModel::Accounts)
+        }
+        Some(NodeKind::User) => capabilities.users == UserModel::Accounts,
         _ => false,
     };
     if copies_ddl && widgets::menu_item(ui, icons::COPY, "Copy DDL").clicked() {
@@ -1612,9 +1637,60 @@ fn new_roles(
             (icons::USER, "User…", Helper::NewUser(path.clone())),
             (icons::USERS, "Role…", Helper::NewRole(path.clone())),
         ],
-        // MySQL's accounts and SQL Server's logins have menus of their own (W18e, W18f).
-        UserModel::Accounts | UserModel::LoginsAndUsers | UserModel::Unsupported => Vec::new(),
+        UserModel::Accounts => vec![
+            (
+                icons::USER,
+                "User…",
+                Helper::Account(AccountHelper::New(path.clone(), AccountKind::User)),
+            ),
+            (
+                icons::USERS,
+                "Role…",
+                Helper::Account(AccountHelper::New(path.clone(), AccountKind::Role)),
+            ),
+        ],
+        // SQL Server's logins have menus of their own (W18f).
+        UserModel::LoginsAndUsers | UserModel::Unsupported => Vec::new(),
     }
+}
+
+/// What can be done to the MySQL or MariaDB account at `path`: a user (`NodeKind::User`) or
+/// a role.
+fn account_actions(
+    path: &CatalogPath,
+    kind: NodeKind,
+) -> Vec<(&'static str, &'static str, Helper)> {
+    let helper = |helper| Helper::Account(helper);
+    let mut items = vec![
+        (
+            icons::PENCIL_SIMPLE,
+            "Edit…",
+            helper(AccountHelper::Edit(path.clone())),
+        ),
+        (
+            icons::PENCIL_SIMPLE,
+            "Rename…",
+            helper(AccountHelper::Rename(path.clone())),
+        ),
+    ];
+    if kind == NodeKind::User {
+        items.push((
+            icons::LOCK_SIMPLE,
+            "Lock or unlock…",
+            helper(AccountHelper::Lock(path.clone())),
+        ));
+        items.push((
+            icons::CLOCK,
+            "Expire password…",
+            helper(AccountHelper::ExpirePassword(path.clone())),
+        ));
+    }
+    items.push((
+        icons::TRASH,
+        "Drop…",
+        helper(AccountHelper::Drop(path.clone())),
+    ));
+    items
 }
 
 /// What can be done to the view or materialized view at `path`.

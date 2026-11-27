@@ -32,6 +32,9 @@ pub(super) enum Approval {
     NotNeeded,
     Awaited,
     Given,
+    /// Nothing is destroyed, but the change gives administration of the server (W18): said
+    /// in the form, with the danger button and no name to type.
+    Warned,
 }
 
 impl Approval {
@@ -178,7 +181,9 @@ impl Review {
             // Red when it drops or empties something, as every destructive action is.
             let execute = match approval {
                 Approval::NotNeeded => form::primary_button(ui, "Execute", enabled),
-                Approval::Awaited | Approval::Given => form::danger_button(ui, "Execute", enabled),
+                Approval::Awaited | Approval::Given | Approval::Warned => {
+                    form::danger_button(ui, "Execute", enabled)
+                }
             };
             let execute = execute.on_disabled_hover_text(execute_disabled_reason(
                 target,
