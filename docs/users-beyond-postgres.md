@@ -1,8 +1,8 @@
 # Users beyond PostgreSQL
 
-Status: **planned on 2026-11-27** (W18a). The [roadmap](roadmap.md#well-rounded-track) tracks it
-as W18 in the well-rounded track; the open questions at the end wait for answers before W18b
-starts. Third in the competitor-gap review of 2026-11-25 ([comparison](comparison.md), gap 3),
+Status: **planned on 2026-11-27** (W18a), its twelve open questions answered the same day, all
+as proposed. The [roadmap](roadmap.md#well-rounded-track) tracks it as W18 in the well-rounded
+track. Third in the competitor-gap review of 2026-11-25 ([comparison](comparison.md), gap 3),
 after server activity (W15) and searching data (W16); dump and restore (W17) is planned beside
 it.
 
@@ -581,7 +581,8 @@ hash appears in any history entry, log line or review panel.
 
 ## Decisions
 
-Proposed; each is confirmed by the answers to the questions below, or as its layer is built.
+The twelve open questions below were answered on 2026-11-27, all as proposed; the rest are
+confirmed as their layers are built.
 
 | Question | Proposed | Consequence |
 | --- | --- | --- |
@@ -632,7 +633,7 @@ Proposed; each is confirmed by the answers to the questions below, or as its lay
 
 ## Open questions
 
-Each has a proposed answer; W18b starts when they are answered.
+Answered on 2026-11-27: all twelve as proposed. Kept as they were asked.
 
 1. **Engines.** MySQL 8.0 and later, MariaDB 10.4 and later and SQL Server 2016 and later, with
    their managed services (RDS, Aurora, Cloud SQL, Azure Database for MySQL, Azure SQL Database

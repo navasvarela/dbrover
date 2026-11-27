@@ -2152,11 +2152,11 @@ three to five, **L** a track of its own).
   another session times out and the search goes on; Cancel keeps what was found; a careful
   data source asks first; History lists the search once, as **Search**.
 - **W18 — Users beyond PostgreSQL (L):** planned on 2026-11-27 in
-  [Users beyond PostgreSQL](users-beyond-postgres.md); its questions wait for answers. MySQL's
-  and MariaDB's `'name'@'host'` accounts and roles, and SQL Server's logins, server roles,
-  database users and database roles, listed in the explorer and created, changed, renamed and
-  dropped through E3's dialogs and review panel. Third in the competitor-gap review of
-  2026-11-25: DataGrip, TablePlus and DBX all have it.
+  [Users beyond PostgreSQL](users-beyond-postgres.md), its questions answered the same day as
+  proposed. MySQL's and MariaDB's `'name'@'host'` accounts and roles, and SQL Server's logins,
+  server roles, database users and database roles, listed in the explorer and created, changed,
+  renamed and dropped through E3's dialogs and review panel. Third in the competitor-gap review
+  of 2026-11-25: DataGrip, TablePlus and DBX all have it.
   - **The explorer:** **users** and **roles** folders at the top of a MySQL or MariaDB data
     source; **logins** and **server roles** at the top of a SQL Server one, and **users** and
     **roles** in each database.
