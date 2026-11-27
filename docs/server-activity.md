@@ -266,6 +266,11 @@ partial list off as the whole server:
   `sys.dm_exec_input_buffer` (2016 and later). `is_user_process = 0` is **background**.
 - **Blocking:** `blocking_session_id`, with `wait_type`, `wait_time` and `wait_resource`; an
   `open_transaction_count` above 0 with no request is **idle in transaction**.
+- **Durations:** milliseconds from the request's `start_time` (or the session's
+  `last_request_end_time`) and from `transaction_begin_time` to `SYSDATETIME()`. Those columns
+  are `datetime`, rounded to 1/300 of a second and so up to about 1.7 ms late, and their clock
+  can run a little ahead: a moment that has only just passed can come out a few milliseconds
+  in the future, and is shown as zero.
 - **Extra columns:** `percent_complete` for the commands that report it (backups, `DBCC`,
   rollbacks).
 

@@ -44,7 +44,7 @@ SELECT s.session_id,
        r.command,
        CAST(s.is_user_process AS int),
        s.open_transaction_count,
-       DATEDIFF_BIG(SECOND, COALESCE(r.start_time, s.last_request_end_time), SYSDATETIME()),
+       DATEDIFF_BIG(MILLISECOND, COALESCE(r.start_time, s.last_request_end_time), SYSDATETIME()),
        {transaction},
        r.blocking_session_id,
        r.wait_type,
@@ -58,7 +58,7 @@ ORDER BY s.session_id";
 
 const CLIENT: &str = "(SELECT TOP (1) client_net_address FROM sys.dm_exec_connections \
                        WHERE session_id = s.session_id)";
-const TRANSACTION_AGE: &str = "(SELECT DATEDIFF_BIG(SECOND, MIN(a.transaction_begin_time), \
+const TRANSACTION_AGE: &str = "(SELECT DATEDIFF_BIG(MILLISECOND, MIN(a.transaction_begin_time), \
                                 SYSDATETIME()) \
                                 FROM sys.dm_tran_session_transactions st \
                                 JOIN sys.dm_tran_active_transactions a \
@@ -108,8 +108,8 @@ struct Listed {
     command: Option<String>,
     user_process: bool,
     open_transactions: i32,
-    in_state_seconds: Option<i64>,
-    transaction_seconds: Option<i64>,
+    in_state_millis: Option<i64>,
+    transaction_millis: Option<i64>,
     blocked_by: i16,
     wait_type: Option<String>,
     wait_resource: Option<String>,
@@ -188,8 +188,8 @@ fn listed(row: &Row) -> Listed {
         command: text(8),
         user_process: column::<i32>(row, 9) == Some(1),
         open_transactions: column(row, 10).unwrap_or_default(),
-        in_state_seconds: column(row, 11),
-        transaction_seconds: column(row, 12),
+        in_state_millis: column(row, 11),
+        transaction_millis: column(row, 12),
         blocked_by: column(row, 13).unwrap_or_default(),
         wait_type: text(14),
         wait_resource: text(15).filter(|resource| !resource.is_empty()),
@@ -272,8 +272,8 @@ fn session(listed: Listed, login: &Login) -> ServerSession {
         application: listed.program,
         client: listed.client,
         state,
-        in_state_for: seconds(listed.in_state_seconds),
-        transaction_for: seconds(listed.transaction_seconds),
+        in_state_for: elapsed(listed.in_state_millis),
+        transaction_for: elapsed(listed.transaction_millis),
         statement: listed.statement.map(|text| SessionStatement {
             text,
             running,
@@ -325,10 +325,17 @@ pub(crate) async fn own_session(client: &mut SqlClient) -> Result<SessionId, Dri
     Ok(SessionId::Number(i64::from(id)))
 }
 
-fn seconds(seconds: Option<i64>) -> Option<Duration> {
-    seconds
-        .and_then(|seconds| u64::try_from(seconds).ok())
-        .map(Duration::from_secs)
+/// The time since a moment [`SESSIONS`] measured, in milliseconds; `None` only when the server
+/// didn't say.
+///
+/// A moment that has only just passed can come out a few milliseconds in the future. The
+/// views keep their times as `datetime`, rounded to 1/300 of a second and so up to about
+/// 1.7 ms late, and their clock can run a little ahead of the `SYSDATETIME()` that
+/// [`SESSIONS`] compares them with (leads of 2.6 ms were measured on SQL Server 2022 on Linux).
+/// A transaction begun at 37.9985 is kept as 38.000 and, read at 37.9993, is -1 ms old, or
+/// -1 s counted in whole seconds. It began a moment ago, so its age is zero, not unknown.
+fn elapsed(millis: Option<i64>) -> Option<Duration> {
+    millis.map(|millis| Duration::from_millis(u64::try_from(millis).unwrap_or(0)))
 }
 
 #[cfg(test)]
@@ -423,5 +430,18 @@ mod tests {
         );
         assert_eq!(session.engine_state.as_deref(), Some("suspended: UPDATE"));
         assert!(session.extra.is_empty());
+    }
+
+    #[test]
+    fn a_moment_the_server_rounded_past_now_is_zero_not_unknown() {
+        let cases = [
+            (Some(1_500), Some(Duration::from_millis(1_500))),
+            (Some(0), Some(Duration::ZERO)),
+            (Some(-1), Some(Duration::ZERO)),
+            (None, None),
+        ];
+        for (millis, expected) in cases {
+            assert_eq!(elapsed(millis), expected, "{millis:?}");
+        }
     }
 }
