@@ -357,7 +357,8 @@ and nothing is lost.
 ## Later
 
 - **A privileges editor** for PostgreSQL.
-- **Users** for MySQL (DB1) and SQL Server (DB2).
+- **Users** for MySQL (DB1) and SQL Server (DB2): planned as W18 in
+  [Users beyond PostgreSQL](users-beyond-postgres.md).
 - **Virtual views** (a saved query shown as if it were a view, never created on the
   server): a candidate once consoles can be pinned to the tree.
 
