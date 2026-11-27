@@ -120,6 +120,7 @@ pub fn node(kind: NodeKind) -> Icon {
         NodeKind::Constraint => Icon::new(glyph::KEY, Role::Warning),
         NodeKind::Trigger => Icon::new(glyph::LIGHTNING, Role::Error),
         NodeKind::Role => Icon::new(glyph::USER, Role::Secondary),
+        NodeKind::User | NodeKind::Login => Icon::new(glyph::USER, Role::Primary),
         NodeKind::KeyPrefix => Icon::new(glyph::FOLDER_SIMPLE, Role::Warning),
         NodeKind::Key(key_type) => key(key_type),
         NodeKind::Collection => Icon::new(glyph::FILES, Role::Primary),

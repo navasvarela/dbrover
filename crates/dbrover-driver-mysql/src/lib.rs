@@ -3,6 +3,7 @@
 //! One driver for both servers: they speak the same protocol and SQL, and what differs is
 //! keyed off the version the server reports. Must run inside a tokio runtime.
 
+mod accounts;
 mod activity;
 mod catalog;
 mod errors;
@@ -16,9 +17,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use dbrover_core::{
     BareNames, BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, Connection, DriverError,
-    MysqlConfig, Password, QuoteEscape, Quoting, Rejection, RelationName, ResultCursor, Route,
-    SearchableTable, ServerActivity, ServerInfo, SessionId, SessionStop, StopOutcome,
-    TableConstraints, TableDescription, TableName, TablesToSearch, TlsMode, TransactionStatus,
+    MysqlConfig, Password, PrincipalDescription, QuoteEscape, Quoting, Rejection, RelationName,
+    ResultCursor, Route, SearchableTable, ServerActivity, ServerInfo, SessionId, SessionStop,
+    StopOutcome, TableConstraints, TableDescription, TableName, TablesToSearch, TlsMode,
+    TransactionStatus, UserManagement,
 };
 use mysql_async::consts::StatusFlags;
 use mysql_async::prelude::Queryable;
@@ -212,7 +214,8 @@ impl Connection for MysqlConnection {
     }
 
     async fn children(&mut self, path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError> {
-        catalog::children(&mut *self.conn.lock().await, path).await
+        let flavour = Flavour::of(&self.server_info);
+        catalog::children(&mut *self.conn.lock().await, flavour, path).await
     }
 
     async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError> {
@@ -252,6 +255,23 @@ impl Connection for MysqlConnection {
     ) -> Result<TableConstraints, DriverError> {
         let flavour = Flavour::of(&self.server_info);
         table::describe_constraints(&mut *self.conn.lock().await, table, flavour).await
+    }
+
+    async fn user_management(&mut self) -> Result<UserManagement, DriverError> {
+        let flavour = Flavour::of(&self.server_info);
+        let mut conn = self.conn.lock().await;
+        accounts::user_management(&mut conn, flavour, &self.server_info.version).await
+    }
+
+    async fn describe_principal(
+        &mut self,
+        path: &CatalogPath,
+    ) -> Result<PrincipalDescription, DriverError> {
+        let flavour = Flavour::of(&self.server_info);
+        let mut conn = self.conn.lock().await;
+        accounts::describe(&mut conn, flavour, path)
+            .await
+            .map(PrincipalDescription::Account)
     }
 
     async fn server_activity(&mut self) -> Result<ServerActivity, DriverError> {

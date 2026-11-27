@@ -6,11 +6,11 @@ use std::sync::{Arc, Mutex, PoisonError};
 use async_trait::async_trait;
 use dbrover_core::{
     CancelHandle, CatalogMatches, CatalogNode, CatalogPath, CatalogSearch, Cell, ChildrenPage,
-    ChildrenQuery, ColumnInfo, Connection, CostEstimate, DriverError, JobProgress, ProgressHandle,
-    Rejection, RelationName, ResultCursor, ResultShape, RoleDescription, Row, SchemaDescription,
-    SearchableTable, ServerActivity, ServerInfo, SessionId, SessionStop, StopOutcome,
-    TableConstraints, TableDescription, TableName, TablesToSearch, TransactionStatus,
-    describe_error,
+    ChildrenQuery, ColumnInfo, Connection, CostEstimate, DriverError, JobProgress,
+    PrincipalDescription, ProgressHandle, Rejection, RelationName, ResultCursor, ResultShape,
+    RoleDescription, Row, SchemaDescription, SearchableTable, ServerActivity, ServerInfo,
+    SessionId, SessionStop, StopOutcome, TableConstraints, TableDescription, TableName,
+    TablesToSearch, TransactionStatus, UserManagement, describe_error,
 };
 
 use super::{SessionContext, SessionOwner, SessionRequest};
@@ -132,6 +132,18 @@ impl Connection for Watched {
 
     async fn describe_role(&mut self, path: &CatalogPath) -> Result<RoleDescription, DriverError> {
         self.loss.watch(self.connection.describe_role(path).await)
+    }
+
+    async fn user_management(&mut self) -> Result<UserManagement, DriverError> {
+        self.loss.watch(self.connection.user_management().await)
+    }
+
+    async fn describe_principal(
+        &mut self,
+        path: &CatalogPath,
+    ) -> Result<PrincipalDescription, DriverError> {
+        self.loss
+            .watch(self.connection.describe_principal(path).await)
     }
 
     async fn describe_schema(
@@ -310,6 +322,15 @@ pub(super) fn refuse(context: &SessionContext, request: SessionRequest, reason: 
         (SessionRequest::DescribeRole(path), _) => Event::RoleDescribed {
             data_source: id,
             path,
+            result: Err(message),
+        },
+        (SessionRequest::DescribePrincipal(path), _) => Event::PrincipalDescribed {
+            data_source: id,
+            path,
+            result: Err(message),
+        },
+        (SessionRequest::LoadUserManagement, _) => Event::UserManagementLoaded {
+            data_source: id,
             result: Err(message),
         },
         (SessionRequest::ApplyDdl(_), _) => Event::DdlApplied {

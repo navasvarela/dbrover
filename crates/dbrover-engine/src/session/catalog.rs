@@ -145,3 +145,41 @@ pub(super) async fn describe_role(
         result: result.map_err(|error| describe_error(&error)),
     });
 }
+
+pub(super) async fn describe_principal(
+    context: &SessionContext,
+    connection: &mut dyn Connection,
+    path: CatalogPath,
+) {
+    let result = connection.describe_principal(&path).await;
+    if let Err(error) = &result {
+        tracing::warn!(
+            data_source = %context.name(),
+            "could not describe {path}: {}",
+            describe_error(error)
+        );
+    }
+    context.send(Event::PrincipalDescribed {
+        data_source: context.data_source.id,
+        path,
+        result: result.map_err(|error| describe_error(&error)),
+    });
+}
+
+pub(super) async fn load_user_management(
+    context: &SessionContext,
+    connection: &mut dyn Connection,
+) {
+    let result = connection.user_management().await;
+    if let Err(error) = &result {
+        tracing::warn!(
+            data_source = %context.name(),
+            "could not read how users are managed: {}",
+            describe_error(error)
+        );
+    }
+    context.send(Event::UserManagementLoaded {
+        data_source: context.data_source.id,
+        result: result.map_err(|error| describe_error(&error)),
+    });
+}

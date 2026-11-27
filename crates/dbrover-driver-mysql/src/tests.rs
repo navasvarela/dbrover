@@ -568,3 +568,267 @@ async fn finds_a_value_across_tables() {
         .await;
     }
 }
+
+/// Runs `sql` to its end on `connection`, rows read and dropped.
+async fn run_sql(connection: &mut dyn Connection, sql: &str) {
+    let mut cursor = connection
+        .execute(sql)
+        .await
+        .unwrap_or_else(|error| panic!("{sql}: {}", dbrover_core::describe_error(&error)));
+    while !cursor.is_exhausted() {
+        cursor.next_page(100).await.expect("read rows");
+    }
+    cursor.finish().await.expect("finish");
+}
+
+/// The statements W18's dialogs would run for `operation`, run as they would be.
+async fn apply_account(
+    connection: &mut dyn Connection,
+    flavor: dbrover_core::MysqlFlavor,
+    operation: dbrover_sql::AccountOperation,
+) {
+    let statements = dbrover_sql::DdlOperation::Account { flavor, operation }
+        .statements(dbrover_sql::Dialect::Mysql)
+        .expect("statements");
+    for sql in statements {
+        run_sql(connection, &sql).await;
+    }
+}
+
+async fn describe_account(
+    connection: &mut dyn Connection,
+    path: &CatalogPath,
+) -> Result<dbrover_core::AccountDescription, DriverError> {
+    match connection.describe_principal(path).await? {
+        dbrover_core::PrincipalDescription::Account(account) => Ok(account),
+        other => panic!("not an account: {other:?}"),
+    }
+}
+
+/// W18's round trip on each server: a role and a user made with DbRover's statements and a
+/// password DbRover hashed, the user logging in and reading through its default role, listed
+/// and described, changed, locked (and refused), renamed and dropped; and what a login without
+/// `CREATE USER` sees.
+#[tokio::test]
+async fn manages_accounts_and_roles_with_a_hashed_password() {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use dbrover_core::{
+        AccountKind, AccountName, AdminOption, DefinedKind, ManagedUsers, MysqlFlavor,
+        PasswordLifetime, Permit, Privilege, PrivilegeSet,
+    };
+    use dbrover_sql::{AccountHash, AccountOperation, AccountPassword, AccountSpec};
+
+    let _shared = SHARED_DATABASE.lock().await;
+    for server in test_servers() {
+        let mut root = server.connect_as_root().await;
+        let database = server.config.server.database.clone();
+        let flavor = MysqlFlavor::from(Flavour::of(root.server_info()));
+        let role = AccountName::role("w18_reader", flavor);
+        let user = AccountName::new("w18_app", "%");
+        let renamed = AccountName::new("w18_app2", "%");
+        for sql in [
+            "DROP USER IF EXISTS `w18_app`@`%`, `w18_app2`@`%`".to_owned(),
+            "DROP ROLE IF EXISTS w18_reader".to_owned(),
+            format!("DROP VIEW IF EXISTS `{database}`.`w18_defined`"),
+            format!("DROP TABLE IF EXISTS `{database}`.`w18_orders`"),
+            format!("CREATE TABLE `{database}`.`w18_orders` (id INT PRIMARY KEY)"),
+            format!("INSERT INTO `{database}`.`w18_orders` VALUES (7)"),
+        ] {
+            run_sql(&mut root, &sql).await;
+        }
+
+        let reads = |names: &[&str]| PrivilegeSet {
+            privileges: names.iter().map(|name| Privilege::new(name)).collect(),
+            grant_option: false,
+        };
+        apply_account(
+            &mut root,
+            flavor,
+            AccountOperation::Create {
+                name: role.clone(),
+                spec: AccountSpec {
+                    databases: BTreeMap::from([(database.clone(), reads(&["SELECT"]))]),
+                    ..AccountSpec::new(AccountKind::Role)
+                },
+                password: None,
+            },
+        )
+        .await;
+        let hash = match flavor {
+            MysqlFlavor::Mysql => AccountHash::caching_sha2("W18-pass!"),
+            MysqlFlavor::MariaDb => AccountHash::mysql_native("W18-pass!"),
+        };
+        let spec = AccountSpec {
+            roles: BTreeMap::from([(role.clone(), AdminOption::Without)]),
+            default_roles: BTreeSet::from([role.clone()]),
+            global: reads(&["PROCESS"]),
+            ..AccountSpec::new(AccountKind::User)
+        };
+        apply_account(
+            &mut root,
+            flavor,
+            AccountOperation::Create {
+                name: user.clone(),
+                spec,
+                password: Some(AccountPassword::Hashed(hash)),
+            },
+        )
+        .await;
+
+        // The new account logs in with the password DbRover hashed, and reads the table its
+        // default role may read.
+        let as_user = |name: &str| {
+            let mut config = server.config.clone();
+            config.server.user = name.to_owned();
+            config
+        };
+        let password = Password::new("W18-pass!");
+        let login = connect(&as_user("w18_app"), Some(&password), Route::Direct)
+            .await
+            .unwrap_or_else(|error| panic!("{}: w18_app logs in: {error:?}", server.variable));
+        assert_eq!(
+            first_value(&login, &format!("SELECT id FROM `{database}`.`w18_orders`"))
+                .await
+                .as_deref(),
+            Some("7"),
+            "{}",
+            server.variable
+        );
+        Box::new(login).close().await.unwrap();
+        run_sql(
+            &mut root,
+            &format!(
+                "CREATE DEFINER = `w18_app`@`%` VIEW `{database}`.`w18_defined` AS SELECT 1 AS x"
+            ),
+        )
+        .await;
+
+        // Listed in its folder, and described as made.
+        let users = CatalogPath::root().child(NodeKind::Folder(FolderKind::Users), "users");
+        let roles = CatalogPath::root().child(NodeKind::Folder(FolderKind::Roles), "roles");
+        let listed = root.children(&users).await.unwrap();
+        let node = listed
+            .iter()
+            .find(|node| node.label == "w18_app@%")
+            .unwrap_or_else(|| panic!("{}: w18_app@% in {listed:?}", server.variable));
+        assert_eq!(node.detail.as_deref(), Some("member of w18_reader"));
+        let role_nodes = root.children(&roles).await.unwrap();
+        assert!(
+            role_nodes.iter().any(|node| node.label == role.label()),
+            "{}: {role_nodes:?}",
+            server.variable
+        );
+        let path = users.child(NodeKind::User, user.label());
+        let account = describe_account(&mut root, &path).await.unwrap();
+        assert_eq!(account.kind, AccountKind::User);
+        assert!(account.has_password && !account.locked, "{account:?}");
+        assert_eq!(account.global, reads(&["PROCESS"]), "{}", server.variable);
+        assert_eq!(account.default_roles, BTreeSet::from([role.clone()]));
+        assert_eq!(
+            account
+                .defines
+                .iter()
+                .map(|o| (o.kind, o.name.as_str()))
+                .collect::<Vec<_>>(),
+            [(DefinedKind::View, "w18_defined")]
+        );
+        let described_role =
+            describe_account(&mut root, &roles.child(NodeKind::Role, role.label()))
+                .await
+                .unwrap();
+        assert_eq!(described_role.kind, AccountKind::Role);
+        // MariaDB grants a new role to the account that creates it, with admin option.
+        let mut members = BTreeSet::from([user.clone()]);
+        if flavor == MysqlFlavor::MariaDb {
+            members.insert(AccountName::new("root", "%"));
+        }
+        assert_eq!(described_role.members, members, "{}", server.variable);
+        assert_eq!(
+            described_role.databases,
+            BTreeMap::from([(database.clone(), reads(&["SELECT"]))])
+        );
+
+        // Changed from its description: PROCESS taken away, the password never expiring.
+        let before = AccountSpec::from(&account);
+        let after = AccountSpec {
+            global: PrivilegeSet::default(),
+            lifetime: PasswordLifetime::Never,
+            ..before.clone()
+        };
+        apply_account(
+            &mut root,
+            flavor,
+            AccountOperation::Alter {
+                name: user.clone(),
+                before,
+                after,
+                password: None,
+            },
+        )
+        .await;
+        let changed = describe_account(&mut root, &path).await.unwrap();
+        assert!(changed.global.is_empty(), "{changed:?}");
+        assert_eq!(changed.lifetime, PasswordLifetime::Never);
+
+        // Locked, it can't log in.
+        apply_account(
+            &mut root,
+            flavor,
+            AccountOperation::SetLocked {
+                name: user.clone(),
+                locked: true,
+            },
+        )
+        .await;
+        assert!(describe_account(&mut root, &path).await.unwrap().locked);
+        assert!(
+            connect(&as_user("w18_app"), Some(&password), Route::Direct)
+                .await
+                .is_err(),
+            "{}: a locked account logged in",
+            server.variable
+        );
+
+        // What a login without CREATE USER sees: its own account only.
+        let mut plain = server.connect().await;
+        let management = plain.user_management().await.unwrap();
+        assert!(!management.may_change.allowed(), "{management:?}");
+        assert!(matches!(management.may_list, Permit::Needs(_)));
+        let own = plain.children(&users).await.unwrap();
+        assert_eq!(own.len(), 1, "{own:?}");
+        assert!(own[0].label.starts_with(&server.config.server.user));
+        let management = root.user_management().await.unwrap();
+        assert!(management.may_change.allowed(), "{management:?}");
+        let ManagedUsers::Accounts(offered) = management.server else {
+            panic!("not accounts: {management:?}");
+        };
+        assert_eq!(offered.flavor, flavor);
+
+        // Renamed, then dropped with its role.
+        apply_account(
+            &mut root,
+            flavor,
+            AccountOperation::Rename {
+                name: user.clone(),
+                new_name: renamed.clone(),
+            },
+        )
+        .await;
+        let renamed_path = users.child(NodeKind::User, renamed.label());
+        assert!(describe_account(&mut root, &renamed_path).await.is_ok());
+        for (name, kind) in [(renamed, AccountKind::User), (role, AccountKind::Role)] {
+            apply_account(&mut root, flavor, AccountOperation::Drop { name, kind }).await;
+        }
+        assert!(matches!(
+            describe_account(&mut root, &renamed_path).await,
+            Err(DriverError::InvalidPath(_))
+        ));
+        for sql in [
+            format!("DROP VIEW `{database}`.`w18_defined`"),
+            format!("DROP TABLE `{database}`.`w18_orders`"),
+        ] {
+            run_sql(&mut root, &sql).await;
+        }
+    }
+}

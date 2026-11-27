@@ -28,6 +28,7 @@ mod object_storage;
 mod password;
 mod password_command;
 mod placeholder;
+mod principal;
 mod quoting;
 mod role;
 mod schema;
@@ -105,6 +106,9 @@ pub use password::Password;
 pub use password_command::PasswordCommand;
 pub use placeholder::{
     ExpandError, PlaceholderError, Setting, Variables, expand, expand_path, has_placeholder,
+};
+pub use principal::{
+    AccountServer, LoginServer, ManagedUsers, Permit, PrincipalDescription, UserManagement,
 };
 pub use quoting::{BareNames, QuoteEscape, Quoting};
 pub use role::{RoleAttribute, RoleDescription};
