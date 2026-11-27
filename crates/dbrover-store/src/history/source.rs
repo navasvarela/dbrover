@@ -31,6 +31,9 @@ pub enum HistorySource {
     /// A data search (W16), recorded once with the statements of the tables that matched, and
     /// what was searched for, where, and what was found.
     Search { searched: String },
+    /// A dump (W17), recorded once with the command that ran, and what was dumped, where to,
+    /// and how large it was.
+    Dump { dumped: String },
     /// DbRover, before it recorded where a statement came from: rows written before the history
     /// had provenance, or since then by an older DbRover sharing the file.
     DbRover,
@@ -48,11 +51,12 @@ pub enum HistorySourceKind {
     Action,
     Activity,
     Search,
+    Dump,
     DbRover,
 }
 
 impl HistorySourceKind {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Console,
         Self::GridEdit,
         Self::ObjectHelper,
@@ -62,6 +66,7 @@ impl HistorySourceKind {
         Self::Action,
         Self::Activity,
         Self::Search,
+        Self::Dump,
         Self::DbRover,
     ];
 
@@ -79,6 +84,7 @@ impl HistorySourceKind {
             Self::Action => "action",
             Self::Activity => "activity",
             Self::Search => "search",
+            Self::Dump => "dump",
             Self::DbRover => "app",
         }
     }
@@ -100,6 +106,7 @@ impl HistorySource {
             Self::Action { .. } => HistorySourceKind::Action,
             Self::Activity { .. } => HistorySourceKind::Activity,
             Self::Search { .. } => HistorySourceKind::Search,
+            Self::Dump { .. } => HistorySourceKind::Dump,
             Self::DbRover => HistorySourceKind::DbRover,
         }
     }
@@ -129,6 +136,7 @@ impl HistorySource {
             Self::Action { id } => Some(id.clone()),
             Self::Activity { stopped } => Some(stopped.clone()),
             Self::Search { searched } => Some(searched.clone()),
+            Self::Dump { dumped } => Some(dumped.clone()),
             _ => None,
         }
     }
@@ -164,6 +172,9 @@ impl HistorySource {
             },
             HistorySourceKind::Search => Self::Search {
                 searched: detail.unwrap_or_default(),
+            },
+            HistorySourceKind::Dump => Self::Dump {
+                dumped: detail.unwrap_or_default(),
             },
             HistorySourceKind::DbRover => Self::DbRover,
         })
@@ -202,6 +213,9 @@ mod tests {
             },
             HistorySource::Search {
                 searched: "Searched 3 tables of shop.public for \"o'brien\"".to_owned(),
+            },
+            HistorySource::Dump {
+                dumped: "Dumped shop to /dumps/shop.dump (custom, 142 MB)".to_owned(),
             },
             HistorySource::DbRover,
         ];

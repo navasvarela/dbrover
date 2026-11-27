@@ -11,6 +11,8 @@ mod config_files;
 mod console_files;
 mod data_search;
 mod diagram_files;
+mod dump_programs;
+mod dumps;
 mod environment;
 mod events;
 mod export;
@@ -58,6 +60,8 @@ pub use data_search::{
     TABLE_TIME_LIMIT, TableOutcome, TableSearched,
 };
 pub use dbrover_ssh::HostKey;
+pub use dump_programs::ProgramPaths;
+pub use dumps::{DumpDone, DumpFailure, DumpProgress, DumpRun, DumpRunId, DumpStart};
 pub use environment::ProcessEnvironment;
 pub use export::{Export, ExportAll};
 pub use export_programs::ExportProgramRequest;

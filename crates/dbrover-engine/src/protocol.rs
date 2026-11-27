@@ -23,8 +23,9 @@ use dbrover_store::{
 };
 
 use crate::{
-    Export, ExportAll, ExportProgramRequest, HostKey, InstalledUpdate, Noticed, PasswordNeeded,
-    ProgramFailure, ProgramId, ProgramOutput, ProgramRequest, Release, WatchedFile,
+    DumpDone, DumpFailure, DumpProgress, DumpRun, DumpRunId, DumpStart, Export, ExportAll,
+    ExportProgramRequest, HostKey, InstalledUpdate, Noticed, PasswordNeeded, ProgramFailure,
+    ProgramId, ProgramOutput, ProgramRequest, Release, WatchedFile,
 };
 
 /// A file in the settings folder that the app shows as one document, which the engine
@@ -481,6 +482,15 @@ pub enum Command {
     RunExportProgram(Box<ExportProgramRequest>),
     /// Stops a running program, killing it. Answered by its [`Event::ProgramFinished`].
     StopProgram(ProgramId),
+    /// Dumps a database with the engine's own program (W17), chosen for the server's version,
+    /// as the data source connects. Answered by [`Event::DumpStarted`] once the program runs,
+    /// [`Event::DumpProgress`] while it does, and [`Event::DumpEnded`]; recorded in the
+    /// history once. A password or trust connecting lacks is asked for as a session asks, and
+    /// the dump ends; the app sends it again once it has it.
+    StartDump(Box<DumpRun>),
+    /// Stops a dump's program and removes what it had written. Answered by its
+    /// [`Event::DumpEnded`].
+    CancelDump(DumpRunId),
     /// Lets the command run without asking from now on, in place of whatever its action ran
     /// before, and saves that. Answered by [`Event::TrustedCommandsLoaded`].
     TrustCommand(TrustedCommand),
@@ -708,6 +718,18 @@ pub enum Event {
     TrustedCommandsLoaded(TrustedCommands),
     /// A program from [`Command::RunProgram`] ended: what it wrote, or why there is nothing to
     /// use.
+    DumpStarted {
+        run: DumpRunId,
+        start: DumpStart,
+    },
+    DumpProgress {
+        run: DumpRunId,
+        progress: DumpProgress,
+    },
+    DumpEnded {
+        run: DumpRunId,
+        result: Result<DumpDone, DumpFailure>,
+    },
     ProgramFinished {
         program: ProgramId,
         result: Result<ProgramOutput, ProgramFailure>,

@@ -111,6 +111,43 @@ pub(crate) async fn open(
     typed: &TypedSecrets,
     connector: Connector<'_>,
 ) -> Result<Box<dyn Connection>, OpenError> {
+    let Reach {
+        config,
+        password,
+        tunnel,
+    } = reach(data_source, typed, connector).await?;
+    let route = tunnel
+        .as_ref()
+        .map_or(Route::Direct, |tunnel| Route::Tunnel(tunnel.local_addr()));
+    let connected = timeout(CONNECT_TIMEOUT, connect(&config, password.as_ref(), route))
+        .await
+        .map_err(|_| OpenError::TimedOut(CONNECT_TIMEOUT))?;
+    let Some(tunnel) = tunnel else {
+        return Ok(connected?);
+    };
+    let connection = connected.map_err(|error| match tunnel.forward_error() {
+        Some(reason) => OpenError::NotForwarded { reason, error },
+        None => OpenError::Driver(error),
+    })?;
+    Ok(Box::new(Tunnelled { connection, tunnel }))
+}
+
+/// What connecting to a data source needs, short of the driver: its settings with their
+/// placeholders resolved, its password, and its SSH tunnel, held open for as long as this is.
+/// An engine's own program (`pg_dump`, W17) connects with these as a driver would.
+pub(crate) struct Reach {
+    pub(crate) config: ConnectionConfig,
+    pub(crate) password: Option<Password>,
+    pub(crate) tunnel: Option<Arc<Tunnel>>,
+}
+
+/// Resolves the data source's settings, opens its SSH tunnel if it has one, then finds its
+/// password, in the order and under the timeouts [`open`] describes.
+pub(crate) async fn reach(
+    data_source: &DataSource,
+    typed: &TypedSecrets,
+    connector: Connector<'_>,
+) -> Result<Reach, OpenError> {
     let config = data_source.config.resolve(&ProcessEnvironment)?;
     let ssh = config
         .server()
@@ -130,20 +167,11 @@ pub(crate) async fn open(
         true => database_password(data_source.id, &config, typed, connector).await?,
         false => None,
     };
-    let route = tunnel
-        .as_ref()
-        .map_or(Route::Direct, |tunnel| Route::Tunnel(tunnel.local_addr()));
-    let connected = timeout(CONNECT_TIMEOUT, connect(&config, password.as_ref(), route))
-        .await
-        .map_err(|_| OpenError::TimedOut(CONNECT_TIMEOUT))?;
-    let Some(tunnel) = tunnel else {
-        return Ok(connected?);
-    };
-    let connection = connected.map_err(|error| match tunnel.forward_error() {
-        Some(reason) => OpenError::NotForwarded { reason, error },
-        None => OpenError::Driver(error),
-    })?;
-    Ok(Box::new(Tunnelled { connection, tunnel }))
+    Ok(Reach {
+        config,
+        password,
+        tunnel,
+    })
 }
 
 /// The password typed in the dialog, or else the token of the data source's cloud sign-in or

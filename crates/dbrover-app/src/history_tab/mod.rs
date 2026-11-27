@@ -467,6 +467,7 @@ fn source_badge(ui: &mut Ui, source: &HistorySource) {
             palette.text_weak,
             format!("Run by Search data: {searched}"),
         ),
+        HistorySource::Dump { dumped } => ("Dump", palette.text_weak, dumped.clone()),
         HistorySource::DbRover => (
             "DbRover",
             palette.text_weak,
