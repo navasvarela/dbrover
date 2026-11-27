@@ -33,6 +33,7 @@
 - [Users and roles](users-roles.md)
 - [Server activity](server-activity.md)
 - [Searching data](data-search.md)
+- [Dump and restore](dump-restore.md)
 - [ER diagrams](diagrams.md)
 - [Comparing schemas](schema-compare.md)
 

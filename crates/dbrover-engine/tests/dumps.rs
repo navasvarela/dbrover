@@ -810,6 +810,195 @@ fn refuses_a_read_only_data_source_and_another_engines_dump() {
     }
 }
 
+/// W17's exit, on the PostgreSQL test server: a custom dump through the program DbRover was
+/// given, with no password on its command line; that dump restored into a new database with the
+/// same rows; a plain dump with an error in it, restored all or nothing, leaving its database
+/// empty; a cancelled dump leaving no file; History listing each dump and restore once; and a
+/// saved dump whose schedule came due while DbRover was closed running once at the next start.
+/// (A read-only data source refusing a restore, and a `pg_dump` older than the server, are
+/// [`refuses_a_read_only_data_source_and_another_engines_dump`] and
+/// `without_a_server::refuses_a_pg_dump_older_than_the_server`; the careful question is the
+/// app's own test.)
+#[test]
+fn w17_exit() {
+    let (Some(server), Some(clients)) = (postgres_test_server(), clients()) else {
+        return;
+    };
+    let fixture = Fixture::create(&server, "exit");
+    let data_source = fixture.data_source(fixture.config.clone());
+    let dir = tempfile::tempdir().unwrap();
+    // A saved dump of the fixture, its hourly schedule turned on yesterday and never run: due.
+    let folder = dir.path().join("nightly");
+    dbrover_store::SavedDumpsFile::new(dir.path().join("dumps.toml"))
+        .save(&[dbrover_store::SavedDump {
+            id: "nightly".to_owned(),
+            name: "Nightly".to_owned(),
+            data_source: data_source.id,
+            database: fixture.database.clone(),
+            schemas: Vec::new(),
+            tables: Vec::new(),
+            content: dbrover_core::DumpContent::SchemaAndData,
+            format: DumpFormat::Custom,
+            leave_out_owners: false,
+            leave_out_privileges: false,
+            folder: folder.clone(),
+            keep: 7,
+            schedule: Some(dbrover_store::Schedule::Hours {
+                hours: std::num::NonZeroU8::new(1).unwrap(),
+            }),
+        }])
+        .unwrap();
+    let yesterday = jiff::Timestamp::now()
+        .checked_sub(jiff::SignedDuration::from_hours(24))
+        .unwrap();
+    let mut state = dbrover_store::ScheduleState::new("nightly", yesterday);
+    state.on = true;
+    dbrover_store::ScheduleStatesFile::new(dir.path().join("dump_schedules.toml"))
+        .save(&[state])
+        .unwrap();
+    let mut engine = TestEngine::start(
+        &dir.path().join("data_sources.toml"),
+        Arc::new(MemorySecrets::default()),
+    );
+    engine.expect_started(vec![]);
+    engine.send(Command::SaveDataSource {
+        data_source: data_source.clone(),
+        password: PasswordUpdate::Set(Password::new(AWKWARD_PASSWORD)),
+        ssh_secret: PasswordUpdate::Keep,
+    });
+    engine.expect(Event::DataSourceSaved(data_source.clone()));
+    trust(&mut engine, &program_paths(&clients));
+    engine.send(Command::SaveSettings(dbrover_store::Settings {
+        dumps: dbrover_store::DumpSettings {
+            programs: program_paths(&clients)
+                .0
+                .iter()
+                .map(|(program, path)| (program.setting_key().to_owned(), path.clone()))
+                .collect(),
+        },
+        ..dbrover_store::Settings::default()
+    }));
+
+    // A custom dump, no password on its command line.
+    let file = dir.path().join("shop.dump");
+    engine.send(Command::StartDump(dump_run(
+        1,
+        &data_source,
+        &fixture,
+        DumpScope::Database,
+        DumpFormat::Custom,
+        file.clone(),
+        program_paths(&clients),
+    )));
+    let start = started(&mut engine, DumpRunId(1));
+    assert!(!start.command.contains("wo#rd"), "{}", start.command);
+    ended(&mut engine, DumpRunId(1)).unwrap();
+
+    // Restored into a new database, with the same rows.
+    let restored_into = format!("{}_r1", fixture.database);
+    engine.send(Command::StartRestore(restore_run(
+        2,
+        &data_source,
+        &fixture,
+        file,
+        RestoreTarget::NewDatabase(restored_into.clone()),
+        program_paths(&clients),
+    )));
+    restored(&mut engine, DumpRunId(2)).unwrap();
+    assert_eq!(
+        query(&clients, &server, &restored_into, ROWS),
+        query(&clients, &server, &fixture.database, ROWS)
+    );
+
+    // A plain dump that fails half way, all or nothing, leaves nothing.
+    let broken = dir.path().join("broken.sql");
+    std::fs::write(
+        &broken,
+        "--\n-- PostgreSQL database dump\n--\nCREATE TABLE half (id integer);\nSELECT 1 / 0;\n",
+    )
+    .unwrap();
+    let empty = format!("{}_r2", fixture.database);
+    engine.send(Command::StartRestore(restore_run(
+        3,
+        &data_source,
+        &fixture,
+        broken,
+        RestoreTarget::NewDatabase(empty.clone()),
+        program_paths(&clients),
+    )));
+    assert!(restored(&mut engine, DumpRunId(3)).is_err());
+    assert_eq!(
+        query(
+            &clients,
+            &server,
+            &empty,
+            "SELECT count(*) FROM pg_class WHERE relname = 'half'"
+        ),
+        "0"
+    );
+
+    // A cancelled dump, held up by a lock, leaves no file.
+    let mut locker = fixture.owner();
+    fixture.execute(locker.as_mut(), "BEGIN");
+    fixture.execute(
+        locker.as_mut(),
+        "LOCK TABLE customers IN ACCESS EXCLUSIVE MODE",
+    );
+    let cancelled = dir.path().join("cancelled.dump");
+    engine.send(Command::StartDump(dump_run(
+        4,
+        &data_source,
+        &fixture,
+        DumpScope::Database,
+        DumpFormat::Custom,
+        cancelled.clone(),
+        program_paths(&clients),
+    )));
+    started(&mut engine, DumpRunId(4));
+    engine.send(Command::CancelDump(DumpRunId(4)));
+    assert_eq!(
+        ended(&mut engine, DumpRunId(4)),
+        Err(DumpFailure::Cancelled)
+    );
+    fixture.execute(locker.as_mut(), "ROLLBACK");
+    assert!(!cancelled.exists());
+
+    // The saved dump due since yesterday runs once when the schedules are checked, as a minute
+    // after start.
+    engine.send(Command::CheckDumpSchedules);
+    let name = until(&mut engine, |event| match event {
+        Event::SavedDumpStarted { name, .. } => Some(name),
+        _ => None,
+    });
+    assert_eq!(name, "Nightly");
+    let states = until(&mut engine, |event| match event {
+        Event::SavedDumpsLoaded { states, .. } => Some(states),
+        _ => None,
+    });
+    assert!(states[0].last_ok.is_some());
+    assert_eq!(files_in(&folder).len(), 1);
+    engine.send(Command::CheckDumpSchedules);
+
+    // History: the three dumps (one cancelled) and two restores, each once.
+    let dumped = dumps(&mut engine, data_source.id);
+    assert_eq!(dumped.len(), 3, "{dumped:?}");
+    engine.send(Command::SearchHistory(HistoryQuery {
+        kind: Some(HistorySourceKind::Restore),
+        ..HistoryQuery::all(data_source.id)
+    }));
+    let restores = until(&mut engine, |event| match event {
+        Event::HistoryFound { result, .. } => Some(result.unwrap()),
+        _ => None,
+    });
+    assert_eq!(restores.len(), 2);
+    assert_eq!(
+        files_in(&folder).len(),
+        1,
+        "checked again within the hour: not due"
+    );
+    engine.shut_down();
+}
+
 /// A data source the refusals in these tests are decided before reaching.
 fn unreachable_source() -> DataSource {
     DataSource {

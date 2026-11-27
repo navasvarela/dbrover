@@ -11,8 +11,8 @@ built. W14, every setting in the Settings tab, designed on 2026-11-01
 and Kill), designed on 2026-11-25 in [Server activity](server-activity.md) and built.
 W16, searching a database's data, planned on 2026-11-25 in
 [Searching a database's data](data-search.md) and built. W17, dump and restore through the
-engines' own programs, planned on 2026-11-27 in [Dump and restore](dump-restore.md). W18,
-users beyond PostgreSQL (MySQL's and MariaDB's accounts, SQL Server's logins and users),
+engines' own programs, planned on 2026-11-27 in [Dump and restore](dump-restore.md) and built.
+W18, users beyond PostgreSQL (MySQL's and MariaDB's accounts, SQL Server's logins and users),
 planned on 2026-11-27 in [Users beyond PostgreSQL](users-beyond-postgres.md) and built.
 Proposed on 2026-10-24.
 

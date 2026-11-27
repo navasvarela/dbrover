@@ -2151,8 +2151,8 @@ three to five, **L** a track of its own).
   its row by its key; double-clicking a match opens a console on that row; a table locked by
   another session times out and the search goes on; Cancel keeps what was found; a careful
   data source asks first; History lists the search once, as **Search**.
-- **W17 — Dump and restore (L):** planned on 2026-11-27 in [Dump and restore](dump-restore.md),
-  its questions answered the same day as proposed. A database, some schemas or some tables written to a
+- **W17 — Dump and restore (L):** built; planned on 2026-11-27 in
+  [Dump and restore](dump-restore.md), its questions answered the same day as proposed. A database, some schemas or some tables written to a
   file by the engine's own program, and read back, optionally on a schedule. Third in the
   competitor-gap review of 2026-11-25, after server activity and searching data: all seven tools
   compared have it, four of them free. It starts with PostgreSQL (`pg_dump`, `pg_restore`,
@@ -2193,6 +2193,52 @@ three to five, **L** a track of its own).
   - **W17h — Saved and scheduled dumps:** `dumps.toml`, **Settings › Dumps**, the schedule's
     clock, keeping the last few, and `dbrover dump run`.
   - **W17i — Manual and demo note:** a chapter with pictures, and the exit as an engine test.
+
+  **W17 demo note:** built in #719 and the eight layers stacked on it, described in
+  [Dump and restore](../book/src/dump-restore.md). Connect a PostgreSQL data source, right-click it
+  → **Dump…**: the dialog names the `pg_dump` it found and its version beside the server's
+  (*pg_dump 18.6, /opt/homebrew/bin/pg_dump, for a server of version 17.11*), the custom format
+  by default, the file `dbrover-2026-11-27-141203.dump` in `Documents/DbRover dumps/<data
+  source>`; **Dump** runs it in the status bar with its tables and bytes and **Cancel**, and History
+  lists it as **Dump** with the command, `--dbname=host=… sslmode=…` and no password, which is in a
+  `PGPASSFILE` of the data folder's, removed after. **Restore…** of that file reads it first
+  (*PostgreSQL custom dump, 2 tables, made by pg_dump 18.6 from PostgreSQL 17.11*), restores into
+  `dbrover_restored` by default, owners and privileges left out, all or nothing, and asks *Restore
+  shop.dump into a new database "dbrover_restored" on "warehouse"?*; into an existing database of
+  a careful data source only once its name is typed; on a read-only one it is disabled with the
+  reason. A `pg_dump` older than the server is refused with `brew install libpq` or `apt install
+  postgresql-client-17`. MySQL and MariaDB dump and restore with their own clients, the `DEFINER`
+  clauses taken out on the way in; SQLite copies itself with `VACUUM INTO` and DuckDB exports
+  Parquet or CSV, each restored into a new file. **Save…** keeps a dump in `dumps.toml` with a
+  daily, weekly or every-few-hours schedule; **Saved dumps…** turns it on here, runs it now, and
+  shows its last run; a run missed while DbRover was closed runs once a minute after it opens, and
+  `dbrover dump run nightly-shop` runs one from cron. Departures from the design: model types came
+  with the layers that use them; the password file is removed when the program ends, not when it
+  connects, since parallel jobs connect later; chosen tables restore through `pg_restore --table`,
+  without their indexes, keys and triggers, which `pg_restore --list` can't tie to a table;
+  `mysqldump` also gets `--no-tablespaces`, as MySQL 8 asks for the server-wide PROCESS privilege
+  to dump them; a MySQL password is quoted with the quote it lacks, and one whose quotes and `#`
+  the option file can't hold is refused; the dialogs dump what was right-clicked, without the
+  plan's **Change…** picker; **Copy command** is disabled through an SSH tunnel and for SQLite and
+  DuckDB, whose commands show in the log and History once run; Dump is offered on a connected data
+  source only, so a password the session lacks is asked for but the dump isn't sent again by
+  itself; an in-memory DuckDB and MotherDuck aren't dumped; a SQLite restore doesn't offer to add
+  the new file as a data source; saved dumps are managed from the data source's **Saved dumps…**
+  rather than a list in Settings, where **Settings › Dumps** sets the programs' paths, trusted when
+  typed there and not when they arrive in a synced `settings.toml`; dump files are named to the
+  second, with no `file` pattern; the engine reads saved dumps on request; a restore's default
+  database drops the dump's date (`warehouse_restored`). Covered by `dbrover-dump`'s golden tests
+  (search places per system, version strings, choice, connection strings, TLS spellings,
+  password and option files, arguments, file kinds, archive listings, the owner and `DEFINER`
+  filters), engine tests on the compose PostgreSQL (every format dumped and restored, chosen
+  tables, all or nothing, Cancel, an SSH tunnel, an awkward password, `w17_exit`), MySQL 8.4 and
+  MariaDB 11.4 (both families, `DEFINER` kept and left out), SQLite and DuckDB on every runner,
+  saved dumps and `dbrover dump run`, and kittest tests of the dialogs, the careful question, the
+  read-only refusal, a too-old `pg_dump`, a SQLite round trip and a saved dump run now. CI runs the
+  clients from the servers' own images through `docker/clients`, installing nothing. Not tried by
+  hand on Windows, where CI has no servers. Still to come, if asked: SQL Server (`sqlpackage`),
+  MongoDB (`mongodump`), ClickHouse, a scope picker, restoring chosen tables with their
+  constraints, and MCP.
 
   **Exit:** on the PostgreSQL test server, **Dump…** on a database writes a custom dump through
   the program DbRover found and named, with no password on its command line or in its

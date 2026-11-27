@@ -969,6 +969,30 @@ const SCENES: &[Scene] = &[
         needs: &[],
     },
     Scene {
+        name: "dump-dialog",
+        data_sources: FixtureSources::Shop,
+        play: dump_dialog,
+        keeps_pointer: false,
+        region: whole_window,
+        needs: &[POSTGRES_URL],
+    },
+    Scene {
+        name: "restore-dialog",
+        data_sources: FixtureSources::Shop,
+        play: restore_dialog,
+        keeps_pointer: false,
+        region: whole_window,
+        needs: &[POSTGRES_URL],
+    },
+    Scene {
+        name: "saved-dumps",
+        data_sources: FixtureSources::Shop,
+        play: saved_dumps,
+        keeps_pointer: false,
+        region: whole_window,
+        needs: &[],
+    },
+    Scene {
         name: "explain-plan",
         data_sources: FixtureSources::Shop,
         play: explain_plan,
@@ -1017,6 +1041,106 @@ fn open_data_search(harness: &mut Harness<'static, DbRoverApp>) {
     harness.run_ok();
     harness.get_by_label("Search data\u{2026}").click();
     step_until_visible(harness, "A value to find");
+}
+
+/// Dump… on the PostgreSQL data source (W17): its content, format and options, the file, and
+/// the `pg_dump` DbRover chose beside the server's version.
+fn dump_dialog(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
+    let Some((postgres, _)) = &fixture.postgres else {
+        return;
+    };
+    // Where a reader's own dumps go; the dialog only shows it, nothing is written.
+    harness.state_mut().pick_dump_file = Box::new(|_| {
+        Some("~/Documents/DbRover dumps/warehouse/dbrover-2026-11-27-141203.dump".into())
+    });
+    connect_for_dumps(harness, &postgres.name);
+    harness.get_by_label("Dump\u{2026}").click();
+    step_until(harness, "the program chosen", |harness| {
+        harness
+            .query_by_label_contains("for a server of version")
+            .is_some()
+    });
+    harness.get_by_label("Browse…").hover();
+    harness.run_ok();
+    harness.get_by_label("Browse…").click();
+    harness.run_ok();
+}
+
+/// Restore… of a plain dump into the PostgreSQL data source: the file read, a new database,
+/// and `psql`.
+fn restore_dialog(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
+    let Some((postgres, _)) = &fixture.postgres else {
+        return;
+    };
+    let dump = fixture.dir.path().join("warehouse-2026-11-27-141203.sql");
+    std::fs::write(
+        &dump,
+        "--\n-- PostgreSQL database dump\n--\nCREATE TABLE notes (body text);\n",
+    )
+    .unwrap();
+    harness.state_mut().pick_restore_file = Box::new(move || Some(dump.clone()));
+    connect_for_dumps(harness, &postgres.name);
+    harness.get_by_label("Restore\u{2026}").click();
+    step_until(harness, "the program chosen", |harness| {
+        harness
+            .query_by_label_contains("for a server of version")
+            .is_some()
+    });
+    harness.run_ok();
+}
+
+/// Saved dumps… on the shop, after saving a nightly dump from the Dump dialog and turning its
+/// schedule on. Not run: its folder is a reader's, which the picture only shows.
+fn saved_dumps(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    harness.state_mut().pick_dump_file =
+        Box::new(|_| Some("~/Documents/DbRover dumps/shop/shop-2026-11-27-141203.sqlite".into()));
+    connect_for_dumps(harness, "shop");
+    harness.get_by_label("Dump\u{2026}").click();
+    step_until_visible(harness, "Dump from shop");
+    for button in ["Browse…", "Save…"] {
+        harness.get_by_label(button).hover();
+        harness.run_ok();
+        harness.get_by_label(button).click();
+        harness.run_ok();
+    }
+    harness.get_by_role_and_label(Role::Button, "Save").hover();
+    harness.run_ok();
+    harness.get_by_role_and_label(Role::Button, "Save").click();
+    harness.run_ok();
+    harness.get_by_label("shop").click_secondary();
+    harness.run_ok();
+    harness.get_by_label("Saved dumps\u{2026}").click();
+    step_until_visible(harness, "shop dump");
+    let toggle = "Run shop dump's schedule here";
+    harness.get_by_label(toggle).hover();
+    harness.run_ok();
+    harness.get_by_label(toggle).click();
+    // The engine saves the schedule's state and sends the list back.
+    for _ in 0..20 {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        harness.run_ok();
+    }
+}
+
+/// Connects the data source `name` and leaves its menu open, with Dump… in it: the menu offers
+/// dumps only once DbRover knows the server.
+fn connect_for_dumps(harness: &mut Harness<'static, DbRoverApp>, name: &str) {
+    harness.get_by_label(name).click_secondary();
+    harness.run_ok();
+    harness.get_by_label("Connect").click();
+    harness.run_ok();
+    // The explorer's connection is up once the menu, opened again, offers Dump….
+    for _ in 0..200 {
+        harness.get_by_label(name).click_secondary();
+        harness.run_ok();
+        if harness.query_by_label("Dump\u{2026}").is_some() {
+            return;
+        }
+        harness.key_press(egui::Key::Escape);
+        harness.run_ok();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    panic!("{name} never offered Dump…");
 }
 
 /// The shop's schema as an ER diagram (ER1): every table, laid out with referenced tables
