@@ -112,6 +112,7 @@ fn kind_label(kind: HistorySourceKind) -> &'static str {
         HistorySourceKind::Action => "Actions",
         HistorySourceKind::Activity => "Server activity",
         HistorySourceKind::Search => "Data searches",
+        HistorySourceKind::Dump => "Dumps",
         HistorySourceKind::DbRover => "Earlier DbRover",
     }
 }

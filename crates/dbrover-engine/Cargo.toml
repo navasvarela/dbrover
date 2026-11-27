@@ -32,6 +32,7 @@ dbrover-driver-postgres.workspace = true
 dbrover-driver-sqlite.workspace = true
 dbrover-driver-sqlserver.workspace = true
 dbrover-driver-trino.workspace = true
+dbrover-dump.workspace = true
 dbrover-export.workspace = true
 dbrover-language.workspace = true
 # Names the plan formats a report's explained sources are in (RS2d).
@@ -41,10 +42,14 @@ dbrover-schema.workspace = true
 dbrover-sql.workspace = true
 dbrover-ssh.workspace = true
 dbrover-store.workspace = true
+# Gzips a plain SQL dump as it is written (W17).
+flate2.workspace = true
 jiff.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+# The folder a dump's password file is written in, readable by its owner only (W17).
+tempfile.workspace = true
 # "signal" for `dbrover report run`, which stops its run on Ctrl-C and SIGTERM (stop_signals.rs).
 tokio = { workspace = true, features = ["process", "io-util", "signal"] }
 tracing.workspace = true

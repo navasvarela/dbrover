@@ -16,6 +16,8 @@ use tokio::task::{JoinError, JoinSet};
 use crate::config_files;
 use crate::console_files;
 use crate::diagram_files;
+use crate::dump_programs::ProgramVersions;
+use crate::dumps::{self, DumpFailure, DumpRun, DumpRunId, DumpServices};
 use crate::events::EventSink;
 use crate::export;
 use crate::export_programs::{self, ExportProgramRequest};
@@ -69,6 +71,13 @@ pub(crate) async fn run(
     for event in config_files::load_custom(&config.custom_files).await {
         events.send(event);
     }
+    let dump_files = dumps::run_files_folder(&config.trusted_commands);
+    let leftovers = dump_files.clone();
+    if let Err(error) =
+        tokio::task::spawn_blocking(move || dumps::remove_leftovers(&leftovers)).await
+    {
+        tracing::warn!("could not look for a dump's leftover files: {error}");
+    }
     let trusted = programs::load_trusted(&config.trusted_commands).await;
     events.send(Event::TrustedCommandsLoaded(trusted.clone()));
     let (trusted, _) = watch::channel(trusted);
@@ -101,6 +110,9 @@ pub(crate) async fn run(
         trusted,
         program_runner: config.programs,
         programs: HashMap::new(),
+        dumps: HashMap::new(),
+        program_versions: ProgramVersions::default(),
+        dump_files,
         releases: config.releases,
         updater: config.updater,
         events,
@@ -153,6 +165,12 @@ struct Engine {
     /// How to stop each program that may still be running. Dropping one stops its program,
     /// which is how shutting down stops them all.
     programs: HashMap<ProgramId, oneshot::Sender<()>>,
+    /// How to cancel each dump that may still be running; dropping one cancels its dump.
+    dumps: HashMap<DumpRunId, oneshot::Sender<()>>,
+    /// The dump programs' versions, read once per copy (W17).
+    program_versions: ProgramVersions,
+    /// The data folder's folder for dumps' password files.
+    dump_files: PathBuf,
     releases: Arc<dyn ReleaseFeed>,
     updater: Arc<dyn UpdateInstaller>,
     events: EventSink,
@@ -536,6 +554,13 @@ impl Engine {
                 if let Some(stop) = self.programs.remove(&program) {
                     // The program may have ended already, taking its receiver with it.
                     let _ = stop.send(());
+                }
+            }
+            Command::StartDump(run) => self.start_dump(*run),
+            Command::CancelDump(run) => {
+                if let Some(cancel) = self.dumps.remove(&run) {
+                    // The dump may have ended already, taking its receiver with it.
+                    let _ = cancel.send(());
                 }
             }
             Command::TrustCommand(command) => self.trust_command(command).await,
@@ -1271,6 +1296,31 @@ impl Engine {
         let trusted = self.trusted.borrow().clone();
         programs::save_trusted(&self.trusted_file, &trusted).await;
         self.events.send(Event::TrustedCommandsLoaded(trusted));
+    }
+
+    fn start_dump(&mut self, run: DumpRun) {
+        let id = run.run;
+        let Some(data_source) = self.registry.get(run.request.data_source).cloned() else {
+            self.events.send(Event::DumpEnded {
+                run: id,
+                result: Err(DumpFailure::NoDataSource),
+            });
+            return;
+        };
+        let (cancel, cancelled) = oneshot::channel();
+        self.dumps.retain(|_, cancel| !cancel.is_closed());
+        self.dumps.insert(id, cancel);
+        let services = DumpServices {
+            secrets: Arc::clone(&self.secrets),
+            passwords: self.passwords.clone(),
+            tunnels: self.tunnels.clone(),
+            commands: self.password_commands(),
+            events: self.events.clone(),
+            history: self.history.clone(),
+            versions: self.program_versions.clone(),
+            run_files: self.dump_files.clone(),
+        };
+        tokio::spawn(dumps::run(run, data_source, services, cancelled));
     }
 
     fn password_commands(&self) -> PasswordCommands {

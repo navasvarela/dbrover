@@ -10,6 +10,7 @@ mod choice;
 mod connection;
 mod discovery;
 mod program;
+mod progress;
 mod secret;
 mod version;
 
@@ -20,5 +21,6 @@ pub use choice::{Choice, FoundProgram, Need, NoFit, choose, install_hint};
 pub use connection::{APPLICATION_NAME, ConnectionError, Target};
 pub use discovery::{Folders, RealFolders, SearchContext, find};
 pub use program::{Os, Program, Role};
+pub use progress::dumped_table;
 pub use secret::{SecretError, password_file};
 pub use version::{ProgramVersion, Version};

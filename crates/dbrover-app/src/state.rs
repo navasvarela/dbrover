@@ -192,6 +192,9 @@ impl AppState {
             | Event::ReportRunsFound { .. }
             | Event::TrustedCommandsLoaded(_)
             | Event::ProgramFinished { .. }
+            | Event::DumpStarted { .. }
+            | Event::DumpProgress { .. }
+            | Event::DumpEnded { .. }
             | Event::SettingsLoaded { .. }
             | Event::LatestRelease(_)
             | Event::UpdateProgress { .. }

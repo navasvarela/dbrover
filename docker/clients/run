@@ -1,0 +1,24 @@
+#!/bin/sh
+# Runs a database's client program from its server's image, for the dump and restore tests
+# (W17, docs/dump-restore.md): `run <image> <program> [arguments…]`.
+#
+# CI's servers run from these images already, so their clients need no installing and are the
+# servers' own versions. The program sees this machine's network (`--network host`, Linux
+# only), the temporary folder the tests write their files in, mounted at the same path, and
+# the password file DbRover names in PGPASSFILE. It runs as this machine's user, so the files
+# it writes are the tests' to read and remove.
+set -eu
+image=$1
+program=$2
+shift 2
+temporary=${TMPDIR:-/tmp}
+temporary=${temporary%/}
+# The repository, read-only, for the test authority's certificate in docker/postgres-tls.
+repository=$(cd "$(dirname "$0")/../.." && pwd)
+exec docker run --rm -i --network host \
+  --user "$(id -u):$(id -g)" \
+  --volume "$temporary:$temporary" \
+  --volume "$repository:$repository:ro" \
+  --env PGPASSFILE \
+  --entrypoint "$program" \
+  "$image" "$@"

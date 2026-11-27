@@ -171,6 +171,11 @@ jobs:
         run: |
           docker compose up -d --wait || { docker compose logs --tail 40; exit 1; }
           grep -E '^[A-Z_]+=' test-servers.env >> "$GITHUB_ENV"
+      # The dump and restore tests (W17) run pg_dump, mysqldump and their clients from the
+      # servers' own images, already pulled above, through the scripts in docker/clients:
+      # nothing to install, and each program the version of its server.
+      - if: env.CODE != 'false' && runner.os == 'Linux'
+        run: echo "DBROVER_TEST_CLIENTS=$PWD/docker/clients" >> "$GITHUB_ENV"
       # Clippy on macOS found nothing Linux didn't, so it's skipped there to save a build.
       # Windows keeps it: some lints depend on type sizes, and `result_large_err` once failed
       # only there.
