@@ -3722,6 +3722,7 @@ flowchart LR
     D2 --> D7[D7 Roomier buttons and menus]
     D7 --> D8[D8 Dialogs and tabs]
     D8 --> D9[D9 Data sources into projects]
+    D3 --> D10[D10 Cookbook]
 ```
 
 ### D1 — Logo and brand palette
@@ -4040,3 +4041,37 @@ between projects, and out of one, by dragging its row onto a header; the toolbar
 Welcome tab and **Move to project ›** keep working as they did.
 
 **Demo note:** built; the design page's demo note says what to try.
+
+### D10 — A cookbook of worked examples
+
+The manual is a reference, one chapter per feature, and only [Reports](../book/src/reports.md)
+walks a reader from an empty file to a result. D10 adds a **Cookbook** part: task-led recipes
+that start from a goal (a monthly report to Excel, a slow query made fast, a teammate given the
+data sources without the passwords, a blocking session found and stopped) and end with what the
+reader should see, linking to the reference chapters for the detail. They run on one sample
+dataset, the bike shop of `examples/reports/shop.sql`, loaded into SQLite, PostgreSQL, MongoDB
+and MinIO by `just shop`. What a recipe asks the reader to copy lives in `examples/cookbook/`,
+included into the page by mdBook and run by the example reports' existing engine test; no CI job
+or service is added. Cloud recipes say what they were tried on and what wasn't tried against the
+real service. The design is in [A cookbook of worked examples](cookbook.md). In layers, one PR
+each:
+
+- **D10a — Plan:** this section and the design page.
+- **D10b — The sample shop:** the PostgreSQL shop, the archive's Parquet in MinIO, the settings
+  template, `just shop`, and the checks that the two shops agree, that the files parse and that
+  every include resolves; the part's first two pages.
+- **D10c — Configuration:** an SSH tunnel, a password manager, a careful production data
+  source, sharing data sources.
+- **D10d — Querying:** a question to a chart, a query with parameters, a slow query from its
+  plan, finding a value.
+- **D10e — Reports:** a monthly report on a schedule, sales half archived in S3, testing a
+  report in CI.
+- **D10f — Cloud:** RDS and Aurora with IAM, Parquet in S3, BigQuery's and Snowflake's and
+  Databricks' cost guards.
+- **D10g — Operations and demo note:** a nightly dump restored into a scratch database, a
+  blocking session stopped.
+
+**Exit:** on a clean checkout, `just shop` loads the shop and writes a settings folder that
+DbRover opens with every data source connecting; `mdbook build` passes with the Cookbook part;
+the checks pass on CI's Linux runner; every recipe is dated as walked through on that data, or
+says what wasn't tried against the real service.
