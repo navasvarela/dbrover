@@ -6,7 +6,8 @@ stand-ins; **C2 built** (2026-11-04), tried only against local stand-ins; **C3 b
 against its container; **C4 built** (2026-11-08), BigQuery tried only against exchanges
 written from its documentation and the community emulator; **C5 built** (2026-11-23),
 Snowflake tried only against exchanges written from its documentation; **C6 built**
-(2026-11-24), Databricks tried only against exchanges written from its documentation. Proposed on
+(2026-11-24), Databricks tried only against exchanges written from its documentation; **C7
+proposed** (2026-11-25), Redshift, its scope awaiting the user's choice. Proposed on
 2026-10-27; the order and the decisions below are confirmed as each milestone starts. The
 providers' priority was set on 2026-10-28: AWS, then Google Cloud, then Azure. On 2026-11-01
 DynamoDB was moved ahead of the track, as the NoSQL track's [N5](nosql.md#n5--dynamodb), with
@@ -1855,6 +1856,243 @@ workspace to see:
    warehouse and a cancelled statement; whether a read of a warehouse ever starts it; whether
    Unity Catalog lists `hive_metastore`; what an expired link answers on each cloud; and whether
    `query_tags` is taken by every warehouse type.
+
+### C7 — Amazon Redshift, signed in with AWS
+
+Proposed on 2026-11-25, after C6; its scope is the user's to choose (see
+[Candidates considered](#candidates-considered-for-c7)), and nothing is built until then.
+Redshift is AWS's own warehouse, and C1 reached it only halfway: it connects with a database
+user's password, browses tables and views through the `svv_all_*` views, and opens their rows
+read-only. C7 finishes it: signing in with an AWS profile instead of a password, Redshift's own
+table descriptions, materialized views, functions and procedures in the explorer, a time limit
+Redshift keeps, and the Redshift Data API, which reaches a cluster in a private network with
+nothing but AWS's sign-in.
+
+#### Candidates considered for C7
+
+C0 to C6 left these for later: Redshift's IAM sign-in and its own catalog (C1), Iceberg REST
+catalogs (C2), BigQuery's Storage Read API and sessions (C4), a browser sign-in for Snowflake
+and Databricks (C5, C6), `hive_metastore` through `SHOW` and an `INLINE` fallback (C6), and the
+NoSQL cloud stores, left out "for now". Three of them make a milestone of their own, ranked as
+the track ranks services: by provider (AWS, then Google Cloud, then Azure), then by how many
+people use them (the [Stack Overflow Developer Survey
+2025](https://survey.stackoverflow.co/2025/technology/), share of developers using each, read on
+2026-11-25):
+
+1. **Amazon Redshift, finished** (AWS; 2.3 % of developers). Recommended, and written out
+   below. It is AWS's, so it comes first; it needs no new protocol, only Redshift's
+   credentials API and its system views, so it is the cheapest; and every Redshift user DbRover
+   already has meets its gaps on the first day (no IAM sign-in, rows that can't be edited,
+   materialized views that don't show).
+2. **Iceberg catalogs** (AWS first). Iceberg tables listed from a catalog rather than found in
+   a bucket's folders, through DuckDB's `ATTACH … (TYPE iceberg)`, as C2's decisions left them:
+   AWS Glue's and S3 Tables' Iceberg REST endpoints first, then Google's BigLake metastore, then
+   the catalogs on any cloud (Apache Polaris, Unity Catalog's Iceberg endpoint, Lakekeeper). It
+   tests best of the three, against an Iceberg REST catalog container and C2's MinIO, but it
+   reaches fewest new people: the survey has no row for it, and these tables are already read
+   through Athena (C3), Trino, Snowflake, Databricks and C2's folders. Its open risk is signing
+   in, since DuckDB signs requests to Glue and S3 Tables with its own `aws` extension, which C2
+   decided against.
+3. **Cloud Firestore and Azure Cosmos DB** (Google Cloud, then Azure; 5.7 % and 4.6 %). More
+   developers use each than Redshift, and each has a local emulator. But they come after AWS
+   in the providers' order; they are the NoSQL track's kind of work (a query language beside
+   SQL for each, and its document results), as "Left out on purpose" says; each bills by the
+   document or request unit, as DynamoDB does, so each needs N5's kind of cost guard; and Cosmos
+   DB's MongoDB API already connects through N2's driver. Google Cloud Bigtable isn't in the
+   survey's list.
+
+The rest are layers, not milestones, each worth doing when someone asks: a browser sign-in
+(Snowflake's and Databricks's OAuth with PKCE, Entra ID's), C6's `hive_metastore` through `SHOW`
+and its `INLINE` fallback, Athena's bytes in the history (C3f), BigQuery's sessions, and the
+Storage Read API, which C4 reopens only for a large result with no bucket to write it to.
+
+#### What Redshift does, from its documentation
+
+Read from the Amazon Redshift API reference (`GetClusterCredentialsWithIAM`,
+`GetClusterCredentials`), the Redshift Serverless API reference (`GetCredentials`), the Redshift
+Data API reference (`ExecuteStatement`, `DescribeStatement`, `GetStatementResult`) and its
+management guide page, the Database Developer Guide's pages on `SVV_REDSHIFT_COLUMNS`,
+`SVV_TABLE_INFO`, `SVV_MV_INFO`, `SVV_REDSHIFT_FUNCTIONS`, `SHOW VIEW`, `SHOW PROCEDURE`,
+`statement_timeout` and `SYS_QUERY_HISTORY`, and Redshift Serverless's billing page, on
+2026-11-25. Two pages didn't load (the constraints page, and the overview of IAM database
+credentials); what is said below from them is marked *to check*. Nothing has been tried against
+Redshift, which needs an account; there is no emulator (see
+[Testing C7 without an account](#testing-c7-without-an-account)).
+
+| Question | Amazon Redshift |
+| --- | --- |
+| Signing in as the IAM identity, provisioned | `GetClusterCredentialsWithIAM` with `ClusterIdentifier`, `DbName`, `DurationSeconds` (900 to 3,600, 900 by default) or `CustomDomainName`; answers with `DbUser`, "mapped 1:1" to the caller's IAM identity, `DbPassword` and `Expiration`. Redshift's own API: a query-style request (`Action=…&Version=2012-12-01`) signed with SigV4, answered in XML. |
+| Signing in as a database user, provisioned | `GetClusterCredentials` with `DbUser` (required), `AutoCreate`, `DbGroups` (lower case), `DbName` and `DurationSeconds` as above; the user comes back prefixed `IAM:`, or `IAMA:` when `AutoCreate` made it. |
+| Signing in, Serverless | `GetCredentials` with `workgroupName` (or `customDomainName`, one of them required), `dbName` and `durationSeconds` (900 to 3,600, 900 by default); answers with `dbUser`, `dbPassword`, `expiration` and `nextRefreshTime`, in JSON. No database user or groups to choose. |
+| Using what they answer | An ordinary user and password over PostgreSQL's protocol, which the PostgreSQL driver already sends. The JDBC and ODBC drivers sign in this way (*to check*). |
+| The Data API | `ExecuteStatement` with `Sql` (200 KB at most), `ClusterIdentifier` or `WorkgroupName`, `Database`, and a sign-in: the IAM identity, a `DbUser`, or a Secrets Manager `SecretArn`; `Parameters` (named, every value a string, no `NULL`), `ClientToken` (kept 8 hours, so a retried submission runs once), `SessionKeepAliveSeconds` (up to 24 hours) or `SessionId`, `ResultFormat` (`JSON` or `CSV`), `WaitTimeSeconds` (1 to 30). `DescribeStatement` says where it is (`SUBMITTED`, `PICKED`, `STARTED`, `FINISHED`, `ABORTED`, `FAILED`), with `ResultRows`, `ResultSize`, `Duration` (nanoseconds) and `RedshiftQueryId`; `CancelStatement` stops it. |
+| The Data API's results | `GetStatementResult`: `ColumnMetadata` (name, type, precision, scale, nullable…) and `Records`, each value a typed field (`{"longValue": 1}`), paged by `NextToken`, with `TotalNumRows`. `GetStatementResultV2` reads `CSV` results in 1 MB chunks, 15 MB a request. A result is kept 24 hours, and one past 500 MB (gzipped) fails. |
+| The Data API's sessions | A statement sent with `SessionKeepAliveSeconds` opens a session, and later statements name its `SessionId`; a session lasts 24 hours at most, runs one statement at a time, queues none, and a cluster or workgroup holds 500. A statement runs 24 hours at most. |
+| Columns | `SVV_REDSHIFT_COLUMNS`: each column's type, default, nullability, `encoding`, `distkey`, `sortkey` (its place in the sort key, 0 for none) and `remarks`, "visible to all users", each seeing their own. |
+| A table's layout | `SVV_TABLE_INFO`: `diststyle`, `sortkey1`, `size` (1 MB blocks), `tbl_rows`, `unsorted`, `stats_off` and more, "visible only to superusers" unless granted, and only for tables with at least one row. |
+| Materialized views, functions and procedures | `SVV_MV_INFO` (each one's state and whether it is stale; not its definition, which `SHOW VIEW` gives "including for materialized views"); `SVV_REDSHIFT_FUNCTIONS` (name, kind, arguments, result); `SHOW PROCEDURE` with its arguments, answering its `CREATE OR REPLACE PROCEDURE`. |
+| Keys | Primary, unique and foreign keys are informational, not enforced (*to check*). |
+| A time limit | `statement_timeout`, in milliseconds, 0 (none) by default, set with `SET`; it covers planning, queueing and running, and with WLM's `max_execution_time` the lower one wins. A statement past it fails with *Query (…) canceled on user's request*. |
+| What a statement costs | Serverless: its compute "metered on a per-second basis", 60 seconds at least, a cancelled statement billed for the time it ran, system tables' queries too; a running query stops after 86,399 seconds, and the console can cap a workgroup's RPU-hours. A provisioned cluster bills its nodes by the hour whatever runs. |
+| What a statement did | `SYS_QUERY_HISTORY`: elapsed, queueing and running time, rows and bytes returned; no bytes scanned. |
+| A local server | None of AWS's: Redshift isn't open source, and nothing runs its SQL. |
+
+#### How the pieces fit
+
+- **Signing in is Redshift's API, then PostgreSQL's protocol.** **AWS IAM** on a Redshift data
+  source asks Redshift for a user and password with C0's AWS sign-in (a profile or the default
+  chain, and the region), and the PostgreSQL driver signs in with them: as the IAM identity
+  (`GetClusterCredentialsWithIAM`) by default, or, on a provisioned cluster, as a database user
+  the data source names, with **Create the user** and **Groups** (`GetClusterCredentials`), for
+  clusters whose grants are on database users and groups. Serverless signs in only as the IAM
+  identity. The calls go through `aws-sdk-redshift` and `aws-sdk-redshiftserverless`, without
+  default features and on ring, as the track's decision on AWS's SDKs says. Credentials are asked
+  for on every connection, for 900 seconds, and never stored, logged or written to the history,
+  as C0d's RDS tokens are; the user they name replaces the data source's for that connection.
+- **Known before connecting.** C1 recognises Redshift after connecting, from `version()`.
+  Signing in has to know it before, so here the host decides:
+  `<cluster>.<id>.<region>.redshift.amazonaws.com` names the cluster and region,
+  `<workgroup>.<account>.<region>.redshift-serverless.amazonaws.com` the workgroup. A data source
+  reached through a tunnel, a private endpoint or a custom domain names its cluster or workgroup
+  (and its custom domain, which both APIs take) in its sign-in:
+  `cloud_sign_in = { provider = "aws", profile = "…", region = "…", redshift_cluster = "…" }`.
+- **Redshift's own table description.** A table's columns come from `SVV_REDSHIFT_COLUMNS`,
+  with their encoding and their place in the distribution and sort keys, and its comment from
+  `remarks`; the table's distribution style, sort key, size and rows from `SVV_TABLE_INFO` where
+  the user may read it, and otherwise left out, saying why. This replaces the PostgreSQL
+  description C1 had to turn off. Redshift doesn't enforce its keys, so an edit by a key it
+  doesn't keep unique could change several rows: rows stay read-only unless the user decides
+  otherwise (an [open question](#c7s-open-questions)).
+- **The rest of the catalog.** A schema gains **materialized views** (marked stale where
+  `SVV_MV_INFO` says so, defined by `SHOW VIEW`), **functions** (`SVV_REDSHIFT_FUNCTIONS`, with
+  their arguments) and **procedures** (defined by `SHOW PROCEDURE` with their arguments; which
+  view lists them across databases is read in C7d). **Found on the server** stays on
+  `svv_all_tables`.
+- **A time limit Redshift keeps.** The cost guard's **Stop statements after**
+  (`stop_after_seconds`, C5's) is sent as `SET statement_timeout` when each connection opens,
+  so Redshift stops a statement past it, and DbRover says which limit stopped it. On Serverless
+  this bounds the bill; on a provisioned cluster, whose nodes bill by the hour anyway, it bounds
+  the queue. A console's own `SET statement_timeout` changes it for that console, as on
+  PostgreSQL. Nothing asks before a statement runs: Redshift's `EXPLAIN` gives a plan's cost
+  units, not time or money.
+- **The Data API, for a cluster with no route to it.** Clusters often sit in a private network
+  that only an SSH tunnel reaches today. The Data API reaches them over AWS's HTTPS with the AWS
+  sign-in alone, so a Redshift data source can **Connect through** the network (PostgreSQL's
+  protocol, as now) or the Data API. The second is a `dbrover-driver-redshift` crate on
+  `aws-sdk-redshiftdata`, implementing C0's `JobService`: `ExecuteStatement` with DbRover's own
+  `ClientToken`, `DescribeStatement` polled, `GetStatementResult` paged, `CancelStatement`.
+  Each console keeps one Data API session (`SessionKeepAliveSeconds`, then its `SessionId`), so
+  `SET`, temporary tables and transactions last between its statements, as they do over the
+  network; a session runs one statement at a time, as a console does. The catalog's queries are
+  C1d's and C7's own, moved into one module both paths send. Values arrive typed and are shown
+  as text, `DECIMAL` from its string.
+- **Rows as text.** Neither path answers in Arrow. A report's large result would reach DuckDB
+  as Parquet through RS7's handoff, with Redshift's `UNLOAD … FORMAT PARQUET` to S3 through an
+  IAM role the cluster holds, as Athena's `UNLOAD` and Snowflake's `COPY INTO` do; whether that
+  belongs in C7 is an [open question](#c7s-open-questions).
+
+#### Testing C7 without an account
+
+- **AWS's calls, replayed on `127.0.0.1`.** Athena's replay server answers the JSON calls
+  (Redshift Serverless's `GetCredentials`, the Data API) from files of exchanges; it learns
+  Redshift's query-style calls, matched by the form's `Action` and answered in XML. The files are
+  written from the API references, since there is no account to record from; what they don't
+  show (the user name `GetClusterCredentialsWithIAM` gives a role, an error's words, how the Data
+  API writes a date, a timestamp or a `SUPER`) is listed beside them for the live check.
+- **Signing in end to end.** On the PostgreSQL test server, a user named as Redshift names them
+  (`IAM:dbrover`), whose password the replayed `GetClusterCredentialsWithIAM` hands out: a data
+  source naming its cluster connects with it, and asks again on its next connection.
+- **The catalog on stand-in views.** C1d's stand-in `svv_*` views gain `SVV_REDSHIFT_COLUMNS`,
+  `SVV_TABLE_INFO`, `SVV_MV_INFO` and `SVV_REDSHIFT_FUNCTIONS`, made from `information_schema`
+  in a schema of the test database, so the queries and the tree are tried. `SHOW VIEW` and `SHOW
+  PROCEDURE` are Redshift's alone, and are tried by hand.
+- **The time limit on PostgreSQL.** `statement_timeout` is PostgreSQL's too, in the same unit,
+  so a `pg_sleep` past a one-second limit is stopped on the test server; DbRover's explanation
+  reads both servers' messages.
+- **The Data API against the stand-in.** Besides the replayed exchanges, a test server answers
+  the Data API by running each statement on the PostgreSQL test server's stand-in views, so the
+  conformance walk goes through the Data API path too.
+- **A live test the user runs.** An `#[ignore]`d test runs the scenarios against Redshift when
+  `DBROVER_TEST_REDSHIFT_LIVE` names a profile, a region and a cluster or workgroup, over
+  Redshift's sample data; a Serverless workgroup at its smallest capacity is enough, and CI
+  never sets it. Nothing reads the machine's `~/.aws` otherwise.
+
+#### Layers
+
+Each layer is one pull request in a stack, useful and tested on its own, with no AWS account.
+
+- **C7a — Plan:** this section, the candidates, and the roadmap's entry in layers; once the
+  user chooses the scope, C7's rows in [Decisions](#decisions) and [Risks](#risks).
+- **C7b — Redshift's IAM sign-in:** **AWS IAM** on a Redshift data source, as the IAM identity
+  or a database user, provisioned or Serverless, with the cluster or workgroup from the host or
+  the sign-in's settings.
+  **Exit:** replayed, each of the three calls is sent with the cluster or workgroup, database
+  and region, and its user and password reach the driver; on the PostgreSQL test server a data
+  source naming its cluster signs in with them and asks again on its next connection; a host
+  that names no cluster, with none set, is an error that says to set one; the sign-in
+  round-trips through `data_sources.toml`, and no type that holds a password prints it.
+- **C7c — Redshift's table description:** columns with encoding, distribution and sort keys
+  and comments; the table's layout where `SVV_TABLE_INFO` can be read.
+  **Exit:** on the stand-in views, a table's description shows its sort key's columns in order
+  and its distribution key; a user who can't read `SVV_TABLE_INFO` gets the columns and a line
+  saying why the layout is missing.
+- **C7d — Materialized views, functions and procedures:** three folders more in a schema, with
+  **Show definition**.
+  **Exit:** on the stand-in views, the conformance walk visits a materialized view (one stale),
+  a function and a procedure; **Show definition** sends `SHOW VIEW` and `SHOW PROCEDURE` with
+  the procedure's arguments.
+- **C7e — The time limit:** **Stop statements after** on Redshift, sent as `statement_timeout`
+  when each connection opens; Redshift's message explained.
+  **Exit:** on the PostgreSQL test server, a data source with a one-second limit has a
+  two-second `pg_sleep` stopped, saying which limit stopped it; one without a limit sends none.
+- **C7f — The Data API:** **Connect through** the Data API; the `dbrover-driver-redshift`
+  crate on `JobService`, a session per console, typed values as text, the catalog's queries
+  shared with the network path.
+  **Exit:** replayed, a statement is submitted with DbRover's `ClientToken`, polled to
+  `FINISHED`, paged over three pages with `NULL` and empty text apart; a failure's message
+  reaches the console; cancel stops it by its id; a console's second statement names the first's
+  session. Against the stand-in, the conformance walk passes.
+- **C7g — Redshift in the data source dialog:** **AWS IAM**'s rows for Redshift (cluster or
+  workgroup, IAM identity or database user, groups), **Connect through**, **Stop statements
+  after**, and the MCP server's read-only mode with an MCP profile.
+  **Exit:** a kittest adds a Serverless data source signed in with AWS IAM through the Data
+  API, and a provisioned one as a database user, each saving as typed.
+- **C7h — Manual, demo note and the exit:** the **Amazon Redshift** section of the manual's
+  Amazon Web Services page rewritten, the C7 demo note in the roadmap with the live checks, and
+  the exit test.
+
+**Exit:** Redshift tested in CI with replayed exchanges and stand-in views, in one test that
+goes through the whole of C7: a data source signs in with AWS IAM and no password, describes a
+table with its sort key, lists a materialized view and a procedure, has a statement past its time
+limit stopped, and runs a console through the Data API. Tried live by the user: the demo note's
+list, and the ignored live test.
+
+#### C7's open questions
+
+These are the user's to decide before C7b, or need an account to see:
+
+1. **The scope.** Redshift (recommended), Iceberg catalogs, or Firestore and Cosmos DB (see
+   [Candidates considered](#candidates-considered-for-c7)). The last two are used by more
+   developers than Redshift (5.7 % and 4.6 % against 2.3 %), but come after AWS in the
+   providers' order and belong half to the NoSQL track.
+2. **The Data API in C7, or later.** It is a driver of its own (C7f) and the largest layer;
+   C7 is useful without it, since an SSH tunnel reaches a private cluster today.
+3. **Editing rows.** Redshift doesn't enforce keys, so an edit by a primary key could change
+   several rows. Keep tables read-only, or allow edits by a key, checking that each changed one
+   row and rolling back otherwise?
+4. **The default time limit.** 10 minutes for a new Serverless data source, as for Snowflake and
+   Databricks; none for a provisioned cluster, whose bill a limit doesn't change?
+5. **Which sign-in is the default** on a provisioned cluster: the IAM identity
+   (`GetClusterCredentialsWithIAM`), or a database user with groups (`GetClusterCredentials`),
+   which older setups use.
+6. **RS7's handoff through `UNLOAD`.** A small layer for reports' large results, as C5h was,
+   if a report needs it; it needs an IAM role on the cluster that can write the bucket.
+7. **The object helpers' Redshift DDL** (`DISTKEY`, `SORTKEY`, `ENCODE`) stays out, as for
+   BigQuery, Snowflake and Databricks, unless asked for.
+8. **Seen only live:** the user name a role gets from `GetClusterCredentialsWithIAM`; whether a
+   connection outlives its credentials' expiry, as RDS's do; the words of a refused sign-in and
+   of a statement past its limit; how the Data API writes dates, timestamps, `DECIMAL` and
+   `SUPER`; and `SHOW VIEW`'s answer for a materialized view.
 
 ## Decisions
 
