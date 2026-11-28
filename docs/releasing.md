@@ -93,13 +93,22 @@ through an S3 bucket with `COPY INTO` and read Databricks's results as Arrow), v
 waited and which session blocks it, on PostgreSQL, MySQL, MariaDB, SQL Server and ClickHouse;
 Cancel query and Kill where the engine has them, Kill always asking first and both refused on
 a read-only data source; every stop recorded in History; and an `activity` permission that lets
-AI assistants over MCP list sessions and stop one) and v0.40.0
+AI assistants over MCP list sessions and stop one), v0.40.0
 (Search data: a value found across a data source's tables and columns, each match opened on
 its row, on PostgreSQL, SQLite, DuckDB, MySQL, MariaDB, SQL Server and ClickHouse, and a
 schema or table at a time, after asking, on Trino, Athena, BigQuery, Snowflake and Databricks;
 time and row limits per table set in Settings, each search recorded in History, and an MCP
 `search_data` tool behind `read`; and Server activity on SQL Server showing a transaction that
-has just begun as zero seconds old rather than unknown).
+has just begun as zero seconds old rather than unknown) and v0.41.0
+(Dump and restore: a database, schema or table written to a file by the engine's own
+`pg_dump`, `mysqldump` or `mariadb-dump`, found on the machine and chosen to fit the server,
+and read back by `pg_restore`, `psql`, `mysql` or `mariadb`, into a new database by default and
+always after asking; SQLite and DuckDB dumped and restored by themselves; the password never on
+a command line; saved dumps run on a schedule while DbRover is open, or by `dbrover dump run`
+from the system's scheduler; each run recorded in History; and users and roles beyond
+PostgreSQL: MySQL's and MariaDB's accounts and roles, and SQL Server's logins, server roles,
+database users and database roles, listed in the explorer and created, changed, renamed and
+dropped through dialogs, passwords hashed on this computer where the engine allows it).
 R3's update notice is built, ahead of R2 (see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
