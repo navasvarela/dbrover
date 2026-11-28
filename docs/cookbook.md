@@ -1,7 +1,7 @@
 # A cookbook of worked examples
 
-Status: **planned on 2026-11-28** (D10a); the twelve open questions at the end wait for answers
-before any recipe is written. The [roadmap](roadmap.md#design-and-documentation-track) tracks it
+Status: **planned on 2026-11-28** (D10a), its twelve open questions answered the same day as
+proposed. The [roadmap](roadmap.md#design-and-documentation-track) tracks it
 as D10 in the design and documentation track.
 
 The manual is a reference: one chapter per feature, each saying what the feature does, every
@@ -406,7 +406,7 @@ foot what wasn't tried against the real service.
 
 ## Open questions
 
-Each has a proposed answer; nothing beyond this plan is written until they are answered.
+Answered on 2026-11-28: all twelve as proposed. Kept as they were asked.
 
 1. **Where the part goes.** Right after **Getting started**, as the second thing a new reader
    meets; or before **Reference**, after every feature chapter? Proposed: after Getting started.

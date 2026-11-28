@@ -4053,8 +4053,8 @@ dataset, the bike shop of `examples/reports/shop.sql`, loaded into SQLite, Postg
 and MinIO by `just shop`. What a recipe asks the reader to copy lives in `examples/cookbook/`,
 included into the page by mdBook and run by the example reports' existing engine test; no CI job
 or service is added. Cloud recipes say what they were tried on and what wasn't tried against the
-real service. The design is in [A cookbook of worked examples](cookbook.md). In layers, one PR
-each:
+real service. The design is in [A cookbook of worked examples](cookbook.md), its questions
+answered on 2026-11-28 as proposed. In layers, one PR each:
 
 - **D10a — Plan:** this section and the design page.
 - **D10b — The sample shop:** the PostgreSQL shop, the archive's Parquet in MinIO, the settings
